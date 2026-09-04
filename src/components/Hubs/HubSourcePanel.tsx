@@ -1,4 +1,4 @@
-import { Button, Divider, ScrollArea, Stack } from '@mantine/core';
+import { Button, Divider, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconCopy } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
@@ -32,6 +32,8 @@ export type HubPanelHub = {
   availability: Availability;
   isOwner: boolean;
   sources: HubSourceValue[];
+  /** How many things this hub keeps out. A count only — see `toHubDetail`. */
+  excludedCount: number;
 };
 
 function MaybeScrollArea({
@@ -178,6 +180,13 @@ export function HubSourcePanel({
             setSessionLevel(hub.id, Flags.intersection(level, viewerAllowedLevel))
           }
         />
+      )}
+
+      {hub.excludedCount > 0 && (
+        <Text size="xs" c="dimmed">
+          {hub.excludedCount === 1 ? '1 thing is' : `${hub.excludedCount} things are`} kept out of
+          this hub. Duplicating it does not copy them.
+        </Text>
       )}
 
       <MaybeScrollArea maxHeight={listMaxHeight}>

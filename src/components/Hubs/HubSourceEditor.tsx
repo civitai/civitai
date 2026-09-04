@@ -56,8 +56,23 @@ export function HubSourceEditor({
     // string from the one that comes back.
     const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
     // Across BOTH lists, matching the row's unique key: a target the hub already
-    // collects cannot also be excluded, and the server would refuse the pair.
-    if (value.some((s) => s.type === type && s.targetId === targetId)) return;
+    // collects cannot also be excluded. Told, not silently dropped — the same click
+    // did nothing whether the target was already collected or currently kept out, and
+    // either list can be long enough that neither is on screen.
+    const clash = value.find((s) => s.type === type && s.targetId === targetId);
+    if (clash) {
+      showErrorNotification({
+        title: 'Already in this hub',
+        error: new Error(
+          clash.exclude
+            ? `"${
+                clash.alias ?? targetId
+              }" is currently kept out of this hub. Remove it from the kept-out list first.`
+            : `"${clash.alias ?? targetId}" is already one of this hub's sources.`
+        ),
+      });
+      return;
+    }
     const held = exclude ? excluded.length : collected.length;
     const cap = exclude ? maxExclusions : maxSources;
     if (held >= cap) {

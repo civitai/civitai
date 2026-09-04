@@ -4,6 +4,8 @@ import {
   Availability,
   MediaType,
   MetricTimeframe,
+  TagTarget,
+  TagType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -18,11 +20,21 @@ export const hubLimits = {
   // creators has not spent any of the budget it collects with, and sharing one cap
   // would let the exclusion list starve the thing the hub is for.
   //
-  // 20 also bounds the excluded-version expansion, which — unlike the positive one —
-  // deliberately does NOT truncate. Measured on the prod replica: 942,241 models,
-  // p99 of 5 versions each, 180 at the worst model, and 58 models past 50 versions.
-  // So the ceiling is 20 x 180 = 3,600 ids and the realistic case is ~100.
   exclusionsPerHub: 20,
+  // What the excluded Model sources of one hub may expand to, checked when a source
+  // is ADDED rather than when the feed is read. The exclusion expansion deliberately
+  // does not truncate — a trimmed exclusion serves back content the owner said to
+  // keep out — so the bound has to sit somewhere a user can be told about it.
+  //
+  // 🔴 `exclusionsPerHub` alone does NOT bound it. It caps sources; the expansion
+  // factor is whatever `ModelVersion` happens to hold, which drifts with the data and
+  // reports nothing. Measured on the prod replica 2026-09-04: 942,348 models /
+  // 1,219,642 versions, p99 of 5, max 180, and the 20 DISTINCT largest models sum to
+  // 2,064 — which, across the three attribution arms the filter needs, is 6,192 ids
+  // and ~45KB, against 2,250 / ~18KB on the positive side. That shape measured 5.7s
+  // cold, past the 5s deadline. Matched to `resolvedVersionIds` so neither side can
+  // put more into the filter than the other.
+  excludedVersionIds: 750,
   nameLength: 60,
   aliasLength: 60,
   descriptionLength: 300,
@@ -50,6 +62,21 @@ export const hubLimits = {
 // So collection sources stay dark until the index has actually been rebuilt.
 // Flip this to true in the same change that confirms the attribute is live.
 export const HUB_COLLECTION_SOURCES_ENABLED = false;
+
+/**
+ * The tag vocabulary a hub may be keyed on. One constant because the picker QUERIES
+ * with it and the server ASSERTS with it, and a picker offering something the server
+ * 404s is the shape this is here to stop.
+ *
+ * Moderation and System tags are out in BOTH directions — Justin's call, 2026-09-04.
+ * Excluding a moderation label is a reasonable thing to want, but the browsing level
+ * is the control that already enforces it; a second, weaker spelling would leave a
+ * user believing they had set something stronger than they had.
+ */
+export const HUB_TAG_SOURCE_FILTER = {
+  entityType: [TagTarget.Image],
+  types: [TagType.UserGenerated, TagType.Label],
+} as const;
 
 // The hub's public identifier, as it appears in the URL. A string, because the route
 // carries the ENCODED id — an int here would be the pre-encoding format and would put

@@ -138,6 +138,7 @@ export function toPanelHub(hub: {
     exclude: boolean;
     index: number;
   }[];
+  excludedCount: number;
 }): HubPanelHub {
   return {
     id: hub.id,
@@ -146,5 +147,6 @@ export function toPanelHub(hub: {
     availability: hub.availability,
     isOwner: hub.isOwner,
     sources: hub.sources.map(({ id: _id, ...source }) => source),
+    excludedCount: hub.excludedCount,
   };
 }

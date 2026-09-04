@@ -73,13 +73,17 @@ export default function AddToHubModal({
                 // Membership here means "this hub shows me that source", so a row the
                 // owner switched off in the rail reads as unticked: the hub is not
                 // showing it, and ticking is what turns it back on.
-                const checked = hub.sources.some(
-                  (s) =>
-                    s.type === source.type &&
-                    s.targetId === source.targetId &&
-                    s.enabled &&
-                    !s.exclude
+                const row = hub.sources.find(
+                  (s) => s.type === source.type && s.targetId === source.targetId
                 );
+                const checked = !!row?.enabled && !row.exclude;
+                // 🔴 A hub that EXCLUDES this target must not render as an empty box.
+                // The server flips a row rather than refusing the pair, so ticking it
+                // would delete the owner's keep-out — from a modal that never showed
+                // the exclusion existed, in one click, with no warning. Locked instead;
+                // removing an exclusion is an edit you make in the hub, where you can
+                // see it.
+                const excluded = !!row?.exclude;
                 // Exclusions have their own cap, so counting them here would report a
                 // hub as full while it still had room for what this box adds.
                 const held = hub.sources.filter((s) => !s.exclude).length;
@@ -88,12 +92,16 @@ export default function AddToHubModal({
                   <Checkbox
                     key={hub.id}
                     checked={checked}
-                    disabled={pending || (full && !checked)}
+                    disabled={pending || excluded || (full && !checked)}
                     label={
                       <Group gap={6} wrap="nowrap">
                         <Text size="sm">{hub.name}</Text>
                         <Text size="xs" c="dimmed">
-                          {full && !checked ? 'Full' : `${held}/${hubLimits.sourcesPerHub}`}
+                          {excluded
+                            ? 'Kept out of this hub'
+                            : full && !checked
+                            ? 'Full'
+                            : `${held}/${hubLimits.sourcesPerHub}`}
                         </Text>
                       </Group>
                     }

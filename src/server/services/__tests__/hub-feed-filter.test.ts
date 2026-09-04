@@ -196,6 +196,17 @@ describe('a tag source joins the OR group', () => {
     // `toContain` survives ' OR ' becoming ' AND ', which is an empty hub.
     expect(emittedFilter()).toContain('(userId IN [10] OR tagIds IN [77,78])');
   });
+
+  it('serves a hub whose ONLY source is a tag', async () => {
+    // The empty-hub branch reads the arm list, not the source list. A tag-only hub
+    // that produced no arm would return an empty page while its rail showed a source.
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ tagIds: [77] }));
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(emittedFilter()).toContain('(tagIds IN [77])');
+  });
 });
 
 /**
@@ -214,7 +225,16 @@ describe('a hub keeps its excluded sources out', () => {
   // A NOT group opening on one of the hub's own fields. `String.raw` because a
   // template literal turns `` into a backspace, which matches nothing and makes
   // the control pass forever.
-  const hubExclusionGroup = new RegExp(String.raw`NOT \((userId|tagIds|postedToId)`);
+  // `\)` is in the alternation because the OTHER revert of the guard — deleting
+  // `if (!arms.length) return null` — emits the literal `NOT ()`, which no arm name
+  // matches. That one is not a quiet permissive bug: Meilisearch rejects the filter
+  // (verified against the prod index, HTTP 400, where the same query without the
+  // group returns 200), so every hub feed that excludes NOTHING fails. `modelVersionIds`
+  // is here so the control does not depend on which arm the builder happens to emit
+  // first.
+  const hubExclusionGroup = new RegExp(
+    String.raw`NOT \((\)|userId|tagIds|postedToId|modelVersionIds)`
+  );
 
   const withExclusions = hubSources({
     userIds: [10],

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as SystemCache from '~/server/services/system-cache';
 
 // These cover the two ways a hub can fail QUIETLY rather than loudly:
 //   - resolveHubSources returning something for a hub the viewer does not own,
@@ -8,10 +9,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 //     without its content-rating cap (forcedBrowsingLevel).
 // Neither shows up as an error at any layer, so only a test pins them.
 
-const { permissionsMock } = vi.hoisted(() => ({ permissionsMock: vi.fn() }));
+const { permissionsMock, replacedTagIdsMock } = vi.hoisted(() => ({
+  permissionsMock: vi.fn(),
+  replacedTagIdsMock: vi.fn(),
+}));
 
 vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionPermissionsByIds: permissionsMock,
+}));
+
+// Spread rather than listed: `system-cache` exports a dozen caches this file does not
+// name, and a hand-listed factory would break the moment the service reaches one of
+// them — far from anything this test is about.
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof SystemCache>()),
+  getReplacedTagIds: replacedTagIdsMock,
 }));
 
 import {
@@ -74,6 +86,10 @@ function stubVersions(versionsByModel: Record<number, number[]>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears calls but keeps implementations, so a resolved value set by
+  // one test leaks into every later one. Re-declared here so each test starts from
+  // "nothing is replaced" rather than from whatever ran before it.
+  replacedTagIdsMock.mockResolvedValue([]);
   stubVersions({});
   // The service maps whatever the write returns before handing it back, so the
   // fakes have to return a row rather than undefined.
@@ -268,10 +284,15 @@ describe('resolveHubSources', () => {
       const result = await resolveHubSources({ hubId: 1, userId: 5 });
 
       expect(result?.excluded.modelVersionIds).toEqual([99, 30, 31, 32]);
-      // Every version of the model, with no rank limit anywhere in the query.
-      expect(excludedVersions).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { modelId: { in: [20] } } })
-      );
+      // The WHOLE argument, not `objectContaining`: the fake ignores what it is
+      // handed, so a `take` or an `orderBy` added to this query cannot change the rows
+      // it returns — and `objectContaining` deep-checks `where` while ignoring exactly
+      // those siblings. Trimming here is the permissive failure the whole design note
+      // is about, and this is the only assertion that can see it.
+      expect(excludedVersions.mock.calls[0][0]).toEqual({
+        where: { modelId: { in: [20] } },
+        select: { id: true },
+      });
       expect(result?.modelVersionIds).toEqual([]);
     });
 
@@ -491,6 +512,34 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     await expect(upsertUserHub(withTag())).rejects.toThrow(/not found/i);
   });
 
+  it('checks EVERY tag, not just the first one', async () => {
+    // The guard matches rows to ids with `find`. Positional matching — `tags[0]` —
+    // passes every single-tag case in this block, and in production lets a moderation
+    // label through behind one valid tag.
+    findTags.mockResolvedValue([imageTag()]);
+
+    await expect(
+      upsertUserHub({
+        name: 'tagged',
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, enabled: true, exclude: false, index: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, enabled: true, exclude: false, index: 1 },
+        ],
+        userId: 5,
+      })
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it('refuses a REPLACED tag, which the index would never match', async () => {
+    // A replaced tag is listed, image-targeted and the right type — it passes every
+    // other clause. The index carries its replacement's id, so as a source it matches
+    // nothing and as an exclusion it keeps nothing out.
+    findTags.mockResolvedValue([imageTag()]);
+    replacedTagIdsMock.mockResolvedValue([77]);
+
+    await expect(upsertUserHub(withTag())).rejects.toThrow(/not found/i);
+  });
+
   it('applies the same rule to an EXCLUDED tag', async () => {
     // The direction that reads as harmless — keeping something out cannot show
     // anything. It still names a moderation label by id, and the error text would
@@ -498,6 +547,62 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     findTags.mockResolvedValue([imageTag({ type: TagType.Moderation })]);
 
     await expect(upsertUserHub(withTag(true))).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('upsertUserHub source caps', () => {
+  // `upsertUserHubSchema` widened its array max to sourcesPerHub + exclusionsPerHub,
+  // so the zod bound no longer enforces either side on its own. `assertSourceCounts`
+  // is the whole of what does. Delete the call and a 70-source hub saves clean.
+  const many = (count: number, exclude: boolean, from = 1) =>
+    Array.from({ length: count }, (_, i) => ({
+      type: UserHubSourceType.User,
+      targetId: from + i,
+      enabled: true,
+      exclude,
+      index: i,
+    }));
+
+  beforeEach(() => {
+    dbMock.dbRead.userHub.count.mockResolvedValue(0);
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {}, sources: [] });
+  });
+
+  it('refuses more sources than the source cap', async () => {
+    await expect(
+      upsertUserHub({
+        name: 'too many',
+        sources: many(hubLimits.sourcesPerHub + 1, false),
+        userId: 5,
+      })
+    ).rejects.toThrow(/at most/i);
+    expect(dbMock.dbWrite.userHub.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses more exclusions than the exclusion cap', async () => {
+    await expect(
+      upsertUserHub({
+        name: 'too many',
+        sources: many(hubLimits.exclusionsPerHub + 1, true),
+        userId: 5,
+      })
+    ).rejects.toThrow(/exclude at most/i);
+    expect(dbMock.dbWrite.userHub.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a hub that fills BOTH caps at once', async () => {
+    // The control, and the reason the two are counted apart: a full source list plus
+    // a full exclusion list is 70 rows, which one shared cap would refuse.
+    await upsertUserHub({
+      name: 'full both ways',
+      sources: [
+        ...many(hubLimits.sourcesPerHub, false),
+        ...many(hubLimits.exclusionsPerHub, true, 1000),
+      ],
+      userId: 5,
+    });
+
+    expect(dbMock.dbWrite.userHub.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1298,6 +1403,236 @@ describe('addUserHubSource', () => {
     await expect(addUserHubSource({ userId: 5, hubId: 1, ...source })).rejects.toThrow();
     expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
   });
+
+  /**
+   * The exclude side of this mutation. Every test above leaves `exclude` undefined, so
+   * none of them can see the field at all: `toHaveBeenCalledWith` ignores a key whose
+   * value is undefined on both sides.
+   */
+  describe('exclusions', () => {
+    const rows = (count: number, exclude: boolean, from = 100) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: from + i,
+        type: UserHubSourceType.Model,
+        targetId: from + i,
+        enabled: true,
+        exclude,
+        index: i,
+      }));
+
+    const excludedUser = { ...source, exclude: true };
+
+    it('writes the exclude flag when creating a negative source', async () => {
+      // Drop `exclude: source.exclude` from the create and exclusions are never
+      // created at all, the row landing as an ordinary source instead. No other test
+      // in this file can see that field.
+      writerHub.mockResolvedValue({ id: 1, sources: [] });
+
+      await addUserHubSource({ userId: 5, hubId: 1, ...excludedUser });
+
+      expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalledWith({
+        data: {
+          hubId: 1,
+          type: UserHubSourceType.User,
+          targetId: 42,
+          alias: 'someone',
+          exclude: true,
+          index: 0,
+        },
+      });
+    });
+
+    it('flips a collected source to an excluded one rather than reporting a no-op', async () => {
+      writerHub.mockResolvedValue({
+        id: 1,
+        sources: [
+          {
+            id: 9,
+            type: UserHubSourceType.User,
+            targetId: 42,
+            enabled: true,
+            exclude: false,
+            index: 0,
+          },
+        ],
+      });
+
+      const result = await addUserHubSource({ userId: 5, hubId: 1, ...excludedUser });
+
+      expect(result).toEqual({ hubId: 1, added: true });
+      expect(dbMock.dbWrite.userHubSource.updateMany).toHaveBeenCalledWith({
+        where: { id: 9, hub: { userId: 5 } },
+        data: { enabled: true, exclude: true },
+      });
+    });
+
+    it('still reports a no-op when the row is already on the side asked for', async () => {
+      // The control for the flip above: without it a service that flips
+      // unconditionally passes, and re-adding a source the hub already holds writes.
+      writerHub.mockResolvedValue({
+        id: 1,
+        sources: [
+          {
+            id: 9,
+            type: UserHubSourceType.User,
+            targetId: 42,
+            enabled: true,
+            exclude: false,
+            index: 0,
+          },
+        ],
+      });
+
+      const result = await addUserHubSource({ userId: 5, hubId: 1, ...source, exclude: false });
+
+      expect(result).toEqual({ hubId: 1, added: false });
+      expect(dbMock.dbWrite.userHubSource.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a FLIP that would go past the exclusion cap', async () => {
+      // The bypass this branch had: the flip returned before the cap block, so fifty
+      // sources flipped one at a time put fifty exclusions on a hub whose limit is
+      // twenty, and flipping also empties the positive side, so the cycle repeated
+      // without bound. The exclusion expansion never truncates, which is what made
+      // that unbounded rather than merely untidy.
+      writerHub.mockResolvedValue({
+        id: 1,
+        sources: [
+          ...rows(hubLimits.exclusionsPerHub, true),
+          {
+            id: 9,
+            type: UserHubSourceType.User,
+            targetId: 42,
+            enabled: true,
+            exclude: false,
+            index: 0,
+          },
+        ],
+      });
+
+      await expect(addUserHubSource({ userId: 5, hubId: 1, ...excludedUser })).rejects.toThrow(
+        /exclude at most/i
+      );
+      expect(dbMock.dbWrite.userHubSource.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('lets a flip through when the destination has room', async () => {
+      // The control. Without it the assertion above passes for a branch that refuses
+      // every flip, which is the shipped feature not working.
+      writerHub.mockResolvedValue({
+        id: 1,
+        sources: [
+          ...rows(hubLimits.exclusionsPerHub - 1, true),
+          {
+            id: 9,
+            type: UserHubSourceType.User,
+            targetId: 42,
+            enabled: true,
+            exclude: false,
+            index: 0,
+          },
+        ],
+      });
+
+      await addUserHubSource({ userId: 5, hubId: 1, ...excludedUser });
+
+      expect(dbMock.dbWrite.userHubSource.updateMany).toHaveBeenCalled();
+    });
+
+    it('does not charge the hub twice for the row it is flipping', async () => {
+      // The row is LEAVING the other side, so counting it against the destination
+      // would refuse a flip that fits on a hub sitting exactly at the cap.
+      writerHub.mockResolvedValue({
+        id: 1,
+        sources: [
+          ...rows(hubLimits.sourcesPerHub - 1, false),
+          {
+            id: 9,
+            type: UserHubSourceType.User,
+            targetId: 42,
+            enabled: true,
+            exclude: true,
+            index: 0,
+          },
+        ],
+      });
+
+      await addUserHubSource({ userId: 5, hubId: 1, ...source, exclude: false });
+
+      expect(dbMock.dbWrite.userHubSource.updateMany).toHaveBeenCalled();
+    });
+
+    it('counts the two caps separately', async () => {
+      // A hub full of sources still has room to exclude something, and the reverse.
+      writerHub.mockResolvedValue({ id: 1, sources: rows(hubLimits.sourcesPerHub, false) });
+
+      await addUserHubSource({ userId: 5, hubId: 1, ...excludedUser });
+
+      expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalled();
+    });
+
+    it('refuses an excluded model whose versions would not fit the filter', async () => {
+      // Refused at the WRITE, because the read cannot fix it: trimming the expansion
+      // serves back content the owner said to keep out, with nothing reporting it. The
+      // cap on source COUNT does not bound this, because the expansion factor is a
+      // property of the data rather than of the code.
+      writerHub.mockResolvedValue({ id: 1, sources: [] });
+      dbMock.dbRead.modelVersion.findMany.mockResolvedValue(
+        Array.from({ length: hubLimits.excludedVersionIds + 1 }, () => ({ modelId: 20 }))
+      );
+      dbMock.dbRead.model.findFirst.mockResolvedValue({ name: 'A Very Forked Model' });
+
+      await expect(
+        addUserHubSource({
+          userId: 5,
+          hubId: 1,
+          type: UserHubSourceType.Model,
+          targetId: 20,
+          alias: null,
+          exclude: true,
+        })
+      ).rejects.toThrow(/A Very Forked Model/);
+      expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    });
+
+    it('allows an excluded model that fits', async () => {
+      // The control for the budget: without it a check that refuses every excluded
+      // model passes, and model exclusions never work at all.
+      writerHub.mockResolvedValue({ id: 1, sources: [] });
+      dbMock.dbRead.modelVersion.findMany.mockResolvedValue(
+        Array.from({ length: hubLimits.excludedVersionIds }, () => ({ modelId: 20 }))
+      );
+
+      await addUserHubSource({
+        userId: 5,
+        hubId: 1,
+        type: UserHubSourceType.Model,
+        targetId: 20,
+        alias: null,
+        exclude: true,
+      });
+
+      expect(dbMock.dbWrite.userHubSource.create).toHaveBeenCalled();
+    });
+
+    it('refuses to EXCLUDE a collection, which would store and filter nothing', async () => {
+      // `resolveExcludedSources` has no collection arm. Refused rather than ignored,
+      // so the gap is loud on the day the collection flag is turned on.
+      writerHub.mockResolvedValue({ id: 1, sources: [] });
+
+      await expect(
+        addUserHubSource({
+          userId: 5,
+          hubId: 1,
+          type: UserHubSourceType.Collection,
+          targetId: 7,
+          alias: null,
+          exclude: true,
+        })
+      ).rejects.toThrow(/cannot be excluded/i);
+      expect(dbMock.dbWrite.userHubSource.create).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('removeUserHubSource', () => {
@@ -1349,7 +1684,9 @@ describe('getUserHubs', () => {
   });
 
   it('marks the caller as the owner of their own hubs', async () => {
-    dbMock.dbRead.userHub.findMany.mockResolvedValue([{ id: 1, userId: 5, metadata: {} }]);
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([
+      { id: 1, userId: 5, metadata: {}, sources: [] },
+    ]);
 
     const [hub] = await getUserHubs({ userId: 5 });
 
@@ -1385,19 +1722,27 @@ describe('getUserHubById', () => {
     // owner blocks — a stronger rule than the `enabled` filter beside it, not the
     // same one. A moderator is covered too: their grant is view-only over the hub,
     // not a licence to read one user's refusals about another.
+    // A DISABLED positive source is in the fixture too, because the filter this
+    // tightened is a conjunction: with only `enabled: true` rows present, dropping the
+    // `source.enabled &&` half reddens nothing and a viewer starts seeing sources the
+    // owner switched off. Both conjuncts are pinned by the same expectation.
     const sources = [
       { type: UserHubSourceType.User, targetId: 10, enabled: true, exclude: false },
       { type: UserHubSourceType.User, targetId: 11, enabled: true, exclude: true },
+      { type: UserHubSourceType.User, targetId: 12, enabled: false, exclude: false },
     ];
     findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources });
 
     const stranger = await getUserHubById({ id: 1, userId: 999, isModerator: true });
     expect(stranger.sources.map((source) => source.targetId)).toEqual([10]);
+    // The number is published where the identities are not, so it is asserted here
+    // rather than left to whatever the payload happens to carry.
+    expect(stranger.excludedCount).toBe(1);
 
     // The control. Without it this passes for a service that drops every source, or
     // that hands the owner a list they cannot edit.
     const owner = await getUserHubById({ id: 1, userId: 5 });
-    expect(owner.sources.map((source) => source.targetId)).toEqual([10, 11]);
+    expect(owner.sources.map((source) => source.targetId)).toEqual([10, 11, 12]);
   });
 
   it('reports a moderator as NOT the owner, so the client renders it read-only', async () => {
@@ -1667,8 +2012,12 @@ describe('getHubCardData', () => {
       name: true,
       metadata: true,
       user: { select: { username: true } },
-      // Enabled only — the count a visitor can see, not the owner's full list.
-      _count: { select: { sources: { where: { enabled: true } }, followers: true } },
+      // Enabled and POSITIVE only — the count a visitor can see. This card answers
+      // unauthenticated at /api/og, and counting the exclusions would publish by
+      // subtraction the one number the keep-out list is withheld to keep private.
+      _count: {
+        select: { sources: { where: { enabled: true, exclude: false } }, followers: true },
+      },
     });
   });
 
