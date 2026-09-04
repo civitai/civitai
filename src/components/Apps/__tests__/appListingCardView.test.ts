@@ -1,11 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import * as cardView from '~/components/Apps/appListingCardView';
 import {
-  LISTING_ACTIONS_WIDEST_PX,
-  LISTING_ACTION_ROW_GAP_PX,
-  LISTING_ROLLUP_HIDE_BELOW_PX,
-  LISTING_ROLLUP_MIN_WIDTH_PX,
   canOwnerEditListing,
   getListingBadge,
   getListingCta,
@@ -13,9 +10,19 @@ import {
   getOwnerEditHref,
   getRecommendLabel,
   isEditableListingStatus,
-  listingRollupHideThreshold,
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
+import {
+  LISTING_ACTION_ROW_CONTROL_PX,
+  LISTING_ACTION_ROW_GAP_PX,
+  LISTING_ACTION_ROW_HEIGHT_PX,
+  LISTING_ACTION_ROW_PT_PX,
+  LISTING_CARD_COVER_ASPECT_RATIO,
+  LISTING_CARD_ICON_SIZE_PX,
+  LISTING_CARD_TITLE_LINES,
+  LISTING_CARD_TITLE_LINE_HEIGHT,
+  LISTING_CARD_TITLE_MIN_HEIGHT,
+} from '~/components/Apps/appListingCardGeometry';
 import type {
   ListingCard,
   ListingRecommendRollup,
@@ -306,31 +313,32 @@ describe('isEditableListingStatus / canOwnerEditListing (owner Edit gating)', ()
 });
 
 /**
- * ── ACTION-ROW GEOMETRY ─────────────────────────────────────────────────────
+ * ── CARD GEOMETRY: ONE MODULE, READ NOT COPIED ──────────────────────────────
  *
- * 🔴 WHY THIS IS IN THE BLOCKING TIER AT ALL. The two numbers behind the action
- * row used to be magic values inside `AppListingCard.tsx`: one derived in a
- * comment, one read off a table, neither checkable. The component suite that
- * MEASURES them is the browser project, which is report-only in CI — so in CI
- * nothing at all held them. What CAN be gated here is the arithmetic and the
- * spelling, and both are where the drift actually happens.
+ * 🔴 WHAT THIS TIER CAN AND CANNOT CLAIM. It cannot measure anything — that a
+ * 36px control plus 10px of padding really renders a 46px row is a claim about a
+ * browser and a stylesheet, and it lives in `AppListingCard.browser.test.tsx`
+ * (which is REPORT-ONLY in CI). What it CAN gate, and what actually drifts, is
+ * (a) the arithmetic between the constants and (b) whether the component still
+ * READS them instead of re-spelling the numbers. Both are checked below.
  *
- * 🔴 WHAT THIS CANNOT SEE, stated rather than implied: it does not measure
- * anything. `LISTING_ACTIONS_WIDEST_PX` is a MEASUREMENT, and if the action
- * cluster's real width changes (a different trigger size, a longer CTA label)
- * this file stays green while the threshold silently stops matching reality.
- * That claim is made by `AppListingCard.browser.test.tsx`'s "AT the threshold"
- * test, which asserts all three terms against a real render.
+ * 🔴 THE RELATIONSHIP BEING PROTECTED IS CARD ⇄ SKELETON. `AppListingCardSkeleton`
+ * (a later PR) must reserve exactly the geometry the real card occupies or the
+ * grid reflows when the query resolves. A skeleton importing this module is
+ * enough — provided the CARD imports it too. The moment a literal creeps back
+ * into the component, the skeleton is pinned to a number the card no longer uses
+ * and nothing here or there goes red. That is what the source assertions are for.
  */
-describe('the recommend-rollup floor and the container-query threshold', () => {
+describe('the card geometry module', () => {
   const CARD_MODULE = path.resolve(__dirname, '../AppListingCard.tsx');
   const cardSource = () => fs.readFileSync(CARD_MODULE, 'utf8');
   /**
    * 🔴 EVERY ASSERTION BELOW IS A CLAIM ABOUT CODE, AND PROSE IS NOT CODE. This
-   * file's comments deliberately quote the constants they explain — the note
-   * recording that `@[360px]` was deleted contains the literal `@[360px]` — so a
-   * raw `not.toContain` reads a correct file as an offence. Measured: that exact
-   * false positive is why this stripper exists.
+   * component's comments deliberately quote the constructs they explain — the
+   * note recording that `@[264px]` was deleted contains the literal `@[264px]` —
+   * so a raw `not.toContain` reads a correct file as an offence. Measured: that
+   * exact false positive is why this stripper exists (it long predates this
+   * change, and every retirement below re-earns it).
    */
   const cardCode = () =>
     cardSource()
@@ -338,90 +346,180 @@ describe('the recommend-rollup floor and the container-query threshold', () => {
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-  /** The single JSX opening tag that carries `substr`, as source text. */
-  function enclosingTag(code: string, substr: string): string {
-    const at = code.indexOf(substr);
-    expect(at, `"${substr}" not found in AppListingCard.tsx`).toBeGreaterThan(-1);
-    const open = code.lastIndexOf('<', at);
-    const close = code.indexOf('>', at);
-    expect(open).toBeGreaterThan(-1);
-    expect(close).toBeGreaterThan(open);
-    return code.slice(open, close + 1);
-  }
-
-  it('the threshold is the floor plus the gap plus the action cluster, rounded up to even', () => {
-    expect(LISTING_ROLLUP_HIDE_BELOW_PX).toBe(
-      LISTING_ACTIONS_WIDEST_PX + LISTING_ACTION_ROW_GAP_PX + LISTING_ROLLUP_MIN_WIDTH_PX
-    );
-    expect(LISTING_ROLLUP_HIDE_BELOW_PX).toBe(264);
+  /**
+   * 🔴 THE HUMAN-FACING NUMBERS, PINNED AS LITERALS — deliberately NOT derived
+   * from the constants they describe.
+   *
+   * A test that reads the value out of the module and asserts it equals itself
+   * cannot fail, and this file has a standing rule against exactly that (see the
+   * badge-label note above). These are the figures a designer, a skeleton and the
+   * browser suite all quote, so a change to any of them has to be typed twice —
+   * which is the whole friction budget this test is spending.
+   */
+  it('pins the geometry a skeleton has to reproduce', () => {
+    expect(LISTING_CARD_COVER_ASPECT_RATIO).toBe('16 / 9');
+    expect(LISTING_CARD_ICON_SIZE_PX).toBe(40);
+    expect(LISTING_CARD_TITLE_LINES).toBe(2);
+    expect(LISTING_CARD_TITLE_LINE_HEIGHT).toBe(1.2);
+    expect(LISTING_ACTION_ROW_PT_PX).toBe(10);
+    expect(LISTING_ACTION_ROW_GAP_PX).toBe(10);
+    expect(LISTING_ACTION_ROW_CONTROL_PX).toBe(36);
+    expect(LISTING_ACTION_ROW_HEIGHT_PX).toBe(46);
   });
 
-  it('rounding is UP and to an even number — never down', () => {
-    // Rounding down would place the threshold BELOW the width at which the floor
-    // first fits, i.e. it would render a row that overflows. Two odd sums and an
-    // already-even one, so the branch is exercised rather than asserted about.
-    expect(listingRollupHideThreshold(183, 10, 70)).toBe(264);
-    expect(listingRollupHideThreshold(184, 11, 70)).toBe(266);
-    expect(listingRollupHideThreshold(184, 10, 70)).toBe(264);
-    for (const [a, g, f] of [
-      [183, 10, 70],
-      [184, 11, 70],
-      [100, 7, 33],
-    ] as const) {
-      expect(listingRollupHideThreshold(a, g, f)).toBeGreaterThanOrEqual(a + g + f);
-      expect(listingRollupHideThreshold(a, g, f) % 2).toBe(0);
+  /**
+   * The one derivation in the module: the row height is its padding plus its
+   * control, never a third number someone measured once. Asserted as arithmetic
+   * AND against the literal above, so neither a wrong sum nor a right sum of
+   * wrong terms survives.
+   */
+  it('derives the action-row height from its padding and its control', () => {
+    expect(LISTING_ACTION_ROW_HEIGHT_PX).toBe(
+      LISTING_ACTION_ROW_PT_PX + LISTING_ACTION_ROW_CONTROL_PX
+    );
+  });
+
+  /**
+   * 🔴 PARSED, NOT RE-CONSTRUCTED. Writing
+   * ``expect(MIN_HEIGHT).toBe(`calc(${LINES} * ${LH}em)`)`` restates the
+   * implementation and passes for every possible value of both terms. Pulling the
+   * two numbers back OUT of the rendered string is an independent read: it fails
+   * if the template ever stops carrying the constants, or carries them in the
+   * wrong slots.
+   */
+  it('the reserved title height carries BOTH constants, in em', () => {
+    const m = /^calc\((\d+(?:\.\d+)?) \* (\d+(?:\.\d+)?)em\)$/.exec(LISTING_CARD_TITLE_MIN_HEIGHT);
+    expect(m, `unparseable min-height: ${LISTING_CARD_TITLE_MIN_HEIGHT}`).not.toBeNull();
+    expect(Number(m![1])).toBe(LISTING_CARD_TITLE_LINES);
+    expect(Number(m![2])).toBe(LISTING_CARD_TITLE_LINE_HEIGHT);
+    // `em`, not `px`: it must resolve against the title's OWN font-size, so the
+    // reservation stays correct if the title's `size` ever moves.
+    expect(LISTING_CARD_TITLE_MIN_HEIGHT.endsWith('em)')).toBe(true);
+  });
+
+  /**
+   * 🔴 THE COMPONENT READS THE MODULE — the assertion the card⇄skeleton
+   * relationship actually rests on, and the one a values-only test cannot make.
+   *
+   * Named constants, one per geometry fact, so a failure says WHICH one stopped
+   * being read rather than "the import list changed".
+   */
+  it('AppListingCard reads every geometry constant from the shared module', () => {
+    const code = cardCode();
+    // Positive control on the stripper: it did not simply eat the file.
+    expect(code).toContain('export function AppListingCard');
+    expect(code).toContain("from '~/components/Apps/appListingCardGeometry'");
+    for (const name of [
+      'LISTING_CARD_COVER_ASPECT_RATIO',
+      'LISTING_CARD_ICON_SIZE_PX',
+      'LISTING_CARD_TITLE_LINES',
+      'LISTING_CARD_TITLE_LINE_HEIGHT',
+      'LISTING_CARD_TITLE_MIN_HEIGHT',
+      'LISTING_ACTION_ROW_PT_PX',
+      'LISTING_ACTION_ROW_GAP_PX',
+      'LISTING_ACTION_ROW_CONTROL_PX',
+    ]) {
+      // Twice: once in the import list, once at the use site. A constant that is
+      // imported and never read is exactly the state a re-literalised value
+      // leaves behind, and it is invisible to a bare `toContain`.
+      const uses = [...code.matchAll(new RegExp(name, 'g'))].length;
+      expect(
+        uses,
+        `${name} is imported but never read in AppListingCard.tsx`
+      ).toBeGreaterThanOrEqual(2);
     }
   });
 
   /**
-   * 🔴 THE SPELLING GUARD. A Tailwind arbitrary variant cannot read a JS constant,
-   * so `@[264px]` in the component and `LISTING_ROLLUP_HIDE_BELOW_PX` here are an
-   * unavoidable duplication. What is avoidable is one moving without the other,
-   * which is exactly the drift this asserts.
+   * 🔴 THE MIRROR IMAGE, AND THE HALF THAT ACTUALLY CATCHES A REGRESSION. "It
+   * imports the module" stays true when someone adds a literal BESIDE the
+   * constant — which is how a card and a skeleton drift while every import
+   * assertion is green. These are the exact literals the constants replaced.
    */
-  it("the component's container query spells the derived threshold", () => {
-    const code = cardSource();
-    const queries = [...code.matchAll(/@\[(\d+)px\]:/g)].map((m) => Number(m[1]));
-    // Positive control: the pattern really does match something, so an equal-to
-    // result is a match and not an empty sweep.
-    expect(queries.length).toBeGreaterThan(0);
-    expect([...new Set(queries)]).toEqual([LISTING_ROLLUP_HIDE_BELOW_PX]);
+  it('AppListingCard spells none of those numbers itself', () => {
+    const code = cardCode();
+    for (const [literal, why] of [
+      ["aspectRatio: '16 / 9'", 'cover ratio'],
+      ['size={40}', 'app-icon avatar'],
+      ['triggerSize={36}', 'menu trigger / row-height contract'],
+      ['pt="xs"', 'action-row padding'],
+      ['line-clamp-2', 'reserved title lines'],
+      ['lh={1.2}', 'title line-height'],
+    ] as const) {
+      expect(code, `${why}: re-literalised as \`${literal}\``).not.toContain(literal);
+    }
+    // Positive control: the stripper leaves OTHER literals alone, so the six
+    // absences above are about these constructs and not about an empty read.
+    expect(code).toContain('line-clamp-3'); // the tagline's clamp, deliberately not geometry
+  });
+});
+
+/**
+ * ── THE RETIRED ACTION-ROW GEOMETRY ─────────────────────────────────────────
+ *
+ * 🔴 WHAT USED TO BE HERE, AND WHY ITS GUARD IS GONE RATHER THAN RELAXED.
+ *
+ * `appListingCardView` exported `LISTING_ROLLUP_MIN_WIDTH_PX` (70),
+ * `LISTING_ACTIONS_WIDEST_PX` (184), `listingRollupHideThreshold()` and
+ * `LISTING_ROLLUP_HIDE_BELOW_PX` (264 = 184 + 10 + 70), and this file asserted
+ * that `AppListingCard.tsx`'s `@[264px]:flex` Tailwind class spelled the same
+ * number — a Tailwind arbitrary variant cannot read a JS constant, so the
+ * duplication was unavoidable and the DRIFT was what got gated.
+ *
+ * All of it existed for ONE reason: the recommend rollup shared the action row
+ * with the CTA, so it needed an enforced floor, a breakpoint below which it was
+ * hidden rather than crushed, and a derived threshold to place that breakpoint.
+ * The rollup now lives in the card's meta block. There is no shared row, no
+ * floor, no container query and no threshold — so the drift guard is not
+ * weakened, it has no subject.
+ *
+ * 🔴 LEAVING IT ASSERTING THE OLD COUPLING WOULD HAVE BEEN THE WORST OUTCOME: a
+ * green test claiming a relationship that no longer exists reads as coverage and
+ * stops anyone looking. Deleting it silently is the second worst. So the deletion
+ * is asserted instead — the exports must be GONE, not merely unused, because a
+ * surviving constant with no consumer is the shape that gets wired back in later.
+ */
+describe('the retired rollup-floor constants', () => {
+  it('are no longer exported by the card view-model', () => {
+    // Runtime keys, not a source grep: the module's tombstone comment names all
+    // four, so a text search would report them present in a correct file.
+    const exported = Object.keys(cardView);
+    // Positive control — the module still exports the things it is FOR, so an
+    // empty `exported` cannot satisfy the absences below.
+    expect(exported).toContain('getRecommendLabel');
+    expect(exported).toContain('getListingCta');
+    for (const gone of [
+      'LISTING_ROLLUP_MIN_WIDTH_PX',
+      'LISTING_ROLLUP_HIDE_BELOW_PX',
+      'LISTING_ACTIONS_WIDEST_PX',
+      'LISTING_ACTION_ROW_GAP_PX',
+      'listingRollupHideThreshold',
+    ]) {
+      expect(exported, `${gone} came back to appListingCardView`).not.toContain(gone);
+    }
   });
 
-  /**
-   * 🔴 THE `@[360px]` BREAKPOINT IS GONE AND MUST STAY GONE. It existed only to
-   * choose between a text Edit button and an icon-only one; both are now a single
-   * `Menu.Item` behind a fixed-width `⋮` trigger, so it had nothing left to decide.
-   * The assertion above already forbids it by enumerating the whole set — this one
-   * names it, so a reader of a future failure knows which constant died and why.
-   */
-  it('the retired dual-Edit breakpoint is not reintroduced', () => {
-    // Positive control on the stripper: the comment that NAMES the retired
-    // breakpoint is still in the file, so a green result here is about code and not
-    // about an empty read.
-    expect(cardSource()).toContain('@[360px]');
-    expect(cardCode()).not.toContain('@[360px]');
-    // …and the stripper did not simply eat the file.
-    expect(cardCode()).toContain('@[264px]:flex');
-  });
-
-  /**
-   * 🔴 THE FLOOR IS ENFORCED, NOT MERELY DOCUMENTED. The rollup used to carry
-   * `minWidth: 0`; the whole point of this change is that the number is now a
-   * layout constraint. A revert to 0 is the mutation that makes the growing CTA
-   * starve the rollup at every width, and it would leave every arithmetic
-   * assertion above perfectly green.
-   */
-  it('the component applies the floor as the rollup min-width', () => {
-    // 🔴 SCOPED TO THE ROLLUP'S OWN TAG, not to the file. Four other elements on
-    // this card legitimately carry `minWidth: 0` (the creator chip, the title
-    // stack, the action cluster) — a file-wide `not.toContain` fails against
-    // correct code, which it did on the first run of this assertion.
-    const tag = enclosingTag(cardCode(), "'hidden @[264px]:flex'");
-    expect(tag).toContain('minWidth: LISTING_ROLLUP_MIN_WIDTH_PX');
-    expect(tag).not.toMatch(/minWidth:\s*0\b/);
-    // The tag really is the rollup's Group, not some enclosing element the index
-    // walk happened to land on.
-    expect(tag.startsWith('<Group')).toBe(true);
+  it('and the container query they placed is gone from the component', () => {
+    const CARD_MODULE = path.resolve(__dirname, '../AppListingCard.tsx');
+    const source = fs.readFileSync(CARD_MODULE, 'utf8');
+    const code = source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // Positive control on the stripper: the comments that NAME the retired
+    // breakpoints are still in the file, so a green result here is about code.
+    expect(source).toContain('@[264px]');
+    expect(source).toContain('@[360px]');
+    // 🔴 NO arbitrary container variant survives — enumerated rather than named,
+    // so a NEW one cannot slip in under a check that only forbids the old two.
+    expect([...code.matchAll(/@\[(\d+)px\]:/g)].map((m) => m[1])).toEqual([]);
+    // …and the card no longer declares itself a query container at all, because
+    // nothing on it is size-queried any more.
+    expect(code).not.toContain('@container');
+    // Positive control: the OTHER classes on that same element are untouched, so
+    // the two absences are about the container query and not about a card whose
+    // className was emptied.
+    expect(code).toContain('rounded-md');
+    expect(code).toContain('h-full');
   });
 });

@@ -220,97 +220,27 @@ export function getOwnerEditHref(
   return `/apps/submit?edit=${encodeURIComponent(listingId)}`;
 }
 
-// ── Action-row geometry (S7) ────────────────────────────────────────────────
+// ── Action-row geometry (S7) — RETIRED, and this note is the tombstone ──────
 //
-// 🔴 THESE ARE DERIVED NUMBERS, AND THEY LIVE HERE SO THE DERIVATION IS MACHINE-
-// CHECKED. They used to be two magic values inside `AppListingCard.tsx` — one
-// stated as arithmetic in a comment, one read off a table — with nothing pinning
-// either to the measurements it came from. `__tests__/appListingCardView.test.ts`
-// (blocking) now re-runs the arithmetic and asserts the component's Tailwind
-// container-query class spells the same number.
-
-/**
- * The recommend rollup's FLOOR, in px — the width below which it stops saying
- * anything and becomes debris.
- *
- * 13px thumb glyph + 4px `Group gap={4}` + ~53px of 12px text ≈ 9 characters,
- * which is enough for "No reviews…" / "91% recom…" to read as a phrase. Below it
- * the surviving glyphs carry no information while still occupying the slot, which
- * reads as a rendering bug.
- *
- * 🔴 THIS IS NOW AN ENFORCED `min-width` ON THE ROLLUP, NOT AN IMPLICIT ONE. The
- * rollup used to carry `minWidth: 0`, i.e. "shrink to nothing", and the floor
- * existed only as the arithmetic behind the container-query threshold — so at any
- * width the query did not cover, the rollup could still be crushed. Making the CTA
- * grow into the free space is exactly the change that would have made that worse
- * (a `flex-grow` with no counterweight starves the rollup at EVERY width), so the
- * floor is stated as a constraint the layout engine enforces rather than as a
- * number a comment claims.
- */
-export const LISTING_ROLLUP_MIN_WIDTH_PX = 70;
-
-/**
- * The gap between the two sides of the action row, in px — Mantine `gap="xs"`
- * (`0.625rem` at the 16px root this app ships).
- */
-export const LISTING_ACTION_ROW_GAP_PX = 10;
-
-/**
- * The action cluster's NATURAL width at its WIDEST, in px, MEASURED (not modelled)
- * in the component suite at the store's real geometry: a fixed 36px `⋮` trigger +
- * the row's 10px `gap="xs"` + the widest CTA ("View details", 137.9px with its
- * glyph) = 183.9, i.e. 184.
- *
- * 🔴 NATURAL, not rendered. The CTA now grows into the row's free space, so the
- * cluster's RENDERED width is larger than this wherever there is slack (measured:
- * 356.3 at a 462px container). The threshold below is about the DEFICIT case,
- * where there is no growth and the two coincide — so this is the number the
- * arithmetic needs.
- *
- * 🔴 RE-MEASURED after the overflow-menu change (this PR). The previous value was
- * also 184 — for a different reason that happens to coincide: the control the
- * menu replaced was an icon-only Edit `ActionIcon` at the same `size={36}`. The
- * coincidence is worth naming, because "the number did not move" is also the
- * shape of a measurement nobody took.
- *
- * 🔴 THE NUMBER IS ABOUT A CARD THAT HAS A `⋮`; WHICH VIEWERS THOSE ARE IS A
- * SEPARATE FACT, AND IT MOVED WITHOUT THE NUMBER MOVING. The card does not offer
- * "Leave a review" or "Report" (`appListingMenuSurface.ts`), so the viewers whose
- * cluster is 184 rather than 137.9 are exactly the OWNER and a MODERATOR — not,
- * as this constant's arithmetic briefly implied on the way here, every signed-in
- * shopper. Nothing derived below changes; the population does, and a stale
- * population is the half of a derived number that gets quoted instead of
- * re-measured.
- */
-export const LISTING_ACTIONS_WIDEST_PX = 184;
-
-/**
- * The container width below which the rollup is HIDDEN rather than clamped at its
- * floor, in px.
- *
- * Rounded UP to an even number so the Tailwind arbitrary variant reads cleanly;
- * rounding up is the safe direction (hide slightly earlier, never render an
- * overflowing row).
- */
-export function listingRollupHideThreshold(
-  actionsWidthPx: number,
-  gapPx: number,
-  rollupFloorPx: number
-): number {
-  const exact = actionsWidthPx + gapPx + rollupFloorPx;
-  return Math.ceil(exact / 2) * 2;
-}
-
-/**
- * The live threshold: 184 + 10 + 70 = 264.
- *
- * 🔴 MUST EQUAL the number in `AppListingCard.tsx`'s `@[264px]:flex` class. A
- * Tailwind arbitrary variant cannot read a JS constant, so the duplication is
- * unavoidable; what is avoidable is it going unnoticed, which is why the blocking
- * suite reads the component source and compares the two.
- */
-export const LISTING_ROLLUP_HIDE_BELOW_PX = listingRollupHideThreshold(
-  LISTING_ACTIONS_WIDEST_PX,
-  LISTING_ACTION_ROW_GAP_PX,
-  LISTING_ROLLUP_MIN_WIDTH_PX
-);
+// 🔴 FIVE EXPORTS LIVED HERE AND ALL FIVE ARE DELETED, not moved:
+// `LISTING_ROLLUP_MIN_WIDTH_PX` (70), `LISTING_ROLLUP_HIDE_BELOW_PX` (264),
+// `LISTING_ACTIONS_WIDEST_PX` (184), `listingRollupHideThreshold()` and the
+// spelling guard in `__tests__/appListingCardView.test.ts` that asserted the
+// component's `@[264px]` Tailwind class agreed with the JS constant.
+//
+// Every one of them existed to let the recommend rollup and the CTA share the
+// action row: a floor so a growing CTA could not starve the rollup, a container
+// query hiding the rollup where even the floor did not fit, a measured
+// action-cluster width to derive that threshold from, and a drift guard because a
+// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup up into
+// the card's meta block removed the competition, and with it the entire
+// apparatus. Deleting a derived number and its guard TOGETHER is the point — a
+// surviving constant with no consumer is the shape that gets "fixed" back into
+// use later.
+//
+// The geometry this card DOES still have — cover ratio, icon size, reserved title
+// lines, action-row height / padding / gap / control size — lives in
+// `~/components/Apps/appListingCardGeometry.ts`, which exists so the (later)
+// `AppListingCardSkeleton` reserves the same numbers by import rather than by
+// copy. This module is back to being the pure kind/CTA/label view-model its
+// header describes.
