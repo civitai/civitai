@@ -129,17 +129,35 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //     the check `playable-collections` fails — it reads AND writes the hash for
   //     its own routing.
   //
-  //     🔴 BUT `grep location.hash` IS NOT THE CRITERION, and reading it as one is
-  //     how the next block gets admitted wrongly. `custom-generators` rewrites the
-  //     URL through `location.href` + `history.replaceState` (its `App.tsx`, via
-  //     `stripDeeplinkParam`, which strips only `?g=` and PRESERVES the fragment) —
-  //     invisible to a hash-shaped grep. It is safe here only because the SDK's
-  //     `seedFromFragment` strips synchronously at transport start, and that call
-  //     reads `location.href` LIVE, so it cannot re-instate an already-stripped
-  //     fragment. A block that round-tripped a CAPTURED href — one commit away from
-  //     this shape — would pass the same grep and re-instate it. The criterion is
-  //     "nothing re-instates the fragment after the transport strips it", so check
-  //     `location.href`/`replaceState`/`pushState` too, not just `location.hash`.
+  //     🔴 BUT `grep location.hash` IS NOT ENOUGH ON ITS OWN, and reading it as the
+  //     whole test is how the next block gets admitted wrongly. `custom-generators`
+  //     rewrites the URL through `location.href` + `history.replaceState` (its
+  //     `App.tsx`, via `stripDeeplinkParam`, which strips only `?g=` and PRESERVES
+  //     the fragment) — invisible to a hash-shaped grep. So apply a SECOND check
+  //     ALONGSIDE the read one, never instead of it: nothing may RE-INSTATE the
+  //     fragment. Grep `location.href` / `replaceState` / `pushState` as well.
+  //     (`playable-collections` fails the READ half, which is why the read half
+  //     stays — a block can re-instate nothing and still be disqualified.)
+  //
+  //     🔴 AND DO NOT REST THAT ON THE SDK'S STRIP — IT DOES NOT RUN FOR ANY BLOCK
+  //     LISTED HERE. An earlier revision of this comment said `custom-generators` is
+  //     safe "only because `seedFromFragment` strips synchronously at transport
+  //     start". Measured, that premise is false in production: every block above is
+  //     `trust_tier: 'unverified'` with `sandbox: "allow-scripts allow-forms"`, and
+  //     `sandbox.ts` adds `allow-same-origin` only for `TRUSTED_TIERS`
+  //     (`internal`/`verified`). The frame therefore runs at an OPAQUE ORIGIN, the
+  //     `history.replaceState` inside `seedFromFragment` throws, and that throw is
+  //     swallowed by a `catch` documented as "nothing depends on this" — so the
+  //     fragment is NOT stripped and persists in `location.hash` for the session.
+  //     These three are safe because of (b) itself — nothing in them reads or
+  //     re-instates it — not because of a strip that never executes.
+  //
+  //     Why that distinction is worth the words: the strip DOES start working if a
+  //     block is later promoted to `verified`/`internal`. A maintainer who admitted
+  //     a block on "the transport already stripped it, so a captured href is clean"
+  //     would have been right at `unverified` only by accident (that block's own
+  //     write throws too), and wrong the moment the tier changes — reaching the
+  //     exact hazard along a path this comment would have declared closed.
   //
   // KEYING: all three are page-mounted — `page` declared, no `slots` key at all,
   // and each `blockId` equals its store slug — so, exactly as for `app-requests`
@@ -151,8 +169,8 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   // widens. `IframeHost` calls the gate with `surface: 'model-slot'` and the
   // `blockId` alone, and these entries ARE blockIds — so if any of these three
   // later adds a `slots` entry in ITS OWN repo and clears App-Block moderation, the
-  // fragment starts being appended on model pages with no change here, no civitai
-  // reviewer involved and no test going red. Low impact (the fragment carries only
+  // fragment starts being appended on model pages with no change here, no reviewer
+  // ON THIS REPO involved and no test going red. Low impact (the fragment carries only
   // theme/renderMode/blockInstanceId, all of which BLOCK_INIT already delivers) but
   // the decision widens without anyone taking it. If a block here goes slot-mounted,
   // re-evaluate the entry for that surface rather than inheriting this one.
