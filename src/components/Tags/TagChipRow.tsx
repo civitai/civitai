@@ -27,8 +27,15 @@ function TagChip({
 
   // In dark mode every chip is `filled`, so colour is the only thing separating active
   // from inactive there.
+  //
+  // `data-active` is for tests, and it is here rather than in a test helper on purpose: a
+  // suite that reads selection back out of Mantine's `--button-bg` colour token is
+  // asserting on a THEME, and the day that token is renamed or emitted as a hex, every
+  // such assertion returns "nothing is selected" and passes. This attribute is the
+  // `active` prop itself, so it cannot drift from it.
   return (
     <Button
+      data-active={active || undefined}
       className="overflow-visible uppercase"
       variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
       color={active ? 'blue' : 'gray'}
