@@ -2911,6 +2911,7 @@ export interface Article {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  isOfficial: boolean;
   status: ArticleStatus;
   thread?: Thread | null;
   reactions?: ArticleReaction[];

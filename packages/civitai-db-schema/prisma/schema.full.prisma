@@ -4498,6 +4498,9 @@ model Article {
   // override is active (or a legacy override predating this column).
   moderatorNsfwLevelBasis Int?
   lockedProperties String[]      @default([])
+  // Published by Civitai rather than by a community author. Mirrors Model.isOfficial:
+  // a column with a moderator-only setter, not a tag anyone can type.
+  isOfficial       Boolean       @default(false)
   status           ArticleStatus @default(Draft)
 
   thread             Thread?

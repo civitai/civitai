@@ -17,12 +17,14 @@ import {
   getMyArticleRatingReviewSchema,
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
+  setArticleOfficialSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  setArticleOfficial,
   getArticleScanStatus,
   getCivitaiEvents,
   getCivitaiNews,
@@ -169,6 +171,13 @@ export const articleRouter = router({
         .catch(() => undefined);
       return review;
     }),
+  // Moderator-only, exactly like `model.setOfficial`. This is a provenance claim, so the
+  // authority is the procedure, not anything in the payload.
+  setOfficial: moderatorProcedure
+    .input(setArticleOfficialSchema)
+    .mutation(({ input, ctx }) =>
+      setArticleOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
+    ),
   getMyArticleRatingReview: protectedProcedure
     .use(isFlagProtected('articleRatingDispute'))
     .input(getMyArticleRatingReviewSchema)

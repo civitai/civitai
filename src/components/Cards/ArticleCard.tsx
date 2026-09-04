@@ -1,5 +1,6 @@
 import { Badge, Text } from '@mantine/core';
 import { memo } from 'react';
+import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
@@ -29,7 +30,7 @@ export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Prop
 });
 
 function ArticleCardContent({ data, aspectRatio }: Props) {
-  const { id, title, coverImage, publishedAt, user, tags, status, nsfwLevel } = data;
+  const { id, title, coverImage, publishedAt, user, tags, status, nsfwLevel, isOfficial } = data;
   // Show the article's aggregate nsfwLevel on the card (badge + blur), not just
   // the cover image's own level. Content images or a moderator/user override can
   // raise the article above the cover's rating; lifting here keeps every feed
@@ -55,6 +56,8 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
       header={
         <div className="flex w-full justify-between">
           <div className="flex items-center gap-1">
+            {/* Provenance leads: an official article is official before it is a guide. */}
+            {isOfficial && <OfficialArticleBadge className={cardClasses.chip} />}
             {category && (
               <Badge
                 size="sm"
