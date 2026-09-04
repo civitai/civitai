@@ -1,0 +1,128 @@
+/**
+ * `/apps` store grid — the COLUMN LADDER, as a container query.
+ *
+ * 🔴 EVERY NUMBER IN THIS FILE IS DERIVED, NOT CHOSEN, AND A UNIT TEST PARSES THIS
+ * FILE TO PROVE IT. `LISTING_GRID_COLUMN_STEPS` in `appListingGrid.ts` computes the
+ * ladder — the narrow half from `LISTING_GRID_SPAN` + Mantine's default breakpoints,
+ * the wide half from the `LISTING_CARD_MIN_WIDTH` floor, and the two are
+ * STRUCTURALLY INDEPENDENT (see the 🔴 note on the wide half below) — and
+ * `__tests__/appListingGrid.test.ts` reads the `@container` rules below and fails
+ * unless the two sets are EQUAL, in both directions. So editing a threshold here
+ * without moving the constant it came from is a red test, not a silent re-tune.
+ *
+ * WHY A STYLESHEET AND NOT A `Grid.Col span=`. Mantine's `Grid.Col span` compiles to
+ * VIEWPORT media queries at the theme's breakpoints, and `xl` (88em / 1408px) is the
+ * top of the scale — `src/providers/ThemeProvider.tsx` declares no custom breakpoints,
+ * so there is nothing above 1408 to hang a fifth column on. Adding one would be a
+ * site-wide theme change made to fix one grid.
+ *
+ * WHY `@container` AND NOT `@media`. The number that decides whether a card is too
+ * narrow is the width of the GRID, and that is not monotonic in viewport width: at the
+ * one-column base breakpoint a 390px phone yields a ~356px card, WIDER than the ~280px
+ * a 1200px laptop gets at four columns. A container query reads the grid's own inline
+ * size, which is the quantity the ladder is actually about, and it keeps working if the
+ * store is ever rendered inside something narrower than the page.
+ *
+ * WHY NOT `repeat(auto-fill, minmax(X, 1fr))`. It cannot express this ladder for any
+ * single `X` — four columns at 1376 of grid needs `X ≤ 332`, while keeping FOUR (not
+ * five) at 1888 needs `X > 364.8`. The full derivation is on
+ * `LISTING_GRID_COLUMN_STEPS`.
+ */
+
+/**
+ * The QUERY CONTAINER. Separate from `.grid` on purpose: `@container` resolves against
+ * an ANCESTOR container, never the queried element itself, so a single element carrying
+ * both `container-type` and the queried `grid-template-columns` would match nothing and
+ * the grid would silently stay at one column.
+ */
+.gridContainer {
+  container-type: inline-size;
+}
+
+/* 🔴 DO NOT ADD `align-items` HERE. ITS ABSENCE IS LOAD-BEARING, NOT AN OMISSION.
+   `AppListingCard` bottom-pins its action row with `mt="auto"` inside a `Stack h="100%"`
+   inside a `Card className="h-full"`, and `h-full` only resolves because this grid
+   STRETCHES its items to the row height (`align-items: normal`, the grid default).
+   Four shapes, measured by the concurrent card PR's audit rather than here — card
+   DIRECT + default ✅ / card in a WRAPPER + default ✅ /
+   card DIRECT + `start` ✅ (`h-full` resolves against the grid AREA) / card in a WRAPPER
+   + non-stretch ❌ (short card 40px shorter, action row unpinned) — and THIS grid is the
+   failing shape's first half, because each card sits in its own
+   `[data-testid=apps-listing-grid-col]` wrapper div. So one `align-items: start` added
+   for vertical rhythm unpins the action row on every card in the store, with nothing
+   else changing. Guarded by rendered boxes (not by an inline-style check, which the
+   mutant walks straight past) in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`
+   — the `geometry` project, because that is the only tier that loads the cascade-LAYER
+   ORDER production declares, which is what makes `h-full` and Mantine's own rules
+   resolve against each other the way they do on the site. */
+.grid {
+  display: grid;
+  /* Mantine's `md` spacing token — the value the retired `<Grid gutter="md">` used, and
+     `LISTING_GRID_GUTTER` in `appListingGrid.ts`. It is part of the ladder arithmetic
+     (a threshold is `n × floor + (n − 1) × gap`), so the unit test pins it too. */
+  gap: 16px;
+  /* `minmax(0, 1fr)` rather than `1fr`: a grid track's default minimum is `auto`, which
+     is the item's min-content size, so a card with a long unbreakable string would push
+     its track past its share and knock the row out of alignment. */
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+/* ── The narrow half: the retired Mantine breakpoints, re-expressed in GRID width ───
+   Each threshold is that breakpoint's viewport px MINUS the apps Container's 32px
+   gutter: sm 768 → 736, md 992 → 960, lg 1200 → 1168. `xl` (1408) is absent
+   deliberately — it and `lg` are both four columns, so it was never a rung.
+
+   🔴 THIS IS NOT "BYTE-EQUIVALENT TO THE OLD MEDIA QUERIES", and the claim that it was
+   has been retired. The page's scroll container (`.scroll-area`) is `scrollbar-width:
+   thin` with no document scroll, so the grid is `viewport − scrollbar − 32`. Media
+   queries ignored the scrollbar; a container query does not. On the platforms that
+   reserve one (~10px) every rung fires ~10px of VIEWPORT later than before — viewport
+   1200 gives 1158 of grid and THREE columns where the old `lg` span gave four. Kept
+   deliberately: the content never had those pixels. Driven end-to-end in
+   `AppListingsMarketplaceBody.stretch.geometry.test.tsx`. */
+@container (min-width: 736px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 960px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 1168px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* ── The wide half: NEW, and derived from the 460px card-width floor ────────────────
+   `n × 460 + (n − 1) × 16`. 5 → 2364, 6 → 2840. 460 is the card width the store
+   renders TODAY at its widest (four columns in the retired 1920 container), so a
+   column is only ever added where doing so makes every card at least as big as it is
+   now — never more cards at a smaller size.
+
+   🔴 THE 2840 RULE IS UNREACHABLE AT TODAY'S CONTAINER CAP, DELIBERATELY. The apps
+   Container is 2560, so this grid tops out at 2528 (less any reserved scrollbar) and
+   the reachable ladder is 1/2/3/4/5 — a 2560 container renders FIVE columns at 492.8px,
+   a 2560 viewport ~490.8px. The rule is kept so a future cap
+   raise engages six automatically; `__tests__/appListingGrid.test.ts` asserts both the
+   rule's presence and its unreachability, so raising the cap past 2840 fails loudly.
+
+   🔴 DO NOT LET THIS FLOOR DECIDE THE NARROW RUNGS ABOVE. `4 × 460 + 3 × 16 = 1888` —
+   exactly the retired 1920 container's content width — so a floor-governed narrow half
+   would move four columns from 1168 to 1888 and drop the whole 1168–1887 band, the
+   `xl` low end (1376) included, to three columns. */
+@container (min-width: 2364px) {
+  .grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 2840px) {
+  .grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}

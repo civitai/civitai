@@ -30,8 +30,8 @@
  * `__tests__/appsPageWidths.test.ts`.
  *
  * 🔴 THE PAIR (unchanged in force, and now stronger). The store's width is HALF of a
- * matched pair with the grid column span in {@link ~/components/Apps/appListingGrid}
- * — the span decides how many cards fit a row, the width decides how wide a row is,
+ * matched pair with the grid column LADDER in {@link ~/components/Apps/appListingGrid}
+ * — the ladder decides how many cards fit a row, the width decides how wide a row is,
  * and moving one without the other silently re-truncates (or over-stretches) the
  * cards. `/apps` takes NO measure, so its content width IS the container width, and
  * `LISTING_STORE_CONTAINER_SIZE` reads {@link APPS_PAGE_CONTAINER_WIDTH} rather than
@@ -60,22 +60,51 @@ export const APPS_CONTAINER_GUTTER = 32;
 /**
  * The ONE container width every `/apps/*` route renders in.
  *
- * 1920 rather than "unbounded": at 2560 an unbounded store grid runs 6+ cards across
- * with the text measure of each card's tagline unchanged, and the wide tables put
- * ~1500px of columns beside ~1000px of whitespace-padded row actions. 1920 is the
- * common wide-desktop width, so on a 1920 monitor the pages are genuinely
- * edge-to-edge and on a 2560 one they stay a readable block.
+ * 🔴 2560, RAISED FROM 1920. The old value's stated reason was that "an unbounded
+ * store grid runs 6+ cards across at 2560" — i.e. the container was doing the
+ * column-count's job, because the grid had no way to add a column deliberately.
+ * That is no longer true: {@link ~/components/Apps/appListingGrid} now carries an
+ * EXPLICIT column ladder driven by a container query, so the store spends the extra
+ * width as a fifth column at the one width where every card still clears the 460px it
+ * renders at today, and stops there. The cap and the density are separately decided
+ * instead of the cap standing in for the density — and the density decision is that
+ * this container makes the cards BIGGER (492.8px at five columns in the 2528 of grid a
+ * 2560 container yields; ~490.8px from a 2560 viewport, which loses ~10px more to the
+ * scroll container's thin scrollbar on the platforms that reserve one),
+ * not more numerous. A sixth column is declared at 2840 of grid and is deliberately
+ * unreachable here; raising this constant past that fails a test rather than silently
+ * shrinking every card.
+ *
+ * What 1920 actually cost: Mantine's `Container` centres past its cap, so a 2560
+ * viewport spent `(2560 − 1920) / 2 = 320px` of dead margin on EACH side of every
+ * `/apps/*` page — and the top of Mantine's own breakpoint scale is `xl` = 88em
+ * (1408px), so nothing in the grid could react to any of it either (the theme
+ * declares no custom breakpoints; see `src/providers/ThemeProvider.tsx`).
+ *
+ * 2560 is the common ultrawide/4K-scaled desktop width, so a 2560 monitor is now
+ * genuinely edge-to-edge. Past it the pages centre again, which is the same
+ * behaviour 1920 gave a 2560 monitor.
+ *
+ * ⚠️ SIBLING ROUTES GET WIDER TOO, AND SOME OF THEM DO NOT YET SPEND IT. Every route
+ * in {@link APPS_FULL_MEASURE_PAGES} — `/apps/installed`, `/apps/mine`,
+ * `/apps/revenue`, `/apps/review/[publishRequestId]` — takes no measure, so its table
+ * now lays out at up to 2528px of content (less the scroll container's scrollbar on
+ * platforms that reserve one). They are correct and unclipped there, but a table that
+ * could not spend 1888 cannot spend 2528 either; making those tables use
+ * the space is a deliberate follow-up, not part of this change.
  *
  * 🔴 IT IS ALSO THE CHROME'S WIDTH, on every route, which is the point of this
  * module. Do not reintroduce a per-page `Container size=` — `AppsPageLayout` no
  * longer accepts one, and `__tests__/appsPageLayout.test.ts` pins that.
  */
-export const APPS_PAGE_CONTAINER_WIDTH = 1920;
+export const APPS_PAGE_CONTAINER_WIDTH = 2560;
 
 /**
  * The READABLE measure — single-column form/detail surfaces where line length, not
  * available space, is the constraint. A submit wizard or a listing editor stretched
- * to 1888 puts prose and form rows on an unreadable measure.
+ * to the full container (2528px of content today, less any reserved scrollbar) puts
+ * prose and form rows on an
+ * unreadable measure.
  *
  * `1068 = 1100 − 32`: the content width these pages rendered when they passed
  * `size={1100}`. 1100 was chosen as wider than the `sm` (620) / `md` (800) / `lg`
@@ -89,10 +118,13 @@ export const APPS_READABLE_MEASURE = 1068;
  * container is not "full width" but "stretched".
  *
  * `/apps/review` is the case this exists for. It renders FOUR narrow columns (Kind /
- * App / Submitter / Submitted) plus a Review button. At 1888 the columns cannot spend
- * the space, so the table distributes it as padding: Submitter grows to ~380px to
- * hold a short username, and a large dead gap opens between the last column and the
- * Review button, which is the action the moderator is actually aiming at.
+ * App / Submitter / Submitted) plus a Review button. At the full container width the
+ * columns cannot spend the space, so the table distributes it as padding: measured at
+ * the then-1888px content width, Submitter grew to ~380px to hold a short username and
+ * a large dead gap opened between the last column and the Review button, which is the
+ * action the moderator is actually aiming at. Raising the container to 2560 (2528 of
+ * content, less any reserved scrollbar) makes that worse, not better — which is why this class exists rather than
+ * tracking the container.
  *
  * `1368 = 1400 − 32`: the content width the page rendered at `size={1400}`. 1400 was
  * picked over 1200 to keep the page wider than the readable/form width while stopping
@@ -125,9 +157,10 @@ export const APPS_NARROW_TABLE_MEASURE = 1368;
  * Why not the READABLE measure it used to be: at 1068 the `md` split gives a ~340px
  * right rail, narrower than the creator card + action card want, and the page reads as
  * a squeezed single column with a sliver beside it. Why not the full container: the
- * left column is prose (a `CustomMarkdown` description), and 8/12 of 1888 is a
- * ~1250px measure — the exact thing {@link APPS_READABLE_MEASURE} exists to avoid. At
- * 1288 the left column is ~825px and the rail ~410px.
+ * left column is prose (a `CustomMarkdown` description), and 8/12 of the container's
+ * content width is a ~1685px measure at today's 2560 (it was ~1250px at 1920) — the
+ * exact thing {@link APPS_READABLE_MEASURE} exists to avoid, and the container getting
+ * wider only widens the gap. At 1288 the left column is ~825px and the rail ~410px.
  */
 export const APPS_TWO_COLUMN_DETAIL_MEASURE = 1288;
 
@@ -237,7 +270,7 @@ export const APPS_FULL_MEASURE_PAGES = [
  * `PageBlockHost`, which caps ITSELF at `--app-page-max-width` (1600px, see
  * `APP_PAGE_MAX_WIDTH_PX` in `~/components/AppBlocks/PageBlockHost`) and centres
  * the app past that. Two different mechanisms at two very different thresholds:
- * this module's container is 1920 and applies to the apps CHROME, the host's cap
+ * this module's container is 2560 and applies to the apps CHROME, the host's cap
  * is 1600 and applies to the app itself, and an app can be excused from the
  * host's via the CSS ledger in `src/styles/globals.css`. Nothing here changes —
  * these routes still pass no `measure` and still render no `AppsPageLayout` — but

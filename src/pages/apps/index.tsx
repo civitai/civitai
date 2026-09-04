@@ -104,10 +104,19 @@ export default function AppsPage() {
             path: typeof window !== 'undefined' ? window.location.pathname : undefined,
           })}
         />
-        {/* Widened past the default `xl` (1320px) token. The width is UNCHANGED by
-            the larger-cover pass — the store now runs a 4-across grid at `xl` (see
-            `LISTING_GRID_SPAN`), and the container/grid pair is pinned together in
-            `appListingGrid.ts` so neither can drift alone. */}
+        {/* The container is `APPS_PAGE_CONTAINER_WIDTH` (2560), applied by
+            `AppsPageLayout` — not by anything on this page. This route takes no body
+            `measure`, so its content width IS the container width, which is what makes
+            the store's column arithmetic true.
+            The store spends that width as an explicit column ladder driven by a
+            container query (`LISTING_GRID_COLUMN_STEPS`): 1/2/3/4 exactly where the
+            retired Mantine breakpoints put them, then 5 from 2364px of grid — so this
+            page renders five columns at ~490.8px on a 2560 monitor (492.8px against the
+            2560 CONTAINER; a 2560 viewport loses ~10px more to the scroll container's
+            thin scrollbar where the platform reserves one), wider than the 460px four-up
+            the 1920 container shipped. A sixth column is declared at
+            2840 and is unreachable at this cap. Container and ladder are pinned
+            together in `appListingGrid.ts` and its test so neither can drift alone. */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

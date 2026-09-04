@@ -1,9 +1,9 @@
-import { Button, Center, Grid, Group, Loader, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Center, Group, Loader, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
-import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
+import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
 import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
@@ -225,7 +225,18 @@ export function AppListingsMarketplaceBody() {
         kind,
         category: category ?? undefined,
         sort,
-        limit: 24,
+        // 🔴 48, NOT 24, AND IT IS THE COLUMN LADDER THAT MOVED IT. 24 was six rows at
+        // the old four-column maximum; at the FIVE columns the grid now reaches on a
+        // 2560 monitor it is under five, so a viewer on the widest screen the container
+        // supports would meet the "Load more" button after the least content. 48 gives
+        // nine rows at five columns and twelve at four — and stays ≥ 8 rows even if a
+        // future cap raise engages the declared-but-unreachable sixth column.
+        // 🔴 THE SERVER CAPS THIS AT 50, so 48 is deliberately just inside it.
+        // `listAppListingsSchema` in
+        // `src/server/schema/blocks/app-listing-read.schema.ts` declares
+        // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
+        // request-time zod error, not a bigger page.
+        limit: 48,
       },
       {
         // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
@@ -462,20 +473,46 @@ export function AppListingsMarketplaceBody() {
         </Center>
       ) : (
         <>
-          {/* Feedback #1 ("make app cover images larger — fewer columns per row?"):
-              at `xl` the grid drops 5 columns → 4 (`span` 2.4 → 3), so each card —
-              and therefore its responsive 16:9 cover — gets ~25% more width. The
-              container width is UNCHANGED (`LISTING_STORE_CONTAINER_SIZE`, still
-              1600, on the store index) and every other breakpoint is unchanged
-              (base 12 / sm 6 / md 4 / lg 3). Both constants live in
-              `appListingGrid.ts` so they're unit-pinned together. */}
-          <Grid gutter="md">
-            {filteredItems.map((card) => (
-              <Grid.Col key={card.id} span={LISTING_GRID_SPAN} data-testid="apps-listing-grid-col">
-                <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
-              </Grid.Col>
-            ))}
-          </Grid>
+          {/* THE COLUMN LADDER — a CSS grid driven by a CONTAINER query, not a
+              Mantine `<Grid>`/`<Grid.Col span={…}>`.
+
+              WHAT IT DOES: 1 / 2 / 3 / 4 columns exactly where the retired
+              `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of
+              grid — those breakpoints minus the apps Container's 32px gutter), then
+              FIVE from 2364. The store container is `LISTING_STORE_CONTAINER_SIZE` =
+              `APPS_PAGE_CONTAINER_WIDTH` = 2560, which yields 2528 of grid — or ~2518
+              from a 2560 VIEWPORT, since the page's `.scroll-area` reserves a thin
+              scrollbar on Windows/Linux Chrome/Firefox (macOS overlay scrollbars and
+              touch reserve none). Either way `/apps` renders FIVE columns, at 492.8px
+              or ~490.8px each — wider than the
+              460px four-up the 1920 container shipped, which is the point: the
+              `LISTING_CARD_MIN_WIDTH` floor is 460, so a column is only added where
+              every card ends up at least as big as it is today. A sixth column would
+              need 2840 of grid and is unreachable at this cap; the rung is declared
+              anyway so a future cap raise engages it.
+
+              WHY IT MOVED OFF `<Grid>`: `Grid.Col span` can only read a theme
+              BREAKPOINT, and `xl` (88em / 1408px) is the top of Mantine's default
+              scale — `src/providers/ThemeProvider.tsx` declares no custom
+              breakpoints, so there was nowhere to hang a fifth column and adding a
+              breakpoint would be a site-wide theme change to fix one grid. A
+              container query also reads the right quantity: card width is not
+              monotonic in VIEWPORT width (a one-column 390px phone gets a ~356px
+              card, wider than the ~280px a four-column 1200px laptop gets).
+
+              Every threshold is derived, and `__tests__/appListingGrid.test.ts`
+              parses the stylesheet and fails unless the `@container` rules equal
+              `LISTING_GRID_COLUMN_STEPS`. The rendered column counts are measured in
+              `AppListingsMarketplaceBody.columns.browser.test.tsx`. */}
+          <div className={gridClasses.gridContainer}>
+            <div className={gridClasses.grid} data-testid="apps-listing-grid">
+              {filteredItems.map((card) => (
+                <div key={card.id} data-testid="apps-listing-grid-col">
+                  <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                </div>
+              ))}
+            </div>
+          </div>
           {/* Load-more is hidden while a client-side search is active (it would
               page in more UN-searched items — the searched view is over loaded
               pages only; see the ⚠️ gap note). */}

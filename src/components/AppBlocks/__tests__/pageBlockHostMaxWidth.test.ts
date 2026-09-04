@@ -264,9 +264,17 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * `APPS_TWO_COLUMN_DETAIL_MEASURE`, the store-preview page an app is launched
    * FROM), so an app would render narrower than the page that linked to it.
    *
-   * Upper 1920: `APPS_PAGE_CONTAINER_WIDTH`, the widest first-party surface on
-   * the site, and it is that wide for card grids and wide tables specifically. At
-   * or above it the cap stops binding at the sizes that motivated it.
+   * Upper 1920: the width `APPS_PAGE_CONTAINER_WIDTH` held when this band was
+   * chosen. ⚠️ THAT CONSTANT IS NOW 2560 — the ultrawide pass moved it — and the
+   * bound is deliberately NOT following it. 1920 is kept as the tighter, still-true
+   * ceiling: the cap is 1600, nowhere near either number, and widening this bound to
+   * track a container that exists for card grids and wide tables would weaken the
+   * guard for no evidence. Re-deriving the cap from "the widest first-party surface"
+   * is exactly the reasoning `PageBlockHost.tsx` now warns against, because that
+   * surface has taken three VALUES over time (1600 → 1920 → 2560) without any of
+   * those moves being a statement about third-party app width. Precisely:
+   * `APPS_PAGE_CONTAINER_WIDTH` was introduced at 1920 (`a15d275759`) and has moved
+   * ONCE, to 2560; the 1600 predates the constant.
    *
    * The ARITHMETIC that picks a value inside the band lives on the constant's own
    * doc comment; the NUMBERS live here.
