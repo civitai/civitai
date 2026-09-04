@@ -71,12 +71,13 @@ describe('buildDuplicateHubInput', () => {
   // spreading the whole source instead of picking fields stays green — and in
   // production that spreads the ORIGINAL hub's source-row ids into the copy.
   let nextId = 100;
-  const source = (targetId: number, enabled = true) => ({
+  const source = (targetId: number, enabled = true, exclude = false) => ({
     id: nextId++,
     type: UserHubSourceType.User,
     targetId,
     alias: `creator-${targetId}`,
     enabled,
+    exclude,
     index: 0,
   });
 
@@ -132,5 +133,48 @@ describe('buildDuplicateHubInput', () => {
 
   it('defaults the level to uncapped when the original had none', () => {
     expect(buildDuplicateHubInput(hub()).forcedBrowsingLevel).toBe(0);
+  });
+  it('carries the exclusions across, not only the sources', () => {
+    // A copy that drops them serves content the original refuses, under the same
+    // name, with nothing saying so. `exclude` is asserted on the OUTPUT rather than
+    // just counted: hardcoding `exclude: false` in the map produces the right number
+    // of rows and the wrong hub.
+    const result = buildDuplicateHubInput(hub({ sources: [source(1), source(2, true, true)] }));
+
+    expect(result.sources).toEqual([
+      {
+        type: UserHubSourceType.User,
+        targetId: 1,
+        alias: 'creator-1',
+        enabled: true,
+        exclude: false,
+        index: 0,
+      },
+      {
+        type: UserHubSourceType.User,
+        targetId: 2,
+        alias: 'creator-2',
+        enabled: true,
+        exclude: true,
+        index: 1,
+      },
+    ]);
+  });
+
+  it('slices the two kinds against their OWN caps', () => {
+    // One `slice` over the combined list lets a full source list swallow every
+    // exclusion — the half that keeps content out. Sized past both caps so a single
+    // combined slice cannot produce this shape by coincidence.
+    const sources = [
+      ...Array.from({ length: hubLimits.sourcesPerHub + 5 }, (_, i) => source(i + 1)),
+      ...Array.from({ length: hubLimits.exclusionsPerHub + 5 }, (_, i) =>
+        source(i + 500, true, true)
+      ),
+    ];
+
+    const result = buildDuplicateHubInput(hub({ sources }));
+
+    expect(result.sources.filter((s) => !s.exclude)).toHaveLength(hubLimits.sourcesPerHub);
+    expect(result.sources.filter((s) => s.exclude)).toHaveLength(hubLimits.exclusionsPerHub);
   });
 });

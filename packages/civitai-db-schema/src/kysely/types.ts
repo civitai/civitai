@@ -4060,6 +4060,7 @@ export type UserHubSource = {
   targetId: number;
   alias: string | null;
   enabled: Generated<boolean>;
+  exclude: Generated<boolean>;
   index: Generated<number>;
 };
 export type UserLink = {

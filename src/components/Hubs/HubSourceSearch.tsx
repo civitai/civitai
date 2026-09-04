@@ -12,25 +12,25 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { HubSuggestionType } from '~/server/schema/user-hub.schema';
-import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
+import { HUB_TAG_SOURCE_FILTER } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
 
-// Collections are listed but not selectable until the index attribute they are
-// served by is live — `HUB_COLLECTION_SOURCES_ENABLED` gates the write path too,
-// so an enabled tab would offer sources the server refuses.
+// Collections are absent rather than disabled. They cannot work until the index
+// attribute serving them is live, and a greyed-out tab advertises a source the
+// server would refuse — `resolveHubSourceFromUrl` still resolves a pasted
+// collection link, gated the same way, so nothing is lost by not listing it.
 const tabs = [
   { value: UserHubSourceType.User, label: 'Creators', scope: 'creators you follow' },
   { value: UserHubSourceType.Model, label: 'Models', scope: 'models you own or bookmarked' },
-  {
-    value: UserHubSourceType.Collection,
-    label: 'Collections',
-    scope: 'collections you follow',
-    disabled: !HUB_COLLECTION_SOURCES_ENABLED,
-  },
+  // The one tab that is not a relationship: everyone shares the same tag
+  // vocabulary, so it searches the site's tags rather than the viewer's library.
+  { value: UserHubSourceType.Tag, label: 'Tags', scope: 'image tags' },
 ];
+
+const TAG_SUGGESTION_LIMIT = 25;
 
 /**
  * One type at a time, over a bounded window of the viewer's own relationships. The
@@ -46,14 +46,45 @@ export function HubSourceSearch({
   isAdded: (suggestion: Suggestion) => boolean;
   disabled?: boolean;
 }) {
-  const [type, setType] = useState<HubSuggestionType>(UserHubSourceType.User);
+  const [type, setType] = useState<UserHubSourceType>(UserHubSourceType.User);
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query, 300);
+  const isTag = type === UserHubSourceType.Tag;
 
-  const { data: suggestions = [], isFetching } = trpc.userHub.sourceSuggestions.useQuery({
-    type,
-    query: debounced || undefined,
-  });
+  const { data: related = [], isFetching: fetchingRelated } =
+    trpc.userHub.sourceSuggestions.useQuery(
+      { type: type as HubSuggestionType, query: debounced || undefined },
+      { enabled: !isTag }
+    );
+
+  // The site's own tag list, not a hub endpoint: `tag.getAll` is what every other
+  // tag picker on the site already uses, and it carries the filters this needs —
+  // image tags, listed, and not the moderation or system vocabularies. Adding a
+  // fourth arm to `sourceSuggestions` would have been a second implementation of
+  // it, scoped to relationships tags do not have.
+  const { data: tagData, isFetching: fetchingTags } = trpc.tag.getAll.useQuery(
+    {
+      // Spread, not retyped. The same two fields were written out here verbatim,
+      // which made this a third copy of a rule the server states once — and the
+      // divergence would be silent and one-directional: widen the constant and the
+      // server accepts the new tags while the picker keeps offering the old set, so
+      // a tag you could add by pasting a link could not be found by searching.
+      entityType: [...HUB_TAG_SOURCE_FILTER.entityType],
+      types: [...HUB_TAG_SOURCE_FILTER.types],
+      query: debounced || undefined,
+      limit: TAG_SUGGESTION_LIMIT,
+    },
+    { enabled: isTag }
+  );
+
+  const isFetching = isTag ? fetchingTags : fetchingRelated;
+  const suggestions: Suggestion[] = isTag
+    ? (tagData?.items ?? []).map((tag) => ({
+        type: UserHubSourceType.Tag,
+        targetId: tag.id,
+        alias: tag.name,
+      }))
+    : related;
 
   const active = tabs.find((tab) => tab.value === type);
 
@@ -64,12 +95,8 @@ export function HubSourceSearch({
         size="xs"
         value={type}
         disabled={disabled}
-        data={tabs.map(({ value, label, disabled: itemDisabled }) => ({
-          value,
-          label,
-          disabled: itemDisabled,
-        }))}
-        onChange={(value) => setType(value as HubSuggestionType)}
+        data={tabs.map(({ value, label }) => ({ value, label }))}
+        onChange={(value) => setType(value as UserHubSourceType)}
       />
 
       <TextInput

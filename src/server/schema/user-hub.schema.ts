@@ -4,6 +4,8 @@ import {
   Availability,
   MediaType,
   MetricTimeframe,
+  TagTarget,
+  TagType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -14,6 +16,25 @@ export const hubLimits = {
   // whole list, and the follow button decides its own state from it.
   followedHubs: 50,
   sourcesPerHub: 50,
+  // Counted separately from `sourcesPerHub`, not out of it: a hub that refuses 20
+  // creators has not spent any of the budget it collects with, and sharing one cap
+  // would let the exclusion list starve the thing the hub is for.
+  //
+  exclusionsPerHub: 20,
+  // What the excluded Model sources of one hub may expand to, checked when a source
+  // is ADDED rather than when the feed is read. The exclusion expansion deliberately
+  // does not truncate — a trimmed exclusion serves back content the owner said to
+  // keep out — so the bound has to sit somewhere a user can be told about it.
+  //
+  // 🔴 `exclusionsPerHub` alone does NOT bound it. It caps sources; the expansion
+  // factor is whatever `ModelVersion` happens to hold, which drifts with the data and
+  // reports nothing. Measured on the prod replica 2026-09-04: 942,348 models /
+  // 1,219,642 versions, p99 of 5, max 180, and the 20 DISTINCT largest models sum to
+  // 2,064 — which, across the three attribution arms the filter needs, is 6,192 ids
+  // and ~45KB, against 2,250 / ~18KB on the positive side. That shape measured 5.7s
+  // cold, past the 5s deadline. Matched to `resolvedVersionIds` so neither side can
+  // put more into the filter than the other.
+  excludedVersionIds: 750,
   nameLength: 60,
   aliasLength: 60,
   descriptionLength: 300,
@@ -41,6 +62,28 @@ export const hubLimits = {
 // So collection sources stay dark until the index has actually been rebuilt.
 // Flip this to true in the same change that confirms the attribute is live.
 export const HUB_COLLECTION_SOURCES_ENABLED = false;
+
+/**
+ * The tag vocabulary a hub may be keyed on. One constant because the picker QUERIES
+ * with it and the server ASSERTS with it, and a picker offering something the server
+ * 404s is the shape this is here to stop.
+ *
+ * Moderation and System tags are out in BOTH directions — Justin's call, 2026-09-04.
+ * Excluding a moderation label is a reasonable thing to want, but the browsing level
+ * is the control that already enforces it; a second, weaker spelling would leave a
+ * user believing they had set something stronger than they had.
+ */
+/**
+ * ⚠️ `entityType` holding exactly ONE value is load-bearing. The picker reaches
+ * `getTags`, which matches it with array OVERLAP (`target && ARRAY[...]`, i.e. ANY);
+ * the server's `hubTagWhere` uses `hasEvery` (ALL). Identical at one element, and
+ * they part company at two — in the dangerous direction, with the picker offering
+ * tags the server then refuses. Add a second target only with that reconciled.
+ */
+export const HUB_TAG_SOURCE_FILTER = {
+  entityType: [TagTarget.Image],
+  types: [TagType.UserGenerated, TagType.Label],
+} as const;
 
 // The hub's public identifier, as it appears in the URL. A string, because the route
 // carries the ENCODED id — an int here would be the pre-encoding format and would put
@@ -70,6 +113,10 @@ export const userHubSourceSchema = z.object({
     .transform((value) => value.slice(0, hubLimits.aliasLength))
     .nullish(),
   enabled: z.boolean().default(true),
+  // A negative source. Defaulted rather than optional because this list REPLACES the
+  // stored one: an undefined here would write `false` through Prisma's own default
+  // anyway, and spelling it makes the round trip visible.
+  exclude: z.boolean().default(false),
   index: z.number().int().min(0).default(0),
 });
 
@@ -127,7 +174,13 @@ export const upsertUserHubSchema = z.object({
   // Every caller sending its own cached copy of the full list turned a sort change
   // into a full replacement, so a save issued before another one's invalidate
   // settled reverted it.
-  sources: z.array(userHubSourceSchema).max(hubLimits.sourcesPerHub).optional(),
+  // The two kinds share one array and are capped SEPARATELY in the service — this
+  // bound is only the outer one, so a list of 50 sources plus 20 exclusions is not
+  // rejected before the service can tell the caller which half it overran.
+  sources: z
+    .array(userHubSourceSchema)
+    .max(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub)
+    .optional(),
   // Same "omitted means leave alone" rule as `sources`; stored on
   // `metadata.filters`, like `description`.
   filters: hubFeedFiltersSchema.optional(),
@@ -215,6 +268,7 @@ export const userHubSourceRefSchema = z.object({
 
 export const addUserHubSourceSchema = userHubSourceRefSchema.extend({
   alias: userHubSourceSchema.shape.alias,
+  exclude: z.boolean().default(false),
 });
 
 export type UserHubSourceRefInput = z.infer<typeof userHubSourceRefSchema>;

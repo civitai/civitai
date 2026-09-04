@@ -88,6 +88,7 @@ export function buildDuplicateHubInput(hub: {
     targetId: number;
     alias?: string | null;
     enabled: boolean;
+    exclude?: boolean;
   }[];
 }) {
   return {
@@ -99,16 +100,24 @@ export function buildDuplicateHubInput(hub: {
     forcedBrowsingLevel: hub.forcedBrowsingLevel ?? 0,
     // Fields picked one by one rather than spread: `getById` rows carry a row `id`,
     // and passing one through would address the ORIGINAL's source rows.
-    sources: hub.sources
-      .filter((source) => source.enabled)
-      .slice(0, hubLimits.sourcesPerHub)
-      .map((source, index) => ({
-        type: source.type,
-        targetId: source.targetId,
-        alias: source.alias ?? null,
-        enabled: true,
-        index,
-      })),
+    // Sliced per kind, because the two caps are separate: one `slice` over the
+    // combined list would let a long source list swallow the copier's exclusions,
+    // which is the half that keeps content OUT.
+    sources: [
+      ...hub.sources
+        .filter((source) => source.enabled && !source.exclude)
+        .slice(0, hubLimits.sourcesPerHub),
+      ...hub.sources
+        .filter((source) => source.enabled && source.exclude)
+        .slice(0, hubLimits.exclusionsPerHub),
+    ].map((source, index) => ({
+      type: source.type,
+      targetId: source.targetId,
+      alias: source.alias ?? null,
+      enabled: true,
+      exclude: !!source.exclude,
+      index,
+    })),
   };
 }
 
@@ -126,8 +135,10 @@ export function toPanelHub(hub: {
     targetId: number;
     alias: string | null;
     enabled: boolean;
+    exclude: boolean;
     index: number;
   }[];
+  excludedCount: number;
 }): HubPanelHub {
   return {
     id: hub.id,
@@ -136,5 +147,6 @@ export function toPanelHub(hub: {
     availability: hub.availability,
     isOwner: hub.isOwner,
     sources: hub.sources.map(({ id: _id, ...source }) => source),
+    excludedCount: hub.excludedCount,
   };
 }

@@ -1240,6 +1240,7 @@ export const UserHubSourceType = {
   Model: 'Model',
   ModelVersion: 'ModelVersion',
   Collection: 'Collection',
+  Tag: 'Tag',
 } as const;
 
 export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];

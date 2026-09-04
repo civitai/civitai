@@ -8169,6 +8169,7 @@ enum UserHubSourceType {
   Model
   ModelVersion
   Collection
+  Tag
 }
 
 /// A user-composed image feed: a named set of creators, models, versions and
@@ -8222,6 +8223,10 @@ model UserHubSource {
   targetId Int
   alias    String?
   enabled  Boolean           @default(true)
+  // A NEGATIVE source: content matching it is kept OUT of the hub, instead of
+  // pulled in. The unique below is what makes the two mutually exclusive — one
+  // target is either something the hub collects or something it refuses.
+  exclude  Boolean           @default(false)
   index    Int               @default(0)
 
   @@unique([hubId, type, targetId])

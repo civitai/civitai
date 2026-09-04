@@ -157,9 +157,9 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   // flag `feed-image-existence`: enabled=true, 0 rules, 0 rollouts. Three sites.
   'server/services/image.service.ts:3142':
     'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:3865':
+  'server/services/image.service.ts:3911':
     'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:4670':
+  'server/services/image.service.ts:4721':
     'feed-image-existence has no segment rollouts; hot feed path',
   // flags `model-text-moderation-xguard` / `-apply`: both enabled=true, 0 rules,
   // 0 rollouts (checked against flipt-state and against the evaluation API on
