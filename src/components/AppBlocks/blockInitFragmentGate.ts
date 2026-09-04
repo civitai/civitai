@@ -125,14 +125,37 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //
   // (b) READS `location.hash` NOWHERE AT RUNTIME. Measured per block over its
   //     shipped `src/`: the only occurrences are inside each block's own
-  //     `bootFragment.test.tsx`, which SETS the hash to drive its reader. No app
-  //     code reads or rewrites it, so the SDK transport's strip-after-init cannot
-  //     race a competing consumer. This is the check `playable-collections` fails.
+  //     `bootFragment.test.tsx`, which SETS the hash to drive its reader. This is
+  //     the check `playable-collections` fails — it reads AND writes the hash for
+  //     its own routing.
   //
-  // KEYING: all three are page-mounted — `page` declared, `slots` empty, and each
-  // `blockId` equals its store slug — so, exactly as for `app-requests` above, one
-  // string covers whichever key the surface passes. None of them mounts in a model
-  // slot; if one ever does, re-read the KEYING ASYMMETRY note before trusting this.
+  //     🔴 BUT `grep location.hash` IS NOT THE CRITERION, and reading it as one is
+  //     how the next block gets admitted wrongly. `custom-generators` rewrites the
+  //     URL through `location.href` + `history.replaceState` (its `App.tsx`, via
+  //     `stripDeeplinkParam`, which strips only `?g=` and PRESERVES the fragment) —
+  //     invisible to a hash-shaped grep. It is safe here only because the SDK's
+  //     `seedFromFragment` strips synchronously at transport start, and that call
+  //     reads `location.href` LIVE, so it cannot re-instate an already-stripped
+  //     fragment. A block that round-tripped a CAPTURED href — one commit away from
+  //     this shape — would pass the same grep and re-instate it. The criterion is
+  //     "nothing re-instates the fragment after the transport strips it", so check
+  //     `location.href`/`replaceState`/`pushState` too, not just `location.hash`.
+  //
+  // KEYING: all three are page-mounted — `page` declared, no `slots` key at all,
+  // and each `blockId` equals its store slug — so, exactly as for `app-requests`
+  // above, one string covers whichever key the surface passes.
+  //
+  // 🔴 AN ENTRY IS PER-BLOCK, NOT PER-SURFACE, so it PRE-AUTHORISES the model slot.
+  // The KEYING ASYMMETRY note above warns about the inert direction (a slug-only
+  // entry doing nothing on a slot); this is the opposite one and it is the one that
+  // widens. `IframeHost` calls the gate with `surface: 'model-slot'` and the
+  // `blockId` alone, and these entries ARE blockIds — so if any of these three
+  // later adds a `slots` entry in ITS OWN repo and clears App-Block moderation, the
+  // fragment starts being appended on model pages with no change here, no civitai
+  // reviewer involved and no test going red. Low impact (the fragment carries only
+  // theme/renderMode/blockInstanceId, all of which BLOCK_INIT already delivers) but
+  // the decision widens without anyone taking it. If a block here goes slot-mounted,
+  // re-evaluate the entry for that surface rather than inheriting this one.
   'custom-generators',
   'model-benchmarking',
   'sensei',

@@ -248,22 +248,25 @@ describe('blockInitFragmentEnabled — the PRODUCTION allowlist', () => {
     expect(BLOCK_INIT_FRAGMENT_ALLOWLIST.has('playable-collections')).toBe(false);
 
     const allowedAnyway = new Set([...BLOCK_INIT_FRAGMENT_ALLOWLIST, 'playable-collections']);
-    // Positive control: with the denylist EMPTY the same call returns true, so a
-    // false below is the denylist and not the surface or a missing entry.
-    expect(
-      blockInitFragmentEnabledWith(
-        { surface: 'page-run', slug: 'playable-collections', blockId: 'playable-collections' },
-        allowedAnyway,
-        new Set<string>()
-      )
-    ).toBe(true);
-    expect(
-      blockInitFragmentEnabledWith(
-        { surface: 'page-run', slug: 'playable-collections', blockId: 'playable-collections' },
-        allowedAnyway,
-        BLOCK_INIT_FRAGMENT_DENYLIST
-      )
-    ).toBe(false);
+
+    // 🔴 EACH KEY ALONE, not just the combined shape — the same rule the `it.each`
+    // above states, which the first version of THIS test broke by passing `slug`
+    // and `blockId` together. Measured: with both keys supplied, deleting EITHER
+    // denylist branch on its own left this test green, because the surviving branch
+    // still matched. Driving each key alone is what makes a single deleted branch
+    // fail here rather than only in the pre-existing per-key tests.
+    for (const args of [
+      { surface: 'page-run', slug: 'playable-collections' },
+      { surface: 'page-run', blockId: 'playable-collections' },
+      { surface: 'page-run', slug: 'playable-collections', blockId: 'playable-collections' },
+    ] as const) {
+      // Positive control: with the denylist EMPTY the same call returns true, so a
+      // false below is the denylist winning and not the surface or a missing entry.
+      expect(blockInitFragmentEnabledWith(args, allowedAnyway, new Set<string>())).toBe(true);
+      expect(
+        blockInitFragmentEnabledWith(args, allowedAnyway, BLOCK_INIT_FRAGMENT_DENYLIST)
+      ).toBe(false);
+    }
   });
 
   it('🔴 enables the fast path for app-requests on page-run', () => {
