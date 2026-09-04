@@ -1,4 +1,4 @@
-import { Button, Modal, Stack } from '@mantine/core';
+import { Alert, Button, Modal, Stack } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { useMemo } from 'react';
 import { Controller } from 'react-hook-form';
@@ -9,6 +9,11 @@ import {
   REWARDS_BONUS_MULTIPLIER_OPTIONS,
   type UpsertRewardsBonusEventSchema,
 } from '~/server/schema/rewards-bonus-event.schema';
+import {
+  defaultStartsAtValue,
+  lateEnableWarning,
+  resolveDisplayStart,
+} from '~/components/RewardsBonusEvent/rewards-bonus-event.utils';
 import dayjs from '~/shared/utils/dayjs';
 import { fromDisplayUTC, toDisplayUTC } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -75,9 +80,21 @@ export function RewardsBonusEventEditModal({
       articleUrl: event?.articleId ? `/articles/${event.articleId}` : '',
       bannerLabel: event?.bannerLabel ?? '',
       enabled: event?.enabled ?? false,
-      startsAt: event?.startsAt ? toDisplayUTC(event.startsAt) : undefined,
+      startsAt: event?.startsAt
+        ? toDisplayUTC(event.startsAt)
+        : event?.id
+        ? undefined
+        : defaultStartsAtValue(new Date()),
       endsAt: event?.endsAt ? toDisplayUTC(event.endsAt) : undefined,
     },
+  });
+
+  const warning = lateEnableWarning({
+    // The schema defaults this to false, but the form's INPUT type still admits
+    // undefined before defaults apply.
+    enabled: !!form.watch('enabled'),
+    startsAt: form.watch('startsAt'),
+    now: new Date(),
   });
 
   const title = useMemo(
@@ -98,9 +115,7 @@ export function RewardsBonusEventEditModal({
   });
 
   function handleSubmit(data: z.infer<typeof schema>) {
-    const startsAt = data.startsAt
-      ? dayjs.utc(fromDisplayUTC(data.startsAt)).startOf('day').toDate()
-      : null;
+    const startsAt = data.startsAt ? resolveDisplayStart(data.startsAt) : null;
     const endsAt = data.endsAt
       ? dayjs.utc(fromDisplayUTC(data.endsAt)).endOf('day').toDate()
       : null;
@@ -160,7 +175,8 @@ export function RewardsBonusEventEditModal({
             name="startsAt"
             render={({ field }) => (
               <DatePickerInput
-                label="Starts at"
+                label="Starts at (UTC)"
+                description="The event goes live at 00:00 UTC on this date, and only if it is already enabled."
                 placeholder="No start date"
                 value={field.value ?? null}
                 onChange={(v) => field.onChange(v ?? null)}
@@ -178,7 +194,8 @@ export function RewardsBonusEventEditModal({
                 startsAtValue && startsAtValue.getTime() > today.getTime() ? startsAtValue : today;
               return (
                 <DatePickerInput
-                  label="Ends at"
+                  label="Ends at (UTC)"
+                  description="Runs through 23:59 UTC on this date."
                   placeholder="No end date"
                   value={field.value ?? null}
                   onChange={(v) => field.onChange(v ?? null)}
@@ -193,6 +210,11 @@ export function RewardsBonusEventEditModal({
           name="enabled"
           label="Enabled (must also be within the start/end window to be active)"
         />
+        {warning && (
+          <Alert color="yellow" title="This will start the event mid-day">
+            {warning}
+          </Alert>
+        )}
         <Stack gap="xs" pt="sm">
           <Button type="submit" loading={isLoading}>
             Save
