@@ -3,11 +3,13 @@ import {
   BOT_ACCOUNT_COHORT_WINDOW_HOURS,
   COHORT_PAGE_SIZE,
   MAX_COHORT_ACCOUNTS,
+  allContentCountArgs,
   cohortCutoff,
   collectCohort,
   commentCountArgs,
   commentV2CountArgs,
   createCohortReader,
+  emptyRawPostCounts,
   imageCountArgs,
   mergePostCounts,
   modelCountArgs,
@@ -17,7 +19,7 @@ import {
   type CohortReader,
   type NewAccountRow,
   type PostCounts,
-  type RawPostCounts,
+  type SurfaceCounts,
 } from '../cohort';
 
 const at = (iso: string) => new Date(iso);
@@ -29,15 +31,65 @@ const account = (id: number, createdAt = NOW): NewAccountRow => ({
   createdAt,
 });
 
-const counts = (entries: Array<[number, Partial<PostCounts>]>): Map<number, PostCounts> =>
+const surface = (partial: Partial<SurfaceCounts> = {}): SurfaceCounts => {
+  const row = { comments: 0, models: 0, images: 0, ...partial };
+  return { ...row, total: row.comments + row.models + row.images };
+};
+
+/**
+ * A `PostCounts` from a per-surface spec.
+ *
+ * The bare form gives what the account POSTED, with `visible` equal to it — the ordinary case where
+ * nothing has been taken down. Pass `visible` to describe an account some of whose content is gone;
+ * `excluded` is always the difference, exactly as `mergePostCounts` computes it.
+ */
+const counts = (
+  entries: Array<[number, Partial<SurfaceCounts> & { visible?: Partial<SurfaceCounts> }]>
+): Map<number, PostCounts> =>
   new Map(
-    entries.map(([userId, partial]) => {
-      const row = { comments: 0, models: 0, images: 0, ...partial };
-      return [userId, { ...row, total: row.comments + row.models + row.images }];
+    entries.map(([userId, spec]) => {
+      const { visible: visibleSpec, ...allSpec } = spec;
+      const all = surface(allSpec);
+      const visible = visibleSpec === undefined ? all : surface(visibleSpec);
+      return [
+        userId,
+        {
+          all,
+          visible,
+          excluded: {
+            comments: Math.max(0, all.comments - visible.comments),
+            models: Math.max(0, all.models - visible.models),
+            images: Math.max(0, all.images - visible.images),
+            total: Math.max(0, all.total - visible.total),
+          },
+        },
+      ];
     })
   );
 
-const emptyRaw = (): RawPostCounts => ({ comments: [], commentsV2: [], models: [], images: [] });
+// The module's own empty, not a local copy: a surface added to `RawPostCounts` and forgotten here
+// would otherwise leave every fixture below silently short of a field.
+const emptyRaw = emptyRawPostCounts;
+
+/** Content counts for a set of ids: `visible` on each surface, and `posted` in total. */
+const rawFor = (
+  ids: number[],
+  per: { images?: number; comments?: number; models?: number },
+  visiblePer: { images?: number; comments?: number; models?: number } = per
+) => {
+  const rows = (n: number | undefined) =>
+    n === undefined || n === 0 ? [] : ids.map((userId) => ({ userId, count: n }));
+  return {
+    comments: rows(visiblePer.comments),
+    commentsV2: [],
+    models: rows(visiblePer.models),
+    images: rows(visiblePer.images),
+    allComments: rows(per.comments),
+    allCommentsV2: [],
+    allModels: rows(per.models),
+    allImages: rows(per.images),
+  };
+};
 
 describe('cohortCutoff', () => {
   // Two points, not one: a single window cannot tell an implementation that subtracts the argument
@@ -65,7 +117,7 @@ describe('the cohort cap is set against the measured signup baseline', () => {
     // looks proven, and trips for the first time on exactly the day a wave lands. Expressed in
     // PAGES so the bound holds without naming the baseline.
     expect(MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE).toBeGreaterThanOrEqual(40);
-    // Still a bound: the walk is at most this many pages, four content reads each.
+    // Still a bound: the walk is at most this many pages, eight content reads each.
     expect(MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE).toBeLessThanOrEqual(100);
   });
 });
@@ -154,6 +206,21 @@ describe('content-count arguments count only content a moderator can open', () =
       ingestion: { notIn: ['Blocked', 'NotFound'] },
     });
   });
+
+  it('🔴 the MEMBERSHIP read carries no visibility predicate at all', () => {
+    // 🔴 The read membership is decided on. Every predicate in the four builders above is a
+    // moderation outcome, and any one of them appearing here would put the scanner or a moderator
+    // back in charge of who the detector is allowed to look at — the exact defect this pair splits
+    // apart. An exact object, not a `toMatchObject`: a stray extra clause has to fail.
+    expect(allContentCountArgs([7]).where).toEqual({ userId: { in: [7] } });
+    expect(allContentCountArgs([7]).by).toEqual(['userId']);
+    expect(allContentCountArgs([7])._count).toEqual({ _all: true });
+
+    // And it is genuinely a different argument from each visible read, so a refactor collapsing the
+    // pair back into one builder fails here rather than silently restoring the old behaviour.
+    for (const build of [commentCountArgs, commentV2CountArgs, modelCountArgs, imageCountArgs])
+      expect(build([7]).where).not.toEqual(allContentCountArgs([7]).where);
+  });
 });
 
 describe('createCohortReader', () => {
@@ -161,6 +228,17 @@ describe('createCohortReader', () => {
   // changes nothing, and that is invisible to a test of the builder alone.
   const makeDb = () => {
     const calls: string[] = [];
+    // Each surface is asked TWICE — once with its visibility filter and once without — and answers
+    // differently, so a mutant that hands the same argument to both, or reads the wrong reply into
+    // the wrong field, cannot produce the expected numbers by coincidence. The two are told apart
+    // by the only thing that distinguishes them: the unfiltered read's `where` has exactly one key.
+    const groupBy = (label: string, visible: number, all: number) => ({
+      groupBy: vi.fn(async (args: { where: Record<string, unknown> }) => {
+        const filtered = Object.keys(args.where).length > 1;
+        calls.push(`${label}.groupBy:${filtered ? 'visible' : 'all'}`);
+        return [{ userId: 1, _count: { _all: filtered ? visible : all } }];
+      }),
+    });
     const db = {
       user: {
         findMany: vi.fn(async (args: unknown) => {
@@ -169,30 +247,11 @@ describe('createCohortReader', () => {
           return [account(1)];
         }),
       },
-      comment: {
-        groupBy: vi.fn(async () => {
-          calls.push('comment.groupBy');
-          return [{ userId: 1, _count: { _all: 2 } }];
-        }),
-      },
-      commentV2: {
-        groupBy: vi.fn(async () => {
-          calls.push('commentV2.groupBy');
-          return [{ userId: 1, _count: { _all: 3 } }];
-        }),
-      },
-      model: {
-        groupBy: vi.fn(async () => {
-          calls.push('model.groupBy');
-          return [{ userId: 1, _count: { _all: 4 } }];
-        }),
-      },
-      image: {
-        groupBy: vi.fn(async () => {
-          calls.push('image.groupBy');
-          return [{ userId: 1, _count: { _all: 5 } }];
-        }),
-      },
+      // Pairwise-distinct across all eight values, and distinct from every total they add up to.
+      comment: groupBy('comment', 2, 20),
+      commentV2: groupBy('commentV2', 3, 30),
+      model: groupBy('model', 4, 40),
+      image: groupBy('image', 5, 50),
     } satisfies CohortDb;
     return { db, calls };
   };
@@ -219,23 +278,46 @@ describe('createCohortReader', () => {
     expect(modelCountArgs([1]).where).not.toEqual(imageCountArgs([1]).where);
   });
 
-  it('reads both comment systems, models and images — and nothing else', async () => {
+  it('🔴 also asks each surface for its UNFILTERED count — the membership read', async () => {
+    // 🔴 The half membership now depends on. A correct `allContentCountArgs` that is never handed
+    // to the client changes nothing, and a builder test cannot see that: the whole F-2 fix is the
+    // pair of reads reaching the database, per surface.
+    const { db } = makeDb();
+    await createCohortReader(db).countPosts([1]);
+    for (const model of [db.comment, db.commentV2, db.model, db.image]) {
+      expect(model.groupBy).toHaveBeenCalledWith(allContentCountArgs([1]));
+      expect(model.groupBy).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('reads both comment systems, models and images — filtered AND unfiltered, nothing else', async () => {
     const { db, calls } = makeDb();
     const raw = await createCohortReader(db).countPosts([1]);
     // An asserted LEDGER, sorted so it is order-independent but not membership-independent: it
     // fails if an operation is added AND if one is removed. Dropping `commentV2` is the realistic
     // regression — it reads as a tidy-up and turns every newer-comment-only account into a
-    // false negative.
+    // false negative. Dropping an `:all` member is the F-2 regression: membership silently goes
+    // back to being decided on visible content.
     expect([...calls].sort()).toEqual([
-      'comment.groupBy',
-      'commentV2.groupBy',
-      'image.groupBy',
-      'model.groupBy',
+      'comment.groupBy:all',
+      'comment.groupBy:visible',
+      'commentV2.groupBy:all',
+      'commentV2.groupBy:visible',
+      'image.groupBy:all',
+      'image.groupBy:visible',
+      'model.groupBy:all',
+      'model.groupBy:visible',
     ]);
+    // Eight distinct values landing in eight distinct fields: a mutant that wires a reply to the
+    // wrong field cannot land on the right number.
     expect(raw.comments).toEqual([{ userId: 1, count: 2 }]);
     expect(raw.commentsV2).toEqual([{ userId: 1, count: 3 }]);
     expect(raw.models).toEqual([{ userId: 1, count: 4 }]);
     expect(raw.images).toEqual([{ userId: 1, count: 5 }]);
+    expect(raw.allComments).toEqual([{ userId: 1, count: 20 }]);
+    expect(raw.allCommentsV2).toEqual([{ userId: 1, count: 30 }]);
+    expect(raw.allModels).toEqual([{ userId: 1, count: 40 }]);
+    expect(raw.allImages).toEqual([{ userId: 1, count: 50 }]);
   });
 
   it('asks the database nothing when there are no ids', async () => {
@@ -243,6 +325,18 @@ describe('createCohortReader', () => {
     const raw = await createCohortReader(db).countPosts([]);
     expect(calls).toEqual([]);
     expect(raw).toEqual(emptyRaw());
+    // The empty answer covers every surface. A field added to `RawPostCounts` and left out of the
+    // empty case would arrive as `undefined` and be silently skipped by `mergePostCounts`.
+    expect(Object.keys(raw).sort()).toEqual([
+      'allComments',
+      'allCommentsV2',
+      'allImages',
+      'allModels',
+      'comments',
+      'commentsV2',
+      'images',
+      'models',
+    ]);
   });
 });
 
@@ -253,21 +347,72 @@ describe('mergePostCounts', () => {
       commentsV2: [{ userId: 1, count: 3 }],
       models: [{ userId: 1, count: 4 }],
       images: [{ userId: 1, count: 5 }],
+      allComments: [{ userId: 1, count: 2 }],
+      allCommentsV2: [{ userId: 1, count: 3 }],
+      allModels: [{ userId: 1, count: 4 }],
+      allImages: [{ userId: 1, count: 5 }],
     });
     // Distinct values per surface, and distinct from the total, so a mutant that reads the wrong
     // field or drops one of the four cannot produce the same number by accident.
-    expect(merged.get(1)).toEqual({ comments: 5, models: 4, images: 5, total: 14 });
+    expect(merged.get(1)?.visible).toEqual({ comments: 5, models: 4, images: 5, total: 14 });
+    expect(merged.get(1)?.all).toEqual({ comments: 5, models: 4, images: 5, total: 14 });
+    expect(merged.get(1)?.excluded).toEqual({ comments: 0, models: 0, images: 0, total: 0 });
+  });
+
+  it('keeps the two sides apart, per surface', () => {
+    // 🔴 The split itself. Every one of the eight inputs is a different number and no two of the
+    // twelve outputs coincide, so a mutant that reads an `all*` row into the visible side (or the
+    // reverse), or that folds `commentsV2` into the wrong half, lands on a value this cannot
+    // produce.
+    const merged = mergePostCounts({
+      comments: [{ userId: 1, count: 1 }],
+      commentsV2: [{ userId: 1, count: 2 }],
+      models: [{ userId: 1, count: 4 }],
+      images: [{ userId: 1, count: 8 }],
+      allComments: [{ userId: 1, count: 16 }],
+      allCommentsV2: [{ userId: 1, count: 32 }],
+      allModels: [{ userId: 1, count: 64 }],
+      allImages: [{ userId: 1, count: 128 }],
+    });
+    expect(merged.get(1)?.visible).toEqual({ comments: 3, models: 4, images: 8, total: 15 });
+    expect(merged.get(1)?.all).toEqual({ comments: 48, models: 64, images: 128, total: 240 });
+    expect(merged.get(1)?.excluded).toEqual({
+      comments: 45,
+      models: 60,
+      images: 120,
+      total: 225,
+    });
+  });
+
+  it('floors `excluded` at zero when the two reads disagree', () => {
+    // The filtered and unfiltered counts of one surface are separate statements against a replica,
+    // so a row created between them can leave `visible` above `all`. A negative in the one sentence
+    // a moderator acts on reads as corrupt data; zero reads as "nothing was taken down", which is
+    // the truth as near as this run can tell.
+    const merged = mergePostCounts({
+      ...emptyRaw(),
+      images: [{ userId: 1, count: 9 }],
+      allImages: [{ userId: 1, count: 4 }],
+    });
+    expect(merged.get(1)?.excluded).toEqual({ comments: 0, models: 0, images: 0, total: 0 });
+    expect(merged.get(1)?.all.total).toBe(4);
+    expect(merged.get(1)?.visible.total).toBe(9);
   });
 
   it('keeps users apart', () => {
     const merged = mergePostCounts({
+      ...emptyRaw(),
       comments: [{ userId: 1, count: 1 }],
-      commentsV2: [],
-      models: [{ userId: 2, count: 7 }],
-      images: [],
+      allComments: [{ userId: 1, count: 1 }],
+      allModels: [{ userId: 2, count: 7 }],
     });
-    expect(merged.get(1)?.total).toBe(1);
-    expect(merged.get(2)?.total).toBe(7);
+    expect(merged.get(1)?.all.total).toBe(1);
+    expect(merged.get(2)?.all.total).toBe(7);
+    // User 2's models were all taken down; user 1's comment is still up. Neither leaks into the
+    // other.
+    expect(merged.get(2)?.visible.total).toBe(0);
+    expect(merged.get(2)?.excluded.models).toBe(7);
+    expect(merged.get(1)?.excluded.total).toBe(0);
   });
 });
 
@@ -300,6 +445,46 @@ describe('selectCohortMembers', () => {
     expect(members[0].userId).toBe(4);
   });
 
+  it('🔴 INCLUDES an account whose every upload was blocked — the canonical bot wave', () => {
+    // 🔴 THE REGRESSION THIS SPLIT EXISTS FOR. An account two hours old uploads 40 images and the
+    // scanner marks every one of them `Blocked`. Under a visible-total membership rule it counted
+    // zero, so it was not a member, not scored and not reported — while `scanned` still counted it,
+    // making the run summary read "0 had posted". Nothing anywhere reported an error.
+    const members = selectCohortMembers([account(6)], counts([[6, { images: 40, visible: {} }]]));
+    expect(members).toHaveLength(1);
+    expect(members[0].userId).toBe(6);
+    expect(members[0].posts.all.total).toBe(40);
+    expect(members[0].posts.visible.total).toBe(0);
+    expect(members[0].posts.excluded.images).toBe(40);
+  });
+
+  it.each([
+    ['every comment hidden or TOS-flagged', { comments: 12 }],
+    ['every model unpublished or deleted', { models: 9 }],
+    ['every image blocked', { images: 40 }],
+  ])('🔴 a moderator action on %s does not drop the account', (_label, posted) => {
+    // One moderator action, or one scanner verdict, could remove a whole account from the cohort —
+    // on any of the three surfaces, since each spells "removed" in its own columns. Three cases so
+    // a fix that covers only the surface the bug was found on fails here.
+    const members = selectCohortMembers([account(7)], counts([[7, { ...posted, visible: {} }]]));
+    expect(members).toHaveLength(1);
+    expect(members[0].posts.visible.total).toBe(0);
+    expect(members[0].posts.all.total).toBeGreaterThan(0);
+  });
+
+  it('🔴 the partial case: 39 of 40 blocked still ranks by what was POSTED', () => {
+    // Worse than the total case, because it is invisible. The account is in the cohort either way,
+    // but under the old rule its finding said "1 image" — so a moderator sorting a queue by volume
+    // put the account that uploaded 40 and had 39 blocked at the very bottom.
+    const members = selectCohortMembers(
+      [account(8)],
+      counts([[8, { images: 40, visible: { images: 1 } }]])
+    );
+    expect(members[0].posts.all.images).toBe(40);
+    expect(members[0].posts.visible.images).toBe(1);
+    expect(members[0].posts.excluded.images).toBe(39);
+  });
+
   it('carries the account identity and its activity through', () => {
     const created = at('2026-09-03T09:30:00.000Z');
     const members = selectCohortMembers(
@@ -310,7 +495,11 @@ describe('selectCohortMembers', () => {
       userId: 5,
       username: 'spam5',
       createdAt: created,
-      posts: { comments: 2, models: 1, images: 3, total: 6 },
+      posts: {
+        all: { comments: 2, models: 1, images: 3, total: 6 },
+        visible: { comments: 2, models: 1, images: 3, total: 6 },
+        excluded: { comments: 0, models: 0, images: 0, total: 0 },
+      },
     });
   });
 });
@@ -328,12 +517,7 @@ function fakeReader(accounts: NewAccountRow[]): CohortReader & { pageRequests: n
         .filter((a) => before === undefined || a.id < before)
         .slice(0, take);
     },
-    countPosts: async (ids) => ({
-      comments: [],
-      commentsV2: [],
-      models: [],
-      images: ids.map((userId) => ({ userId, count: 1 })),
-    }),
+    countPosts: async (ids) => rawFor(ids, { images: 1 }),
   };
 }
 
@@ -458,15 +642,42 @@ describe('collectCohort', () => {
     const reader: CohortReader = {
       ...base,
       // Only odd ids posted.
-      countPosts: async (ids) => ({
-        ...emptyRaw(),
-        images: ids.filter((id) => id % 2 === 1).map((userId) => ({ userId, count: 1 })),
-      }),
+      countPosts: async (ids) =>
+        rawFor(
+          ids.filter((id) => id % 2 === 1),
+          { images: 1 }
+        ),
     };
     const result = await collectCohort(reader, { createdAfter, pageSize: 3, maxAccounts: 100 });
     expect(result.members.map((m) => m.userId)).toEqual([7, 5, 3, 1]);
     // `scanned` is the denominator the counters publish. If the filter were applied to it too, a
     // report could never say "3 of 700", which is the number that says whether the rule is tight.
     expect(result.scanned).toBe(7);
+  });
+
+  it('🔴 a whole page of already-blocked accounts is a COHORT, not a reassuring zero', async () => {
+    // 🔴 END TO END, through the walk rather than the pure selector, because that is where the
+    // reassuring zero was produced. The reader reports what a real bot wave looks like at the
+    // moment this detector runs: 40 uploads each, every one of them blocked, so every visible
+    // count is empty and only the unfiltered reads return rows.
+    //
+    // Before the split this walk produced `members: []` against `scanned: 7`, and the run summary
+    // said "Scanned 7 account(s); 0 had posted". Nothing errored, nothing was logged, and the whole
+    // shadow phase's output for that wave was the word zero.
+    const base = fakeReader(seven);
+    const reader: CohortReader = {
+      ...base,
+      countPosts: async (ids) => rawFor(ids, { images: 40 }, {}),
+    };
+    const result = await collectCohort(reader, { createdAfter, pageSize: 3, maxAccounts: 100 });
+
+    expect(result.members).toHaveLength(7);
+    expect(result.members.map((m) => m.userId)).toEqual([7, 6, 5, 4, 3, 2, 1]);
+    expect(result.scanned).toBe(7);
+    for (const member of result.members) {
+      expect(member.posts.all.images).toBe(40);
+      expect(member.posts.visible.total).toBe(0);
+      expect(member.posts.excluded.images).toBe(40);
+    }
   });
 });

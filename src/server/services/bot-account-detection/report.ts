@@ -1,5 +1,5 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
-import type { BotAccountCohortMember } from './cohort';
+import type { BotAccountCohortMember, SurfaceCounts } from './cohort';
 import { renderSubScores, type BotAccountScore } from './scoring';
 
 /**
@@ -40,6 +40,40 @@ export function truncateReason(reason: string, max = MAX_REASON_LENGTH): string 
   return `${reason.slice(0, max - 1)}…`;
 }
 
+/** `3 comment(s), 0 model(s), 40 image(s)` — the per-surface breakdown, spelled one way. */
+const renderSurface = (s: SurfaceCounts) =>
+  `${s.comments} comment(s), ${s.models} model(s), ${s.images} image(s)`;
+
+/**
+ * 🔴 WHAT THE ACCOUNT POSTED, AND HOW MUCH OF IT IS STILL UP — both, always, in that order.
+ *
+ * The leading number is the total, because that is what membership was decided on and a moderator
+ * ranking a queue by volume must see the same figure the detector did. An account with 40 blocked
+ * uploads leads with 40, not with 0.
+ *
+ * The split follows, because "40 images" and "40 images, 39 of which we already removed" call for
+ * different actions and the second is the interesting one. When nothing was excluded the split
+ * collapses to one clause — the sentence still states it, so a reader never has to infer the
+ * absence of a missing clause.
+ *
+ * 🔴 "STILL ON THE SITE", NOT "VISIBLE". `cohort.ts` deliberately counts an image whose scan has
+ * not finished (`ingestion: Pending`) as on-site, which is exactly the case a moderator cannot view
+ * yet — so calling that number "visible" claimed something the query does not deliver. The carve-out
+ * is stated in the same sentence rather than left to a reader who would have no way to know.
+ */
+export function renderPostCounts(posts: BotAccountCohortMember['posts']): string {
+  const head = `Posted ${posts.all.total} item(s) — ${renderSurface(posts.all)}.`;
+  if (posts.excluded.total === 0)
+    return `${head} All ${posts.all.total} still on the site (nothing hidden, blocked, unpublished or removed).`;
+  return (
+    `${head} Still on the site: ${posts.visible.total} (${renderSurface(posts.visible)}). ` +
+    `NOT on the site: ${posts.excluded.total} (${renderSurface(posts.excluded)}) — drafts, ` +
+    `unpublished or scheduled models, unattached uploads, uploads the scanner blocked or could not ` +
+    `find, and hidden, TOS-flagged or already-removed content. Images still awaiting a scan result ` +
+    `are counted as on the site.`
+  );
+}
+
 /**
  * One finding.
  *
@@ -63,14 +97,7 @@ export function buildFinding(
     `Shadow-mode observation — NOT actioned. Account ${member.userId}` +
       `${member.username ? ` (${member.username})` : ''} registered ` +
       `${member.createdAt.toISOString()}, ${ageHours.toFixed(1)}h old at scan. ` +
-      // 🔴 The qualifier is not decoration. This sentence is what a moderator acts on — they go and
-      // look — so it has to say what was counted. These counts are VISIBLE content only: published
-      // models, images attached to a post, comments not hidden or TOS-flagged, nothing soft-deleted
-      // or blocked (see `cohort.ts`). Naming that here is the difference between "4 images" meaning
-      // "four things you can open" and meaning "four rows, some of which are drafts we removed".
-      `Posted ${member.posts.comments} visible comment(s), ${member.posts.models} published ` +
-      `model(s), ${member.posts.images} visible image(s) — counts exclude drafts, unattached ` +
-      `uploads, blocked uploads, hidden or TOS-flagged content and anything already removed. ` +
+      `${renderPostCounts(member.posts)} ` +
       `Per-heuristic: ${renderSubScores(score.subScores)}. ` +
       `Blended confidence ${score.confidence.toFixed(2)}.`
   );

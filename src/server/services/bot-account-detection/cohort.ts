@@ -58,7 +58,8 @@ export const COHORT_PAGE_SIZE = 500;
  * a ceiling on work rather than a daily filter.
  *
  * It is still a bound and it is still cheap: at `COHORT_PAGE_SIZE` this is at most 50 account pages
- * and 200 `groupBy` reads, all on the replica, all keyset-paged.
+ * and 400 `groupBy` reads — eight per page, see `createCohortReader` — all on the replica, all
+ * keyset-paged.
  *
  * 🔴 The value is the SECOND line of defence, not the first. The walk below pages DESCENDING, so
  * whatever the cap is set to, the accounts it discards are the OLDEST of the window rather than the
@@ -77,20 +78,51 @@ export type NewAccountRow = {
 /** Per-user counts from one content table. */
 export type CountRow = { userId: number; count: number };
 
-/** The four content reads, unmerged. Kept apart so the merge stays a pure, testable step. */
+/**
+ * The eight content reads, unmerged. Kept apart so the merge stays a pure, testable step.
+ *
+ * Two counts per surface, not one:
+ *  - `comments`/`commentsV2`/`models`/`images` — the subset still on the site, i.e. what the
+ *    visibility filters keep. Reported to the moderator.
+ *  - `all*` — every row the account owns on that surface, moderation outcome or not. This is what
+ *    decides MEMBERSHIP; see `selectCohortMembers`.
+ */
 export type RawPostCounts = {
   comments: CountRow[];
   commentsV2: CountRow[];
   models: CountRow[];
   images: CountRow[];
+  allComments: CountRow[];
+  allCommentsV2: CountRow[];
+  allModels: CountRow[];
+  allImages: CountRow[];
 };
 
-/** What an account posted, per surface. `total` is what decides membership. */
-export type PostCounts = {
+/** Three surface counts and their sum. The unit both halves of `PostCounts` are expressed in. */
+export type SurfaceCounts = {
   comments: number;
   models: number;
   images: number;
   total: number;
+};
+
+/**
+ * What an account posted.
+ *
+ * 🔴 `all.total` DECIDES MEMBERSHIP; `visible` is reported and never gates anything. The two were
+ * one number until this split, and that number was the visible one — which made a moderator's own
+ * action, or the scanner's, able to remove an account from the cohort entirely. See
+ * `selectCohortMembers`.
+ */
+export type PostCounts = {
+  /** Every row the account owns, whatever state it is in. Membership is decided on this. */
+  all: SurfaceCounts;
+  /** The subset a moderator can still open. Reported, never used for membership. */
+  visible: SurfaceCounts;
+  /** `all` minus `visible`, per surface. Derived here so the reason string cannot recompute it
+   *  differently, and non-negative by construction — every visibility filter is a restriction of
+   *  the unfiltered read over the same rows. */
+  excluded: SurfaceCounts;
 };
 
 /** An account that is in the cohort, with the activity that put it there. */
@@ -178,13 +210,26 @@ export function newAccountPageArgs(args: {
 }
 
 /**
- * 🔴 WHAT "HAS POSTED" MEANS: content a moderator can open right now.
+ * 🔴 WHAT "STILL ON THE SITE" MEANS — AND WHY IT IS NOT THE MEMBERSHIP RULE.
  *
- * The reason string on every finding says "Posted N comment(s), N model(s), N image(s)" to a human
- * whose next action is to go and look. So the counts have to be counts of things that are THERE.
- * Filtering on `userId` alone counted an account's drafts, its never-attached image uploads, its
- * blocked uploads, its hidden comments and its already-removed models — content that is either not
- * published yet or has already been taken down — and sent a moderator after all of it.
+ * These filters answer one question: of what this account posted, how much can a moderator open
+ * right now. That is worth reporting, because the reason string on every finding is read by a human
+ * whose next action is to go and look, and "4 images" meaning "four things you can open" is a
+ * different sentence from "four rows, some of which we already removed".
+ *
+ * 🔴 IT IS NOT WHAT DECIDES WHO IS IN THE COHORT, and using it that way was a hole with a name on
+ * it. An account registered two hours ago that uploads forty images the scanner then marks
+ * `Blocked` is the canonical bot wave — and under a visible-only membership rule it counted zero,
+ * produced no `groupBy` row, and was therefore not a member, not scored and not reported, while
+ * `scanned` still counted it. The run summary then read "Scanned N account(s); 0 had posted": a
+ * reassuring zero produced by the detector working exactly as written. The partial case is worse —
+ * 39 of 40 blocked leaves "1 image", so a moderator sorting by volume puts the worst account last.
+ * `tosViolation` and `hidden` behave identically, so one moderator action could drop a whole
+ * account out of the cohort.
+ *
+ * So membership is decided on the UNFILTERED counts (`allContentCountArgs`) and these filtered
+ * counts are reported alongside them, with the difference stated in the finding. See
+ * `selectCohortMembers` and `buildFinding`.
  *
  * The rule, per surface, and what each clause excludes:
  *  - `Comment` / `CommentV2`: `hidden` is not true, `tosViolation` is false. Both are moderation
@@ -202,6 +247,12 @@ export function newAccountPageArgs(args: {
  * this detector looks at them. Excluding Pending would be excluding the signal, and unlike Blocked
  * it is a scan that has not finished rather than a decision to remove. Blocked and NotFound are
  * decisions, so they go.
+ *
+ * 🔴 THAT CLAUSE IS WHY THE REPORTED NUMBER IS NOT CALLED "VISIBLE". A Pending image is counted
+ * here and is precisely the case a moderator cannot view yet, so "N visible image(s)" over-claimed
+ * against this set's own definition. The set is "not removed, withheld or unpublished" — the
+ * finding says "still on the site" and states the Pending carve-out in the same sentence rather
+ * than leaving a reader to infer it.
  *
  * No time predicate, deliberately: every account in the list is younger than the window, so its
  * content is too, and a redundant `createdAt` filter would only cost the planner an extra condition
@@ -256,6 +307,22 @@ export function imageCountArgs(userIds: number[]) {
   });
 }
 
+/**
+ * Everything the account posted on one surface, with no visibility judgement at all.
+ *
+ * 🔴 ONE BUILDER FOR ALL FOUR SURFACES, deliberately, where the visible reads have four. There is
+ * nothing per-surface to express: the question is "does this row belong to this account", and the
+ * four filtered builders differ only because each surface spells "removed" in its own columns. A
+ * second builder per surface here would be four copies of the same clause and four places for a
+ * stray predicate to reappear — which is the exact defect this pair exists to undo.
+ *
+ * Soft-deleted, blocked, hidden and TOS-flagged rows are all counted. That is the point: a
+ * moderation outcome is evidence about the account, not a reason to stop looking at it.
+ */
+export function allContentCountArgs(userIds: number[]) {
+  return groupByUser({ userId: { in: userIds } });
+}
+
 type GroupByRow = { userId: number; _count: { _all: number } };
 
 const toCountRows = (rows: GroupByRow[]): CountRow[] =>
@@ -284,12 +351,16 @@ const toCountRows = (rows: GroupByRow[]): CountRow[] =>
  */
 type GroupByFn<A> = (args: A) => Promise<unknown>;
 
+/** Every `groupBy` argument shape one surface is asked for: its own visibility filter, and the
+ *  unfiltered count that decides membership. */
+type Grouped<A> = { groupBy: GroupByFn<A | ReturnType<typeof allContentCountArgs>> };
+
 export type CohortDb = {
   user: { findMany: (args: ReturnType<typeof newAccountPageArgs>) => Promise<NewAccountRow[]> };
-  comment: { groupBy: GroupByFn<ReturnType<typeof commentCountArgs>> };
-  commentV2: { groupBy: GroupByFn<ReturnType<typeof commentV2CountArgs>> };
-  model: { groupBy: GroupByFn<ReturnType<typeof modelCountArgs>> };
-  image: { groupBy: GroupByFn<ReturnType<typeof imageCountArgs>> };
+  comment: Grouped<ReturnType<typeof commentCountArgs>>;
+  commentV2: Grouped<ReturnType<typeof commentV2CountArgs>>;
+  model: Grouped<ReturnType<typeof modelCountArgs>>;
+  image: Grouped<ReturnType<typeof imageCountArgs>>;
 };
 
 /**
@@ -303,38 +374,93 @@ export function createCohortReader(db: CohortDb = dbRead): CohortReader {
   return {
     listNewAccounts: (args) => db.user.findMany(newAccountPageArgs(args)),
     countPosts: async (userIds) => {
-      if (!userIds.length) return { comments: [], commentsV2: [], models: [], images: [] };
-      const [comments, commentsV2, models, images] = await Promise.all([
+      if (!userIds.length) return emptyRawPostCounts();
+      // 🔴 EIGHT READS PER PAGE, NOT FOUR — the visible count and the unfiltered count of each
+      // surface. That is the price of deciding membership on everything an account posted while
+      // still telling a moderator how much of it is still up, and it is paid on purpose. All eight
+      // are per-user counts over the same `userId IN (…)` list on the replica, issued together.
+      const [comments, commentsV2, models, images, allC, allC2, allM, allI] = await Promise.all([
         db.comment.groupBy(commentCountArgs(userIds)),
         db.commentV2.groupBy(commentV2CountArgs(userIds)),
         db.model.groupBy(modelCountArgs(userIds)),
         db.image.groupBy(imageCountArgs(userIds)),
+        db.comment.groupBy(allContentCountArgs(userIds)),
+        db.commentV2.groupBy(allContentCountArgs(userIds)),
+        db.model.groupBy(allContentCountArgs(userIds)),
+        db.image.groupBy(allContentCountArgs(userIds)),
       ]);
       return {
         comments: toCountRows(comments as GroupByRow[]),
         commentsV2: toCountRows(commentsV2 as GroupByRow[]),
         models: toCountRows(models as GroupByRow[]),
         images: toCountRows(images as GroupByRow[]),
+        allComments: toCountRows(allC as GroupByRow[]),
+        allCommentsV2: toCountRows(allC2 as GroupByRow[]),
+        allModels: toCountRows(allM as GroupByRow[]),
+        allImages: toCountRows(allI as GroupByRow[]),
       };
     },
   };
 }
 
-/** The four reads folded into one per-user record. Comments from both systems add together — they
- *  are the same act to a moderator, and splitting them in the report would invite reading a
- *  migration artefact as a signal. */
+/** An empty result for every surface — the shape `countPosts` returns when asked about nobody. */
+export function emptyRawPostCounts(): RawPostCounts {
+  return {
+    comments: [],
+    commentsV2: [],
+    models: [],
+    images: [],
+    allComments: [],
+    allCommentsV2: [],
+    allModels: [],
+    allImages: [],
+  };
+}
+
+const zeroSurface = (): SurfaceCounts => ({ comments: 0, models: 0, images: 0, total: 0 });
+
+/**
+ * The eight reads folded into one per-user record.
+ *
+ * Comments from both systems add together — they are the same act to a moderator, and splitting
+ * them in the report would invite reading a migration artefact as a signal.
+ *
+ * 🔴 `excluded` is SUBTRACTED, not read. There is no eighth query for "how much was taken down":
+ * it is `all` minus `visible` on the same rows at the same instant, which is the only definition
+ * under which the three numbers in a finding are guaranteed to add up. It is floored at zero so a
+ * torn read — the unfiltered and filtered counts of one surface are separate statements against a
+ * replica, and a row can be created between them — reports 0 excluded rather than a negative, which
+ * would read as corrupt data in the one sentence a moderator acts on.
+ */
 export function mergePostCounts(raw: RawPostCounts): Map<number, PostCounts> {
   const merged = new Map<number, PostCounts>();
   const get = (userId: number) => {
     let row = merged.get(userId);
-    if (!row) merged.set(userId, (row = { comments: 0, models: 0, images: 0, total: 0 }));
+    if (!row)
+      merged.set(
+        userId,
+        (row = { all: zeroSurface(), visible: zeroSurface(), excluded: zeroSurface() })
+      );
     return row;
   };
-  for (const r of raw.comments) get(r.userId).comments += r.count;
-  for (const r of raw.commentsV2) get(r.userId).comments += r.count;
-  for (const r of raw.models) get(r.userId).models += r.count;
-  for (const r of raw.images) get(r.userId).images += r.count;
-  for (const row of merged.values()) row.total = row.comments + row.models + row.images;
+  for (const r of raw.comments) get(r.userId).visible.comments += r.count;
+  for (const r of raw.commentsV2) get(r.userId).visible.comments += r.count;
+  for (const r of raw.models) get(r.userId).visible.models += r.count;
+  for (const r of raw.images) get(r.userId).visible.images += r.count;
+  for (const r of raw.allComments) get(r.userId).all.comments += r.count;
+  for (const r of raw.allCommentsV2) get(r.userId).all.comments += r.count;
+  for (const r of raw.allModels) get(r.userId).all.models += r.count;
+  for (const r of raw.allImages) get(r.userId).all.images += r.count;
+  for (const row of merged.values()) {
+    for (const side of [row.all, row.visible])
+      side.total = side.comments + side.models + side.images;
+    row.excluded = {
+      comments: Math.max(0, row.all.comments - row.visible.comments),
+      models: Math.max(0, row.all.models - row.visible.models),
+      images: Math.max(0, row.all.images - row.visible.images),
+      total: Math.max(0, row.all.total - row.visible.total),
+    };
+  }
   return merged;
 }
 
@@ -344,6 +470,15 @@ export function mergePostCounts(raw: RawPostCounts): Map<number, PostCounts> {
  * Pure, and the only place membership is decided. An account with no content is not a bot-account
  * candidate under this brief — a signup that has done nothing is a signup, and including it would
  * put most of a day's registrations in front of a moderator.
+ *
+ * 🔴 `all.total`, NOT `visible.total`. The test is "did this account post anything at all", so a
+ * moderation outcome — the scanner blocking every upload, a moderator hiding a comment, a
+ * TOS flag — cannot take the account out of the cohort. It goes into the finding instead, where a
+ * human can see it. Reading `visible.total` here restores the hole this split exists to close, and
+ * does so silently: the run reports a smaller cohort and nothing anywhere reports an error.
+ *
+ * Membership is the only thing that changed. `visible` is still what the finding leads with,
+ * because it is still what a moderator can go and look at.
  */
 export function selectCohortMembers(
   accounts: NewAccountRow[],
@@ -352,7 +487,7 @@ export function selectCohortMembers(
   const members: BotAccountCohortMember[] = [];
   for (const account of accounts) {
     const posts = counts.get(account.id);
-    if (!posts || posts.total === 0) continue;
+    if (!posts || posts.all.total === 0) continue;
     members.push({
       userId: account.id,
       username: account.username,

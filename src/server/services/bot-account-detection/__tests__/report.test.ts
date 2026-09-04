@@ -1,11 +1,12 @@
 import { MAX_FINDINGS_PER_REPORT, abuseReportInput } from '@civitai/moderation';
 import { describe, expect, it } from 'vitest';
-import type { BotAccountCohortMember } from '../cohort';
+import type { BotAccountCohortMember, PostCounts, SurfaceCounts } from '../cohort';
 import {
   BOT_ACCOUNT_DETECTOR,
   buildFinding,
   buildReports,
   chunkFindings,
+  renderPostCounts,
   truncateReason,
 } from '../report';
 import type { BotAccountScore } from '../scoring';
@@ -14,11 +15,35 @@ const at = (iso: string) => new Date(iso);
 const STARTED = at('2026-09-03T03:20:00.000Z');
 const FINISHED = at('2026-09-03T03:20:41.000Z');
 
+const surface = (partial: Partial<SurfaceCounts> = {}): SurfaceCounts => {
+  const row = { comments: 0, models: 0, images: 0, ...partial };
+  return { ...row, total: row.comments + row.models + row.images };
+};
+
+/** `visible` defaults to everything posted — nothing taken down, the ordinary case. */
+const posts = (
+  all: Partial<SurfaceCounts>,
+  visiblePartial: Partial<SurfaceCounts> = all
+): PostCounts => {
+  const a = surface(all);
+  const v = surface(visiblePartial);
+  return {
+    all: a,
+    visible: v,
+    excluded: {
+      comments: Math.max(0, a.comments - v.comments),
+      models: Math.max(0, a.models - v.models),
+      images: Math.max(0, a.images - v.images),
+      total: Math.max(0, a.total - v.total),
+    },
+  };
+};
+
 const member = (overrides: Partial<BotAccountCohortMember> = {}): BotAccountCohortMember => ({
   userId: 91,
   username: 'newcomer',
   createdAt: at('2026-09-03T00:20:00.000Z'),
-  posts: { comments: 2, models: 1, images: 3, total: 6 },
+  posts: posts({ comments: 2, models: 1, images: 3 }),
   ...overrides,
 });
 
@@ -60,26 +85,62 @@ describe('buildFinding', () => {
   it('cites the evidence a moderator needs to judge it', () => {
     const finding = buildFinding(member(), score(), STARTED);
     // Distinct counts per surface so a mutant reading the wrong field cannot produce this string.
-    expect(finding.reason).toContain('2 visible comment(s)');
-    expect(finding.reason).toContain('1 published model(s)');
-    expect(finding.reason).toContain('3 visible image(s)');
+    expect(finding.reason).toContain('Posted 6 item(s) — 2 comment(s), 1 model(s), 3 image(s).');
     expect(finding.reason).toContain('3.0h old');
     expect(finding.reason).toContain('placeholder-no-op=0.00');
     expect(finding.reason).toContain('NOT actioned');
   });
 
-  it('says what the counts EXCLUDE, because the moderator’s next move is to go and look', () => {
-    // 🔴 The counts are of visible content only (see `cohort.ts`). An unqualified "Posted 3
-    // image(s)" was a promise the cohort query did not keep — it counted drafts, unattached and
-    // blocked uploads, hidden comments and removed models — and the wire contract calls this
-    // string "the whole value of the row". The whole normalised clause is pinned, not a keyword,
-    // so a reword that quietly drops the qualifier has to be a deliberate edit.
-    const finding = buildFinding(member(), score(), STARTED);
-    expect(finding.reason).toContain(
-      'Posted 2 visible comment(s), 1 published model(s), 3 visible image(s) — counts exclude ' +
-        'drafts, unattached uploads, blocked uploads, hidden or TOS-flagged content and anything ' +
-        'already removed.'
+  it('🔴 pins the WHOLE clause when nothing was taken down', () => {
+    // 🔴 THE WIRE CONTRACT CALLS THIS STRING "the whole value of the row to a moderator", so it is
+    // pinned as a whole normalised string rather than by keyword. A guard on words is walkable by
+    // rewording; this one makes a cosmetic reword a deliberate edit with a failing test attached.
+    expect(renderPostCounts(posts({ comments: 2, models: 1, images: 3 }))).toBe(
+      'Posted 6 item(s) — 2 comment(s), 1 model(s), 3 image(s). All 6 still on the site ' +
+        '(nothing hidden, blocked, unpublished or removed).'
     );
+  });
+
+  it('🔴 leads with what was POSTED and states the split, when content was taken down', () => {
+    // 🔴 THE F-2 REGRESSION, in the sentence a moderator reads. Forty uploads, thirty-nine blocked:
+    // the finding used to say "1 visible image(s)", so a queue sorted by volume put the worst
+    // account last. The total leads; the split follows and says plainly what is gone and why.
+    //
+    // Pairwise-distinct numbers across all three lines — 40/1/39, and comments 5/2/3 — so no
+    // mutant that reads `visible` for `all`, or recomputes `excluded` the other way round, can
+    // land on this string.
+    expect(
+      renderPostCounts(posts({ comments: 5, models: 0, images: 40 }, { comments: 2, images: 1 }))
+    ).toBe(
+      'Posted 45 item(s) — 5 comment(s), 0 model(s), 40 image(s). ' +
+        'Still on the site: 3 (2 comment(s), 0 model(s), 1 image(s)). ' +
+        'NOT on the site: 42 (3 comment(s), 0 model(s), 39 image(s)) — drafts, unpublished or ' +
+        'scheduled models, unattached uploads, uploads the scanner blocked or could not find, and ' +
+        'hidden, TOS-flagged or already-removed content. Images still awaiting a scan result are ' +
+        'counted as on the site.'
+    );
+  });
+
+  it('🔴 an account with NOTHING left on the site still leads with what it posted', () => {
+    // The canonical bot wave: 40 images, every one blocked. Under the old rule this account was not
+    // in the cohort at all, so there was no finding for this sentence to be wrong in.
+    const finding = buildFinding(member({ posts: posts({ images: 40 }, {}) }), score(), STARTED);
+    expect(finding.reason).toContain('Posted 40 item(s) — 0 comment(s), 0 model(s), 40 image(s).');
+    expect(finding.reason).toContain('Still on the site: 0 (0 comment(s), 0 model(s), 0 image(s))');
+    expect(finding.reason).toContain('NOT on the site: 40 (0 comment(s), 0 model(s), 40 image(s))');
+  });
+
+  it('🔴 never calls the reported number "visible" — the Pending carve-out', () => {
+    // 🔴 `cohort.ts` deliberately counts an image whose scan has not finished as on-site, and that
+    // is exactly the case a moderator cannot view. "N visible image(s)" claimed something the query
+    // does not deliver. The replacement states the carve-out in the same sentence, so this checks
+    // BOTH halves: the over-claiming word is gone, and the caveat that replaced it is present.
+    const shown = renderPostCounts(posts({ images: 40 }, { images: 1 }));
+    expect(shown).not.toContain('visible');
+    expect(shown).toContain('Images still awaiting a scan result are counted as on the site.');
+    // The no-exclusions branch has no room for the caveat and must not silently imply viewability
+    // either.
+    expect(renderPostCounts(posts({ images: 3 }))).not.toContain('visible');
   });
 
   it('floors the account age at zero when the clocks disagree', () => {

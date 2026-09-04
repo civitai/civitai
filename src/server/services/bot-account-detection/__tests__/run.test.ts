@@ -26,7 +26,12 @@ const account = (id: number): NewAccountRow => ({
  * is a ledger of what the run did to the database — and a ledger fails when the set grows, which a
  * check for a named forbidden call cannot.
  */
-function recordingReader(accounts: NewAccountRow[], postedIds?: Set<number>) {
+function recordingReader(
+  accounts: NewAccountRow[],
+  postedIds?: Set<number>,
+  /** Ids whose content is all gone — posted, but nothing left on the site. The bot-wave shape. */
+  blockedIds?: Set<number>
+) {
   const operations: string[] = [];
   const reader: CohortReader = {
     // Descending keyset, matching the real reader: ids strictly BELOW `before`, newest first.
@@ -39,13 +44,17 @@ function recordingReader(accounts: NewAccountRow[], postedIds?: Set<number>) {
     },
     countPosts: async (ids) => {
       operations.push('countPosts');
+      const posted = ids.filter((id) => !postedIds || postedIds.has(id));
       return {
         comments: [],
         commentsV2: [],
         models: [],
-        images: ids
-          .filter((id) => !postedIds || postedIds.has(id))
-          .map((userId) => ({ userId, count: 1 })),
+        // Still on the site: everything the account posted, unless it is one of the blocked ones.
+        images: posted.filter((id) => !blockedIds?.has(id)).map((userId) => ({ userId, count: 1 })),
+        allComments: [],
+        allCommentsV2: [],
+        allModels: [],
+        allImages: posted.map((userId) => ({ userId, count: blockedIds?.has(userId) ? 40 : 1 })),
       };
     },
   };
@@ -81,9 +90,10 @@ const constantHeuristic = (id: string, value: number): BotAccountHeuristic => ({
 const run = (
   accounts: NewAccountRow[],
   overrides: Parameters<typeof runBotAccountDetection>[1] = {},
-  postedIds?: Set<number>
+  postedIds?: Set<number>,
+  blockedIds?: Set<number>
 ) => {
-  const { reader, operations } = recordingReader(accounts, postedIds);
+  const { reader, operations } = recordingReader(accounts, postedIds, blockedIds);
   const out = sink();
   return {
     operations,
@@ -156,6 +166,59 @@ describe('runBotAccountDetection', () => {
     expect(result.cohortSize).toBe(1);
     expect(result.scanned).toBe(3);
     expect(scenario.reports[0].findings.map((f) => f.userId)).toEqual([2]);
+  });
+
+  it('🔴 reports accounts whose content is ALL gone, and counts how many there are', async () => {
+    // 🔴 END TO END for F-2. Three accounts posted; two of them had every upload blocked. Before the
+    // split those two were not in the cohort at all, so `cohortSize` was 1 and no counter, finding
+    // or summary sentence in the whole run mentioned them.
+    const scenario = run(
+      [account(1), account(2), account(3)],
+      {},
+      undefined,
+      new Set([2, 3]) // 40 uploads each, every one blocked
+    );
+    const result = await scenario.result;
+
+    expect(result.cohortSize).toBe(3);
+    expect(scenario.reports[0].findings.map((f) => f.userId)).toEqual([3, 2, 1]);
+    // The blind-spot counter: how many of the cohort have nothing left on the site. Structurally
+    // unobservable before, because those accounts were not members.
+    expect(result.counters.cohort_members_nothing_on_site).toBe(2);
+    // 40 + 40 + 1 posted, of which 40 + 40 are gone. Distinct from every other counter in the run.
+    expect(result.counters.cohort_items_posted).toBe(81);
+    expect(result.counters.cohort_items_not_on_site).toBe(80);
+  });
+
+  it('emits the blind-spot counters on a run where nothing was taken down', async () => {
+    // Emitted at zero, not omitted. A counter that appears only in the bad case cannot be alerted
+    // on, because its absence is indistinguishable from the producer not running at all.
+    const scenario = run([account(1), account(2)]);
+    const result = await scenario.result;
+    expect(result.counters.cohort_members_nothing_on_site).toBe(0);
+    expect(result.counters.cohort_items_not_on_site).toBe(0);
+    expect(result.counters.cohort_items_posted).toBe(2);
+    for (const key of [
+      'cohort_members_nothing_on_site',
+      'cohort_items_posted',
+      'cohort_items_not_on_site',
+    ])
+      expect(Object.keys(scenario.reports[0].counters ?? {})).toContain(key);
+  });
+
+  it('says in the summary that membership counts everything an account posted', async () => {
+    // The summary is what a grading pass reads first. "N had posted" against a visible-only
+    // membership rule was a true sentence about a number that had quietly excluded the accounts
+    // most worth looking at, so the rule is stated where the number is.
+    const scenario = run([account(1), account(2)], {}, undefined, new Set([2]));
+    await scenario.result;
+    const summary = scenario.reports[0].summary ?? '';
+    expect(summary).toContain('They posted 41 item(s), of which 40 are no longer on the site');
+    expect(summary).toContain('1 of the 2 have nothing left on the site at all');
+    expect(summary).toContain(
+      'Membership counts everything an account posted, so an account whose uploads were all ' +
+        'blocked or removed is included rather than dropped.'
+    );
   });
 
   it('batches across reports at the real cap, with distinct startedAt per batch', async () => {
@@ -335,24 +398,38 @@ describe('the shadow-mode invariant: nothing is muted, banned or restricted', ()
     expect([...new Set(scenario.operations)].sort()).toEqual(['countPosts', 'listNewAccounts']);
   });
 
-  it('never touches the write client', async () => {
+  it('never touches a write path on EITHER client', async () => {
     const scenario = run(Array.from({ length: 3 }, (_, i) => account(i + 1)));
     await scenario.result;
     // The behavioural half of the guard, against the REAL global `dbWrite` spy rather than a local
     // fake: it sees a write issued from anywhere in the run's import graph, including one this
     // module's own fakes know nothing about. The structural half — which sees a write that this
     // fixture's data happens not to reach — is `no-write-surface.test.ts`.
-    for (const path of [
-      'dbWrite.user.update',
-      'dbWrite.user.updateMany',
-      'dbWrite.userRestriction.create',
-      'dbWrite.userRestriction.update',
-      'dbWrite.$transaction',
-      'dbWrite.$executeRaw',
-      'dbWrite.$executeRawUnsafe',
-      'dbWrite.$queryRaw',
-    ])
-      expect(mockNode(path), `${path} was called by a shadow-mode run`).not.toHaveBeenCalled();
+    //
+    // 🔴 THE `dbRead` HALF IS NOT DECORATION. `packages/civitai-db/src/client.ts` builds `dbRead` as
+    // `singleClient ? dbWrite : new PrismaClient(replica)`, so wherever `DATABASE_REPLICA_URL`
+    // equals `DATABASE_URL` the two names are the SAME OBJECT and every raw statement below runs
+    // against the primary. A list that named only `dbWrite.*` watched half the surface: the
+    // demonstrated escape was `dbRead.$executeRawUnsafe('UPDATE "User" SET "muted" = true …')` in
+    // `collectCohort`'s loop, which left this file entirely green.
+    for (const client of ['dbWrite', 'dbRead'])
+      for (const method of [
+        'user.update',
+        'user.updateMany',
+        'user.create',
+        'user.delete',
+        'userRestriction.create',
+        'userRestriction.update',
+        '$transaction',
+        '$executeRaw',
+        '$executeRawUnsafe',
+        '$queryRaw',
+        '$queryRawUnsafe',
+      ])
+        expect(
+          mockNode(`${client}.${method}`),
+          `${client}.${method} was called by a shadow-mode run`
+        ).not.toHaveBeenCalled();
   });
 
   it('holds with the PRODUCTION heuristic registry, not only injected fakes', async () => {

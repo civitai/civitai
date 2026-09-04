@@ -44,12 +44,18 @@ export type BotAccountDetectionDeps = {
   /**
    * Throws if the job has been canceled. In production this is `JobContext.checkIfCanceled`.
    *
-   * 🔴 A run that never asks keeps going after the scheduler has hung up, and this one is on a
-   * lock the webhook route releases at `lockExpiration` WHILE the run continues — so an uncanceled
-   * overrun is how the same window gets walked twice under two different `startedAt`s, which
-   * `(detector, started_at)` cannot merge and the board shows as two complete duplicate sets.
-   * Checked once per cohort page and once before each report send: the two places this run can be
-   * doing work nobody is waiting for.
+   * 🔴 WHAT THIS PROTECTS AGAINST IS THE CALLER HANGING UP, and only that. The run-jobs route
+   * cancels in exactly one place — `res.on('close')`, which calls `jobRunner.cancel()` — so what
+   * this stops is a walk that keeps paging and keeps POSTing after nobody is listening. Checked
+   * once per cohort page and once before each report send: the two places this run can be doing
+   * work for a closed response.
+   *
+   * 🔴 IT DOES NOT PROTECT AGAINST LOCK EXPIRY, and reading it that way is how the duplicate-run
+   * hazard gets treated as handled. The route's `release()` clears the redis key and the refresh
+   * interval; it never touches the job context, so nothing about a lapsed lock makes this throw and
+   * the run continues unaware. The mitigation for a second concurrent run under a different
+   * `startedAt` is the widened `lockExpiration` on the job — see
+   * `~/server/jobs/bot-account-detection.ts` — not this callback.
    */
   checkCanceled?: () => void;
 };
@@ -123,10 +129,25 @@ export async function runBotAccountDetection(
 
   const finishedAt = deps.now();
 
+  // 🔴 THE COHORT'S OWN BLIND-SPOT COUNTER. Membership is decided on everything an account posted,
+  // so an account whose every item was blocked, hidden or removed is now a member — and this is how
+  // many of them there were. It is the number that was structurally unobservable while membership
+  // ran off the visible count: those accounts were not in the cohort at all, so no counter, no
+  // finding and no summary sentence could mention them. Emitted on every run, zero included, so its
+  // absence means the producer did not run rather than that the case did not occur.
+  const nothingOnSite = cohort.members.filter((m) => m.posts.visible.total === 0).length;
+  // Everything the cohort posted, and how much of it has already been taken down. A run-level ratio
+  // a grading pass can read without opening a single finding.
+  const postedAll = cohort.members.reduce((sum, m) => sum + m.posts.all.total, 0);
+  const postedExcluded = cohort.members.reduce((sum, m) => sum + m.posts.excluded.total, 0);
+
   const counters: Record<string, number> = {
     window_hours: windowHours,
     cohort_scanned: cohort.scanned,
     cohort_size: cohort.members.length,
+    cohort_members_nothing_on_site: nothingOnSite,
+    cohort_items_posted: postedAll,
+    cohort_items_not_on_site: postedExcluded,
     cohort_pages: cohort.pages,
     cohort_cap: maxAccounts,
     // A boolean as 0/1 because the contract's counters are `Record<string, number>`. Emitted on
@@ -144,7 +165,11 @@ export async function runBotAccountDetection(
   // conclusion that the newest signups went unexamined.
   const summary =
     `Scanned ${cohort.scanned} account(s) created since ${createdAfter.toISOString()}; ` +
-    `${cohort.members.length} had posted and were scored by ${heuristics.length} heuristic(s).` +
+    `${cohort.members.length} had posted something and were scored by ${heuristics.length} ` +
+    `heuristic(s). They posted ${postedAll} item(s), of which ${postedExcluded} are no longer on ` +
+    `the site; ${nothingOnSite} of the ${cohort.members.length} have nothing left on the site at ` +
+    `all. Membership counts everything an account posted, so an account whose uploads were all ` +
+    `blocked or removed is included rather than dropped.` +
     (cohort.capped
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +
         `${cohort.scanned} read are the most recent of the window and the unread remainder is its ` +
