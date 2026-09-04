@@ -15,7 +15,12 @@ import {
   APPS_TWO_COLUMN_DETAIL_MEASURE,
 } from '~/components/Apps/appsPageWidths';
 import * as widthsModule from '~/components/Apps/appsPageWidths';
-import { LISTING_GRID_SPAN, LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
+import {
+  LISTING_CARD_MIN_WIDTH,
+  LISTING_GRID_SPAN,
+  LISTING_STORE_CONTAINER_SIZE,
+  listingGridColumnsAt,
+} from '~/components/Apps/appListingGrid';
 import {
   SUBMISSIONS_CONTAINER_CHROME,
   SUBMISSIONS_TABLE_MIN_WIDTH,
@@ -376,9 +381,16 @@ function portalOffenders(name: string, abs: string, exportName: string): string[
 }
 
 describe('the container is uniform, and it is the only container', () => {
-  test('every `/apps/*` route renders in ONE container width (1920)', () => {
+  test('every `/apps/*` route renders in ONE container width (2560)', () => {
     // A literal, not derived from the module's own arithmetic.
-    expect(APPS_PAGE_CONTAINER_WIDTH).toBe(1920);
+    //
+    // 🔴 2560, RAISED FROM 1920 BY THE ULTRAWIDE PASS. The old cap left `(2560 −
+    // 1920) / 2 = 320px` of dead margin on each side of every apps page on a 2560
+    // monitor, and Mantine's top breakpoint (`xl`, 88em / 1408px) meant nothing in
+    // the grid could react to any of it. Raising the cap is only half the change —
+    // the store's column ladder is the other half, and it lives in
+    // `__tests__/appListingGrid.test.ts`.
+    expect(APPS_PAGE_CONTAINER_WIDTH).toBe(2560);
   });
 
   test('🔴 there is no per-route CONTAINER width map any more', () => {
@@ -498,12 +510,12 @@ describe('🔴 the measures preserve the OLD rendered content widths exactly', (
   });
 });
 
-describe('🔴 the store width and the store grid span are a MATCHED PAIR', () => {
+describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', () => {
   test('LISTING_STORE_CONTAINER_SIZE reads the shared container width (one number, not two)', () => {
     // `appListingGrid.ts` used to carry its own literal 1600. If it drifts back to a
     // literal, this fails the moment the two disagree.
     expect(LISTING_STORE_CONTAINER_SIZE).toBe(APPS_PAGE_CONTAINER_WIDTH);
-    expect(LISTING_STORE_CONTAINER_SIZE).toBe(1920);
+    expect(LISTING_STORE_CONTAINER_SIZE).toBe(2560);
   });
 
   test('🔴 /apps takes NO body measure, so its content width IS the container width', () => {
@@ -513,16 +525,38 @@ describe('🔴 the store width and the store grid span are a MATCHED PAIR', () =
     expect(APPS_FULL_MEASURE_PAGES).toContain('/apps');
   });
 
-  test('the container yields the card width the xl span was tuned for', () => {
-    //   container 1920 − 2×16 Container padding = 1888 usable
-    //   xl span 3/12 → 4 columns; Grid gutter "md" (16) → 3 gutters between them
-    //   → (1888 − 3×16) / 4 = 460 px per card.
+  test('the container yields the card width the top of the ladder was tuned for', () => {
+    //   container 2560 − 2×16 Container padding = 2528 of grid
+    //   the ladder's top rung is SIX columns from 2378; gap 16 → 5 gaps between them
+    //   → (2528 − 5×16) / 6 = 408 px per card.
     const GUTTER = 16;
-    const columns = 12 / LISTING_GRID_SPAN.xl;
     const usable = LISTING_STORE_CONTAINER_SIZE - APPS_CONTAINER_GUTTER;
+    expect(usable).toBe(2528);
+    const columns = listingGridColumnsAt(usable);
     const cardWidth = (usable - GUTTER * (columns - 1)) / columns;
-    expect(columns).toBe(4);
-    expect(cardWidth).toBe(460);
+    expect(columns).toBe(6);
+    expect(cardWidth).toBe(408);
+    // 🔴 THE PAIRING, AS A RELATIONSHIP RATHER THAN TWO NUMBERS: a container change
+    // that outran the ladder would land cards under the floor the ladder exists to
+    // hold, and this is what notices.
+    expect(cardWidth).toBeGreaterThanOrEqual(LISTING_CARD_MIN_WIDTH);
+  });
+
+  test('🔴 the retired container widths still produce the column counts they shipped', () => {
+    // The ultrawide pass must not have moved anything BELOW its own new territory.
+    // 1600 and 1920 are the two container widths this store has actually shipped at;
+    // both still resolve to four columns, at the card widths those passes measured.
+    for (const [container, columns, cardWidth] of [
+      [1600, 4, 380],
+      [1920, 4, 460],
+    ] as const) {
+      const usable = container - APPS_CONTAINER_GUTTER;
+      expect(listingGridColumnsAt(usable), `container ${container}`).toBe(columns);
+      expect((usable - 16 * (columns - 1)) / columns, `container ${container}`).toBe(cardWidth);
+    }
+    // The `xl` SPAN is still four columns — the legacy object the narrow half of the
+    // ladder is derived from has not been quietly re-tuned.
+    expect(12 / LISTING_GRID_SPAN.xl).toBe(4);
   });
 });
 

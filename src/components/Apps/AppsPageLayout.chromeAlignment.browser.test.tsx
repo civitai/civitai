@@ -15,7 +15,9 @@
  *
  * — a 170px left / 340px width spread at 1440, and 410px / 820px at 2560. The
  * container is now uniform and the narrowing moved into the BODY, so every row of
- * that table collapses to one pair.
+ * that table collapses to one pair. (That table is a record of the PRE-FIX state and
+ * of the 1920 cap it was measured under; the uniform container is 2560 today, which is
+ * why the @2560 numbers below no longer match this column.)
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
  * Vitest browser-mode `component` project, which CI runs only as the preview
@@ -97,9 +99,18 @@ const ROUTES: { route: string; measure?: number }[] = [
 /**
  * The container's own geometry at each viewport, as LITERALS.
  *
- * Container `max-width: 1920`, `padding-inline: 16`, `margin-inline: auto`. So:
+ * Container `max-width: 2560`, `padding-inline: 16`, `margin-inline: auto`. So:
  *   1440 → narrower than the cap, full-bleed: left 16, content 1440 − 32 = 1408.
- *   2560 → capped at 1920, centred: left (2560 − 1920)/2 + 16 = 336, content 1888.
+ *   2560 → exactly the cap, still full-bleed: left 16, content 2560 − 32 = 2528.
+ *   3440 → capped, CENTRED: left (3440 − 2560)/2 + 16 = 456, content 2528.
+ *
+ * 🔴 THE THIRD ROW EXISTS BECAUSE THE SECOND STOPPED BEING THE CENTRED CASE. While the
+ * cap was 1920, a 2560 viewport exercised the centred branch; raising it to 2560 made
+ * that row full-bleed like the first, so BOTH rows would have measured the same branch
+ * and the `margin-inline: auto` half of the layout would have gone unmeasured. 3440 (a
+ * common ultrawide) restores it. Do not delete the row that is currently past the cap
+ * without adding another one — that is the branch a re-introduced per-page container
+ * width would show up in most loudly.
  *
  * 🔴 These are the POSITIVE CONTROL. "Every route agrees" is satisfied by every route
  * measuring 0, which is exactly what an unloaded stylesheet produces. Pinning the
@@ -107,7 +118,8 @@ const ROUTES: { route: string; measure?: number }[] = [
  */
 const VIEWPORTS = [
   { width: 1440, height: 900, navLeft: 16, navWidth: 1408 },
-  { width: 2560, height: 1440, navLeft: 336, navWidth: 1888 },
+  { width: 2560, height: 1440, navLeft: 16, navWidth: 2528 },
+  { width: 3440, height: 1440, navLeft: 456, navWidth: 2528 },
 ] as const;
 
 const px = (n: number) => Math.round(n * 100) / 100;
