@@ -127,7 +127,7 @@ A **thin-client / token-introspection** model: spokes hold zero shared TS and in
 - ❌ A network hop per auth check — you'd **throw away the stateless-JWT win you already have**.
 - ❌ You'd still want a tiny client wrapper anyway.
 
-**Recommendation: thick client (the package).** It matches the existing stateless-JWT + civ-token design and keeps verification local. Reserve introspection only if a non-JS app ever needs auth.
+**Recommendation: thick client (the package).** It matches the existing stateless-JWT + civ-token design and keeps verification local. Introspection now ships as a narrow carve-out rather than the general model: `POST /api/auth/oauth/introspect` (RFC 7662) exists for **link-service**, which is handed an *opaque* `civitai_…` OAuth access token by the Civitai Link desktop app and so has nothing to verify locally. It is gated to confidential clients on the hub's `OAUTH_INTROSPECTION_CLIENT_IDS` allowlist; session verification everywhere else still goes through the package. See [oauth-developer-docs.md](./oauth-developer-docs.md#token-introspection) and [../features/civitai-link.md](../features/civitai-link.md).
 
 > **How the package verifies** — symmetric shared secret vs. asymmetric JWKS — is its own decision, and it determines whether auth changes force consumer redeploys. See [auth-verification-strategy.md](./auth-verification-strategy.md) (Path A vs Path C). Both keep verification local; C removes the shared-secret blast radius and makes key/provider/token changes consumer-redeploy-free.
 
