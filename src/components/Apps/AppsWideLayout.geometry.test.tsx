@@ -9,17 +9,29 @@
  * errored — the extra 640px simply became PADDING, which on a `space-between` row lands
  * entirely between a row's content and the control that acts on it.
  *
- * Two mechanisms answer that, and both are only observable as PIXELS:
+ * Two mechanisms answer that:
  *
  *   · `AppsTableColgroup` — percentage widths on every column except the primary, which
- *     is left `auto` so the surplus lands there. A `<colgroup>` in the WRONG PLACE (after
- *     `<thead>`) is ignored SILENTLY; a ledger with the wrong column count mis-assigns
- *     widths silently; and neither shows up in the DOM as anything but a correct-looking
- *     `<col>` list. `__tests__/appsWideLayout.test.ts` pins the data and the wiring and
- *     cannot see any of that.
+ *     is left `auto` so the surplus lands there.
  *   · `AppsCardGrid` — `/apps/installed`'s cards step to a second column exactly where the
  *     surplus appeared, so a card's own width stops tracking the container and the
  *     name→Manage gap stops growing.
+ *
+ * 🔴 THE SPLIT WITH THE UNIT TIER IS NOT WHAT THIS PARAGRAPH ORIGINALLY SAID. It claimed a
+ * misplaced `<colgroup>` is "ignored SILENTLY" and that `__tests__/appsWideLayout.test.ts`
+ * "cannot see any of that". Both halves were refuted by mutation, in opposite directions:
+ *
+ *   - a `<colgroup>` moved AFTER `<Table.Tbody>` changed **no rendered width at all** (all
+ *     eight assertions here stayed green), because React inserts nodes through the DOM API
+ *     so the HTML parser's table foster-parenting never runs and Chromium honours the
+ *     columns wherever the element sits — while the unit file's structural guard went red;
+ *   - a `<colgroup>` DELETED entirely does turn these assertions red, which is the positive
+ *     control proving that green was about placement rather than about this tier being
+ *     blind.
+ *
+ * So: PLACEMENT and ledger↔table COLUMN COUNT are owned by `__tests__/appsWideLayout.test.ts`
+ * (AST, per-table, in the blocking tier). WIDTHS are owned here. Neither is a substitute
+ * for the other, and the sentence that said one of them saw everything was wrong.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * 🔴 WHY THE `geometry` PROJECT AND NOT `component`
@@ -86,7 +98,39 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // only network this file's tree reaches.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } } },
+  trpc: {
+    useUtils: () => ({
+      blocks: {
+        listActivePreviews: { invalidate: vi.fn() },
+        getReviewStatus: { invalidate: vi.fn() },
+      },
+    }),
+    blocks: {
+      getNavSummary: { useQuery: () => ({ data: undefined }) },
+      // `ActivePreviewsPanel`'s own read. One LIVE preview, so both of its buttons render
+      // — the shape the +563.88px gap was measured on.
+      listActivePreviews: {
+        useQuery: () => ({
+          data: {
+            cap: 3,
+            active: [
+              {
+                publishRequestId: 'pr_1',
+                slug: 'lighthouse',
+                version: '1.0.0',
+                state: 'preview-live',
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          },
+          error: null,
+          isFetching: false,
+          refetch: vi.fn(),
+        }),
+      },
+      teardownPreview: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    },
+  },
 }));
 // `/apps/installed`'s module calls `createServerSideProps` at import time, which pulls the
 // server graph into a browser bundle. Stubbed so the page's `InstalledAppCard` — the REAL
@@ -100,6 +144,7 @@ const { AppsCardGrid } = await import('~/components/Apps/appsWideLayout');
 const { UnifiedReviewList } = await import('~/components/Apps/UnifiedReviewList');
 const { MyAppsBodyView } = await import('~/components/Apps/MyAppsBody');
 const { InstalledAppCard } = await import('~/pages/apps/installed');
+const { ActivePreviewsPanel } = await import('~/components/Apps/ActivePreviewsPanel');
 
 /** The container's own content width at each fixture viewport, as literals. */
 const NARROW = { width: 1440, height: 900, content: 1408 } as const;
@@ -325,10 +370,10 @@ describe('/apps/review — the queue table spends the width on its App column', 
     const widths = headerWidths();
     const table = document.querySelector('table')!.getBoundingClientRect().width;
     for (const [index, share] of [
-      [0, 10],
-      [2, 12],
-      [3, 14],
-      [4, 10],
+      [0, 6],
+      [2, 6],
+      [3, 9],
+      [4, 6],
     ] as const) {
       expect(px(widths[index]), `column ${index} should be ${share}% of ${px(table)}`).toBeCloseTo(
         (share / 100) * table,
@@ -370,6 +415,80 @@ describe('/apps/mine — the author table spends the width on its App column', (
     await renderRoute(body(), WIDE);
     expect(widthOf('apps-mine-col-app')).toBe(px(headerWidths()[0]));
     await cleanup();
+  });
+});
+
+// ── table route 3: /apps/review's ACTIVE PREVIEWS — the payload of round 1 ───
+
+describe('/apps/review — the active-previews panel keeps its buttons near its rows', () => {
+  /**
+   * 🔴 THE TABLE THE FIRST PASS EXPOSED. `/apps/review` renders four tables and the change
+   * that removed its 1368 body cap ledgered two of them. Measured on this one WITHOUT a
+   * ledger, 1440 → 2560:
+   *
+   *   columns  228.02 | 165.17 | 146.45 | 152.05 | 682.31
+   *            413.89 | 299.83 | 265.84 | 276.00 | 1238.44
+   *   slug → "Tear down"  609.67 → 1173.55
+   *
+   * i.e. removing the cap re-opened, on this table, exactly the defect the cap had been
+   * suppressing. The ledger makes the ACTION column primary (case (b)), so the four short
+   * data columns stay at their own widths and the surplus lands past the buttons.
+   */
+  function slugToTeardownGap(): number {
+    const slug = document.querySelector('table tbody code');
+    const buttons = Array.from(document.querySelectorAll('table tbody button'));
+    const teardown = buttons.find((b) => (b.textContent ?? '').includes('Tear down'));
+    if (!slug || !teardown) {
+      throw new Error(
+        `the previews panel did not render its row (slug=${!!slug} teardown=${!!teardown})`
+      );
+    }
+    // The glyphs' own box, not the cell's — a cell already spans its column at every width.
+    const range = document.createRange();
+    range.selectNodeContents(slug);
+    return px(teardown.getBoundingClientRect().left - range.getBoundingClientRect().right);
+  }
+
+  const panel = () => <ActivePreviewsPanel />;
+
+  test('the panel renders its row at all (guards a vacuous measurement)', async () => {
+    // Every assertion below is a comparison of two numbers read off this row. If the trpc
+    // fixture stopped resolving, the panel returns `null` and the helpers throw — but the
+    // COUNT is what proves the fixture shape is still the two-button LIVE one.
+    await renderRoute(panel(), WIDE);
+    expect(document.querySelectorAll('table tbody tr')).toHaveLength(1);
+    // ONE `<button>` (Tear down) plus ONE `<a>` — Mantine's `component="a"` Button
+    // renders an anchor, so a `button` count of 2 would be wrong, not stricter.
+    expect(document.querySelectorAll('table tbody button')).toHaveLength(1);
+    expect(document.querySelectorAll('table tbody a')).toHaveLength(1);
+    expect(headerWidths()).toHaveLength(5);
+    await cleanup();
+  });
+
+  test('🔴 the slug → "Tear down" gap does NOT grow with the container', async () => {
+    const { narrow, wide } = await atBothWidths(panel, slugToTeardownGap);
+    expect(narrow, 'the narrow fixture measured no gap at all').toBeGreaterThan(0);
+    expect(
+      wide,
+      `the slug→"Tear down" gap went ${narrow} → ${wide} across a ${CONTAINER_DELTA}px ` +
+        'container increase; the measured no-ledger baseline for this table was ' +
+        '609.67 → 1173.55, which is what removing the 1368 cap re-opened'
+    ).toBeLessThanOrEqual(narrow + 1);
+  });
+
+  test('…because the ACTION column is the one that grows here', async () => {
+    // The mechanism, separately from its consequence — and the direct contrast with the
+    // other two table blocks, where the FIRST columns grow instead. Same module, opposite
+    // primary, because this table has no column that can use the room.
+    const { narrow, wide } = await atBothWidths(panel, headerWidths);
+    const actionDelta = wide[4] - narrow[4];
+    const dataDelta = wide.reduce((s, w, i) => (i === 4 ? s : s + (w - narrow[i])), 0);
+    expect(actionDelta).toBeGreaterThan(0);
+    expect(
+      actionDelta,
+      `the action column took ${px(actionDelta)} of ${CONTAINER_DELTA}px and the four data ` +
+        `columns took ${px(dataDelta)} between them`
+    ).toBeGreaterThan(dataDelta);
   });
 });
 
@@ -425,5 +544,35 @@ describe('/apps/installed — the space-between row keeps its control near its c
     // Two 1fr tracks with a 16px gap: (2528 − 16) / 2 = 1256.
     expect(wide).toBe(1256);
     expect(wide).toBeLessThan(narrow);
+  });
+
+  test('🔴 ON A PHONE the card fits the screen — the `min(100%, …)` is load-bearing', async () => {
+    // 🔴 THE ONE ASSERTION THAT MAKES THAT `min()` MORE THAN A COMMENT. Without it the
+    // track floor is a flat 1200px, and neither of this file's other fixtures is narrower
+    // than that — so dropping it passed the whole suite. Measured at 390×844 with the
+    // `min()` removed: gridBox 358, gridScroll 1200, child 1200, and
+    // `document.scrollWidth` UNCHANGED — the card is CLIPPED at the grid's edge with no
+    // scrollbar and no page overflow to notice it by, which is worse than the "overflows
+    // horizontally" the docstring used to claim. This route is phone-reachable, and this
+    // component converted three of its lists from `Stack` to grid.
+    const PHONE = { width: 390, height: 844 } as const;
+    const { observed } = await renderAtViewport(
+      <AppsPageLayout title="Fixture">{grid()}</AppsPageLayout>,
+      PHONE
+    );
+    expect(observed).toEqual({ width: PHONE.width, height: PHONE.height });
+    const gridEl = document.querySelector('[data-apps-card-grid]') as HTMLElement;
+    const child = gridEl.firstElementChild as HTMLElement;
+    const gridBox = px(gridEl.getBoundingClientRect().width);
+    const childBox = px(child.getBoundingClientRect().width);
+    // ONE column, and the card is inside the grid rather than hanging out of it.
+    expect(childBox).toBeLessThanOrEqual(gridBox);
+    // …and the grid is not itself a scroll container hiding the overflow.
+    expect(gridEl.scrollWidth).toBeLessThanOrEqual(Math.ceil(gridBox));
+    // The positive control on the two assertions above: the grid really is narrower than
+    // the track floor here, so this fixture CAN see the defect. Without this, a viewport
+    // that quietly grew past 1200 would make both checks vacuous.
+    expect(gridBox).toBeLessThan(1200);
+    await cleanup();
   });
 });

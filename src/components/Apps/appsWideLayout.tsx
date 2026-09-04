@@ -19,18 +19,18 @@ import {
  * 🔴 THE DEFECT IS A GAP, NOT A CLIP. Nothing was cut off — a table's columns simply
  * stayed at their content width and the table distributed the extra 640px as PADDING,
  * which on a `space-between` row lands entirely between a row's content and the control
- * that acts on it. Measured on `/apps/installed`, whose four
- * `Group justify="space-between" wrap="nowrap"` rows (lines 146, 231, 362, 415) each
- * moved their button 640px further from the name it belongs to. `/apps/review` had the
- * same shape and had been "fixed" by CAPPING THE PAGE at 1368 — a workaround this
- * module replaces, so that cap is deleted.
+ * that acts on it. Measured on `/apps/installed`, where THREE
+ * `Group justify="space-between" wrap="nowrap"` rows (in `PinnedInstallRow`,
+ * `InstalledAppCard` and `HiddenBlocksPanel`) each moved their button 640px further from
+ * the name it belongs to. `/apps/review` had the same shape and had been "fixed" by
+ * CAPPING THE PAGE at 1368 — a workaround this module replaces, so that cap is deleted.
  *
  * TWO MECHANISMS, one per surface shape:
  *
  *   · A TABLE takes {@link AppsTableColgroup}. Every column except the PRIMARY one gets
  *     a percentage width; the primary gets none, so CSS's automatic table layout hands
- *     it everything left over. That is the "proportional columns, primary absorbs the
- *     slack" rule, and it is why there is exactly one `null` in each ledger below.
+ *     it everything left over. That is why there is exactly one `null` in each ledger
+ *     below — and WHICH column gets it is a decision, not a default; see the two cases.
  *   · A CARD LIST takes {@link AppsCardGrid}. Cards go SIDE BY SIDE once the container
  *     is wide enough for two of {@link APPS_CARD_LIST_MIN_COLUMN}, so the surplus buys
  *     a column instead of stretching one card across the screen.
@@ -39,6 +39,31 @@ import {
  * container pass exists to stop doing, and a cap is invisible to every guard here —
  * see `__tests__/appsPageWidths.test.ts` for the taxonomy pins that keep these routes
  * in `APPS_FULL_MEASURE_PAGES`.
+ *
+ * 🔴 WHICH COLUMN IS PRIMARY IS A DECISION WITH TWO CASES, AND GETTING IT WRONG MAKES THE
+ * DEFECT WORSE RATHER THAN BETTER. The slack has to land somewhere; "the primary column
+ * absorbs it" only helps when that column can USE it.
+ *
+ *   (a) A column with genuinely VARIABLE, long content — an app name, a free-text reason,
+ *       an event detail — is primary. The slack becomes headroom for real content that
+ *       would otherwise truncate.
+ *   (b) A table where NO column has that — every cell a slug, a badge, a date — takes its
+ *       LAST (action) column as primary instead. A cell's content is left-aligned, so the
+ *       control sits at the action column's LEFT edge: the slack then lands to the RIGHT
+ *       of the button, AFTER the row, instead of between the row and its control.
+ *
+ * `ActivePreviewsPanel` is why this is written down. Its first ledger made `App` primary
+ * on the general rule — and `App` is a short `<Code>{slug}</Code>`, so 49% of the table
+ * became dead space sitting *between* the slug and the "Tear down" button. Modelled
+ * against the measured no-ledger baseline that is a WIDER gap than doing nothing at all.
+ * Case (b) puts the same slack past the button, where nothing has to be scanned across it.
+ *
+ * 🔴 AND THE FIXED SHARES ARE SIZED TO CONTENT, NOT SPREAD TO FILL. A non-primary
+ * percentage that exceeds what its cell needs at the wide width is padding again, just
+ * relabelled — it re-creates a slice of the defect between every pair of columns. Each
+ * number below is roughly the cell's own width at the CURRENT container, which is small;
+ * at narrow widths min-content wins anyway (see the next paragraph), so the visible effect
+ * on a 1440 monitor is nil.
  *
  * ⚠️ A PERCENTAGE IS A PREFERENCE, NOT A FLOOR-AND-CEILING. Under automatic table layout
  * a column is never squeezed below its MIN-CONTENT width, so on a narrow viewport a
@@ -117,9 +142,9 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
   /** Pending / Rejected: Kind · App · Submitter · date · action. */
-  withoutDeploy: [10, null, 12, 14, 10] as AppsTableColumns,
+  withoutDeploy: [6, null, 6, 9, 6] as AppsTableColumns,
   /** Approved: Kind · App · Submitter · date · Deploy · action. */
-  withDeploy: [8, null, 11, 13, 12, 8] as AppsTableColumns,
+  withDeploy: [5, null, 5, 8, 8, 5] as AppsTableColumns,
 } as const;
 
 /**
@@ -130,7 +155,7 @@ export const APPS_REVIEW_QUEUE_COLUMNS = {
  * its 12% is a floor rather than an aspiration; Status holds up to three badges plus
  * the completeness advisory, which is why it is the widest fixed share.
  */
-export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 10, 24, 11];
+export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 10, 5];
 
 /**
  * The `/apps/review` MANAGE-LISTINGS table (`AppListingsModerationTable`) —
@@ -140,7 +165,7 @@ export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 10, 24, 11];
  * share; it still cannot be primary, because its natural width is set by its buttons
  * and handing it the slack would push the buttons away from the row again.
  */
-export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 14, 12, 10, 22];
+export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 5, 5, 4, 13];
 
 /**
  * The revenue attributions table (`RevenuePanel`) — Date · [App] · **Scope** · Buzz ·
@@ -155,10 +180,88 @@ export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 14, 12, 10, 22
  */
 export const APPS_REVENUE_COLUMNS = {
   /** `/apps/revenue`: Date · App · Scope · Buzz · Gross · Your share · Status. */
-  withApp: [8, null, 12, 10, 9, 11, 11] as AppsTableColumns,
+  withApp: [5, null, 7, 5, 5, 6, 7] as AppsTableColumns,
   /** `/apps/<appBlockId>/revenue`: Date · Scope · Buzz · Gross · Your share · Status. */
-  scoped: [10, null, 12, 11, 13, 13] as AppsTableColumns,
+  scoped: [6, null, 6, 6, 7, 8] as AppsTableColumns,
 } as const;
+
+/**
+ * The `/apps/review` ACTIVE-PREVIEWS panel (`ActivePreviewsPanel`) —
+ * **App** · Version · State · Age · actions.
+ *
+ * 🔴 THIS LEDGER IS THE ONE THAT PROVES THE POINT OF ENUMERATING THEM. `/apps/review`
+ * renders FOUR tables, and the first pass gave ledgers to two of them while removing the
+ * 1368 cap that had been holding the other two down. Measured on the real panel in the
+ * real layout, 1440 → 2560, with no ledger:
+ *
+ *   columns  228.02 | 165.17 | 146.45 | 152.05 | 682.31   (1440)
+ *            413.89 | 299.83 | 265.84 | 276.00 | 1238.44  (2560)
+ *   slug → "Tear down" gap   609.67 → 1173.55   (+563.88)
+ *
+ * i.e. half the container's 1120px delta landed between a row's identity and the control
+ * acting on it — the exact phenomenon the header of this file calls THE DEFECT, on the
+ * route whose cap this change removes. Uncapping a page is a claim about EVERY table on
+ * it, which is why `__tests__/appsWideLayout.test.ts` now enumerates them instead of
+ * naming the ones somebody remembered.
+ *
+ * 🔴 THE PRIMARY IS THE **ACTION** COLUMN — case (b) at the top of this file, and this
+ * table is the worked example. Every data cell here is short and fixed in kind: a slug, a
+ * version, a state badge, a relative age. Making `App` primary on the general rule put the
+ * slack *inside* the column the reader has to scan across to reach the button, which is
+ * the defect with extra steps. With the action column primary, the surplus lands past the
+ * buttons.
+ *
+ * 🔴 AND THE FOUR SHARES ARE DELIBERATELY TOO SMALL TO BIND — this is the shrink-to-content
+ * idiom, not a proportion. A percentage is a preference floored at min-content, so a share
+ * smaller than the cell needs resolves to the cell's own width at EVERY container width,
+ * which is what makes those four columns CONSTANT. It has to be spelled this way here:
+ * ordinary content-sized shares (9/7/6/6) still grow with the table, and measured on this
+ * fixture that alone moved the slug → "Tear down" gap 510.38 → 823.95. The same numbers
+ * with these shares hold it flat.
+ */
+export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null];
+
+/**
+ * The `/apps/review` REPORTS tab (`OffsiteReportsQueue`) —
+ * **App** · Reason · Reporter · Reported · Status · actions.
+ *
+ * 🔴 REASON IS PRIMARY, NOT App — case (a), applied to the column that is actually
+ * variable rather than the one that names the row. `App` is a slug: knowing which listing
+ * a report is about takes ~150px and no more. `Reason` is operator-written free text, and
+ * it is the thing the moderator has to read before deciding. Giving the slack to the slug
+ * would widen an identifier while the sentence stayed wrapped.
+ */
+export const APPS_OFFSITE_REPORTS_COLUMNS: AppsTableColumns = [10, null, 6, 7, 5, 8];
+
+/**
+ * The `/apps/installed` ACTIVITY tab (`AppActivityPanel`) —
+ * When · App · Action · **Detail** · Status.
+ *
+ * 🔴 THE PRIMARY IS `Detail`, NOT `App`, and that is the only ledger here where it moves.
+ * Every other row in this module is identified by an app and scanned down that column;
+ * this one is a per-EVENT feed where the app repeats and the variable-length cell is what
+ * the app did (an endpoint, a Buzz amount, a scope). Handing the slack to `App` would
+ * widen a column of repeated slugs while the sentence that matters stayed truncated.
+ */
+export const APPS_ACTIVITY_COLUMNS: AppsTableColumns = [7, 8, 10, null, 6];
+
+/**
+ * The agent code-review report's scope table (`ReportTabs`) —
+ * Scope · Used · Justified · Sensitive · Evidence · **Notes**.
+ *
+ * 🔴 NOTES IS PRIMARY. `Scope` is a fixed-shape identifier (`models:read:self`); `Used`,
+ * `Justified` and `Sensitive` are booleans. The two free-text columns are `Evidence` and
+ * `Notes`, and only one can be primary — `Evidence` therefore takes the largest FIXED
+ * share and `Notes`, which is the reviewer's own prose and the least bounded of the two,
+ * takes the slack.
+ *
+ * Reachable on `/apps/review/[publishRequestId]` (via `OnsiteReviewModalBody` →
+ * `AgentReviewPanel`), which takes the full container — so it is in scope even though it
+ * is flag-gated (`appBlocksAgenticReview`) and also renders inside a modal elsewhere. A
+ * ledger is inert in the modal (the table is narrower than the sum of its min-contents
+ * there) and load-bearing on the page, which is the right way round.
+ */
+export const APPS_AGENT_REPORT_SCOPE_COLUMNS: AppsTableColumns = [7, 5, 6, 6, 22, null];
 
 /** Every ledger in this module, so a guard can sweep them all rather than a sample. */
 export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns>> = {
@@ -168,6 +271,10 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
   'moderation listings': APPS_MOD_LISTINGS_COLUMNS,
   'revenue (unscoped)': APPS_REVENUE_COLUMNS.withApp,
   'revenue (scoped)': APPS_REVENUE_COLUMNS.scoped,
+  'active previews': APPS_ACTIVE_PREVIEWS_COLUMNS,
+  'offsite reports': APPS_OFFSITE_REPORTS_COLUMNS,
+  'app activity': APPS_ACTIVITY_COLUMNS,
+  'agent report scopes': APPS_AGENT_REPORT_SCOPE_COLUMNS,
 };
 
 /**
@@ -235,11 +342,17 @@ export const APPS_LEGACY_CONTENT_WIDTH = APPS_LEGACY_CONTAINER_WIDTH - APPS_CONT
 /**
  * A card list that spends surplus width on COLUMNS rather than on stretching one card.
  *
- * Replaces a `<Stack gap="md">` of full-width cards. `minmax(min(100%, N), 1fr)` — the
- * inner `min()` is load-bearing: a bare `minmax(1200px, 1fr)` sets a track FLOOR of
- * 1200px, so on any viewport narrower than that the grid overflows horizontally instead
- * of collapsing to one full-width card. With it, a narrow screen renders exactly what a
- * `Stack` did.
+ * Replaces a `<Stack gap="…">` of full-width cards.
+ *
+ * 🔴 THE INNER `min(100%, N)` IS LOAD-BEARING, AND ITS FAILURE MODE IS WORSE THAN THIS
+ * COMMENT USED TO SAY. It claimed a bare `minmax(1200px, 1fr)` "overflows horizontally".
+ * Measured at 390×844 with the `min()` removed: `gridBox=358`, `gridScroll=1200`,
+ * `child=1200`, and `document.scrollWidth` **unchanged** — so the card is 1200px wide
+ * inside a 358px grid, CLIPPED, with no scrollbar and no page-level overflow to notice
+ * it by. Nothing on screen says the content is cut off. That matters because this
+ * component converted three phone-reachable `Stack`s on `/apps/installed` into grids, so
+ * the narrow case is a real users' case rather than a theoretical one, and it is pinned
+ * at a phone viewport in `AppsWideLayout.geometry.test.tsx`.
  *
  * `alignItems: start` is deliberate and is NOT the store grid's bug: these cards are
  * independent blocks with nothing bottom-pinned inside them (compare
@@ -250,18 +363,32 @@ export const APPS_LEGACY_CONTENT_WIDTH = APPS_LEGACY_CONTAINER_WIDTH - APPS_CONT
 export function AppsCardGrid({
   children,
   testId,
+  gap = APPS_CARD_LIST_GAP,
 }: {
   children: ReactNode;
   /** Optional `data-testid`, so a page's existing list id survives the swap. */
   testId?: string;
+  /**
+   * Track gap in px. Defaults to {@link APPS_CARD_LIST_GAP} (Mantine `md`).
+   *
+   * 🔴 IT IS A PROP BECAUSE THE PROVENANCE RULE APPLIES TO SPACING TOO. The lists this
+   * replaced did not all use the same gap — `/apps/installed`'s Hidden tab was
+   * `<Stack gap="sm">` (12px) — and defaulting every one of them to 16 would have moved
+   * something a 1440 monitor shows, which is precisely what
+   * `APPS_CARD_LIST_MIN_COLUMN`'s "nothing a 1440 or 1920 monitor shows changes" claim
+   * forbids. Both gaps yield the SAME column ladder at both container widths (pinned in
+   * `__tests__/appsWideLayout.test.ts`), so carrying the original number costs nothing.
+   */
+  gap?: number;
 }) {
   return (
     <div
       data-testid={testId}
       data-apps-card-grid=""
+      data-apps-card-grid-gap={String(gap)}
       style={{
         display: 'grid',
-        gap: APPS_CARD_LIST_GAP,
+        gap,
         alignItems: 'start',
         gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${APPS_CARD_LIST_MIN_COLUMN}px), 1fr))`,
       }}

@@ -139,9 +139,16 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * `Stack` of full-width cards whose header rows are
  * `<Group justify="space-between" wrap="nowrap">` — content on the left, the control
  * that acts on it on the right. Raising the container to 2560 therefore moved the
- * Manage / Restore button **640px further from the app name it belongs to** (four such
- * rows: `src/pages/apps/installed.tsx` lines 146, 231, 362, 415), because the row's
- * left cell is `flex: 1` and the surplus lands inside it as dead space.
+ * Manage / Restore button **640px further from the app name it belongs to**, because the
+ * row's left cell is `flex: 1` and the surplus lands inside it as dead space.
+ *
+ * ⚠️ THREE ROWS, NOT FOUR, and the correction is worth keeping because the fourth is a
+ * reminder that the SHAPE is not the defect. The rows are in `PinnedInstallRow`,
+ * `InstalledAppCard` and `HiddenBlocksPanel` (named rather than cited by line number —
+ * this file's own edits moved every one of the line numbers first quoted here).
+ * `ScopeGrantsPanel`'s row is `justify="space-between"` too and NOTHING moved in it: it
+ * has a SINGLE flex child and no control, so there are no two ends for the space to open
+ * between. A grep for the justify prop over-counts; what matters is content-plus-control.
  *
  * A body cap would fix the gap by refusing the width, which is the thing the container
  * pass exists to stop doing. So the width is spent on COLUMNS instead: the card list is
@@ -155,11 +162,20 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * 2416 of content. Both rungs are pinned in `__tests__/appsWideLayout.test.ts`; the
  * rendered consequence (the gap does not grow) is in
  * `AppsWideLayout.geometry.test.tsx`.
+ *
+ * 🔴 "NOTHING CHANGES" IS A CLAIM ABOUT SPACING AS WELL AS COLUMN COUNT, which is why
+ * `AppsCardGrid` takes a `gap`. The lists it replaced did not share one: the Hidden tab
+ * was `<Stack gap="sm">` (12px), the other two `md` (16px). Defaulting all three to 16
+ * would have moved 4px on a tab a 1440 monitor shows — small, but the sentence above
+ * says NOTHING, and a claim that is 99% true is the kind nobody re-checks. Both gaps
+ * produce the SAME rungs at both container widths, so carrying the original number is
+ * free; that equivalence is asserted rather than assumed.
  */
 export const APPS_CARD_LIST_MIN_COLUMN = 1200;
 
-/** The gap between card-grid tracks, px — Mantine's `md` spacing, stated as a number
- *  because the column arithmetic above needs it. */
+/** The DEFAULT gap between card-grid tracks, px — Mantine's `md` spacing, stated as a
+ *  number because the column arithmetic above needs it. A list that used a different
+ *  `Stack` gap passes its own; see `AppsCardGrid`'s `gap` prop. */
 export const APPS_CARD_LIST_GAP = 16;
 
 /**

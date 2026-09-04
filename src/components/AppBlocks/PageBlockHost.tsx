@@ -347,9 +347,17 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *   1288  the widest ORDINARY civitai content measure — Mantine `xl` (1320
  *         border-box) is the widest container size in use across `src/pages`,
  *         and `APPS_TWO_COLUMN_DETAIL_MEASURE` (the store-preview page an app is
- *         usually launched FROM) is exactly it. An app capped below this would
+ *         usually launched FROM) starts there. An app capped below this would
  *         render narrower than the page that linked to it, which reads as a
  *         downgrade rather than a frame.
+ *         ⚠️ THAT CONSTANT IS NO LONGER A SINGLE NUMBER, and the sentence above used
+ *         to say "is exactly it". It is a BAND now — `{min: 1288, max: 1600}` — so on
+ *         a wide screen the store-preview page reaches 1600, which is EXACTLY this
+ *         cap rather than 312px below it. The conclusion survives (an app is never
+ *         narrower than the page that launched it) but the MARGIN this paragraph
+ *         implied is gone: at the top of that band the two are equal. If the
+ *         store-preview band is ever raised again, this cap stops being a ceiling
+ *         over it and the reasoning here has to be re-made rather than re-read.
  *   2560  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
  *         outlier for a reason that does NOT transfer: it exists for card GRIDS
  *         and wide TABLES (`appsPageWidths.ts` records the measurements), which
@@ -359,8 +367,13 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *         to 2560. The gap between the cap and the outlier therefore WIDENED, which
  *         does not by itself justify widening the cap — see below.
  *
- * 1600 is above every ordinary content measure on the site and below the grid
- * container, i.e. no app is ever narrower than a civitai page. It also clears the
+ * 1600 is at-or-above every ordinary content measure on the site and below the grid
+ * container, i.e. no app is ever narrower than a civitai page. ⚠️ "AT-OR-ABOVE" IS THE
+ * CORRECTION: this read "above every ordinary content measure" while
+ * `APPS_TWO_COLUMN_DETAIL_MEASURE` was the fixed 1288. It is a band now, topping out at
+ * exactly 1600, so on a wide screen the store-preview page and this cap are the SAME
+ * width. The claim that matters — no app renders narrower than the page that launched it
+ * — still holds at equality; the headroom it used to have does not. It also clears the
  * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
  * that has already thought about its own width, while leaving a two-pane shell
  * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
@@ -371,9 +384,11 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * used to appear here and it is a moving target: the apps container has taken three
  * values over time — 1600 → 1920 → 2560 — without any of them being a statement about
  * how wide a THIRD-PARTY app should be. The cap's real justification is the two bounds above
- * it does control — above every ordinary content measure, and comfortably clear of
- * the widest app-imposed well — neither of which moves when the apps container
- * does. Widening 1600 is a separate decision with its own evidence.
+ * it does control — at-or-above every ordinary content measure, and comfortably clear of
+ * the widest app-imposed well — neither of which moves when the apps CONTAINER does.
+ * (The store-preview band's ceiling does sit exactly on the first of those two, so it is
+ * a bound this cap now touches rather than clears; raising that band again would invert
+ * it, and this reasoning would have to be re-made.) Widening 1600 is a separate decision with its own evidence.
  *
  * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
  * rather than after it: Playable Collections. Re-read at its DEPLOYED ref

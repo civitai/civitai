@@ -4,6 +4,7 @@ import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurfac
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { AppsTableColgroup, APPS_ACTIVE_PREVIEWS_COLUMNS } from '~/components/Apps/appsWideLayout';
 
 /**
  * MOD REVIEW SANDBOX — global "Active previews (N / cap)" panel. Extracted from
@@ -110,9 +111,14 @@ export function ActivePreviewsPanel() {
         )}
       </Group>
       <Table verticalSpacing="xs" horizontalSpacing="md">
+        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. This panel is
+            the reason that module's guard ENUMERATES tables: `/apps/review` gave up its
+            1368 body cap, and measured at 1440 → 2560 without a ledger the gap between a
+            row's slug and its "Tear down" button grew 609.67 → 1173.55. */}
+        <AppsTableColgroup columns={APPS_ACTIVE_PREVIEWS_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>App</Table.Th>
+            <Table.Th data-testid="apps-active-previews-col-app">App</Table.Th>
             <Table.Th>Version</Table.Th>
             <Table.Th>State</Table.Th>
             <Table.Th>Age</Table.Th>

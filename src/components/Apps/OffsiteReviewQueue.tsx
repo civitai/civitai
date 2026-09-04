@@ -87,6 +87,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { AppsTableColgroup, APPS_OFFSITE_REPORTS_COLUMNS } from '~/components/Apps/appsWideLayout';
 
 /**
  * /apps/review — the OFF-SITE (external-link) pending review section (W13 P3a).
@@ -1349,6 +1350,9 @@ export function OffsiteReportsQueue() {
       ) : (
         <Card withBorder p={0}>
           <Table verticalSpacing="md" horizontalSpacing="md">
+            {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/review`
+                hosts this tab and no longer caps its body. */}
+            <AppsTableColgroup columns={APPS_OFFSITE_REPORTS_COLUMNS} />
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>App</Table.Th>

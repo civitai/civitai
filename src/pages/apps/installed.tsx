@@ -412,7 +412,10 @@ function HiddenBlocksPanel() {
   }
 
   return (
-    <AppsCardGrid testId="apps-installed-hidden-grid">
+    /* `gap={12}` — this list was `<Stack gap="sm">`, not `md`. Carrying its own number
+       keeps `APPS_CARD_LIST_MIN_COLUMN`'s "nothing a 1440 or 1920 monitor shows changes"
+       literally true on this tab; the column ladder is identical at both gaps. */
+    <AppsCardGrid testId="apps-installed-hidden-grid" gap={12}>
       {hidden.map((block) => (
         <Card key={block.blockInstanceId} withBorder padding="sm" radius="md">
           <Group justify="space-between" wrap="nowrap" gap="md" align="center">

@@ -20,6 +20,7 @@ import {
   READ_SCOPE_LABELS,
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
+import { AppsTableColgroup, APPS_ACTIVITY_COLUMNS } from '~/components/Apps/appsWideLayout';
 
 /**
  * Shared per-viewer app-activity timeline. Extracted from
@@ -358,6 +359,10 @@ export function AppActivityPanel({
   return (
     <Stack gap="sm">
       <Table>
+        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/installed`
+            hosts this tab and takes the full container; `Detail` is the primary column,
+            not `App`, because this is a per-EVENT feed where the app repeats. */}
+        <AppsTableColgroup columns={APPS_ACTIVITY_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
             <Table.Th>When</Table.Th>
