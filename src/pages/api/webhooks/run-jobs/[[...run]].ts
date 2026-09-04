@@ -5,6 +5,7 @@ import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-str
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
+import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -192,6 +193,7 @@ export const jobs: Job[] = [
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
   confirmMutes,
+  botAccountDetection,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
