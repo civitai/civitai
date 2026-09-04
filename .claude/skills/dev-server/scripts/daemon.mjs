@@ -23,7 +23,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
-import { samePath, canonicalPath } from './paths.mjs';
+import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { TestQueue } from './test-queue.mjs';
 import {
@@ -40,34 +40,10 @@ const skillDir = resolve(__dirname, '..');
 const projectRoot = resolve(skillDir, '../../..');
 const pidFile = resolve(skillDir, 'daemon.pid');
 
-// The checkout that owns the .git directory — the base of every env chain. This is NOT projectRoot:
-// the skill directory is committed, so a daemon launched from a worktree derives projectRoot as that
-// worktree, and the "fall back to the primary" half of every chain then points at a file the
-// worktree does not have. `git rev-parse --git-common-dir` resolves to the primary's `.git` from
-// inside any worktree, which is the only spelling of this that does not depend on where the process
-// was started. Falls back to projectRoot when git cannot answer, which is the pre-worktree behaviour.
-function resolvePrimaryCheckout() {
-  try {
-    const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
-      cwd: projectRoot,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      // The daemon has no console of its own, so every console child it starts without this
-      // allocates one — which Windows 11 hands to the default terminal app, popping a Windows
-      // Terminal window that takes focus. Piping stdio does not prevent the allocation.
-      windowsHide: true,
-      // This runs at module load, before the listener exists, so a wedged git would hang the daemon
-      // where `ensureDaemon` reports a bare "Failed to start daemon" with nothing naming git.
-      timeout: 5000,
-    }).trim();
-    if (gitCommonDir) return { path: resolve(gitCommonDir, '..'), derived: true, error: null };
-  } catch (e) {
-    return { path: projectRoot, derived: false, error: e.message };
-  }
-  return { path: projectRoot, derived: false, error: 'git named no common dir' };
-}
-
-const primaryResolution = resolvePrimaryCheckout();
+// The checkout that owns the .git directory — the base of every env chain, and since cli.mjs now
+// spawns this process from there, normally projectRoot as well. Still resolved rather than assumed:
+// a daemon started by hand from a worktree must not take that worktree as the base of every chain.
+const primaryResolution = resolvePrimaryCheckout(projectRoot);
 const primaryCheckout = primaryResolution.path;
 
 // Configuration
@@ -2274,6 +2250,11 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
+          // Where this process is running FROM, which the caller cannot derive: a daemon started
+          // before cli.mjs learned to spawn from the primary is still running out of a worktree and
+          // holds that directory open. `wt rm` reads this to name itself as the holder rather than
+          // blaming a stray shell.
+          skillDir,
           sessions: await listSessions(),
         }));
         return;

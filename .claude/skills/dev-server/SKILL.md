@@ -33,8 +33,8 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 
 ## Which node the daemon runs on — and why it is sticky
 
-The daemon is spawned with `process.execPath` (`cli.mjs:71`, `console.mjs:90`), i.e. **whatever node ran
-the CLI verb that first started it**. It then passes its own environment down to every `next dev` it
+The daemon is spawned with `process.execPath` (`startDaemon` in `cli.mjs` and `console.mjs`), i.e.
+**whatever node ran the CLI verb that first started it**. It then passes its own environment down to every `next dev` it
 supervises. So the node you happened to have on `PATH` the first time you typed any command above is the
 node the whole tree runs on, until someone shuts the daemon down — and nothing records which one that was.
 
@@ -191,6 +191,7 @@ node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD wa
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR and a prune
+node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
 
@@ -252,9 +253,11 @@ gitignored — a fresh copy of `env-modes.example` defines none, so `--prod all`
 fill it in. Adding a service is an edit to that file, not to the code.
 
 ⚠️ **`env-modes.local` does not fall through** the way `.env` now does. It is read from the skill
-directory of the daemon that is running (`env-modes.mjs`), so a daemon started from a worktree's own
-copy of the CLI finds none and applies no overlay at all. Start the daemon from the primary checkout,
-or the groups simply will not exist.
+directory of the daemon that is running (`env-modes.mjs`), and that file is gitignored, so it exists
+only in the primary checkout. The CLI and the console now always spawn the daemon from the primary
+(`resolveDaemonHome` in `scripts/paths.mjs`), so this is handled — but a daemon started **by hand**
+from inside a worktree, `node scripts/daemon.mjs`, still reads that worktree's skill directory, finds
+no `env-modes.local`, and applies no overlay at all.
 
 Several services have **no dev counterpart to move to at all** — `env-modes.mjs` lists orchestrator,
 payments, s3, clickhouse, notifications, feeds and opensearch in `PROD_ONLY_GROUPS`, and `auth-hub`
@@ -653,6 +656,12 @@ What's already handled:
   take the primary from the first entry of `git worktree list`, which git guarantees is the main
   worktree; before that, running them through a worktree's own CLI copy inverted every check and
   offered the real main checkout as removable.
+
+  **The daemon PROCESS also runs from there**, whichever worktree's CLI started it — script, pid file
+  and cwd all come from the primary (`resolveDaemonHome`). One daemon serves every tree, and a daemon
+  living inside one of them holds that directory open for its whole life, so `wt rm` on it failed
+  EBUSY for whoever finished their PR first. `wt rm` now asks the daemon where it runs from and names
+  it when it is the holder, instead of blaming a stray shell.
 - **Auth on secondary ports.** `NEXTAUTH_URL`, `NEXTAUTH_URL_INTERNAL`, and `NEXT_PUBLIC_BASE_URL` are rewritten to `http://localhost:<port>`, so logins work on non-3000 sessions instead of bouncing to the primary.
 - **Independent branch watching + prewarming** per session.
 - **Port allocation sees listeners the daemon does not own.** The picker connects to both loopback

@@ -12,7 +12,7 @@
 
 import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync } from 'fs';
-import { samePath } from './paths.mjs';
+import { isInside, samePath } from './paths.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -189,6 +189,23 @@ async function fetchRunning(daemonRequest) {
   };
 }
 
+// The daemon reports where its own code lives; a daemon running out of this tree holds the
+// directory open and no delete can succeed while it lives.
+//
+// `checked` is separate from `holder` on purpose. A daemon that is down, unreachable, or older than
+// the `skillDir` field yields no holder AND no knowledge — and the failure path below must not then
+// tell the reader the daemon has been ruled out, which is the confidently-wrong message this
+// replaces.
+export async function daemonRunningFrom(target, daemonRequest) {
+  const res = await daemonRequest('/');
+  const skillDir = res.ok ? res.data?.skillDir : null;
+  if (!skillDir) return { holder: null, checked: false };
+  return {
+    holder: isInside(skillDir, target) ? { pid: res.data.pid, skillDir } : null,
+    checked: true,
+  };
+}
+
 // Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
 // While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
 // out from under a running moderator and report a clean removal.
@@ -300,6 +317,20 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
     console.log(`stopped ${s.id}`);
   }
 
+  // Before the delete, not after it: the delete unlinks thousands of reparse points first, and a
+  // tree left half-dismantled by a failure nothing could have prevented is worse than a refusal.
+  const daemonCheck = await daemonRunningFrom(target, daemonRequest);
+  if (daemonCheck.holder) {
+    fail(
+      `the dev-server daemon (pid ${daemonCheck.holder.pid}) is running from this worktree\n` +
+        `  ${daemonCheck.holder.skillDir}\n` +
+        `its cwd and its own script are inside the directory, so no delete can succeed while it lives.\n` +
+        `a daemon started by a current cli.mjs runs from the primary checkout and never blocks this;\n` +
+        `this one predates that. it is SHARED — other agents' dev servers and queued test runs are on it —\n` +
+        `so check "cli.mjs test list" reports zero running and zero queued, and ask before restarting it.`
+    );
+  }
+
   const dirty = dirtyCount(target);
   if (dirty && !opts.force) {
     fail(`${dirty} uncommitted change(s) in ${target}\ninspect them, or re-run with --force`);
@@ -333,7 +364,12 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
       rmSync(target, { recursive: true, force: true });
     } catch (err) {
       fail(
-        `could not delete ${target}: ${err.message}\nsomething is holding it open (a shell cwd'd inside it?)`
+        `could not delete ${target}: ${err.message}\n` +
+          (daemonCheck.checked
+            ? `the dev-server daemon was asked and is running from elsewhere, so it is not the holder.\n` +
+              `look for a shell cwd'd inside, an editor, an unmanaged dev server, or a virus scan.`
+            : `the dev-server daemon could not be asked where it runs from (down, unreachable, or too\n` +
+              `old to report it), so it has NOT been ruled out — check it before hunting a stray shell.`)
       );
     }
     if (existsSync(target)) fail(`directory still present after delete: ${target}`);

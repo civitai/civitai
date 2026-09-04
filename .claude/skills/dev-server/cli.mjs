@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs';
 import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,8 +27,20 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
-const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
+
+// ONE daemon serves every worktree, so it must not live inside one. The skill directory is
+// committed, so `__dirname` names whichever tree the agent happened to run the CLI from — and a
+// daemon spawned there holds that directory open for its whole life, so `wt rm` on it fails EBUSY
+// for whoever finishes their PR first. It also survives the tree: the daemon's own copy of
+// daemon.mjs would be deleted out from under it.
+//
+// So the daemon's script, its pid file and its cwd all come from the checkout that owns the .git
+// directory. Falls back to the caller's own tree when git cannot answer — a wrong-tree daemon is
+// worse than a right-tree one, but no daemon at all is worse than either.
+const daemonHome = resolveDaemonHome(__dirname, projectRoot);
+
+const pidFile = resolve(daemonHome.skillDir, 'daemon.pid');
+const serverScript = resolve(daemonHome.skillDir, 'scripts/daemon.mjs');
 
 // Overridable via DEV_DAEMON_PORT, so a second daemon can be exercised without touching the
 // shared one. The whole decision — port included — is made in scripts/daemon-port.mjs, which is
@@ -59,7 +72,9 @@ async function startDaemon() {
   const spawnOptions = {
     detached: true,
     stdio: 'ignore',
-    cwd: projectRoot,
+    // The primary checkout, not the caller's. A cwd inside a worktree is itself a handle on that
+    // directory, so pointing only the script at the primary would still pin the tree.
+    cwd: daemonHome.home,
     windowsHide: true,
   };
 
