@@ -1,8 +1,10 @@
-import { Button, Center, Group, Loader, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Center, Group, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
+import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
 import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
@@ -219,35 +221,66 @@ export function AppListingsMarketplaceBody() {
     );
   }
 
-  const { data, isLoading, isError, refetch, isFetchingNextPage, fetchNextPage, hasNextPage } =
-    trpc.appListings.listAvailable.useInfiniteQuery(
-      {
-        kind,
-        category: category ?? undefined,
-        sort,
-        // 🔴 48, NOT 24, AND IT IS THE COLUMN LADDER THAT MOVED IT. 24 was six rows at
-        // the old four-column maximum; at the FIVE columns the grid now reaches on a
-        // 2560 monitor it is under five, so a viewer on the widest screen the container
-        // supports would meet the "Load more" button after the least content. 48 gives
-        // nine rows at five columns and twelve at four — and stays ≥ 8 rows even if a
-        // future cap raise engages the declared-but-unreachable sixth column.
-        // 🔴 THE SERVER CAPS THIS AT 50, so 48 is deliberately just inside it.
-        // `listAppListingsSchema` in
-        // `src/server/schema/blocks/app-listing-read.schema.ts` declares
-        // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
-        // request-time zod error, not a bigger page.
-        limit: 48,
-      },
-      {
-        // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
-        // predicate (dedicated `appListings` OR-falling-back to `appBlocks`).
-        // Mirrors the server read gate (`enforceAppListingsReadFlag` →
-        // `isAppListingsEnabled`), which is why this query — unlike
-        // `blocks.getNavSummary` — DOES widen with the store.
-        enabled: hasAppsStoreAccess(features),
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
-    );
+  const {
+    data,
+    isLoading,
+    isError,
+    isPlaceholderData,
+    refetch,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+  } = trpc.appListings.listAvailable.useInfiniteQuery(
+    {
+      kind,
+      category: category ?? undefined,
+      sort,
+      // 🔴 48, NOT 24, AND IT IS THE COLUMN LADDER THAT MOVED IT. 24 was six rows at
+      // the old four-column maximum; at the FIVE columns the grid now reaches on a
+      // 2560 monitor it is under five, so a viewer on the widest screen the container
+      // supports would meet the "Load more" button after the least content. 48 gives
+      // nine rows at five columns and twelve at four — and stays ≥ 8 rows even if a
+      // future cap raise engages the declared-but-unreachable sixth column.
+      // 🔴 THE SERVER CAPS THIS AT 50, so 48 is deliberately just inside it.
+      // `listAppListingsSchema` in
+      // `src/server/schema/blocks/app-listing-read.schema.ts` declares
+      // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
+      // request-time zod error, not a bigger page.
+      limit: 48,
+    },
+    {
+      // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
+      // predicate (dedicated `appListings` OR-falling-back to `appBlocks`).
+      // Mirrors the server read gate (`enforceAppListingsReadFlag` →
+      // `isAppListingsEnabled`), which is why this query — unlike
+      // `blocks.getNavSummary` — DOES widen with the store.
+      enabled: hasAppsStoreAccess(features),
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      /**
+       * 🔴 KEEP THE PREVIOUS RESULT WHILE A NEW ONE LOADS. The query key is
+       * `{kind, category, sort, limit}`, so every sort/filter change is a NEW
+       * key — and without this `data` goes `undefined` for the duration of the
+       * round trip. `items` empties, the grid collapses to zero rows, the page
+       * jumps, and then everything comes back: a full-height layout shift on a
+       * control the viewer touched expecting a re-ORDER.
+       *
+       * With `keepPreviousData` the old cards stay mounted and in place, and
+       * `isPlaceholderData` marks them as stale so the grid can dim (see its
+       * render site). The swap is then a repaint rather than a reflow — unless
+       * the two result sets differ in COUNT, which still moves the grid's
+       * height. That residue is real and is stated in the PR body rather than
+       * papered over.
+       *
+       * 🔴 IT DOES **NOT** REPLACE THE RECENTS MEMO. `reconcileRecentApps`'s
+       * third argument exists because `items` can be empty when the rail
+       * reconciles against it; this narrows that window (a first load, an error,
+       * a cache eviction still produce it) but does not close it. Do not read
+       * this option as licence to drop that argument — `__tests__/recentAppsRail.test.ts`
+       * fails if the call goes back to two, and that guard is correct.
+       */
+      placeholderData: keepPreviousData,
+    }
+  );
 
   const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
 
@@ -435,10 +468,17 @@ export function AppListingsMarketplaceBody() {
         onOpenRecent={handleOpenRecent}
       />
 
+      {/* THE FIRST-LOAD STATE. This used to be `<Center py="xl"><Loader /></Center>`
+          — a spinner in a box whose height had nothing to do with the grid that
+          replaced it, so every cell in the store moved when the query resolved.
+          The skeleton grid renders the SAME `.gridContainer` / `.grid` markup with
+          the same per-cell wrapper, so the cells that appear are already the right
+          size and in the right place.
+          🔴 IT IS NOT "ZERO LAYOUT SHIFT". Two rows of skeletons against up to 48
+          results still changes the grid's HEIGHT on resolve, and the recents rail
+          still hydrates a frame late above it. See `AppListingCardSkeleton.tsx`. */}
       {isLoading ? (
-        <Center py="xl">
-          <Loader />
-        </Center>
+        <AppListingCardSkeletonGrid />
       ) : isError ? (
         <Center py="xl">
           <Stack align="center" gap={8}>
@@ -504,7 +544,24 @@ export function AppListingsMarketplaceBody() {
               parses the stylesheet and fails unless the `@container` rules equal
               `LISTING_GRID_COLUMN_STEPS`. The rendered column counts are measured in
               `AppListingsMarketplaceBody.columns.browser.test.tsx`. */}
-          <div className={gridClasses.gridContainer}>
+          {/* 🔴 THE PENDING AFFORDANCE, AND WHY IT IS ON THE CONTAINER. With
+              `keepPreviousData` the grid keeps showing the OLD result set while the
+              new one loads, so without a signal a sort change looks like it did
+              nothing for a round trip. Dimming says "this is stale" without moving
+              anything — an opacity change is a repaint, never a reflow, which is
+              the whole point of choosing it over a spinner or a shimmer that would
+              re-introduce the shift this PR is removing.
+              `data-pending` is the machine-readable half; `aria-busy` is the
+              assistive-tech half. */}
+          <div
+            className={
+              isPlaceholderData
+                ? `${gridClasses.gridContainer} ${gridClasses.gridPending}`
+                : gridClasses.gridContainer
+            }
+            data-pending={isPlaceholderData ? '' : undefined}
+            aria-busy={isPlaceholderData ? true : undefined}
+          >
             <div className={gridClasses.grid} data-testid="apps-listing-grid">
               {filteredItems.map((card) => (
                 <div key={card.id} data-testid="apps-listing-grid-col">

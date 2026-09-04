@@ -39,6 +39,21 @@
   container-type: inline-size;
 }
 
+/* The STALE-RESULTS affordance, applied alongside `.gridContainer` while the store
+   is showing `keepPreviousData`'s previous page.
+
+   🔴 OPACITY ONLY, ON PURPOSE. The whole point of keeping the previous result is
+   that nothing MOVES while the new one loads, so the pending signal must be a
+   repaint: no height, no margin, no inserted spinner, nothing that participates in
+   layout. `pointer-events: none` because a stale row is not a thing to click —
+   following a card that is about to be replaced is how a viewer lands on a listing
+   the filter they just chose excludes. */
+.gridPending {
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
 /* 🔴 DO NOT ADD `align-items` HERE. ITS ABSENCE IS LOAD-BEARING, NOT AN OMISSION.
    `AppListingCard` bottom-pins its action row with `mt="auto"` inside a `Stack h="100%"`
    inside a `Card className="h-full"`, and `h-full` only resolves because this grid
