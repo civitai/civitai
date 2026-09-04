@@ -1,5 +1,6 @@
+import path from 'node:path';
 import type { NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as ModeratorService from '~/server/services/moderator.service';
@@ -765,6 +766,25 @@ describe('resolveUserRestriction — ruling scope', () => {
    * that 500.
    */
   describe('the refusal survives the REST envelope', () => {
+    /**
+     * The moderator app's REAL body reader, loaded across the app boundary by filesystem path. It is
+     * import-free for exactly this reason — see `apps/moderator/src/lib/server/rest-error-reason.ts`
+     * and the note in `moderator-restriction-vocabulary.harness.ts` about the same coupling
+     * (resolving a path into `apps/moderator` needs `svelte-kit sync` to have run there).
+     */
+    let restErrorReason: (body: unknown, status: number) => string | null;
+
+    beforeAll(async () => {
+      const file = path.resolve(
+        __dirname,
+        '../../..',
+        'apps/moderator/src/lib/server/rest-error-reason.ts'
+      );
+      ({ restErrorReason } = await import(/* @vite-ignore */ file));
+      // The import resolving is not the same as it being the thing we meant to load.
+      expect(typeof restErrorReason).toBe('function');
+    });
+
     const throughRest = async (fn: () => Promise<unknown>) => {
       const res = createRes();
       let threw = false;
@@ -777,7 +797,7 @@ describe('resolveUserRestriction — ruling scope', () => {
       // Positive control: a call that did NOT throw would leave `state` at its zero value and every
       // assertion below would be about the fake rather than about the error.
       expect(threw).toBe(true);
-      return res.state as { status: number; body: { message?: string } };
+      return res.state as { status: number; body: Record<string, unknown> & { message?: string } };
     };
 
     it('reaches REST as a 400 naming the type, not an opaque 500', async () => {
@@ -826,6 +846,79 @@ describe('resolveUserRestriction — ruling scope', () => {
 
       expect(status).toBe(400);
       expect(body.message).toBe('Restriction has already been resolved');
+    });
+
+    /**
+     * 🔴 The assertions above are about the WIRE. This one is about what the only in-repo consumer
+     * gets out of it, and the two are NOT the same claim — which is how the gap below survived a
+     * green suite for a whole round.
+     *
+     * `handleEndpointError`'s 4xx pass-through emits `{ message }` and no `error` key, while every
+     * other refusal from `defineModeratorEndpoint` emits `{ error, message, code }`. The moderator
+     * app's `readError` read `body.error` and nothing else, so all three refusals above came back
+     * `null` and the operator saw `"Restriction ruling returned 400."` — the reason destroyed again,
+     * one layer further out than the opaque 500 this endpoint change removed.
+     *
+     * So this drives the REAL emitter into the REAL reader in one process. Both halves mocked
+     * separately is exactly the arrangement that cannot see a disagreement about the field name:
+     * `restErrorReason` is loaded across the app boundary by filesystem path, the same mechanism (and
+     * the same import-free precondition) as the vocabulary harness.
+     */
+    it('hands the moderator app a reason it can read, not just a status', async () => {
+      const cases: [string, () => Promise<unknown>, number, string][] = [
+        [
+          'an unwired type',
+          () =>
+            resolveUserRestriction({
+              userRestrictionId: fileRestriction('bot-account'),
+              status: UserRestrictionStatus.Overturned,
+              moderatorId: MOD_ID,
+            }),
+          400,
+          'Rulings are not yet available for "bot-account" restrictions',
+        ],
+        [
+          'a missing row',
+          () =>
+            resolveUserRestriction({
+              userRestrictionId: 4242,
+              status: UserRestrictionStatus.Upheld,
+              moderatorId: MOD_ID,
+            }),
+          404,
+          'Restriction record not found',
+        ],
+        [
+          'an already-ruled row',
+          () =>
+            resolveUserRestriction({
+              userRestrictionId: fileRestriction('generation', 'Upheld'),
+              status: UserRestrictionStatus.Overturned,
+              moderatorId: MOD_ID,
+            }),
+          400,
+          'Restriction has already been resolved',
+        ],
+      ];
+
+      for (const [label, call, expectedStatus, expectedReason] of cases) {
+        // `fileRestriction` hardcodes id 1, so stacked rows would all answer to the same lookup and
+        // every case after the first would rule on the previous case's row.
+        store.restrictions.length = 0;
+
+        const { status, body } = await throughRest(call);
+        expect(status, label).toBe(expectedStatus);
+
+        const reason = restErrorReason(body, status);
+        // The discriminating assertion: reading `error` alone returns null here, and null is what
+        // collapses the operator's message back to "<label> returned <status>."
+        expect(reason, label).not.toBeNull();
+        expect(reason, label).toContain(expectedReason);
+      }
+
+      // Positive control on the reader itself — it must be capable of returning null, or the three
+      // `not.toBeNull()` assertions above would hold against a function that always answers.
+      expect(restErrorReason({ nothingReadable: true }, 400)).toBeNull();
     });
   });
 
