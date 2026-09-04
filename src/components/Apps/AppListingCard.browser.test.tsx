@@ -41,7 +41,11 @@ import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
-import { LISTING_ACTION_ROW_HEIGHT_PX } from '~/components/Apps/appListingCardGeometry';
+import { Button, Text } from '@mantine/core';
+import {
+  LISTING_ACTION_ROW_HEIGHT_PX,
+  LISTING_CARD_TITLE_LINE_HEIGHT,
+} from '~/components/Apps/appListingCardGeometry';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -565,6 +569,92 @@ describe('AppListingCard', () => {
     // asserted so the change is visible rather than discovered later.
     expect(title.tagName).not.toBe('H4');
     expect(cardRoot()!.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull();
+  });
+
+  /**
+   * 🔴 THE NUMBERS THE COMMENTS QUOTE AS MEASUREMENTS — pinned, so they are
+   * measurements rather than folklore.
+   *
+   * Two figures do real argumentative work in this component's comments and in
+   * `appListingCardGeometry.ts`, and until now NOTHING asserted either of them:
+   *
+   *   - **Mantine `md` is 42px tall.** This is the whole reason the CTA grows
+   *     HORIZONTALLY instead of up the size scale — the row is a load-bearing 46px
+   *     and the next size up would not fit. It is quoted three times.
+   *   - **`--mantine-line-height-xl` is 1.65, i.e. 33px at the title's 20px.** This
+   *     is why `lh` on the title is called load-bearing: without it the reserved
+   *     two lines would be 66px rather than 48, an ~18px card-height swing.
+   *
+   * A number quoted as a measurement that nothing re-derives is exactly the shape
+   * that gets cited for years after it stops being true — a Mantine upgrade
+   * retuning either token would leave every comment and both design decisions
+   * silently wrong. Both are one `getComputedStyle` away in a tier that already
+   * renders the card, so there is no excuse for leaving them unpinned.
+   *
+   * 🔴 REPORT-ONLY TIER, stated: this is the browser project, so these do not gate
+   * a merge. They are still the only place either number is checked at all.
+   */
+  describe('🔴 the Mantine tokens the geometry comments quote', () => {
+    test('the next button size up (`md`) is 42px — taller than the 46px row can afford', async () => {
+      // Rendered rather than read off a CSS variable: the claim is about a
+      // BUTTON's height, and a token lookup would not see a padding or border
+      // change that also moves it.
+      renderWithProviders(
+        <div>
+          <Button size="sm" data-testid="probe-sm">
+            Probe
+          </Button>
+          <Button size="md" data-testid="probe-md">
+            Probe
+          </Button>
+        </div>
+      );
+      await expect.element(page.getByTestId('probe-sm')).toBeInTheDocument();
+      const sm = page.getByTestId('probe-sm').element() as HTMLElement;
+      const md = page.getByTestId('probe-md').element() as HTMLElement;
+      // `sm` is the CTA's size and the row's CONTROL term — 36, the same number
+      // `LISTING_ACTION_ROW_CONTROL_PX` spells and the `⋮` trigger renders at.
+      expect(
+        Math.round(sm.getBoundingClientRect().height),
+        'Mantine `sm` is the CTA size AND the control term of the 46px row height'
+      ).toBe(36);
+      // …and `md` is 42, which is why "just bump the size" is not available: 42 + a
+      // 10px `pt` is 52, and the row must stay 46 inside an `h-full` grid row.
+      expect(
+        Math.round(md.getBoundingClientRect().height),
+        'the comments justify growing the CTA horizontally by saying `md` is 42px tall — ' +
+          'if that is no longer true, re-argue the decision instead of re-quoting the number'
+      ).toBe(42);
+    });
+
+    test("an xl Text with no `lh` inherits 1.65 — 33px, not the title's 24px", async () => {
+      renderWithProviders(
+        <div>
+          <Text size="xl" data-testid="probe-default-lh">
+            Probe
+          </Text>
+          <Text size="xl" lh={LISTING_CARD_TITLE_LINE_HEIGHT} data-testid="probe-pinned-lh">
+            Probe
+          </Text>
+        </div>
+      );
+      await expect.element(page.getByTestId('probe-default-lh')).toBeInTheDocument();
+      const bare = page.getByTestId('probe-default-lh').element() as HTMLElement;
+      const pinned = page.getByTestId('probe-pinned-lh').element() as HTMLElement;
+      // 20px x 1.65 = 33px. This is the value the title would inherit if `lh` were
+      // ever dropped, and the reason the comment calls it load-bearing.
+      expect(
+        getComputedStyle(bare).lineHeight,
+        'the comments justify `lh` on the title by saying the inherited xl line-height is ' +
+          '1.65 (33px at 20px) — pin the new value and re-derive the reserved height if this moved'
+      ).toBe('33px');
+      // …against the 24px the pinned constant produces. The gap is what the
+      // reserved two lines are worth: 48px vs 66px.
+      expect(getComputedStyle(pinned).lineHeight).toBe('24px');
+      // Stated as the arithmetic the card actually depends on, so a reader does not
+      // have to do it: 2 reserved lines at each.
+      expect(2 * 33 - 2 * 24).toBe(18);
+    });
   });
 
   /**
@@ -1357,6 +1447,28 @@ describe('AppListingCard', () => {
             expect(Math.round(row.clientWidth)).toBe(282);
             // No trigger, no gap to leave — the CTA is the entire row.
             expect(cta.getBoundingClientRect().width).toBeCloseTo(282, 0);
+            // 🔴 THE CONTROL HALF OF THE ROW-HEIGHT DERIVATION, AND IT WAS MISSING.
+            // `LISTING_ACTION_ROW_HEIGHT_PX` is `pt` (10) + a 36px CONTROL, and the
+            // suite asserted the 36 for the `⋮` trigger and for NOTHING ELSE. The
+            // CTA's own 36 was only ever asserted as the CSS variable STRING
+            // `var(--button-height-sm)` — which survives a theme override of that
+            // token, a border or padding on the button, or swapping `Button` for
+            // another element entirely.
+            //
+            // 🔴 IT MATTERS MORE ON THIS ROW THAN IT LOOKS, because `mih` MASKS it:
+            // the row is floored at 46 whatever its child renders, so a CTA that
+            // shrinks leaves the row measuring 46 and every row-height assertion
+            // green. Measured on this arm with the CTA at `size="xs"`: with `mih`
+            // the suite reported 2 reds (both size-token tests only); without `mih`
+            // it reported 4, the extra two being these arms at `expected 40 to be
+            // 46`. The floor is correct and stays — this assertion is what puts the
+            // control back under observation despite it.
+            expect(
+              Math.round(cta.getBoundingClientRect().height),
+              'the CTA must render at the same 36px as the ⋮ trigger — that 36 is the ' +
+                'CONTROL term of LISTING_ACTION_ROW_HEIGHT_PX (pt 10 + control 36 = 46), ' +
+                "and the row's `mih` floor hides a shrunken control from every height assertion"
+            ).toBe(36);
             expect(Math.round(row.getBoundingClientRect().height)).toBe(46);
           });
         }

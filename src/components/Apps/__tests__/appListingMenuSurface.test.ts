@@ -121,7 +121,14 @@ describe('the listing menu surface policy', () => {
       // false when written: there are none. That framing would also have turned a
       // future cleanup of dead code into a red BLOCKING test for no correctness
       // reason, which is the failure mode this assertion is inverted to avoid.
-      expect(code('../AppListingActionsMenu.tsx')).not.toContain('useAppListingActionsMenuVisible');
+      expect(
+        code('../AppListingActionsMenu.tsx'),
+        'useAppListingActionsMenuVisible is back in AppListingActionsMenu.tsx. It was deleted ' +
+          'because it had exactly one consumer (this card, to lay out around the trigger) and ' +
+          "that reason died with the rollup's container query. If a NEW surface genuinely " +
+          'needs it, re-add it AND change this assertion to name that surface — do not leave ' +
+          'an exported hook with no consumer, which is how the deleted apparatus comes back.'
+      ).not.toContain('useAppListingActionsMenuVisible');
       // Positive control on that read: the module is still the one that owns the
       // menu, so the absence is about the hook and not about an unreadable file.
       expect(code('../AppListingActionsMenu.tsx')).toContain(

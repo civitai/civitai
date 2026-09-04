@@ -16,7 +16,10 @@
  * the card's own header and a test titled "reads every geometry constant" all said
  * otherwise (the test's list enumerated 8 of these 9). `appListingCardView.test.ts`
  * now derives that list from THIS module's `Object.keys`, so an export added below
- * and not read by the card fails the BLOCKING tier, naming it.
+ * and not read by the card fails the BLOCKING tier, naming it. (Its exact-count
+ * backstop runs AFTER that loop, deliberately — ordered first, as it was at
+ * first, the failure a reader saw was a length mismatch and the constant went
+ * unnamed.)
  *
  * 🔴 REACT-FREE AND PURE, deliberately: the node `unit` project is the BLOCKING
  * tier here (the browser component suites are report-only), so a module with no

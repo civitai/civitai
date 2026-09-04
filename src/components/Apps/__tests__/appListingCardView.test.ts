@@ -409,10 +409,16 @@ describe('the card geometry module', () => {
    * than the body, which is the shape that reads as coverage while providing none.
    * Deriving the list from `Object.keys` makes the omission impossible to repeat AND
    * makes the guard cover constants nobody has written yet: add one to the module
-   * without reading it in the card and this fails, naming it.
+   * without reading it in the card and this fails, NAMING it.
    *
-   * 🔴 SO THE FAILURE MESSAGE NAMES THE CONSTANT, not "the import list changed" —
-   * a set comparison would say only that two arrays differ.
+   * 🔴 "NAMING IT" IS TRUE ONLY BECAUSE THE COUNT CHECK RUNS LAST, and it did not
+   * at first. `expect(exported).toHaveLength(9)` sat ABOVE the loop, so the first
+   * failure a reader saw was `expected [ …(10) ] to have a length of 9 but got 10`
+   * — the guard fired, but the constant was not named until someone bumped 9 to 10
+   * and re-ran. That is the description-wider-than-its-body class this very file
+   * exists to close, reintroduced inside the commit that closed it. The loop now
+   * runs FIRST, so an unread export is named on the first failure and the count is
+   * the backstop for the case where someone adds an export AND reads it.
    */
   it('AppListingCard reads every geometry constant the module exports', () => {
     const code = cardCode();
@@ -421,10 +427,11 @@ describe('the card geometry module', () => {
     expect(code).toContain("from '~/components/Apps/appListingCardGeometry'");
 
     const exported = Object.keys(geometry);
-    // Positive control on the enumeration itself: a module that exported nothing
-    // would make the loop below vacuous, and `toHaveLength(0)` is not something a
-    // reader would notice. 9 is typed out so ADDING an export is a deliberate act.
-    expect(exported).toHaveLength(9);
+    // Positive control on the enumeration BEFORE the loop, so a module that
+    // exported nothing cannot make the loop vacuously green. Deliberately a
+    // non-zero LOWER BOUND rather than the exact count — the exact count is the
+    // backstop below, and putting it here is what buried the named failure.
+    expect(exported.length, 'appListingCardGeometry exports nothing').toBeGreaterThan(0);
     expect(exported).toContain('LISTING_ACTION_ROW_HEIGHT_PX');
 
     for (const name of exported) {
@@ -438,6 +445,17 @@ describe('the card geometry module', () => {
           `(found ${uses} occurrence(s); an import with no use site counts as 1)`
       ).toBeGreaterThanOrEqual(2);
     }
+
+    // 🔴 THE BACKSTOP, RUN LAST ON PURPOSE. It catches the one case the loop
+    // cannot — an export ADDED and dutifully read, which should still be a
+    // deliberate act — and it is here rather than above so that the common failure
+    // (an export nobody reads) is reported by NAME first. 9 is typed out.
+    expect(
+      exported,
+      'appListingCardGeometry gained or lost an export. If you added one, the loop ' +
+        'above already proved the card reads it — bump this count deliberately, and ' +
+        'make sure AppListingCardSkeleton reads it too.'
+    ).toHaveLength(9);
   });
 
   /**
@@ -459,10 +477,25 @@ describe('the card geometry module', () => {
    * be present cannot see it. This asserts the EXACT SET, so it fails when the set
    * grows as well as when it shrinks — and it fails loudly enough to name the prop.
    *
-   * 🔴 WHAT IT STILL CANNOT SEE, stated rather than implied: it reads the row's own
-   * opening tag. Height moved by a CHILD — a taller CTA size, a bigger
-   * `triggerSize` — is invisible here and is caught by the constants' own literal
-   * pins plus the browser measurements. This closes the row's own tag, not the row.
+   * 🔴 WHAT IT STILL CANNOT SEE, stated rather than implied, and the two halves are
+   * NOT equally covered. It reads the row's own opening tag, so height moved by a
+   * CHILD is invisible to it — and only ONE of the two children is picked up
+   * elsewhere in this blocking tier:
+   *
+   *   - `triggerSize` IS covered: it reads `LISTING_ACTION_ROW_CONTROL_PX`, so the
+   *     "reads every constant" test above and that constant's literal pin both see
+   *     a change to it.
+   *   - **the CTA is NOT.** Its 36px comes from Mantine's `size="sm"` token, which
+   *     no constant in the geometry module touches. Measured: flipping the CTA to
+   *     `size="md"` leaves this whole node file green at 45/45, and only the
+   *     REPORT-ONLY browser tier reds. An earlier draft of this note said a child
+   *     change was "caught by the constants' own literal pins plus the browser
+   *     measurements", which credits the blocking tier with coverage it does not
+   *     have for half the row.
+   *
+   * `AppListingCard.browser.test.tsx` now asserts the CTA's RENDERED height as well
+   * as the trigger's, which is the real guard on that term — but it lives in the
+   * non-gating tier. Do not read this ledger as covering a CTA size bump.
    */
   it("🔴 the action row's prop set is exactly the geometry it declares", () => {
     const code = cardCode();
@@ -480,9 +513,31 @@ describe('the card geometry module', () => {
     // happened to land on.
     expect(tag.startsWith('<Group')).toBe(true);
 
+    // 🔴 NO SPREAD, ASSERTED FIRST AND SEPARATELY. A spread carries props the name
+    // scan below CANNOT see — it has no `name=` to match — so `{...{ pb: 10 }}`,
+    // or the realistic `{...(compact ? { pt: 4, pb: 0 } : {})}` for a dense
+    // variant, changes the rendered row height while leaving the set unchanged.
+    // Measured green at 45/45 against the previous version of this test. A ledger
+    // that can be walked past by writing the same prop a different way is a
+    // SPELLED guard, and this one's own comment claimed it was not.
+    expect(
+      tag,
+      `the action row's opening tag contains a spread. A spread can carry padding or ` +
+        `height props that the prop-name ledger below cannot see, so the row's 46px ` +
+        `height would change with every node assertion green. Write the props literally.`
+    ).not.toContain('{...');
+
     // The prop NAMES, in source order. `pb`, `p`, `py`, `h`, `mah`, `style` — or
     // anything else that can move a flex row's height — makes this set grow.
-    const props = [...tag.matchAll(/\n\s+([a-zA-Z-]+)=/g)].map((m) => m[1]);
+    //
+    // 🔴 SPLIT ON ANY WHITESPACE, NOT ON A LINE START. This was `/\n\s+([a-zA-Z-]+)=/`,
+    // which required a prop to BEGIN A LINE — so `mt="auto" pb={10}` on one line
+    // slipped a second prop past it, also measured green at 45/45. Prettier would
+    // reformat that onto its own line and the ledger would then red, but nothing
+    // BLOCKING runs prettier here: `.github/workflows/lint.yml`'s
+    // `Prettier (modified files, report-only)` job is `continue-on-error: true`,
+    // and only ADDED files are gating. `AppListingCard.tsx` is a modified file.
+    const props = [...tag.matchAll(/\s([a-zA-Z-]+)=/g)].map((m) => m[1]);
     expect(
       props,
       `the action row's props changed — every one of them can move the 46px row height, ` +
