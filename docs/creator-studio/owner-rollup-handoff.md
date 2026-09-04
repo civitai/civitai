@@ -214,7 +214,7 @@ Neither is a Creator Studio bug, but both change what the numbers mean. Do not d
 1. **Access sales always credit yellow** (see D1 above). Confirmed a bug, fix is forward-only, historical rows
    stay yellow.
 2. **Cosmetic creator payouts are best-effort — a sale can succeed while the creator is never credited.**
-   `cosmetic-shop.service.ts:702-709` wraps the bank→creator `sell` leg in `withRetries(..., 3)` and a catch that
+   `cosmetic-shop.service.ts` (`purchaseCosmeticShopItem`'s payout block) wraps the bank→creator `sell` leg in `withRetries(..., 3)` and a catch that
    only logs to Axiom; the in-code comment says *"we don't want to fail the purchase if this fails. We can divide
    the funds later if needed."* So the platform keeps the buyer's buzz and the creator silently gets nothing.
    **`/earnings` will under-report cosmetic revenue with no signal**, because a failed payout leaves **no row** —

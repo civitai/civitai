@@ -1,6 +1,6 @@
 # Creator Shop
 
-> Status: **Design complete, pre-implementation.** Working doc — tracks decisions and changes as we build.
+> Status: **Built and live** (cosmetics; merch not started). Working doc — tracks decisions and changes as we build.
 > Plan of record: HackMD `@civitai/S1iNtOxXzl`. UI/UX mockups: `designs/creator-shop.pen`.
 
 Active Creator Program members submit and sell their own **cosmetics** (and, later, **merch**) from a **Shop** tab on their profile. Buyers pay in Buzz; creators keep a share; moderators review submissions before they go live.
@@ -86,7 +86,7 @@ Bounds of the guarantee:
 | Existing | Creator-shop role | Notes |
 |----------|-------------------|-------|
 | `CosmeticShopItem` (`unitAmount`, `availableFrom/To`, `availableQuantity`, `meta`) | the sellable **listing** + price + **quantity/availability** | `availableQuantity` already delivers requirement #5 ("X left" / Sold out), enforced at purchase via `count(purchases)` |
-| `CosmeticShopItem.meta.paidToUserIds` | **creator payout** routing | Mechanism exists; see rate caveat below |
+| `CosmeticShopItem.meta.paidToUserIds` | **legacy official-shop payout** routing | Creator items pay `Cosmetic.createdById` its 70% share; `paidToUserIds` survives only for items with no cosmetic creator, where it still splits the **full** price equally with no platform cut (`cosmetic-shop.service.ts`, pinned by `cosmetic-shop-payout.service.test.ts`) |
 | `UserCosmetic` + `UserCosmeticShopPurchases` | ownership + purchase record + refund | unchanged |
 
 ### Additive changes (nullable / defaulted — official shop unaffected)
@@ -117,11 +117,13 @@ items submitted before that existed show no amount rather than today's configure
 
 The official shop's sections are a **curated CMS** (banner image, `placement`, `published`, moderator-added). The creator shop's "sections" are **derived**: Cosmetics/Merch/Models are just groupings by item kind, Featured is a picked set, Models is a toggle. Modeling those as per-creator `CosmeticShopSection` rows would force a curated-content table to do a derived-grouping job and push a `userId IS NULL` branch into the official shop's hot queries. Cleaner: derive sections from the creator's items by type + the `User.settings.creatorShop` blob, and leave `CosmeticShopSection` untouched. (If creators ever need arbitrary custom sections, the fork is a nullable `CosmeticShopSection.userId` — but the current design doesn't call for it.)
 
-### Caveats / dependencies to confirm before building
+### Payout rate: built — 70/30
 
-- **Payout rate:** the current `paidToUserIds` logic pays out the **full** `unitAmount` (split equally, bank → recipients) — i.e. 100%, platform keeps 0. For the **70/30** split we change the payout amount to 70% and set `paidToUserIds = [creatorId]` at publish. Plumbing reused; rate is a policy change in `purchaseCosmeticShopItem`.
+`computeCreatorShopSplit` (`creator-shop.schema.ts`) is the single source of truth: the creator pool is `floor(price × 0.7)`, the platform keeps the remainder, and a resale listing's `sellerShare` comes **out of** the creator's pool, never on top of it. The same function feeds the payout and the submit form's earnings preview, so the previewed number is the paid number. Routing is `Cosmetic.createdById`, not `paidToUserIds` — see the table above.
+
+### Caveats
+
 - **Payout is not rolled back** if the transfer fails after a successful purchase (logged to Axiom). Acceptable for Buzz; revisit for merch (pay-on-fulfilment).
-- **Models toggle** depends on the existing early/paid-access model system (ModelVersion early access) — the shop only *reads* it; confirm the query for "this user's early/paid-access models."
 - **Merch** is a physical product (Printful/Shopify), not a `Cosmetic` — model it as a sibling later; don't shoehorn into `Cosmetic`. The storefront/listing abstraction should leave room for a non-cosmetic item kind.
 
 ### Net new vs. plan
