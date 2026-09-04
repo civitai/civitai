@@ -49,11 +49,12 @@ export const COHORT_PAGE_SIZE = 500;
  * remove.
  *
  * 🔴 THE VALUE IS SET AGAINST A MEASUREMENT, and the previous one was set against nothing. A
- * read-only count on a replica put the 24h signup baseline at **8,863 accounts**. Against the
- * former ceiling of 10,000 that is ~13% headroom, which is the worst possible place for a cap to
- * sit: it never trips on an ordinary day, so it looks proven, and it trips for the FIRST time on
- * exactly the day a registration wave lands. 25,000 is ~2.8x the baseline, so an ordinary day plus
- * a wave of nearly twice the site's normal daily signups still fits, and the cap goes back to being
+ * read-only count on a replica established the current 24h signup baseline; the figure itself is
+ * recorded outside this repository. Against the former ceiling of 10,000 that was only ~13%
+ * headroom, which is the worst possible place for a cap to sit: it never trips on an ordinary day,
+ * so it looks proven, and it trips for the FIRST time on exactly the day a registration wave lands.
+ * This ceiling is ~2.8x that baseline, so an ordinary day plus a wave of nearly twice the site's
+ * normal daily signups still fits, and the cap goes back to being
  * a ceiling on work rather than a daily filter.
  *
  * It is still a bound and it is still cheap: at `COHORT_PAGE_SIZE` this is at most 50 account pages
@@ -143,8 +144,8 @@ export function cohortCutoff(now: Date, windowHours = BOT_ACCOUNT_COHORT_WINDOW_
  *
  *  - ascending, the unread remainder is the HIGHEST ids — the most recent signups. That is the
  *    registration wave this detector exists to notice, discarded, while `capped: true` reads as
- *    "we saw the first N". Measured baseline is ~8,863 signups/24h, so the cap does not trip on an
- *    ordinary day and trips first on exactly the day it must not.
+ *    "we saw the first N". At the measured baseline the old cap did not trip on an ordinary day and
+ *    would have tripped first on exactly the day it must not.
  *  - descending, the unread remainder is the LOWEST ids — the oldest accounts of the window, which
  *    have had a full day to be seen by every other surface and are the harmless end to drop.
  *
