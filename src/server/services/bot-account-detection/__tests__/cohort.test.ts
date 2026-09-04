@@ -54,17 +54,17 @@ describe('cohortCutoff', () => {
 });
 
 describe('the cohort cap is set against the measured signup baseline', () => {
-  /** Signups in the 24h window, counted read-only on a replica while auditing this change. Not a
-   *  live figure and it will drift — it is the number the constant was CHOSEN against, recorded so
-   *  the choice is checkable rather than a remembered anecdote. */
-  const MEASURED_DAILY_SIGNUPS = 8_863;
-
-  it('leaves room for a registration wave, not 13% headroom', () => {
+  /** 🔴 The baseline figure itself is NOT in this repository — it is production business data and
+   *  this repo is public. It is recorded privately; what is pinned here is the RELATIONSHIP the cap
+   *  was chosen for, which is what a maintainer has to preserve. Re-measure before changing the
+   *  constant: the number drifts, the reasoning does not. */
+  it('leaves room for a registration wave rather than sitting just above an ordinary day', () => {
     // 🔴 An invariant guard, deliberately labelled as one: it pins the reasoning, it is not
-    // regression coverage for a bug. The previous 10,000 sat ~13% above the baseline, which is the
-    // worst place for a cap — never trips on an ordinary day, so it looks proven, and trips for the
-    // first time on exactly the day a wave lands.
-    expect(MAX_COHORT_ACCOUNTS).toBeGreaterThanOrEqual(MEASURED_DAILY_SIGNUPS * 2);
+    // regression coverage for a bug. The previous ceiling sat only marginally above an ordinary
+    // day's volume, which is the worst place for a cap — never trips on an ordinary day, so it
+    // looks proven, and trips for the first time on exactly the day a wave lands. Expressed in
+    // PAGES so the bound holds without naming the baseline.
+    expect(MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE).toBeGreaterThanOrEqual(40);
     // Still a bound: the walk is at most this many pages, four content reads each.
     expect(MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE).toBeLessThanOrEqual(100);
   });
