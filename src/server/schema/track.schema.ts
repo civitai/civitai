@@ -565,10 +565,11 @@ const generatorSubmitSchema = z.object({
     // opened from the remix entry point. See the doc-block above: the meaning
     // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
-    // 'new' (generation_v2/FormFooter) is emitted by the current form.
-    // 'legacy'/'video' are retained for backward-compatibility with
-    // historical events from the removed legacy generation form.
-    formVersion: z.enum(['legacy', 'new', 'video']).optional(),
+    // 'new' (generation_v2/FormFooter) is emitted by the current form;
+    // 'form-graph' by the form-graph lane's footer. 'legacy'/'video' are
+    // retained for backward-compatibility with historical events from the
+    // removed legacy generation form.
+    formVersion: z.enum(['legacy', 'new', 'video', 'form-graph']).optional(),
     // False when the submit attempt failed validation (react-hook-form
     // onError path or graph.validate() early return). The data team can
     // split valid-vs-invalid attempts to spot UX traps where users click
