@@ -112,6 +112,99 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   // transport strips the fragment during init. That hash-reading hazard is
   // what put `playable-collections` on the DENYLIST; this block is clear of it.
   'app-requests',
+
+  // The three below were added together and each was checked against BOTH halves
+  // of the bar above, per block — not inherited from `app-requests` because they
+  // shipped in the same batch.
+  //
+  // (a) SHIPS A DECODING READER. Each now serves an inline pre-paint fragment
+  //     reader in its own `index.html` that records the resolved theme on
+  //     `data-civitai-boot-theme`, and each declares `bootSkeleton: true`, so the
+  //     host stands its veil down and the block's own boot paint is what a viewer
+  //     actually sees. Verified against the SERVED artifact, not the repo.
+  //
+  // (b) READS `location.hash` NOWHERE AT RUNTIME. Measured per block over its
+  //     shipped `src/`: the only occurrences are inside each block's own
+  //     `bootFragment.test.tsx`, which SETS the hash to drive its reader. This is
+  //     the check `playable-collections` fails — it reads AND writes the hash for
+  //     its own routing.
+  //
+  //     🔴 BUT `grep location.hash` IS NOT ENOUGH ON ITS OWN, and reading it as the
+  //     whole test is how the next block gets admitted wrongly. `custom-generators`
+  //     rewrites the URL through `location.href` + `history.replaceState` (its
+  //     `App.tsx`, via `stripDeeplinkParam`, which strips only `?g=` and PRESERVES
+  //     the fragment) — invisible to a hash-shaped grep. So apply a SECOND check
+  //     ALONGSIDE the read one, never instead of it: nothing may RE-INSTATE the
+  //     fragment. Grep `location.href` / `replaceState` / `pushState` as well.
+  //
+  //     🔴 A HIT ON THAT SECOND CHECK IS NOT AUTOMATICALLY A DISQUALIFICATION, and
+  //     `custom-generators` IS such a hit — so read this before concluding the entry
+  //     below is wrong. What separates safe from unsafe is LIVE versus CAPTURED:
+  //     its `getHref: () => window.location.href` is read at call time, so whatever
+  //     it writes back carries the CURRENT fragment and the write is a no-op with
+  //     respect to it. The unsafe shape is a block that CAPTURES an href early
+  //     (at mount, in a ref, in state) and writes that stale copy back later — that
+  //     one really can re-instate a fragment the transport had removed, and it
+  //     passes a `location.hash` grep exactly as this one does. So the second check
+  //     is a prompt to go LOOK at each hit, not a filter that rejects on sight.
+  //
+  //     The read half stays because the two checks catch different things: a block
+  //     can re-instate nothing and still be disqualified for reading the fragment
+  //     for its own routing. `playable-collections` is not a clean illustration of
+  //     that — it happens to fail BOTH halves (it reads the hash AND calls
+  //     `replaceState`), so it is evidence for neither half being independently
+  //     necessary. Keep the read half on the principle, not on that example.
+  //
+  //     🔴 AND DO NOT REST THAT ON THE SDK'S STRIP — IT DOES NOT RUN FOR ANY BLOCK
+  //     LISTED HERE. An earlier revision of this comment said `custom-generators` is
+  //     safe "only because `seedFromFragment` strips synchronously at transport
+  //     start". Measured, that premise is false in production: every block above is
+  //     `trust_tier: 'unverified'` with `sandbox: "allow-scripts allow-forms"`, and
+  //     `sandbox.ts` adds `allow-same-origin` only for `TRUSTED_TIERS`
+  //     (`internal`/`verified`). The frame therefore runs at an OPAQUE ORIGIN, the
+  //     `history.replaceState` inside `seedFromFragment` throws, and that throw is
+  //     swallowed by a `catch` documented as "nothing depends on this" — so the
+  //     fragment is NOT stripped and persists in `location.hash` for the session.
+  //     These three are safe on their own terms, not because of a strip that never
+  //     executes: none of them CONSUMES the fragment — none branches on it, routes
+  //     on it, or stores it — and the one URL write among them (`custom-generators`,
+  //     above) is built from a LIVE href read, so it cannot re-instate anything.
+  //
+  //     🔴 "Consumes", not "reads", and the difference is not pedantry:
+  //     `location.href` CONTAINS the fragment, so `custom-generators` does read it,
+  //     incidentally, every time `getHref()` runs. An earlier draft of this line
+  //     said "none of them READS the fragment", which is false for exactly that
+  //     block and would have sent the next maintainer looking for a contradiction
+  //     that is really just imprecision. Criterion (b) is about a block that reads
+  //     the fragment TO USE IT; an href round-trip that passes it through untouched
+  //     is not that, and a grep for `location.hash` alone will not tell you which
+  //     kind you are looking at.
+  //
+  //     Why that distinction is worth the words: the strip DOES start working if a
+  //     block is later promoted to `verified`/`internal`. A maintainer who admitted
+  //     a block on "the transport already stripped it, so a captured href is clean"
+  //     would have been right at `unverified` only by accident (that block's own
+  //     write throws too), and wrong the moment the tier changes — reaching the
+  //     exact hazard along a path this comment would have declared closed.
+  //
+  // KEYING: all three are page-mounted — `page` declared, no `slots` key at all,
+  // and each `blockId` equals its store slug — so, exactly as for `app-requests`
+  // above, one string covers whichever key the surface passes.
+  //
+  // 🔴 AN ENTRY IS PER-BLOCK, NOT PER-SURFACE, so it PRE-AUTHORISES the model slot.
+  // The KEYING ASYMMETRY note above warns about the inert direction (a slug-only
+  // entry doing nothing on a slot); this is the opposite one and it is the one that
+  // widens. `IframeHost` calls the gate with `surface: 'model-slot'` and the
+  // `blockId` alone, and these entries ARE blockIds — so if any of these three
+  // later adds a `slots` entry in ITS OWN repo and clears App-Block moderation, the
+  // fragment starts being appended on model pages with no change here, no reviewer
+  // ON THIS REPO involved and no test going red. Low impact (the fragment carries only
+  // theme/renderMode/blockInstanceId, all of which BLOCK_INIT already delivers) but
+  // the decision widens without anyone taking it. If a block here goes slot-mounted,
+  // re-evaluate the entry for that surface rather than inheriting this one.
+  'custom-generators',
+  'model-benchmarking',
+  'sensei',
 ]);
 
 /**
