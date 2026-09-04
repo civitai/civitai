@@ -69,7 +69,17 @@ export const MODERATOR_VOCABULARY_PATH = path.resolve(
  * at 5 passed / 0 failed, while the production build shipped both types — the ban-then-strand hazard
  * reached with every pinning guard green. The base commit's text parser went RED on that same shape,
  * so the execute reader is not strictly stronger; it trades a formatting blind spot for a
- * runtime-environment one. This closes the half it gave up.
+ * runtime-environment one.
+ *
+ * 🔴 SCOPE — this refuses the two spellings below and NOT the class. It is a text scan, so it is
+ * walkable by indirection, and that was measured on #4609: an aliased global
+ * (`const P = (globalThis as any).process` then `P?.env`), a computed member access
+ * (`P['env']['NODE_ENV']`), and a regex literal containing `//` placed on the SAME line as the read
+ * — which `withoutComments` below truncates as a line comment — each left the seam and vocabulary
+ * suites at 29 passed / 0 failed while the two apps genuinely disagreed. Every spelling a maintainer
+ * would plausibly reach for IS covered: `import.meta.*` and `process.env.*` are caught here, and
+ * `import { dev } from '$app/environment'` or `$env/*` break loudly as a missing module. Do not read
+ * this as closing the environment-read class.
  *
  * 🔴 Note what this means for the "keep this module import-free" precondition: `import.meta.env` and
  * `process.env` need NO import statement, so import-freedom does not imply environment-independence.
@@ -124,6 +134,13 @@ function withoutComments(sourceText: string): string {
   return out;
 }
 
+/**
+ * 🔴 Comments are stripped before the scan, string literals are NOT — deliberately, since a string
+ * can be interpolated into a read. The cost is that the scanned module may not MENTION these tokens
+ * in a string either: `export const HINT = 'never read process.env here'` trips this guard. That
+ * fails SAFE — red with this message, never silently green — but it is a real constraint on the
+ * module, and a mention in a COMMENT is the supported way to write one.
+ */
 export function assertEnvironmentIndependent(sourceText: string, source: string): void {
   const found = ENVIRONMENT_READ.exec(withoutComments(sourceText));
   if (found)
