@@ -54,7 +54,13 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { box, cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
+import {
+  box,
+  cascadeEvidence,
+  LOADABLE_IMAGE_DATA_URI,
+  nextLayout,
+  renderAtViewport,
+} from '../../../test/geometry-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -109,7 +115,12 @@ const POOL: ListingCard[] = [
   makeCard('u12', 'Overtone Bench', 'linnea'),
 ];
 
-const mocks = vi.hoisted(() => ({ items: [] as ListingCard[], isLoading: false }));
+const mocks = vi.hoisted(() => ({
+  items: [] as ListingCard[],
+  isLoading: false,
+  /** The signed-in viewer, or `null`. Drives whether a card renders the `⋮` trigger. */
+  currentUser: null as { id: number; username: string } | null,
+}));
 
 // The same mock set, and the same reasons, as
 // `AppListingsMarketplaceBody.stretch.geometry.test.tsx` — see the long notes in
@@ -118,7 +129,7 @@ const mocks = vi.hoisted(() => ({ items: [] as ListingCard[], isLoading: false }
 // THROW without a provider, and the flags factory must name BOTH flag hooks or the
 // whole file fails to IMPORT and reports `no tests` rather than a failure.
 // `next/router` is already mocked by `test/geometry-setup.tsx`.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -157,6 +168,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { APP_LISTING_SKELETON_ROWS } = await import('./AppListingCardSkeleton');
 const { listingGridColumnsAt } = await import('./appListingGrid');
+const { LISTING_ACTION_ROW_CONTROL_PX, LISTING_ACTION_ROW_GAP_PX } = await import(
+  './appListingCardGeometry'
+);
 
 /**
  * A viewport wide enough that neither grid width below is clamped by it. The grid
@@ -196,10 +210,19 @@ const RUNGS = [736, 960, 1168, 2364, 2840];
  * found and fixed in two sibling suites; `the harness really replaces the tree`
  * below is the control that proves the cure works here.
  */
-async function renderStore(gridWidth: number, opts: { loading: boolean; items?: ListingCard[] }) {
+async function renderStore(
+  gridWidth: number,
+  opts: {
+    loading: boolean;
+    items?: ListingCard[];
+    /** Signed-out unless given. An owner gets the `⋮` trigger on every card. */
+    viewer?: { id: number; username: string } | null;
+  }
+) {
   await cleanup();
   mocks.isLoading = opts.loading;
   mocks.items = opts.items ?? [];
+  mocks.currentUser = opts.viewer ?? null;
   const { observed } = await renderAtViewport(
     <div style={{ width: gridWidth, maxWidth: 'none' }} data-testid="width-harness">
       <AppListingsMarketplaceBody />
@@ -223,9 +246,35 @@ async function renderStore(gridWidth: number, opts: { loading: boolean; items?: 
   };
 }
 
+/**
+ * The rendered width of each card's CTA button — the action row's first child.
+ *
+ * Resolved structurally because `AppListingCard` puts no testid on the CTA, and
+ * VALIDATED rather than trusted: a silently mis-resolved element would make the
+ * comparison below compare the wrong boxes and pass.
+ */
+function ctaWidths(): number[] {
+  const cells = Array.from(
+    document.querySelectorAll('[data-testid="apps-listing-grid-col"]')
+  ) as HTMLElement[];
+  return cells.map((cell) => {
+    const card = cell.firstElementChild as HTMLElement | null;
+    const stack = card?.lastElementChild as HTMLElement | null;
+    const actionRow = stack?.lastElementChild as HTMLElement | null;
+    const cta = actionRow?.firstElementChild as HTMLElement | null;
+    if (!cta || !(cta.tagName === 'BUTTON' || cta.tagName === 'A')) {
+      throw new Error(
+        `the walk did not land on the CTA control: ${cta?.outerHTML.slice(0, 200) ?? 'null'}`
+      );
+    }
+    return Math.round(cta.getBoundingClientRect().width * 100) / 100;
+  });
+}
+
 beforeEach(() => {
   mocks.items = [];
   mocks.isLoading = false;
+  mocks.currentUser = null;
 });
 
 describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () => {
@@ -329,6 +378,84 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
     expect(narrow.boxes[0].width).not.toBe(wide.boxes[0].width);
     // …and only ONE grid is in the document at a time, which is the mechanism.
     expect(document.querySelectorAll('[data-testid="apps-listing-skeleton-grid"]')).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 THE `LISTING_ACTION_ROW_GAP_PX` EXCLUSION, MEASURED RATHER THAN ASSERTED IN
+   * PROSE.
+   *
+   * `AppListingCardSkeleton` deliberately does not read that constant: it is the gap
+   * between the CTA and the `⋮` overflow trigger, a card renders that trigger only
+   * for an owner or a moderator, and a loading state cannot know which viewer it is
+   * about to serve. `__tests__/appListingCardSkeleton.test.ts` carries the exclusion
+   * as a named carve-out, and a carve-out justified by "it costs no geometry" has to
+   * have that COST measured, or it is a promise.
+   *
+   * So: the same listings, the same width, rendered for a signed-out viewer and for
+   * their OWNER. The trigger appears, the CTA gives up exactly
+   * `LISTING_ACTION_ROW_CONTROL_PX + LISTING_ACTION_ROW_GAP_PX` of width to it — and
+   * the CARD's box does not move. That is the whole claim.
+   *
+   * The fixture carries an icon and a cover here, unlike the parity fixture above:
+   * an owner looking at a listing missing either gets the "Incomplete" badge, which
+   * would make the owner arm genuinely taller for a reason that has nothing to do
+   * with the trigger and would turn this measurement into a different test.
+   */
+  test('🔴 the ⋮ trigger takes width from the CTA and NOTHING from the card box', async () => {
+    const OWNER = { id: 7331, username: 'ashling' };
+    const COMPLETE = POOL.slice(0, 8).map((c) => ({
+      ...c,
+      iconUrl: LOADABLE_IMAGE_DATA_URI,
+      coverUrl: LOADABLE_IMAGE_DATA_URI,
+    }));
+    const GRID_WIDTH = 1376;
+
+    const anon = await renderStore(GRID_WIDTH, { loading: false, items: COMPLETE });
+    const anonMenus = document.querySelectorAll(
+      '[data-testid="apps-listing-card-actions-menu"]'
+    ).length;
+    const anonCtas = ctaWidths();
+
+    const owner = await renderStore(GRID_WIDTH, {
+      loading: false,
+      items: COMPLETE,
+      viewer: OWNER,
+    });
+    const ownerMenus = document.querySelectorAll(
+      '[data-testid="apps-listing-card-actions-menu"]'
+    ).length;
+    const ownerCtas = ctaWidths();
+
+    // POSITIVE CONTROL, FIRST — the two arms must genuinely differ, or "the boxes
+    // are equal" is a fact about rendering the same thing twice.
+    expect(anonMenus, 'the signed-out arm rendered a ⋮ trigger it should not have').toBe(0);
+    expect(ownerMenus, 'the owner arm rendered no ⋮ trigger — the arms are identical').toBe(
+      owner.cells.length
+    );
+    // …and no "Incomplete" badge crept in, which would make the owner arm taller for
+    // an unrelated reason.
+    expect(document.querySelectorAll('[data-testid="apps-listing-owner-incomplete"]')).toHaveLength(
+      0
+    );
+
+    // THE CTA PAYS FOR THE TRIGGER — exactly the trigger plus the row gap.
+    expect(anonCtas.length).toBe(ownerCtas.length);
+    for (let i = 0; i < anonCtas.length; i++) {
+      expect(
+        Math.round(anonCtas[i] - ownerCtas[i]),
+        `CTA ${i} did not give up exactly the trigger + gap when the ⋮ appeared ` +
+          `(${anonCtas[i]} -> ${ownerCtas[i]})`
+      ).toBe(LISTING_ACTION_ROW_CONTROL_PX + LISTING_ACTION_ROW_GAP_PX);
+    }
+
+    // …AND THE CARD DOES NOT MOVE. This is what licenses the skeleton to ignore the
+    // gap constant.
+    expect(
+      anon.boxes,
+      'a card changes box when its viewer gains the ⋮ trigger — the skeleton cannot ' +
+        'then reserve one box for both viewers, and the gap exclusion in ' +
+        '__tests__/appListingCardSkeleton.test.ts is wrong'
+    ).toEqual(owner.boxes);
   });
 
   /**

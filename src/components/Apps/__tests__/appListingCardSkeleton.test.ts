@@ -51,10 +51,13 @@ const GEOMETRY_MODULE = '~/components/Apps/appListingCardGeometry';
  * check would be an unread declaration that the next reader has to prove unused —
  * the same shape this component family deleted a `@container` rule and a hook for.
  *
- * It costs no geometry: the trigger decides how WIDE the CTA is, never how tall
- * the row or the card is. The measured parity test is green for an owner (menu
- * present) and a signed-out viewer (menu absent) alike, which is what makes this
- * exclusion a fact rather than an assumption.
+ * It costs no geometry, and that is MEASURED rather than promised — a carve-out
+ * justified by "it costs nothing" has to have the cost measured or it is a
+ * promise. `AppListingCardSkeleton.geometry.test.tsx` renders the same listings at
+ * the same width for a signed-out viewer and for their OWNER, and pins that the
+ * CTA gives up exactly `LISTING_ACTION_ROW_CONTROL_PX + LISTING_ACTION_ROW_GAP_PX`
+ * of WIDTH to the trigger while the card's box is byte-identical across the two
+ * arms ("the ⋮ trigger takes width from the CTA and NOTHING from the card box").
  *
  * The test below still asserts this name IS an export, so the exclusion cannot rot
  * into a reference to a constant that no longer exists.

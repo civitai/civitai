@@ -206,9 +206,10 @@ export function AppListingCardSkeleton() {
             an unread declaration that reads as load-bearing, which is the shape
             this component family has spent several rounds deleting (see the
             `@container` note in `AppListingCard.tsx`). It costs nothing in
-            geometry: the trigger changes how wide the CTA is, never how tall the
-            row or the card is — the parity test measures cards, and it is green for
-            an owner and a signed-out viewer alike.
+            geometry, MEASURED not assumed: `AppListingCardSkeleton.geometry.test.tsx`
+            renders the same listings for a signed-out viewer and for their owner and
+            pins that the CTA gives up exactly the trigger + the row gap of WIDTH
+            while the card's box is identical across the two arms.
             `__tests__/appListingCardSkeleton.test.ts` names this exclusion
             explicitly, so it cannot become a silent hole. */}
         <Group
