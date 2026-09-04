@@ -52,6 +52,11 @@ const VERSION = 1;
  * Exported because the submit path now unions two independently-capped sources —
  * URL-derived ids and verified tokens — and a union of two 8s is a 16 unless the
  * caller applies the same bound.
+ *
+ * 🔴 It now does double duty: it is also the DoS bound the router applies to the
+ * caller-controlled `sourceProvenance` array, where each element past it costs an
+ * AES-GCM attempt. Raising this for a collage feature raises that ceiling too —
+ * give the router its own constant before you do.
  */
 export const MAX_SOURCE_IMAGES = 8;
 

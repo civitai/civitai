@@ -423,14 +423,23 @@ export const orchestratorRouter = router({
         // `verifyProvenance`, which returns null for a non-string, but narrowing
         // at the boundary keeps that a type guarantee instead of a coincidence.
         // Bounded HERE, at the boundary. `.input(z.any())` means the array arrives
-        // unvalidated, and every element costs an AES-GCM decrypt attempt on the
-        // event loop before the prompt audit or any Buzz check runs. The union
-        // discards everything past `MAX_SOURCE_IMAGES` anyway, so the cap removes
-        // the work without removing any behaviour.
+        // unvalidated, and every element past the cap costs an AES-GCM decrypt
+        // attempt on the event loop before the prompt audit or any Buzz check.
+        //
+        // `.slice` BEFORE `.filter`, deliberately: filtering first walks and
+        // reallocates the whole caller-controlled array before the cap applies,
+        // so the crypto would be bounded while the O(n) pass was not.
+        //
+        // What this trims is TOKENS, not resolved ids — `unionSourceImageIds`
+        // caps the ids. The two differ only when more than `MAX_SOURCE_IMAGES`
+        // tokens arrive and some of the first few fail to verify, where tokens
+        // that would once have backfilled the cap are now dropped unread. That
+        // direction is strictly fewer verified ids, never more, so it can only
+        // under-grant the free-submission gate.
         sourceProvenance: Array.isArray(sourceProvenance)
           ? sourceProvenance
-              .filter((x): x is string => typeof x === 'string')
               .slice(0, MAX_SOURCE_IMAGES)
+              .filter((x): x is string => typeof x === 'string')
           : undefined,
         // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
         // from a hand-rolled client can't stand in for the acknowledgement.

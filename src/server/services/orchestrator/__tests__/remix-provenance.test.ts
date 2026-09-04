@@ -295,7 +295,11 @@ describe('unionSourceImageIds', () => {
     // set the cap is satisfied by the url ids alone, so the assertion would hold
     // even if tokens were ignored entirely and the test could not fail.
     const urlSourceImageIds = [1, 2, 3, 4, 5, 6];
-    const token = signProvenance({ userId: USER, sourceImageIds: [101, 102, 103, 104], kind: 'mint' });
+    const token = signProvenance({
+      userId: USER,
+      sourceImageIds: [101, 102, 103, 104],
+      kind: 'mint',
+    });
 
     const ids = unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
 
@@ -370,7 +374,12 @@ describe('provenance kind separates the mint from a real job', () => {
    * issued for, which is why absent means `job` rather than being rejected.
    */
   it('treats a token with no kind as a job token', async () => {
-    const legacy = signProvenance({ userId: USER, sourceImageIds: [7] })!;
+    // Hand-built via `tokenIssuedAt`, NOT `signProvenance`. The point is the
+    // tokens already baked into output files, which carry no `k` at all — asking
+    // today's signer for one only re-checks whatever it emits now, so making it
+    // write `k:'job'` explicitly would leave this test green while breaking every
+    // token in the wild.
+    const legacy = tokenIssuedAt(Math.floor(Date.now() / 1000) - 60, USER, [7]);
 
     expect(verifyProvenance(legacy, USER)).toEqual([7]);
     expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: legacy })).toEqual([7]);

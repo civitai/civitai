@@ -3,8 +3,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 /**
  * The unit project runs in `node`, so there is no `sessionStorage`. Installed
  * before the store module is imported because `persist` resolves its storage at
- * module scope. A real in-memory implementation rather than a no-op: a stub that
- * silently dropped writes would let a broken `transfer` pass here.
+ * module scope.
+ *
+ * 🔴 It is a fixture, not coverage — stated because an earlier version of this
+ * comment claimed otherwise and that is the kind of sentence that stops the next
+ * reviewer looking. Zustand holds state in memory and `persist` only reads the
+ * medium at rehydration, which nothing here exercises: replacing `setItem` with
+ * a no-op, or swapping sessionStorage for localStorage, leaves every test below
+ * green. So the store's "must not outlive the tab" property is UNTESTED. Pinning
+ * it would take a rehydration test that writes, re-imports the module and reads
+ * the token back.
  */
 const store = new Map<string, string>();
 Object.defineProperty(globalThis, 'sessionStorage', {
