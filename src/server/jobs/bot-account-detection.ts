@@ -32,12 +32,15 @@ import { createJob, UNRUNNABLE_JOB_CRON } from './job';
  * shadow-phase grading pass needs — while firing no schedule. Restoring a real cron is a one-token
  * change once both preconditions are confirmed live; the PR body records what they are.
  *
- * `lockExpiration` is widened from the 5-minute default because the run-jobs route hard-caps the
- * lock hold at exactly that value and then RELEASES the lock while the run continues — so a run
- * longer than the expiration leaves the door open for a second, concurrent full run whose different
- * `startedAt` the board cannot merge with the first. A capped walk is up to
- * `MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE` account pages plus four `groupBy` reads each; 30 minutes
- * is comfortably above that and is a ceiling, not a reservation.
+ * 🔴 `lockExpiration` IS THE MITIGATION FOR THE DUPLICATE RUN, and it is the only one. The run-jobs
+ * route hard-caps the lock hold at exactly this value and then RELEASES the lock while the run
+ * continues, so past that point a retry can start a second, concurrent full run whose different
+ * `startedAt` the board's `(detector, started_at)` key cannot merge with the first — two complete
+ * duplicate finding sets. Widening the window until a run fits inside it is what prevents that; the
+ * `checkCanceled` wiring below does NOT, because `release()` clears the redis key and its refresh
+ * interval and never touches the job context (see `acquireLock` in the route). A capped walk is up
+ * to `MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE` account pages plus eight `groupBy` reads each;
+ * 30 minutes is comfortably above that and is a ceiling, not a reservation.
  */
 export const botAccountDetection = createJob(
   'bot-account-detection',
