@@ -12,24 +12,18 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { HubSuggestionType } from '~/server/schema/user-hub.schema';
-import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 import { TagTarget, TagType, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
 
-// Collections are listed but not selectable until the index attribute they are
-// served by is live — `HUB_COLLECTION_SOURCES_ENABLED` gates the write path too,
-// so an enabled tab would offer sources the server refuses.
+// Collections are absent rather than disabled. They cannot work until the index
+// attribute serving them is live, and a greyed-out tab advertises a source the
+// server would refuse — `resolveHubSourceFromUrl` still resolves a pasted
+// collection link, gated the same way, so nothing is lost by not listing it.
 const tabs = [
   { value: UserHubSourceType.User, label: 'Creators', scope: 'creators you follow' },
   { value: UserHubSourceType.Model, label: 'Models', scope: 'models you own or bookmarked' },
-  {
-    value: UserHubSourceType.Collection,
-    label: 'Collections',
-    scope: 'collections you follow',
-    disabled: !HUB_COLLECTION_SOURCES_ENABLED,
-  },
   // The one tab that is not a relationship: everyone shares the same tag
   // vocabulary, so it searches the site's tags rather than the viewer's library.
   { value: UserHubSourceType.Tag, label: 'Tags', scope: 'image tags' },
@@ -95,11 +89,7 @@ export function HubSourceSearch({
         size="xs"
         value={type}
         disabled={disabled}
-        data={tabs.map(({ value, label, disabled: itemDisabled }) => ({
-          value,
-          label,
-          disabled: itemDisabled,
-        }))}
+        data={tabs.map(({ value, label }) => ({ value, label }))}
         onChange={(value) => setType(value as UserHubSourceType)}
       />
 

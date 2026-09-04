@@ -18,7 +18,7 @@ export type HubSourceValue = {
   index: number;
 };
 
-type AddMode = 'collect' | 'exclude';
+type AddMode = 'include' | 'exclude';
 
 export function HubSourceEditor({
   value,
@@ -45,7 +45,7 @@ export function HubSourceEditor({
   emptyMessage?: string;
 }) {
   const [adding, setAdding] = useState(false);
-  const [addMode, setAddMode] = useState<AddMode>('collect');
+  const [addMode, setAddMode] = useState<AddMode>('include');
   const exclude = addMode === 'exclude';
 
   const collected = value.filter((source) => !source.exclude);
@@ -132,7 +132,7 @@ export function HubSourceEditor({
                     value={addMode}
                     onChange={(next) => setAddMode(next as AddMode)}
                     data={[
-                      { value: 'collect', label: 'Collect' },
+                      { value: 'include', label: 'Include' },
                       { value: 'exclude', label: 'Exclude' },
                     ]}
                   />
