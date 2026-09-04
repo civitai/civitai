@@ -25,8 +25,20 @@ const store = createDismissalStore<number, typeof BUCKET>({
 
 export const useDismissedCreatorAnnouncements = () => store.useDismissed();
 
-export function dismissCreatorAnnouncement(id: number) {
-  store.dismiss(id);
+export function dismissCreatorAnnouncements(ids: number | number[]) {
+  store.dismiss(ids);
+}
+
+/**
+ * The badge counts these and the panel renders them, from the same query and the same
+ * dismissal set — so the predicate has one owner. Two copies that drift are the reported
+ * bug in mirror image: a number that no longer matches the list under it.
+ */
+export function selectUndismissedAnnouncements<T extends { id: number }>(
+  announcements: T[],
+  dismissedIds: number[]
+) {
+  return announcements.filter((x) => !dismissedIds.includes(x.id));
 }
 
 export function pruneDismissedCreatorAnnouncements(live: Iterable<number>) {
