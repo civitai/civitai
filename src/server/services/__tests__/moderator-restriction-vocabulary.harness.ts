@@ -1,8 +1,10 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 /**
  * How the main app's suite reads the moderator app's restriction vocabulary: it **imports and
- * executes** the module and reads the resulting VALUES.
+ * executes** the module and reads the resulting VALUES — plus one TEXT assertion, because the two
+ * mechanisms are blind to different things (see `assertEnvironmentIndependent` below).
  *
  * 🔴 It used to parse the file as TEXT with a pair of regexes, and that was walkable. `[^\]]*`
  * stops at the FIRST `]` after the `=`, so a `]` anywhere inside the literal — in a trailing
@@ -31,6 +33,13 @@ import path from 'node:path';
  * correct outcome: the two apps would then no longer share a plain-data vocabulary module and the
  * mirror needs re-deciding rather than silently relaxing.
  *
+ * 🔴 CROSS-APP BUILD COUPLING, and it lands on the MAIN app's suite. Resolving that path makes Vite
+ * load `apps/moderator/tsconfig.json`, which extends the generated, gitignored
+ * `apps/moderator/.svelte-kit/tsconfig.json` — so without `svelte-kit sync` having been run in
+ * `apps/moderator`, this file and `restriction-type-seam.test.ts` both fail with
+ * `TSConfckParseError: failed to resolve "extends"`, an error naming a tsconfig rather than the
+ * seam. CI is unaffected (`prepare` runs sync); a fresh clone or a fresh worktree is not.
+ *
  * Not typechecked (`src/**\/__tests__/**` is excluded in tsconfig.json), so the shape is validated
  * at runtime by `asModeratorVocabulary` below rather than by the compiler.
  */
@@ -43,6 +52,85 @@ export const MODERATOR_VOCABULARY_PATH = path.resolve(
   '../../../..',
   MODERATOR_VOCABULARY_FILE
 );
+
+/**
+ * 🔴 The blind spot the execute-based reader has and the text parser it replaced did NOT, so this
+ * check is COMPLEMENTARY to `readModeratorVocabulary` rather than a leftover of it — keep both.
+ *
+ * Executing the module reads its values **in the main app's test process**. An environment-dependent
+ * value is therefore resolved under Vitest's environment, not under the moderator app's production
+ * build. Measured on #4609, writing the list as
+ *
+ *     export const RULINGS_WIRED_FOR: readonly RestrictionType[] = import.meta.env.DEV
+ *       ? ['generation']
+ *       : ['generation', 'bot-account'];
+ *
+ * left the seam and vocabulary suites at 28 passed / 0 failed and the moderator app's own value pin
+ * at 5 passed / 0 failed, while the production build shipped both types — the ban-then-strand hazard
+ * reached with every pinning guard green. The base commit's text parser went RED on that same shape,
+ * so the execute reader is not strictly stronger; it trades a formatting blind spot for a
+ * runtime-environment one. This closes the half it gave up.
+ *
+ * 🔴 Note what this means for the "keep this module import-free" precondition: `import.meta.env` and
+ * `process.env` need NO import statement, so import-freedom does not imply environment-independence.
+ * They are two separate constraints and this asserts the second one.
+ */
+const ENVIRONMENT_READ = /import\.meta|process\.env/;
+
+/**
+ * 🔴 Comments are removed before the scan, and that is not a nicety — without it the guard is
+ * matched by its OWN documentation. The module it checks has to be able to say, in prose, which
+ * shapes are refused; a raw-text scan then fires on the sentence forbidding the thing rather than on
+ * the thing, and the only way to keep the suite green is to stop documenting the rule.
+ *
+ * String literals are deliberately KEPT: a `//` inside one must not start a comment, and an
+ * environment read cannot hide inside a string anyway — a string is not executable.
+ */
+function withoutComments(sourceText: string): string {
+  let out = '';
+  let i = 0;
+  while (i < sourceText.length) {
+    const c = sourceText[i];
+    const next = sourceText[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < sourceText.length && sourceText[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < sourceText.length && !(sourceText[i] === '*' && sourceText[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < sourceText.length && sourceText[i] !== quote) {
+        if (sourceText[i] === '\\') {
+          out += sourceText[i];
+          i++;
+        }
+        out += sourceText[i];
+        i++;
+      }
+      out += sourceText[i] ?? '';
+      i++;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+export function assertEnvironmentIndependent(sourceText: string, source: string): void {
+  const found = ENVIRONMENT_READ.exec(withoutComments(sourceText));
+  if (found)
+    throw new Error(
+      `${source} reads \`${found[0]}\`. The vocabulary must be the SAME VALUES in every environment: this guard executes the module in the main app's test process, so an environment-conditional list is read under Vitest and never under the moderator app's production build — the two apps could then ship different lists with every guard green. Write the list as constants, not as a branch on the environment.`
+    );
+}
 
 export type ModeratorRestrictionVocabulary = {
   /** The moderator app's copy of the types that can be FILED and reviewed. */
@@ -99,11 +187,12 @@ export function asModeratorVocabulary(
 export async function readModeratorVocabulary(
   file: string = MODERATOR_VOCABULARY_PATH
 ): Promise<ModeratorRestrictionVocabulary> {
+  const source = file === MODERATOR_VOCABULARY_PATH ? MODERATOR_VOCABULARY_FILE : file;
+  // The TEXT half, run BEFORE the import so the failure names the constraint rather than reporting a
+  // list that happens to be correct in this process. See `assertEnvironmentIndependent`.
+  assertEnvironmentIndependent(fs.readFileSync(file, 'utf-8'), source);
   // `@vite-ignore` because the path is computed: this reader is deliberately usable against a
   // fixture, which is the only way to test that it sees a divergence at all.
   const mod = await import(/* @vite-ignore */ file);
-  return asModeratorVocabulary(
-    mod,
-    file === MODERATOR_VOCABULARY_PATH ? MODERATOR_VOCABULARY_FILE : file
-  );
+  return asModeratorVocabulary(mod, source);
 }

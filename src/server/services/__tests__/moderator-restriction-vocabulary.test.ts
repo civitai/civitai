@@ -2,6 +2,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   asModeratorVocabulary,
+  assertEnvironmentIndependent,
   MODERATOR_VOCABULARY_FILE,
   readModeratorVocabulary,
 } from './moderator-restriction-vocabulary.harness';
@@ -90,6 +91,54 @@ describe('moderator restriction vocabulary — the reader the seam guard uses', 
     expect(vocabulary.unwiredRulingReason('spam-account')).toBe(
       unwiredRulingReason('spam-account')
     );
+  });
+
+  /**
+   * 🔴 The half executing the module GAVE UP, kept alongside it rather than instead of it. The
+   * execute reader resolves the vocabulary in the MAIN APP'S TEST PROCESS, so a list branching on the
+   * environment is read under Vitest and never under the moderator app's production build. Measured
+   * on #4609: with `RULINGS_WIRED_FOR = import.meta.env.DEV ? ['generation'] : ['generation',
+   * 'bot-account']`, the seam and vocabulary suites reported 28 passed / 0 failed and the moderator's
+   * own value pin 5 passed / 0 failed, while the shipped build carried both types. The base commit's
+   * TEXT parser went red on that same module — so the reader that replaced it traded one blind spot
+   * for another, and this is the trade being paid back.
+   */
+  it('refuses a vocabulary whose values are read from the environment', () => {
+    // Both shapes, because neither needs an import statement and the module's stated precondition is
+    // only about imports.
+    expect(() =>
+      assertEnvironmentIndependent(
+        `export const RULINGS_WIRED_FOR = import.meta.env.DEV ? ['generation'] : ['generation', 'bot-account'];`,
+        MODERATOR_VOCABULARY_FILE
+      )
+    ).toThrow(/import\.meta/);
+    expect(() =>
+      assertEnvironmentIndependent(
+        `export const RULINGS_WIRED_FOR = process.env.NODE_ENV === 'test' ? ['generation'] : [];`,
+        MODERATOR_VOCABULARY_FILE
+      )
+    ).toThrow(/process\.env/);
+    // Negative control: an ordinary literal list must NOT trip it, or the check would be refusing
+    // everything and its red above would say nothing.
+    expect(() =>
+      assertEnvironmentIndependent(
+        `export const RULINGS_WIRED_FOR = ['generation'];`,
+        MODERATOR_VOCABULARY_FILE
+      )
+    ).not.toThrow();
+    // 🔴 …and the control that stops this guard being matched by its own documentation. The module
+    // has to be able to NAME the shapes it refuses; a scan over raw text fires on that sentence, and
+    // the only way back to green would be to delete the explanation.
+    expect(() =>
+      assertEnvironmentIndependent(
+        [
+          '/** Do not read `import.meta.env` or `process.env` here — see the harness. */',
+          '// process.env is likewise refused.',
+          `export const RULINGS_WIRED_FOR = ['generation'];`,
+        ].join('\n'),
+        MODERATOR_VOCABULARY_FILE
+      )
+    ).not.toThrow();
   });
 
   it('loads the real moderator module when given no path', async () => {

@@ -45,10 +45,19 @@ export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
  * not fork it by hand.
  *
  * 🔴 That guard used to parse this file as TEXT, and passed green over a real divergence: a `]` in a
- * trailing comment truncated its capture. So KEEP THIS MODULE IMPORT-FREE. It has no imports today,
- * and that is the only reason the main app's Vitest project can load it across the app boundary;
- * adding a `$lib/…` import here breaks the seam guard loudly rather than silently, but it does break
- * it.
+ * trailing comment truncated its capture. Two preconditions come out of the replacement, and they are
+ * SEPARATE — the second is not implied by the first:
+ *
+ *  1. KEEP THIS MODULE IMPORT-FREE. It has no imports today, and that is the only reason the main
+ *     app's Vitest project can load it across the app boundary; adding a `$lib/…` import here breaks
+ *     the seam guard loudly rather than silently, but it does break it.
+ *  2. KEEP EVERY VALUE HERE ENVIRONMENT-INDEPENDENT — no `import.meta.env`, no `process.env`, and
+ *     nothing derived from them. Neither needs an import statement, so rule 1 does not cover this.
+ *     The guard EXECUTES this module inside the main app's test process: a list that branches on the
+ *     environment is read under Vitest and never under this app's production build, so the two apps
+ *     can ship different lists with every guard on both sides green. Assembling a value from
+ *     constants declared in this file is fine — that is the same value everywhere. Reading one from
+ *     the environment is not, and is refused by name.
  */
 export const RULINGS_WIRED_FOR: readonly RestrictionType[] = ['generation'];
 
