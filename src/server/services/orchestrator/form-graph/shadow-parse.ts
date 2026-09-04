@@ -1,5 +1,4 @@
 import { isEqual } from 'lodash-es';
-import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formGraphShadowParseCounter } from '~/server/prom/form-graph.metrics';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
@@ -8,19 +7,15 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 
 /**
- * The form-graph cutover's server side, staged behind two Flipt flags:
- *
- * 1. `form-graph-shadow-parse` — every generation parse ALSO runs through
- *    `generationHub`; results are compared and divergence is counted
- *    (`form_graph_shadow_parse_total`) and logged with diff KEYS only — no
- *    field values, so no prompts or user content reach the log.
- * 2. `form-graph-parse` — the hub result is SERVED. The v1 parse still runs
- *    (it feeds the substitution metrics and the reverse shadow-compare);
- *    dropping it entirely belongs to the delete-data-graph change, which
- *    ports the metrics tap onto the hub's correction notes.
- *
- * Both flags default off; with neither set this module costs one sync flag
- * check per parse.
+ * The form-graph cutover's server side, gated by the ONE cutover flag —
+ * the `formGraphGenerator` feature flag, read per-user from the generation
+ * context. Every parse runs BOTH engines and records the comparison
+ * (`form_graph_shadow_parse_total`, divergences logged with diff KEYS only —
+ * no field values, so no prompts or user content reach the log); the hub
+ * result is SERVED for users whose flag is on. The v1 parse always runs
+ * (it feeds the substitution metrics and the reverse comparison). Both the
+ * flag and this whole module go away in the delete-data-graph change, which
+ * ports the metrics tap onto the hub's correction notes.
  */
 
 export type HubParse =
@@ -31,12 +26,6 @@ export type HubParse =
       computedKeys: readonly string[];
     }
   | { ok: false; errors: Record<string, { message: string }> };
-
-export function shadowFlags() {
-  const serve = isFliptSync(FLIPT_FEATURE_FLAGS.FORM_GRAPH_PARSE) === true;
-  const shadow = serve || isFliptSync(FLIPT_FEATURE_FLAGS.FORM_GRAPH_SHADOW_PARSE) === true;
-  return { serve, shadow };
-}
 
 /** The hub parse, never throwing — a throw is a divergence class of its own. */
 export function runHubParse(

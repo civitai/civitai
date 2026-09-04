@@ -1,11 +1,10 @@
 import { registerCounterWithLabels } from '@civitai/telemetry/client';
 
 /**
- * Shadow-parse comparison outcomes for the form-graph cutover: while the
- * `form-graph-shadow-parse` flag is on, every server-side generation parse
- * runs through BOTH graphs and the results are compared. `match` should be
- * the only outcome; a sustained zero on the others is the flip criterion for
- * `form-graph-parse`.
+ * Shadow-parse comparison outcomes for the form-graph cutover: every
+ * server-side generation parse runs through BOTH graphs and the results are
+ * compared. `match` should be the only outcome; a sustained zero on the
+ * others is the criterion for widening the `formGraphGenerator` flag.
  *
  * outcome: match | diverged (results differ) | error (the hub parse threw)
  */

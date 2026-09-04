@@ -43,10 +43,6 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_EXPERIMENTAL = 'generation-experimental',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   WAN22_MULTI_STEP = 'wan22-multi-step',
-  // form-graph cutover, staged: shadow-compare first, then serve. See
-  // src/server/services/orchestrator/form-graph/shadow-parse.ts.
-  FORM_GRAPH_SHADOW_PARSE = 'form-graph-shadow-parse',
-  FORM_GRAPH_PARSE = 'form-graph-parse',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
