@@ -50,3 +50,22 @@ export async function postTraining(runs: TrainingRunPayload[]): Promise<string[]
   const { workflowIds } = (await res.json()) as { workflowIds: string[] };
   return workflowIds;
 }
+
+/** Rename a training (updates its metadata title + name tag). Throws with a readable message on failure. */
+export async function postRename(workflowId: string, name: string): Promise<void> {
+  const res = await fetch('/api/rename', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflowId, name }),
+  });
+  if (!res.ok) {
+    let message = `Could not rename (${res.status})`;
+    try {
+      const body = (await res.json()) as { message?: string };
+      if (body.message) message = body.message;
+    } catch {
+      // non-JSON body
+    }
+    throw new Error(message);
+  }
+}

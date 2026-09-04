@@ -1,4 +1,11 @@
-import { submitWorkflow, type BuzzClientAccount, type WorkflowStepTemplate } from '@civitai/client';
+import {
+  getWorkflow,
+  submitWorkflow,
+  updateWorkflow,
+  type BuzzClientAccount,
+  type WorkflowStepTemplate,
+} from '@civitai/client';
+import { env } from '$env/dynamic/private';
 import { isFlux2, orchestratorClient } from './orchestrator';
 import {
   CIVITAI_TAG,
@@ -43,6 +50,11 @@ export interface TrainingRunInput {
 
 // Real-spend wallets (Buzz), same set the whatif quotes against.
 const CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+// Opt each epoch job into an NDJSON live trace (step progress + console logs), exposed as
+// `output.epochs[].traceUrl` (ai-toolkit only). OFF by default: sending this unknown field before the
+// orchestrator's trace feature is live could get the whole submit rejected, so it's gated on an env flag —
+// set TRAINING_TRACE_MODE=events (or logs) once the orchestrator side has shipped.
+const TRACE_MODE = env.TRAINING_TRACE_MODE ?? 'none';
 
 /** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
  *  blobs for every engine; the SDK types imageResourceTraining's `trainingData` as a string, so that path
@@ -87,6 +99,7 @@ function buildStep(run: TrainingRunInput): WorkflowStepTemplate {
           networkAlpha: run.networkAlpha,
           resolution: run.resolution,
           triggerWord: run.trigger,
+          ...(TRACE_MODE !== 'none' ? { trace: TRACE_MODE } : {}),
           trainingData,
           samples: { prompts: run.prompts },
         },
@@ -102,6 +115,10 @@ function describeSubmitError(error: unknown): string {
   const e = error as { detail?: string; title?: string } | undefined;
   return e?.detail ?? e?.title ?? 'no data returned';
 }
+
+// The workflow carries the run name both as `metadata.name` (the displayed title) and a `name:<slug>` tag
+// (for finding it). This prefix is the one place the tag shape is written and matched.
+const NAME_TAG_PREFIX = 'name:';
 
 /** A short tag-safe slug of the run name, so a training can be found by name later. */
 function nameSlug(name: string): string {
@@ -119,7 +136,9 @@ export async function submitTraining(token: string, run: TrainingRunInput): Prom
   const { data, error } = await submitWorkflow({
     client: orchestratorClient(token),
     body: {
-      tags: slug ? [CIVITAI_TAG, TRAINING_TAG, `name:${slug}`] : [CIVITAI_TAG, TRAINING_TAG],
+      tags: slug
+        ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
+        : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [buildStep(run)],
       currencies: CURRENCIES,
@@ -128,4 +147,32 @@ export async function submitTraining(token: string, run: TrainingRunInput): Prom
   });
   if (!data?.id) throw new Error(`training submit failed: ${describeSubmitError(error)}`);
   return data.id;
+}
+
+/** Rename a training: merge the new name into the workflow metadata (the title the list/detail read) and
+ *  swap its `name:<slug>` tag. Fetches current metadata/tags first so nothing else is dropped. Per-user —
+ *  the token only resolves the caller's own workflows, so this can't rename someone else's. */
+export async function renameTraining(
+  token: string,
+  workflowId: string,
+  name: string
+): Promise<void> {
+  const client = orchestratorClient(token);
+  const { data: current, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  if (!current) throw new Error(`rename: workflow not found (${describeSubmitError(getError)})`);
+
+  const trimmed = name.trim();
+  const metadata = { ...(current.metadata ?? {}), name: trimmed };
+  const slug = trimmed ? nameSlug(trimmed) : '';
+  const tags = [
+    ...(current.tags ?? []).filter((t) => !t.startsWith(NAME_TAG_PREFIX)),
+    ...(slug ? [`${NAME_TAG_PREFIX}${slug}`] : []),
+  ];
+
+  const { error } = await updateWorkflow({
+    client,
+    path: { workflowId },
+    body: { metadata, tags },
+  });
+  if (error) throw new Error(`rename failed: ${describeSubmitError(error)}`);
 }

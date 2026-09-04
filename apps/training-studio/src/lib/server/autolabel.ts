@@ -6,7 +6,7 @@ import {
   type WdTaggingStepTemplate,
   type WorkflowStepTemplate,
 } from '@civitai/client';
-import { CIVITAI_TAG, TRAINING_TAG } from '$lib/data/trainingRows';
+import { AUTO_LABEL_TAG, CIVITAI_TAG } from '$lib/data/trainingRows';
 import type { Media } from '$lib/data/trainingModels';
 import { orchestratorClient } from './orchestrator';
 
@@ -23,7 +23,8 @@ export interface AutoLabelItem {
   key: string;
 }
 
-const AUTO_LABEL_TAGS = [CIVITAI_TAG, TRAINING_TAG, 'auto-label'];
+// Deliberately NOT tagged `training` — that's the list query, and an auto-label run is not a training.
+const AUTO_LABEL_TAGS = [CIVITAI_TAG, AUTO_LABEL_TAG];
 // WD-tagger confidence floor — the orchestrator drops tags below it, so the output is already trimmed.
 const WD_THRESHOLD = 0.35;
 const CAPTION_MAX_TOKENS = 128;

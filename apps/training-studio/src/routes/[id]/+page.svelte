@@ -1,9 +1,13 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { invalidate } from '$app/navigation';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { postRename } from '$lib/train';
   import AppHeader from '$lib/components/AppHeader.svelte';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
+  import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
@@ -12,6 +16,18 @@
 
   let { data }: { data: PageData } = $props();
   const d = $derived(data.detail);
+
+  // Overall, monotonic training progress. The orchestrator's estimatedProgressRate is PER-EPOCH — it runs
+  // 0→1 for the current epoch's job and restarts each epoch — so folding it into the count of finished
+  // checkpoints gives a whole-run reading that climbs instead of resetting. Falls back to the raw rate, or
+  // to finished/planned, when a piece is missing.
+  const completedEpochs = $derived(d.epochs.length);
+  const progressPct = $derived.by(() => {
+    const planned = d.plannedEpochs ?? 0;
+    const rate = typeof d.progress === 'number' ? d.progress : 0;
+    if (planned > 0) return Math.min(100, Math.round(((completedEpochs + rate) / planned) * 100));
+    return typeof d.progress === 'number' ? Math.round(d.progress * 100) : 0;
+  });
 
   // Live updates while training: re-run the load every few seconds so new epochs/samples stream in. The
   // one-shot timeout re-arms via this effect after each refetch and stops on its own once the run reaches
@@ -22,6 +38,37 @@
     const timer = setTimeout(() => invalidate('app:training-detail'), POLL_MS);
     return () => clearTimeout(timer);
   });
+
+  // Inline rename of the run title (updates metadata + name tag on the workflow).
+  let renaming = $state(false);
+  let draft = $state('');
+  let saving = $state(false);
+  let renameError = $state('');
+
+  function startRename() {
+    draft = d.name;
+    renameError = '';
+    renaming = true;
+  }
+  function focusInput(node: HTMLElement) {
+    queueMicrotask(() => node.querySelector('input')?.focus());
+  }
+  async function saveRename(e: SubmitEvent) {
+    e.preventDefault();
+    const name = draft.trim();
+    if (!name || saving) return;
+    saving = true;
+    renameError = '';
+    try {
+      await postRename(d.workflowId, name);
+      await invalidate('app:training-detail'); // re-read the title from the server
+      renaming = false;
+    } catch (err) {
+      renameError = err instanceof Error ? err.message : 'Could not rename';
+    } finally {
+      saving = false;
+    }
+  }
 
   const createdLabel = $derived(
     new Date(d.createdAt).toLocaleDateString(undefined, {
@@ -64,6 +111,13 @@
     const epochIndex = newestFirst.indexOf(epoch);
     if (epochIndex !== -1) viewer = { epochIndex, sampleIndex };
   }
+
+  // A param-only /[id]→/[id'] navigation reuses this component, so the viewer would keep an index into the
+  // previous run's epochs — close it when the run changes.
+  $effect(() => {
+    void d.workflowId;
+    viewer = null;
+  });
 </script>
 
 <AppHeader username={data.username} />
@@ -77,7 +131,36 @@
     <div class="flex flex-wrap items-start gap-4">
       <ModelCodeBadge code={d.code} size="lg" />
       <div class="min-w-0 flex-1">
-        <h1 class="m-0 truncate text-2xl font-semibold text-white">{d.name}</h1>
+        {#if renaming}
+          <form class="flex flex-wrap items-center gap-2" onsubmit={saveRename} use:focusInput>
+            <Input
+              bind:value={draft}
+              aria-label="Training name"
+              class="h-9 max-w-sm text-lg font-semibold"
+            />
+            <Button type="submit" size="sm" disabled={saving || !draft.trim()}>
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onclick={() => (renaming = false)}>
+              Cancel
+            </Button>
+          </form>
+          {#if renameError}
+            <p class="mt-1 font-mono text-[11px] text-red-400">{renameError}</p>
+          {/if}
+        {:else}
+          <div class="flex items-center gap-2">
+            <h1 class="m-0 truncate text-2xl font-semibold text-white">{d.name}</h1>
+            <button
+              type="button"
+              aria-label="Rename training"
+              onclick={startRename}
+              class="shrink-0 rounded p-1 text-dark-2 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              ✎
+            </button>
+          </div>
+        {/if}
         <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-dark-2">
           <span class="text-dark-0">{d.base}</span>
         </div>
@@ -102,6 +185,33 @@
       </div>
     </dl>
   </header>
+
+  {#if d.state === 'training'}
+    <div class="rounded-md border border-dark-4 bg-dark-6 p-4">
+      <div class="mb-2 flex items-center justify-between text-sm">
+        <span class="flex items-center gap-2 font-semibold text-dark-0">
+          <span class="h-2 w-2 animate-pulse rounded-full bg-primary"></span>
+          Training progress
+        </span>
+        <span class="font-mono text-dark-2">
+          {progressPct}%{#if d.plannedEpochs} · epoch {completedEpochs} / {d.plannedEpochs}{/if}
+        </span>
+      </div>
+      <div
+        class="h-2 overflow-hidden rounded-full bg-dark-7"
+        role="progressbar"
+        aria-valuenow={progressPct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div class="h-full rounded-full bg-primary transition-[width]" style:width="{progressPct}%"></div>
+      </div>
+    </div>
+  {/if}
+
+  {#if d.state === 'training' && d.liveTraceUrl}
+    <TrainingTrace traceUrl={d.liveTraceUrl} />
+  {/if}
 
   {#if d.state === 'failed'}
     <div class="rounded-md border border-red-500/20 bg-red-500/5 p-8 text-center">
@@ -128,16 +238,6 @@
       {/if}
     </div>
   {:else}
-    {#if d.state === 'training'}
-      <div
-        class="flex items-center gap-2 rounded border border-primary/25 bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary"
-      >
-        <span class="h-2 w-2 animate-pulse rounded-full bg-primary"></span>
-        Still training{#if d.plannedEpochs} — {d.epochs.length} of {d.plannedEpochs} checkpoints{/if}. More
-        appear as they finish.
-      </div>
-    {/if}
-
     {#if newestFirst.length > 1}
       <ToggleGroup
         type="single"

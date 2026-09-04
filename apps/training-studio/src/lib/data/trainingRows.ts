@@ -7,6 +7,9 @@ import { cardByEcosystem, cardByType, findByAir, type Media } from './trainingMo
  * query must pass both explicitly. */
 export const TRAINING_TAG = 'training';
 export const CIVITAI_TAG = 'civitai';
+/** Marks a free auto-label workflow. These share the training tags but are NOT trainings — the list and
+ *  detail mappers drop them so they don't show up as runs. */
+export const AUTO_LABEL_TAG = 'auto-label';
 
 /** Version stamped into `Workflow.metadata` by the write path and read back here. Bump when the
  * `TrainingStudioMeta` shape changes incompatibly; the reader degrades field-by-field regardless. */
@@ -39,7 +42,7 @@ export interface TrainingRow {
   sub: string;
   /** 0 when unknown (a running workflow whose step progress we haven't read); the list then
    * shows an indeterminate bar rather than a misleading percentage. */
-  pct: number;
+  progressPct: number;
   progress: string;
   /** Real sample-image URLs from a finished run's last epoch (the list shows these instead of the
    * gradient placeholders). Empty until a run produces samples. */
@@ -92,6 +95,8 @@ interface TrainingStepOutput {
     epochNumber?: number;
     model?: { url?: string | null; available?: boolean };
     samples?: Array<{ url?: string | null; available?: boolean }>;
+    /** Tail-able live trace of this epoch's job (present only when the run requested tracing). */
+    traceUrl?: string | null;
   }>;
 }
 
@@ -112,6 +117,11 @@ function resolveWorkflow(w: Workflow) {
     {}) as TrainingStepInput;
   const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
     {}) as TrainingStepOutput;
+  // The orchestrator's 0–1 estimate of overall step progress (refreshed on each job event); the general
+  // "how far along" the run is, independent of the per-epoch checkpoints.
+  const rate = (step as { estimatedProgressRate?: number | null } | undefined)
+    ?.estimatedProgressRate;
+  const progress = typeof rate === 'number' ? Math.max(0, Math.min(1, rate)) : undefined;
 
   // Base model: the exact `air` the run trained on, else its ecosystem, else our metadata's card type.
   const byAir = input.model ? findByAir(input.model) : undefined;
@@ -126,6 +136,7 @@ function resolveWorkflow(w: Workflow) {
     state,
     input,
     output,
+    progress,
     media: card?.media ?? 'image',
     base: card ? `${card.name}${version ? ` · ${version.label}` : ''}` : 'Training run',
     code: card?.code ?? '??',
@@ -137,8 +148,17 @@ function resolveWorkflow(w: Workflow) {
 
 /** Map one orchestrator workflow to a My-trainings row. Returns null for a workflow we can't place. */
 export function workflowToRow(w: Workflow): TrainingRow | null {
-  if (!w.id) return null;
-  const { meta, state, input, output, base, code, name } = resolveWorkflow(w);
+  if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
+  const {
+    meta,
+    state,
+    input,
+    output,
+    base,
+    code,
+    name,
+    progress: progressRate,
+  } = resolveWorkflow(w);
   if (!state) return null;
 
   const epochCount = output.epochs?.length ?? input.epochs;
@@ -165,7 +185,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     code,
     state,
     sub: parts.join(' · '),
-    pct: 0,
+    progressPct: progressRate != null ? Math.round(progressRate * 100) : 0,
     progress: state === 'training' ? w.status : '',
     sampleUrls,
   };
@@ -198,6 +218,11 @@ export interface TrainingDetail {
   prompts: string[];
   /** The requested checkpoint count, for a "N of M" progress readout while training. */
   plannedEpochs?: number;
+  /** Overall step progress, 0–1 (the orchestrator's estimate) — the general "how far along" the run is. */
+  progress?: number;
+  /** The currently-training epoch's tail-able trace stream (step progress + logs), when tracing is on.
+   *  Absent unless a run is mid-epoch. */
+  liveTraceUrl?: string;
   /** Only epochs that have actually produced content (a sample or downloadable weights). A still-training
    *  run's not-yet-produced epochs are excluded, so the page shows a processing state rather than empty cards. */
   epochs: TrainingDetailEpoch[];
@@ -205,8 +230,8 @@ export interface TrainingDetail {
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
-  if (!w.id) return null;
-  const { input, state, output, media, base, code, name } = resolveWorkflow(w);
+  if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
+  const { input, state, output, media, base, code, name, progress } = resolveWorkflow(w);
   if (!state) return null;
 
   const prompts = input.samples?.prompts ?? [];
@@ -232,6 +257,12 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     // just-started run renders as N empty checkpoints instead of a "training underway" state.
     .filter((e) => e.modelUrl != null || e.samples.some((s) => s !== null));
 
+  // The live trace is the currently-training epoch's stream: has a traceUrl but no finished weights yet,
+  // newest first. Absent once every epoch is done (nothing to tail).
+  const liveTraceUrl = [...(output.epochs ?? [])]
+    .filter((e) => typeof e.traceUrl === 'string' && !e.model?.available)
+    .sort((a, b) => (b.epochNumber ?? 0) - (a.epochNumber ?? 0))[0]?.traceUrl;
+
   return {
     workflowId: w.id,
     name,
@@ -242,6 +273,8 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     isVideo: media === 'video',
     prompts,
     plannedEpochs: input.epochs,
+    progress,
+    liveTraceUrl: liveTraceUrl ?? undefined,
     epochs,
   };
 }
@@ -254,7 +287,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     code: 'FL',
     state: 'ready',
     sub: '12 images · character',
-    pct: 0,
+    progressPct: 0,
     progress: '',
     sampleUrls: [],
   },
@@ -264,7 +297,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     code: 'XL',
     state: 'training',
     sub: '28 images · style',
-    pct: 62,
+    progressPct: 62,
     progress: 'step 5,120 / 8,400 · checkpoint 6/10',
     sampleUrls: [],
   },
@@ -274,7 +307,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     code: 'XL',
     state: 'published',
     sub: '40 images · 1.2k downloads',
-    pct: 0,
+    progressPct: 0,
     progress: '',
     sampleUrls: [],
   },
@@ -284,7 +317,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     code: 'XL',
     state: 'failed',
     sub: 'refunded ⚡ 1,750',
-    pct: 0,
+    progressPct: 0,
     progress: '',
     sampleUrls: [],
   },
