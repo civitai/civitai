@@ -1,28 +1,35 @@
 # Paid Model Loading — implementation checklist
 
 Companion to [paid-model-loading.md](paid-model-loading.md), which holds the contract and the
-decisions, and [paid-model-loading-build-plan.md](paid-model-loading-build-plan.md), which is the
-inventory of files, procedures, pages and components. This file is the state of the work.
+decisions, [paid-model-loading-build-plan.md](paid-model-loading-build-plan.md), which is the
+inventory of files, procedures, pages and components, and
+[paid-model-loading-decisions.md](paid-model-loading-decisions.md), which collects every open
+decision with an owner and a closing condition. This file is the state of the work.
 
 ClickUp ids are the C-numbers from the 2026-08-18 lab call. Items with no C-number are gaps found
 while reading the contract and the code; they have no ClickUp task and no owner yet.
 
 ---
 
-## Phase 0 — resolve before writing site code
+## Phase 0 — decisions, and what each one still gates
 
-Nothing in Phase 1 onward is safe to start until these land. All four are decisions — the
-orchestrator questions are answered and recorded below.
+Four decisions; one is now settled. The orchestrator questions behind them are answered and
+recorded below.
+
+Phase 1 turned out **not** to be gated on these — the plumbing is built and none of it depends on
+an answer. What is still gated is the purchase path (the licence gate) and C6 (the "select any
+model" question). Every open item here is restated with an owner and a closing condition in
+[paid-model-loading-decisions.md](paid-model-loading-decisions.md).
 
 - [ ] **C14 — decide: standalone demo client, mod-only launch, or straight into the platform.**
       Justin owns it. Gates C5–C8. ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
       *Closes when:* Justin states the choice in the task.
-- [ ] 🔴 **Decide what we can honestly sell, given the 48-hour guarantee is not implemented.**
-      Verified against deployed orchestrator source: nothing pins a prepared resource, so a paid
-      load buys a download and then ordinary eviction. Either Koen builds retention (`PinModelJob`
-      looks like the intended primitive, but nothing creates one), or the surfaces stop saying
-      "48 hours". See [Orchestrator state](#orchestrator-state--verified-against-source).
-      *Closes when:* residency exists, or the copy is rewritten to promise only a load.
+- [x] 🔴 **What we can honestly sell, given the 48-hour guarantee is not implemented.** Settled:
+      **no surface promises a duration** — a paid load buys a load. Verified against deployed
+      orchestrator source: nothing pins a prepared resource, so a paid load buys a download and then
+      ordinary eviction. See [Orchestrator state](#orchestrator-state--verified-against-source).
+      Whether Koen *builds* retention is his open question, not a decision of ours — it is
+      [K1](paid-model-loading-decisions.md#k1--is-the-48-hour-residency-planned-and-where).
 - [ ] **Decide "select any model", and decide it as two questions.** `GenerationCoverage` is a
       **view**, not a flag. LoRAs/TI/VAE/LoCon/DoRA are already covered once licensed and scanned —
       they are merely not resident, which is the thing paid loading fixes, and need **no view
@@ -58,49 +65,66 @@ No user-visible surface. Everything in Phase 2 and 3 sits on this, and it is tes
 against a real download.
 
 - [ ] **C4 — the endpoint the orchestrator hits when a download starts/progresses.**
-      ([868ktt58f](https://app.clickup.com/t/868ktt58f))
-  - [ ] `src/pages/api/webhooks/model-loading.ts` (or similar), guarded with `WebhookEndpoint`
-  - [ ] zod schema over the `availability` payload — model **all four** statuses, and treat
-        `queuePosition` as living on `unavailable`
-  - [ ] map AIR → model version id (`parseAIR`) so the topic can be named
-- [ ] **Topic broadcast helper.** The site can only send per-user signals today. Add a
-      `sendSignalToTopic`-shaped helper beside the per-user ones in
-      `src/server/orchestrator/orchestrator.utils.ts`, wrapped in `withSignals()`.
-- [ ] **New `SignalMessages` entry**, e.g. `model-version:load-progress`. Reuse the existing
-      `SignalTopic.ModelVersion` — no new topic constant needed. Do not collide with
-      `SchedulerDownload = 'scheduler:download'`, which is the generation-history export.
-- [ ] **Extract versionId → AIR.** It exists twice already (`bustOrchestratorModelCache`,
-      `modelVersionResourceCache`), both including `fileType` from the primary file. Extract before
-      adding a third caller.
-- [ ] **Server-side resource-state read.** Wrap `getModelClient` (already calls
-      `GET /v2/resources/{air}`) for a single AIR, and add `queryResources({ view: 'queue' })` for
-      the queue. Expose via tRPC; all three surfaces read through it.
-  - [ ] ⚠️ do **not** reuse `modelVersionResourceCache` — it holds the same `ResourceInfo` on a
-        **day-long** TTL and discards `availability`. This read must be fresh.
-- [ ] **The purchase path.** A tRPC procedure that submits the standalone `prepareResource` step
-      with the **user's** token and returns the queued state. The orchestrator prices and charges;
-      the site does not.
-  - [ ] 🔴 call `assertWorkflowOwner` on the result — the `no-unguarded-billable-submit` guard
-        fails otherwise, and this feature is literally the case its docstring describes
-  - [ ] price the CTA from a `whatIf` submit, not a site-side size→price table — blocked on C2,
-        since `whatif` returns zero today
-  - [ ] refuse when `status === 'unsupported'`
+      ([868ktt58f](https://app.clickup.com/t/868ktt58f)) Not built, and it may not need to be: the
+      load submit points its callback straight at the signals **group** URL for
+      `model-version:<id>`, so progress fans out with no hop through us. Build the endpoint only if
+      C9 (the completion notification) survives scoping — that is the one thing the direct route
+      cannot do.
+- [x] **Topic broadcast helper.** `sendSignalToTopic(topic, message, data)` in
+      `src/server/orchestrator/orchestrator.utils.ts`, wrapped in `withSignals()`. Unused so far —
+      the callback URL covers progress; this is for the server-side sends C9 will need.
+- [x] **New `SignalMessages` entry** — `ResourceLoadUpdate = 'resource-load:update'`, on the
+      existing `SignalTopic.ModelVersion`. No collision with `SchedulerDownload`.
+- [x] **Extract versionId → AIR.** `modelVersionToAir` in `src/server/utils/resource-air.ts`;
+      `bustOrchestratorModelCache` and `modelVersionResourceCache` both repointed at it.
+      `fileType` comes from the primary file when the caller loaded files, and the two existing
+      callers keep the AIRs they had.
+- [x] **Server-side resource-state read.** `getResourceLoadState(versionIds)` and
+      `getResourceLoadQueue({cursor, take})` in `src/server/services/resource-load.service.ts`,
+      exposed as `resourceLoad.getState` / `resourceLoad.getQueue` (both public). The queue read
+      goes through a new `queryResourcesClient` wrapper beside `getModelClient`, so the SDK stays
+      in `services/orchestrator/models.ts`.
+  - [x] fresh, uncached — `modelVersionResourceCache` is not reused
+  - [x] a status this build does not know is reported as `unknown`, not folded into one of the four
+- [x] **Service tests** — `src/server/services/__tests__/resource-load.service.test.ts`: AIR
+      construction, `queuePosition` on `unavailable`, the `unknown` fallback, unresolvable queue
+      rows, all three pre-submit refusals, owner-check propagation, priced vs unpriced.
+- [ ] **The purchase path.** `resourceLoad.estimate` (whatIf) and `resourceLoad.submit` exist and
+      work; what is missing is a price to show and a licence gate.
+  - [x] 🔴 `assertWorkflowOwner` on the submit result
+  - [x] refuse when `status === 'unsupported'`, and when we could not read the status at all
+  - [x] refuse (without charging) when already `available`
+  - [x] price from a `whatIf` submit rather than a site-side table — the procedure returns
+        `{ cost, priced }`, and `priced` is false while the orchestrator quotes zero, so no surface
+        can render "free" as a quote. Still blocked on C2 for a real number.
   - [ ] surface the orchestrator's own `CanGenerate` rejection cleanly — `PrepareResourceInput`
         throws a ValidationException before any charge
-  - [ ] refuse (without charging) when already `available`
-  - [ ] refuse when the model lacks a `RentCivit` licence (see Phase 0)
+  - [ ] 🔴 refuse when the model lacks a `RentCivit` licence (see Phase 0). **Not implemented** —
+        the submit path will currently take a load for a model whose creator did not grant it.
 - [ ] **C10 — per-tier daily rate limits.** ([868ktt5aq](https://app.clickup.com/t/868ktt5aq))
-  - [ ] 🔴 the free row must be an **unconditional catch-all**, and `founder` needs its own row —
-        `userTiers` is `[free, founder, bronze, silver, gold]`, and a tier matching no row gets
-        **no limit at all**, not the strictest one
-  - [ ] see [the build plan](paid-model-loading-build-plan.md#2-server--the-trpc-surface) for the
-        exact `rateLimit()` shape
-  - [ ] apply the **same `sharedKey`** on the generation submit path, or the implicit
-        prepare-via-txt2img route bypasses the cap entirely
-  - [ ] `onlyCountSuccess: true`, so a refused purchase does not burn a slot
-  - [ ] write down that the middleware is off by one (a limit of 3 permits 4) so the configured
-        numbers mean what we intend
-  - [ ] note that moderators are exempt — a mod-only launch exercises none of this
+  - [x] 🔴 the free row is an **unconditional catch-all** and `founder` has its own row
+  - [x] `onlyCountSuccess: true`, so a refused purchase does not burn a slot
+  - [x] `sharedKey: 'resource-load:submit'`
+  - [ ] 🔴 apply that **same `sharedKey`** on the generation submit path, or the implicit
+        prepare-via-txt2img route bypasses the cap entirely. **Not done** — the cap is currently
+        decorative for anyone who generates instead of pressing the button.
+  - [x] the off-by-one is written down beside the limiter — the docstring in
+        `resource-load.router.ts` states that `attempts > limit` makes each nonzero number permit
+        one more load than it says. Whether to renumber to 2/5/9 instead is
+        [2.5](paid-model-loading-decisions.md#25-the-rate-limit-numbers-are-off-by-one).
+
+---
+
+## Phase 1.5 — the mod test page
+
+Not in the build plan; asked for while building Phase A so the plumbing could be driven end to end
+before any of Phase 2 exists.
+
+- [x] **`/moderator/resource-load`** — enter a model version id, get the estimate, then submit;
+      below it, the live queue polled every 15s. `requireModerator` plus the `resourceLoad`
+      feature flag.
+  - [x] the estimate names itself as unpriced while the orchestrator quotes zero
+  - ⚠️ moderators are exempt from `rateLimit()`, so this page exercises none of C10
 
 ---
 
@@ -129,7 +153,8 @@ the platform second.
   - [ ] the popover is inside the header — pass `withinPortal` explicitly (the app themes
         `Popover` to `withinPortal: false`)
 - [ ] **C8 — queue page.** ([868ktt59y](https://app.clickup.com/t/868ktt59y))
-  - [ ] reads `queryResources({ view: 'queue' })`, polled
+  - [ ] reads `resourceLoad.getQueue` (which wraps `queryResources({ view: 'queue' })` server-side),
+        polled
   - [ ] signal subscriptions only for the items *this* user is waiting on
   - [ ] ranking across providers is already done server-side — do not rebuild it
   - [ ] ⚠️ the cursor is an integer offset over a live re-ranked list, so paging is unstable; keep
@@ -225,14 +250,11 @@ like a missing feature. It is not missing — it is unadvertised.
 ### Still worth asking Koen
 
 Deployment, concurrent prepares and the site-side rate-limit posture are all settled and no longer
-need asking. C2 (pricing) is the other open item and lives in Phase 0.
-
-- [ ] Is the 48-hour residency planned, and where? **`PinModelJob` looks like the intended
-      primitive** — it is defined and `[Preview]`, and `PushWorkerHandler` has a handler for it,
-      but nothing in the repo creates one and `PrepareResourceHandler` does not issue it. This
-      decides whether C5–C8 can say "48 hours" at all.
-- [ ] Is `step:preparing` unadvertised on purpose? `step:*` works, but if consumers are meant to
-      subscribe narrowly we should know.
+need asking. The two that remain — 48-hour residency
+([K1](paid-model-loading-decisions.md#k1--is-the-48-hour-residency-planned-and-where)) and whether
+`step:preparing` is unadvertised on purpose
+([K2](paid-model-loading-decisions.md#k2-is-steppreparing-unadvertised-on-purpose)) — live in the
+decisions register with C2, where Koen can answer them in place.
 
 ## Not in v1, on the record
 
@@ -247,5 +269,7 @@ need asking. C2 (pricing) is the other open item and lives in Phase 0.
 
 Real work with no task and no owner. Listed so they are decided rather than discovered.
 
-- [ ] **Refund path** for a load that fails or never completes.
-- [ ] **48-hour residency display** — nothing shows the user when what they bought expires.
+- [ ] **Refund path** for a load that fails or never completes. Open decision —
+      [1.2](paid-model-loading-decisions.md#12-what-happens-when-a-load-fails-or-never-finishes).
+- [ ] **Residency display.** Moot while no surface promises a duration; it becomes real work the day
+      retention ships, and nothing today would tell us it had.

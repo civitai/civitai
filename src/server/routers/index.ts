@@ -138,6 +138,9 @@ export const appRouter = router({
     import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
   ),
   auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
+  resourceLoad: lazy(() =>
+    import('~/server/routers/resource-load.router').then((m) => m.resourceLoadRouter)
+  ),
   changelog: lazy(() => import('~/server/routers/changelog.router').then((m) => m.changelogRouter)),
   bug: lazy(() => import('~/server/routers/bug.router').then((m) => m.bugRouter)),
   nowPayments: lazy(() => import('./nowpayments.router').then((m) => m.nowPaymentsRouter)),

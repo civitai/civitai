@@ -1,4 +1,4 @@
-import { getResource } from '@civitai/client';
+import { getResource, queryResources } from '@civitai/client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
@@ -8,7 +8,7 @@ import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.sc
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelVersionToAir } from '~/server/utils/resource-air';
 
 export async function getModelClient({
   token,
@@ -16,6 +16,17 @@ export async function getModelClient({
 }: z.output<typeof getModelByAirSchema> & { token: string }) {
   const client = createOrchestratorClient(token);
   return await getResource({ client, path: { air } });
+}
+
+export async function queryResourcesClient({
+  token,
+  query,
+}: {
+  token: string;
+  query: { view: 'queue'; cursor?: string; take?: number };
+}) {
+  const client = createOrchestratorClient(token);
+  return await queryResources({ client, query });
 }
 
 // DELETE /v2/resources/{air} is called with fetch rather than through @civitai/client: the operation
@@ -54,12 +65,7 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   const tasks = chunk(resources, 100).map((batch) => async () => {
     await Promise.all(
       batch.map(async (resource) => {
-        const air = stringifyAIR({
-          baseModel: resource.baseModel,
-          type: resource.model.type,
-          modelId: resource.model.id,
-          id: resource.id,
-        });
+        const air = modelVersionToAir(resource);
 
         try {
           await invalidateOrchestratorResource(air, etag, userId);

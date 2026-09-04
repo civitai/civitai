@@ -430,6 +430,9 @@ const featureFlags = createFeatureFlags({
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],
+  // Not public until C2: the orchestrator prices a prepare at zero, so a wider audience would be
+  // loading models for free.
+  resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],

@@ -58,6 +58,13 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
       'whatIfFromGraph — a cost estimate. `query: { whatif: true }` produces no persisted ' +
       'workflow and no debit, so there is no attribution to check.',
   },
+  'src/server/services/resource-load.service.ts': {
+    unguarded: 1,
+    reason:
+      'estimateResourceLoad — the paid-model-loading price quote at `query: { whatif: true }`. ' +
+      'No persisted workflow and no debit, so there is no attribution to check. The real load ' +
+      'submit beside it IS guarded.',
+  },
   'src/server/services/orchestrator/promptEnhancement.ts': {
     unguarded: 1,
     reason:

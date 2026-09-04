@@ -1,7 +1,8 @@
 # Paid Model Loading
 
-**Status:** not started on the site side. The orchestrator can download and report; it cannot yet
-charge or guarantee residency.
+**Status:** Phase A (server plumbing plus a mod-only test page) is built behind the `resourceLoad`
+flag; no public surface exists. The orchestrator can download and report; it cannot yet charge or
+guarantee residency. State of the work: [checklist](paid-model-loading-checklist.md).
 **Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, and the
 `civitai-orchestration` source at `9306e7333` — **which is deployed**, so everything described as
 built below is live.
@@ -117,9 +118,11 @@ roughly a thousand generations to accounts that did not make them.
 
 - `GET /v2/resources/{air}` already has a caller —
   [`getModelClient`](../../src/server/services/orchestrator/models.ts).
-- **AIR construction from a model version already exists twice**, in `bustOrchestratorModelCache`
-  and in `modelVersionResourceCache`, and both include `fileType` from the primary file. Extract
-  it rather than writing a third copy.
+- **AIR construction from a model version** is `modelVersionToAir`
+  ([resource-air.ts](../../src/server/utils/resource-air.ts)), extracted this phase from the copies
+  in `bustOrchestratorModelCache` and `modelVersionResourceCache`, both now repointed at it. It
+  includes `fileType` from the primary file **only when the caller loaded files** — a caller that
+  resolves files and one that does not are asking about two different AIRs.
 - ⚠️ [`modelVersionResourceCache`](../../src/server/redis/caches.ts) already fetches the whole
   `ResourceInfo` per version — and caches it for **a day**, then throws `availability` away.
   Availability must be read fresh. Do not reach for that cache because it looks like it already
@@ -134,10 +137,10 @@ Same shape as image generation: workflow → our endpoint → signals service �
 ⚠️ `SignalMessages.SchedulerDownload = 'scheduler:download'` already exists and is **not** this
 feature — it is the generation-history export. Do not reuse or shadow it.
 
-**Sending.** The site has no topic-broadcast helper today. Per-user sends exist
-([orchestrator.utils.ts](../../src/server/orchestrator/orchestrator.utils.ts)) and hit
-`${SIGNALS_ENDPOINT}/users/{userId}/signals/{message}`. Topic sends hit
-`${SIGNALS_ENDPOINT}/groups/{topic}/signals/{message}` — chat does this today
+**Sending.** Per-user sends and the topic broadcast both live in
+[orchestrator.utils.ts](../../src/server/orchestrator/orchestrator.utils.ts): per-user hits
+`${SIGNALS_ENDPOINT}/users/{userId}/signals/{message}`, and `sendSignalToTopic` hits
+`${SIGNALS_ENDPOINT}/groups/{topic}/signals/{message}` — the same shape chat uses
 ([chat.service.ts](../../src/server/services/chat.service.ts)). Route all of it through
 [`withSignals()`](../../src/server/signals/wrapper.ts); an unwrapped fetch to the signals service
 is the exact shape behind the 2026-05-30 event-loop cascade.
@@ -173,11 +176,11 @@ Site-side only, deliberately. Anyone can go straight to the orchestrator; the co
 | --- | --- |
 | Free | 0 |
 | Bronze | 3 |
-| Silver | 5–6 |
+| Silver | 6 |
 | Gold | 10 |
 
-Free started at 1; Koen suggested members-only to start; Justin settled on 0. These are
-deliberately low and meant to be raised.
+Free started at 1; Koen suggested members-only to start; Justin settled on 0. Silver was left at
+5–6 on the call and shipped as 6. These are deliberately low and meant to be raised.
 
 The mechanism is the existing `rateLimit()` tRPC middleware
 ([middleware.trpc.ts:151](../../src/server/middleware.trpc.ts#L151)). Four properties of it decide
@@ -263,7 +266,10 @@ modal, model version details, the app header, and a product tour. C11 should not
 
 ## Open questions
 
-These came out of reading the contract and the code, not out of the call. None has an owner.
+These came out of reading the contract and the code, not out of the call. Each is restated with an
+owner and a closing condition in
+[paid-model-loading-decisions.md](paid-model-loading-decisions.md) — the register to read before
+deciding anything.
 
 1. **"Select any model" is not in any task**, and C6 assumes it is already done. See the coverage
    section above for what it involves — including the licence gate, which is the part with a
@@ -273,8 +279,10 @@ These came out of reading the contract and the code, not out of the call. None h
    Koen: "we got to be prepared for us not giving any hard guarantees about when it's going to be
    available." A refund path is implied and unscoped.
 3. **The 48-hour guarantee does not exist yet**, on the site or in the orchestrator. Nothing pins a
-   prepared resource and nothing records an expiry, so there is no countdown to design until Koen
-   builds retention. Until then the surfaces must not promise it.
+   prepared resource and nothing records an expiry. What the surfaces may claim meanwhile is
+   settled — see Decided below. What is open is Koen's
+   [K1](paid-model-loading-decisions.md#k1--is-the-48-hour-residency-planned-and-where): whether
+   retention is planned at all.
 4. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
    irrelevant checkpoints and starves the popular ones. The answers on record are that popular
    models stay resident because workers keep them, plus the rate limits, plus Koen's
@@ -297,7 +305,12 @@ These came out of reading the contract and the code, not out of the call. None h
 - Progress shows in three places: navbar, model version page (below Create), and the generator for
   the selected resource.
 - A bystander on the model page can subscribe to someone else's in-flight load and get the
-  notification.
+  notification. Load state and the queue are therefore **public reads** — everyone sees them, not
+  only the buyer.
+- Until residency exists, no surface promises a duration. A paid load buys a load; the 48 hours are
+  not ours to sell yet.
+- The daily cap must also cover the implicit path — a generation submitted against a non-resident
+  resource — or it is decorative. Same quota, not a second one.
 - Free tier gets 0 per day at launch.
 - Rate limits stay site-side only; the orchestrator accepts unlimited prepares from a user token.
 - Concurrent prepares of the same resource are not a concern and need no special handling.

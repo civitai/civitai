@@ -168,6 +168,7 @@ export enum SignalMessages {
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ModelVersionPopularityUpdate = 'model-version:popularity:update',
+  ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashInvalidator = 'creators-program:cash-invalidator',

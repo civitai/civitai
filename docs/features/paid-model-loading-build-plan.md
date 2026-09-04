@@ -6,11 +6,14 @@ build them in.
 Companion to:
 
 - [paid-model-loading.md](paid-model-loading.md) — the contract and the decisions
-- [paid-model-loading-checklist.md](paid-model-loading-checklist.md) — the open decisions and the
+- [paid-model-loading-checklist.md](paid-model-loading-checklist.md) — the state of the work and the
   verified orchestrator state
+- [paid-model-loading-decisions.md](paid-model-loading-decisions.md) — every open decision, with an
+  owner and a closing condition
 
-Names below are proposals, not conventions we already have. The point is that each one is a real
-file in a real place, so the shape of the work is arguable before it is written.
+Names below were proposals when this was written. §1, §2, §6 and §3's callback builders are now
+built and the names here are the ones in the code; §3's webhook, §4 and §5 are still proposals. The
+[checklist](paid-model-loading-checklist.md) holds the per-item state.
 
 ---
 
@@ -34,16 +37,17 @@ The only module that talks to the orchestrator about residency. Everything else 
 | Function | Does |
 | --- | --- |
 | `getResourceLoadState(versionIds)` | versionId → `availability`, batched. Fresh, uncached. |
-| `getResourceLoadQueue({ cursor, take })` | `queryResources({ view: 'queue' })`, mapped back to model versions. |
-| `submitResourceLoad({ versionId, userId, token })` | The paid submit. Owner-checked. |
-| `estimateResourceLoad({ versionId, token })` | `whatIf` price for the CTA. |
+| `getResourceLoadQueue({ cursor, take })` | `queryResourcesClient({ view: 'queue' })` — the SDK call stays in `services/orchestrator/models.ts` — mapped back to model versions. |
+| `submitResourceLoad({ modelVersionId, userId, token, currencies })` | The paid submit. Owner-checked. |
+| `estimateResourceLoad({ modelVersionId, token, currencies })` | `whatIf` price for the CTA. Returns `{ cost, priced }`. |
 
 Notes that decide the implementation:
 
 - 🔴 `submitResourceLoad` **must call `assertWorkflowOwner`** on the result. It is a user-token
   billable submit, which is exactly what `no-unguarded-billable-submit` guards.
-- The queue returns AIRs; the site thinks in version ids. Map back via `parseAIR`, and **drop
-  anything that does not resolve** rather than rendering a half-known row.
+- The queue returns AIRs; the site thinks in version ids. Map back via `parseAIRSafe` — **not**
+  `parseAIR`, which throws — and **drop anything that does not resolve** rather than rendering a
+  half-known row.
 - Do not reuse `modelVersionResourceCache` — day-long TTL, and it discards `availability`.
 
 ### `src/server/utils/resource-air.ts` — new (extraction, not new logic)
@@ -145,15 +149,17 @@ deduplicated at 1% progress.
 generation points it straight at the signals service. If we point ours at a signals *group* URL
 (`/groups/model-version:{id}/signals/{message}`), the fan-out happens without us.
 
-Build the endpoint anyway, because we need a server-side moment for two things the direct-to-signals
-route cannot do: **send the completion notification** (C9), and resolve AIR → version id once rather
-than in every client. Decide by whether C9 survives scoping.
+That is the route the load submit took, so this endpoint is **not built**. Build it if and only if
+C9 (the completion notification) survives scoping — that, plus resolving AIR → version id once
+instead of per client, is all a server-side hop would add. Tracked as
+[2.4](paid-model-loading-decisions.md#24-whether-to-build-the-c4-webhook-at-all).
 
 ### `src/server/orchestrator/orchestrator.utils.ts` — edit
 
-Add `getResourceLoadCallbacks(modelVersionId)` beside the two existing callback builders, and a
-`sendSignalToTopic(topic, message, payload)` helper — the site can only send per-user signals today.
-Both wrapped in `withSignals()`.
+`getResourceLoadCallbacks(modelVersionId)` builds a `step:*` callback pointed at the signals group
+URL for `model-version:<id>`, so progress fans out with no hop through us. `sendSignalToTopic(topic,
+message, data)` is the topic-broadcast helper the site lacked — that one is wrapped in
+`withSignals()`; it is unused until C9 needs a server-side send.
 
 ### `src/server/common/enums.ts` — edit
 
@@ -274,8 +280,9 @@ pins the default toggle state — read it before choosing `toggleable`.
 
 ## 6. Feature flag
 
-`src/server/services/feature-flags.service.ts` — add `resourceLoad`. Start `['granted']` so it is
-mod-only, which is the cheap version of C14's "ship it mod-only initially".
+`src/server/services/feature-flags.service.ts` — `resourceLoad: ['mod', 'granted']`, the cheap
+version of C14's "ship it mod-only initially". It gates `estimate`, `submit` and the mod page;
+`getState` and `getQueue` are deliberately **not** gated, because load state is a public read.
 
 ⚠️ A mod-only launch **exercises none of the rate limiting** — `rateLimit()` short-circuits for
 moderators. Do not read a quiet mod rollout as evidence the caps work.
@@ -286,17 +293,19 @@ moderators. Do not read a quiet mod rollout as evidence the caps work.
 
 Each phase is independently testable, and the first two are unblocked today.
 
-**Phase A — plumbing.** No UI, no flag. `resource-air.ts` extraction, the schema, the service, the
-router with `getState` + `getQueue`, the signal message, the callback builders. Verifiable against a
-real download by hitting the procedures directly.
+**Phase A — plumbing. Built.** `resource-air.ts`, the schema, the service, the router, the signal
+message, the callback builders, the `resourceLoad` flag, and a mod-only page at
+`/moderator/resource-load` that drives all four procedures against a real download.
 
 **Phase B — read-only surfaces.** The store, `resource-load.utils.ts`, `ResourceLoadCard` in its
 non-purchase states, `ResourceLoadTracker`, the queue page. All of this shows real state for loads
 triggered by anything, including a generation. **No purchase path yet, so nothing depends on
 pricing** — which is the piece blocked on Koen.
 
-**Phase C — the purchase.** `estimate` + `submit`, the CTA, the rate limit, `assertWorkflowOwner`.
-🔴 Blocked on C2: `CalculateCost` returns a hardcoded zero today, so `whatIf` has no number to show.
+**Phase C — the purchase. Server half built:** `estimate` + `submit`, the rate limit,
+`assertWorkflowOwner`. Outstanding: the CTA, the `RentCivit` licence refusal
+([1.1](paid-model-loading-decisions.md#11--models-without-a-rentcivit-licence)), and 🔴 C2 —
+`CalculateCost` returns a hardcoded zero, so `whatIf` still has no number to show.
 
 **Phase D — the rest.** C9 notification, then C11 auctions retirement (blocked on 868gtq1kt, and on
 `CoveredCheckpoint` ownership).
