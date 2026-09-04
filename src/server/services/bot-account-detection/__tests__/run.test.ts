@@ -5,10 +5,20 @@ import {
 } from '@civitai/moderation';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, mockNode } from '~/__tests__/mocks';
-import type { CohortReader, NewAccountRow } from '../cohort';
+import type { BotAccountCohortMember, CohortReader, NewAccountRow } from '../cohort';
+import { emptyCohortSignals } from '../evidence';
 import { BOT_ACCOUNT_DETECTOR } from '../report';
-import { BOT_ACCOUNT_HEURISTICS } from '../heuristics';
-import { MIN_REPORTED_CONFIDENCE, type BotAccountHeuristic } from '../scoring';
+import {
+  BOT_ACCOUNT_HEURISTICS,
+  contentTemplatingHeuristic,
+  postingVelocityHeuristic,
+  registrationClusterHeuristic,
+} from '../heuristics';
+import {
+  MIN_REPORTED_CONFIDENCE,
+  SOLE_SIGNAL_DOMINANCE,
+  type BotAccountHeuristic,
+} from '../scoring';
 import { BotAccountReportError, runBotAccountDetection } from '../run';
 
 const STARTED = new Date('2026-09-03T03:20:00.000Z');
@@ -602,6 +612,119 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
     expect(result.counters['heuristic:a:fired']).toBe(1);
     expect(result.counters['heuristic:a:sole_signal']).toBe(0);
     expect(result.counters['heuristic:b:sole_signal']).toBe(0);
+  });
+
+  it('🔴 counts a finding a TRACE from another heuristic used to EXCLUDE', async () => {
+    // 🔴 THE COLLISION'S ROUTINE SHAPE, AND THE OLD PREDICATE COULD NOT SEE IT. `sole_signal` was
+    // `exactly one heuristic scored above zero`, which measured a strictly smaller population than
+    // the sentence it was documented with. A member 40 minutes old with 6 parameter-paste comments
+    // in a fingerprint cluster of 6 scores a TRACE on posting-velocity as well — and that trace
+    // excluded the whole finding from the count. An operator reading
+    // `content-templating:sole_signal = 0` concluded the known collision produced no reports, on
+    // the one number the decision about that collision was deferred to.
+    //
+    // The two scores below are EXECUTED against the shipped heuristics, not stipulated: if
+    // `ZERO_AT_PER_HOUR` or `CLUSTER_ZERO_AT` moves, this case moves with it rather than pinning a
+    // number the detector no longer produces.
+    const colliding: BotAccountCohortMember = {
+      userId: 1,
+      username: 'u1',
+      createdAt: new Date(STARTED.getTime() - 40 * 60_000),
+      posts: {
+        all: { comments: 6, models: 0, images: 0, total: 6 },
+        visible: { comments: 6, models: 0, images: 0, total: 6 },
+        excluded: { comments: 0, models: 0, images: 0, total: 0 },
+      },
+      emailDomain: null,
+    };
+    const signals = emptyCohortSignals();
+    signals.fingerprintsByUser.set(1, ['paste']);
+    signals.membersPerFingerprint.set('paste', 6);
+
+    const velocity = postingVelocityHeuristic.score({ member: colliding, now: STARTED, signals });
+    const templating = contentTemplatingHeuristic.score({
+      member: colliding,
+      now: STARTED,
+      signals,
+    });
+    // 6 items in 0.67h is 9/hour, just over the 4/hour floor — a trace, not a finding.
+    expect(velocity).toBeCloseTo(0.1389, 4);
+    expect(templating).toBeCloseTo(0.5, 4);
+    // The property that makes this the collision population rather than a corroborated finding.
+    expect(templating).toBeGreaterThanOrEqual(SOLE_SIGNAL_DOMINANCE * velocity);
+
+    const { reader } = recordingReader([account(1)]);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      {
+        reader,
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [
+          constantHeuristic(postingVelocityHeuristic.id, velocity),
+          constantHeuristic(registrationClusterHeuristic.id, 0),
+          constantHeuristic(contentTemplatingHeuristic.id, templating),
+        ],
+      },
+      { pageSize: 10, maxAccounts: 10 }
+    );
+
+    // It cleared the threshold, so it is a report a moderator received — the count is over the
+    // REPORTED members and this case has to be inside that population to mean anything.
+    expect(result.findingsReported).toBe(1);
+    // `fired` is what looks ordinary while the collision inflates the board: two heuristics fired.
+    expect(result.counters[`heuristic:${postingVelocityHeuristic.id}:fired`]).toBe(1);
+    expect(result.counters[`heuristic:${contentTemplatingHeuristic.id}:fired`]).toBe(1);
+
+    expect(result.counters[`heuristic:${contentTemplatingHeuristic.id}:sole_signal`]).toBe(1);
+    // The trace itself carried nothing, and must not be counted as though it had.
+    expect(result.counters[`heuristic:${postingVelocityHeuristic.id}:sole_signal`]).toBe(0);
+    expect(result.counters[`heuristic:${registrationClusterHeuristic.id}:sole_signal`]).toBe(0);
+  });
+
+  it('🔴 is blind to REGISTRY ORDER, and counts nobody on a member nothing fired on', async () => {
+    // Two mutants the case above cannot see, both of which inflate the counter in the reassuring
+    // direction — the one direction this number must not fail in, since it is what a decision about
+    // the content-templating collision is deferred to.
+    //
+    // 🔴 ORDER. `subScores` follows the registry order, and the registry is
+    // [velocity, clustering, templating] — so the leading heuristic is routinely the LAST one seen,
+    // and the account's real runner-up is a score that already held the lead. Failing to carry a
+    // displaced leader into the runner-up leaves it at 0, and then EVERY finding looks sole.
+    const { reader } = recordingReader([account(1)]);
+    const out = sink();
+    const ordered = await runBotAccountDetection(
+      {
+        reader,
+        sendReport: out.sendReport,
+        now: clock(),
+        // Ascending, so the winner arrives last and 0.4 is only ever seen as a displaced leader.
+        // 0.5 is not 3× 0.4, so neither heuristic carried this finding.
+        heuristics: [constantHeuristic('low', 0.4), constantHeuristic('high', 0.5)],
+      },
+      { pageSize: 10, maxAccounts: 10 }
+    );
+    expect(ordered.findingsReported).toBe(1);
+    expect(ordered.counters['heuristic:high:sole_signal']).toBe(0);
+    expect(ordered.counters['heuristic:low:sole_signal']).toBe(0);
+
+    // 🔴 NOTHING FIRED. `minConfidence: 0` reports a member every heuristic scored 0 on, and a
+    // dominance test taken on its own is satisfied by 0 ≥ 3 × 0 — so without the score-above-zero
+    // guard the first heuristic is credited with carrying a finding no heuristic saw anything for.
+    const quiet = recordingReader([account(2)]);
+    const out2 = sink();
+    const silent = await runBotAccountDetection(
+      {
+        reader: quiet.reader,
+        sendReport: out2.sendReport,
+        now: clock(),
+        heuristics: [constantHeuristic('a', 0), constantHeuristic('b', 0)],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+    expect(silent.findingsReported).toBe(1);
+    expect(silent.counters['heuristic:a:sole_signal']).toBe(0);
+    expect(silent.counters['heuristic:b:sole_signal']).toBe(0);
   });
 
   it('counts only the REPORTED members, not every scored one', async () => {

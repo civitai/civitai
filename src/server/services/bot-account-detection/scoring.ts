@@ -168,16 +168,47 @@ export function heuristicCounters(scores: BotAccountScore[]): Record<string, num
 }
 
 /**
- * How many of these scores each heuristic was the ONLY firing signal on.
+ * How much larger than every other score a heuristic's own must be before the finding counts as
+ * carried by it alone.
+ *
+ * 🔴 DERIVED FROM THE REGISTRY'S SIZE, NOT PICKED. With `n` equally weighted heuristics and a top
+ * score `s`, every other is at most `s / k`, so the rest together contribute at most `(n - 1) · s / k`
+ * — which is less than `s` exactly when `k > n - 1`. At `n = 3` that makes 3 the smallest integer
+ * multiple at which the leading heuristic outweighs everything else combined, which is the plain
+ * reading of "this finding rests on one signal".
+ *
+ * 🔴 SO IT IS TIED TO `n = 3`. A fourth registered heuristic makes `k > 3` the condition and this
+ * value no longer satisfies it — re-derive here when `heuristics/index.ts` grows, rather than
+ * leaving a counter that quietly starts calling a two-signal finding sole.
+ */
+export const SOLE_SIGNAL_DOMINANCE = 3;
+
+/**
+ * How many of these scores each heuristic CARRIED ON ITS OWN.
  *
  * 🔴 THIS IS THE COUNTER THE FALSE-POSITIVE QUESTION IS ANSWERED WITH, and `fired` cannot answer it.
- * A heuristic that fires alongside the other two on the same account is corroborated; one that fires
- * BY ITSELF is carrying a finding on its own, and that is the population where a known collision
- * turns into a report nobody should have received. The worked example is `content-templating`: a
- * generation-parameter paste — `Steps: …, Sampler: …, CFG scale: …, Seed: …` — fingerprints
- * identically to the same line with different numbers, because the digit masking is doing the
- * matching, so six accounts pasting their settings under one model look like one ring. Nothing about
- * such an account fires the other two heuristics, so it lands here and nowhere else.
+ * A heuristic that fires alongside the other two on the same account is corroborated; one that
+ * carries a finding by itself is the population where a known collision turns into a report nobody
+ * should have received. The worked example is `content-templating`: a generation-parameter paste —
+ * `Steps: …, Sampler: …, CFG scale: …, Seed: …` — fingerprints identically to the same line with
+ * different numbers, because the digit masking is doing the matching, so six accounts pasting their
+ * settings under one model look like one ring.
+ *
+ * 🔴 "CARRIED IT" IS A DOMINANCE TEST, NOT AN EXCLUSIVITY TEST, AND THE DIFFERENCE IS THE WHOLE
+ * POINT OF THE COUNTER. The predicate used to be `exactly one heuristic scored above zero`, and that
+ * measured a strictly smaller population than the sentence above describes: the collision's own
+ * routine shape is a member who ALSO scores a trace somewhere else, and a trace excluded it. A
+ * member 40 minutes old with 6 parameter-paste comments and a fingerprint cluster of 6 scores
+ * `posting-velocity` 0.1389 — six items in 0.67h is 9/hour, just over the 4/hour floor — and
+ * `content-templating` 0.5. It blends to 0.2130, clears `MIN_REPORTED_CONFIDENCE`, is REPORTED, and
+ * under the old predicate incremented nothing. An operator reading
+ * `content-templating:sole_signal = 0` concluded the collision produced no reports, on the one
+ * number the decision about that collision was deferred to, and the error ran in the reassuring
+ * direction. The dominance form counts it: 0.5 ≥ 3 × 0.1389.
+ *
+ * Two signals that genuinely agree still count for neither. At any multiple above 1 a tie fails the
+ * test — `0.9 ≥ 3 × 0.9` is false — so corroboration is excluded by the arithmetic rather than by a
+ * special case.
  *
  * Run over the REPORTED members rather than all scored ones: a sole signal below the threshold
  * produced no finding and cost nobody anything, and mixing the two would bury the number that
@@ -185,6 +216,12 @@ export function heuristicCounters(scores: BotAccountScore[]): Record<string, num
  *
  * A member on whom NOTHING fired contributes to no key, which is why these are emitted for every
  * registered heuristic including the zeros — a key that appears only when non-zero cannot be charted.
+ *
+ * The key keeps the name `sole_signal` even though the predicate moved. It is a metric name, and
+ * the question it answers — which heuristic carried this finding — is the same one; the change is
+ * that it now measures the population that question names instead of a subset of it. Nothing has
+ * consumed the key yet, so no series breaks either way, and renaming costs every reader of the
+ * design notes a lookup for no gain in what the number means.
  */
 export function soleSignalCounters(
   scores: BotAccountScore[],
@@ -193,9 +230,22 @@ export function soleSignalCounters(
   const counters: Record<string, number> = {};
   for (const heuristic of heuristics) counters[`heuristic:${heuristic.id}:sole_signal`] = 0;
   for (const account of scores) {
-    const fired = account.subScores.filter((s) => s.score > 0);
-    if (fired.length !== 1) continue;
-    const key = `heuristic:${fired[0].id}:sole_signal`;
+    // The leading score, and the largest of everything else. A registry of one leaves the runner-up
+    // at 0, which is what makes a single-heuristic run count — there is nothing for it to share the
+    // finding with.
+    let leader: HeuristicScore | null = null;
+    let runnerUp = 0;
+    for (const sub of account.subScores) {
+      if (leader === null || sub.score > leader.score) {
+        if (leader !== null) runnerUp = Math.max(runnerUp, leader.score);
+        leader = sub;
+      } else {
+        runnerUp = Math.max(runnerUp, sub.score);
+      }
+    }
+    if (leader === null || leader.score <= 0) continue;
+    if (leader.score < SOLE_SIGNAL_DOMINANCE * runnerUp) continue;
+    const key = `heuristic:${leader.id}:sole_signal`;
     counters[key] = (counters[key] ?? 0) + 1;
   }
   return counters;
