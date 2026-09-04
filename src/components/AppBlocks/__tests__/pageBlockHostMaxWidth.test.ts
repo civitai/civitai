@@ -271,8 +271,10 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * track a container that exists for card grids and wide tables would weaken the
    * guard for no evidence. Re-deriving the cap from "the widest first-party surface"
    * is exactly the reasoning `PageBlockHost.tsx` now warns against, because that
-   * surface has moved three times (1600 → 1920 → 2560) without any of those moves
-   * being a statement about third-party app width.
+   * surface has taken three VALUES over time (1600 → 1920 → 2560) without any of
+   * those moves being a statement about third-party app width. Precisely:
+   * `APPS_PAGE_CONTAINER_WIDTH` was introduced at 1920 (`a15d275759`) and has moved
+   * ONCE, to 2560; the 1600 predates the constant.
    *
    * The ARITHMETIC that picks a value inside the band lives on the constant's own
    * doc comment; the NUMBERS live here.

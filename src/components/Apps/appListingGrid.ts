@@ -65,9 +65,12 @@ export const LISTING_GRID_SPAN = {
  * 🔴 A CSS `html { font-size }` CANNOT MOVE THEM AT ALL. Inside a MEDIA query, `em`
  * resolves against the browser's INITIAL font size, not the root element's computed one
  * — so an app-level declaration is not a mitigation and its absence is not an exposure.
- * (Measured across three root sizes and 17 viewports: the `@media em` column is
- * identical at 16 / 20 / 24px, and the ladder stays monotone non-decreasing in viewport
- * at every one of them, so no rung inversion is reachable this way.)
+ * That is a CSS FACT, not a repo measurement: nothing here reproduces it, and it needs
+ * no fixture because it follows from the spec — a media query is evaluated against the
+ * initial value, outside any element's inherited context. The corollary it buys, also by
+ * construction rather than by experiment, is that the ladder cannot INVERT under a root
+ * font-size change: the `@media em` breakpoints do not move at all, so the ladder stays
+ * monotone non-decreasing in viewport whatever the root size is.
  *
  * 🔴 AND THIS FILE USED TO CITE A SAFEGUARD THAT DOES NOT EXIST: it said "`globals.css`
  * sets `html { font-size: 16px }`". It does not — there is no `html { … }` rule setting

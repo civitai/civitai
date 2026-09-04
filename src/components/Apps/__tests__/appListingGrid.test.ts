@@ -275,7 +275,8 @@ describe('🔴 the NARROW rungs are unchanged as functions of GRID width', () =>
    * does not. On platforms that reserve one (~10px) every rung fires ~10px of viewport
    * later than before. Kept deliberately — the content never had those pixels — and
    * driven end-to-end in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`, which is
-   * the only test in this PR that exercises the viewport→grid step at all.
+   * the only SPEC in this PR that exercises the viewport→grid step at all — every other
+   * fixture sets the grid's width directly on a wrapper.
    *
    * So everything below is stated in GRID width, which is what it was always measuring.
    */

@@ -7,9 +7,11 @@
  * `AppListingCard` bottom-pins its action row with `mt="auto"`, inside a
  * `<Stack h="100%">`, inside a `<Card className="h-full">`. None of that chain
  * resolves to a real height on its own: `h-full` is `height: 100%`, which needs a
- * parent with a definite height, and the only thing that gives it one is the GRID
- * stretching its items to the row's height — i.e. `align-items: normal`, the
- * default for a grid container.
+ * parent with a definite height, and what supplies one HERE is the GRID stretching its
+ * items to the row's height — i.e. `align-items: normal`, the default for a grid
+ * container. It is not the only conceivable source (a definite height on the wrapper
+ * would do it too), which is why the guard measures rendered boxes rather than asserting
+ * one particular property.
  *
  * That default is declared NOWHERE. `AppListingsMarketplaceBody.module.scss` sets
  * no `align-items` on `.grid`, so the behaviour every card depends on is an
@@ -46,8 +48,9 @@
  *
  *   · BY DEFAULT it does not. `test/component-setup.tsx` parses `globals.css?raw`
  *     into a throwaway `CSSStyleSheet`, walks it for unconditional `:root` rules and
- *     injects a `<style>` holding ONLY the `--*` custom properties — measured, 24 CSS
- *     rules. No utilities, no preflight. Its own docstring records why importing the
+ *     injects a `<style>` holding ONLY the `--*` custom properties (24 CSS rules — that
+ *     count is `test/geometry-setup.tsx`'s, recorded there 2026-09-03, and is NOT
+ *     re-measured here; what this file re-measures every run is `cascadeEvidence()`). No utilities, no preflight. Its own docstring records why importing the
  *     real sheet instead was rejected: it moves the rendered geometry of every
  *     existing test in that tier.
  *   · BUT THREE SPECS OPT IN, by importing `~/styles/globals.css` for its side effect
@@ -127,9 +130,23 @@ const mocks = vi.hoisted(() => ({ items: [] as ListingCard[] }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// 🔴 THE TWO BANNERS `MainContent` ALWAYS RENDERS, STUBBED TO NULL. They are not part of
+// the width chain — they sit inside the same `<main>` and contribute no horizontal box —
+// but `VerifyEmailBanner` reads `trpc.user.resendEmailVerification`, which this file's
+// wholesale trpc factory does not carry. Stubbing the two components is a smaller and more
+// honest surface than growing that factory with routes the fixture never exercises.
+vi.mock('~/components/User/VerifyEmailBanner', () => ({ VerifyEmailBanner: () => null }));
+vi.mock('~/components/Buzz/RewardsBonusBanner', () => ({ RewardsBonusBanner: () => null }));
+// 🔴 THE FACTORY MUST NAME EVERY EXPORT THE GRAPH IMPORTS — a wholesale mock replaces the
+// module outright, so one missing name makes the whole FILE fail to import and reports as
+// `Tests no tests` rather than as a failure. `useFeatureFlagsReady` is here because
+// rendering the real `MainContent` pulls `AppLayout`'s graph in, which reads it; the exact
+// error was `does not provide an export named 'useFeatureFlagsReady'`, and half a dozen
+// sibling specs carry the same note.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
   useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useFeatureFlagsReady: () => true,
 }));
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock).
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -155,7 +172,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 // Import AFTER the mocks (vi.mock is hoisted; static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsPageLayout } = await import('./AppsPageLayout');
-const { ScrollArea } = await import('~/components/ScrollArea/ScrollArea');
+const { MainContent } = await import('~/components/AppLayout/AppLayout');
 const { APPS_CONTAINER_GUTTER } = await import('./appsPageWidths');
 const { listingGridColumnsAt, MANTINE_BREAKPOINT_PX } = await import('./appListingGrid');
 
@@ -314,26 +331,40 @@ async function renderRealChain(
   await cleanup();
   await renderAtViewport(
     <div style={{ display: 'flex', flexDirection: 'column', height: viewport.height }}>
-      <ScrollArea
+      {/* 🔴 THE REAL `MainContent`, NOT A HAND-BUILT COPY OF IT — and that is the point of
+          calling this fixture "the real chain". `MainContent` supplies BOTH links this
+          measurement depends on: the `ScrollArea` (`.scroll-area`, the scrollbar-consuming
+          box) and the `<main className="min-w-0 flex-1">` between it and the page.
+
+          That `<main>` is load-bearing, not padding: `.scroll-area` is `display: flex;
+          flex-direction: column`, and Mantine's `Container` carries `margin-inline: auto`,
+          which in a flex container's CROSS axis disables stretch — so without a plain block
+          in between, the Container shrink-to-fits its content. An earlier draft of this
+          fixture hand-wrote that `<main>` and measured 553.02px instead of 1168 when it was
+          omitted, which is how its weight was discovered.
+
+          🔴 SO IT IS RENDERED RATHER THAN COPIED. A literal `<main className="min-w-0
+          flex-1">` here would be a duplicate of a production value with nothing checking the
+          two agree: adding `px-2` to `AppLayout`'s scrollable branch would make production's
+          grid `viewport − scrollbar − 16 − 32` while this fixture kept measuring the old
+          number and stayed green. Rendering the component makes that mutation fail HERE —
+          checked, see the mutation table in the PR body.
+
+          `subNav`/`footer` are nulled because they are vertical chrome that contributes no
+          horizontal box; the two banners `MainContent` renders unconditionally are stubbed
+          above for the same reason. */}
+      <MainContent
         data-testid="scroll-area"
+        subNav={null}
+        footer={null}
         style={availableWidth != null ? { width: availableWidth } : undefined}
       >
-        {/* 🔴 `<main className="min-w-0 flex-1">` IS PART OF THE REAL CHAIN, NOT PADDING.
-            `AppLayout`'s `MainContent` puts it between the ScrollArea and the page, and
-            omitting it changes the layout: `.scroll-area` is `display: flex; flex-direction:
-            column`, and Mantine's `Container` carries `margin-inline: auto`, which in a flex
-            container's cross axis DISABLES stretch — so without this the Container
-            shrink-to-fits its content and the grid measured 553.02px instead of 1168.
-            Found by this fixture failing, which is the argument for driving the real chain
-            rather than a wrapper of a chosen width. */}
-        <main className="min-w-0 flex-1">
-          <AppsPageLayout>
-            <AppListingsMarketplaceBody />
-          </AppsPageLayout>
-        </main>
+        <AppsPageLayout>
+          <AppListingsMarketplaceBody />
+        </AppsPageLayout>
         {/* Force the overflow that makes a scrollbar appear at all. */}
         <div style={{ height: viewport.height * 4 }} />
-      </ScrollArea>
+      </MainContent>
     </div>,
     viewport
   );
@@ -389,13 +420,27 @@ async function renderRealChain(
  * without changing the browser launch args for both browser projects — out of scope for
  * this PR, and a change that would move every existing geometry number.
  *
- * The two tests below split that honestly: the first drives the real chain and asserts the
- * RELATIONSHIP that holds on every platform (the grid reads the scroll box, not the
- * viewport), and pins the harness's reserve at 0 so this note cannot silently rot; the
- * second reproduces the production-shaped case by narrowing the box by
- * `THIN_SCROLLBAR_PX`, which is deterministic in any harness.
+ * The tests below split that honestly. Three of the four drive the real chain end-to-end —
+ * one at a narrow viewport, two at wide ones so BOTH halves of the ladder are covered — and
+ * assert the relationship that holds on every platform (the grid is derived from the scroll
+ * box, through the real `MainContent`). 🔴 NONE of those three can tell a container query
+ * from a media query, because at reserve 0 the box and the viewport are the same number;
+ * measured, all three stay green under the `@container` → `@media` mutant. ALL of the
+ * box-vs-viewport discrimination lives in the FOURTH, which reproduces the production case
+ * by narrowing the box by `THIN_SCROLLBAR_PX` and is deterministic in any harness. The
+ * `expect(reserve).toBe(0)` in the first is a config tripwire, not a guard.
  */
 describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport', () => {
+  /**
+   * ⚠️ THIS TEST HAS NO DISCRIMINATING POWER ON BOX-VS-VIEWPORT, deliberately stated so it
+   * is not counted as coverage it does not provide. With the harness reserve at 0 the box
+   * and the viewport are the same number, so `columns === listingGridColumnsAt(gridWidth)`
+   * holds under a media-query implementation too — measured: this test stays GREEN under
+   * the `@container` → `@media` mutant. What it does buy is the CHAIN (that the grid is
+   * derived from the scroll box's `clientWidth` minus the Container gutter at all, through
+   * the real `MainContent`) and the tripwire below. All of the box-vs-viewport
+   * discrimination lives in the next test.
+   */
   test('the real chain: grid width === scroll box clientWidth − the Container gutter', async () => {
     const VIEWPORT = { width: 1200, height: 800 };
     const m = await renderRealChain(VIEWPORT);
@@ -412,9 +457,13 @@ describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport',
     expect(m.gridWidth).toBe(m.availableInBox - APPS_CONTAINER_GUTTER);
     expect(m.columns).toBe(listingGridColumnsAt(m.gridWidth));
 
-    // 🔴 THE HARNESS'S OWN BLINDNESS, PINNED. If a Playwright bump or a config change ever
-    // starts reserving scrollbar space, this fails and the note above stops being true —
-    // which is the point. It is NOT an assertion that production reserves nothing.
+    // 🔴 A CONFIG TRIPWIRE, NOT A GUARD — and the distinction is worth being blunt about.
+    // It CANNOT fail while `vitest.config.mts` passes no `ignoreDefaultArgs`, because
+    // Playwright's `--hide-scrollbars` makes the reserve 0 unconditionally. So it buys
+    // exactly one thing: if a Playwright bump or a config change ever starts reserving
+    // scrollbar space, this goes red and the docstring above stops being able to rot
+    // silently. It is NOT evidence about production, and NOT an assertion that production
+    // reserves nothing.
     expect(
       m.reserve,
       'this harness has started reserving scrollbar width — the docstring above says it ' +
@@ -423,6 +472,39 @@ describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport',
     // …so, and only because of that, the box here equals the viewport.
     expect(m.availableInBox).toBe(VIEWPORT.width);
   });
+
+  /**
+   * 🔴 THE WIDE RUNGS, THROUGH THE SAME REAL CHAIN. Without this, `renderRealChain` was
+   * called twice and both times at 1200x800 — so the viewport→grid step was exercised only
+   * around rungs 3 and 4, and the wide rungs (2364 / 2840) were reached exclusively through
+   * `renderAtGridWidth`, which sets a width on a wrapper: the exact shape this file's own
+   * header calls "blind to the step in front of it". The claim that both halves of the
+   * ladder are driven end-to-end is only true with this test present.
+   *
+   * Both viewports are mid-band, not on a rung: 2300 → 2268 of grid (the four-column band
+   * runs 1168–2363) and 2500 → 2468 (five-column, 2364–2839).
+   *
+   * ⚠️ LIKE TEST 1, THESE DO NOT DISCRIMINATE BOX FROM VIEWPORT. With the harness reserve
+   * at 0 the two numbers coincide, so a media-query implementation passes them — measured:
+   * both stay GREEN under the `@container` → `@media` mutant. What they DO buy is the
+   * chain at the wide rungs (and they die to the `px-2`-on-`<main>` mutant, which is the
+   * link they are really guarding). All box-vs-viewport discrimination in this file lives
+   * in the reserved-scrollbar test below, and nowhere else.
+   */
+  test.each([
+    { viewportWidth: 2300, gridWidth: 2268, columns: 4 },
+    { viewportWidth: 2500, gridWidth: 2468, columns: 5 },
+  ])(
+    'the real chain at viewport $viewportWidth gives $gridWidth of grid and $columns columns',
+    async ({ viewportWidth, gridWidth, columns }) => {
+      const m = await renderRealChain({ width: viewportWidth, height: 900 });
+      expect(m.overflows).toBe(true);
+      expect(m.gridWidth).toBe(m.availableInBox - APPS_CONTAINER_GUTTER);
+      expect(m.gridWidth).toBe(gridWidth);
+      expect(m.columns).toBe(columns);
+      expect(m.columns).toBe(listingGridColumnsAt(m.gridWidth));
+    }
+  );
 
   test('🔴 with a thin scrollbar reserved, viewport 1200 gives THREE columns, not four', async () => {
     // THE PRODUCTION-SHAPED CASE, and the one the retired media queries got wrong. At a

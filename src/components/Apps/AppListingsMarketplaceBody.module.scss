@@ -43,7 +43,8 @@
    `AppListingCard` bottom-pins its action row with `mt="auto"` inside a `Stack h="100%"`
    inside a `Card className="h-full"`, and `h-full` only resolves because this grid
    STRETCHES its items to the row height (`align-items: normal`, the grid default).
-   Measured, four shapes — card DIRECT + default ✅ / card in a WRAPPER + default ✅ /
+   Four shapes, measured by the concurrent card PR's audit rather than here — card
+   DIRECT + default ✅ / card in a WRAPPER + default ✅ /
    card DIRECT + `start` ✅ (`h-full` resolves against the grid AREA) / card in a WRAPPER
    + non-stretch ❌ (short card 40px shorter, action row unpinned) — and THIS grid is the
    failing shape's first half, because each card sits in its own

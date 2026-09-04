@@ -17,7 +17,8 @@
  *
  * 🔴 WHY IT IMPORTS A STYLESHEET AND WHAT IT DELIBERATELY DOES NOT NEED.
  * `test/component-setup.tsx` injects only the `:root` custom properties out of
- * `globals.css` — measured, 24 CSS rules — so by DEFAULT this tier resolves no Tailwind
+ * `globals.css` (24 CSS rules, per `test/geometry-setup.tsx`'s own record of 2026-09-03
+ * — not re-measured here) — so by DEFAULT this tier resolves no Tailwind
  * utility and no Mantine rule. (Three specs opt in by importing `~/styles/globals.css`
  * themselves; this is not one of them, and does not need to be.) The column ladder lives
  * in a CSS MODULE, which Vite injects wherever the component is imported, so the

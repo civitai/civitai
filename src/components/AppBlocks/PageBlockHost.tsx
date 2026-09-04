@@ -311,9 +311,17 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *
  * 🔴 WHO IS ACTUALLY UNDEFENDED — enumerated, because the obvious premise ("apps
  * do not cap themselves") is only half true, and the half that is false is what
- * decides where this value sits. Across the 13 first-party App Block repos — 11
- * with a `page` surface; the other two are `model.sidebar_top` slot blocks and a
- * PAGE cap cannot reach them:
+ * decides where this value sits.
+ *
+ * ⚠️ THE CENSUS BELOW IS A CROSS-REPO READING, NOT SOMETHING THIS REPO CAN CHECK, AND
+ * NOTHING ASSERTS IT. It was taken by reading 13 separate first-party App Block repos
+ * at whatever refs they were at when the cap was chosen; no ref is recorded, no
+ * fixture reproduces it, and every number in it (13 repos, 11 page surfaces, the nine
+ * wells, median 860, max 1100) would silently rot as those repos change. Treat it as
+ * the RATIONALE that was in front of whoever picked 1600, not as a live measurement —
+ * and re-take it, recording refs, before leaning on it to move the cap. Across those
+ * 13 repos as read then — 11 with a `page` surface; the other two are
+ * `model.sidebar_top` slot blocks and a PAGE cap cannot reach them:
  *
  *   · NINE of the eleven page apps DO cap themselves, at 640 / 720 / 720 / 760 /
  *     820 / 880 / 900 / 960 / 1100 px — a hand-copied `contentStyle` well; median
@@ -360,9 +368,9 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * four, 2560 holds eight).
  *
  * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
- * used to appear here and it is a moving target: the apps container has gone
- * 1600 → 1920 → 2560 without any of those moves being a statement about how wide a
- * THIRD-PARTY app should be. The cap's real justification is the two bounds above
+ * used to appear here and it is a moving target: the apps container has taken three
+ * values over time — 1600 → 1920 → 2560 — without any of them being a statement about
+ * how wide a THIRD-PARTY app should be. The cap's real justification is the two bounds above
  * it does control — above every ordinary content measure, and comfortably clear of
  * the widest app-imposed well — neither of which moves when the apps container
  * does. Widening 1600 is a separate decision with its own evidence.
