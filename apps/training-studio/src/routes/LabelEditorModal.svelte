@@ -84,7 +84,7 @@
     {#if editing}
       <Dialog.Header>
         <Dialog.Title>{labelMode === 'tag' ? 'Edit tags' : 'Edit caption'}</Dialog.Title>
-        <Dialog.Description>{editing.file.name}</Dialog.Description>
+        <Dialog.Description>{editing.name}</Dialog.Description>
       </Dialog.Header>
 
       {#if labelMode === 'tag'}

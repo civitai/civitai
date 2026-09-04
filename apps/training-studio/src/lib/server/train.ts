@@ -108,11 +108,20 @@ function buildStep(run: TrainingRunInput): WorkflowStepTemplate {
   return step as unknown as WorkflowStepTemplate;
 }
 
-/** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + `.errors`), a plain error as
- *  `.detail`; surface whichever is present. */
+/** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + a `.errors` field→messages map), a
+ *  plain error as `.detail`; surface whichever is present, including the per-field validation errors so a
+ *  bad body says which field, not just "One or more validation errors occurred". */
 function describeSubmitError(error: unknown): string {
   if (typeof error === 'string') return error;
-  const e = error as { detail?: string; title?: string } | undefined;
+  const e = error as
+    | { detail?: string; title?: string; errors?: Record<string, string[] | string> }
+    | undefined;
+  if (e?.errors && typeof e.errors === 'object') {
+    const fields = Object.entries(e.errors)
+      .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join('; ') : val}`)
+      .join(' | ');
+    if (fields) return `${e.title ?? 'validation failed'} — ${fields}`;
+  }
   return e?.detail ?? e?.title ?? 'no data returned';
 }
 

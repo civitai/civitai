@@ -13,9 +13,11 @@ import {
   TRAINING_TAG,
   workflowToDetail,
   workflowToRow,
+  type GenerationItem,
   type TrainingDetail,
   type TrainingRow,
 } from '$lib/data/trainingRows';
+import type { Media } from '$lib/data/trainingModels';
 
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 const RETENTION_DAYS = 30;
@@ -43,6 +45,106 @@ export async function listTrainingWorkflows(token: string): Promise<TrainingRow[
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
   return (data.items ?? []).map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+}
+
+const GENERATION_TAG = 'gen';
+const MEDIA_TAG: Record<Media, string> = { image: 'img', video: 'vid', audio: 'aud' };
+/** A picker grid caps out well before this; enough to cover a heavy day of generations. */
+const MAX_GENERATION_ITEMS = 200;
+
+/** One output blob off a raw workflow step, across all media shapes (image/video/audio). */
+interface OutputBlob {
+  id: string;
+  available: boolean;
+  url?: string | null;
+  previewUrl?: string | null;
+  blockedReason?: string | null;
+  type?: string;
+}
+interface RawStep {
+  $type?: string;
+  output?: {
+    blobs?: OutputBlob[];
+    images?: OutputBlob[];
+    blob?: OutputBlob | null;
+    video?: OutputBlob | null;
+    additionalVideos?: OutputBlob[] | null;
+  };
+}
+
+// The orchestrator's queryGeneratedImages feed normalizes step outputs SERVER-SIDE, so its clients read a
+// flat `step.images`. We call the raw SDK queryWorkflows, which returns un-normalized steps, so we mirror
+// the relevant branches of the main app's `normalizeStepOutput`: which output field holds the media
+// depends on the step `$type` (`comfy`→blobs, `textToImage`/`imageGen`→images, upscalers→blob, …).
+function stepBlobsForMedia(step: RawStep, media: Media): OutputBlob[] {
+  const output = step.output;
+  if (!output) return [];
+  const arr = (v: OutputBlob[] | null | undefined) => v ?? [];
+  const one = (v: OutputBlob | null | undefined) => (v ? [v] : []);
+
+  if (media === 'image') {
+    switch (step.$type) {
+      case 'comfy':
+        return arr(output.blobs);
+      case 'imageGen':
+      case 'textToImage':
+      case 'model3DPreview':
+        return arr(output.images);
+      case 'imageUpscaler':
+      case 'preprocessImage':
+        return one(output.blob);
+      default:
+        return [];
+    }
+  }
+  if (media === 'video') {
+    switch (step.$type) {
+      case 'videoGen':
+        return [...one(output.video), ...arr(output.additionalVideos)];
+      case 'videoUpscaler':
+      case 'videoEnhancement':
+      case 'videoInterpolation':
+        return one(output.video);
+      default:
+        return [];
+    }
+  }
+  // audio: aceStepAudio emits a VideoBlob (audio + cover) or an AudioBlob — only the latter is trainable audio.
+  if (step.$type === 'aceStepAudio' && output.blob?.type === 'audio') return one(output.blob);
+  return [];
+}
+
+/** The caller's recent generated media of one type, as pick-able blobs — pulled from their generation
+ *  workflows (tagged civitai/gen/<media>), taking each step's available, unblocked output blobs. The URL
+ *  is presigned and short-lived: the picker uses it for previews, and the dataset is seeded by blob id
+ *  (already scanned, so `addFromBlobs` skips upload). */
+export async function listGenerations(token: string, media: Media): Promise<GenerationItem[]> {
+  const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await queryWorkflows({
+    client: orchestratorClient(token),
+    query: {
+      tags: [CIVITAI_TAG, GENERATION_TAG, MEDIA_TAG[media]],
+      take: 100,
+      fromDate,
+      hideMatureContent: false,
+    },
+  });
+  if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
+
+  const items: GenerationItem[] = [];
+  const seen = new Set<string>();
+  for (const workflow of data.items ?? []) {
+    for (const step of (workflow.steps ?? []) as RawStep[]) {
+      for (const blob of stepBlobsForMedia(step, media)) {
+        if (blob.available && !blob.blockedReason && blob.url && !seen.has(blob.id)) {
+          seen.add(blob.id);
+          items.push({ blobId: blob.id, url: blob.url, previewUrl: blob.previewUrl ?? blob.url });
+        }
+      }
+    }
+    if (items.length >= MAX_GENERATION_ITEMS) break;
+  }
+  return items.slice(0, MAX_GENERATION_ITEMS);
 }
 
 /** A representative dataset size for a pre-dataset "from" quote. Under step-based pricing the image count

@@ -55,3 +55,87 @@ export function parseTraceLine(line: string): ParsedTraceLine {
   }
   return { kind: 'text', text: line };
 }
+
+/** The ai-toolkit worker's per-epoch phases, plus a synthetic `generating_samples` we infer from the
+ *  "Generating Images:" log line (the worker emits that as text, not a phase event). */
+export type TrainingPhase =
+  | 'loading_base_model'
+  | 'copying_previous_epoch'
+  | 'training'
+  | 'uploading'
+  | 'generating_samples';
+
+export const PHASE_LABEL: Record<TrainingPhase, string> = {
+  loading_base_model: 'Loading base model',
+  copying_previous_epoch: 'Preparing epoch',
+  training: 'Training',
+  uploading: 'Saving checkpoint',
+  generating_samples: 'Generating preview samples',
+};
+
+const WORKER_PHASES = new Set<string>([
+  'loading_base_model',
+  'copying_previous_epoch',
+  'training',
+  'uploading',
+]);
+
+/** The one signal a trace line carries for the friendly status view. `noise` = a line we keep in the raw
+ *  log but that drives no status (timer blocks, "Saved optimizer", "Removing old save", unknown JSON). */
+export type TraceSignal =
+  | { kind: 'phase'; phase: TrainingPhase; epoch: number | null }
+  | {
+      kind: 'step';
+      step: number;
+      maxSteps: number;
+      stepsRemaining: number | null;
+      secondsPerStep: number | null;
+    }
+  | { kind: 'epoch-done'; epoch: number }
+  | { kind: 'attempt'; epoch: number | null }
+  | { kind: 'noise' };
+
+const finite = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+/** Interpret one trace line into a structured status signal. The `step` event's own `epoch` field is the
+ *  worker's internal dataset-epoch counter (44, 49, …), which differs from the checkpoint epoch the user
+ *  sees (10); only `attempt`/`phase`/`epoch` events carry the checkpoint epoch, so step signals don't. */
+export function interpretTraceLine(line: string): TraceSignal {
+  const parsed = parseTraceLine(line);
+  if (parsed.kind === 'text') {
+    if (/^Generating Images:/i.test(parsed.text)) {
+      return { kind: 'phase', phase: 'generating_samples', epoch: null };
+    }
+    return { kind: 'noise' };
+  }
+  const e = parsed.event;
+  const epoch = finite(e.epoch);
+  switch (e.type) {
+    case 'phase': {
+      const p =
+        typeof e.phase === 'string' && WORKER_PHASES.has(e.phase)
+          ? (e.phase as TrainingPhase)
+          : null;
+      return p ? { kind: 'phase', phase: p, epoch } : { kind: 'noise' };
+    }
+    case 'step': {
+      const step = finite(e.step);
+      const maxSteps = finite(e.maxSteps);
+      if (step === null || maxSteps === null || maxSteps <= 0) return { kind: 'noise' };
+      return {
+        kind: 'step',
+        step,
+        maxSteps,
+        stepsRemaining: finite(e.epochStepsRemaining),
+        secondsPerStep: finite(e.secondsPerStep),
+      };
+    }
+    case 'epoch':
+      return epoch !== null ? { kind: 'epoch-done', epoch } : { kind: 'noise' };
+    case 'attempt':
+      return { kind: 'attempt', epoch };
+    default:
+      return { kind: 'noise' };
+  }
+}

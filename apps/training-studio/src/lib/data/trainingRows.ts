@@ -15,6 +15,16 @@ export const AUTO_LABEL_TAG = 'auto-label';
  * `TrainingStudioMeta` shape changes incompatibly; the reader degrades field-by-field regardless. */
 export const META_VERSION = 1;
 
+/** A pick-able generation blob, as returned by `/api/generations`. Declared here (not on the server
+ *  helper) so the route, `listGenerations`, and the picker share one contract across the network boundary. */
+export interface GenerationItem {
+  blobId: string;
+  /** Full blob URL — seeds the dataset (auto-label media + training reference). */
+  url: string;
+  /** Resized preview for the grid thumbnail; falls back to `url`. */
+  previewUrl: string;
+}
+
 /** A run's coarse lifecycle as shown on the My-trainings list. `published` is an app-level
  * fact we store in the workflow metadata, not an orchestrator status. */
 export type RunState = 'ready' | 'training' | 'published' | 'failed';

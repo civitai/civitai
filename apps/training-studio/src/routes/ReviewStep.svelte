@@ -157,16 +157,15 @@
       </p>
     </div>
 
-    <div>
-      <label for="training-name" class="font-mono text-xs uppercase tracking-wider text-dark-2">
-        Name
-      </label>
+    <div class="rounded-md border border-dark-4 bg-dark-6 p-4">
+      <label for="training-name" class="block text-sm font-semibold text-dark-0">Name your LoRA</label>
       <Input
         id="training-name"
         bind:value={name}
-        placeholder="Name this training — defaults to your trigger word"
-        class="mt-1.5"
+        placeholder="e.g. my_character — defaults to your trigger word"
+        class="mt-2"
       />
+      <p class="mt-1.5 text-[11px] text-dark-2">Shown as the run's title; you can rename it later.</p>
     </div>
 
     <div class="flex items-center justify-between">

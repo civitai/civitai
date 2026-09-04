@@ -7,6 +7,7 @@
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
   import {
+    blobAirFromUrl,
     captionTriggerHit,
     isTrainable,
     isTriggerTag,
@@ -17,6 +18,7 @@
     type Selection,
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
+  import GenerationPickerModal from './GenerationPickerModal.svelte';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
   let {
@@ -79,6 +81,7 @@
     const added: Img[] = matched.map((file) => ({
       id: ++seq,
       file,
+      name: file.name,
       previewUrl: URL.createObjectURL(file),
       mediaType: media,
       status: 'uploading',
@@ -87,7 +90,7 @@
       caption: '',
     }));
     images = [...images, ...added];
-    await pool(added, 4, (img) => uploadOne(img.id, img.file));
+    await pool(added, 4, (img) => uploadOne(img.id, img.file!));
     // Auto-label as soon as this batch's uploads settle. If a run is already going, it drains this batch too.
     void ensureLabeling();
   }
@@ -113,7 +116,37 @@
 
   function retry(id: number) {
     const tile = images.find((x) => x.id === id);
-    if (tile) void uploadOne(id, tile.file).then(ensureLabeling);
+    if (tile?.file) void uploadOne(id, tile.file).then(ensureLabeling);
+  }
+
+  // Add items backed by EXISTING orchestrator blobs (a generation or a reused dataset): already uploaded
+  // and scanned, so no upload. A `caption` (from a reused dataset) is applied to the right field for the
+  // dataset's label type and marks the item labeled; un-captioned items (generations) get auto-labeled.
+  function addFromBlobs(items: { blobId: string; url: string; name: string; caption?: string }[]) {
+    // Skip blobs already in the dataset — the picker can't see what's here, so re-picking one (or
+    // reopening and picking it again) would otherwise add a duplicate tile with the same `air`.
+    const have = new Set(images.map((i) => i.blobId).filter(Boolean));
+    const fresh = items.filter((item) => !have.has(item.blobId));
+    if (fresh.length === 0) return;
+    const isTag = labelMode === 'tag';
+    const added: Img[] = fresh.map((item) => {
+      const label = item.caption?.trim() ?? '';
+      return {
+        id: ++seq,
+        name: item.name,
+        previewUrl: item.url,
+        mediaType: media,
+        status: 'uploaded',
+        progress: 1,
+        blobId: item.blobId,
+        blobUrl: item.url,
+        tags: isTag && label ? label.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        caption: !isTag ? label : '',
+        labelTried: label ? true : undefined,
+      };
+    });
+    images = [...images, ...added];
+    void ensureLabeling();
   }
 
   function remove(id: number) {
@@ -172,6 +205,17 @@
     const input = e.currentTarget as HTMLInputElement;
     void addFiles(input.files);
     input.value = ''; // let the same file be re-picked after a remove
+  }
+
+  let genPickerOpen = $state(false);
+  function addFromGenerations(items: { blobId: string; url: string }[]) {
+    addFromBlobs(
+      items.map((i) => ({
+        blobId: blobAirFromUrl(i.url),
+        url: i.url,
+        name: `generation ${i.blobId.slice(0, 8)}`,
+      }))
+    );
   }
 
   // ---- label editor: opens LabelEditorModal for one uploaded image ----
@@ -251,7 +295,7 @@
 
   <div class="flex flex-wrap gap-2.5">
     <Button variant="outline" onclick={() => fileInput.click()}>⬆ Upload files</Button>
-    <Button variant="outline" disabled title="Coming soon">🖼 From my generations</Button>
+    <Button variant="outline" onclick={() => (genPickerOpen = true)}>🖼 From my generations</Button>
     <Button variant="outline" disabled title="Coming soon">♻ Reuse a dataset</Button>
   </div>
 
@@ -347,7 +391,7 @@
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-1 p-2 text-center">
                     <span class="text-2xl">🎵</span>
-                    <span class="line-clamp-2 break-all font-mono text-[10px] text-dark-2">{img.file.name}</span>
+                    <span class="line-clamp-2 break-all font-mono text-[10px] text-dark-2">{img.name}</span>
                   </div>
                 {/if}
 
@@ -470,3 +514,5 @@
   {tagVocab}
   onRelabel={relabelOne}
 />
+
+<GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />

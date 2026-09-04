@@ -105,7 +105,11 @@ export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
  *  locally for now (auto-label lands next). */
 export interface Img {
   id: number;
-  file: File;
+  /** The source file for an uploaded-from-disk item; absent for items pulled from an existing orchestrator
+   *  blob (a generation or a reused dataset), which are already uploaded. */
+  file?: File;
+  /** Display name (filename, or a synthetic label for blob-backed items). */
+  name: string;
   previewUrl: string;
   mediaType: Media;
   status: ImgStatus;
@@ -127,6 +131,14 @@ export interface Img {
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
+}
+
+/** The training-data `air` reference for a blob-backed item (a generation / reused dataset). The
+ *  orchestrator accepts a full `https://…/v2/consumer/blobs/{key}.ext` URL but rejects a generation's
+ *  bare blob id and a host-less path — so use the blob's own URL with the presigned query stripped (the
+ *  extension must survive for the media-type check; the signature isn't needed server-side). */
+export function blobAirFromUrl(url: string): string {
+  return url.split('?')[0];
 }
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
