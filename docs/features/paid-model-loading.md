@@ -1,7 +1,9 @@
 # Paid Model Loading
 
-**Status:** not started on the site side. Orchestrator side is largely built, but charging is off.
-**Source:** lab call 2026-08-18 (Justin, Koen, Briant) + orchestrator SDK `@civitai/client@0.2.0-beta.98`.
+**Status:** not started on the site side. The orchestrator can download and report; it cannot yet
+charge or guarantee residency.
+**Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, and the
+`civitai-orchestration` source at `9306e7333`.
 **Tracking:** ClickUp C2–C14, `Synced Team`.
 
 ---
@@ -9,8 +11,14 @@
 ## What it is
 
 Any model on the site becomes generatable. If the model is not resident in the generation
-cluster, the user pays to load it in, and we guarantee it stays resident for **48 hours**.
-The orchestrator sets the price, scaled by model size.
+cluster, the user pays to load it in, and — as pitched — we guarantee it stays resident for
+**48 hours**. The orchestrator sets the price, scaled by model size.
+
+🔴 **Two halves of that sentence are not built.** Verified against orchestrator source
+(`civitai-orchestration` @ `9306e7333`): there is **no residency mechanism at all** — nothing pins a
+prepared resource, so it is evicted like any other — and **the cost function returns a hardcoded
+zero**, so there is no size-scaled price to show. The download machinery is real and working; the
+product wrapped around it is not. See [Orchestrator state](paid-model-loading-checklist.md#orchestrator-state--verified-against-source).
 
 This replaces auctions as the mechanism for getting a checkpoint into the generator.
 
@@ -50,17 +58,19 @@ Two consequences the call's model of this misses:
 `queryResources({ query: { view: 'queue', cursor?, take? } })` returns a cursor-paged
 `ResourceInfo[]`.
 
-🔴 **The call recorded this as Koen's one missing piece** ("there is no endpoint for a queue…
-that one I missed"). It is present in the SDK we have installed. Confirm with Koen that it is
-live in the deployed orchestrator before planning around it — the SDK is generated from the
-OpenAPI document and can lead the deployment.
+The call recorded this as Koen's one missing piece ("there is no endpoint for a queue… that one I
+missed"). **It has since been built** — verified in `ResourcesController.QueryAsync`.
 
-Koen's caveat still stands and is not resolved by the endpoint existing: **there is no single
-global queue.** Each provider has its own. A prepared resource is submitted to every provider,
-each interested provider queues it, and the reported number is the winning provider at that
-moment. With multiple providers, several items legitimately occupy "position 1". Justin's answer
-was to flatten the per-provider ranks into one displayed 1..n list and accept that it is a
-ranking, not a position. Today there is one provider, so this is latent.
+Two properties that shape the queue page: the **cursor is an integer offset** over a list that is
+re-ranked from live provider state on every request, so paging is not stable; and each item costs a
+`GetInfoAsync` plus a `GetAvailabilityAsync` grain call, so a 500-item page is a thousand calls.
+Keep `take` small (it is clamped to 1..500, default 100).
+
+Koen's caveat about there being **no single global queue** — each provider has its own, and several
+items can legitimately occupy "position 1" — is real, but the endpoint already resolves it: it
+merges every enabled provider, de-dupes by AIR and ranks the result. Justin's "make it look like
+1, 2, 3, 4" is done server-side. Do not rebuild it client-side. A single unreachable provider
+degrades to an empty contribution rather than failing the call.
 
 ### Preparing a resource
 
@@ -72,8 +82,15 @@ Submittable two ways:
 - as a **standalone** `prepareResource` workflow step, or
 - **implicitly**, by submitting a txt2img step that references a resource that is not resident.
 
-While a download progresses, the orchestrator emits a webhook event **every 10 seconds** carrying
-the same `availability` payload.
+While a download progresses, the step publishes a `WorkflowStepEvent` with `status: preparing` and
+a `preparation { resource, queuePosition, progress, etaSeconds }` payload — refreshed every **10
+seconds**, deduplicated so it only publishes when progress moves by 1%.
+
+**Subscribe with `step:*`** — the callback filter is "no event type means all", so `step:*` matches
+`preparing` too, and `getOrchestratorCallbacks` already uses it for generation. ⚠️ The generated
+SDK's `WorkflowCallback.type` union does **not** list `preparing` or `scheduled`: the orchestrator's
+Swagger filter strips both from the advertised enum, so the type looks like the feature is missing
+when it is only unadvertised.
 
 ⚠️ The implicit path matters for rate limiting — see below.
 
@@ -256,8 +273,9 @@ These came out of reading the contract and the code, not out of the call. None h
    available." A refund path is implied and unscoped.
 3. **Concurrent purchases of the same resource.** Two users pay to load the same model at the same
    time. Does the second pay? Is one refunded? Does the 48 hours reset?
-4. **The 48-hour guarantee has no representation on the site.** Nothing in C4–C11 shows when a
-   residency expires, and the value proposition is a countdown nobody has designed.
+4. **The 48-hour guarantee does not exist yet**, on the site or in the orchestrator. Nothing pins a
+   prepared resource and nothing records an expiry, so there is no countdown to design until Koen
+   builds retention. Until then the surfaces must not promise it.
 5. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
    irrelevant checkpoints and starves the popular ones. The answers on record are that popular
    models stay resident because workers keep them, plus the rate limits, plus Koen's
