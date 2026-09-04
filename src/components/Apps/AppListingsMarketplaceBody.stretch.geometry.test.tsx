@@ -40,18 +40,46 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * 🔴 WHY THE `geometry` PROJECT AND NOT `component`
  * ─────────────────────────────────────────────────────────────────────────────
- * `h-full` IS A TAILWIND UTILITY. The `component` tier's setup injects only the
- * `:root` custom properties out of `globals.css` — measured, 24 CSS rules — so
- * every Tailwind utility there is inert and the card's height silently follows its
- * content. This was not theory: the first draft of this guard lived in
- * `AppListingsMarketplaceBody.columns.browser.test.tsx` and reported heights of
- * `[458.23, 312.75, 434.23, 312.75]` on a CORRECT grid, because `h-full` did
- * nothing. A test that cannot distinguish the fix from the defect is worse than no
- * test, and it would have been read as this guard working.
+ * `h-full` IS A TAILWIND UTILITY, AND WHICH TIER YOU ARE IN DECIDES WHETHER IT
+ * RESOLVES — but the accurate statement is narrower than "the `component` tier has
+ * no Tailwind", so state it precisely:
  *
- * `test/geometry-setup.tsx` loads the real cascade in production order and this
- * file asserts that it arrived (`cascadeEvidence()`), so a stylesheet that fails
- * to load fails the run rather than quietly reproducing the defect's numbers.
+ *   · BY DEFAULT it does not. `test/component-setup.tsx` parses `globals.css?raw`
+ *     into a throwaway `CSSStyleSheet`, walks it for unconditional `:root` rules and
+ *     injects a `<style>` holding ONLY the `--*` custom properties — measured, 24 CSS
+ *     rules. No utilities, no preflight. Its own docstring records why importing the
+ *     real sheet instead was rejected: it moves the rendered geometry of every
+ *     existing test in that tier.
+ *   · BUT THREE SPECS OPT IN, by importing `~/styles/globals.css` for its side effect
+ *     (`AppListingCard.browser.test.tsx`, `ImageCard.browser.test.tsx`,
+ *     `ImageResources.browser.test.tsx` — measured at this ref; two more import it as
+ *     `?raw` TEXT, which injects nothing). Vite runs those through PostCSS, so
+ *     Tailwind utilities genuinely DO resolve there. Anyone claiming a spec in that
+ *     tier "cannot see Tailwind" has to check the file, not the tier.
+ *
+ * 🔴 SO THE REASON THIS GUARD IS HERE IS THE CASCADE **LAYER ORDER**, NOT THE MERE
+ * PRESENCE OF TAILWIND. An opted-in `component` spec gets `globals.css` (and possibly
+ * `@mantine/core/styles.layer.css`) without `test/cascade-layer-order.css` and without
+ * the other Mantine layer sheets. A layer's priority is fixed at its FIRST APPEARANCE
+ * in the CSSOM, so with no `@layer tailwind-preflight, theme, mantine, modules;`
+ * parsed first, layer priority falls out of import order — a THIRD cascade, matching
+ * neither this tier's default nor production. `test/geometry-setup.tsx` parses that
+ * declaration first and then loads `globals.css` + the six Mantine
+ * `<pkg>/styles.layer.css` sheets + `mantine-react-table/styles.css`, i.e.
+ * `src/pages/_document.tsx` followed by
+ * `src/pages/_app.tsx`, in that order. This seam is a fight between a Tailwind
+ * utility (`h-full`), a Mantine component rule (`Card`) and a CSS Module (`.grid`) —
+ * exactly the three layers that declaration orders — so it needs the real one.
+ *
+ * That this matters is not theory: the first draft of this guard lived in
+ * `AppListingsMarketplaceBody.columns.browser.test.tsx`, which imports only
+ * `@mantine/core/styles.css` and therefore gets the tier default. It reported heights
+ * of `[458.23, 312.75, 434.23, 312.75]` on a CORRECT grid, because `h-full` did
+ * nothing there. A test that cannot distinguish the fix from the defect is worse than
+ * no test, and it would have been read as this guard working.
+ *
+ * This file asserts the cascade arrived (`cascadeEvidence()`), so a stylesheet that
+ * fails to load fails the run rather than quietly reproducing the defect's numbers.
  *
  * The column LADDER stays in the `component` tier — it is driven by this repo's own
  * CSS module, which Vite injects wherever the component is imported, so it needs no
@@ -260,11 +288,17 @@ describe('🔴 the store grid stretches its cards, so their action rows stay pin
   test('the harness loaded the REAL cascade (positive control — Tailwind must resolve)', async () => {
     // 🔴 THE CONTROL THIS FILE EXISTS BECAUSE OF. Without Tailwind's utilities `h-full` is
     // inert, the card's height follows its content, and every measurement below reproduces
-    // the DEFECT's numbers on correct code. `tailwindFlexUtilityResolves` is `false` in the
-    // `component` tier and `true` here, so it is evidence rather than a reassurance.
+    // the DEFECT's numbers on correct code. `tailwindFlexUtilityResolves` is `false` under
+    // the `component` tier's DEFAULT setup and `true` here, so it is evidence rather than a
+    // reassurance. (It would also be `true` in a `component` spec that imports
+    // `~/styles/globals.css` itself — three do. What such a spec still would not have is
+    // the layer-ORDER declaration; see the header.)
     await renderAtGridWidth(2450);
     const evidence = cascadeEvidence();
-    expect(evidence.tailwindFlexUtilityResolves, 'Tailwind utilities are inert here').toBe(true);
+    expect(
+      evidence.tailwindFlexUtilityResolves,
+      'Tailwind utilities did not resolve — the real cascade did not load'
+    ).toBe(true);
     expect(evidence.probeBoxSizing, 'Preflight did not load').toBe('border-box');
     expect(evidence.ruleCount, 'the cascade is far too small to be the real one').toBeGreaterThan(
       1000

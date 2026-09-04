@@ -51,8 +51,9 @@
    for vertical rhythm unpins the action row on every card in the store, with nothing
    else changing. Guarded by rendered boxes (not by an inline-style check, which the
    mutant walks straight past) in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`
-   — the `geometry` project, because `h-full` is a Tailwind utility and is inert in the
-   `component` tier's cascade. */
+   — the `geometry` project, because that is the only tier that loads the cascade-LAYER
+   ORDER production declares, which is what makes `h-full` and Mantine's own rules
+   resolve against each other the way they do on the site. */
 .grid {
   display: grid;
   /* Mantine's `md` spacing token — the value the retired `<Grid gutter="md">` used, and

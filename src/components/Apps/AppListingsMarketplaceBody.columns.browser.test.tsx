@@ -15,13 +15,25 @@
  * visual row, which is the only form of the question that a broken container query can
  * answer differently.
  *
- * 🔴 WHY IT IMPORTS THE CASCADE. `test/component-setup.tsx` injects only the `:root`
- * custom properties out of `globals.css` — measured, 24 CSS rules — so every Tailwind
- * utility is inert and, critically, a CSS-Module `@container` rule would still apply but
- * `display: grid` from an unloaded sheet would not. This file imports what it needs and
- * then ASSERTS it arrived (`cascadeLoaded` below), because "every width rendered one
- * column" is exactly what an unstyled document produces and it would read as a
- * consistent, confident, entirely vacuous pass.
+ * 🔴 WHY IT IMPORTS A STYLESHEET AND WHAT IT DELIBERATELY DOES NOT NEED.
+ * `test/component-setup.tsx` injects only the `:root` custom properties out of
+ * `globals.css` — measured, 24 CSS rules — so by DEFAULT this tier resolves no Tailwind
+ * utility and no Mantine rule. (Three specs opt in by importing `~/styles/globals.css`
+ * themselves; this is not one of them, and does not need to be.) The column ladder lives
+ * in a CSS MODULE, which Vite injects wherever the component is imported, so the
+ * `@container` rules apply here regardless — what would NOT apply is Mantine's own
+ * `display`/box rules, hence the one stylesheet imported above. The file then ASSERTS
+ * the sheet arrived (`cascadeLoaded` below), because "every width rendered one column" is
+ * exactly what an unstyled document produces and would read as a consistent, confident,
+ * entirely vacuous pass.
+ *
+ * 🔴 WHAT THIS TIER CANNOT MEASURE, AND WHERE THAT LIVES INSTEAD. Anything resolving
+ * through Tailwind or through the production cascade-LAYER order — notably the card's
+ * `h-full` + `h="100%"` + `mt="auto"` bottom-pin chain — is not measurable here. That
+ * seam is guarded in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`, in the
+ * `geometry` project, which loads the layer-order declaration and the Mantine layer
+ * sheets in production order. A first draft of it lived in THIS file and reported card
+ * heights of `[458.23, 312.75, 434.23, 312.75]` on a correct grid.
  *
  * ⚠️ REPORT-ONLY, like every `.browser.test.tsx` here: the `component` project's only CI
  * home is the preview pipeline's non-blocking `preview / component-tests`. The gating
