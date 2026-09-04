@@ -42,15 +42,21 @@
 /* The STALE-RESULTS affordance, applied alongside `.gridContainer` while the store
    is showing `keepPreviousData`'s previous page.
 
-   🔴 OPACITY ONLY, ON PURPOSE. The whole point of keeping the previous result is
-   that nothing MOVES while the new one loads, so the pending signal must be a
-   repaint: no height, no margin, no inserted spinner, nothing that participates in
-   layout. `pointer-events: none` because a stale row is not a thing to click —
-   following a card that is about to be replaced is how a viewer lands on a listing
-   the filter they just chose excludes. */
+   🔴 OPACITY ONLY, ON PURPOSE — no height, no margin, no inserted spinner, nothing
+   that participates in layout. The whole point of keeping the previous result is
+   that nothing MOVES while the new one loads, so the pending signal has to be a
+   repaint; a shimmer or a spinner here would re-introduce the shift this change
+   removes.
+
+   🔴 AND DELIBERATELY **NOT** `pointer-events: none`, which an earlier draft had.
+   It blocks the MOUSE and not the KEYBOARD — focus still lands on every card and
+   Enter still follows it — so it does not actually stop a viewer reaching a stale
+   card; it only stops one of the two ways of doing so, which is worse than either
+   choice made consistently. And the cards are stale, not wrong: each still points
+   at a listing that exists, so following one is a valid navigation rather than a
+   trap. Dim to say "being replaced"; leave it usable. */
 .gridPending {
   opacity: 0.55;
-  pointer-events: none;
   transition: opacity 120ms ease-out;
 }
 
