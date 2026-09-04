@@ -1,10 +1,16 @@
+import { NON_PUBLIC_IP_RANGES } from '@civitai/shared/clickhouse-ip-filters';
 import { describe, expect, it, vi } from 'vitest';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
 import {
+  MAX_CONTENT_CHARS,
+  MAX_CONTENT_SAMPLES,
+  MAX_IPS_PER_ACCOUNT,
+  EVIDENCE_CHUNK_SIZE,
   MIN_FINGERPRINT_CHARS,
   MIN_FINGERPRINT_TOKENS,
   buildCohortSignals,
   chunk,
+  clickhouseDateTime,
   collectCohortSignals,
   contentFingerprint,
   contentSampleArgs,
@@ -127,6 +133,81 @@ describe('contentFingerprint', () => {
     expect(a).not.toBe(other);
     expect(other).not.toBeNull();
   });
+
+  it('🔴 KNOWN FALSE POSITIVE, PINNED: a generation-parameter paste collides with itself', () => {
+    // 🔴 THIS IS NOT A GUARD, IT IS A RECORD. Pasting settings under a model is one of the most
+    // ordinary comments on this site, and the digit masking that makes a swapped payout match ALSO
+    // makes two unrelated parameter pastes match: every number in them is a `nummask`. Six such
+    // accounts in one day's cohort read as a ring of six and are reported.
+    //
+    // It is asserted so the collision cannot quietly stop being true — a normaliser change that
+    // fixed it should have to delete this case deliberately, and one that made it WORSE (a longer
+    // paste form colliding too) is a diff a reader can see. `similarity.ts` records why the two
+    // candidate fixes were rejected on the arithmetic below.
+    const a = contentFingerprint(
+      'Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 1234567890, Size: 512x768'
+    );
+    const b = contentFingerprint(
+      'Steps: 35, Sampler: Euler a, CFG scale: 4, Seed: 9987654321, Size: 768x1024'
+    );
+    expect(a).toBe(b);
+    expect(a).not.toBeNull();
+
+    // 🔴 THE MEASUREMENT THAT KILLED THE "DISCARD MASK-HEAVY FINGERPRINTS" FIX. Run over the
+    // SHIPPED normaliser, not argued: the two classes do not merely sit close, they INTERLEAVE in
+    // both directions, so no threshold exists in either.
+    const maskRatio = (fp: string) => {
+      const tokens = fp.split(' ').filter(Boolean);
+      return tokens.filter((t) => t === 'nummask' || t === 'linkmask').length / tokens.length;
+    };
+    const fp = (s: string) => contentFingerprint(s) as string;
+    // The commonest real form — the whole metadata block including the prompt — and an ordinary
+    // shill template are EXACTLY equal at 2/7. A cut cannot go between two identical values.
+    const pasteWithPrompt = fp(
+      'masterpiece, best quality, 1girl, detailed eyes, Steps: 20, Sampler: Euler a, ' +
+        'CFG scale: 7, Seed: 1234567890, Size: 512x768'
+    );
+    const shillLink = fp('check out https://mysite.example/a for 500 free buzz');
+    expect(maskRatio(pasteWithPrompt)).toBeCloseTo(6 / 21, 12);
+    expect(maskRatio(shillLink)).toBeCloseTo(2 / 7, 12);
+    expect(maskRatio(pasteWithPrompt)).toBeCloseTo(maskRatio(shillLink), 12);
+
+    // And the ordering INVERTS at the other end: the shortest shill template is mask-heavier than
+    // the longest parameter paste, so a cut high enough to spare shill text discards nothing and a
+    // cut low enough to catch pastes discards shill text first.
+    const shillMinimal = fp('free buzz https://x.example 999');
+    const pasteLong = fp(
+      'Steps: 30, Sampler: DPM++ 2M Karras, CFG scale: 7, Seed: 1234567890, Size: 512x768, ' +
+        'Model hash: a1b2c3d4, Model: dreamShaper_8, Denoising strength: 0.45, Clip skip: 2'
+    );
+    expect(maskRatio(shillMinimal)).toBeGreaterThan(maskRatio(pasteLong));
+    // A positive control on the measure itself: a zero everywhere would make every comparison above
+    // vacuously agree.
+    expect(maskRatio(fp('This checkpoint handles hands surprisingly well overall'))).toBe(0);
+    expect(maskRatio(a as string)).toBeGreaterThan(0);
+  });
+});
+
+describe('the module constants', () => {
+  it('🔴 pins every bound a run is sized by, so moving one is a deliberate edit', () => {
+    // 🔴 FOUR OF THESE WERE UNTESTED. A constant nothing asserts can be changed by a mutant — or by
+    // a maintainer — with the entire suite green, and each of these decides how much of a wave a
+    // run actually sees: the budget is the ceiling on content read at all, the chunk size is the
+    // width of every `IN (…)` list, and the truncation is what bounds both the memory a run holds
+    // and what counts as "the same text".
+    expect(MAX_CONTENT_SAMPLES).toBe(5_000);
+    expect(EVIDENCE_CHUNK_SIZE).toBe(500);
+    expect(MAX_CONTENT_CHARS).toBe(512);
+    expect(MIN_FINGERPRINT_CHARS).toBe(24);
+    expect(MIN_FINGERPRINT_TOKENS).toBe(4);
+    expect(MAX_IPS_PER_ACCOUNT).toBe(4);
+  });
+
+  it('renders a ClickHouse DateTime literal, not an ISO string', () => {
+    // The `Z`-suffixed ISO form is not accepted by ClickHouse, and a rejected statement is a whole
+    // heuristic dark for a day with nothing but a caught error to say so.
+    expect(clickhouseDateTime(new Date('2026-09-03T03:20:00.000Z'))).toBe('2026-09-03 03:20:00');
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -166,8 +247,67 @@ describe('registrationIpSql', () => {
     expect(registrationIpSql([Number.NaN] as number[])).toBe('');
   });
 
-  it('bounds the result so one account cannot flood a chunk', () => {
-    expect(registrationIpSql([1, 2])).toMatch(/LIMIT 8\b/);
+  it('🔴 pins the SELECT PROJECTION, not only the WHERE clause', () => {
+    // 🔴 THE MUTANT THIS EXISTS FOR: `SELECT targetUserId, ip` → `SELECT userId, ip`, leaving the
+    // WHERE alone. Every other case in this describe passed. Rows then come back keyed `userId`,
+    // `Number(row.targetUserId)` is `Number(undefined)` = `NaN`, the `Number.isFinite` filter drops
+    // every row, and `sources.registrationIps` stays TRUE — a zero that says the source answered.
+    // The projection is what decides the KEY the reader destructures, so it is behaviour, not
+    // formatting.
+    const sql = registrationIpSql([7, 8]);
+    expect(sql).toContain('SELECT targetUserId, ip');
+    // The `GROUP BY` names it too, and the two must not drift apart: grouping on one column while
+    // projecting another is the same silent zero arrived at from the other side.
+    expect(sql).toContain('GROUP BY targetUserId, ip');
+  });
+
+  it('🔴 excludes private and carrier-internal space — the shared predicate, not a copy', () => {
+    // 🔴 WITHOUT THIS THE HEURISTIC IS WORSE THAN ABSENT. Private space correlates everyone and
+    // therefore no one: six cohort members behind one `10.124/16` address or one proxy reach a
+    // reported score, and ten of them top the run's whole distribution from an infrastructure
+    // address — a confident finding produced by omission.
+    const sql = registrationIpSql([1]);
+    for (const range of NON_PUBLIC_IP_RANGES)
+      expect(sql).toContain(`NOT isIPAddressInRange(ip, '${range}')`);
+    // A positive control on the list itself: an empty `NON_PUBLIC_IP_RANGES` would make the loop
+    // above vacuous, and it is imported from another package.
+    expect(NON_PUBLIC_IP_RANGES.length).toBeGreaterThanOrEqual(6);
+    expect(NON_PUBLIC_IP_RANGES).toContain('10.0.0.0/8');
+
+    // 🔴 `isIPAddressInRange` RAISES on an empty string and `userActivities` holds a handful, so
+    // whether this query throws depends on whether a blank row lands in the scanned range — it
+    // passes in testing and breaks later, once. The guard has to come FIRST.
+    expect(sql).toContain(`ip != ''`);
+    expect(sql.indexOf(`ip != ''`)).toBeLessThan(sql.indexOf('isIPAddressInRange'));
+  });
+
+  it('bounds the addresses PER ACCOUNT, not per result', () => {
+    // 🔴 `LIMIT ids.length * 4` was a cap on the RESULT with no `ORDER BY` under it: one account
+    // with many distinct registration addresses could consume the whole allowance and evict every
+    // other account in its chunk, silently, understating every ring that straddled it. The comment
+    // claimed a per-account cap; only `LIMIT n BY` delivers one.
+    const sql = registrationIpSql([1, 2]);
+    expect(sql).toContain(`LIMIT ${MAX_IPS_PER_ACCOUNT} BY targetUserId`);
+    // `ORDER BY` is what makes which addresses survive the per-account cap deterministic rather
+    // than whatever the merge happened to emit first.
+    expect(sql).toContain('ORDER BY targetUserId, ip');
+    // The total is still bounded — the property the old `LIMIT` was there for is not lost.
+    expect(MAX_IPS_PER_ACCOUNT).toBe(4);
+  });
+
+  it('bounds the scan on `time` when it is given a window, and omits it when it is not', () => {
+    // `time` is this table's pruning column. Every cohort account was created after the window
+    // opened, so its registration event cannot predate it: the predicate removes no row the query
+    // wants and is the difference between fifty unpruned chunk scans and fifty pruned ones.
+    const windowed = registrationIpSql([1], new Date('2026-09-03T03:20:00.000Z'));
+    // ClickHouse's `DateTime` literal form. The `Z`-suffixed ISO string is NOT accepted, and a
+    // rejected statement here is a whole heuristic dark for a day.
+    expect(windowed).toContain(`AND time >= '2026-09-03 03:20:00'`);
+    expect(windowed).not.toContain('T03:20:00');
+    expect(windowed).not.toContain(`03:20:00.000Z'`);
+
+    // Optional: a caller with no window still gets a correct, merely unpruned, answer.
+    expect(registrationIpSql([1])).not.toContain('time >=');
   });
 });
 
@@ -191,6 +331,7 @@ describe('contentSampleArgs', () => {
 describe('buildCohortSignals', () => {
   const sources = {
     registrationIps: true,
+    contentSamples: true,
     contentBudgetExhausted: false,
     membersSampledForContent: 3,
   };
@@ -289,12 +430,14 @@ describe('buildCohortSignals', () => {
       contentSamples: [],
       sources: {
         registrationIps: false,
+        contentSamples: true,
         contentBudgetExhausted: true,
         membersSampledForContent: 7,
       },
     });
     expect(s.sources).toEqual({
       registrationIps: false,
+      contentSamples: true,
       contentBudgetExhausted: true,
       membersSampledForContent: 7,
     });
@@ -303,9 +446,12 @@ describe('buildCohortSignals', () => {
 
 describe('emptyCohortSignals', () => {
   it('🔴 defaults every source to "did not run", which is the safe reading', () => {
-    // A run with no evidence reader must not look like a run that found no rings.
+    // A run with no evidence reader must not look like a run that found no rings. Both source
+    // flags default to false for that reason — including `contentSamples`, whose false means "no
+    // content was read", never "the cohort posted nothing that matched".
     expect(emptyCohortSignals().sources).toEqual({
       registrationIps: false,
+      contentSamples: false,
       contentBudgetExhausted: false,
       membersSampledForContent: 0,
     });
@@ -332,20 +478,29 @@ function fakeReader(opts: {
   content?: ContentSampleRow[];
   hasIps?: boolean;
   ipError?: Error;
-}): EvidenceReader & { ipCalls: number[][]; contentCalls: Array<{ ids: number[]; take: number }> } {
+  contentError?: Error;
+}): EvidenceReader & {
+  ipCalls: number[][];
+  ipWindows: Array<Date | undefined>;
+  contentCalls: Array<{ ids: number[]; take: number }>;
+} {
   const ipCalls: number[][] = [];
+  const ipWindows: Array<Date | undefined> = [];
   const contentCalls: Array<{ ids: number[]; take: number }> = [];
   return {
     ipCalls,
+    ipWindows,
     contentCalls,
     hasRegistrationIps: opts.hasIps ?? true,
-    listRegistrationIps: async (ids) => {
+    listRegistrationIps: async (ids, createdAfter) => {
       ipCalls.push(ids);
+      ipWindows.push(createdAfter);
       if (opts.ipError) throw opts.ipError;
       return (opts.ips ?? []).filter((r) => ids.includes(r.userId));
     },
     listContentSamples: async (ids, take) => {
       contentCalls.push({ ids, take });
+      if (opts.contentError) throw opts.contentError;
       return (opts.content ?? []).filter((r) => ids.includes(r.userId)).slice(0, take);
     },
   };
@@ -414,6 +569,69 @@ describe('collectCohortSignals', () => {
     const s = await collectCohortSignals(reader, members, { chunkSize: 2 });
     expect(s.sources.registrationIps).toBe(false);
     expect(s.membersPerFingerprint.get(contentFingerprint(text) as string)).toBe(3);
+  });
+
+  it('🔴 a failing CONTENT read degrades the run instead of killing it', async () => {
+    // 🔴 THE FAILURE THIS EXISTS TO PREVENT. `listContentSamples` had no guard at all, so a timeout
+    // on a busy replica propagated out of `runBotAccountDetection` and NO REPORT WAS FILED — losing
+    // the velocity heuristic's day with it, and looking exactly like a producer that stopped
+    // running. The IP loop already had this shape; this is the same contract on the other read.
+    const reader = fakeReader({ contentError: new Error('replica timeout') });
+    const log = vi.fn();
+    const s = await collectCohortSignals(reader, members, { chunkSize: 2, log });
+
+    // It does not throw, the rest of the index is intact, and the flag says which half is missing.
+    expect(s.sources.contentSamples).toBe(false);
+    expect(s.membersPerFingerprint.size).toBe(0);
+    // The domain half of the clustering heuristic costs no read and is unaffected.
+    expect(s.membersPerDomain.get('ring.test')).toBe(5);
+    // It stops rather than hammering a dead source once per chunk.
+    expect(reader.contentCalls).toHaveLength(1);
+    expect(log.mock.calls.map(([name]) => name)).toContain(
+      'bot-account-detection:content-samples-failed'
+    );
+    // 🔴 A FAILED READ IS NOT AN EXHAUSTED BUDGET. Reporting it as one would send a grading pass
+    // looking for a cohort too large rather than for a broken replica, and `membersSampled` must
+    // not claim members whose samples were discarded.
+    expect(s.sources.contentBudgetExhausted).toBe(false);
+    expect(s.sources.membersSampledForContent).toBe(0);
+  });
+
+  it('discards the PARTIAL content already read when a later chunk fails', async () => {
+    // Same argument as the IP loop's: a fingerprint count built from some of the chunks understates
+    // every ring that straddles the missing ones, and understating produces the confident zero.
+    const text = 'Grab your 100 free credits at https://spam.example now';
+    let calls = 0;
+    const reader: EvidenceReader = {
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async (ids) => {
+        calls += 1;
+        if (calls > 1) throw new Error('replica timeout');
+        return ids.map((userId) => ({ userId, content: text }));
+      },
+    };
+    const s = await collectCohortSignals(reader, members, { chunkSize: 2 });
+    expect(calls).toBe(2);
+    expect(s.sources.contentSamples).toBe(false);
+    // The two rows the FIRST chunk returned are gone, not scored as a two-account cluster.
+    expect(s.membersPerFingerprint.size).toBe(0);
+    expect(s.fingerprintsByUser.size).toBe(0);
+  });
+
+  it('reports the content source as present on an ordinary run', async () => {
+    // Emitted true, not merely absent-when-false: the flag has to distinguish "read fine, nobody
+    // matched" from "read did not happen", and only asserting the false side leaves the true side
+    // free to be wrong.
+    const s = await collectCohortSignals(fakeReader({ content: [] }), members, { chunkSize: 2 });
+    expect(s.sources.contentSamples).toBe(true);
+  });
+
+  it('hands the run window down to the registration-IP read', async () => {
+    const reader = fakeReader({});
+    const createdAfter = new Date('2026-09-02T03:20:00.000Z');
+    await collectCohortSignals(reader, members, { chunkSize: 5, createdAfter });
+    expect(reader.ipWindows).toEqual([createdAfter]);
   });
 
   it('🔴 stops reading content once the BUDGET is spent, and records that it did', async () => {

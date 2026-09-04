@@ -225,6 +225,113 @@ describe('the reporting threshold, end to end', () => {
   });
 });
 
+/**
+ * The reason string's `Per-heuristic: a=0.60, b=0.00` clause, parsed back into a map.
+ *
+ * Read off the EMITTED FINDING rather than off an intermediate, because the finding is the only
+ * thing that leaves this process — an assertion on a score object one layer up cannot tell whether
+ * that score ever reached the board.
+ */
+function subScoresOf(finding: { reason: string }): Record<string, number> {
+  // Anchored on the clause that FOLLOWS it, because the scores themselves contain full stops —
+  // `[^.]*` reads `posting-velocity=0` and stops, which is a parse that looks like a value.
+  const clause = /Per-heuristic: (.*?)\. Blended confidence/.exec(finding.reason);
+  if (!clause) throw new Error(`no per-heuristic clause in reason: ${finding.reason}`);
+  return Object.fromEntries(
+    clause[1].split(', ').map((pair) => {
+      const [id, value] = pair.split('=');
+      return [id, Number(value)];
+    })
+  );
+}
+
+describe('🔴 the seam between the evidence and the scoring', () => {
+  /**
+   * A cohort of six accounts that share ONE registration IP and ONE templated comment, run end to
+   * end through the PRODUCTION heuristic registry with a real `EvidenceReader` behind it.
+   *
+   * Six, not three: at the shipped boundaries six members on one address is where the IP ramp
+   * reaches 0.5, and it overshoots `IP_ZERO_AT`/`CLUSTER_ZERO_AT` rather than sitting on them.
+   */
+  const RING_TEXT = 'Grab your 100 free credits here: https://spam.example/ref1';
+  const ringRun = (evidence: Parameters<typeof runBotAccountDetection>[0]['evidence']) => {
+    const accounts = Array.from({ length: 6 }, (_, i) => account(i + 1));
+    const { reader } = recordingReader(accounts);
+    const out = sink();
+    return {
+      ...out,
+      result: runBotAccountDetection(
+        { reader, evidence, sendReport: out.sendReport, now: clock() }, // production registry
+        { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+      ),
+    };
+  };
+
+  const ringEvidence = {
+    hasRegistrationIps: true,
+    listRegistrationIps: async (ids: number[]) =>
+      ids.map((userId) => ({ userId, ip: '203.0.113.9' })),
+    listContentSamples: async (ids: number[]) =>
+      ids.map((userId) => ({ userId, content: RING_TEXT })),
+  };
+
+  it('🔴 the cohort-level evidence REACHES the scoring, and the finding proves it', async () => {
+    // 🔴 THE MUTANT THIS EXISTS FOR, AND IT IS THE MOST EXPENSIVE ONE IN THIS TREE. Replacing the
+    // `signals` handed to `scoreAccount` with `emptyCohortSignals()` left the entire suite green:
+    // `evidence.test.ts` covers the index, `heuristics.test.ts` covers the pure scorers over
+    // hand-built signals, `run.test.ts` covered the threshold — and NO test ever built the combined
+    // state. Two of the three heuristics would have scored 0 for every account on every production
+    // run while `evidence_registration_ips`, `evidence_distinct_registration_ips` and
+    // `evidence_distinct_content_fingerprints` all reported healthy values, because those read
+    // `signals` rather than what scoring saw. Two-thirds of the detector inert, every counter
+    // saying it was fine.
+    //
+    // The assertion is on the EMITTED FINDING's own sub-scores. A score object, or a counter, is a
+    // claim about an intermediate; the finding is what reaches the board.
+    const scenario = ringRun(ringEvidence);
+    await scenario.result;
+
+    const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
+    expect(finding).toBeDefined();
+    const sub = subScoresOf(finding as { reason: string });
+
+    // A positive control on the parse before either number is believed: all three registered
+    // heuristics are present, so a regex that matched a fragment cannot read as a pass.
+    expect(Object.keys(sub).sort()).toEqual([
+      'content-templating',
+      'posting-velocity',
+      'registration-cluster',
+    ]);
+
+    // 🔴 THE TWO THAT GO INERT. Both read `signals` and nothing else; under the mutant both are 0.
+    expect(sub['registration-cluster']).toBeGreaterThan(0);
+    expect(sub['content-templating']).toBeGreaterThan(0);
+    // Six on one address and six on one fingerprint, at the shipped boundaries.
+    expect(sub['registration-cluster']).toBeCloseTo(0.5, 6);
+    expect(sub['content-templating']).toBeCloseTo(0.5, 6);
+    // And the blend a moderator sorts on moved with them, rather than the sub-scores being
+    // decoration on a number computed elsewhere.
+    expect(finding?.confidence).toBeCloseTo(1 / 3, 6);
+
+    // The reason a moderator reads names WHAT was seen, not only that something was.
+    expect(finding?.reason).toContain('6 new posting accounts share its registration IP');
+    expect(finding?.reason).toContain('6 new accounts posted the same text');
+  });
+
+  it('the same cohort with NO evidence reader scores both ring heuristics 0 — the control', async () => {
+    // The other arm. Without it the case above cannot attribute anything: a finding whose ring
+    // sub-scores are non-zero proves the seam only if they are zero when the evidence is absent,
+    // and that is exactly the state the mutant manufactures.
+    const scenario = ringRun(undefined);
+    await scenario.result;
+    const sub = subScoresOf(
+      scenario.reports[0].findings.find((f) => f.userId === 1) as { reason: string }
+    );
+    expect(sub['registration-cluster']).toBe(0);
+    expect(sub['content-templating']).toBe(0);
+  });
+});
+
 describe('the evidence sources are reported, not assumed', () => {
   it('🔴 a run with NO evidence reader says the ring sources did not run', async () => {
     // Two of the three heuristics score 0 when their source is missing, which is byte-identical to
@@ -268,6 +375,264 @@ describe('the evidence sources are reported, not assumed', () => {
     const scenario = run([account(1)]);
     await scenario.result;
     expect(scenario.reports[0].summary).toContain('REGISTRATION-IP DATA WAS UNAVAILABLE');
+  });
+
+  it('🔴 says so when the IP read RAN and matched nothing — the wrong-query signature', async () => {
+    // 🔴 THE CASE THE AVAILABILITY FLAG CANNOT EXPRESS. `evidence_registration_ips: 1` with
+    // `evidence_distinct_registration_ips: 0` over a non-empty cohort is what a changed column, a
+    // moved table or an over-tight filter looks like — and it is also what a quiet day looks like.
+    // The counters carried both numbers; the summary, which is what a human reads first, said
+    // nothing at all, so the two states were indistinguishable to the only reader who would
+    // recognise the difference.
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: true,
+          listRegistrationIps: async () => [],
+          listContentSamples: async () => [],
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+    const summary = out.reports[0].summary ?? '';
+    expect(summary).toContain('THE REGISTRATION-IP READ RAN AND MATCHED NOTHING for any of the 2');
+    expect(summary).toContain('wrong column, a moved table or an over-tight filter');
+    // And it does NOT also claim the source was unavailable — the two clauses are mutually
+    // exclusive, and emitting both would make each meaningless.
+    expect(summary).not.toContain('REGISTRATION-IP DATA WAS UNAVAILABLE');
+    expect(out.reports[0].counters?.evidence_registration_ips).toBe(1);
+    expect(out.reports[0].counters?.evidence_distinct_registration_ips).toBe(0);
+  });
+
+  it('stays quiet when the IP read ran and DID match — the negative control', async () => {
+    // The clause above must not fire on an ordinary run, or it is noise that trains a reader to
+    // skip the summary.
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: true,
+          listRegistrationIps: async () => [{ userId: 1, ip: '203.0.113.4' }],
+          listContentSamples: async () => [],
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+    expect(out.reports[0].summary).not.toContain('MATCHED NOTHING');
+  });
+
+  it('🔴 a failing CONTENT read degrades the run: a report is still filed, and it SAYS so', async () => {
+    // 🔴 THE FAILURE THIS EXISTS TO PREVENT, END TO END. `listContentSamples` had no guard, so a
+    // replica timeout propagated out of the run and NO REPORT WAS FILED AT ALL — the velocity
+    // heuristic's day lost with it, and the whole thing indistinguishable from a producer that
+    // stopped running. Under the pre-fix code this case does not fail an assertion, it REJECTS.
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: false,
+          listRegistrationIps: async () => [],
+          listContentSamples: async () => {
+            throw new Error('replica timeout');
+          },
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+
+    expect(result.reportsSent).toBe(1);
+    expect(result.cohortSize).toBe(2);
+    expect(out.reports[0].counters?.evidence_content_samples).toBe(0);
+    expect(out.reports[0].summary).toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
+    // Not reported as an exhausted budget: that would send a grading pass looking for a cohort too
+    // large rather than for a broken replica.
+    expect(out.reports[0].counters?.evidence_content_budget_exhausted).toBe(0);
+    expect(out.reports[0].counters?.evidence_members_sampled_for_content).toBe(0);
+  });
+
+  it('publishes evidence_content_samples as a 1 when the read worked', async () => {
+    // Emitted on both sides, so the counter is a state rather than a flag that only ever appears in
+    // the bad case.
+    const { reader } = recordingReader([account(1)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: false,
+          listRegistrationIps: async () => [],
+          listContentSamples: async () => [],
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+    expect(out.reports[0].counters?.evidence_content_samples).toBe(1);
+    expect(out.reports[0].summary).not.toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
+  });
+
+  it('🔴 says the budget ran out, in the summary as well as the counters', async () => {
+    // 🔴 The whole budget-exhausted sentence was unasserted: mutating `(signals.sources
+    // .contentBudgetExhausted` to `(false` left the suite green, so half of what the PR body claims
+    // the summary warns about was never checked. The sentence is pinned in full, not by keyword —
+    // it names WHICH END went unsampled, and a reword that inverted that would pass a keyword test.
+    const { reader } = recordingReader([account(1), account(2), account(3), account(4)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: false,
+          listRegistrationIps: async () => [],
+          // Two rows per chunk against a budget of 2: the first chunk spends it and the walk stops.
+          listContentSamples: async (ids) =>
+            ids.map((userId) => ({ userId, content: 'x'.repeat(30) })),
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 2, maxAccounts: 10, minConfidence: 0, maxContentSamples: 2 }
+    );
+
+    expect(out.reports[0].counters?.evidence_content_budget_exhausted).toBe(1);
+    expect(out.reports[0].counters?.evidence_content_budget).toBe(2);
+    expect(out.reports[0].summary).toContain(
+      '🔴 THE CONTENT SAMPLE BUDGET (2 rows) WAS EXHAUSTED after 2 of 4 members. Members are ' +
+        'sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ' +
+        'scored 0 on content templating for want of data.'
+    );
+  });
+});
+
+describe('the counters that make the heuristics’ own blind spots measurable', () => {
+  it('🔴 counts the members whose email domain was SUPPRESSED as a common provider', async () => {
+    // 🔴 `clustering.ts` asserted `domains_suppressed_common` "is what makes the first measurable"
+    // while the identifier existed nowhere in `src/`, `packages/` or `apps/` — a comment claiming
+    // coverage that did not exist, which is worse than no comment because it stops anyone looking.
+    // It is the SIZE of the domain half's blind spot: a real ring that registered on a listed
+    // provider scores 0 there by construction and nothing else can see it.
+    const common = [1, 2, 3].map((id) => ({
+      ...account(id),
+      email: `u${id}@gmail.com`,
+    }));
+    const uncommon = [4, 5].map((id) => ({ ...account(id), email: `u${id}@ring.test` }));
+    const { reader } = recordingReader([...common, ...uncommon]);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      { reader, sendReport: out.sendReport, now: clock(), heuristics: [] },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+
+    expect(result.counters.domains_suppressed_common).toBe(3);
+    expect(result.counters.cohort_size).toBe(5);
+    // Emitted at zero too, on a cohort where nothing was suppressed — a counter that appears only
+    // in the interesting case cannot be charted or alerted on.
+    const clean = recordingReader(uncommon);
+    const out2 = sink();
+    const result2 = await runBotAccountDetection(
+      { reader: clean.reader, sendReport: out2.sendReport, now: clock(), heuristics: [] },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+    expect(result2.counters.domains_suppressed_common).toBe(0);
+    expect(Object.keys(out2.reports[0].counters ?? {})).toContain('domains_suppressed_common');
+  });
+
+  it('🔴 counts the findings that rest on ONE heuristic and nothing else', async () => {
+    // The counter the content-templating false positive shows up in. A generation-parameter paste
+    // fires that heuristic and no other, so a run inflated by collisions moves
+    // `heuristic:content-templating:sole_signal` and leaves `fired` looking ordinary. Over the
+    // REPORTED members only: a sole signal below the threshold produced no finding and cost nobody
+    // anything.
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      {
+        reader,
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [
+          constantHeuristic('alone', 0.9),
+          constantHeuristic('quiet', 0),
+          constantHeuristic('silent', 0),
+        ],
+      },
+      { pageSize: 10, maxAccounts: 10 }
+    );
+
+    expect(result.counters['heuristic:alone:sole_signal']).toBe(2);
+    // Emitted as zeros for the heuristics that never fired alone, not omitted.
+    expect(result.counters['heuristic:quiet:sole_signal']).toBe(0);
+    expect(result.counters['heuristic:silent:sole_signal']).toBe(0);
+  });
+
+  it('does not count a finding TWO heuristics agreed on', async () => {
+    // The negative control: `sole_signal` must mean "carried by one signal", not "fired". Without
+    // this a counter wired to the same predicate as `fired` passes the case above.
+    const { reader } = recordingReader([account(1)]);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      {
+        reader,
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [constantHeuristic('a', 0.9), constantHeuristic('b', 0.9)],
+      },
+      { pageSize: 10, maxAccounts: 10 }
+    );
+    expect(result.counters['heuristic:a:evaluated']).toBe(1);
+    expect(result.counters['heuristic:a:fired']).toBe(1);
+    expect(result.counters['heuristic:a:sole_signal']).toBe(0);
+    expect(result.counters['heuristic:b:sole_signal']).toBe(0);
+  });
+
+  it('counts only the REPORTED members, not every scored one', async () => {
+    // A sole signal under the threshold produced no finding. Counting it would bury the number that
+    // matters in the cohort's own size, which is the shape of every reassuring figure this detector
+    // was built to avoid producing.
+    const accounts = [account(1), account(2)];
+    const { reader } = recordingReader(accounts);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      {
+        reader,
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [
+          {
+            id: 'weak',
+            description: 'test',
+            weight: 1,
+            // #2 blends to 0.9 and is reported; #1 blends to 0.01 and is not.
+            score: ({ member }) => (member.userId === 2 ? 0.9 : 0.01),
+            explain: () => null,
+          },
+        ],
+      },
+      { pageSize: 10, maxAccounts: 10 }
+    );
+    expect(result.findingsReported).toBe(1);
+    expect(result.findingsSuppressed).toBe(1);
+    expect(result.counters['heuristic:weak:fired']).toBe(2);
+    expect(result.counters['heuristic:weak:sole_signal']).toBe(1);
   });
 });
 

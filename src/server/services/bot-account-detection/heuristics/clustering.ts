@@ -68,40 +68,190 @@ export const DOMAIN_ONE_AT = 15;
  * ring scored lower. This is the exact "fires on 90% of accounts" failure the scoring seam was built
  * to expose, and here it is foreseeable rather than something to discover in shadow.
  *
- * 🔴 IT IS A HARDCODED LIST AND THEREFORE BRITTLE, WHICH IS THE HONEST COST. The principled version
- * is a base rate — how over-represented is this domain against its ordinary share of signups — and
- * that needs a historical query this change does not make. A list has two failure modes worth
- * stating: a provider missing from it produces a standing false positive that looks exactly like a
- * ring, and a provider ON it hides a real ring that happened to use it. `domains_suppressed_common`
- * in the run counters is what makes the first measurable; nothing measures the second.
+ * 🔴 WHAT A WORD LIST STRUCTURALLY CANNOT DO, stated here because the length below invites the
+ * opposite reading. Extending it is a PATCH, not a fix, and no amount of extending changes any of
+ * these three:
  *
- * Deliberately SHORT. Every entry is a domain that hides real rings, so the list earns its length
- * only where the provider is common enough that its cluster would dominate anyway.
+ *   1. IT IS WALKABLE IN ONE KEYSTROKE, and the evasion is to register the ring on `gmail.com`.
+ *      A domain on this list scores 0 by construction, so the list is a map of where a ring should
+ *      go. The domain half is therefore a signal against the CARELESS only, and the IP half is what
+ *      carries the heuristic against anyone who has read this file.
+ *   2. EVERY OMISSION IS A STANDING FALSE POSITIVE, and they do not fall evenly. The omissions are
+ *      whatever the author did not think of, and an English-speaking author does not think of
+ *      `hotmail.fr`, `libero.it`, `uol.com.br`, `daum.net` or `foxmail.com` — so the false positives
+ *      land systematically on people who do not write in English. Nine new posting accounts a day on
+ *      one country's ordinary free provider is not a ring; before this list was widened it scored
+ *      like one. The list can only ever be as complete as the last person to look at it.
+ *   3. A DOMAIN ON IT HIDES A REAL RING THAT USED IT, and nothing measures that.
+ *      `domains_suppressed_common` in the run counters (see `run.ts`) is how many members had their
+ *      domain suppressed this way — it makes the SIZE of that blind spot visible, which is the most
+ *      the shadow phase can do; it cannot say how many of those members were a ring.
+ *
+ * The principled version is a BASE RATE — how over-represented is this domain against its ordinary
+ * share of signups — which needs a historical query this change does not make and which removes
+ * failure modes 1 and 2 outright. That is the fix; this is the patch, and it is labelled as one.
+ *
+ * Grouped by provider family rather than alphabetically, because the way an entry goes missing is
+ * that someone adds `hotmail.fr` and does not think about `hotmail.be`.
  */
 export const COMMON_EMAIL_DOMAINS: ReadonlySet<string> = new Set([
+  // Google
   'gmail.com',
   'googlemail.com',
-  'yahoo.com',
-  'yahoo.co.uk',
+  // Microsoft — the country variants are the single largest omission class, because the .com is
+  // obvious and the rest are only obvious to whoever uses them.
   'hotmail.com',
   'hotmail.co.uk',
+  'hotmail.fr',
+  'hotmail.de',
+  'hotmail.es',
+  'hotmail.it',
+  'hotmail.be',
+  'hotmail.nl',
+  'hotmail.com.br',
+  'hotmail.com.ar',
+  'hotmail.gr',
+  'hotmail.se',
   'outlook.com',
+  'outlook.fr',
+  'outlook.de',
+  'outlook.es',
+  'outlook.it',
+  'outlook.com.br',
   'live.com',
+  'live.co.uk',
+  'live.fr',
+  'live.de',
+  'live.it',
+  'live.nl',
+  'live.se',
+  'live.ca',
+  'live.com.au',
   'msn.com',
+  // Yahoo and its acquisitions
+  'yahoo.com',
+  'yahoo.co.uk',
+  'yahoo.fr',
+  'yahoo.de',
+  'yahoo.es',
+  'yahoo.it',
+  'yahoo.ca',
+  'yahoo.co.jp',
+  'yahoo.co.in',
+  'yahoo.com.br',
+  'yahoo.com.mx',
+  'yahoo.com.ar',
+  'yahoo.com.au',
+  'ymail.com',
+  'rocketmail.com',
+  'aol.com',
+  'aol.co.uk',
+  // Apple
   'icloud.com',
   'me.com',
-  'aol.com',
+  'mac.com',
+  // Proton. 🔴 `pm.me` is Proton's own short alias domain, offered to every paid account — it is as
+  // ordinary as `proton.me` and was the sharpest omission on the original list.
   'proton.me',
   'protonmail.com',
+  'protonmail.ch',
+  'pm.me',
+  // Germany / Austria / Switzerland
   'gmx.com',
   'gmx.de',
-  'mail.com',
+  'gmx.net',
+  'gmx.at',
+  'gmx.ch',
+  'web.de',
+  't-online.de',
+  'freenet.de',
+  'bluewin.ch',
+  // France
+  'free.fr',
+  'orange.fr',
+  'wanadoo.fr',
+  'laposte.net',
+  'sfr.fr',
+  'bbox.fr',
+  // Italy
+  'libero.it',
+  'virgilio.it',
+  'alice.it',
+  'tiscali.it',
+  // Iberia and Latin America
+  'terra.com.br',
+  'uol.com.br',
+  'bol.com.br',
+  'globo.com',
+  'prodigy.net.mx',
+  // Russia, Ukraine and the CIS
   'mail.ru',
+  'inbox.ru',
+  'list.ru',
+  'bk.ru',
+  'internet.ru',
   'yandex.ru',
+  'yandex.com',
+  'yandex.by',
+  'yandex.kz',
+  'ya.ru',
+  'rambler.ru',
+  'ukr.net',
+  // Central and eastern Europe
+  'seznam.cz',
+  'wp.pl',
+  'o2.pl',
+  'onet.pl',
+  'interia.pl',
+  'abv.bg',
+  'mynet.com',
+  // China
   'qq.com',
+  'foxmail.com',
   '163.com',
   '126.com',
+  'sina.com',
+  'sina.cn',
+  'sohu.com',
+  '139.com',
+  '189.cn',
+  // Korea and Japan
   'naver.com',
+  'daum.net',
+  'hanmail.net',
+  'nate.com',
+  'docomo.ne.jp',
+  'ezweb.ne.jp',
+  // India
+  'rediffmail.com',
+  // Generic and privacy-first providers
+  'mail.com',
+  'email.com',
+  'usa.com',
+  'zoho.com',
+  'fastmail.com',
+  'tutanota.com',
+  'tuta.io',
+  'hushmail.com',
+  'gmx.us',
+  // Consumer ISPs — an ISP address is as ordinary as a webmail one and clusters the same way
+  'comcast.net',
+  'verizon.net',
+  'att.net',
+  'sbcglobal.net',
+  'cox.net',
+  'charter.net',
+  'bellsouth.net',
+  'btinternet.com',
+  'sky.com',
+  'virginmedia.com',
+  'talktalk.net',
+  'bigpond.com',
+  'optusnet.com.au',
+  'shaw.ca',
+  'rogers.com',
+  'telus.net',
+  'sympatico.ca',
 ]);
 
 /** Whether a domain is one whose cluster size means nothing. */

@@ -9,6 +9,10 @@ const RUN_JOBS_ROUTE = path.resolve(
   '../../../../pages/api/webhooks/run-jobs/[[...run]].ts'
 );
 
+/** The job file itself — the ONLY wiring, so what it passes to the run is what a production run
+ *  actually gets. */
+const JOB_FILE = path.resolve(__dirname, '../../../jobs/bot-account-detection.ts');
+
 /**
  * The `jobs` array the route dispatches on, as source.
  *
@@ -69,6 +73,30 @@ describe('the bot-account detection job is registered but NOT scheduled', () => 
     // separate lines, and the array alone would not compile without it.
     const source = readFileSync(RUN_JOBS_ROUTE, 'utf8');
     expect(source).toContain("from '~/server/jobs/bot-account-detection'");
+  });
+
+  it('🔴 SUPPLIES THE EVIDENCE READER — without it two of three heuristics are inert', () => {
+    // 🔴 THE OTHER HALF OF THE SEAM. `run.test.ts` proves the cohort-level signals reach scoring
+    // WHEN a reader is passed; nothing proved the production job passes one. Deleting the
+    // `evidence:` line from the wiring below left the whole suite green — `evidence?` is optional
+    // on `BotAccountDetectionDeps`, deliberately, so its absence is a supported state and not a
+    // type error — and the run would then score `registration-cluster` and `content-templating` 0
+    // for every account, on every real run, for ever.
+    //
+    // Asserted on the job's SOURCE. The alternative is calling `botAccountDetection.run`, which
+    // constructs a real Prisma reader, a real ClickHouse client and a real moderator client; this
+    // is one line of wiring and a line is something a file can be asked about directly — the same
+    // argument the `jobs` array assertion above is built on.
+    const source = readFileSync(JOB_FILE, 'utf8');
+    // A positive control on the read before anything is concluded from a `toContain`.
+    expect(source.length).toBeGreaterThan(500);
+    expect(source).toContain('runBotAccountDetection(');
+
+    expect(source).toContain('evidence: createEvidenceReader()');
+    // The import that makes the identifier resolve. Membership and import are separate lines, and
+    // a wiring that named an undefined binding would not compile — but a wiring that dropped both
+    // compiles fine, which is the case this pair covers.
+    expect(source).toContain("from '~/server/services/bot-account-detection/evidence'");
   });
 
   it('holds its lock for longer than a capped run can take', () => {

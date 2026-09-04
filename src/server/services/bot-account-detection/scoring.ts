@@ -167,6 +167,40 @@ export function heuristicCounters(scores: BotAccountScore[]): Record<string, num
   return counters;
 }
 
+/**
+ * How many of these scores each heuristic was the ONLY firing signal on.
+ *
+ * 🔴 THIS IS THE COUNTER THE FALSE-POSITIVE QUESTION IS ANSWERED WITH, and `fired` cannot answer it.
+ * A heuristic that fires alongside the other two on the same account is corroborated; one that fires
+ * BY ITSELF is carrying a finding on its own, and that is the population where a known collision
+ * turns into a report nobody should have received. The worked example is `content-templating`: a
+ * generation-parameter paste — `Steps: …, Sampler: …, CFG scale: …, Seed: …` — fingerprints
+ * identically to the same line with different numbers, because the digit masking is doing the
+ * matching, so six accounts pasting their settings under one model look like one ring. Nothing about
+ * such an account fires the other two heuristics, so it lands here and nowhere else.
+ *
+ * Run over the REPORTED members rather than all scored ones: a sole signal below the threshold
+ * produced no finding and cost nobody anything, and mixing the two would bury the number that
+ * matters in the cohort's own size.
+ *
+ * A member on whom NOTHING fired contributes to no key, which is why these are emitted for every
+ * registered heuristic including the zeros — a key that appears only when non-zero cannot be charted.
+ */
+export function soleSignalCounters(
+  scores: BotAccountScore[],
+  heuristics: readonly BotAccountHeuristic[]
+): Record<string, number> {
+  const counters: Record<string, number> = {};
+  for (const heuristic of heuristics) counters[`heuristic:${heuristic.id}:sole_signal`] = 0;
+  for (const account of scores) {
+    const fired = account.subScores.filter((s) => s.score > 0);
+    if (fired.length !== 1) continue;
+    const key = `heuristic:${fired[0].id}:sole_signal`;
+    counters[key] = (counters[key] ?? 0) + 1;
+  }
+  return counters;
+}
+
 /** The compact `id=0.00` rendering the finding's reason carries, so a moderator sees each
  *  heuristic's own number rather than only the blend. */
 export function renderSubScores(subScores: HeuristicScore[]): string {

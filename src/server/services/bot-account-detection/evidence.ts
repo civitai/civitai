@@ -1,3 +1,4 @@
+import { publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import type { BotAccountCohortMember } from './cohort';
@@ -101,8 +102,13 @@ export type EvidenceDb = {
 export type EvidenceClickhouse = { $query: <T extends object>(sql: string) => Promise<T[]> };
 
 export type EvidenceReader = {
-  /** Registration IPs for exactly these accounts. Empty when ClickHouse is unavailable. */
-  listRegistrationIps(userIds: number[]): Promise<RegistrationIpRow[]>;
+  /**
+   * Registration IPs for exactly these accounts. Empty when ClickHouse is unavailable.
+   *
+   * `createdAfter` is the run's own window opening — see `registrationIpSql`. Optional so a caller
+   * that has no window still gets an (unpruned) answer rather than an empty one.
+   */
+  listRegistrationIps(userIds: number[], createdAfter?: Date): Promise<RegistrationIpRow[]>;
   /** Up to `take` recent comments across both comment surfaces, for exactly these accounts. */
   listContentSamples(userIds: number[], take: number): Promise<ContentSampleRow[]>;
   /** Whether a registration-IP read can happen at all. `false` means the source is missing, NOT
@@ -152,20 +158,57 @@ export function contentSampleArgs(userIds: number[], take: number) {
  * only thing standing between a value and the statement is this filter. It is cheap and it is the
  * kind of guard that is correct until someone routes a different id source into it.
  *
+ * 🔴 PRIVATE AND CARRIER-INTERNAL SPACE IS EXCLUDED, and this is the one filter without which the
+ * heuristic is worse than absent. `publicIpOnlySql` comes from `@civitai/shared/clickhouse-ip-filters`
+ * — the SAME predicate `apps/moderator/src/lib/server/reactor-lookup.service.ts` reads this table
+ * with, moved to a shared module rather than copied, because a second hand-written copy is how the
+ * two silently stop matching. That file names this heuristic's failure mode exactly: private space
+ * "correlates everyone and therefore no one". Without it, six cohort members behind one `10.124/16`
+ * address or one proxy reach a reported score, and ten of them top the run's whole distribution from
+ * an infrastructure address — a confident finding about nothing, produced by omission rather than by
+ * error. The predicate's own `ip != ''` guard is emitted FIRST because `isIPAddressInRange` raises on
+ * an empty string; do not reorder the conjunction.
+ *
+ * 🔴 `time` IS THE PRUNING COLUMN AND THE WINDOW IS SEMANTICALLY FREE. Every cohort account was
+ * created inside `createdAfter`, so its registration event cannot predate it; the predicate removes
+ * no row this query wants and is the difference between a walk of up to fifty chunks scanning the
+ * whole table and one scanning a day. Sibling readers of this table all bound on `time` for the same
+ * reason. It is optional so a caller with no window gets a correct — merely unpruned — answer.
+ *
  * `GROUP BY` rather than a plain select: an account can have several registration rows, and the
- * heuristic wants distinct (account, ip) pairs, not a row count. `LIMIT` bounds a pathological
- * chunk — an account with thousands of recorded registration events cannot flood the result.
+ * heuristic wants distinct (account, ip) pairs, not a row count.
+ *
+ * 🔴 THE CAP IS PER ACCOUNT, AND `LIMIT n` COULD NOT SAY THAT. `LIMIT ids.length * 4` was a cap on
+ * the RESULT with no `ORDER BY` under it, so one account with many distinct registration addresses
+ * could consume the whole allowance and EVICT every other account in its chunk — silently, and in
+ * the direction that understates every ring. `LIMIT n BY targetUserId` is the per-group form
+ * (precedent: `~/server/redis/caches.ts`'s `LIMIT 2000 BY userId`), so the comment and the code now
+ * say the same thing: at most `MAX_IPS_PER_ACCOUNT` addresses per account, whatever any other
+ * account in the chunk did. The total is still bounded, at `ids.length * MAX_IPS_PER_ACCOUNT`.
+ * `ORDER BY` makes which addresses survive that per-account cap deterministic rather than whatever
+ * the merge happened to emit.
  */
-export function registrationIpSql(userIds: number[]): string {
+export const MAX_IPS_PER_ACCOUNT = 4;
+
+/** ClickHouse's `DateTime` literal form — `YYYY-MM-DD hh:mm:ss`, UTC, no zone suffix. The `Z`-suffixed
+ *  ISO string is not accepted, and the spelling below is the one every other ClickHouse writer in
+ *  this repo uses. */
+export const clickhouseDateTime = (d: Date): string =>
+  d.toISOString().slice(0, 19).replace('T', ' ');
+
+export function registrationIpSql(userIds: number[], createdAfter?: Date): string {
   const ids = userIds.filter((n) => Number.isInteger(n) && n > 0);
   if (!ids.length) return '';
+  const window = createdAfter ? `\n      AND time >= '${clickhouseDateTime(createdAfter)}'` : '';
   return `
     SELECT targetUserId, ip
     FROM default.userActivities
     WHERE targetUserId IN (${ids.join(',')})
-      AND type = 'Registration'
+      AND type = 'Registration'${window}
+      AND ${publicIpOnlySql()}
     GROUP BY targetUserId, ip
-    LIMIT ${ids.length * 4}
+    ORDER BY targetUserId, ip
+    LIMIT ${MAX_IPS_PER_ACCOUNT} BY targetUserId
   `;
 }
 
@@ -184,8 +227,8 @@ export function createEvidenceReader(
 
   return {
     hasRegistrationIps: ch !== null,
-    listRegistrationIps: async (userIds) => {
-      const sql = registrationIpSql(userIds);
+    listRegistrationIps: async (userIds, createdAfter) => {
+      const sql = registrationIpSql(userIds, createdAfter);
       if (!ch || !sql) return [];
       const rows = await ch.$query<{ targetUserId: string | number; ip: string }>(sql);
       // ClickHouse returns integers as strings over HTTP JSON; `Number` on an already-numeric value
@@ -293,6 +336,16 @@ export type CohortSignals = {
   sources: {
     /** ClickHouse was reachable and the registration-IP read ran. */
     registrationIps: boolean;
+    /**
+     * The content read ran to completion. `false` means it never ran, or a chunk THREW and the
+     * partial data was discarded — NOT that the cohort posted nothing.
+     *
+     * 🔴 IT IS A SOURCE FLAG FOR THE SAME REASON `registrationIps` IS. Before it, a content-read
+     * failure propagated out of the run and no report was filed at all — losing the velocity
+     * heuristic's day too, and looking exactly like a dead producer. Degrading and saying so is what
+     * this module's header claims it does; this is the flag that makes the claim true of both reads.
+     */
+    contentSamples: boolean;
     /** The content budget was spent before the whole cohort was sampled. */
     contentBudgetExhausted: boolean;
     /** How many members had content sampled at all. The denominator for the similarity heuristic. */
@@ -311,6 +364,7 @@ export function emptyCohortSignals(): CohortSignals {
     membersPerFingerprint: new Map(),
     sources: {
       registrationIps: false,
+      contentSamples: false,
       contentBudgetExhausted: false,
       membersSampledForContent: 0,
     },
@@ -403,6 +457,12 @@ export function buildCohortSignals(args: {
  * pass can filter on. A run whose IP data was missing is not comparable with one whose was there,
  * and this flag is the only thing that says which kind you are looking at.
  *
+ * 🔴 BOTH READS, NOT ONE. That paragraph described only the IP read for a while, and the content
+ * read — the Postgres one, on a replica that is exactly the thing that times out — had no guard at
+ * all, so a failure there propagated out and lost the whole run including the heuristic that needs
+ * no source. `sources.contentSamples` is the second flag, and it exists so this docstring is a
+ * description rather than an aspiration.
+ *
  * The content walk is a BUDGET, not a per-chunk cap — see `MAX_CONTENT_SAMPLES`.
  */
 export async function collectCohortSignals(
@@ -411,6 +471,8 @@ export async function collectCohortSignals(
   opts: {
     chunkSize?: number;
     maxContentSamples?: number;
+    /** The run's window opening, passed through to the ClickHouse read as its `time` bound. */
+    createdAfter?: Date;
     checkCanceled?: () => void;
     log?: (name: string, data: Record<string, unknown>) => void;
   } = {}
@@ -433,7 +495,7 @@ export async function collectCohortSignals(
     for (const ids of chunks) {
       checkCanceled();
       try {
-        registrationIps.push(...(await reader.listRegistrationIps(ids)));
+        registrationIps.push(...(await reader.listRegistrationIps(ids, opts.createdAfter)));
       } catch (e) {
         // One failed chunk invalidates the IP signal for the WHOLE run, not just for its own
         // accounts: a cluster count built from a partial read UNDERSTATES every ring that straddles
@@ -454,6 +516,17 @@ export async function collectCohortSignals(
   let budget = budgetTotal;
   let budgetExhausted = false;
   let membersSampled = 0;
+  // 🔴 THE CONTENT READ DEGRADES THE RUN INSTEAD OF KILLING IT, for exactly the reason the IP read
+  // above does. Without this a timeout on a busy replica propagated out of `runBotAccountDetection`
+  // and NO REPORT WAS FILED AT ALL — the velocity heuristic's day lost with it, and the whole thing
+  // indistinguishable from a producer that stopped running. The partial data is DISCARDED rather
+  // than scored, again for the IP loop's reason: a fingerprint count built from some of the chunks
+  // understates every ring that straddles the missing ones, and understating is the direction that
+  // produces a confident zero.
+  //
+  // `checkCanceled()` stays OUTSIDE the try. It throws on purpose, and swallowing that would turn
+  // cancellation into a degraded run that keeps going.
+  let contentRead = true;
   for (const ids of chunks) {
     checkCanceled();
     if (budget <= 0) {
@@ -463,12 +536,27 @@ export async function collectCohortSignals(
     // The per-surface `take` is the remaining budget, so one chunk can never consume more than what
     // is left; `listContentSamples` reads two surfaces, so the actual return can be up to twice it.
     // Bounding the SPEND rather than the take is what keeps the total fixed.
-    const rows = await reader.listContentSamples(ids, Math.min(budget, chunkSize * 2));
+    let rows: ContentSampleRow[];
+    try {
+      rows = await reader.listContentSamples(ids, Math.min(budget, chunkSize * 2));
+    } catch (e) {
+      log('bot-account-detection:content-samples-failed', {
+        chunkIds: ids.length,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      contentSamples.length = 0;
+      contentRead = false;
+      // A failed read is not an exhausted budget, and reporting it as one would send a grading pass
+      // looking for a cohort too large rather than for a broken replica.
+      budgetExhausted = false;
+      membersSampled = 0;
+      break;
+    }
     membersSampled += ids.length;
     budget -= rows.length;
     contentSamples.push(...rows);
   }
-  if (budget <= 0 && membersSampled < members.length) budgetExhausted = true;
+  if (contentRead && budget <= 0 && membersSampled < members.length) budgetExhausted = true;
 
   return buildCohortSignals({
     members,
@@ -476,6 +564,7 @@ export async function collectCohortSignals(
     contentSamples,
     sources: {
       registrationIps: ipsRead,
+      contentSamples: contentRead,
       contentBudgetExhausted: budgetExhausted,
       membersSampledForContent: Math.min(membersSampled, members.length),
     },

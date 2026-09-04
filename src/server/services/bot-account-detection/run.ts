@@ -13,7 +13,7 @@ import {
   emptyCohortSignals,
   type EvidenceReader,
 } from './evidence';
-import { BOT_ACCOUNT_HEURISTICS } from './heuristics';
+import { BOT_ACCOUNT_HEURISTICS, isCommonEmailDomain } from './heuristics';
 import { BOT_ACCOUNT_DETECTOR, buildFinding, buildReports } from './report';
 import {
   MIN_REPORTED_CONFIDENCE,
@@ -21,6 +21,7 @@ import {
   heuristicCounters,
   partitionByConfidence,
   scoreAccount,
+  soleSignalCounters,
   type BotAccountHeuristic,
 } from './scoring';
 
@@ -185,12 +186,17 @@ export async function runBotAccountDetection(
     ? await collectCohortSignals(deps.evidence, cohort.members, {
         chunkSize: pageSize,
         maxContentSamples,
+        // The window this run already computed, handed to the ClickHouse read as its `time` bound.
+        // Every cohort account was created after it, so it prunes the scan without removing a row
+        // the query wants.
+        createdAfter,
         checkCanceled,
         log,
       })
     : emptyCohortSignals();
   log('bot-account-detection:signals', {
     registrationIps: signals.sources.registrationIps,
+    contentSamples: signals.sources.contentSamples,
     contentBudgetExhausted: signals.sources.contentBudgetExhausted,
     membersSampledForContent: signals.sources.membersSampledForContent,
     distinctIps: signals.membersPerIp.size,
@@ -228,6 +234,16 @@ export async function runBotAccountDetection(
   const postedAll = cohort.members.reduce((sum, m) => sum + m.posts.all.total, 0);
   const postedExcluded = cohort.members.reduce((sum, m) => sum + m.posts.excluded.total, 0);
 
+  // 🔴 THE DOMAIN LIST'S OWN BLIND SPOT, AS A NUMBER. `COMMON_EMAIL_DOMAINS` scores a member's
+  // domain half at 0 by construction, so a real ring that registered on a listed provider is
+  // invisible to the clustering heuristic and to every counter that reads its score. This is how
+  // many members that applied to — the SIZE of the blind spot, which is the most the shadow phase
+  // can measure; it cannot say how many of them were a ring. It was asserted in a code comment
+  // before it existed anywhere, which is the failure mode the comment was warning about.
+  const domainsSuppressed = cohort.members.filter(
+    (m) => m.emailDomain !== null && isCommonEmailDomain(m.emailDomain)
+  ).length;
+
   const counters: Record<string, number> = {
     window_hours: windowHours,
     cohort_scanned: cohort.scanned,
@@ -260,16 +276,24 @@ export async function runBotAccountDetection(
     // the only things that tell the two apart, so a grading pass can exclude the runs whose ring
     // heuristics were blind rather than averaging them in as evidence of no rings.
     evidence_registration_ips: signals.sources.registrationIps ? 1 : 0,
+    // The content read's own availability, on the same 0/1 terms and for the same reason: a
+    // templating score of 0 across the cohort means "nobody templated" only when this is 1.
+    evidence_content_samples: signals.sources.contentSamples ? 1 : 0,
     evidence_content_budget_exhausted: signals.sources.contentBudgetExhausted ? 1 : 0,
     evidence_members_sampled_for_content: signals.sources.membersSampledForContent,
     evidence_content_budget: maxContentSamples,
     evidence_distinct_registration_ips: signals.membersPerIp.size,
     evidence_distinct_email_domains: signals.membersPerDomain.size,
     evidence_distinct_content_fingerprints: signals.membersPerFingerprint.size,
+    domains_suppressed_common: domainsSuppressed,
 
     ...heuristicCounters(scores),
     // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
     ...confidenceBucketCounters(scores),
+    // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
+    // `soleSignalCounters` — this is what a known collision (a generation-parameter paste matching
+    // itself under `content-templating`) shows up as, and it is not visible in `fired`.
+    ...soleSignalCounters(reported, heuristics),
   };
 
   // 🔴 The truncation sentence names WHICH END was dropped. "TRUNCATED at the N-account cap" alone
@@ -298,6 +322,24 @@ export async function runBotAccountDetection(
       ? ''
       : ` 🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run, so the clustering heuristic scored on ` +
         `email domain alone — a low score from it is not evidence that accounts share no IP.`) +
+    // 🔴 THE READ RAN AND MATCHED NOTHING — the case the availability flag alone cannot express.
+    // `evidence_registration_ips: 1` with `evidence_distinct_registration_ips: 0` over a non-empty
+    // cohort is the signature of a query that is wrong rather than of a day with no shared
+    // addresses: a changed column name, a moved table, an over-tight filter. The counters already
+    // carry both numbers; a human reading the summary had nothing, and this is the reader who would
+    // recognise it.
+    (signals.sources.registrationIps && signals.membersPerIp.size === 0 && cohort.members.length > 0
+      ? ` 🔴 THE REGISTRATION-IP READ RAN AND MATCHED NOTHING for any of the ` +
+        `${cohort.members.length} member(s). That is possible on a quiet day, and it is also what a ` +
+        `wrong column, a moved table or an over-tight filter looks like — the two are not ` +
+        `distinguishable from this run alone.`
+      : '') +
+    (signals.sources.contentSamples
+      ? ''
+      : ` 🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read either did not run or failed ` +
+        `and its partial result was discarded — so the content-templating heuristic scored 0 for ` +
+        `every member for want of data. That is not evidence that no accounts posted the same text. ` +
+        `The rest of the run was scored normally.`) +
     (signals.sources.contentBudgetExhausted
       ? ` 🔴 THE CONTENT SAMPLE BUDGET (${maxContentSamples} rows) WAS EXHAUSTED after ` +
         `${signals.sources.membersSampledForContent} of ${cohort.members.length} members. Members ` +

@@ -39,6 +39,36 @@ import { rampScore } from './ramp';
  * wave day the oldest end of the cohort may not be sampled at all. An unsampled account scores 0
  * here for want of data, which — again — is not the same as scoring 0 for want of a signal. The
  * budget state rides out on `sources.contentBudgetExhausted` and as a run counter.
+ *
+ * 🔴 THE KNOWN FALSE POSITIVE, NAMED, MEASURED AND DELIBERATELY NOT PATCHED: A GENERATION-PARAMETER
+ * PASTE. `Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 1234567890, Size: 512x768` and the same
+ * line with entirely different numbers produce an IDENTICAL fingerprint, because every number is a
+ * `nummask` — verified by executing the shipped normaliser, and pinned as a regression case in
+ * `__tests__/evidence.test.ts` so it cannot quietly stop being true. Pasting settings under a model
+ * is one of the most ordinary comments on this site, so six such accounts in one day's cohort read
+ * as a ring of six and are reported. `MIN_FINGERPRINT_CHARS`/`MIN_FINGERPRINT_TOKENS` defend against
+ * SHORT text only and cannot reach this by construction.
+ *
+ * TWO FIXES WERE CONSIDERED AND BOTH REJECTED ON THE ARITHMETIC, not on taste:
+ *  - DISCARD FINGERPRINTS THAT ARE MOSTLY MASK TOKENS. Measured on the shipped normaliser, the two
+ *    classes do not sit close — they INTERLEAVE, in both directions, so no threshold exists in
+ *    either. A paste that includes the prompt (the commonest real form) is 6/21 masks and
+ *    `check out linkmask for nummask free buzz` is 2/7 — the SAME value, 0.286. And the ordering
+ *    inverts at the other end: `free buzz linkmask nummask` is 0.500, above the longest parameter
+ *    paste's 0.389. A cut low enough to catch pastes discards shill text first; a cut high enough
+ *    to spare shill text catches nothing. The arithmetic is asserted in `__tests__/evidence.test.ts`
+ *    rather than left as a claim here.
+ *  - RAISE `CLUSTER_ZERO_AT`. It does not remove the class, it only demands a larger innocent
+ *    cluster — and the innocent cluster here is "people who commented their settings under a
+ *    popular model today", which is not bounded by anything. A floor high enough to exclude it
+ *    would also exclude most real rings.
+ * So the honest disposition is the shadow phase's own: the collision is REPORTED rather than
+ * silently tuned away, the reason string QUOTES the normalised text that clustered — so a
+ * generation-parameter paste identifies itself to a moderator in one glance, which is a property of
+ * the design rather than a hope — and `heuristic:content-templating:sole_signal` counts the
+ * findings that rest on this heuristic ALONE, which is exactly the population a collision inflates.
+ * That counter is what should set the fix, and inventing a third judgement constant before it exists
+ * is the thing `evidence.ts` argues against at `MIN_FINGERPRINT_CHARS`.
  */
 
 export const CONTENT_TEMPLATING_ID = 'content-templating';

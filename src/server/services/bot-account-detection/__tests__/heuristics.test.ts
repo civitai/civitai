@@ -355,6 +355,79 @@ describe('registration-cluster', () => {
     expect(COMMON_EMAIL_DOMAINS.size).toBeGreaterThan(10);
     for (const d of COMMON_EMAIL_DOMAINS) expect(d).toBe(d.toLowerCase());
   });
+
+  it('🔴 suppresses the NON-ANGLOPHONE providers too, where the false positives actually land', () => {
+    // 🔴 THE ORIGINAL LIST WAS ANGLOPHONE, AND ITS OMISSIONS WERE NOT RANDOM. `hotmail.com` and
+    // `hotmail.co.uk` were listed; `hotmail.fr/de/es/it` were not — so nine new posting accounts a
+    // day on one country's ordinary free provider scored like a ring, and the standing false
+    // positive fell systematically on people who do not write in English. Each of these is one
+    // country's commonest webmail or ISP address, not an exotic case.
+    for (const domain of [
+      'hotmail.fr',
+      'hotmail.de',
+      'hotmail.es',
+      'hotmail.it',
+      'web.de',
+      't-online.de',
+      'free.fr',
+      'orange.fr',
+      'laposte.net',
+      'libero.it',
+      'virgilio.it',
+      'uol.com.br',
+      'terra.com.br',
+      'seznam.cz',
+      'wp.pl',
+      'yandex.com',
+      'ya.ru',
+      'foxmail.com',
+      'daum.net',
+      'naver.com',
+      'nate.com',
+      'rediffmail.com',
+      'comcast.net',
+      'btinternet.com',
+      'bigpond.com',
+    ])
+      expect(isCommonEmailDomain(domain), `${domain} is not suppressed`).toBe(true);
+  });
+
+  it('🔴 suppresses `pm.me` — Proton’s own alias domain, the sharpest omission', () => {
+    // `proton.me` and `protonmail.com` were both listed and `pm.me` was not, although Proton offers
+    // it to every paid account and it is exactly as ordinary as the other two. Asserted on its own
+    // because the whole family has to be suppressed or none of it is: a ring on the missing member
+    // of a listed family is the case the list is least likely to be re-read for.
+    for (const domain of ['proton.me', 'protonmail.com', 'protonmail.ch', 'pm.me'])
+      expect(isCommonEmailDomain(domain)).toBe(true);
+    // Scored, not merely classified — the classification only matters through this.
+    const huge = signalsWith({ membersPerDomain: { 'pm.me': 40 } });
+    expect(score(member({ emailDomain: 'pm.me' }), huge)).toBe(0);
+  });
+
+  it('🔴 a NEGATIVE control: the list does not swallow every domain', () => {
+    // The three cases above are all `true`, and a predicate wired to `() => true` passes all of
+    // them while destroying the heuristic. An uncommon domain must still cluster.
+    for (const domain of ['ring.test', 'freshdomain.xyz', 'mail.proton.me', 'notgmail.com'])
+      expect(isCommonEmailDomain(domain), `${domain} was wrongly suppressed`).toBe(false);
+    const ring = signalsWith({ membersPerDomain: { 'ring.test': 15 } });
+    expect(score(member({ emailDomain: 'ring.test' }), ring)).toBe(1);
+  });
+
+  it('🔴 the list stays a WORD LIST, and the evasion it cannot close is one keystroke', () => {
+    // Not a guard on the code — a statement of what extending the list bought and what it did not.
+    // A domain on the list scores 0 by construction, so the list is also a map of where a ring
+    // should register. The IP half is what carries this heuristic against anyone who reads it, and
+    // the principled fix is a base rate rather than a longer list.
+    const ringOnGmail = signalsWith({ membersPerDomain: { 'gmail.com': 40 } });
+    expect(score(member({ emailDomain: 'gmail.com' }), ringOnGmail)).toBe(0);
+    // …and the IP half of the SAME account still scores it, which is the part that survives.
+    const ringOnGmailSharingAnIp = signalsWith({
+      ips: { 42: ['203.0.113.9'] },
+      membersPerIp: { '203.0.113.9': IP_ONE_AT },
+      membersPerDomain: { 'gmail.com': 40 },
+    });
+    expect(score(member({ emailDomain: 'gmail.com' }), ringOnGmailSharingAnIp)).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
