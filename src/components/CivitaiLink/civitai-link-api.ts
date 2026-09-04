@@ -6,7 +6,6 @@ export type CivitaiLinkInstance = {
   name: string | null;
   activated: boolean;
   origin: string | null;
-  oauthPaired: boolean;
   createdAt: Date;
 };
 

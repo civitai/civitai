@@ -23,10 +23,6 @@ const mocks = vi.hoisted(() => ({
   baseUrl: undefined as string | undefined,
   /** How many times the provider constructed a SharedWorker. */
   workerConstructions: 0,
-  /** Every message the provider posted to the worker, in order. */
-  posted: [] as unknown[],
-  /** The live fake port, so a test can push worker messages back. */
-  port: null as { onmessage: ((e: { data: unknown }) => void) | null } | null,
 }));
 
 // `importOriginal` spread, NOT a bare replacement naming only `useFeatureFlags`.
@@ -49,14 +45,11 @@ vi.mock('~/components/CivitaiLink/civitai-link-api', async (importOriginal) => (
 vi.mock('@okikio/sharedworker', () => ({
   default: class FakeSharedWorker {
     port = {
-      postMessage: (message: unknown) => {
-        mocks.posted.push(message);
-      },
+      postMessage: () => undefined,
       onmessage: null as ((e: { data: unknown }) => void) | null,
     };
     constructor() {
       mocks.workerConstructions += 1;
-      mocks.port = this.port;
     }
   },
 }));
@@ -79,20 +72,8 @@ const UNAVAILABLE_MESSAGE = 'Civitai Link is not available on this domain';
  * the behaviour regresses.
  */
 function Probe() {
-  const { error, status, instances, pairingStatus, awaitPairing } = useCivitaiLink();
-  return (
-    <div
-      data-testid="probe"
-      data-status={status}
-      data-error={error ?? ''}
-      data-instances={(instances ?? []).map((x) => x.id).join(',')}
-      data-pairing={pairingStatus ?? ''}
-    >
-      <button type="button" data-testid="await-pairing" onClick={() => awaitPairing()}>
-        await
-      </button>
-    </div>
-  );
+  const { error, status } = useCivitaiLink();
+  return <div data-testid="probe" data-status={status} data-error={error ?? ''} />;
 }
 
 const renderProvider = () =>
@@ -106,8 +87,6 @@ describe('CivitaiLinkProvider — cross-domain guard', () => {
   beforeEach(() => {
     mocks.baseUrl = undefined;
     mocks.workerConstructions = 0;
-    mocks.posted = [];
-    mocks.port = null;
   });
 
   test('the exported constant still says what these tests assert', () => {
@@ -135,52 +114,5 @@ describe('CivitaiLinkProvider — cross-domain guard', () => {
 
     await vi.waitFor(() => expect(mocks.workerConstructions).toBe(1));
     await expect.element(page.getByTestId('probe')).toHaveAttribute('data-error', '');
-  });
-
-  // The worker half is untestable (module-scope `io()` + `self.onconnect`), so
-  // this pins the contract between them: the snapshot the provider sends, and
-  // the status it surfaces. Every state asserted here is absorbing — it arrives
-  // and stays — so no matcher is racing a state that deletes itself.
-  test('awaitPairing snapshots the instance list and surfaces the worker status', async () => {
-    mocks.baseUrl = 'https://link.civitai.com';
-    renderProvider();
-
-    await vi.waitFor(() => expect(mocks.port).not.toBeNull());
-    const port = mocks.port!;
-    // The provider only resolves its worker promise on `ready`; without this,
-    // every `workerReq` stays pending forever.
-    port.onmessage?.({ data: { type: 'ready' } });
-    port.onmessage?.({
-      data: {
-        type: 'instancesUpdate',
-        payload: [
-          {
-            id: 7,
-            key: 'abcdef',
-            name: 'Workstation',
-            activated: true,
-            origin: null,
-            oauthPaired: true,
-            createdAt: new Date('2026-09-01T00:00:00Z'),
-          },
-        ],
-      },
-    });
-
-    const probe = page.getByTestId('probe');
-    await expect.element(probe).toHaveAttribute('data-instances', '7');
-
-    await page.getByTestId('await-pairing').click();
-    await vi.waitFor(() =>
-      expect(mocks.posted).toContainEqual({
-        type: 'awaitPairing',
-        knownIds: [7],
-        knownKeys: { 7: 'abcdef' },
-      })
-    );
-    await expect.element(probe).toHaveAttribute('data-pairing', 'waiting');
-
-    port.onmessage?.({ data: { type: 'pairing', status: 'paired' } });
-    await expect.element(probe).toHaveAttribute('data-pairing', 'paired');
   });
 });

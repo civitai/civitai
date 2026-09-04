@@ -15,8 +15,6 @@ export type Instance = {
   sdConnected: boolean; // if the sd instance is available to connect to
 };
 
-export type PairingStatus = 'waiting' | 'paired' | 'timeout';
-
 export type WorkerOutgoingMessage =
   | { type: 'ready' }
   | { type: 'socketConnection'; payload: boolean }
@@ -26,8 +24,7 @@ export type WorkerOutgoingMessage =
   | { type: 'instancesUpdate'; payload: CivitaiLinkInstance[] | undefined }
   | { type: 'resourcesUpdate'; payload: ResponseResourcesList['resources'] }
   | { type: 'commandComplete'; payload: Response }
-  | { type: 'instance'; payload: Instance }
-  | { type: 'pairing'; status: PairingStatus };
+  | { type: 'instance'; payload: Instance };
 
 export type WorkerIncomingMessage =
   | { type: 'create'; id?: number }
@@ -35,6 +32,4 @@ export type WorkerIncomingMessage =
   | { type: 'rename'; id: number; name: string }
   | { type: 'join'; id: number }
   | { type: 'leave' }
-  | { type: 'command'; payload: Command }
-  | { type: 'awaitPairing'; knownIds: number[]; knownKeys: Record<number, string> }
-  | { type: 'cancelAwaitPairing' };
+  | { type: 'command'; payload: Command };
