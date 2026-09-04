@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { SEED, enumDef, sliderDef, textDef } from '../defs';

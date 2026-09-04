@@ -61,7 +61,7 @@ import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createWanSteps } from './wan.handler';
 import type { WanGenerationData } from './wan.handler';
 import { createZImageInput } from './z-image.handler';
-import type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
+import type { EcosystemGenerationData, LooseGenerationData } from './types';
 
 export type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
 export { createChromaInput } from './chroma.handler';
