@@ -86,7 +86,7 @@ type HubRow = {
   id: number;
   metadata: Prisma.JsonValue;
   userId: number;
-  sources: { enabled: boolean }[];
+  sources: { enabled: boolean; exclude: boolean }[];
 };
 
 export type HubViewer = { userId?: number; isModerator?: boolean };
@@ -174,7 +174,15 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
     // A source the owner switched off contributes nothing to the feed and is not
     // shown, so shipping it to a viewer publishes part of their curation for no
     // reason. The owner still gets the whole list, which is the one they edit.
-    sources: isOwner ? hub.sources : hub.sources.filter((source) => source.enabled),
+    //
+    // 🔴 Exclusions are withheld from everyone but the owner, and that is a stronger
+    // rule than the one above rather than the same one. A positive source says "I
+    // like this creator"; a negative one says "keep this creator away from me", about
+    // a named person, on a hub anyone with the link can open. Publishing it would
+    // make every public hub a list of who its owner refuses.
+    sources: isOwner
+      ? hub.sources
+      : hub.sources.filter((source) => source.enabled && !source.exclude),
     description: readDescription(metadata),
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.

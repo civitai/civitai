@@ -1378,6 +1378,28 @@ describe('getUserHubById', () => {
     await expect(getUserHubById({ id: 1, userId: 999 })).rejects.toThrow(/not found/i);
   });
 
+  it('withholds the owner EXCLUSIONS from everyone but the owner', async () => {
+    // 🔴 Named for the decision, so the next reader knows it is deliberate. A public
+    // hub is openable by anyone with the link; a negative source names a creator its
+    // owner refuses. Publishing that turns every public hub into a list of who its
+    // owner blocks — a stronger rule than the `enabled` filter beside it, not the
+    // same one. A moderator is covered too: their grant is view-only over the hub,
+    // not a licence to read one user's refusals about another.
+    const sources = [
+      { type: UserHubSourceType.User, targetId: 10, enabled: true, exclude: false },
+      { type: UserHubSourceType.User, targetId: 11, enabled: true, exclude: true },
+    ];
+    findFirstHub.mockResolvedValue({ id: 1, userId: 5, metadata: {}, sources });
+
+    const stranger = await getUserHubById({ id: 1, userId: 999, isModerator: true });
+    expect(stranger.sources.map((source) => source.targetId)).toEqual([10]);
+
+    // The control. Without it this passes for a service that drops every source, or
+    // that hands the owner a list they cannot edit.
+    const owner = await getUserHubById({ id: 1, userId: 5 });
+    expect(owner.sources.map((source) => source.targetId)).toEqual([10, 11]);
+  });
+
   it('reports a moderator as NOT the owner, so the client renders it read-only', async () => {
     // "View only" is the whole scope of moderator access. `isOwner` is what every
     // write affordance branches on, so a moderator reading as owner would hand them
