@@ -52,7 +52,13 @@ describe('actions.type enum drift', () => {
     ),
   }));
 
-  const actionsBlock = enumBlocks.find((b) => b.table === 'default.actions');
+  // 🔴 The LAST block, not the first. `MODIFY COLUMN` replaces the definition, so once a
+  // second migration restates the column the newest file is the live one — reading the
+  // oldest checks a definition prod no longer has, and every value added after it reads as
+  // missing. Files are read in name order and these migrations are date-prefixed, so last
+  // is newest.
+  const actionsBlocks = enumBlocks.filter((b) => b.table === 'default.actions');
+  const actionsBlock = actionsBlocks[actionsBlocks.length - 1];
 
   // The prod indices this guard was written against (SHOW CREATE TABLE actions,
   // 2026-08-21). These predate the migrations directory, so no file here introduces them
@@ -101,13 +107,13 @@ describe('actions.type enum drift', () => {
       actionsBlock,
       'no MODIFY COLUMN on default.actions found in any migration'
     ).toBeDefined();
-    expect(actionsBlock!.arms.size).toBeGreaterThan(0);
+    expect(actionsBlock.arms.size).toBeGreaterThan(0);
   });
 
   it.each([...ActionType].filter((t) => !PRE_EXISTING.has(t)))(
     '%s is widened into the actions enum by a migration',
     (type) => {
-      expect([...actionsBlock!.arms.keys()]).toContain(type);
+      expect([...actionsBlock.arms.keys()]).toContain(type);
     }
   );
 
@@ -116,12 +122,12 @@ describe('actions.type enum drift', () => {
     // column, and a name given a different index silently remaps existing rows. The
     // migration's own header forbids both; this is what makes that enforceable.
     for (const [name, index] of PRE_EXISTING) {
-      expect(actionsBlock!.arms.get(name), `${name} missing from the restated enum`).toBe(index);
+      expect(actionsBlock.arms.get(name), `${name} missing from the restated enum`).toBe(index);
     }
   });
 
   it('assigns every value a distinct index', () => {
-    const indices = [...actionsBlock!.arms.values()];
+    const indices = [...actionsBlock.arms.values()];
     expect(new Set(indices).size).toBe(indices.length);
   });
 

@@ -3,6 +3,8 @@
   import AllowanceNotice from './AllowanceNotice.svelte';
   import AnnouncementComposer from './AnnouncementComposer.svelte';
   import AnnouncementList from './AnnouncementList.svelte';
+  import AnnouncementMetricsNotice from './AnnouncementMetricsNotice.svelte';
+  import MutesPanel from './MutesPanel.svelte';
   import type { AnnouncementRow } from '$lib/server/announcements';
   import type { ActionData, PageData } from './$types';
 
@@ -50,6 +52,8 @@
 
   <AllowanceNotice allowance={data.allowance} error={data.allowanceError} />
 
+  <AnnouncementMetricsNotice unavailable={data.metrics === null} />
+
   {#if open}
     {#key editingId ?? 'new'}
       <AnnouncementComposer
@@ -61,8 +65,13 @@
     {/key}
   {/if}
 
+  {#if data.metrics}
+    <MutesPanel mutedNow={data.metrics.mutedNow} series={data.metrics.muteSeries} />
+  {/if}
+
   <AnnouncementList
     announcements={data.announcements}
+    metrics={data.metrics}
     deleteError={form?.scope === 'delete'
       ? { id: form.subject ?? null, message: form.error ?? '' }
       : null}
