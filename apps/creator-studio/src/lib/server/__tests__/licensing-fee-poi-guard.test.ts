@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   released: [] as number[][],
   releaseFilters: [] as string[],
   slotsUsed: 0,
-  modelsScore: 50_000,
+  creatorScore: 50_000,
   // modelVersionId -> the last licenseFee charge ClickHouse reports for it.
   charges: {} as Record<number, string>,
   chargeQueries: [] as string[],
@@ -64,7 +64,12 @@ vi.mock('$lib/server/db', () => {
       });
     if (table === 'User')
       return chain({
-        executeTakeFirst: async () => ({ meta: { scores: { models: state.modelsScore } } }),
+        executeTakeFirst: async () => ({
+          // `models` is deliberately high and unequal: with a single-key fixture the spoke's
+          // getTotalScore and its aggregate getCreatorScore return the same number, and swapping
+          // the gate between them stays green. This is what makes that swap visible.
+          meta: { scores: { total: state.creatorScore, models: 50_000 } },
+        }),
       });
     if (table === 'PricingSlot')
       return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
@@ -146,7 +151,7 @@ beforeEach(() => {
   state.chargeQueries = [];
   state.clickhouseDown = false;
   state.slotsUsed = 0;
-  state.modelsScore = 50_000;
+  state.creatorScore = 50_000;
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -444,7 +449,7 @@ describe('licensing fee POI guard', () => {
 describe('eligibility floor and monthly allowance', () => {
   it('refuses a first fee from a creator below the score floor, and writes nothing', async () => {
     state.rows = [version()];
-    state.modelsScore = 9_999;
+    state.creatorScore = 9_999;
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);
 
@@ -453,9 +458,34 @@ describe('eligibility floor and monthly allowance', () => {
     expect(state.slots).toEqual([]);
   });
 
+  // User.meta is JSON, so a string-typed score is possible. getTotalScore reads it strictly for this
+  // reason: coercing it here would allow a row the main app refuses, at the same money gate on the
+  // same account. Nothing else in the spoke exercises that strictness.
+  it('refuses a string score rather than coercing it, matching the main app', async () => {
+    state.rows = [version()];
+    state.creatorScore = '999999' as unknown as number;
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  // The other direction the fixture could not previously see: `total` absent entirely must not fall
+  // back to another key.
+  it('refuses when the total score is missing altogether', async () => {
+    state.rows = [version()];
+    state.creatorScore = undefined as unknown as number;
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
   it('lets a below-floor creator change a fee they already charge', async () => {
     state.rows = [version({ currentFee: 2 })];
-    state.modelsScore = 0;
+    state.creatorScore = 0;
 
     const result = await setLicensingFee(7, GOLD, 1, 5, true);
 
@@ -467,7 +497,7 @@ describe('eligibility floor and monthly allowance', () => {
   // Already sells through a permanent gate, so it is exempt from both rules.
   it('treats a version with a permanent gate and no fee as already priced', async () => {
     state.rows = [version({ gated: 1 })];
-    state.modelsScore = 0;
+    state.creatorScore = 0;
     state.slotsUsed = 3;
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);

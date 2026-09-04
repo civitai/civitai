@@ -17,6 +17,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 // The queries and the ordering behind the two pricing rules; the rules themselves are in
 // @civitai/buzz, shared with the creator-studio spoke, which enforces them against the same database
@@ -24,14 +25,6 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
 /** The entity kinds that can carry a price. Mirrors PaidAccessEntityType. */
 export type PricingSlotEntityType = 'ModelVersion' | 'ComicChapter';
-
-type UserMetaScores = { scores?: { models?: number } };
-
-/** Absent or malformed meta reads as 0 — this decides who may start charging, so it fails closed. */
-export function creatorScoreFromMeta(meta: unknown): number {
-  const score = (meta as UserMetaScores | null | undefined)?.scores?.models;
-  return typeof score === 'number' && Number.isFinite(score) ? score : 0;
-}
 
 export async function getCreatorScore(userId: number): Promise<number> {
   const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });

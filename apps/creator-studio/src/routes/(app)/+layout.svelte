@@ -57,8 +57,8 @@
     invalidateAll();
   }
 
-  // The early-access ladder keys off the models score, not membership, so simulating a tier can't reach
-  // those flows on an account below the first rung (40k).
+  // The early-access ladder keys off the creator score (`scores.total`), not membership, so simulating
+  // a tier can't reach those flows on an account below the first rung (40k).
   const scoreOptions = [
     { value: '', label: 'Real score' },
     ...[40000, 90000, 250000].map((score) => {

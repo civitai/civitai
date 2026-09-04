@@ -93,12 +93,20 @@ publish-restricted.
 
 | Limit                     | Source                              | Applies to                    |
 | ------------------------- | ----------------------------------- | ----------------------------- |
-| Eligibility (score ≥ 10k)  | **Creator score** (`models` score)  | A new fee or a new gate       |
+| Eligibility (score ≥ 10k)  | **Creator score** (`scores.total`)  | A new fee or a new gate       |
 | New prices per month      | **Membership tier**                 | A new fee or a permanent gate |
 | Licensing fee ceiling     | Flat 100/generation × media type    | Fees                          |
 | Paid access price ceiling | — none                              | —                             |
 | Window length (days)      | **Creator score**                   | Timed                         |
 | Concurrent windows        | **Creator score**                   | Timed                         |
+
+**Every "creator score" in this table is `User.meta.scores.total`** — the figure `/user/account`
+displays under that name. Monetization and the early-access ladder both compared against the
+per-category `scores.models` until 2026-09-04; 45,216 accounts were above the displayed floor and
+below the enforced one, and had no way to see why. **Any gate that says "creator score" to the user**
+reads it through `creatorScoreFromMeta` (`src/shared/utils/creator-score.ts`) rather than reaching
+into `meta.scores` directly. (The rate-limit checks in `src/server/schema/{comment,reaction,post}.schema.ts`
+still inline `scores.total`; they gate posting frequency, not money, and are not covered by this rule.)
 
 Every creator gets the same fee ceiling — `maxLicensingFeeCeiling`, 100 per generation and 500 on a
 video model. Paid access has no ceiling at all. What a tier buys is **allowance**:
@@ -121,8 +129,8 @@ it lapsed in, which would fix the involuntary case (a failed card is the most co
 Gold is **unlimited**, so "held it at any point this month" would mean unlimited pricing for that month
 off one payment. Left as-is deliberately; revisit with that cost in view.
 
-**Membership tier does not unlock early access.** The ladder reads `User.meta.scores.models` and starts at
-40,000, so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
+**Membership tier does not unlock early access.** The ladder reads the creator score (`scores.total`)
+and starts at 40,000, so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
 for this reason. The one non-score unlock is the **granted `thirtyDayEarlyAccess` feature flag**, which by
 itself confers the top rung (30 days, 30 concurrent) at any score.
 

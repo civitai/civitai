@@ -8,6 +8,7 @@ import {
 } from '~/shared/constants/challenge.constants';
 import { ChallengeSource, ChallengeStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 function forbidden(message: string) {
   return new TRPCError({ code: 'FORBIDDEN', message });
@@ -39,7 +40,6 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   });
   if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
 
-  const meta = (user.meta ?? {}) as { scores?: { total?: number } };
   // POINTS, not the strike count — severity is what the ladder measures everywhere else. Gating on the
   // count locked an account out for a strike's full lifetime over one 1-point strike that mutes nobody.
   const { _sum } = await dbRead.userStrike.aggregate({
@@ -48,7 +48,7 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   });
 
   return {
-    scoreTotal: meta.scores?.total ?? 0,
+    scoreTotal: creatorScoreFromMeta(user.meta),
     bannedAt: user.bannedAt,
     muted: user.muted,
     deletedAt: user.deletedAt,
