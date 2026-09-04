@@ -42,6 +42,8 @@ import {
   CollectionReadConfiguration,
   MetricTimeframe,
   ModelStatus,
+  TagTarget,
+  TagType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
@@ -177,6 +179,114 @@ describe('resolveHubSources', () => {
     });
 
     expect(result?.userIds).toEqual([10]);
+  });
+
+  /**
+   * Negative sources. The properties here are the ones no assertion on the emitted
+   * FILTER can see, because they decide what reaches the builder in the first place.
+   */
+  describe('negative sources', () => {
+    const excludedVersions = dbMock.dbRead.modelVersion.findMany;
+
+    it('keeps an excluded source out of the positive sets and in the excluded ones', async () => {
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10, exclude: false },
+          { type: UserHubSourceType.User, targetId: 11, exclude: true },
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: true },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      // Both directions asserted. Half of this — the positive sets — stays green if
+      // every source is read as an exclusion, which is a hub that shows nothing.
+      expect(result?.userIds).toEqual([10]);
+      expect(result?.tagIds).toEqual([77]);
+      expect(result?.excluded.userIds).toEqual([11]);
+      expect(result?.excluded.tagIds).toEqual([78]);
+    });
+
+    it('IGNORES a session toggle aimed at a negative source', async () => {
+      // 🔴 The one direction a viewer-supplied list must never move the feed. A
+      // session toggle removes content from the person who forged it; letting it
+      // reach an exclusion would ADD content the owner refused, to anyone who can
+      // post a hub feed query. Do not "fix" this by subtracting before the split.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10, exclude: false },
+          { type: UserHubSourceType.User, targetId: 11, exclude: true },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.User, targetId: 11 }],
+      });
+
+      expect(result?.excluded.userIds).toEqual([11]);
+    });
+
+    it('still lets a session toggle drop a POSITIVE source', async () => {
+      // The control for the test above: without it, that assertion also passes for a
+      // resolver that ignores the session list entirely, which breaks every viewer's
+      // source toggles.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10, exclude: false },
+          { type: UserHubSourceType.User, targetId: 11, exclude: true },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.User, targetId: 10 }],
+      });
+
+      expect(result?.userIds).toEqual([]);
+      expect(result?.excluded.userIds).toEqual([11]);
+    });
+
+    it('expands an excluded model into ALL of its versions, untrimmed', async () => {
+      // Deliberately not the budgeted, per-model-ranked expansion the positive path
+      // uses: a trimmed exclusion serves back content the owner said to keep out.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Model, targetId: 20, exclude: true },
+          { type: UserHubSourceType.ModelVersion, targetId: 99, exclude: true },
+        ],
+      });
+      excludedVersions.mockResolvedValue([{ id: 30 }, { id: 31 }, { id: 32 }]);
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.excluded.modelVersionIds).toEqual([99, 30, 31, 32]);
+      // Every version of the model, with no rank limit anywhere in the query.
+      expect(excludedVersions).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { modelId: { in: [20] } } })
+      );
+      expect(result?.modelVersionIds).toEqual([]);
+    });
+
+    it('does not query versions when nothing is excluded', async () => {
+      // The control: the assertion above passes for a resolver that expands models
+      // unconditionally, which would make every hub pay for a query it does not use.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [{ type: UserHubSourceType.User, targetId: 10, exclude: false }],
+      });
+
+      await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(excludedVersions).not.toHaveBeenCalled();
+    });
   });
 
   it('carries the hub stored level out to the filter builders', async () => {
@@ -322,6 +432,72 @@ describe('resolveHubSources source expansion', () => {
         }),
       })
     );
+  });
+});
+
+/**
+ * Which tags a hub may name. The tag table carries the moderation labels the
+ * scanners write and the system tags the site runs on beside the subject tags, and
+ * a hub source is an id — so without this a hub can be keyed on any of them.
+ */
+describe('tag sources are restricted to the browsable vocabulary', () => {
+  const findTags = dbMock.dbRead.tag.findMany;
+  const imageTag = (over: Record<string, unknown> = {}) => ({
+    id: 77,
+    name: 'dragon',
+    type: TagType.UserGenerated,
+    target: [TagTarget.Image],
+    unlisted: false,
+    adminOnly: false,
+    ...over,
+  });
+  const withTag = (exclude = false) => ({
+    name: 'tagged',
+    sources: [{ type: UserHubSourceType.Tag, targetId: 77, enabled: true, exclude, index: 0 }],
+    userId: 5,
+  });
+
+  beforeEach(() => {
+    dbMock.dbRead.userHub.count.mockResolvedValue(0);
+    dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {}, sources: [] });
+  });
+
+  it('accepts a listed image tag', async () => {
+    // The negative control for every refusal below. Without it a guard that throws
+    // on every tag passes this whole block while shipping no tag sources at all.
+    findTags.mockResolvedValue([imageTag()]);
+
+    await upsertUserHub(withTag());
+
+    expect(dbMock.dbWrite.userHub.create).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a moderation label', imageTag({ type: TagType.Moderation })],
+    ['a system tag', imageTag({ type: TagType.System })],
+    ['an unlisted tag', imageTag({ unlisted: true })],
+    ['an admin-only tag', imageTag({ adminOnly: true })],
+    ['a tag that does not apply to images', imageTag({ target: [TagTarget.Model] })],
+  ])('refuses %s', async (_label, tag) => {
+    findTags.mockResolvedValue([tag]);
+
+    await expect(upsertUserHub(withTag())).rejects.toThrow(/not found/i);
+    expect(dbMock.dbWrite.userHub.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a tag id that matches no row', async () => {
+    findTags.mockResolvedValue([]);
+
+    await expect(upsertUserHub(withTag())).rejects.toThrow(/not found/i);
+  });
+
+  it('applies the same rule to an EXCLUDED tag', async () => {
+    // The direction that reads as harmless — keeping something out cannot show
+    // anything. It still names a moderation label by id, and the error text would
+    // confirm which ids are moderation labels to anyone counting.
+    findTags.mockResolvedValue([imageTag({ type: TagType.Moderation })]);
+
+    await expect(upsertUserHub(withTag(true))).rejects.toThrow(/not found/i);
   });
 });
 

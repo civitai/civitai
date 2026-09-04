@@ -3384,12 +3384,53 @@ function hubFilterArms(
     if (!hideManualResources)
       arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
   }
+  // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
+  // attribute on the metrics index since 2024, and the ids are denormalised onto the
+  // documents at index time. Verified against the prod index rather than assumed —
+  // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
+  if (sources.tagIds.length) arms.push({ field: 'tagIds', ids: sources.tagIds });
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
     arms.push({ field: 'collectionIds', ids: sources.collectionIds });
 
   return arms.length ? arms : null;
+}
+
+/**
+ * The hub's keep-out group: a creator, model or version whose content the owner
+ * said must not appear. ANDed as a `NOT` against everything else rather than ORed
+ * into the source group — an exclusion that joins the OR is not an exclusion, it is
+ * a fifth way to be included.
+ *
+ * Returns null for "this hub excludes nothing", which is the only safe reading of
+ * an empty set: unlike `hubFilterArms`, a null here must NOT empty the page.
+ *
+ * The three resource arms are emitted unconditionally, where the positive builder
+ * gates two of them on hideAutoResources / hideManualResources. Those gates say
+ * which attributions the viewer wants to be COLLECTED by; they do not say the
+ * viewer is willing to see a model the owner refused, arriving under a different
+ * attribution.
+ */
+function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
+  const { userIds, modelVersionIds, tagIds } = sources.excluded;
+  const arms: HubFilterArm[] = [];
+  if (userIds.length) arms.push({ field: 'userId', ids: userIds });
+  if (tagIds.length) arms.push({ field: 'tagIds', ids: tagIds });
+  if (modelVersionIds.length) {
+    arms.push({ field: 'postedToId', ids: modelVersionIds });
+    arms.push({ field: 'modelVersionIds', ids: modelVersionIds });
+    arms.push({ field: 'modelVersionIdsManual', ids: modelVersionIds });
+  }
+  if (!arms.length) return null;
+
+  // Verified against the prod metrics index rather than assumed: a document whose
+  // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
+  // returns the whole set. So a NOT arm removes matches only — it does not also
+  // drop documents that lack the field.
+  return `NOT (${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
 }
 
 function buildHubFilter(
@@ -3554,6 +3595,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // Pushed as its own AND term, and only when there is something to exclude: an
+    // empty keep-out set must leave the feed alone, not empty it.
+    const hubExclusionFilter = buildHubExclusionFilter(sources);
+    if (hubExclusionFilter) filters.push(hubExclusionFilter);
 
     // The hub's own content cap, applied before the browsing-level block below
     // reads `browsingLevel`. An empty intersection is served as an empty page, not
@@ -4188,6 +4234,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // Pushed as its own AND term, and only when there is something to exclude: an
+    // empty keep-out set must leave the feed alone, not empty it.
+    const hubExclusionFilter = buildHubExclusionFilter(sources);
+    if (hubExclusionFilter) filters.push(hubExclusionFilter);
 
     // The hub's own content cap, applied before the browsing-level block below
     // reads `browsingLevel`. An empty intersection is served as an empty page, not

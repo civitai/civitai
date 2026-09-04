@@ -122,7 +122,11 @@ export function HubSourcePanel({
 
   // Only what the owner has switched on: a source they switched off contributes
   // nothing, so listing it would offer a toggle that cannot change the feed.
-  const ownerEnabled = hub.sources.filter((source) => source.enabled);
+  //
+  // The owner's EXCLUSIONS are left out as well, and not because they are secret —
+  // `resolveHubSources` deliberately ignores session toggles on negative sources, so
+  // listing one here would render a switch that cannot move the feed.
+  const ownerEnabled = hub.sources.filter((source) => source.enabled && !source.exclude);
   const excludedKeys = new Set(excluded.map(hubSourceKey));
   const view = ownerEnabled.map((source) => ({
     ...source,

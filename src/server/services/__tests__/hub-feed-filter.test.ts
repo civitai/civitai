@@ -34,8 +34,10 @@ const hubSources = (over: Partial<ResolvedHubSources> = {}): ResolvedHubSources 
   userIds: [],
   modelVersionIds: [],
   collectionIds: [],
+  tagIds: [],
   truncated: false,
   forcedBrowsingLevel: 0,
+  excluded: { userIds: [], modelVersionIds: [], tagIds: [] },
   ...over,
 });
 
@@ -181,6 +183,115 @@ describe('hub filter reaches the search backend', () => {
     expect(fetchDocumentsMock).toHaveBeenCalled();
     expect(emittedFilter()).not.toContain('postedToId IN');
     expect(resolveHubSourcesMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('a tag source joins the OR group', () => {
+  it('emits the tag arm beside the others', async () => {
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10], tagIds: [77, 78] }));
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    // One string, for the reason the first test in this file gives: per-arm
+    // `toContain` survives ' OR ' becoming ' AND ', which is an empty hub.
+    expect(emittedFilter()).toContain('(userId IN [10] OR tagIds IN [77,78])');
+  });
+});
+
+/**
+ * The keep-out group. Two mutations this has to catch, and the first is the one a
+ * per-arm assertion misses:
+ *
+ *   `AND NOT (…)` -> `OR NOT (…)`   — the exclusion stops narrowing anything, and
+ *                                     the hub serves the excluded content back.
+ *   `NOT (a OR b)` -> `NOT (a AND b)` — only content matching BOTH is removed, so
+ *                                     almost nothing is.
+ *
+ * Both are one-token edits inside a string nothing else reads, so the assertions
+ * below quote the operators rather than the arms.
+ */
+describe('a hub keeps its excluded sources out', () => {
+  // A NOT group opening on one of the hub's own fields. `String.raw` because a
+  // template literal turns `` into a backspace, which matches nothing and makes
+  // the control pass forever.
+  const hubExclusionGroup = new RegExp(String.raw`NOT \((userId|tagIds|postedToId)`);
+
+  const withExclusions = hubSources({
+    userIds: [10],
+    excluded: { userIds: [11], modelVersionIds: [20], tagIds: [77] },
+  });
+
+  it('ANDs a NOT group onto the source filter', async () => {
+    resolveHubSourcesMock.mockResolvedValue(withExclusions);
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    expect(emittedFilter()).toContain(
+      '(userId IN [10]) AND NOT (userId IN [11] OR tagIds IN [77] OR postedToId IN [20] OR modelVersionIds IN [20] OR modelVersionIdsManual IN [20])'
+    );
+  });
+
+  it('excludes a model under every resource attribution, not only the gated ones', async () => {
+    // hideAutoResources/hideManualResources gate the INCLUSION arms. Letting them
+    // reach the exclusion would serve a refused model back to anyone who happened to
+    // have one of those filters on.
+    resolveHubSourcesMock.mockResolvedValue(withExclusions);
+
+    await getImagesFromSearchPreFilter({
+      ...input(1),
+      hideAutoResources: true,
+      hideManualResources: true,
+    });
+
+    expect(emittedFilter()).toContain(
+      'NOT (userId IN [11] OR tagIds IN [77] OR postedToId IN [20] OR modelVersionIds IN [20] OR modelVersionIdsManual IN [20])'
+    );
+  });
+
+  it('emits no NOT group at all when the hub excludes nothing', async () => {
+    // The negative control. Without it every assertion above passes for a builder
+    // that hard-codes a NOT group, and an unconditional `NOT ()` is either a syntax
+    // error Meili rejects or a filter that removes content nobody excluded.
+    //
+    // Matched on the ARM, not on a bare `NOT (`: the licence-restriction filter emits
+    // its own NOT group on every request, so `not.toContain('NOT (')` fails whether or
+    // not this code is correct.
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10] }));
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(emittedFilter()).not.toMatch(hubExclusionGroup);
+  });
+
+  it('still serves the page — an exclusion narrows the feed, it does not empty it', async () => {
+    resolveHubSourcesMock.mockResolvedValue(withExclusions);
+
+    const result = await getImagesFromSearchPreFilter(input(1));
+
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(result.data).toEqual([]);
+  });
+
+  it('the post-filter builder emits the same NOT group', async () => {
+    // Per builder, not once: a per-user flag decides which one a request takes, and
+    // the one nobody tested is the one the exclusion goes missing from.
+    resolveHubSourcesMock.mockResolvedValue(withExclusions);
+
+    await getImagesFromSearchPostFilter(input(1));
+
+    expect(emittedFilter()).toContain(
+      '(userId IN [10]) AND NOT (userId IN [11] OR tagIds IN [77] OR postedToId IN [20] OR modelVersionIds IN [20] OR modelVersionIdsManual IN [20])'
+    );
+  });
+
+  it('the post-filter builder emits no NOT group without exclusions', async () => {
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10] }));
+
+    await getImagesFromSearchPostFilter(input(1));
+
+    expect(fetchDocumentsMock).toHaveBeenCalled();
+    expect(emittedFilter()).not.toMatch(hubExclusionGroup);
   });
 });
 

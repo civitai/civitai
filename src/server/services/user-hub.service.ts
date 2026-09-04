@@ -32,6 +32,8 @@ import {
   MetricTimeframe,
   ModelEngagementType,
   ModelStatus,
+  TagTarget,
+  TagType,
   UserEngagementType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
@@ -58,7 +60,15 @@ const hubListSelect = {
   metadata: true,
 
   sources: {
-    select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
+    select: {
+      id: true,
+      type: true,
+      targetId: true,
+      alias: true,
+      enabled: true,
+      exclude: true,
+      index: true,
+    },
     orderBy: { index: 'asc' },
   },
 } as const;
@@ -287,6 +297,7 @@ export async function upsertUserHub({
       duplicate.add(key);
     }
 
+    assertSourceCounts(sources);
     await assertHubSourcesUsable({ sources, userId });
   }
 
@@ -379,6 +390,16 @@ export async function upsertUserHub({
   return toHubDetail(updated, userId);
 }
 
+// Each kind against its own cap. Counted here rather than on the zod array, which
+// sees one list and cannot say which half overran it.
+function assertSourceCounts(sources: UserHubSourceInput[]) {
+  const excluded = sources.filter((source) => source.exclude).length;
+  if (sources.length - excluded > hubLimits.sourcesPerHub)
+    throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
+  if (excluded > hubLimits.exclusionsPerHub)
+    throw throwBadRequestError(`A hub can exclude at most ${hubLimits.exclusionsPerHub} sources`);
+}
+
 export async function addUserHubSource({
   userId,
   hubId,
@@ -393,7 +414,9 @@ export async function addUserHubSource({
     where: { id: hubId, userId },
     select: {
       id: true,
-      sources: { select: { id: true, type: true, targetId: true, enabled: true, index: true } },
+      sources: {
+        select: { id: true, type: true, targetId: true, enabled: true, exclude: true, index: true },
+      },
     },
   });
   if (!hub) throw throwNotFoundError('Hub not found');
@@ -404,23 +427,32 @@ export async function addUserHubSource({
   if (existing) {
     // A source the owner switched off is invisible to the feed — `resolveHubSources`
     // selects enabled rows only — so reporting "already there" and leaving it off is a
-    // success message for nothing happening.
-    if (existing.enabled) return { hubId, added: false };
+    // success message for nothing happening. Adding the SAME target on the other side
+    // is the same story: the unique key holds one row per target, so asking to exclude
+    // something the hub collects flips it rather than failing.
+    if (existing.enabled && existing.exclude === source.exclude) return { hubId, added: false };
 
     // Owner-scoped on the write as well as in the read above, per the argument this
     // file makes for `removeUserHubSource`: id-addressing is safe only while a source
     // row cannot change hubs, and that is not a property anything enforces.
     await dbWrite.userHubSource.updateMany({
       where: { id: existing.id, hub: { userId } },
-      data: { enabled: true },
+      data: { enabled: true, exclude: source.exclude },
     });
     return { hubId, added: true };
   }
 
-  if (hub.sources.length >= hubLimits.sourcesPerHub)
+  const held = hub.sources.filter((s) => s.exclude === source.exclude).length;
+  if (source.exclude) {
+    if (held >= hubLimits.exclusionsPerHub)
+      throw throwBadRequestError(`A hub can exclude at most ${hubLimits.exclusionsPerHub} sources`);
+  } else if (held >= hubLimits.sourcesPerHub)
     throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
 
-  await assertHubSourcesUsable({ sources: [{ ...source, enabled: true, index: 0 }], userId });
+  await assertHubSourcesUsable({
+    sources: [{ ...source, enabled: true, index: 0 }],
+    userId,
+  });
 
   try {
     await dbWrite.userHubSource.create({
@@ -429,6 +461,7 @@ export async function addUserHubSource({
         type: source.type,
         targetId: source.targetId,
         alias: source.alias ?? null,
+        exclude: source.exclude,
         index: hub.sources.reduce((max, s) => Math.max(max, s.index + 1), 0),
       },
     });
@@ -570,10 +603,22 @@ export type ResolvedHubSources = {
   userIds: number[];
   modelVersionIds: number[];
   collectionIds: number[];
+  /**
+   * Image tags. Unlike a Model source these need no expansion and no budget: the
+   * ids ARE what the index is filtered on.
+   */
+  tagIds: number[];
   /** True when a Model source expanded past the id cap and was trimmed. */
   truncated: boolean;
   /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
   forcedBrowsingLevel: number;
+  /**
+   * What the hub refuses. Never truncated, unlike the positive sets above: a
+   * trimmed inclusion shows less than the owner asked for, where a trimmed
+   * exclusion shows content they said to keep out. `exclusionsPerHub` is what
+   * bounds this instead.
+   */
+  excluded: { userIds: number[]; modelVersionIds: number[]; tagIds: number[] };
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
@@ -593,7 +638,10 @@ export async function resolveHubSources({
     where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
     select: {
       forcedBrowsingLevel: true,
-      sources: { where: { enabled: true }, select: { type: true, targetId: true } },
+      sources: {
+        where: { enabled: true },
+        select: { type: true, targetId: true, exclude: true },
+      },
     },
   });
   if (!hub) return null;
@@ -603,13 +651,20 @@ export async function resolveHubSources({
   // than in the filter builders because this is the one place the id sets exist,
   // and because subtracting can only ever NARROW the feed: a forged exclusion
   // removes content from the forger, and can add none.
-  const excluded = new Set((excludedSources ?? []).map(hubSourceKey));
-  const sources = excluded.size
-    ? hub.sources.filter((s) => !excluded.has(hubSourceKey(s)))
-    : hub.sources;
+  //
+  // 🔴 Applied to the POSITIVE sources only. A session toggle reaching the negative
+  // ones would let a viewer switch off somebody else's exclusion, which is the one
+  // direction this list must never be able to move the feed: forging it would ADD
+  // content the owner refused, where forging a positive toggle only removes their
+  // own.
+  const sessionExcluded = new Set((excludedSources ?? []).map(hubSourceKey));
+  const negativeSources = hub.sources.filter((s) => s.exclude);
+  const positiveSources = hub.sources
+    .filter((s) => !s.exclude)
+    .filter((s) => !sessionExcluded.size || !sessionExcluded.has(hubSourceKey(s)));
 
   const byType = (type: UserHubSourceType) =>
-    sources.filter((s) => s.type === type).map((s) => s.targetId);
+    positiveSources.filter((s) => s.type === type).map((s) => s.targetId);
 
   const modelIds = byType(UserHubSourceType.Model);
   const explicitVersionIds = byType(UserHubSourceType.ModelVersion);
@@ -657,7 +712,44 @@ export async function resolveHubSources({
     modelVersionIds,
     truncated,
     collectionIds: byType(UserHubSourceType.Collection),
+    tagIds: byType(UserHubSourceType.Tag),
     forcedBrowsingLevel: hub.forcedBrowsingLevel,
+    excluded: await resolveExcludedSources(negativeSources),
+  };
+}
+
+/**
+ * The id sets a hub's negative sources become. An excluded Model expands to ALL of
+ * its versions — no per-model budget and no trimming, unlike the positive path,
+ * because a trimmed exclusion is a permissive failure: the content the owner said
+ * to keep out comes back, and nothing anywhere reports it.
+ *
+ * What makes that affordable is `hubLimits.exclusionsPerHub` plus the shape of the
+ * data: measured on the prod replica, 942,241 models at a p99 of 5 versions and 180
+ * at the very worst one, so 20 exclusions is ~100 ids in practice and 3,600 at a
+ * ceiling no real hub reaches.
+ */
+async function resolveExcludedSources(
+  sources: { type: UserHubSourceType; targetId: number }[]
+): Promise<ResolvedHubSources['excluded']> {
+  const byType = (type: UserHubSourceType) =>
+    sources.filter((s) => s.type === type).map((s) => s.targetId);
+
+  const modelIds = byType(UserHubSourceType.Model);
+  const versionIds = byType(UserHubSourceType.ModelVersion);
+
+  if (modelIds.length) {
+    const rows = await dbRead.modelVersion.findMany({
+      where: { modelId: { in: modelIds } },
+      select: { id: true },
+    });
+    versionIds.push(...rows.map((row) => row.id));
+  }
+
+  return {
+    userIds: byType(UserHubSourceType.User),
+    modelVersionIds: [...new Set(versionIds)],
+    tagIds: byType(UserHubSourceType.Tag),
   };
 }
 
@@ -680,7 +772,10 @@ export function hubBrowsingLevel(browsingLevel: number | undefined, sources: Res
 
 export function hubSourcesAreEmpty(sources: ResolvedHubSources) {
   return (
-    !sources.userIds.length && !sources.modelVersionIds.length && !sources.collectionIds.length
+    !sources.userIds.length &&
+    !sources.modelVersionIds.length &&
+    !sources.collectionIds.length &&
+    !sources.tagIds.length
   );
 }
 
@@ -695,6 +790,8 @@ async function assertHubSourcesUsable({
   sources: UserHubSourceInput[];
   userId: number;
 }) {
+  await assertHubTagsUsable(sources);
+
   const collectionIds = sources
     .filter((s) => s.type === UserHubSourceType.Collection)
     .map((s) => s.targetId);
@@ -737,6 +834,46 @@ async function assertHubSourcesUsable({
       throw throwBadRequestError(
         `"${collection.name}" limits the content ratings it shows, which a hub cannot honour. It cannot be used as a hub source.`
       );
+  }
+}
+
+/**
+ * Which tags a hub may be keyed on, in either direction. The tag table is not a
+ * vocabulary of subjects — it also carries the moderation labels the scanners write
+ * and the system tags the site runs on, and a hub addressed by id would otherwise
+ * reach every one of them.
+ *
+ * Applied to exclusions as well as sources. Excluding a moderation label is a
+ * reasonable thing to WANT, but the browsing level is the control that already does
+ * it and the one the server actually enforces; letting a second, unenforced spelling
+ * of the same intent exist would leave a user believing they had set something they
+ * had not.
+ */
+async function assertHubTagsUsable(sources: UserHubSourceInput[]) {
+  const tagIds = sources
+    .filter((source) => source.type === UserHubSourceType.Tag)
+    .map((source) => source.targetId);
+  if (!tagIds.length) return;
+
+  const tags = await dbRead.tag.findMany({
+    where: { id: { in: tagIds } },
+    select: { id: true, name: true, type: true, target: true, unlisted: true, adminOnly: true },
+  });
+
+  for (const id of tagIds) {
+    const tag = tags.find((t) => t.id === id);
+    // A tag that fails the rule is a not-found rather than a refusal naming it: this
+    // is an id-addressed lookup over a dense id space, so an error that distinguishes
+    // "no such tag" from "that one is a moderation label" enumerates the moderation
+    // vocabulary for anyone willing to count.
+    if (
+      !tag ||
+      tag.unlisted ||
+      tag.adminOnly ||
+      !tag.target.includes(TagTarget.Image) ||
+      (tag.type !== TagType.UserGenerated && tag.type !== TagType.Label)
+    )
+      throw throwNotFoundError(`Tag ${id} not found`);
   }
 }
 

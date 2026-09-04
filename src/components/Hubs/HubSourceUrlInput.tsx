@@ -10,6 +10,7 @@ const sourceLabels: Record<UserHubSourceType, string> = {
   [UserHubSourceType.Model]: 'Model',
   [UserHubSourceType.ModelVersion]: 'Version',
   [UserHubSourceType.Collection]: 'Collection',
+  [UserHubSourceType.Tag]: 'Tag',
 };
 
 /**

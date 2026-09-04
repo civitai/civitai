@@ -252,7 +252,7 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
-export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection";
+export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export interface Account {
   id: number;
@@ -5428,6 +5428,7 @@ export interface UserHubSource {
   targetId: number;
   alias: string | null;
   enabled: boolean;
+  exclude: boolean;
   index: number;
 }
 

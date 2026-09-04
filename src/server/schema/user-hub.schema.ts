@@ -14,6 +14,15 @@ export const hubLimits = {
   // whole list, and the follow button decides its own state from it.
   followedHubs: 50,
   sourcesPerHub: 50,
+  // Counted separately from `sourcesPerHub`, not out of it: a hub that refuses 20
+  // creators has not spent any of the budget it collects with, and sharing one cap
+  // would let the exclusion list starve the thing the hub is for.
+  //
+  // 20 also bounds the excluded-version expansion, which — unlike the positive one —
+  // deliberately does NOT truncate. Measured on the prod replica: 942,241 models,
+  // p99 of 5 versions each, 180 at the worst model, and 58 models past 50 versions.
+  // So the ceiling is 20 x 180 = 3,600 ids and the realistic case is ~100.
+  exclusionsPerHub: 20,
   nameLength: 60,
   aliasLength: 60,
   descriptionLength: 300,
@@ -70,6 +79,10 @@ export const userHubSourceSchema = z.object({
     .transform((value) => value.slice(0, hubLimits.aliasLength))
     .nullish(),
   enabled: z.boolean().default(true),
+  // A negative source. Defaulted rather than optional because this list REPLACES the
+  // stored one: an undefined here would write `false` through Prisma's own default
+  // anyway, and spelling it makes the round trip visible.
+  exclude: z.boolean().default(false),
   index: z.number().int().min(0).default(0),
 });
 
@@ -127,7 +140,13 @@ export const upsertUserHubSchema = z.object({
   // Every caller sending its own cached copy of the full list turned a sort change
   // into a full replacement, so a save issued before another one's invalidate
   // settled reverted it.
-  sources: z.array(userHubSourceSchema).max(hubLimits.sourcesPerHub).optional(),
+  // The two kinds share one array and are capped SEPARATELY in the service — this
+  // bound is only the outer one, so a list of 50 sources plus 20 exclusions is not
+  // rejected before the service can tell the caller which half it overran.
+  sources: z
+    .array(userHubSourceSchema)
+    .max(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub)
+    .optional(),
   // Same "omitted means leave alone" rule as `sources`; stored on
   // `metadata.filters`, like `description`.
   filters: hubFeedFiltersSchema.optional(),
@@ -215,6 +234,7 @@ export const userHubSourceRefSchema = z.object({
 
 export const addUserHubSourceSchema = userHubSourceRefSchema.extend({
   alias: userHubSourceSchema.shape.alias,
+  exclude: z.boolean().default(false),
 });
 
 export type UserHubSourceRefInput = z.infer<typeof userHubSourceRefSchema>;

@@ -21,7 +21,10 @@ import { trpc } from '~/utils/trpc';
 export default function AddToHubModal({
   source,
 }: {
-  source: Omit<AddUserHubSourceInput, 'hubId'>;
+  // `exclude` is omitted, not defaulted: every entry point into this modal is a
+  // "put this in a hub" affordance on a creator or model page. Keeping the field out
+  // of the prop means a caller cannot quietly turn one of them into an exclusion.
+  source: Omit<AddUserHubSourceInput, 'hubId' | 'exclude'>;
 }) {
   const dialog = useDialogContext();
   const invalidateHub = useInvalidateHub();
@@ -71,9 +74,16 @@ export default function AddToHubModal({
                 // owner switched off in the rail reads as unticked: the hub is not
                 // showing it, and ticking is what turns it back on.
                 const checked = hub.sources.some(
-                  (s) => s.type === source.type && s.targetId === source.targetId && s.enabled
+                  (s) =>
+                    s.type === source.type &&
+                    s.targetId === source.targetId &&
+                    s.enabled &&
+                    !s.exclude
                 );
-                const full = hub.sources.length >= hubLimits.sourcesPerHub;
+                // Exclusions have their own cap, so counting them here would report a
+                // hub as full while it still had room for what this box adds.
+                const held = hub.sources.filter((s) => !s.exclude).length;
+                const full = held >= hubLimits.sourcesPerHub;
                 return (
                   <Checkbox
                     key={hub.id}
@@ -83,9 +93,7 @@ export default function AddToHubModal({
                       <Group gap={6} wrap="nowrap">
                         <Text size="sm">{hub.name}</Text>
                         <Text size="xs" c="dimmed">
-                          {full && !checked
-                            ? 'Full'
-                            : `${hub.sources.length}/${hubLimits.sourcesPerHub}`}
+                          {full && !checked ? 'Full' : `${held}/${hubLimits.sourcesPerHub}`}
                         </Text>
                       </Group>
                     }

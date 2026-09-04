@@ -13,7 +13,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { HubSuggestionType } from '~/server/schema/user-hub.schema';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
-import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { TagTarget, TagType, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
@@ -30,7 +30,12 @@ const tabs = [
     scope: 'collections you follow',
     disabled: !HUB_COLLECTION_SOURCES_ENABLED,
   },
+  // The one tab that is not a relationship: everyone shares the same tag
+  // vocabulary, so it searches the site's tags rather than the viewer's library.
+  { value: UserHubSourceType.Tag, label: 'Tags', scope: 'image tags' },
 ];
+
+const TAG_SUGGESTION_LIMIT = 25;
 
 /**
  * One type at a time, over a bounded window of the viewer's own relationships. The
@@ -46,14 +51,40 @@ export function HubSourceSearch({
   isAdded: (suggestion: Suggestion) => boolean;
   disabled?: boolean;
 }) {
-  const [type, setType] = useState<HubSuggestionType>(UserHubSourceType.User);
+  const [type, setType] = useState<UserHubSourceType>(UserHubSourceType.User);
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query, 300);
+  const isTag = type === UserHubSourceType.Tag;
 
-  const { data: suggestions = [], isFetching } = trpc.userHub.sourceSuggestions.useQuery({
-    type,
-    query: debounced || undefined,
-  });
+  const { data: related = [], isFetching: fetchingRelated } =
+    trpc.userHub.sourceSuggestions.useQuery(
+      { type: type as HubSuggestionType, query: debounced || undefined },
+      { enabled: !isTag }
+    );
+
+  // The site's own tag list, not a hub endpoint: `tag.getAll` is what every other
+  // tag picker on the site already uses, and it carries the filters this needs —
+  // image tags, listed, and not the moderation or system vocabularies. Adding a
+  // fourth arm to `sourceSuggestions` would have been a second implementation of
+  // it, scoped to relationships tags do not have.
+  const { data: tagData, isFetching: fetchingTags } = trpc.tag.getAll.useQuery(
+    {
+      entityType: [TagTarget.Image],
+      types: [TagType.UserGenerated, TagType.Label],
+      query: debounced || undefined,
+      limit: TAG_SUGGESTION_LIMIT,
+    },
+    { enabled: isTag }
+  );
+
+  const isFetching = isTag ? fetchingTags : fetchingRelated;
+  const suggestions: Suggestion[] = isTag
+    ? (tagData?.items ?? []).map((tag) => ({
+        type: UserHubSourceType.Tag,
+        targetId: tag.id,
+        alias: tag.name,
+      }))
+    : related;
 
   const active = tabs.find((tab) => tab.value === type);
 
@@ -69,7 +100,7 @@ export function HubSourceSearch({
           label,
           disabled: itemDisabled,
         }))}
-        onChange={(value) => setType(value as HubSuggestionType)}
+        onChange={(value) => setType(value as UserHubSourceType)}
       />
 
       <TextInput
