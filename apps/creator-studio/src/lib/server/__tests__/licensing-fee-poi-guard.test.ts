@@ -125,6 +125,8 @@ const MAX_IMAGE_FEE = maxLicensingFeeCeiling('image');
 // `gated` stands in for a permanent PaidAccess row on the version (null = none).
 const version = (over: Partial<Record<string, unknown>> = {}) => ({
   id: 1,
+  modelName: 'Test Model',
+  versionName: 'v1.0',
   baseModel: 'SDXL 1.0',
   modelType: 'Checkpoint',
   currentFee: null,
@@ -387,6 +389,43 @@ describe('licensing fee POI guard', () => {
       error: expect.stringContaining('depict a real person'),
     });
     expect(state.written).toEqual([]);
+  });
+
+  // The refusal named nothing, so the offender was unfindable in a multi-page selection (868m15nnc).
+  it('names the blocking versions in the bulk refusal', async () => {
+    state.rows = [
+      version(),
+      version({ id: 2, poi: true, modelName: 'Face LoRA', versionName: 'v2' }),
+    ];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2], 1, true);
+
+    expect(result).toMatchObject({ error: expect.stringContaining('Face LoRA — v2') });
+    expect((result as { error: string }).error).not.toContain('Test Model');
+  });
+
+  it('truncates a name too long to read in a toast', async () => {
+    state.rows = [version({ poi: true, modelName: 'M'.repeat(200) })];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1], 1, true);
+
+    const { error } = result as { error: string };
+    expect(error).toContain('…');
+    expect(error.length).toBeLessThan(200);
+  });
+
+  // Naming every offender in a 4,700-version selection is its own unreadable wall.
+  it('names the first few and counts the rest', async () => {
+    state.rows = Array.from({ length: 8 }, (_, i) =>
+      version({ id: i + 1, poi: true, modelName: `M${i + 1}` })
+    );
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2, 3, 4, 5, 6, 7, 8], 1, true);
+
+    const { error } = result as { error: string };
+    expect(error).toContain('M5 — v1.0');
+    expect(error).not.toContain('M6');
+    expect(error).toContain('and 3 more');
   });
 
   it('allows the same bulk fee when no selected version is POI', async () => {

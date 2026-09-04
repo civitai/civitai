@@ -345,6 +345,9 @@
     return [...byKey.values()].sort((a, b) => a.cap - b.cap);
   });
 
+  const POI_BLOCKED_HINT =
+    "Flagged as depicting a real person — a new licensing fee or access price will be refused. If that's wrong, contact support to have the flag reviewed.";
+
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
     else selected.add(id);
@@ -405,6 +408,8 @@
   let editing = $state<CreatorModelVersion | null>(null);
   // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
   let editingType = $state('');
+  // Same for the POI flag, which is model-level.
+  let editingPoi = $state(false);
   // The edited version's base model decides the media axis of every cap in the drawer.
   // One object per edited version — max, offered denominators and the suggestion all come from it, so
   // they cannot disagree with each other or with what the server enforces.
@@ -426,8 +431,9 @@
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
   // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.
-  function openEditor(version: CreatorModelVersion, modelType: string) {
+  function openEditor(version: CreatorModelVersion, modelType: string, poi: boolean) {
     editingType = modelType;
+    editingPoi = poi;
     feeAffirmed = false;
     // Denominator from the seed rule, amount from the version alone: an unset fee opens on the
     // suggestion's denominator with nothing priced until the creator types.
@@ -783,6 +789,15 @@
                 <CardTitle class="text-base text-white">{model.name}</CardTitle>
               {/if}
               <Badge variant="secondary">{model.type}</Badge>
+              {#if model.poi}
+                <Badge
+                  variant="outline"
+                  class="border-yellow-5/30 bg-yellow-5/10 text-yellow-5"
+                  title={POI_BLOCKED_HINT}
+                >
+                  Real person
+                </Badge>
+              {/if}
               <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
                 {model.status}
               </Badge>
@@ -822,7 +837,7 @@
                       />
                       <button
                         type="button"
-                        onclick={() => openEditor(version, model.type)}
+                        onclick={() => openEditor(version, model.type, model.poi)}
                         class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
                       >
                         <span class="flex min-w-0 items-center gap-2 sm:flex-1">
@@ -919,6 +934,13 @@
       </SheetHeader>
 
       <div class="flex flex-col gap-6 p-5">
+        {#if editingPoi}
+          <p class="rounded-md border border-yellow-5/30 bg-yellow-5/10 p-3 text-xs text-yellow-5">
+            This model is flagged as depicting a real person, so it can't carry a licensing fee or a
+            paid-access price. Clearing an existing fee still works. If the flag is wrong, contact
+            support to have it reviewed.
+          </p>
+        {/if}
         <!-- Licensing fee -->
         <section class="flex flex-col gap-3">
           <div class="flex items-center justify-between">

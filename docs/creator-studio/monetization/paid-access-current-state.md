@@ -77,7 +77,7 @@ Purchase → access is **correct end-to-end** (audited): buying `download` grant
 buying generation grants generation (`1`); permanent buyers never lose access (no `EntityAccess` expiry; the
 expiry cron excludes permanent rows); the **orchestrator** meters free-trial counts per user and checks the
 `EarlyAccessGeneration` bit (external, confirmed — don't re-flag as a bug). `pnpm typecheck` (main) and
-`pnpm --filter @civitai/creator-studio-app check` (spoke) both pass 0 errors.
+`pnpm --filter @civitai/creator-studio-app typecheck` (spoke) both pass 0 errors.
 
 ## Gotchas (non-obvious)
 
