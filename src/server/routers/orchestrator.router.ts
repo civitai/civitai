@@ -35,7 +35,7 @@ import {
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
-import { signProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { MAX_SOURCE_IMAGES, signProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -422,8 +422,15 @@ export const orchestratorRouter = router({
         // than assumed: anything that is not a string survives to
         // `verifyProvenance`, which returns null for a non-string, but narrowing
         // at the boundary keeps that a type guarantee instead of a coincidence.
+        // Bounded HERE, at the boundary. `.input(z.any())` means the array arrives
+        // unvalidated, and every element costs an AES-GCM decrypt attempt on the
+        // event loop before the prompt audit or any Buzz check runs. The union
+        // discards everything past `MAX_SOURCE_IMAGES` anyway, so the cap removes
+        // the work without removing any behaviour.
         sourceProvenance: Array.isArray(sourceProvenance)
-          ? sourceProvenance.filter((x): x is string => typeof x === 'string')
+          ? sourceProvenance
+              .filter((x): x is string => typeof x === 'string')
+              .slice(0, MAX_SOURCE_IMAGES)
           : undefined,
         // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
         // from a hand-rolled client can't stand in for the acknowledgement.
@@ -568,7 +575,14 @@ export const orchestratorRouter = router({
       if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
 
       return {
-        provenance: signProvenance({ userId: ctx.user.id, sourceImageIds: [image.id] }),
+        // `mint`, so this token is spendable ONLY into a submit. The upload path
+        // refuses it — otherwise a click here would be worth a free remix-gallery
+        // submission with no generation behind it.
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'mint',
+        }),
       };
     }),
   // #endregion

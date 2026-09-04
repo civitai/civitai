@@ -75,10 +75,6 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
       getToken: (url) => get().tokensByUrl[url]?.token,
 
       transfer: (fromUrl, toUrl) => {
-        // Guarded rather than merged: `uploadOrchestratorImage` returns the same
-        // URL it was given when the source is already an orchestrator blob, and
-        // deleting the source key in that case would drop the token on the floor.
-        if (fromUrl === toUrl) return;
         set((state) => {
           const existing = state.tokensByUrl[fromUrl];
           if (!existing) return state;

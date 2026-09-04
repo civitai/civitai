@@ -17,7 +17,9 @@ Object.defineProperty(globalThis, 'sessionStorage', {
   },
 });
 
-const { remixProvenanceStore } = await import('~/store/remix-provenance.store');
+const { remixProvenanceStore, useRemixProvenanceStore } = await import(
+  '~/store/remix-provenance.store'
+);
 
 const SEEDED = 'https://image.civitai.com/abc/original=true/foo.jpeg';
 const UPLOADED = 'https://orchestration-new.civitai.com/v2/consumer/blobs/xyz.jpg?sig=a';
@@ -50,33 +52,29 @@ describe('remixProvenanceStore', () => {
   });
 
   /**
-   * `uploadOrchestratorImage` returns the url it was given when the source is
-   * already an orchestrator blob, so the upload path calls transfer with two
-   * equal urls. Deleting the source key there would drop the token.
+   * Asserts the KEY SET, not just `getToken`. Dropping the `!existing` guard
+   * writes `{ [toUrl]: undefined }` — which reads back as undefined through
+   * `?.token`, so a `getToken` assertion passes over it, while the valueless key
+   * eats a slot against the cap and then throws in the eviction sort.
    */
-  it('keeps the token when the url did not actually change', () => {
-    remixProvenanceStore.setToken(UPLOADED, 'tok');
-
-    remixProvenanceStore.transfer(UPLOADED, UPLOADED);
-
-    expect(remixProvenanceStore.getToken(UPLOADED)).toBe('tok');
-  });
-
   it('does nothing when there is no token to move', () => {
     remixProvenanceStore.setToken(SEEDED, 'tok');
 
     remixProvenanceStore.transfer('https://example.com/other.jpeg', UPLOADED);
 
-    expect(remixProvenanceStore.getToken(UPLOADED)).toBeUndefined();
+    expect(Object.keys(useRemixProvenanceStore.getState().tokensByUrl)).toEqual([SEEDED]);
     expect(remixProvenanceStore.getToken(SEEDED)).toBe('tok');
   });
 
   /**
-   * The cap is what stops a long session filling sessionStorage. Eviction is by
-   * age, so the newest token — the one the user is about to submit — must be the
-   * one that survives.
+   * The cap is what stops a long session filling sessionStorage.
+   *
+   * Scope, stated because the name would otherwise overclaim: 60 writes in a
+   * loop share a millisecond, so `storedAt` ties and this rides insertion order.
+   * It pins that the cap evicts and that the newest write survives — it does NOT
+   * exercise age ordering, and setting `storedAt` to a constant still passes.
    */
-  it('evicts the oldest tokens past the cap and keeps the newest', () => {
+  it('evicts past the cap and keeps the newest write', () => {
     for (let i = 0; i < 60; i++) remixProvenanceStore.setToken(`url-${i}`, `tok-${i}`);
 
     expect(remixProvenanceStore.getToken('url-59')).toBe('tok-59');

@@ -257,6 +257,9 @@ describe('sanitizeProvenance', () => {
 describe('unionSourceImageIds', () => {
   const USER = 42;
 
+  // Every token here is `mint`: the submit path accepts only tokens the mint
+  // issued, so a `job` token would (correctly) contribute nothing.
+
   /**
    * The bug this exists for. A remix seeds an on-site URL, the generation form
    * re-uploads it as an orchestrator blob, and by submit time the URL route can
@@ -264,7 +267,7 @@ describe('unionSourceImageIds', () => {
    * button recorded no derivation at all.
    */
   it('recovers the link when the url route found nothing', () => {
-    const token = signProvenance({ userId: USER, sourceImageIds: [7] });
+    const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
 
     expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual([
       7,
@@ -276,7 +279,7 @@ describe('unionSourceImageIds', () => {
   });
 
   it('does not double-count an image both routes name', () => {
-    const token = signProvenance({ userId: USER, sourceImageIds: [7] });
+    const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
 
     expect(
       unionSourceImageIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })
@@ -292,7 +295,7 @@ describe('unionSourceImageIds', () => {
     // set the cap is satisfied by the url ids alone, so the assertion would hold
     // even if tokens were ignored entirely and the test could not fail.
     const urlSourceImageIds = [1, 2, 3, 4, 5, 6];
-    const token = signProvenance({ userId: USER, sourceImageIds: [101, 102, 103, 104] });
+    const token = signProvenance({ userId: USER, sourceImageIds: [101, 102, 103, 104], kind: 'mint' });
 
     const ids = unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
 
@@ -306,7 +309,7 @@ describe('unionSourceImageIds', () => {
    * for someone else must buy nothing.
    */
   it('ignores a token issued to a different user', () => {
-    const token = signProvenance({ userId: USER + 1, sourceImageIds: [7] });
+    const token = signProvenance({ userId: USER + 1, sourceImageIds: [7], kind: 'mint' });
 
     expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual(
       []
@@ -321,5 +324,55 @@ describe('unionSourceImageIds', () => {
         userId: USER,
       })
     ).toEqual([9]);
+  });
+});
+
+/**
+ * The audience split. `sourceImageIds` gates the FREE remix-gallery submission
+ * and the `derivedFromHost` badge, and the upload path takes its token from
+ * client-supplied `meta.extra.provenance` — so a token that cost no generation
+ * must not be spendable there. These four assertions are the fix; without the
+ * `k` check every one of them inverts.
+ */
+describe('provenance kind separates the mint from a real job', () => {
+  const USER = 42;
+
+  it('refuses a mint token on the upload path', async () => {
+    const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
+
+    expect(verifyProvenance(minted, USER)).toBeNull();
+    expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: minted })).toBeNull();
+  });
+
+  it('accepts a mint token on the submit path', () => {
+    const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
+
+    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [minted], userId: USER })).toEqual([
+      7,
+    ]);
+  });
+
+  /**
+   * The other direction, and the reason the submit path does not simply accept
+   * anything that verifies: a job token fed back in as a submit input would be
+   * re-signed with a fresh timestamp, renewing its own 30-day expiry for as long
+   * as the holder keeps submitting.
+   */
+  it('refuses a job token presented as a submit input', () => {
+    const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
+
+    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [job], userId: USER })).toEqual([]);
+  });
+
+  /**
+   * Tokens minted before `k` existed are baked into output files that live for
+   * 30 days. They carry no `k` and must keep working on the path they were
+   * issued for, which is why absent means `job` rather than being rejected.
+   */
+  it('treats a token with no kind as a job token', async () => {
+    const legacy = signProvenance({ userId: USER, sourceImageIds: [7] })!;
+
+    expect(verifyProvenance(legacy, USER)).toEqual([7]);
+    expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: legacy })).toEqual([7]);
   });
 });
