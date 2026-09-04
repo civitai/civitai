@@ -4,8 +4,9 @@ import { Announcement } from '~/components/Announcements/Announcement';
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 import { CreatorAnnouncement } from '~/components/Announcements/CreatorAnnouncement';
 import {
-  dismissCreatorAnnouncement,
+  dismissCreatorAnnouncements,
   pruneDismissedCreatorAnnouncements,
+  selectUndismissedAnnouncements,
   useDismissedCreatorAnnouncements,
 } from '~/components/Announcements/creator-announcement-dismissals';
 import { DeleteCreatorAnnouncementButton } from '~/components/Announcements/CreatorAnnouncementsCarousel';
@@ -51,7 +52,7 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
     pruneDismissedCreatorAnnouncements(creatorItems.map((x) => x.id));
   }, [creatorItems]);
 
-  const visibleCreatorItems = creatorItems.filter((x) => !dismissedCreatorIds.includes(x.id));
+  const visibleCreatorItems = selectUndismissedAnnouncements(creatorItems, dismissedCreatorIds);
 
   if (isLoading)
     return (
@@ -112,7 +113,7 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
                 color="gray"
                 radius="xl"
                 className="text-dark-9 dark:text-white"
-                onClick={() => dismissCreatorAnnouncement(announcement.id)}
+                onClick={() => dismissCreatorAnnouncements(announcement.id)}
                 aria-label="Dismiss creator announcement"
               >
                 <IconX size={16} />
