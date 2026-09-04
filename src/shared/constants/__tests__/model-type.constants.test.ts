@@ -7,8 +7,9 @@ import {
   modelTypeGroups,
   resolveModelTypeDefaults,
   retiredModelTypes,
+  leadingUngroupedModelTypes,
   selectableModelTypes,
-  ungroupedModelTypes,
+  trailingUngroupedModelTypes,
 } from '~/shared/constants/model-type.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -115,9 +116,10 @@ describe('model type picker data', () => {
       expect(item.label.length).toBeGreaterThan(0);
     }
 
-    // Only the trailing ungrouped types have no heading; a group of one would repeat its own name.
+    // Only the ungrouped types have no heading; a group of one would repeat its own name.
     expect(data.filter(({ group }) => !group).map(({ value }) => value)).toStrictEqual([
-      ...ungroupedModelTypes,
+      ...leadingUngroupedModelTypes,
+      ...trailingUngroupedModelTypes,
     ]);
   });
 
@@ -198,7 +200,36 @@ describe('model type picker data', () => {
     expect(source).not.toContain('resolveModelTypeDefaults(model)');
   });
 
-  it('labels Checkpoint as Fine-tune', () => {
-    expect(getDisplayName(ModelType.Checkpoint)).toBe('Fine-tune');
+  // Reverted from "Fine-tune" (#4521) after tester complaints that it replaced a term people
+  // already knew. If you are here to rename it again, that is a product call, not a cleanup.
+  it('labels Checkpoint as Checkpoint, not Fine-tune', () => {
+    expect(getDisplayName(ModelType.Checkpoint)).toBe('Checkpoint');
+  });
+
+  // App settings keeps its own hand-written label map instead of calling getDisplayName, so the
+  // test above does not reach it: #4521 renamed Checkpoint in both files and so did the revert,
+  // both times found by grep. Derived rather than hardcoded, so it reddens whichever side moves.
+  it('keeps the App settings label in step with getDisplayName for Checkpoint', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../components/Apps/AppSettingsModal.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain(
+      `{ value: ModelType.Checkpoint, label: '${getDisplayName(ModelType.Checkpoint)}' }`
+    );
+  });
+
+  // Same revert: Checkpoint is offered with no heading rather than under a "Fine-tunes" group of
+  // one. Restoring a heading here reintroduces the word the revert removed.
+  it('offers Checkpoint ungrouped and first, under no heading', () => {
+    const data = getModelTypeSelectData(null);
+
+    expect(data[0]).toStrictEqual({ value: ModelType.Checkpoint, label: 'Checkpoint' });
+    expect(modelTypeGroups.map(({ group }) => group)).toStrictEqual([
+      'Adapters',
+      'Component replacements',
+      'Workflow additives',
+    ]);
   });
 });
