@@ -440,7 +440,7 @@ export async function upsertCreatorAnnouncement({
   const allowance = await getAnnouncementAllowance(userId);
   if (!allowance.eligible)
     throw throwAuthorizationError(
-      `Announcements require a creator score of ${allowance.minScore.toLocaleString()}.`
+      `Broadcasting an announcement requires a creator score of ${allowance.minScore.toLocaleString()}.`
     );
 
   return dbWrite.$transaction(async (tx) => {
@@ -473,10 +473,10 @@ export async function upsertCreatorAnnouncement({
     if (spent >= allowance.limit)
       throw throwBadRequestError(
         allowance.nextAvailableAt
-          ? `You have used your ${
+          ? `You have used all ${
               allowance.limit
-            } announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
-          : 'You have used your announcements for this period.'
+            } of your broadcasts for this period. Next one ${allowance.nextAvailableAt.toDateString()}.`
+          : 'You have used all your broadcasts for this period.'
       );
 
     const announcement = existing

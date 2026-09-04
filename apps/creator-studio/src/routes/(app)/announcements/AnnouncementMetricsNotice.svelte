@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { IconAlertTriangle, IconLayoutGrid } from '@tabler/icons-svelte';
+  import { IconAlertTriangle, IconEye } from '@tabler/icons-svelte';
   import Notice from '$lib/components/Notice.svelte';
   import { ANNOUNCEMENT_METRICS_SINCE_LABEL } from '$lib/impressions';
 
@@ -13,7 +13,7 @@
       on this page still works. Reload in a minute — this is not a report that nobody saw your announcements.
     </Notice>
   {:else}
-    <Notice icon={IconLayoutGrid}>
+    <Notice icon={IconEye}>
       <strong class="font-medium text-white">Seen counts people, not opens.</strong> An announcement
       is counted once per person per visit, once it has been at least half on screen for a full
       second. Counting started on {ANNOUNCEMENT_METRICS_SINCE_LABEL}, so anything you posted before

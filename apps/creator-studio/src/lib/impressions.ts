@@ -6,9 +6,8 @@ export const IMPRESSIONS_SINCE = '2026-08-17';
 export const IMPRESSIONS_FULL = '2026-08-18';
 
 // Announcement reach, clicks and mute events start here — the day that instrumentation shipped,
-// which is later than the feed dates above and unrelated to them. It is also the floor every
-// `actions` read uses, so moving it earlier makes those queries scan more of a 92.8M-row table
-// for rows that cannot exist.
+// which is later than the feed dates above and unrelated to them. This is the date shown to
+// creators, so it has to be the truth.
 export const ANNOUNCEMENT_METRICS_SINCE = '2026-09-04';
 
 const monthDay = new Intl.DateTimeFormat('en-US', {

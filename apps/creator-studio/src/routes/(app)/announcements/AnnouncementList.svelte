@@ -4,6 +4,14 @@
   import type { ActionResult } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
+  import {
+    IconCalendar,
+    IconCalendarOff,
+    IconEye,
+    IconPencil,
+    IconPointer,
+    IconTrash,
+  } from '@tabler/icons-svelte';
   import { DOMAIN_LABELS, type AnnouncementDomain } from '$lib/announcements';
   import type { AnnouncementRow } from '$lib/server/announcements';
   import type { AnnouncementMetrics } from '$lib/server/announcement-analytics';
@@ -100,39 +108,60 @@
             {/each}
           </div>
           <p class="mt-1 line-clamp-2 text-sm text-dark-2">{announcement.content}</p>
-          <p class="mt-1 text-xs text-dark-2">
-            Posted {formatDate(announcement.createdAt)}
-            {#if announcement.endsAt}· ends {formatDate(announcement.endsAt)}{/if}
-          </p>
-          {#if metrics}
-            {@const impressions = seen(announcement.id)}
-            {@const clicks = clicked(announcement.id)}
-            <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-2">
-              <span><span class="font-medium text-white">{num(impressions)}</span> seen</span>
+          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-dark-2">
+            <span class="flex items-center gap-1">
+              <IconCalendar size={14} class="shrink-0" />
+              Posted {formatDate(announcement.createdAt)}
+            </span>
+            {#if announcement.endsAt}
+              <span class="flex items-center gap-1">
+                <IconCalendarOff size={14} class="shrink-0" />
+                Ends {formatDate(announcement.endsAt)}
+              </span>
+            {/if}
+            {#if metrics}
+              {@const impressions = seen(announcement.id)}
+              {@const clicks = clicked(announcement.id)}
+              <span class="flex items-center gap-1" title="People who saw this announcement">
+                <IconEye size={14} class="shrink-0" />
+                <span class="font-medium text-white">{num(impressions)}</span> Seen
+              </span>
               {#if announcement.link}
-                <!-- Clicks are raw presses and "seen" is deduplicated people, so the two are
-                     deliberately not divided into a rate: the units differ and one person
-                     clicking twice would read as 200%. -->
-                <span
-                  ><span class="font-medium text-white">{num(clicks)}</span>
-                  link {clicks === 1 ? 'click' : 'clicks'}</span
-                >
+                <span class="flex items-center gap-1" title="Clicks on this announcement's link">
+                  <IconPointer size={14} class="shrink-0" />
+                  <span class="font-medium text-white">{num(clicks)}</span>
+                  {clicks === 1 ? 'Click' : 'Clicks'}
+                </span>
               {/if}
-            </p>
-          {/if}
+            {/if}
+          </div>
         </div>
         <div class="flex shrink-0 flex-col items-end gap-2">
-          <Button variant="outline" size="sm" onclick={() => onEdit(announcement)}>Edit</Button>
+          {#if confirmingId !== announcement.id}
+            <div class="flex gap-1">
+              <Button variant="ghost" size="sm" onclick={() => onEdit(announcement)}>
+                <IconPencil size={15} class="mr-1" /> Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="text-red-300 hover:text-red-200"
+                onclick={() => (confirmingId = announcement.id)}
+              >
+                <IconTrash size={15} class="mr-1" /> Delete
+              </Button>
+            </div>
+          {/if}
           {#if confirmingId === announcement.id}
             <form method="POST" action="?/delete" use:enhance={() => removed(announcement.id)}>
               <input type="hidden" name="id" value={announcement.id} />
               {#if deleteError?.id === announcement.id}
                 <p class="mb-2 max-w-48 text-right text-sm text-red-300">{deleteError.message}</p>
                 <!-- Keyed on the spend ledger, not on `profileOnly`: an announcement that notified
-                     and was later switched to profile-only still consumed its slot. -->
+                     and was later switched to profile-only still consumed its broadcast. -->
               {:else if announcement.spentSlot}
                 <p class="mb-2 max-w-48 text-right text-xs text-dark-2">
-                  Deleting does not return the slot it used.
+                  Deleting does not return the broadcast it used.
                 </p>
               {/if}
               <div class="flex gap-2">
@@ -154,10 +183,6 @@
                 </Button>
               </div>
             </form>
-          {:else}
-            <Button variant="ghost" size="sm" onclick={() => (confirmingId = announcement.id)}>
-              Delete
-            </Button>
           {/if}
         </div>
       </li>

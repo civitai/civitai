@@ -3,9 +3,14 @@ import { getClickhouse } from '$lib/server/clickhouse';
 import { createCache } from '$lib/server/cache';
 import { IMPRESSION_ENTITY } from '$lib/server/view-entities';
 import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
-import { ANNOUNCEMENT_METRICS_SINCE } from '$lib/impressions';
 
-export type MutePoint = { date: string; muted: number; unmuted: number };
+// Pruning floor for the `actions` reads below, and deliberately EARLIER than the date creators are
+// shown. `actions` is ORDER BY (time, type), so a type filter alone reads all 92.8M rows and only a
+// `time` bound touches the primary key. It must be <= the first possible row and is otherwise free
+// to be conservative: no row of these types can predate the deploy. Server-only — it has no meaning
+// in a browser, and keeping it out of `$lib/impressions.ts` keeps two similar-looking dates from
+// sitting next to each other where one of them would read as the start of counting.
+const ACTIONS_FLOOR = '2026-08-28';
 
 export type AnnouncementMetrics = {
   /** Per announcement id. A missing id means no rows, which is a real zero — both reads are all-time. */
@@ -13,8 +18,8 @@ export type AnnouncementMetrics = {
   clicks: Record<number, number>;
   /** How many people mute this creator's announcements right now. Postgres, so retroactive and exact. */
   mutedNow: number;
-  /** Mute and unmute events per day. Empty before the first event, never backfilled. */
-  muteSeries: MutePoint[];
+  /** Followers, i.e. who a non-profile-only announcement can reach before mutes are subtracted. */
+  followers: number;
 };
 
 // Ten minutes: these are read on every load of a page the creator also composes on, so a save
@@ -41,12 +46,13 @@ export async function getAnnouncementMetrics(
   userId: number,
   announcementIds: number[]
 ): Promise<AnnouncementMetrics> {
-  const [mutedNow, clickhouse] = await Promise.all([
+  const [mutedNow, followers, clickhouse] = await Promise.all([
     countMutes(userId),
+    countFollowers(userId),
     announcementClickhouse.get({ userId, ids: announcementIds.join(',') }),
   ]);
 
-  return { ...clickhouse, mutedNow };
+  return { ...clickhouse, mutedNow, followers };
 }
 
 async function countMutes(userId: number): Promise<number> {
@@ -59,13 +65,29 @@ async function countMutes(userId: number): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
+/**
+ * `UserMetric` rather than counting `UserEngagement`: that table is keyed `(userId, targetUserId)`
+ * and indexed `(type, userId)`, so counting a creator's FOLLOWERS — the target side — matches no
+ * index. The rollup is a primary-key lookup.
+ */
+async function countFollowers(userId: number): Promise<number> {
+  const row = await dbRead
+    .selectFrom('UserMetric')
+    .where('userId', '=', userId)
+    .where('timeframe', '=', 'AllTime')
+    .select('followerCount')
+    .executeTakeFirst();
+
+  return Number(row?.followerCount ?? 0);
+}
+
 async function readClickhouse(
   userId: number,
   idList: string
-): Promise<Omit<AnnouncementMetrics, 'mutedNow'>> {
+): Promise<Omit<AnnouncementMetrics, 'mutedNow' | 'followers'>> {
   const ch = getClickhouse();
 
-  const [impressionRows, clickRows, muteRows] = await Promise.all([
+  const [impressionRows, clickRows] = await Promise.all([
     idList
       ? ch.$query<{ id: number | string; impressions: number | string }>(
           entityImpressionTotalsSql(IMPRESSION_ENTITY.announcement, idList)
@@ -78,23 +100,13 @@ async function readClickhouse(
           // marks, ~900ms) and gets worse by ~215M rows a year. The floor is the day the feature
           // shipped, and no row of these types can predate it.
           `SELECT JSONExtractUInt(details, 'announcementId') AS id, count() AS clicks FROM actions
-           WHERE time >= toDate('${ANNOUNCEMENT_METRICS_SINCE}')
+           WHERE time >= toDate('${ACTIONS_FLOOR}')
              AND type = 'Announcement_Click'
              AND JSONExtractUInt(details, 'creatorId') = ${userId}
              AND id IN (${idList})
            GROUP BY id`
         )
       : [],
-    ch.$query<{ date: string; muted: number | string; unmuted: number | string }>(
-      `SELECT toDate(time) AS date,
-              countIf(type = 'Announcement_Mute') AS muted,
-              countIf(type = 'Announcement_Unmute') AS unmuted
-       FROM actions
-       WHERE time >= toDate('${ANNOUNCEMENT_METRICS_SINCE}')
-         AND type IN ('Announcement_Mute', 'Announcement_Unmute')
-         AND JSONExtractUInt(details, 'creatorId') = ${userId}
-       GROUP BY date ORDER BY date`
-    ),
   ]);
 
   return {
@@ -102,10 +114,5 @@ async function readClickhouse(
       impressionRows.map((r) => [Number(r.id), Number(r.impressions)])
     ),
     clicks: Object.fromEntries(clickRows.map((r) => [Number(r.id), Number(r.clicks)])),
-    muteSeries: muteRows.map((r) => ({
-      date: String(r.date),
-      muted: Number(r.muted),
-      unmuted: Number(r.unmuted),
-    })),
   };
 }
