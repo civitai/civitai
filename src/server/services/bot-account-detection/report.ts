@@ -1,6 +1,6 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
 import type { BotAccountCohortMember, SurfaceCounts } from './cohort';
-import { renderSubScores, type BotAccountScore } from './scoring';
+import { renderNotes, renderSubScores, type BotAccountScore } from './scoring';
 
 /**
  * Turning a scored cohort into abuse-board reports.
@@ -104,11 +104,18 @@ export function buildFinding(
   // Floored at zero: an account timestamped after the scan instant is clock skew between the app and
   // the database, not a negative age, and a negative figure in the reason reads as corrupt data.
   const ageHours = Math.max(0, (observedAt.getTime() - member.createdAt.getTime()) / 3_600_000);
+  // 🔴 THE NOTES ARE THE ONLY PART A MODERATOR CAN ACT ON. `Per-heuristic: a=0.60, b=0.00` says
+  // which signal fired and nothing about WHAT IT SAW — so the clause below carries the cluster
+  // sizes, the posting rate and the shared text, and it is placed BEFORE the numbers because it is
+  // the part that gets read. It is omitted entirely when nothing fired rather than rendered as an
+  // empty clause; that is the case where the numbers alone are the whole story.
+  const notes = renderNotes(score.subScores);
   const reason = truncateReason(
     `Shadow-mode observation — NOT actioned. Account ${member.userId}` +
       `${member.username ? ` (${member.username})` : ''} registered ` +
       `${member.createdAt.toISOString()}, ${ageHours.toFixed(1)}h old at scan. ` +
       `${renderPostCounts(member.posts)} ` +
+      `${notes ? `Signals — ${notes}. ` : ''}` +
       `Per-heuristic: ${renderSubScores(score.subScores)}. ` +
       `Blended confidence ${score.confidence.toFixed(2)}.`
   );

@@ -281,8 +281,14 @@ export function resolveDbAliases(source: string): string {
  * 🔴 `dbRead['user']['update'](…)` reaches the same method with no dot in it, and prettier wraps a
  * long chain as `dbRead.user\n  .update(` — a newline where the old pattern required none. Both
  * left the operation ledger unmoved.
+ *
+ * 🔴 OPTIONAL CHAINING IS THE THIRD SPELLING, and it is not exotic here — it is IDIOMATIC. Several
+ * handles in this tree are typed `| undefined` (`clickhouse` most of all), so `?.` is what anyone
+ * reaching for one actually writes, and `dbWrite?.user.update(…)` left BOTH ledgers unmoved: the
+ * `?` sat between the handle and the `.` where the pattern required adjacency. Both the dot form
+ * (`a?.b`) and the computed form (`a?.['b']`) are covered.
  */
-const SEGMENT = String.raw`(?:\s*\.\s*([A-Za-z_$][\w$]*)|\s*\[\s*['"]([^'"\n\]]+)['"]\s*\])`;
+const SEGMENT = String.raw`(?:\s*\??\s*\.\s*([A-Za-z_$][\w$]*)|\s*(?:\?\s*\.)?\s*\[\s*['"]([^'"\n\]]+)['"]\s*\])`;
 
 /**
  * `db.model.method(` / `dbRead.$rawMethod(` / `dbWrite['model']['method'](` — every shape a Prisma
@@ -345,6 +351,88 @@ function importSpecifiers(sources: ReturnType<typeof detectorSources>): string[]
   for (const { source } of sources)
     for (const match of source.matchAll(MODULE_REF)) found.add(match[1] ?? match[2] ?? match[3]);
   return [...found].sort();
+}
+
+/**
+ * A method called on a ClickHouse handle — `clickhouse.$query(`, `ch.$exec(`.
+ *
+ * 🔴 A SECOND LEDGER, BECAUSE THE FIRST ONE IS BLIND HERE BY CONSTRUCTION. `DB_CALL` above anchors
+ * on `db`/`dbRead`/`dbWrite`; the ClickHouse client is none of those, so a call on it moves the
+ * operation ledger not at all. That matters because the client's surface is not read-only: `$exec`
+ * takes the same kind of string, runs arbitrary DDL/DML, and returns `void` — so a mutation through
+ * it produces no value anyone would notice was missing.
+ *
+ * The handle names are matched rather than tracked by dataflow, for the same reason
+ * `resolveDbAliases` is a regex: following a client through property assignment is an analysis this
+ * file does not attempt. `ch` is included because that is what `createEvidenceReader` binds it to.
+ * The `$`-prefixed method requirement is what keeps ordinary `.map(`/`.filter(` on a variable named
+ * `ch` out of the set.
+ *
+ * 🔴 THE TYPE-ARGUMENT LIST IS PART OF THE PATTERN, and leaving it out made the ledger return an
+ * empty set for a module that calls `$query` on every run. `ch.$query<{ ip: string }>(sql)` puts a
+ * generic argument between the method name and the `(`, so a pattern requiring them adjacent matches
+ * nothing — while `$exec(` , which nobody writes with type arguments, matched fine. The result was
+ * the worst possible shape: the guard's negative control passed, its assertion read a reassuring
+ * `[]`, and it was blind to the exact call the real code makes. Caught only because the positive
+ * control asserts the benign shape IS seen rather than only that the hostile one is.
+ *
+ * The type-argument body excludes parentheses so the match cannot run past the call it belongs to.
+ *
+ * 🔴 OPTIONAL CHAINING AND THE BRACKET FORM ARE BOTH MATCHED, and the first of those is the one that
+ * mattered: `~/server/clickhouse/client` exports `clickhouse: CustomClickHouseClient | undefined`,
+ * so `clickhouse?.$exec(…)` is not an evasion, it is the SPELLING THE TYPE PUSHES YOU TOWARDS —
+ * `evidence.ts` only avoids it by binding a narrowed local first. Against the adjacency-requiring
+ * pattern it recorded nothing at all, and `$exec` runs arbitrary DDL/DML and returns `void`, so a
+ * mutation through it produces no value anyone would notice was missing. `ch['$exec'](…)` is the
+ * same hole with a different keystroke.
+ *
+ * 🔴 WHAT REMAINS OPEN, stated rather than implied by the widening: this matches the two handle
+ * NAMES it knows and a `$`-prefixed method spelled as a literal. It does not follow a client through
+ * an assignment to a differently-named variable, a destructure (`const { $exec } = clickhouse`), an
+ * object field, a function return, or a computed key built at runtime (`ch[m]`). Those are dataflow,
+ * not pattern-matching, and this file does not attempt them — the import ledger is what bounds the
+ * blast radius there, by refusing a new specifier without a maintainer looking at it.
+ */
+const CLICKHOUSE_CALL =
+  /\b(?:clickhouse|ch)\s*(?:\??\s*\.\s*(\$[A-Za-z_$][\w$]*)|(?:\s*\?\s*\.)?\s*\[\s*['"](\$[A-Za-z_$][\w$]*)['"]\s*\])\s*(?:<[^()]*>)?\s*\(/g;
+
+export function clickhouseMethods(sources: ReturnType<typeof detectorSources>): string[] {
+  const found = new Set<string>();
+  for (const { source } of sources)
+    for (const match of source.matchAll(CLICKHOUSE_CALL)) found.add(match[1] ?? match[2]);
+  return [...found].sort();
+}
+
+/**
+ * Every SQL-looking string literal in the module.
+ *
+ * Deliberately over-inclusive: it collects any template or quoted string whose first word is a SQL
+ * verb, whether or not it is passed to ClickHouse. Over-inclusion is the safe direction — it can
+ * only add candidates for the "is it a SELECT" test below, never hide one — and it means a statement
+ * built into a variable before being passed is still seen, which is exactly how `registrationIpSql`
+ * is written.
+ */
+const SQL_VERB = /^\s*(select|insert|alter|drop|delete|update|create|truncate|optimize|rename)\b/i;
+
+export function clickhouseStatements(sources: ReturnType<typeof detectorSources>): string[] {
+  const out: string[] = [];
+  for (const { source } of sources) {
+    // Template literals and quoted strings alike. The comment stripper has already run, so nothing
+    // collected here is prose.
+    for (const match of source.matchAll(/`([^`]*)`|'([^'\n]*)'|"([^"\n]*)"/g)) {
+      const text = match[1] ?? match[2] ?? match[3] ?? '';
+      if (SQL_VERB.test(text)) out.push(text);
+    }
+  }
+  return out;
+}
+
+/** The statements that are NOT reads. The assertion this exists for expects an empty list, so the
+ *  control that proves it can be non-empty is a test of its own. */
+export function nonSelectClickhouseStatements(
+  sources: ReturnType<typeof detectorSources>
+): string[] {
+  return clickhouseStatements(sources).filter((sql) => !/^\s*select\b/i.test(sql));
 }
 
 /**
@@ -642,12 +730,25 @@ describe('the detector has no write surface', () => {
     expect(importSpecifiers(planted)).toEqual(['~/server/services/user-restriction.service']);
   });
 
-  it('performs exactly five database operations, all of them reads', () => {
-    // 🔴 THE LEDGER. A write added anywhere in these files is a sixth member and fails here; a read
-    // removed is a missing member and fails here too (dropping `commentV2` would silently turn
+  it('performs exactly seven database operations, all of them reads', () => {
+    // 🔴 THE LEDGER. A write added anywhere in these files is an eighth member and fails here; a
+    // read removed is a missing member and fails here too (dropping `commentV2` would silently turn
     // every newer-comment-only account into a false negative).
+    //
+    // 🔴 IT WENT FROM FIVE TO SEVEN WITH THE HEURISTICS, AND THE TWO NEW MEMBERS ARE THE WHOLE
+    // DATABASE COST OF THIS CHANGE. `comment.findMany`/`commentV2.findMany` are the content samples
+    // the templating heuristic compares. Note what is NOT here: the velocity heuristic added
+    // nothing (it reads counts the cohort already carried) and the clustering heuristic's email
+    // half added nothing (a wider `select` on the existing `user.findMany` is not a new operation).
+    //
+    // 🔴 THIS LEDGER CANNOT SEE THE CLICKHOUSE READ — `DB_CALL` anchors on a `db` handle and the
+    // ClickHouse client is not one. That is not a gap being tolerated; it is why the separate
+    // ClickHouse ledger below exists. Adding a source that is not Prisma leaves this assertion
+    // completely unmoved, which is the exact shape of hole this file is built to refuse.
     expect(databaseOperations(detectorSources())).toEqual([
+      'comment.findMany',
       'comment.groupBy',
+      'commentV2.findMany',
       'commentV2.groupBy',
       'image.groupBy',
       'model.groupBy',
@@ -661,19 +762,130 @@ describe('the detector has no write surface', () => {
     // ledger above completely unmoved. Adding a module to this list is the moment to ask whether
     // the shadow guarantee still holds — and, per the file header, WHICH BINDING is taken from it,
     // which this list cannot see.
+    //
+    // 🔴 THE ONE ENTRY THAT CHANGES THE THREAT MODEL IS `~/server/clickhouse/client`. Every other
+    // new member is a local module inside this tree. That one is a NEW EXTERNAL DATA SYSTEM, and
+    // the question this list exists to force is what else its module exports: it exports a client
+    // whose surface includes `$exec`, which runs arbitrary statements and returns nothing. Nothing
+    // in THIS assertion can tell `clickhouse` apart from `$exec` being taken off the same
+    // specifier — that is the "which BINDING" gap named in the file header — so the ClickHouse
+    // ledger below asserts the method set and the statement text separately.
     expect(importSpecifiers(detectorSources())).toEqual([
+      '../scoring',
+      './clustering',
       './cohort',
+      './evidence',
+      './heuristics',
       './job',
+      './ramp',
       './report',
       './scoring',
+      './similarity',
+      './velocity',
       '@civitai/moderation',
+      // Pure string constants and one string builder — no client, no env, no IO. It is the SAME
+      // predicate `apps/moderator/src/lib/server/reactor-lookup.service.ts` reads `userActivities`
+      // with, shared rather than copied; a second hand-written copy is how two readers of one table
+      // silently stop agreeing about what an address means.
+      '@civitai/shared/clickhouse-ip-filters',
+      '~/server/clickhouse/client',
       '~/server/db/client',
       '~/server/logging/client',
       '~/server/services/bot-account-detection/cohort',
+      '~/server/services/bot-account-detection/evidence',
       '~/server/services/bot-account-detection/run',
       '~/server/services/moderator-app.service',
       '~/shared/utils/prisma/enums',
     ]);
+  });
+
+  it('the ClickHouse scanner can see a call and a statement — controls, both halves', () => {
+    // 🔴 VALIDATE THE INSTRUMENT BEFORE READING ITS VERDICT. The two assertions after this one are
+    // both ZEROES ("no method other than $query", "no non-SELECT statement"), and a reassuring zero
+    // is indistinguishable from a scanner wired to nothing. Both controls are built from the exact
+    // text a real regression would carry.
+    const planted = asSources({
+      'a.ts': `await clickhouse.$exec(\`ALTER TABLE default.userActivities DELETE WHERE ip = ''\`);\n`,
+    });
+    // Positive control: the method scanner CAN produce a non-empty result.
+    expect(clickhouseMethods(planted)).toEqual(['$exec']);
+    // Positive control: the statement scanner CAN find a non-SELECT.
+    expect(nonSelectClickhouseStatements(planted)).toHaveLength(1);
+
+    // And it does not fire on the shape the module actually uses.
+    const benign = asSources({ 'b.ts': "await ch.$query<{ip: string}>('SELECT ip FROM t');\n" });
+    expect(clickhouseMethods(benign)).toEqual(['$query']);
+    expect(nonSelectClickhouseStatements(benign)).toEqual([]);
+  });
+
+  it('🔴 sees a ClickHouse call spelled with OPTIONAL CHAINING or a bracket key', () => {
+    // 🔴 Red before the widening, and this is not an exotic spelling: `clickhouse` is typed
+    // `| undefined`, so `clickhouse?.$exec(…)` is what the type pushes anyone towards. Against the
+    // adjacency-requiring pattern it recorded NOTHING — the ledger read `['$query']`, exactly as it
+    // does on a clean tree, so the reassuring answer and the escaped answer were the same string.
+    //
+    // Each widening gets its OWN control rather than one case asserting both, so a regression names
+    // which spelling came back.
+    const optional = asSources({
+      'a.ts': `await clickhouse?.$exec(\`ALTER TABLE default.userActivities DELETE WHERE ip = ''\`);\n`,
+    });
+    expect(clickhouseMethods(optional)).toEqual(['$exec']);
+
+    const bracket = asSources({
+      'b.ts': `await ch['$exec'](\`ALTER TABLE default.userActivities DELETE WHERE ip = ''\`);\n`,
+    });
+    expect(clickhouseMethods(bracket)).toEqual(['$exec']);
+
+    const optionalBracket = asSources({ 'c.ts': `await ch?.['$exec']('DROP TABLE t');\n` });
+    expect(clickhouseMethods(optionalBracket)).toEqual(['$exec']);
+
+    // And the widening did not swallow the benign shape it has to keep seeing.
+    expect(
+      clickhouseMethods(
+        asSources({ 'd.ts': "await ch.$query<{ip: string}>('SELECT ip FROM t');\n" })
+      )
+    ).toEqual(['$query']);
+    // Nor does it now match an ordinary array method on a variable called `ch` — the `$` prefix is
+    // still what keeps `.map(`/`.filter(` out, and a widened pattern is the moment to re-check it.
+    expect(clickhouseMethods(asSources({ 'e.ts': 'const x = ch?.map((r) => r.ip);\n' }))).toEqual(
+      []
+    );
+  });
+
+  it('🔴 sees a Prisma write spelled with OPTIONAL CHAINING', () => {
+    // Same class, other ledger: `dbWrite?.user.update(…)` put the `?` exactly where `SEGMENT`
+    // required a bare `.`, so it contributed no operation and the ledger stayed at seven members.
+    // Its own control, separate from the ClickHouse one above.
+    const optional = asSources({ 'a.ts': 'await dbWrite?.user.update({ where: { id } });\n' });
+    expect(databaseOperations(optional)).toEqual(['user.update']);
+
+    const optionalBracket = asSources({ 'b.ts': "await dbRead?.['user']?.['update']({ id });\n" });
+    expect(databaseOperations(optionalBracket)).toEqual(['user.update']);
+
+    // The benign shapes the ledger already saw still read the same, so the widening added members
+    // rather than moving them.
+    expect(
+      databaseOperations(asSources({ 'c.ts': 'await dbRead.comment.findMany(args);\n' }))
+    ).toEqual(['comment.findMany']);
+  });
+
+  it('calls exactly one ClickHouse method, and it is the read one', () => {
+    // 🔴 THE LEDGER THE PRISMA ONE STRUCTURALLY CANNOT PROVIDE. `DB_CALL` anchors on a `db` handle,
+    // so a ClickHouse call contributes nothing to it — the operation ledger above stays at seven
+    // members whatever this module does to ClickHouse. `$exec` is on the same client and the same
+    // import, takes the same kind of string, and runs arbitrary DDL/DML while returning nothing.
+    // An asserted set, so it fails if a second method appears as well as if this one goes.
+    expect(clickhouseMethods(detectorSources())).toEqual(['$query']);
+  });
+
+  it('every ClickHouse statement it holds is a bare SELECT', () => {
+    // The method ledger says which call is made; this says what is handed to it. They are different
+    // claims — `$query` is a read method, but the scanner cannot know that the string it is given
+    // is a read, and ClickHouse will happily accept a mutation through a query path.
+    expect(nonSelectClickhouseStatements(detectorSources())).toEqual([]);
+    // 🔴 POSITIVE CONTROL ON THE REAL TREE, not just on a fixture: an empty list above is only
+    // meaningful if the walk found statements to look at in the first place.
+    expect(clickhouseStatements(detectorSources()).length).toBeGreaterThanOrEqual(1);
   });
 
   it('names no write client, and no raw-SQL escape hatch on EITHER handle', () => {

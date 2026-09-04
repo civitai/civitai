@@ -7,11 +7,21 @@ import {
   collectCohort,
   type CohortReader,
 } from './cohort';
+import {
+  MAX_CONTENT_SAMPLES,
+  collectCohortSignals,
+  emptyCohortSignals,
+  type EvidenceReader,
+} from './evidence';
+import { BOT_ACCOUNT_HEURISTICS, isCommonEmailDomain } from './heuristics';
 import { BOT_ACCOUNT_DETECTOR, buildFinding, buildReports } from './report';
 import {
-  BOT_ACCOUNT_HEURISTICS,
+  MIN_REPORTED_CONFIDENCE,
+  confidenceBucketCounters,
   heuristicCounters,
+  partitionByConfidence,
   scoreAccount,
+  soleSignalCounters,
   type BotAccountHeuristic,
 } from './scoring';
 
@@ -34,6 +44,15 @@ export type BotAccountReportSink = (report: AbuseReportInput) => Promise<unknown
 
 export type BotAccountDetectionDeps = {
   reader: CohortReader;
+  /**
+   * The cohort-level sources — registration IPs and content samples.
+   *
+   * Optional, and its absence is a REAL state rather than a test affordance: a run without it scores
+   * the velocity heuristic normally and the two ring heuristics against an empty index. That is why
+   * `emptyCohortSignals()` sets both source flags to "did not run" — so the counters say the ring
+   * heuristics had no data, instead of the run reporting that nobody shared anything.
+   */
+  evidence?: EvidenceReader;
   sendReport: BotAccountReportSink;
   /** The producer's clock. Injected, because the report's `startedAt`/`finishedAt` are the producer's
    *  own times and the board's "how current is this" reading depends on them being real. */
@@ -65,14 +84,40 @@ export type BotAccountDetectionOptions = {
   pageSize?: number;
   maxAccounts?: number;
   maxFindingsPerReport?: number;
+  /**
+   * The confidence at or above which a scored member becomes a finding. Defaults to
+   * `MIN_REPORTED_CONFIDENCE`.
+   *
+   * 🔴 IT FILTERS REPORTING, NEVER SCORING. Every cohort member is scored and lands in the
+   * distribution counters whatever this is set to; the only thing it decides is whether a moderator
+   * sees a row. Setting it to 0 restores the previous behaviour — every member reported — and is
+   * how a deliberate full-cohort grading run is requested, rather than something that happens by
+   * default on a live board.
+   */
+  minConfidence?: number;
+  /** Ceiling on content rows read for the templating heuristic. Defaults to `MAX_CONTENT_SAMPLES`. */
+  maxContentSamples?: number;
 };
 
 export type BotAccountDetectionResult = {
   detector: string;
   /** Accounts read from the window, before the has-posted filter. */
   scanned: number;
-  /** Accounts that made the cohort, i.e. findings. */
+  /**
+   * Accounts that made the cohort and were SCORED.
+   *
+   * 🔴 NO LONGER THE NUMBER OF FINDINGS. It was, while every member became one; the threshold broke
+   * that identity and the two names are kept apart deliberately so a caller cannot read a cohort
+   * size as a finding count.
+   */
   cohortSize: number;
+  /** Members at or above the threshold — the rows a moderator actually receives. */
+  findingsReported: number;
+  /** Members scored BELOW the threshold. Never zero-by-omission: this is the number that makes a
+   *  small finding count readable. */
+  findingsSuppressed: number;
+  /** The threshold this run applied. */
+  minConfidence: number;
   /** The window held more accounts than the cap allowed the run to read. */
   capped: boolean;
   reports: number;
@@ -93,6 +138,15 @@ export class BotAccountReportError extends Error {
   }
 }
 
+/** A map lookup that cannot fail silently. The alternative — `map.get(k)!` — turns a broken
+ *  invariant into `undefined` flowing into a reason string as "Account undefined". */
+function mustGet<K, V>(map: Map<K, V>, key: K): V {
+  const value = map.get(key);
+  if (value === undefined)
+    throw new Error(`bot-account-detection: no cohort member for scored id ${String(key)}`);
+  return value;
+}
+
 export async function runBotAccountDetection(
   deps: BotAccountDetectionDeps,
   options: BotAccountDetectionOptions = {}
@@ -102,6 +156,8 @@ export async function runBotAccountDetection(
   const pageSize = options.pageSize ?? COHORT_PAGE_SIZE;
   const maxAccounts = options.maxAccounts ?? MAX_COHORT_ACCOUNTS;
   const maxFindingsPerReport = options.maxFindingsPerReport ?? MAX_FINDINGS_PER_REPORT;
+  const minConfidence = options.minConfidence ?? MIN_REPORTED_CONFIDENCE;
+  const maxContentSamples = options.maxContentSamples ?? MAX_CONTENT_SAMPLES;
   const log = deps.log ?? (() => undefined);
   const checkCanceled = deps.checkCanceled ?? (() => undefined);
 
@@ -122,10 +178,47 @@ export async function runBotAccountDetection(
     createdAfter: createdAfter.toISOString(),
   });
 
+  // The cohort-level indexes, read once for the whole run. Without an evidence reader the ring
+  // heuristics score against an empty index whose source flags say "did not run" — which the
+  // counters below publish, so a run with no evidence source is never mistaken for a run that found
+  // no rings.
+  const signals = deps.evidence
+    ? await collectCohortSignals(deps.evidence, cohort.members, {
+        chunkSize: pageSize,
+        maxContentSamples,
+        // The window this run already computed, handed to the ClickHouse read as its `time` bound.
+        // Every cohort account was created after it, so it prunes the scan without removing a row
+        // the query wants.
+        createdAfter,
+        checkCanceled,
+        log,
+      })
+    : emptyCohortSignals();
+  log('bot-account-detection:signals', {
+    registrationIps: signals.sources.registrationIps,
+    contentSamples: signals.sources.contentSamples,
+    contentBudgetExhausted: signals.sources.contentBudgetExhausted,
+    membersSampledForContent: signals.sources.membersSampledForContent,
+    distinctIps: signals.membersPerIp.size,
+    distinctDomains: signals.membersPerDomain.size,
+    distinctFingerprints: signals.membersPerFingerprint.size,
+  });
+
+  const memberById = new Map(cohort.members.map((m) => [m.userId, m]));
   const scores = cohort.members.map((member) =>
-    scoreAccount(heuristics, { member, now: startedAt })
+    scoreAccount(heuristics, { member, now: startedAt, signals })
   );
-  const findings = cohort.members.map((member, i) => buildFinding(member, scores[i], startedAt));
+
+  // 🔴 THE THRESHOLD, APPLIED HERE AND NOWHERE ELSE. Every member above was scored; only the
+  // reported half becomes a finding. The suppressed half is still counted, bucketed and summarised
+  // below — a member nobody can see is a member nobody can grade, and grading is the entire purpose
+  // of the shadow phase.
+  const { reported, suppressed } = partitionByConfidence(scores, minConfidence);
+  const findings = reported.map((score) =>
+    // Every score was built from a member, so the lookup cannot miss; the non-null assertion would
+    // be the only place in this module where a missing key is silent, so it throws instead.
+    buildFinding(mustGet(memberById, score.userId), score, startedAt)
+  );
 
   const finishedAt = deps.now();
 
@@ -141,6 +234,16 @@ export async function runBotAccountDetection(
   const postedAll = cohort.members.reduce((sum, m) => sum + m.posts.all.total, 0);
   const postedExcluded = cohort.members.reduce((sum, m) => sum + m.posts.excluded.total, 0);
 
+  // 🔴 THE DOMAIN LIST'S OWN BLIND SPOT, AS A NUMBER. `COMMON_EMAIL_DOMAINS` scores a member's
+  // domain half at 0 by construction, so a real ring that registered on a listed provider is
+  // invisible to the clustering heuristic and to every counter that reads its score. This is how
+  // many members that applied to — the SIZE of the blind spot, which is the most the shadow phase
+  // can measure; it cannot say how many of them were a ring. It was asserted in a code comment
+  // before it existed anywhere, which is the failure mode the comment was warning about.
+  const domainsSuppressed = cohort.members.filter(
+    (m) => m.emailDomain !== null && isCommonEmailDomain(m.emailDomain)
+  ).length;
+
   const counters: Record<string, number> = {
     window_hours: windowHours,
     cohort_scanned: cohort.scanned,
@@ -155,7 +258,42 @@ export async function runBotAccountDetection(
     // on, because its absence is indistinguishable from the producer not running.
     cohort_capped: cohort.capped ? 1 : 0,
     heuristics_registered: heuristics.length,
+
+    // 🔴 THE SUPPRESSION LEDGER. `findings_reported` on its own is the reassuring number this
+    // project keeps being burned by — "12 findings" reads as a quiet day whether the cohort was
+    // twelve accounts or the whole day's signups. The pair, plus the threshold that produced it,
+    // plus the full distribution below, is what makes a small number readable. All emitted every
+    // run, zeros included.
+    findings_reported: reported.length,
+    findings_suppressed: suppressed.length,
+    // A float, which the contract's `z.record(z.string(), z.number())` accepts. Recorded because a
+    // distribution is uninterpretable without the cut that was applied to it, and the cut is
+    // configurable.
+    report_min_confidence: minConfidence,
+
+    // 🔴 EVIDENCE AVAILABILITY, AS 0/1 ON EVERY RUN. Two of the three heuristics score 0 when their
+    // source is missing, which is byte-identical to scoring 0 because nothing was found. These are
+    // the only things that tell the two apart, so a grading pass can exclude the runs whose ring
+    // heuristics were blind rather than averaging them in as evidence of no rings.
+    evidence_registration_ips: signals.sources.registrationIps ? 1 : 0,
+    // The content read's own availability, on the same 0/1 terms and for the same reason: a
+    // templating score of 0 across the cohort means "nobody templated" only when this is 1.
+    evidence_content_samples: signals.sources.contentSamples ? 1 : 0,
+    evidence_content_budget_exhausted: signals.sources.contentBudgetExhausted ? 1 : 0,
+    evidence_members_sampled_for_content: signals.sources.membersSampledForContent,
+    evidence_content_budget: maxContentSamples,
+    evidence_distinct_registration_ips: signals.membersPerIp.size,
+    evidence_distinct_email_domains: signals.membersPerDomain.size,
+    evidence_distinct_content_fingerprints: signals.membersPerFingerprint.size,
+    domains_suppressed_common: domainsSuppressed,
+
     ...heuristicCounters(scores),
+    // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
+    ...confidenceBucketCounters(scores),
+    // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
+    // `soleSignalCounters` — this is what a known collision (a generation-parameter paste matching
+    // itself under `content-templating`) shows up as, and it is not visible in `fired`.
+    ...soleSignalCounters(reported, heuristics),
   };
 
   // 🔴 The truncation sentence names WHICH END was dropped. "TRUNCATED at the N-account cap" alone
@@ -170,6 +308,44 @@ export async function runBotAccountDetection(
     `the site; ${nothingOnSite} of the ${cohort.members.length} have nothing left on the site at ` +
     `all. Membership counts everything an account posted, so an account whose uploads were all ` +
     `blocked or removed is included rather than dropped.` +
+    // 🔴 THE SUPPRESSION SENTENCE. The counters carry this too, but the summary is what a human
+    // reads first, and a finding count with no denominator beside it is the shape of every
+    // reassuring zero this detector was built to avoid producing.
+    ` ${reported.length} scored at or above the ${minConfidence.toFixed(
+      2
+    )} reporting threshold and ` +
+    `appear below; ${suppressed.length} scored under it and are counted in the ` +
+    `confidence_bucket_* counters but NOT reported as findings.` +
+    // Two of three heuristics are ring detectors and both can go dark. Saying so in the summary
+    // stops a reader treating a low-confidence run as evidence that no ring existed.
+    (signals.sources.registrationIps
+      ? ''
+      : ` 🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run, so the clustering heuristic scored on ` +
+        `email domain alone — a low score from it is not evidence that accounts share no IP.`) +
+    // 🔴 THE READ RAN AND MATCHED NOTHING — the case the availability flag alone cannot express.
+    // `evidence_registration_ips: 1` with `evidence_distinct_registration_ips: 0` over a non-empty
+    // cohort is the signature of a query that is wrong rather than of a day with no shared
+    // addresses: a changed column name, a moved table, an over-tight filter. The counters already
+    // carry both numbers; a human reading the summary had nothing, and this is the reader who would
+    // recognise it.
+    (signals.sources.registrationIps && signals.membersPerIp.size === 0 && cohort.members.length > 0
+      ? ` 🔴 THE REGISTRATION-IP READ RAN AND MATCHED NOTHING for any of the ` +
+        `${cohort.members.length} member(s). That is possible on a quiet day, and it is also what a ` +
+        `wrong column, a moved table or an over-tight filter looks like — the two are not ` +
+        `distinguishable from this run alone.`
+      : '') +
+    (signals.sources.contentSamples
+      ? ''
+      : ` 🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read either did not run or failed ` +
+        `and its partial result was discarded — so the content-templating heuristic scored 0 for ` +
+        `every member for want of data. That is not evidence that no accounts posted the same text. ` +
+        `The rest of the run was scored normally.`) +
+    (signals.sources.contentBudgetExhausted
+      ? ` 🔴 THE CONTENT SAMPLE BUDGET (${maxContentSamples} rows) WAS EXHAUSTED after ` +
+        `${signals.sources.membersSampledForContent} of ${cohort.members.length} members. Members ` +
+        `are sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ` +
+        `scored 0 on content templating for want of data.`
+      : '') +
     (cohort.capped
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +
         `${cohort.scanned} read are the most recent of the window and the unread remainder is its ` +
@@ -207,6 +383,9 @@ export async function runBotAccountDetection(
     detector: BOT_ACCOUNT_DETECTOR,
     scanned: cohort.scanned,
     cohortSize: cohort.members.length,
+    findingsReported: reported.length,
+    findingsSuppressed: suppressed.length,
+    minConfidence,
     capped: cohort.capped,
     reports: reports.length,
     reportsSent: sent,

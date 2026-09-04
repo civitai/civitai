@@ -14,6 +14,7 @@ import {
   mergePostCounts,
   modelCountArgs,
   newAccountPageArgs,
+  normalizeEmailDomain,
   selectCohortMembers,
   type CohortDb,
   type CohortReader,
@@ -29,6 +30,10 @@ const account = (id: number, createdAt = NOW): NewAccountRow => ({
   id,
   username: `user${id}`,
   createdAt,
+  // Per-account domain by default, so a fixture never accidentally builds a cluster the test did
+  // not ask for — the clustering heuristic counts members sharing a domain, and a shared fixture
+  // domain would silently make every paging test a ring.
+  email: `user${id}@user${id}.test`,
 });
 
 const surface = (partial: Partial<SurfaceCounts> = {}): SurfaceCounts => {
@@ -158,8 +163,12 @@ describe('newAccountPageArgs', () => {
     expect(seed.orderBy).toEqual({ id: 'desc' });
   });
 
-  it('selects only the columns the report cites', () => {
-    expect(args.select).toEqual({ id: true, username: true, createdAt: true });
+  it('selects only the columns the report cites, plus the email the clustering heuristic needs', () => {
+    // 🔴 `email` is here so the registration-cluster heuristic gets a domain WITHOUT a second
+    // query — widening a `select` adds no database operation, which is what keeps the asserted
+    // operation ledger in `no-write-surface.test.ts` at five reads. The address itself does not
+    // survive `selectCohortMembers`; see the `emailDomain` cases below.
+    expect(args.select).toEqual({ id: true, username: true, createdAt: true, email: true });
   });
 });
 
@@ -517,9 +526,12 @@ describe('selectCohortMembers', () => {
   it('carries the account identity and its activity through', () => {
     const created = at('2026-09-03T09:30:00.000Z');
     const members = selectCohortMembers(
-      [{ id: 5, username: 'spam5', createdAt: created }],
+      [{ id: 5, username: 'spam5', createdAt: created, email: 'spam5@Ring.Example' }],
       counts([[5, { comments: 2, models: 1, images: 3 }]])
     );
+    // 🔴 A WHOLE-OBJECT EQUALITY, not a `toMatchObject`. That is what makes the next assertion
+    // meaningful: `toEqual` fails if the member grows a field, so the email address CANNOT
+    // reappear on this object without a failing test.
     expect(members[0]).toEqual({
       userId: 5,
       username: 'spam5',
@@ -529,7 +541,56 @@ describe('selectCohortMembers', () => {
         visible: { comments: 2, models: 1, images: 3, total: 6 },
         excluded: { comments: 0, models: 0, images: 0, total: 0 },
       },
+      // Lowercased, and the local part is gone.
+      emailDomain: 'ring.example',
     });
+  });
+
+  it('🔴 reduces the email to its domain and keeps the address nowhere', () => {
+    // The reduction happens in the pure selector rather than inside the heuristic that consumes it,
+    // so nothing downstream — no score, counter, note or reason string — can hold an address. This
+    // asserts the boundary rather than the heuristic's use of it.
+    const [only] = selectCohortMembers(
+      [
+        {
+          id: 7,
+          username: 'u7',
+          createdAt: at('2026-09-03T09:30:00.000Z'),
+          email: 'someone@a.test',
+        },
+      ],
+      counts([[7, { comments: 1 }]])
+    );
+    expect(only.emailDomain).toBe('a.test');
+    expect(JSON.stringify(only)).not.toContain('someone');
+  });
+});
+
+describe('normalizeEmailDomain', () => {
+  it('lowercases and trims a real domain', () => {
+    expect(normalizeEmailDomain('User@Example.COM')).toBe('example.com');
+    expect(normalizeEmailDomain('u@ example.com ')).toBe('example.com');
+  });
+
+  it('splits on the LAST @, because a local part may legally contain one', () => {
+    // A domain cannot contain `@`; a quoted local part can. Splitting on the first would yield a
+    // cluster key with an `@` in it, and two differently-quoted addresses at the same real domain
+    // would then fail to cluster.
+    expect(normalizeEmailDomain('"odd@name"@real.example')).toBe('real.example');
+  });
+
+  it('🔴 returns null rather than a key for anything that is not a domain', () => {
+    // The return value becomes a CLUSTER KEY, and two accounts are called related when their keys
+    // are equal — so a permissive parse maps several malformed addresses onto one key and
+    // MANUFACTURES a ring out of bad data. Every rejection here is a ring that cannot be invented.
+    expect(normalizeEmailDomain(null)).toBeNull();
+    expect(normalizeEmailDomain('')).toBeNull();
+    expect(normalizeEmailDomain('no-at-sign')).toBeNull();
+    expect(normalizeEmailDomain('trailing@')).toBeNull();
+    // No dot: not a domain a registration can have come from.
+    expect(normalizeEmailDomain('u@localhost')).toBeNull();
+    // Internal whitespace: not a domain at all.
+    expect(normalizeEmailDomain('u@bad domain.com')).toBeNull();
   });
 });
 
