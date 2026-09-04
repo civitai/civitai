@@ -206,6 +206,20 @@ describe('model type picker data', () => {
     expect(getDisplayName(ModelType.Checkpoint)).toBe('Checkpoint');
   });
 
+  // App settings keeps its own hand-written label map instead of calling getDisplayName, so the
+  // test above does not reach it: #4521 renamed Checkpoint in both files and so did the revert,
+  // both times found by grep. Derived rather than hardcoded, so it reddens whichever side moves.
+  it('keeps the App settings label in step with getDisplayName for Checkpoint', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../components/Apps/AppSettingsModal.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain(
+      `{ value: ModelType.Checkpoint, label: '${getDisplayName(ModelType.Checkpoint)}' }`
+    );
+  });
+
   // Same revert: Checkpoint is offered with no heading rather than under a "Fine-tunes" group of
   // one. Restoring a heading here reintroduces the word the revert removed.
   it('offers Checkpoint ungrouped and first, under no heading', () => {
