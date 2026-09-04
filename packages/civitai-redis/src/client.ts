@@ -1851,6 +1851,8 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
+    // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
+    FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
