@@ -34,7 +34,9 @@
 
   const wordmark = buildWordmarkSvg({ base: '#e8eaed' });
 
-  const nav = $derived(navForMember(data.membership.isCreatorProgramMember, data.enabledFlags));
+  const nav = $derived(
+    navForMember(data.membership.isCreatorProgramMember, data.enabledFlags, data.isStudioAdmin)
+  );
   const who = $derived(data.user.username ?? `user #${data.user.id}`);
   // Any load in flight — a real page nav or an in-place query change (e.g. the analytics range selector, which
   // re-runs the server load without leaving the route). Drives the top progress bar.

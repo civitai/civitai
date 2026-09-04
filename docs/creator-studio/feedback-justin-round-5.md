@@ -12,9 +12,11 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 - [x] **[todo]** **Public marketing landing page for non-authed users** — done. The root `/` is now a public,
   SSR landing page (hero + feature cards for licensing fees / analytics / Creator Program payouts + CTAs). The
-  dashboard moved to `/dashboard`. All authed routes live in a SvelteKit **`(app)` route group** (URLs
+  dashboard moved to `/dashboard`. The authed Studio routes live in a SvelteKit **`(app)` route group** (URLs
   unchanged) whose layout owns the sidebar shell + requires a user; the landing sits outside the group under a
   bare root layout, so logged-out visitors get marketing chrome only and gated pages keep a non-null user type.
+  (`/admin` was later added as its own `(admin)` group — a second authed shell, gated on the `creator-studio:admin`
+  hub role in its layout load.)
   - **Public route** — `hooks.server.ts` `OPTIONAL_AUTH_PATHS` lets `/` through logged-out (attaching a user
     when present); every other route stays gated. Signed-in visitors to `/` are redirected to `/dashboard`.
   - **SEO** — real `<title>` + meta description, `robots: index,follow`, canonical, Open Graph + Twitter tags,

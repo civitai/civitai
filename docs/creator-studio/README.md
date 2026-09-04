@@ -47,7 +47,7 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
 
 ## Cross-cutting (not a page — referenced by several)
 
-- **Nav** — one app-local `nav.ts` constant drives the desktop sidebar + mobile header ([plan §3](../creator-studio-plan.md#3-page-list-v1)).
+- **Nav** — one app-local `nav.ts` constant drives the Studio shell's desktop sidebar + mobile header ([plan §3](../creator-studio-plan.md#3-page-list-v1)). `/admin` is a separate shell with its own list (`$lib/admin-nav.ts`); `nav.ts`'s `adminOnly` item is only the way in.
 - **Member gate** — most write actions are member-`tier` gated; the exact bar (tier vs full CP membership) is a
   [pending confirm](../creator-studio-plan.md#9-decisions--open-questions).
 - **Monetization module** — `setLicensingFee` / `bulkSetLicensingFee` / `setUnlimitedAccess`

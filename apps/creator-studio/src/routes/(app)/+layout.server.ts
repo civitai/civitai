@@ -5,6 +5,7 @@ import { resolveMembership, TEST_MEMBERSHIP_COOKIE } from '$lib/server/membershi
 import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { TEST_MODELS_SCORE_COOKIE } from '$lib/server/creator-score';
 import { ANNOUNCEMENTS_FLAG, announcementsEnabled } from '$lib/server/announcements';
+import { isStudioAdmin } from '$lib/server/admin/access';
 import { SALES_FLAG } from '$lib/nav';
 
 // Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it. The logout
@@ -30,6 +31,7 @@ export const load: LayoutServerLoad = async ({ locals, url, cookies }) => {
     enabledFlags,
     user: { id: user.id, username: user.username ?? null, image: user.image ?? null },
     isModerator: user.isModerator === true,
+    isStudioAdmin: isStudioAdmin(user),
     testMembership,
     testModelsScore: cookies.get(TEST_MODELS_SCORE_COOKIE) ?? null,
     membership,
