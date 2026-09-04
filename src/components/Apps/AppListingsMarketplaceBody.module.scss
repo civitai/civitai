@@ -39,6 +39,20 @@
   container-type: inline-size;
 }
 
+/* 🔴 DO NOT ADD `align-items` HERE. ITS ABSENCE IS LOAD-BEARING, NOT AN OMISSION.
+   `AppListingCard` bottom-pins its action row with `mt="auto"` inside a `Stack h="100%"`
+   inside a `Card className="h-full"`, and `h-full` only resolves because this grid
+   STRETCHES its items to the row height (`align-items: normal`, the grid default).
+   Measured, four shapes — card DIRECT + default ✅ / card in a WRAPPER + default ✅ /
+   card DIRECT + `start` ✅ (`h-full` resolves against the grid AREA) / card in a WRAPPER
+   + non-stretch ❌ (short card 40px shorter, action row unpinned) — and THIS grid is the
+   failing shape's first half, because each card sits in its own
+   `[data-testid=apps-listing-grid-col]` wrapper div. So one `align-items: start` added
+   for vertical rhythm unpins the action row on every card in the store, with nothing
+   else changing. Guarded by rendered boxes (not by an inline-style check, which the
+   mutant walks straight past) in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`
+   — the `geometry` project, because `h-full` is a Tailwind utility and is inert in the
+   `component` tier's cascade. */
 .grid {
   display: grid;
   /* Mantine's `md` spacing token — the value the retired `<Grid gutter="md">` used, and

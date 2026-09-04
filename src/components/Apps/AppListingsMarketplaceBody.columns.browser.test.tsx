@@ -36,13 +36,13 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
-function makeCard(id: string, name: string): ListingCard {
+function makeCard(id: string, name: string, tagline: string | null = 'tag'): ListingCard {
   return {
     id,
     slug: `slug-${id}`,
     kind: 'onsite',
     name,
-    tagline: 'tag',
+    tagline,
     category: null,
     contentRating: null,
     isBeta: false,
@@ -132,7 +132,11 @@ async function renderAtContainerWidth(width: number) {
       <AppListingsMarketplaceBody />
     </div>
   );
-  await expect.element(page.getByText('App 0')).toBeInTheDocument();
+  // 🔴 SETTLE ON THE GRID CELL, NOT ON A CARD'S NAME. Two fixtures use this helper —
+  // the uniform `App N` set and the deliberately uneven mixed-height set — so waiting on
+  // `getByText('App 0')` bound the helper to one of them and made the other time out
+  // 15s per test with a failure that reads like a broken component.
+  await expect.element(page.getByTestId('apps-listing-grid-col').first()).toBeInTheDocument();
   // Two frames so style application and layout have both settled.
   await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
 
