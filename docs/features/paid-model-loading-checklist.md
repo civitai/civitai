@@ -16,11 +16,12 @@ check.
 - [ ] **C14 — decide: standalone demo client, mod-only launch, or straight into the platform.**
       Justin owns it. Gates C5–C8. ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
       *Closes when:* Justin states the choice in the task.
-- [ ] **Confirm `GET /v2/resources?view=queue` is live in the deployed orchestrator.** The SDK
-      (`0.2.0-beta.98`) has `ResourceView.QUEUE` and `queryResources`; the call recorded it as
-      unbuilt. Ask Koen. This is a five-minute question that changes whether C8 is blocked.
-      *Closes when:* a call against the deployed orchestrator returns 200, or Koen says it is not
-      deployed.
+- [ ] **Verify the orchestrator surface with Koen — all of it, in one pass.** See
+      [the verification list](#orchestrator-verification-list) below. Everything there is typed in
+      `@civitai/client@0.2.0-beta.98`; none of it is confirmed as deployed and behaving. Two of the
+      questions (progress events, and whether prepare is a recipe or a workflow) change the design
+      of C4/C7/C8, not just their schedule.
+      *Closes when:* Koen has answered every row.
 - [ ] **Decide "select any model", and decide it as two questions.** `GenerationCoverage` is a
       **view**, not a flag. LoRAs/TI/VAE/LoCon/DoRA are already covered once licensed and scanned —
       they are merely not resident, which is the thing paid loading fixes, and need **no view
@@ -145,6 +146,28 @@ the platform second.
         it would silently un-cover anything someone paid for.
 
 ---
+
+## Orchestrator verification list
+
+Everything below is **typed in `@civitai/client@0.2.0-beta.98`**. That is evidence the contract was
+designed, not that it is deployed, charging, or behaving. Rows 1 and 2 are design questions — the
+answers change what C4, C7 and C8 are, not merely when they can start.
+
+| # | Endpoint / behaviour | What we need confirmed |
+| --- | --- | --- |
+| 1 | **Progress events.** `WorkflowCallback.type` is a list of lifecycle transitions only — `workflow:*`, `step:*`, `job:*`. There is **no progress event type.** | The call promised "every 10 seconds, if there's progress, you will get a new event on the webhook." Which event carries `progress` / `etaSeconds`? If none, live progress has to be polled from `GET /v2/resources/{air}`, and the navbar and queue page become pollers. |
+| 2 | **Is prepare a recipe or a workflow step?** The SDK exposes `POST /v2/consumer/recipes/prepareResource` (`invokePrepareResourceStepTemplate`). There is **no `PrepareResourceStepTemplate`** in the step union — `WorkflowStepTemplate.$type` is an open `string`. | The call's whole signal design assumes a workflow ("you submit a workflow to load the thing… then you get signals or webhooks for that workflow"). A recipe invoke has no workflow id — so nothing to attach callbacks to, nothing to poll, and nothing for `assertWorkflowOwner` to check. Can we submit `$type: 'prepareResource'` inside `POST /v2/consumer/workflows`? |
+| 3 | `GET /v2/resources/{air}` → `ResourceInfo.availability` | Deployed and populating `availability` for arbitrary AIRs, including ones never requested before. Confirm all four statuses are reachable: `available`, `loading`, `unavailable`, `unsupported`. |
+| 4 | `GET /v2/resources?view=queue` (`queryResources`, cursor + take) | Live? The 2026-08-18 call recorded this as the one piece not built; it is in the SDK now. Also: is `cursor` stable while the queue mutates? |
+| 5 | `POST /v2/consumer/recipes/prepareResource` with `?whatif=true` | Returns a **price** without side effects, and prices by model size. This is where the CTA's number comes from. |
+| 6 | The same call **without** `whatif` | Charges the bearer. This is C2 and it is currently off — confirm what "on" looks like and how we will know it flipped. |
+| 7 | `?ephemeral=true` on the prepare recipe | Undocumented to us. Does it relate to the 48-hour residency, and should we be setting it either way? |
+| 8 | **48-hour residency** | Is it enforced orchestrator-side on a successful prepare, and is the expiry readable anywhere? Nothing in `ResourceInfo` obviously carries it, and we cannot show users a countdown we cannot read. |
+| 9 | **Callback targets.** Generation points `WorkflowCallback.url` straight at `${SIGNALS_ENDPOINT}/users/{id}/signals/{message}` — the orchestrator posts to signals directly, with no site endpoint in between. | Can a callback instead target a signals **group** URL (`/groups/model-version:{id}/signals/{message}`)? If yes, bystander subscribers work with no site endpoint. If no, C4 must exist as a real endpoint that fans out. |
+| 10 | **Failure semantics** | What does a prepare that never completes look like — `workflow:expired`, `step:failed`, or silence? Is the charge reversed orchestrator-side, or do we owe a refund? Directly relevant given ~10 KB/s download bandwidth. |
+| 11 | **Concurrent prepares of the same AIR** | Two users prepare the same resource simultaneously. Two charges or one? Does the second join the first, and does the 48 hours reset? |
+| 12 | **Rate limiting posture** | Confirmed decision is site-side only, so the orchestrator will accept unlimited prepares from a user token. Confirm that is still true and intended — it is what makes our cap bypassable by going direct. |
+| 13 | `DELETE /v2/resources/{air}` | Already used by `bustOrchestratorModelCache`. Does it evict a **paid, resident** resource, and if so should it be blocked during the 48 hours? |
 
 ## Not in v1, on the record
 
