@@ -42,7 +42,6 @@ export function getStripeCurrencyDisplay(unitAmount: number, currency: string) {
 }
 
 const nameOverrides: Record<string, string> = {
-  Checkpoint: 'Fine-tune',
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
   DoRA: 'DoRA',

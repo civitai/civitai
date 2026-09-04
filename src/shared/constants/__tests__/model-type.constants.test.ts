@@ -7,8 +7,9 @@ import {
   modelTypeGroups,
   resolveModelTypeDefaults,
   retiredModelTypes,
+  leadingUngroupedModelTypes,
   selectableModelTypes,
-  ungroupedModelTypes,
+  trailingUngroupedModelTypes,
 } from '~/shared/constants/model-type.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -115,9 +116,10 @@ describe('model type picker data', () => {
       expect(item.label.length).toBeGreaterThan(0);
     }
 
-    // Only the trailing ungrouped types have no heading; a group of one would repeat its own name.
+    // Only the ungrouped types have no heading; a group of one would repeat its own name.
     expect(data.filter(({ group }) => !group).map(({ value }) => value)).toStrictEqual([
-      ...ungroupedModelTypes,
+      ...leadingUngroupedModelTypes,
+      ...trailingUngroupedModelTypes,
     ]);
   });
 
@@ -198,7 +200,22 @@ describe('model type picker data', () => {
     expect(source).not.toContain('resolveModelTypeDefaults(model)');
   });
 
-  it('labels Checkpoint as Fine-tune', () => {
-    expect(getDisplayName(ModelType.Checkpoint)).toBe('Fine-tune');
+  // Reverted from "Fine-tune" (#4521) after tester complaints that it replaced a term people
+  // already knew. If you are here to rename it again, that is a product call, not a cleanup.
+  it('labels Checkpoint as Checkpoint, not Fine-tune', () => {
+    expect(getDisplayName(ModelType.Checkpoint)).toBe('Checkpoint');
+  });
+
+  // Same revert: Checkpoint is offered with no heading rather than under a "Fine-tunes" group of
+  // one. Restoring a heading here reintroduces the word the revert removed.
+  it('offers Checkpoint ungrouped and first, under no heading', () => {
+    const data = getModelTypeSelectData(null);
+
+    expect(data[0]).toStrictEqual({ value: ModelType.Checkpoint, label: 'Checkpoint' });
+    expect(modelTypeGroups.map(({ group }) => group)).toStrictEqual([
+      'Adapters',
+      'Component replacements',
+      'Workflow additives',
+    ]);
   });
 });
