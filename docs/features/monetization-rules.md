@@ -130,7 +130,8 @@ Gold is **unlimited**, so "held it at any point this month" would mean unlimited
 off one payment. Left as-is deliberately; revisit with that cost in view.
 
 **Membership tier does not unlock early access.** The ladder reads the creator score (`scores.total`)
-and starts at 40,000, so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
+and starts at 10,000 — the same floor as pricing, so early access and monetization open at one
+number — so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
 for this reason. The one non-score unlock is the **granted `thirtyDayEarlyAccess` feature flag**, which by
 itself confers the top rung (30 days, 30 concurrent) at any score.
 

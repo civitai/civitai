@@ -49,7 +49,7 @@ export async function getTotalScore(userId: number): Promise<number> {
 
 // Moderator-only testing override (this app only), mirroring TEST_MEMBERSHIP_COOKIE. The early-access
 // ladder keys off the creator score, which membership doesn't touch — so simulating a tier alone can't
-// reach these flows, and the ladder's first rung is 40k. Set from the sidebar simulator.
+// reach these flows, and the ladder's first rung is 10k. Set from the sidebar simulator.
 // Cookie name predates the switch off the models score; renaming it would only drop live simulator state.
 export const TEST_MODELS_SCORE_COOKIE = 'cs-test-models-score';
 

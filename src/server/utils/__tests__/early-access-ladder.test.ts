@@ -7,7 +7,8 @@ import {
 
 // The ladder had no assertions at all until 2026-09-04, so the score it reads could be swapped
 // without a single test printing anything. These pin the field, not the rungs: the rung values come
-// from EARLY_ACCESS_CONFIG so a deliberate re-tiering doesn't redden them.
+// from EARLY_ACCESS_CONFIG so a deliberate re-tiering doesn't redden them — which is what let the
+// entry rung move 40,000 -> 10,000 without touching a line here.
 
 const [firstDayScore, firstDays] = EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock[0] as [number, number];
 const [secondDayScore, secondDays] = EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock[1] as [
