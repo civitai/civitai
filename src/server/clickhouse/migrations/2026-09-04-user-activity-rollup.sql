@@ -126,8 +126,20 @@ GROUP BY userId;
 
 
 -- ── Verification ──────────────────────────────────────────────────────────
--- Expect ~7.4M distinct users (7,356,496 had a `pageViews` row on 2026-09-04, plus whatever the
--- other three sources add), and a country distribution with a plausible head.
+-- Applied 2026-09-04 (246 s end to end; `views` was 109 s of it). Actuals, which are the numbers to
+-- check a re-application against:
+--
+--   distinct users   10,719,260
+--   no country        3,361,661   — accounts with no pageView since 2024-09-26
+--   with a country    7,357,599
+--
+-- That last figure is the arm-by-arm correctness check, not a coincidence: `pageViews` held 7,356,496
+-- distinct users when measured a few hours earlier, and only `pageViews` can set a country. A total far
+-- from these means an arm did not land — which does NOT error, it just leaves those users reading as
+-- dormant with an unknown country. Re-run; every statement is idempotent.
+--
+-- The 31% platform-wide unknown rate is not the rate a creator sees. Follower sets are far more engaged:
+-- a 15,000-follower sample of the most-followed creator came back 86.2% with a country.
 --
 --   SELECT uniqExact(userId) FROM default.user_activity_rollup;
 --
