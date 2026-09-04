@@ -1,6 +1,8 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
+  Box,
   Card,
   Checkbox,
   Divider,
@@ -25,6 +27,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
+import { PricingSlotHistory } from '~/components/Buzz/PricingSlotHistory';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
@@ -76,6 +79,8 @@ import {
   type ModelVersionTerms,
   ACCEPTS_BLUE_BUZZ_HINT,
   DEFAULT_GENERATION_TRIAL_LIMIT,
+  EARLY_ACCESS_NOT_COUNTED,
+  PRICING_SLOT_EXPLAINER,
   DEFAULT_FEE_IMAGES,
   MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT,
   acceptsBlueBuzz,
@@ -1346,6 +1351,22 @@ export function ModelVersionUpsertForm({
                           {formatPricingAllowance(allowanceState)}
                           {hasExistingCharge ? ' · editing this one is free' : ''}
                         </Text>
+                        <Popover width={320} withArrow withinPortal shadow="sm">
+                          <Popover.Target>
+                            <ActionIcon
+                              variant="subtle"
+                              color="gray"
+                              size="xs"
+                              aria-label="What counts toward this limit"
+                            >
+                              <IconInfoCircle size={14} />
+                            </ActionIcon>
+                          </Popover.Target>
+                          <Popover.Dropdown>
+                            <Text size="xs">{PRICING_SLOT_EXPLAINER}</Text>
+                          </Popover.Dropdown>
+                        </Popover>
+                        <PricingSlotHistory />
                         {!allowanceState.unlimited && (
                           <CapUpsell
                             used={allowanceState.used}
@@ -1356,6 +1377,33 @@ export function ModelVersionUpsertForm({
                       </Group>
                     )}
                 </Stack>
+                {!monetizationBlocked &&
+                  !belowPricingFloor &&
+                  (showPaidAccessInput || showLicensingFeeBlock) &&
+                  allowanceState?.atLimit && (
+                    <Alert
+                      color="yellow"
+                      icon={<IconAlertTriangle size={18} />}
+                      title="You've priced all this month's versions"
+                      mb="sm"
+                    >
+                      <Text size="sm">{PRICING_SLOT_EXPLAINER}</Text>
+                      {showPaidAccessInput && canChooseTimed && (
+                        <Text size="sm" mt={4}>
+                          You can still put this version on a timed Early Access window — that
+                          doesn&apos;t need a slot. A licensing fee or permanent paid access does.
+                        </Text>
+                      )}
+                      <Box mt="xs">
+                        <CapUpsell
+                          used={allowanceState.used}
+                          limit={pricingAllowance?.limit ?? Infinity}
+                          capTier={feeCapTier}
+                          expanded
+                        />
+                      </Box>
+                    </Alert>
+                  )}
                 {monetizationBlocked && (
                   <Alert
                     color="red"
@@ -1538,8 +1586,8 @@ export function ModelVersionUpsertForm({
                                 }
                                 description={
                                   paidAccessConfig.permanent
-                                    ? 'Always requires purchase — this version never becomes free.'
-                                    : 'A timed Early Access window; the version becomes free when it ends.'
+                                    ? 'Always requires purchase — this version never becomes free. Uses one of your monthly pricing slots.'
+                                    : `A timed Early Access window; the version becomes free when it ends. ${EARLY_ACCESS_NOT_COUNTED}`
                                 }
                               >
                                 <SegmentedControl

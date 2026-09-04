@@ -365,7 +365,7 @@ describe('assertMonetizationWrite', () => {
         tier: 'free',
         userMeta: ELIGIBLE,
       })
-    ).rejects.toThrow(/monetized 3 of 3 model versions this month/);
+    ).rejects.toThrow(/priced 3 of 3 model versions this month on Free/);
   });
 
   it('never blocks gold — its allowance is unlimited, so no count is even read', async () => {

@@ -1,6 +1,9 @@
+import type { ModelVersionTerms } from '@civitai/buzz';
 import {
   MONETIZATION_MIN_CREATOR_SCORE,
+  capTierLabel,
   exceedsAllowance,
+  gatePrices,
   monthlyPricingAllowance,
   pricingAllowanceMessage,
   pricingFloorMessage,
@@ -245,14 +248,90 @@ export async function assertPricingAllowed(
   if (score < MONETIZATION_MIN_CREATOR_SCORE)
     return { ok: false, status: 403, error: pricingFloorMessage() };
 
-  const limit = monthlyPricingAllowance(cappedTier(membership));
+  const tier = cappedTier(membership);
+  const limit = monthlyPricingAllowance(tier);
   if (!Number.isFinite(limit)) return { ok: true };
 
   const used = await countPricingSlotsThisMonth(userId);
   // Counted for the whole batch: a bulk write is all-or-nothing, so it is refused rather than
   // half-applied. At count=1 this is the same test the single-version paths make.
   if (exceedsAllowance(used, limit, newlyPricedCount))
-    return { ok: false, status: 403, error: pricingAllowanceMessage(used, limit) };
+    return {
+      ok: false,
+      status: 403,
+      error: pricingAllowanceMessage(used, limit, capTierLabel(tier)),
+    };
 
   return { ok: true };
+}
+
+export type PricingSlotEntry = {
+  entityId: number;
+  createdAt: Date;
+  countsThisMonth: boolean;
+  modelId: number | null;
+  modelName: string | null;
+  /** Both feed civitaiUrl, which picks .com vs .red. */
+  modelNsfw: boolean;
+  modelNsfwLevel: number;
+  versionName: string | null;
+  licensingFee: number | null;
+  accessPrice: number | null;
+  generationPrice: number | null;
+};
+
+/**
+ * The creator's spent slots, newest first. Amounts are what each version charges NOW — `PricingSlot`
+ * stores no amount (see the main app's listPricingSlots).
+ */
+export async function listPricingSlots(ownerId: number, limit = 100): Promise<PricingSlotEntry[]> {
+  const rows = await dbRead
+    .selectFrom('PricingSlot as ps')
+    .leftJoin('ModelVersion as mv', (join) =>
+      join.onRef('mv.id', '=', 'ps.entityId').on('ps.entityType', '=', 'ModelVersion')
+    )
+    .leftJoin('Model as m', 'm.id', 'mv.modelId')
+    // Only a permanent gate is a price — a timed Early Access window must not read as one.
+    .leftJoin('PaidAccess as pa', (join) =>
+      join
+        .onRef('pa.entityId', '=', 'ps.entityId')
+        .onRef('pa.entityType', '=', 'ps.entityType')
+        .on('pa.timeframeDays', 'is', null)
+    )
+    .select([
+      'ps.entityId as entityId',
+      'ps.createdAt as createdAt',
+      'mv.name as versionName',
+      'mv.licensingFee as fee',
+      'm.id as modelId',
+      'm.name as modelName',
+      'm.deletedAt as modelDeletedAt',
+      'm.nsfw as modelNsfw',
+      'm.nsfwLevel as modelNsfwLevel',
+      'pa.terms as terms',
+    ])
+    .where('ps.ownerId', '=', ownerId)
+    .orderBy('ps.createdAt', 'desc')
+    .limit(limit)
+    .execute();
+
+  const monthStart = pricingMonthStart();
+  return rows.map((row) => {
+    const prices = gatePrices(row.terms as ModelVersionTerms | null);
+    const fee = Number(row.fee ?? 0);
+    return {
+      entityId: row.entityId,
+      createdAt: row.createdAt,
+      countsThisMonth: row.createdAt >= monthStart,
+      // A soft-deleted model still holds its slot, so the row stays — but it has no page to link to.
+      modelId: row.modelDeletedAt ? null : (row.modelId ?? null),
+      modelName: row.modelName ?? null,
+      modelNsfw: !!row.modelNsfw,
+      modelNsfwLevel: row.modelNsfwLevel ?? 0,
+      versionName: row.versionName ?? null,
+      licensingFee: fee > 0 ? fee : null,
+      accessPrice: row.terms ? prices.download : null,
+      generationPrice: row.terms && prices.generation > 0 ? prices.generation : null,
+    };
+  });
 }

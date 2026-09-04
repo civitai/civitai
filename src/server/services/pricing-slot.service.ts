@@ -1,8 +1,11 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import type { ModelVersionTerms } from '@civitai/buzz';
 import {
   MONETIZATION_MIN_CREATOR_SCORE,
+  capTierLabel,
   clearsLastPrice,
   exceedsAllowance,
+  gatePrices,
   isAlreadyPriced,
   monthlyPricingAllowance,
   pricingAllowanceMessage,
@@ -288,12 +291,97 @@ export async function assertPricingAllowed({
   if (score < MONETIZATION_MIN_CREATOR_SCORE)
     throw throwBadRequestError(pricingFloorMessage(score));
 
-  const limit = monthlyPricingAllowance(typeof tier === 'function' ? await tier() : tier);
+  const resolvedTier = typeof tier === 'function' ? await tier() : tier;
+  const limit = monthlyPricingAllowance(resolvedTier);
   if (Number.isFinite(limit)) {
     const used = await countPricingSlotsThisMonth(userId);
     if (exceedsAllowance(used, limit))
-      throw throwBadRequestError(pricingAllowanceMessage(used, limit));
+      throw throwBadRequestError(pricingAllowanceMessage(used, limit, capTierLabel(resolvedTier)));
   }
 
   return { spendsSlot: true, releasesSlot: false };
+}
+
+export type PricingSlotEntry = {
+  entityType: PricingSlotEntityType;
+  entityId: number;
+  createdAt: Date;
+  countsThisMonth: boolean;
+  modelId: number | null;
+  modelName: string | null;
+  versionName: string | null;
+  /** Buzz per image, as stored. Null when the version carries no fee. */
+  licensingFee: number | null;
+  /** Download price of a permanent gate. Null when the version's only gate is timed. */
+  accessPrice: number | null;
+  generationPrice: number | null;
+};
+
+/**
+ * The creator's spent slots, newest first.
+ *
+ * Amounts are the version's price NOW, not the price at spend time: `PricingSlot` is
+ * `{ entityType, entityId, ownerId, createdAt }` keyed on the entity — one row per version, not per
+ * event. A real ledger needs `amount`/`releasedAt` columns that do not exist.
+ */
+export async function listPricingSlots(
+  ownerId: number,
+  { limit = 100 }: { limit?: number } = {}
+): Promise<PricingSlotEntry[]> {
+  const slots = await dbRead.pricingSlot.findMany({
+    where: { ownerId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: { entityType: true, entityId: true, createdAt: true },
+  });
+  if (slots.length === 0) return [];
+
+  const versionIds = slots
+    .filter((slot) => slot.entityType === 'ModelVersion')
+    .map((slot) => slot.entityId);
+  const [versions, gates] = await Promise.all([
+    versionIds.length
+      ? dbRead.modelVersion.findMany({
+          where: { id: { in: versionIds } },
+          select: {
+            id: true,
+            name: true,
+            licensingFee: true,
+            model: { select: { id: true, name: true, deletedAt: true } },
+          },
+        })
+      : [],
+    versionIds.length
+      ? dbRead.paidAccess.findMany({
+          where: { entityType: 'ModelVersion', entityId: { in: versionIds } },
+          select: { entityId: true, timeframeDays: true, terms: true },
+        })
+      : [],
+  ]);
+  const versionById = new Map(versions.map((v) => [v.id, v]));
+  // Only a permanent gate is a price — a timed Early Access window must not read as one.
+  const gateById = new Map(
+    gates.filter((g) => g.timeframeDays == null).map((g) => [g.entityId, g])
+  );
+
+  const monthStart = pricingMonthStart();
+  return slots.map((slot) => {
+    const version = versionById.get(slot.entityId);
+    const prices = gatePrices(gateById.get(slot.entityId)?.terms as ModelVersionTerms | undefined);
+    const hasGate = gateById.has(slot.entityId);
+    const fee = version?.licensingFee != null ? Number(version.licensingFee) : 0;
+    return {
+      entityType: slot.entityType as PricingSlotEntityType,
+      entityId: slot.entityId,
+      createdAt: slot.createdAt,
+      countsThisMonth: slot.createdAt >= monthStart,
+      // A soft-deleted model still holds its slot, so the row stays — but it has no page to link to.
+      modelId: version?.model?.deletedAt ? null : version?.model?.id ?? null,
+      modelName: version?.model?.name ?? null,
+      versionName: version?.name ?? null,
+      licensingFee: fee > 0 ? fee : null,
+      accessPrice: hasGate ? prices.download : null,
+      generationPrice: hasGate && prices.generation > 0 ? prices.generation : null,
+    };
+  });
 }

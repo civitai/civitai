@@ -13,6 +13,7 @@ import {
   assertPricingAllowed,
   countPricingSlotsThisMonth,
   creatorScoreFromMeta,
+  listPricingSlots,
   recordPricingSlot,
   releasePricingSlot,
 } from '~/server/services/pricing-slot.service';
@@ -507,5 +508,53 @@ describe('assertPricingAllowed', () => {
       assertPricingAllowed({ userId: 1, wasPriced: false, willBePriced: true, tier: 'free' })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     expect(mockFindUnique).toHaveBeenCalledWith({ where: { id: 1 }, select: { meta: true } });
+  });
+});
+
+describe('listPricingSlots', () => {
+  const mockSlots = dbMock.dbRead.pricingSlot.findMany;
+  const mockVersions = dbMock.dbRead.modelVersion.findMany;
+  const mockGates = dbMock.dbRead.paidAccess.findMany;
+
+  const THIS_MONTH = new Date();
+  const LAST_MONTH = new Date(
+    Date.UTC(THIS_MONTH.getUTCFullYear(), THIS_MONTH.getUTCMonth() - 1, 15)
+  );
+
+  beforeEach(() => {
+    mockSlots.mockResolvedValue([
+      { entityType: 'ModelVersion', entityId: 1, createdAt: THIS_MONTH },
+      { entityType: 'ModelVersion', entityId: 2, createdAt: LAST_MONTH },
+    ] as never);
+    mockVersions.mockResolvedValue([
+      { id: 1, name: 'v1', licensingFee: 40, model: { id: 100, name: 'Model A' } },
+      { id: 2, name: 'v2', licensingFee: null, model: { id: 200, name: 'Model B' } },
+    ] as never);
+    mockGates.mockResolvedValue([] as never);
+  });
+
+  it('splits on the calendar month the allowance is counted over', async () => {
+    const slots = await listPricingSlots(OWNER);
+    expect(slots.map((s) => s.countsThisMonth)).toEqual([true, false]);
+    expect(slots[0]).toMatchObject({ modelName: 'Model A', versionName: 'v1', licensingFee: 40 });
+  });
+
+  it('reads a price off a permanent gate only, never a timed window', async () => {
+    mockGates.mockResolvedValue([
+      { entityId: 1, timeframeDays: null, terms: { download: { price: 5000 } } },
+      { entityId: 2, timeframeDays: 15, terms: { download: { price: 9000 } } },
+    ] as never);
+
+    const [current, older] = await listPricingSlots(OWNER);
+    expect(current.accessPrice).toBe(5000);
+    expect(older.accessPrice).toBeNull();
+  });
+
+  it('names a deleted version rather than dropping the slot that is still counted', async () => {
+    mockVersions.mockResolvedValue([] as never);
+
+    const slots = await listPricingSlots(OWNER);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]).toMatchObject({ modelId: null, modelName: null, licensingFee: null });
   });
 });

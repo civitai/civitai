@@ -35,6 +35,8 @@
     type MonetizationLimits,
   } from '$lib/monetization/fee';
   import {
+    EARLY_ACCESS_NOT_COUNTED,
+    PRICING_SLOT_EXPLAINER,
     capMediaType,
     formatPricingAllowance,
     pricingAllowanceState,
@@ -44,6 +46,7 @@
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
   import CapUpsell from '$lib/components/CapUpsell.svelte';
+  import PricingSlotHistory from '$lib/components/PricingSlotHistory.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
@@ -504,8 +507,14 @@
           to monetize
         </span>
       {:else}
-        <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
+        <span
+          class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}"
+          title={PRICING_SLOT_EXPLAINER}
+        >
           {formatPricingAllowance(allowance)}
+        </span>
+        <span class="text-dark-2" title={PRICING_SLOT_EXPLAINER}>
+          · licensing fees and permanent paid access
         </span>
         {#if !allowance.unlimited}
           <CapUpsell
@@ -523,14 +532,23 @@
         <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span
         >
       {:else}
-        <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
+        <span
+          class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}"
+          title={EARLY_ACCESS_NOT_COUNTED}
+        >
           {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
             ? ' · limit reached'
             : ''}
         </span>
-        <span class="text-dark-2">· up to {data.caps.maxEarlyAccessDays} days</span>
+        <span class="text-dark-2" title={EARLY_ACCESS_NOT_COUNTED}>
+          · up to {data.caps.maxEarlyAccessDays} days · a separate limit
+        </span>
       {/if}
     </span>
+    <!-- Two meters side by side get read as one budget — say what each counts where they meet. -->
+    {#if permAtCap && data.caps.pricingFloor.eligible}
+      <p class="w-full text-yellow-5">{PRICING_SLOT_EXPLAINER}</p>
+    {/if}
     <details class="w-full">
       <summary
         class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
@@ -539,6 +557,17 @@
         Monetization limits · {data.caps.tier}
       </summary>
       <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
+    </details>
+    <details class="w-full">
+      <summary
+        class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
+        data-testid="pricing-slots-toggle"
+      >
+        What used your pricing slots
+      </summary>
+      <div class="mt-3">
+        <PricingSlotHistory slots={data.caps.pricingSlots} />
+      </div>
     </details>
   </div>
 {/if}

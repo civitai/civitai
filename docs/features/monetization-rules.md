@@ -193,6 +193,26 @@ counting against their allowance.
 in the codebase they do not bypass: the floor is a statement about who may sell, not a permission level.
 They remain exempt from the fee ceiling.
 
+#### R3c. What the creator is told, and what they can look at
+
+The counter and the allowance refusal say **priced**, not "monetized", and name what is counted:
+`PRICING_SLOT_EXPLAINER` and `EARLY_ACCESS_NOT_COUNTED` in `@civitai/buzz` are the one wording, shared by
+both apps, and the refusal names the tier it refuses on (`capTierLabel`). "Monetized" was read as covering
+Early Access — the two meters sit side by side, so creators added them together and asked why 25 + 20 wasn't
+45, then hit the cap on an Early Access publish that had spent no slot at all (CU 868m1baec). The count was
+already shown in both editors; what arrived only on save was the *explanation*, so both apps now carry the
+explainer where the price is set. `pricingFloorMessage` deliberately keeps "monetize" — the floor is about
+who may sell at all, not about what the counter counts, and a test pins that split.
+
+`listPricingSlots` (both apps) answers *what spent them*: the owner's slots newest first, split on the
+calendar month the allowance counts, with the model version and its prices. Read behind
+`modelVersion.getPricingSlots` in the main app and loaded with the models page in Creator Studio.
+
+⚠️ **The amounts are the version's price NOW, not the price at spend time.** `PricingSlot` stores
+`{ entityType, entityId, ownerId, createdAt }` and nothing else, one row per entity — current state, not an
+audit log. A true history (priced, released, re-priced, and the amount each time) needs an append-only
+ledger or `amount` + `releasedAt` columns; neither exists.
+
 **Enforced**: `assertMonetizationWrite` (`src/server/services/paid-access.service.ts`), called by tRPC
 `modelVersion.upsert` and the REST early-access endpoint, and mirrored for Creator Studio's direct-SQL
 writes in `apps/creator-studio/src/lib/server/monetization/pricing-slot.ts`. Three write surfaces, so a

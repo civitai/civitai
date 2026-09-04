@@ -58,11 +58,12 @@ No schema change, no migration, no backfill.
       server enforces with `getHighestTierSubscription` (excludes canceled/past_due/unpaid, picks the highest
       tier). **The server is authoritative; the UI should display the server-computed cap, not recompute tier
       client-side.** Have the form loader return the allowance state computed with the same helper
-      enforcement uses (`pricingAllowanceState`, exposed onsite via `modelVersion.getPricingAllowance`) — then displayed == enforced by construction, and it also delivers the live "X of Y"
+      enforcement uses (`pricingAllowanceState`, exposed onsite via `modelVersion.getPricingAllowance`) — then displayed == enforced by construction, and it also delivers the live allowance
       count below. (Same pattern as creator-studio's loader.)
-- [x] **Live "X of Y set" count onsite.** Done in the monetization revamp: `modelVersion.getPricingAllowance`
+- [x] **Live allowance count onsite.** Done in the monetization revamp: `modelVersion.getPricingAllowance`
       feeds the count into the upsert form, so displayed == enforced. Note the meaning changed — it counts new
-      prices this calendar month against the membership allowance, not concurrent permanent gates.
+      prices this calendar month against the membership allowance, not concurrent permanent gates — and the
+      label is `formatPricingAllowance`'s "N of M versions priced this month", not "X of Y set".
 - [ ] **Naming divergence.** UI says "Paid Access"; every field is `earlyAccess*`. Rename deliberately or
       accept the split.
 

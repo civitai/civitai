@@ -42,6 +42,7 @@ import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
   assertPricingAllowed,
   countPricingSlotsThisMonth,
+  listPricingSlots,
   recordPricingSlots,
   unpricedVersionIds,
 } from '$lib/server/monetization/pricing-slot';
@@ -69,21 +70,23 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
-  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore] = await Promise.all([
-    getModelsView(locals.user, url, cookies),
-    resolveModelsScore(
-      locals.user.id,
-      !!locals.user.isModerator,
-      cookies.get(TEST_MODELS_SCORE_COOKIE)
-    ),
-    countPricingSlotsThisMonth(locals.user.id),
-    countActiveEarlyAccessVersions(locals.user.id),
-    resolveCreatorScore(
-      locals.user.id,
-      !!locals.user.isModerator,
-      cookies.get(TEST_CREATOR_SCORE_COOKIE)
-    ),
-  ]);
+  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots] =
+    await Promise.all([
+      getModelsView(locals.user, url, cookies),
+      resolveModelsScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_MODELS_SCORE_COOKIE)
+      ),
+      countPricingSlotsThisMonth(locals.user.id),
+      countActiveEarlyAccessVersions(locals.user.id),
+      resolveCreatorScore(
+        locals.user.id,
+        !!locals.user.isModerator,
+        cookies.get(TEST_CREATOR_SCORE_COOKIE)
+      ),
+      listPricingSlots(locals.user.id),
+    ]);
 
   // Query-independent, so they stay out of getModelsView: the creator's own sale windows and the
   // limit overrides are the same whatever is being searched for.
@@ -105,6 +108,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       tier: displayTier(membership),
       capTier: cappedTier(membership),
       pricingUsed,
+      pricingSlots,
       pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
       // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
       // creator at a given score sees. What it never moves is the write, which re-reads the real one.
