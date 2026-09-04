@@ -14,7 +14,6 @@ import {
   Button,
   Tooltip,
   List,
-  Loader,
   Menu,
   TextInput,
 } from '@mantine/core';
@@ -45,7 +44,7 @@ import {
   IconPlayerPlay,
   IconRefresh,
 } from '@tabler/icons-react';
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
@@ -479,20 +478,7 @@ function GetStarted({ onClose }: { onClose: () => void }) {
 }
 
 function GetReconnected() {
-  const { instance, instances, createInstance, awaitPairing, cancelAwaitPairing, pairingStatus } =
-    useCivitaiLink();
-  const oauthPaired = !!instances?.find((x) => x.id === instance?.id)?.oauthPaired;
-
-  // Layout, not passive: the cancel this same cleanup fires broadcasts a
-  // terminal status back, so a passive arm renders one frame of it on reopen.
-  useLayoutEffect(() => {
-    if (!oauthPaired) return;
-    awaitPairing();
-    return () => {
-      cancelAwaitPairing();
-    };
-  }, [oauthPaired]); // eslint-disable-line
-
+  const { instance, createInstance } = useCivitaiLink();
   const handleGenerateKey = () => createInstance(instance?.id ?? undefined);
 
   return (
@@ -510,72 +496,45 @@ function GetReconnected() {
           {`${instance?.name ?? 'This app'} hasn't checked in. Sending is paused until it's back.`}
         </Text>
       </Group>
-      {oauthPaired ? (
-        <Stack px="xs" py="sm" gap={8}>
-          <Text size="sm" fw={500}>
-            Open Civitai Link and sign in again
+      {instance?.key && (
+        <Stack align="center" gap={6} px="xs" pt="sm">
+          <Text fz={11} c="dimmed">
+            Pair with this code
           </Text>
-          <List type="unordered" size="xs" spacing={6} c="dimmed">
-            <List.Item>Open the Civitai Link app on that machine.</List.Item>
-            <List.Item>
-              Click <b>Sign in with Civitai</b> and approve it in your browser.
-            </List.Item>
-          </List>
-          <Group gap={8} pt={2}>
-            {pairingStatus !== 'timeout' && <Loader size="xs" />}
-            <Text fz="xs" c="dimmed">
-              {pairingStatus === 'timeout'
-                ? 'Still waiting? Make sure the app is running.'
-                : 'Waiting for the app…'}
-            </Text>
-          </Group>
+          <CopyButton value={instance.key}>
+            {({ copied, copy }) => (
+              <Tooltip label="Copy" withinPortal>
+                <Button
+                  variant="default"
+                  onClick={copy}
+                  px="sm"
+                  rightSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                >
+                  {!copied ? instance.key : 'Copied'}
+                </Button>
+              </Tooltip>
+            )}
+          </CopyButton>
         </Stack>
-      ) : (
-        <>
-          {instance?.key && (
-            <Stack align="center" gap={6} px="xs" pt="sm">
-              <Text fz={11} c="dimmed">
-                Pair with this code
-              </Text>
-              <CopyButton value={instance.key}>
-                {({ copied, copy }) => (
-                  <Tooltip label="Copy" withinPortal>
-                    <Button
-                      variant="default"
-                      onClick={copy}
-                      px="sm"
-                      rightSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-                    >
-                      {!copied ? instance.key : 'Copied'}
-                    </Button>
-                  </Tooltip>
-                )}
-              </CopyButton>
-            </Stack>
-          )}
-          <Stack px="xs" py="sm" gap={6}>
-            <Text size="sm" fw={500}>
-              Try this
-            </Text>
-            <List type="unordered" size="xs" spacing={6} c="dimmed">
-              <List.Item>Make sure the app is running on that machine.</List.Item>
-              <List.Item>{`Open its Civitai Link panel and check it's still paired.`}</List.Item>
-              <List.Item>{`Still stuck? Reconnect for a fresh code, then paste it into the app.`}</List.Item>
-            </List>
-            <Text fz={11} c="dimmed">
-              Using the desktop app? Sign in from the app instead.
-            </Text>
-          </Stack>
-          <Button
-            leftSection={<IconRefresh size={18} />}
-            radius={0}
-            fullWidth
-            onClick={handleGenerateKey}
-          >
-            Reconnect
-          </Button>
-        </>
       )}
+      <Stack px="xs" py="sm" gap={6}>
+        <Text size="sm" fw={500}>
+          Try this
+        </Text>
+        <List type="unordered" size="xs" spacing={6} c="dimmed">
+          <List.Item>Make sure the app is running on that machine.</List.Item>
+          <List.Item>{`Open its Civitai Link panel and check it's still paired.`}</List.Item>
+          <List.Item>{`Still stuck? Reconnect for a fresh code, then paste it into the app.`}</List.Item>
+        </List>
+      </Stack>
+      <Button
+        leftSection={<IconRefresh size={18} />}
+        radius={0}
+        fullWidth
+        onClick={handleGenerateKey}
+      >
+        Reconnect
+      </Button>
     </>
   );
 }
