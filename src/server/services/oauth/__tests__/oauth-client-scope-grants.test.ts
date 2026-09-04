@@ -189,26 +189,6 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
       },
     ],
   },
-  '20260903143000_register_civitai_link_service_oauth_client': {
-    liveReferences: 1,
-    grants: [
-      {
-        clientId: 'civitai-link-service',
-        op: 'set',
-        value: 0,
-        pinnedSql:
-          'INSERT INTO "OauthClient" ( "id", "secret", "name", "description", "logoUrl", ' +
-          '"redirectUris", "allowedOrigins", "grants", "allowedScopes", "isConfidential", ' +
-          '"accessMode", "userId", "isVerified", "createdAt", "updatedAt" ) SELECT ' +
-          "'civitai-link-service', NULL, 'Civitai Link Service', 'First-party Civitai service " +
-          "that mints Civitai Link instance keys from an OAuth access token.', NULL, " +
-          'ARRAY[]::TEXT[], ARRAY[]::TEXT[], ARRAY[]::TEXT[], ' +
-          "0, true, 'open', -1, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP WHERE " +
-          'EXISTS (SELECT 1 FROM "User" WHERE "id" = -1) ON CONFLICT ("id") DO NOTHING;',
-        note: 'Introspection caller only — grants:[] means no token can be minted for it, so the 0 ceiling is moot and can never be a superset of Full',
-      },
-    ],
-  },
   '20260902065427_register_civitai_link_desktop_oauth_client': {
     liveReferences: 1,
     grants: [
