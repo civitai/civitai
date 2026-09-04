@@ -260,12 +260,29 @@ function base(over: Partial<ListingCard>): ListingCard {
  * so `width - 34` was exact arithmetic, not fractional. The 0.877px figure comes
  * from PROD, where the scale differs — do not use it to reason about these pins.
  *
- * The two widths used below, both measured through the real
- * `AppsPageLayout` + `Grid` rather than assumed:
- *   - `280` -> a 248px content box = the TRUE 1200px-viewport geometry
- *     (container 1200 -> column 296 -> card 280 -> row 248);
- *   - `314` -> a 282px content box, i.e. roughly a 1345 viewport. "280" in the
- *     original bug report is the CARD width at 1200, not its content box.
+ * The widths used below:
+ *   - `280` -> a 248px action row. This is the CARD the store renders at FOUR
+ *     COLUMNS on a 1168px grid;
+ *   - `314` -> a 282px action row, one step wider — kept for continuity with the
+ *     pre-change table rather than because a particular rung produces it;
+ *   - `494` -> a 462px action row, the wide end, chosen so the CTA has real slack
+ *     to grow into.
+ *
+ * 🔴 STATED AGAINST THE GRID RUNG, NOT A VIEWPORT — AND THAT IS A CORRECTION, NOT
+ * A STYLE PREFERENCE. This block used to derive 280 as "the TRUE 1200px-viewport
+ * geometry (container 1200 -> column 296 -> card 280 -> row 248)". Every step of
+ * that chain except the last is the STORE's business, not the card's, and both
+ * halves have since moved: the `column 296` step names Mantine `<Grid.Col>`
+ * arithmetic the store no longer uses, and a 1200 viewport does not even yield
+ * four columns once a scrollbar is reserved. The card NUMBERS were never wrong —
+ * 280/248 is still the real four-column card — but the sentence a maintainer reads
+ * to decide whether these fixtures still represent production had gone stale, and
+ * a stale justification is how correct fixtures get "fixed".
+ *
+ * The card's contract is "AT THESE WIDTHS, THIS GEOMETRY". That survives whichever
+ * grid implementation sits above it, so these widths are exercise points anchored
+ * to the grid, and deliberately not to a viewport or to any grid's column maths.
+ * ("280" in the original bug report is the CARD width, not its content box.)
  */
 function Sized({ width, card }: { width: number; card: ListingCard }) {
   return (
@@ -1346,13 +1363,19 @@ describe('AppListingCard', () => {
      *   |       282 | 282 − 36 − 10     |           282 |    46 |
      *   |       462 | 462 − 36 − 10     |           462 |    46 |
      *
-     * 248 / 282 / 462 are the same three container widths the pre-change code
-     * measured — 248 is the TRUE 1200px-viewport geometry (container 1200 → grid
-     * column 296 → card 280 → row 248), 282 is roughly a 1345 viewport, and 462 is
-     * the wide single-column `base` case. They are kept because the row height
-     * claim is the one that must hold everywhere, and re-deriving a fresh set of
-     * widths would drop the continuity with the numbers the file already reasons
-     * about.
+     * 248 / 282 / 462 are the same three action-row widths the pre-change code
+     * measured — 248 inside the 280px card the store renders at FOUR COLUMNS on a
+     * 1168px grid, 282 one step wider, and 462 the wide end where the CTA has real
+     * slack to grow into. They are kept because the row-height claim is the one
+     * that must hold everywhere, and re-deriving a fresh set of widths would drop
+     * the continuity with the numbers the file already reasons about.
+     *
+     * 🔴 ANCHORED TO THE GRID RUNG, NOT TO A VIEWPORT — see the `Sized` docblock
+     * for why. This paragraph used to derive 248 from "container 1200 → grid
+     * column 296 → card 280" and call 462 "the wide single-column `base` case";
+     * both described a store layout rather than a card, and both have since gone
+     * stale. No number here moved: what changed is that the justification no
+     * longer claims anything about how a viewport becomes a column.
      *
      * 🔴 THE CTA WIDTHS ARE WRITTEN AS ARITHMETIC, NOT AS THE THREE RESULTING
      * NUMBERS, because the arithmetic is the claim: the CTA takes the whole row
@@ -1379,10 +1402,17 @@ describe('AppListingCard', () => {
        * 🔴 THE CTA FILLS THE ROW — asserted at TWO named container widths, because
        * one measurement is not a general claim.
        *
-       * A narrow one (248, the store's tightest real geometry) and a wide one
-       * (462, the widest). Both are above the row's ~184px natural content, so
-       * both are cases where the CTA must GROW; a single width could not
-       * distinguish "it fills" from "it happens to fit".
+       * A narrow one (248 — the action row inside the four-column card) and a wide
+       * one (462). Both are above the row's ~184px natural content, so both are
+       * cases where the CTA must GROW; a single width could not distinguish "it
+       * fills" from "it happens to fit".
+       *
+       * 🔴 NO SUPERLATIVE. These used to read "the store's tightest real geometry"
+       * and "the widest". Neither is a claim this file can keep: which rung is
+       * narrowest, and which is widest, is decided by the store's grid — not this
+       * component's, and it has changed. What the pair still buys — two widths far
+       * enough apart that "it fills" is a general claim rather than one
+       * measurement — does not need either word.
        *
        * 🔴 THE EXPECTED VALUE IS BUILT FROM THE MEASURED TRIGGER AND THE MEASURED
        * GAP, not from `LISTING_ACTION_ROW_CONTROL_PX` / `_GAP_PX`. Deriving it
