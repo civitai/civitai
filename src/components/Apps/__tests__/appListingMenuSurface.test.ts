@@ -164,7 +164,10 @@ describe('the listing menu surface policy', () => {
           if (entry.isDirectory()) walk(full);
           else if (entry.name.endsWith('.tsx') && !entry.name.includes('.test.')) {
             if (/<AppListingActionsMenu\b/.test(fs.readFileSync(full, 'utf8'))) {
-              found.push(path.relative(SRC, full));
+              // Separators normalised because the ledger below is spelled with `/`:
+              // `path.relative` returns `\` on Windows, so the raw value is green on CI
+              // and red on every local run.
+              found.push(path.relative(SRC, full).split(path.sep).join('/'));
             }
           }
         }
