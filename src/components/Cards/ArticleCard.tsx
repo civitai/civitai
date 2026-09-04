@@ -1,5 +1,7 @@
 import { Badge, Text } from '@mantine/core';
 import { memo } from 'react';
+import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
+import { hasOfficialArticleTag } from '~/shared/constants/official-article.constants';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
@@ -38,6 +40,8 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
     ? { ...coverImage, nsfwLevel: Math.max(nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0) }
     : undefined;
   const category = tags?.find((tag) => tag.isCategory);
+  // Provenance, so it leads: an official article is official before it is a guide.
+  const official = hasOfficialArticleTag(tags);
   const currentUser = useCurrentUser();
   const canSeeStatus = !!currentUser && (currentUser.id === user.id || currentUser.isModerator);
   const statusBadge = canSeeStatus && status ? articleStatusBadge[status] : null;
@@ -55,6 +59,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
       header={
         <div className="flex w-full justify-between">
           <div className="flex items-center gap-1">
+            {official && <OfficialArticleBadge className={cardClasses.chip} />}
             {category && (
               <Badge
                 size="sm"

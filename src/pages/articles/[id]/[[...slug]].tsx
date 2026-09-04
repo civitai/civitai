@@ -44,7 +44,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openArticleRatingReviewModal } from '~/components/Dialog/triggers/article-rating-review';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import {
+  hasOfficialArticleTag,
+  isOfficialArticleTag,
+} from '~/shared/constants/official-article.constants';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
@@ -250,7 +255,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   if (!article || isBlocked || disableArticles) return <NotFound />;
 
   const category = article.tags.find((tag) => tag.isCategory);
-  const tags = article.tags.filter((tag) => !tag.isCategory);
+  const official = hasOfficialArticleTag(article.tags);
+  // The official tag is drawn as its own badge below, so it is filtered out of the
+  // ordinary tag row as well as the category — otherwise the same fact appears twice on
+  // one line, once as a provenance marker and once as a grey chip a reader can mistake
+  // for a topic.
+  const tags = article.tags.filter((tag) => !tag.isCategory && !isOfficialArticleTag(tag));
 
   const actionButtons = (
     <Group gap={4} align="center" wrap="nowrap">
@@ -386,6 +396,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </Text>
                 </Tooltip>
               )}
+            {official && (
+              <>
+                <Divider orientation="vertical" />
+                <OfficialArticleBadge />
+              </>
+            )}
             {category && (
               <>
                 <Divider orientation="vertical" />

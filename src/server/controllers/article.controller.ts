@@ -7,7 +7,7 @@ import type {
   ArticleMetadata,
 } from '~/server/schema/article.schema';
 import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
-import { getCategoryTags } from '~/server/services/system-cache';
+import { findAdminOnlyTags } from '~/server/services/tag.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -23,13 +23,19 @@ export const upsertArticleHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const categories = await getCategoryTags('article');
-    const adminOnlyCategories = categories.filter((category) => category.adminOnly);
-    const includesAdminOnlyTag = input.tags?.some(
-      (tag) => adminOnlyCategories.findIndex((category) => category.name === tag.name) !== -1
-    );
-    // Only users with adminTags featureFlag can add adminOnly tags
-    if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
+    // Only users with the adminTags feature can attach an `adminOnly` tag.
+    //
+    // 🔴 This used to resolve the tags through `getCategoryTags('article')`, so it only
+    // ever saw adminOnly tags that were also article CATEGORIES — an adminOnly tag that
+    // is not a category was not checked at all, and tags attach by NAME through
+    // `connectOrCreate`, so anyone could put one on their own article. That is the whole
+    // point of a mod-only marker, so the guard now asks the tag table directly and covers
+    // every adminOnly tag. The old behaviour is a strict subset of this one: an adminOnly
+    // category is still an adminOnly tag.
+    if (input.tags?.length && !ctx.features.adminTags) {
+      const adminOnlyTags = await findAdminOnlyTags(input.tags);
+      if (adminOnlyTags.length) throw throwAuthorizationError();
+    }
     const scanContent = ctx.features.articleImageScanning ?? false;
 
     // Capture the prior published state so we can tell a publish transition apart

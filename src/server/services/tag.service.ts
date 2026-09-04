@@ -46,6 +46,7 @@ import { getPagination, getPagingData } from '~/server/utils/pagination-helpers'
 import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
+import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
@@ -993,4 +994,40 @@ export const getTypeCategories = async ({
   if (limit) categories = categories.slice(start, start + limit);
 
   return categories;
+};
+
+/**
+ * The `adminOnly` tags among `tags`, resolved the same two ways a caller can name a tag:
+ * by id, and by lowercased name.
+ *
+ * 🔴 The NAME arm is the load-bearing one, and it is why this exists. Entity upserts
+ * attach tags with `connectOrCreate` keyed on `name` (article.service.ts, and the same
+ * shape in post.service and model.service), so a caller never has to know a tag's id to
+ * attach it. A guard that only checked ids would be trivially bypassed by sending the
+ * name — which is how every tag the web client sends arrives.
+ *
+ * Deliberately NOT cached. The other global tag blobs (`getSystemTags`, `getCategoryTags`)
+ * sit behind a 4h redis TTL, which is fine for a listing and wrong for a permission
+ * check: the window between flagging a tag `adminOnly` and the guard honouring it would
+ * be a window where anyone can apply it. Entity upserts are low volume and this reads at
+ * most a handful of rows on an indexed unique column.
+ */
+export const findAdminOnlyTags = async (tags: { id?: number; name?: string }[]) => {
+  const ids = uniq(tags.map((tag) => tag.id).filter(isDefined));
+  // Matching `article.service`'s own normalisation on the attach path — a tag arrives as
+  // free text and is lowercased and trimmed before `connectOrCreate` sees it, so a guard
+  // comparing the raw string would miss `Official` for the tag named `official`.
+  const names = uniq(
+    tags.map((tag) => tag.name?.toLowerCase().trim()).filter((name): name is string => !!name)
+  );
+  if (!ids.length && !names.length) return [];
+
+  const OR: Prisma.TagWhereInput[] = [];
+  if (ids.length) OR.push({ id: { in: ids } });
+  if (names.length) OR.push({ name: { in: names } });
+
+  return dbRead.tag.findMany({
+    where: { adminOnly: true, OR },
+    select: { id: true, name: true },
+  });
 };
