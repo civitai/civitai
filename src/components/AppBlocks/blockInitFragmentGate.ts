@@ -166,9 +166,19 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //     swallowed by a `catch` documented as "nothing depends on this" — so the
   //     fragment is NOT stripped and persists in `location.hash` for the session.
   //     These three are safe on their own terms, not because of a strip that never
-  //     executes: none of them READS the fragment, and the one URL write among them
-  //     (`custom-generators`, above) is built from a LIVE href read, so it cannot
-  //     re-instate anything.
+  //     executes: none of them CONSUMES the fragment — none branches on it, routes
+  //     on it, or stores it — and the one URL write among them (`custom-generators`,
+  //     above) is built from a LIVE href read, so it cannot re-instate anything.
+  //
+  //     🔴 "Consumes", not "reads", and the difference is not pedantry:
+  //     `location.href` CONTAINS the fragment, so `custom-generators` does read it,
+  //     incidentally, every time `getHref()` runs. An earlier draft of this line
+  //     said "none of them READS the fragment", which is false for exactly that
+  //     block and would have sent the next maintainer looking for a contradiction
+  //     that is really just imprecision. Criterion (b) is about a block that reads
+  //     the fragment TO USE IT; an href round-trip that passes it through untouched
+  //     is not that, and a grep for `location.hash` alone will not tell you which
+  //     kind you are looking at.
   //
   //     Why that distinction is worth the words: the strip DOES start working if a
   //     block is later promoted to `verified`/`internal`. A maintainer who admitted
