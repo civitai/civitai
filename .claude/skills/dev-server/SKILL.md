@@ -62,8 +62,10 @@ subcommands — the wrapper only decides which node runs them, so nothing here d
 Either way, **check what you have got** before trusting a session:
 
 ```bash
-# the daemon's real interpreter, not the one you assume
-readlink -f /proc/$(cat .claude/skills/dev-server/daemon.pid)/exe
+# the daemon's real interpreter, not the one you assume.
+# the pid file belongs to the skill dir the daemon RUNS FROM, which is the primary checkout — a
+# relative path here reads the wrong tree's file, or none, when you are standing in a worktree.
+readlink -f /proc/$(cat <primary-checkout>/.claude/skills/dev-server/daemon.pid)/exe
 ```
 
 Changing node means restarting the daemon — `cli.mjs shutdown`, then start it again from the right shell.
@@ -254,10 +256,11 @@ fill it in. Adding a service is an edit to that file, not to the code.
 
 ⚠️ **`env-modes.local` does not fall through** the way `.env` now does. It is read from the skill
 directory of the daemon that is running (`env-modes.mjs`), and that file is gitignored, so it exists
-only in the primary checkout. The CLI and the console now always spawn the daemon from the primary
-(`resolveDaemonHome` in `scripts/paths.mjs`), so this is handled — but a daemon started **by hand**
-from inside a worktree, `node scripts/daemon.mjs`, still reads that worktree's skill directory, finds
-no `env-modes.local`, and applies no overlay at all.
+only in the primary checkout. A CLI or console **carrying the `resolveDaemonHome` change** spawns the
+daemon from the primary, which handles it — but the skill directory is committed, so each worktree
+runs its own copy: a tree cut before that change still spawns the daemon into itself, and so does a
+daemon started **by hand** with `node scripts/daemon.mjs`. Either way it reads that worktree's skill
+directory, finds no `env-modes.local`, and applies no overlay at all.
 
 Several services have **no dev counterpart to move to at all** — `env-modes.mjs` lists orchestrator,
 payments, s3, clickhouse, notifications, feeds and opensearch in `PROD_ONLY_GROUPS`, and `auth-hub`
@@ -657,11 +660,17 @@ What's already handled:
   worktree; before that, running them through a worktree's own CLI copy inverted every check and
   offered the real main checkout as removable.
 
-  **The daemon PROCESS also runs from there**, whichever worktree's CLI started it — script, pid file
-  and cwd all come from the primary (`resolveDaemonHome`). One daemon serves every tree, and a daemon
-  living inside one of them holds that directory open for its whole life, so `wt rm` on it failed
-  EBUSY for whoever finished their PR first. `wt rm` now asks the daemon where it runs from and names
-  it when it is the holder, instead of blaming a stray shell.
+  **The daemon PROCESS also runs from there** — script, pid file and cwd all resolved through
+  `resolveDaemonHome`. One daemon serves every tree, and a daemon living inside one of them holds
+  that directory open for its whole life, so `wt rm` on it fails EBUSY for whoever finishes their PR
+  first. `wt rm` asks the daemon for its script path and its cwd, and names it when either is inside
+  the target instead of blaming a stray shell.
+
+  🔴 **This only binds a CLI that has the change.** The skill directory is committed, so every
+  worktree runs its own `cli.mjs`, and a tree cut before it re-pins itself the next time the daemon
+  dies and that tree is first to start it. So the daemon moving to the primary requires both a
+  shutdown and an updated spawner — it is not retroactive, and a daemon already running is unaffected
+  until it restarts.
 - **Auth on secondary ports.** `NEXTAUTH_URL`, `NEXTAUTH_URL_INTERNAL`, and `NEXT_PUBLIC_BASE_URL` are rewritten to `http://localhost:<port>`, so logins work on non-3000 sessions instead of bouncing to the primary.
 - **Independent branch watching + prewarming** per session.
 - **Port allocation sees listeners the daemon does not own.** The picker connects to both loopback

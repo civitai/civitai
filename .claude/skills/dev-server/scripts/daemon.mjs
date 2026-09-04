@@ -2250,11 +2250,15 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
-          // Where this process is running FROM, which the caller cannot derive: a daemon started
-          // before cli.mjs learned to spawn from the primary is still running out of a worktree and
-          // holds that directory open. `wt rm` reads this to name itself as the holder rather than
-          // blaming a stray shell.
+          // Both handles this process holds on a directory, which the caller cannot derive. `wt rm`
+          // reads them to name itself as the holder rather than blaming a stray shell.
+          //
+          // cwd as well as skillDir, because they can differ: a daemon started BY HAND from inside a
+          // worktree (`node <primary>/.claude/.../daemon.mjs`) runs the primary's script while
+          // holding the worktree open through its working directory alone. Reporting only skillDir
+          // would answer "not the holder" there — confidently, and wrongly.
           skillDir,
+          cwd: process.cwd(),
           sessions: await listSessions(),
         }));
         return;

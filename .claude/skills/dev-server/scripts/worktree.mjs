@@ -200,8 +200,14 @@ export async function daemonRunningFrom(target, daemonRequest) {
   const res = await daemonRequest('/');
   const skillDir = res.ok ? res.data?.skillDir : null;
   if (!skillDir) return { holder: null, checked: false };
+  // Its script AND its working directory: either one alone keeps the directory open. A daemon
+  // started by hand from a worktree runs the primary's script and still pins the tree by cwd.
+  const held = [
+    ['its running script', skillDir],
+    ['its working directory', res.data.cwd],
+  ].find(([, p]) => p && isInside(p, target));
   return {
-    holder: isInside(skillDir, target) ? { pid: res.data.pid, skillDir } : null,
+    holder: held ? { pid: res.data.pid, reason: `${held[0]}: ${held[1]}` } : null,
     checked: true,
   };
 }
@@ -301,6 +307,22 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
   const entry = trees.find((t) => samePath(t.path, target));
   if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
 
+  // Ahead of the session stops, not merely ahead of the delete. `--stop-server` stops OTHER agents'
+  // dev servers in this tree, which is irreversible and cannot be undone by the refusal that would
+  // otherwise follow it.
+  const daemonCheck = await daemonRunningFrom(target, daemonRequest);
+  if (daemonCheck.holder) {
+    fail(
+      `the dev-server daemon (pid ${daemonCheck.holder.pid}) is running from this worktree\n` +
+        `  ${daemonCheck.holder.reason}\n` +
+        `no delete can succeed while it lives — that path is inside the directory.\n` +
+        `a daemon started by a cli.mjs carrying this fix runs from the primary checkout and never\n` +
+        `blocks this; this one does not. it is SHARED — other agents' dev servers and queued test\n` +
+        `runs are on it — so check "cli.mjs test list" reports zero running and zero queued, and ask\n` +
+        `before restarting it.`
+    );
+  }
+
   const sessions = sessionsIn(target, await fetchRunning(daemonRequest));
   const live = sessions.filter((s) => s.status === 'running');
   if (live.length && !opts.stopServer) {
@@ -315,20 +337,6 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
     // Both release the port — the difference is only which endpoint owns the reservation.
     await daemonRequest(s.stopPath, { method: s.id.startsWith('app:') ? 'POST' : 'DELETE' });
     console.log(`stopped ${s.id}`);
-  }
-
-  // Before the delete, not after it: the delete unlinks thousands of reparse points first, and a
-  // tree left half-dismantled by a failure nothing could have prevented is worse than a refusal.
-  const daemonCheck = await daemonRunningFrom(target, daemonRequest);
-  if (daemonCheck.holder) {
-    fail(
-      `the dev-server daemon (pid ${daemonCheck.holder.pid}) is running from this worktree\n` +
-        `  ${daemonCheck.holder.skillDir}\n` +
-        `its cwd and its own script are inside the directory, so no delete can succeed while it lives.\n` +
-        `a daemon started by a current cli.mjs runs from the primary checkout and never blocks this;\n` +
-        `this one predates that. it is SHARED — other agents' dev servers and queued test runs are on it —\n` +
-        `so check "cli.mjs test list" reports zero running and zero queued, and ask before restarting it.`
-    );
   }
 
   const dirty = dirtyCount(target);

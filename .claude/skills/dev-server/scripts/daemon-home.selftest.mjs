@@ -55,18 +55,31 @@ check('it is the checkout that owns .git', primary.path, resolve(gitCommonDir, '
 // --- the whole point: run from a worktree, get the primary ---
 
 const home = resolveDaemonHome(skillDir, projectRoot);
-check('the daemon home is the primary checkout', home.home, primary.path);
-check('the daemon script comes from the primary', home.skillDir, resolve(primary.path, '.claude/skills/dev-server'));
-check('and it says so', home.fromPrimary, true);
 
-// The assertion that actually fails on a revert to `__dirname`, stated as the property rather than
-// as a path: run this selftest from a worktree and the home must not be that worktree. In the
-// primary checkout the two are legitimately equal, so this can only fail where it can fire.
+// 🔴 EVERY LIVE ASSERTION HERE IS VACUOUS IN THE PRIMARY CHECKOUT, so all of them sit behind one
+// guard rather than only the last. Run from the primary, `callerProjectRoot` and `primary.path` are
+// the same directory — so a `resolveDaemonHome` reverted to plain `__dirname` returns exactly the
+// values these expect and the file prints `all passed` over the bug it exists to catch. Guarding
+// only the isInside check (the first version of this file) left the two above it reporting PASS.
+//
+// The banner at the top of this file is addressed to whoever reverts this function; the primary
+// checkout is where they will run it, and it is the one place these cannot fire. So say so loudly
+// instead of printing a quiet SKIP among PASSes.
 if (resolve(projectRoot).toLowerCase() !== resolve(primary.path).toLowerCase()) {
+  check('the daemon home is the primary checkout', home.home, primary.path);
+  check('the daemon script comes from the primary', home.skillDir, resolve(primary.path, '.claude/skills/dev-server'));
   check('running from a worktree does NOT pin that worktree', isInside(home.skillDir, projectRoot), false);
 } else {
-  console.log('SKIP  running from a worktree does NOT pin that worktree (this IS the primary)');
+  console.log(
+    '\n⚠️  VACUOUS HERE — this run is in the PRIMARY checkout, where a reverted resolveDaemonHome\n' +
+      '    returns the same values as a correct one. 3 checks skipped. Re-run from a worktree to\n' +
+      '    exercise them; a green run here is not evidence about the fix.\n'
+  );
 }
+
+// Non-vacuous everywhere, including the primary: `fromPrimary` requires `derived && existsSync`, so
+// a revert to `__dirname` cannot satisfy it wherever it is run.
+check('and it says so', home.fromPrimary, true);
 
 // --- the fallback, which must never leave the caller without a daemon ---
 
@@ -102,13 +115,29 @@ if (process.platform === 'win32') {
 const reply = (data) => async () => (data === null ? { ok: false } : { ok: true, data });
 const tree = resolve('C:' + sep + 'Dev', 'Repos', 'work', 'worktrees', 'foo');
 
-const held = await daemonRunningFrom(tree, reply({ pid: 42, skillDir: resolve(tree, '.claude/skills/dev-server') }));
-check('a daemon inside the tree is named', held.holder?.pid, 42);
+const outsideDir = resolve(tree, '../bar/.claude');
+
+const held = await daemonRunningFrom(tree, reply({ pid: 42, skillDir: resolve(tree, '.claude/skills/dev-server'), cwd: outsideDir }));
+check('a daemon whose SCRIPT is in the tree is named', held.holder?.pid, 42);
+check('and the message says which handle', held.holder?.reason.startsWith('its running script'), true);
 check('and the answer is conclusive', held.checked, true);
 
-const elsewhere = await daemonRunningFrom(tree, reply({ pid: 42, skillDir: resolve(tree, '../bar/.claude') }));
-check('a daemon outside the tree is not blamed', elsewhere.holder, null);
+// 🔴 THE CASE THE FIRST VERSION OF THIS GOT WRONG. A daemon started by hand from inside a worktree
+// runs the PRIMARY's script while holding the worktree open through its working directory alone.
+// Testing skillDir only answered "not the holder" here — the same confidently-wrong message this
+// whole change exists to remove, reintroduced in a narrower case.
+const byCwd = await daemonRunningFrom(tree, reply({ pid: 42, skillDir: outsideDir, cwd: resolve(tree, 'src') }));
+check('a daemon holding the tree only by CWD is still named', byCwd.holder?.pid, 42);
+check('and the message says it was the cwd', byCwd.holder?.reason.startsWith('its working directory'), true);
+
+const elsewhere = await daemonRunningFrom(tree, reply({ pid: 42, skillDir: outsideDir, cwd: outsideDir }));
+check('a daemon outside the tree on BOTH handles is not blamed', elsewhere.holder, null);
 check('and THAT answer is conclusive too', elsewhere.checked, true);
+
+// An old daemon reports skillDir but no cwd. It must not throw, and must not be blamed on a missing
+// field — `undefined` is not inside anything.
+const noCwd = await daemonRunningFrom(tree, reply({ pid: 42, skillDir: outsideDir }));
+check('a daemon that reports no cwd is not blamed for it', noCwd.holder, null);
 
 for (const [name, res] of [
   ['a daemon that is down', reply(null)],
