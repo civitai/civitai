@@ -169,8 +169,13 @@ Reuse the shapes already on the page rather than inventing spacing: panels are
 - `+page.server.ts` `load` for reads, form `actions` for writes; services in `$lib/server/`.
 - Kysely builder first, raw `sql` only where the builder can't go (bitmask index matching, PG functions,
   jsonb/LATERAL, and tables the Prisma schema does not model).
-- Slow or optional data (ClickHouse roll-ups, external HTTP) goes behind `/api/*` and is fetched by the
-  panel, so it can't hold up the page's first paint. Everything cheap belongs in `load`.
+- External HTTP, and any slow read that is **not** cached, goes behind `/api/*` and is fetched by the
+  panel so it can't hold up first paint. Everything cheap belongs in `load`.
+- **ClickHouse roll-ups are the standing exception.** Creator Studio's analytics tabs read every one of
+  them in `load` — Redis-cached (`$lib/server/cache`), issued together in one `Promise.all`, each with its
+  own `.catch(() => null)` so one dead panel can't take the page. A cache hit is a millisecond read and
+  SSR is worth more than the deferral. Match that shape when the read is cached and degrades per panel;
+  reach for `/api/*` when it is neither.
 - Validate every action input with zod. Scope every mutation by owner as well as id (`WHERE id = ? AND
   userId = ?`), and **treat 0 affected rows as a failure, not a success** — reporting success on zero
   writes an audit row for something that did not happen.

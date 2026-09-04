@@ -6,9 +6,11 @@
     type ChartOptions,
     type ChartType,
     type Plugin,
+    ArcElement,
     BarController,
     BarElement,
     CategoryScale,
+    DoughnutController,
     Filler,
     Legend,
     LineController,
@@ -18,14 +20,17 @@
     Tooltip,
   } from 'chart.js';
 
-  // Register the tree-shakeable pieces we use (line + bar, category/linear axes, tooltip, legend, area fill).
-  // Time axes would additionally need a date adapter — callers pass pre-formatted category labels for now.
+  // Register the tree-shakeable pieces we use (line + bar + doughnut, category/linear axes, tooltip, legend,
+  // area fill). Time axes would additionally need a date adapter — callers pass pre-formatted category labels
+  // for now.
   ChartJS.register(
     LineController,
     BarController,
+    DoughnutController,
     LineElement,
     PointElement,
     BarElement,
+    ArcElement,
     LinearScale,
     CategoryScale,
     Tooltip,

@@ -83,6 +83,7 @@ import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subs
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
+import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -185,6 +186,7 @@ export const jobs: Job[] = [
   auditWildcardSetCategoriesJob,
   ...metricReconciliationJobs,
   ...clickhouseRefreshJobs,
+  userActivityRollupJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,

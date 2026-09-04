@@ -526,10 +526,14 @@ async function fetchContentAnalytics(
   };
 }
 
-// Bounded by the number of *reactors*, never the number of followers: `UserEngagement`'s only usable index is its
-// PK `(userId, targetUserId)`, so "does this user follow X" is an index seek while "everyone who follows X" is a
-// seq scan. We therefore aggregate reactors in ClickHouse first and probe Postgres with that list — measured 143
-// index searches / ~96 ms for a creator's all-time reactor set (~87k), against 825M reaction rows.
+// Bounded by the number of *reactors*, never the number of followers: the reactor set is what ClickHouse can
+// aggregate cheaply, so we do that first and probe Postgres with the resulting list — measured 143 index
+// searches / ~96 ms for a creator's all-time reactor set (~87k), against 825M reaction rows.
+//
+// Not because the reverse direction is unavailable: prod carries
+// `UserEngagement_type_targetUserId_idx (type, targetUserId) INCLUDE (userId)` — absent from
+// schema.full.prisma — so "everyone who follows X" is an index-only scan, and `$lib/server/follower-reach`
+// reads it that way.
 //
 // `reactions` carries the reactor on every row back to 2023-04-27 with no TTL, so this is not limited to a rolling
 // window the way an `entityMetricEvents_month` approach would be — any range the picker offers works, including a

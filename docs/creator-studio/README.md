@@ -37,7 +37,7 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
 |---|---|---|---|
 | Dashboard / overview | [dashboard.md](dashboard.md) | ✓ | at-a-glance earnings + entry points |
 | Model management | [models.md](models.md) | ⭐ | access toggles, per-version licensing fee, sell-indefinitely |
-| Analytics | [analytics.md](analytics.md) | ⭐ | `/earnings/analytics` — ClickHouse usage/earnings charts |
+| Analytics | [analytics.md](analytics.md) | ⭐ | `/analytics` — ClickHouse usage/earnings charts (moved from `/earnings/analytics`) |
 | Earnings | [earnings.md](earnings.md) | ✓ | `/earnings` — earnings by source (ClickHouse) |
 | Licensing fees (bulk) | [licensing.md](licensing.md) | ~ | bulk fee editor; may trail the per-version editor |
 | Settings | [settings.md](settings.md) | ✓ | Tipalti/tier status, default fee suggestions |

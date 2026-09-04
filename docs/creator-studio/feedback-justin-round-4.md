@@ -144,9 +144,10 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 
 - [ ] **[vNext]** **Customizable Dashboard** — `CU:868ke495u`. Customizable panels; share code with the
   models/analytics custom-views work. (`T:538`)
-- [ ] **[vNext]** **Audience** — `CU:868ke4vn3`. Broader audience analytics. *(Note: the audience-tab all-time
-  reactions/comments charts Briant said he was "already doing" (`T:189`) appear to be landing in V1 analytics — this
-  vNext task is the larger expansion; confirm the split.)*
+- [ ] **[vNext]** **Audience** — `CU:868ke4vn3`. Broader audience analytics. *(Split resolved by build: the
+  all-time reactions/comments charts (`T:189`), follower **active reach** (30/60/100d) and the follower
+  **country** breakdown all shipped in V1's audience tab. What remains under this task is whatever is scoped
+  beyond those — confirm with Justin before building.)*
 - [x] **[done — pulled forward from vNext]** **Multi-period compare** — reworked into a **month-primary** model across
   **earnings + all analytics** (per Briant). The shared range control is now **two month pickers** — *Month* (defaults to
   the current month) and *Compare* (defaults to the prior month) — the 7d/30d presets are gone. The **comparison month
