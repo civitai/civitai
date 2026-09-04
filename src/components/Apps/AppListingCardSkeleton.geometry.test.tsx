@@ -166,7 +166,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 // Import AFTER the mocks (vi.mock is hoisted; static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
-const { APP_LISTING_SKELETON_ROWS } = await import('./AppListingCardSkeleton');
+const { APP_LISTING_SKELETON_ROWS, gridQueryInlineSize } = await import('./AppListingCardSkeleton');
 const { listingGridColumnsAt } = await import('./appListingGrid');
 const { LISTING_ACTION_ROW_CONTROL_PX, LISTING_ACTION_ROW_GAP_PX } = await import(
   './appListingCardGeometry'
@@ -295,6 +295,16 @@ function ctaWidths(): number[] {
  * Kept as a SECOND, independent signal beside
  * `AppListingCardSkeleton.ssr.browser.test.tsx`'s string scan of the server markup:
  * the two fail differently, so a change to React's warning text cannot disarm both.
+ *
+ * ⚠️ IT IS ONE CHECK, NOT TEN — AND AN EARLIER VERSION OF THIS NOTE SAID OTHERWISE.
+ * It claimed the hook "covers EVERY test in this file rather than the one someone
+ * remembered to add it to". React DEDUPES `validateDOMNesting` per warn-key per module
+ * instance, so with the defect reintroduced the whole file reports **1 failed / 9
+ * passed** even though 9 of the 10 tests render the offending markup; run the late
+ * "NO CREATOR" test alone and it reds by itself. The hook does RUN on every test, and
+ * the guard is not inert — it goes red — but what it buys is "this file will fail if
+ * the pairing is ever rendered", not ten independent assertions. Do not price it as
+ * per-test coverage.
  */
 const domNestingErrors: string[] = [];
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
@@ -304,11 +314,17 @@ beforeEach(() => {
   mocks.isLoading = false;
   mocks.currentUser = null;
   domNestingErrors.length = 0;
+  // 🔴 CALL THROUGH. `mockImplementation` REPLACES the console method, so a spy that
+  // only collects would silently swallow every unrelated React/Mantine warning in this
+  // file — in the file whose own docstring says such a warning "scrolls past in a run
+  // that reports green". Collect AND forward.
+  const originalError = console.error.bind(console) as (...args: unknown[]) => void;
   consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
     const text = args.map((a) => String(a)).join(' ');
     if (text.includes('validateDOMNesting') || text.includes('cannot appear as a descendant')) {
       domNestingErrors.push(text);
     }
+    originalError(...args);
   });
 });
 
@@ -395,21 +411,27 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
   );
 
   /**
-   * 🔴 THE CELL COUNT IS TWO ROWS OF THE GRID **AS CSS ACTUALLY LAID IT OUT** — not
-   * two rows of what the ladder says CSS should have done.
+   * The cell count is two rows of the grid AS CSS ACTUALLY LAID IT OUT — not two rows
+   * of what the ladder says CSS should have done. The count is computed in JS while
+   * the tracks come from an `@container` query, so comparing the count against the
+   * RENDERED first row is a relationship between the two mechanisms rather than a
+   * re-derivation of one from the other.
    *
-   * The skeleton grid computes its count in JS (`listingGridColumnsAt` over a measured
-   * width) while the tracks are produced by an `@container (min-width: …)` query. Two
-   * mechanisms, one number, and they can silently disagree: a query container's size is
-   * its CONTENT box while `getBoundingClientRect()` is the BORDER box, so a `padding`
-   * or `border` added to `.gridContainer` — a plausible styling change — desynchronises
-   * them. The component subtracts padding and border for exactly that reason, but a
-   * check that re-derived the expected count from the ladder would be testing the JS
-   * against itself and would not notice.
+   * ⚠️ THIS IS **NOT** THE BOX-MODEL DESYNC GUARD, AND AN EARLIER VERSION OF THIS
+   * DOCBLOCK CLAIMED IT WAS ("it catches the desync above and any other cause"). An
+   * audit measured it PASSING with `padding: 8px` on `.gridContainer` and the
+   * component's subtraction removed — i.e. firing identically on its own control,
+   * which attributes nothing. The cause is structural, not a bad assertion: both
+   * fixtures sit deliberately MID-BAND (1376 is 208px above the 1168 rung, 2450 is
+   * 86px above 2364) so an off-by-one cannot reach them, and that same margin means no
+   * plausible padding can move the column count either. The property that makes them
+   * good PARITY fixtures is what blinds them here. It IS reachable — at `padding: 50px`
+   * it reds with its own message — but only at a padding nobody would write.
    *
-   * So this compares the count against the RENDERED first row: whatever CSS decided the
-   * column count is, the grid must hold exactly `APP_LISTING_SKELETON_ROWS` of them.
-   * That is a RELATIONSHIP, and it catches the desync above and any other cause of one.
+   * The desync is therefore guarded separately and without any fixture, against the
+   * container's own content box: see "the query inline size IS the container's content
+   * box" below. What THIS test still buys is the count↔track relationship at two real
+   * column counts, which is worth having and is all it should be read as.
    */
   test.each(WIDTHS)(
     'at $gridWidth px the cell count is exactly two rows of the grid CSS actually laid out',
@@ -429,6 +451,87 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
       expect(rendered).toBe(columns);
     }
   );
+
+  /**
+   * 🔴 THE BOX-MODEL DESYNC, GUARDED WITHOUT A FIXTURE.
+   *
+   * The component picks its column count from `gridQueryInlineSize(container)`, which
+   * must equal what an `@container` query sees: the container's CONTENT box.
+   * `getBoundingClientRect()` gives the BORDER box, so dropping the padding/border
+   * subtraction desynchronises the cell count from the rendered tracks — silently,
+   * because today `.gridContainer` has neither.
+   *
+   * This asserts that equality DIRECTLY, against a second and independent read of the
+   * same quantity (`getComputedStyle().width` is the used content-box width whatever
+   * `box-sizing` says), and it applies the padding ITSELF rather than waiting for a
+   * fixture width at which the count happens to flip. That is what makes it
+   * independent of where `WIDTHS` sit — the failure mode the count↔row test above was
+   * measured to have.
+   */
+  test("🔴 the query inline size IS the container's content box, padded or not", async () => {
+    await renderStore(WIDTHS[0].gridWidth, { loading: true });
+    const container = document.querySelector(
+      '[data-testid="apps-listing-skeleton-grid-container"]'
+    ) as HTMLElement;
+    const grid = document.querySelector(
+      '[data-testid="apps-listing-skeleton-grid"]'
+    ) as HTMLElement;
+    expect(container, 'the skeleton grid container did not render').not.toBeNull();
+    expect(grid, 'the skeleton grid did not render').not.toBeNull();
+
+    /**
+     * 🔴 THE REFERENCE READ: THE GRID'S OWN WIDTH.
+     *
+     * `.grid` is a block-level child with no margin, so its border box fills the
+     * container's CONTENT box exactly — a layout-derived, fractional, independent
+     * measurement of the very quantity the `@container` query sizes.
+     *
+     * ⚠️ `getComputedStyle(container).width` WAS THE FIRST CHOICE AND IS WRONG, and
+     * only the positive control below caught it: under `box-sizing: border-box` —
+     * which Preflight sets on everything — Chrome resolves `width` to the BORDER box.
+     * Measured with 8px padding + 2px borders on a 1376px container: computed `width`
+     * `1376px`, `clientWidth` 1372, true content box 1356. A reference that tracks the
+     * value under test is not a reference.
+     */
+    const contentBox = () => grid.getBoundingClientRect().width;
+
+    // ── ARM 1: as shipped — no padding, no border. The two agree trivially, which is
+    // exactly why this arm cannot be the whole guard. It is not useless either: it is
+    // what fires if `.gridContainer` ever GAINS padding in the stylesheet while the
+    // component still measures the border box.
+    expect(
+      Math.abs(gridQueryInlineSize(container) - contentBox()),
+      "the container query inline size and the grid's own width disagree with no " +
+        'padding or border in play — either `.gridContainer` gained one in the ' +
+        'stylesheet, or `gridQueryInlineSize` stopped measuring the content box'
+    ).toBeLessThan(0.01);
+    expect(container.getBoundingClientRect().width).toBeCloseTo(contentBox(), 1);
+
+    // ── ARM 2: the plausible styling change, applied here rather than hoped for.
+    container.style.padding = '8px';
+    container.style.borderLeft = '2px solid transparent';
+    container.style.borderRight = '2px solid transparent';
+    await nextLayout();
+
+    // POSITIVE CONTROL — the box model really moved, so a pass below is about the
+    // subtraction and not about a style that silently did nothing.
+    expect(
+      container.getBoundingClientRect().width - contentBox(),
+      'the padding/border did not change the box model — this arm is testing nothing'
+    ).toBeCloseTo(20, 1);
+
+    expect(
+      Math.abs(gridQueryInlineSize(container) - contentBox()),
+      'the measured inline size is the BORDER box, not the CONTENT box. An @container ' +
+        'query reads the content box, so the skeleton computes its cell count from a ' +
+        'different width than CSS uses for its tracks — restore the padding/border ' +
+        'subtraction in `gridQueryInlineSize`.'
+    ).toBeLessThan(0.01);
+
+    container.style.padding = '';
+    container.style.borderLeft = '';
+    container.style.borderRight = '';
+  });
 
   /**
    * 🔴 THE FOURTH CONTENT-VARIANCE AXIS, AND THE ONLY ONE THAT RUNS **DOWNWARD**.

@@ -138,14 +138,34 @@ describe('🔴 the server emits a real skeleton grid, not an empty one', () => {
   });
 
   /**
-   * The grid announces itself once. Cheap, and it is the only thing on the loading
-   * path that carries announcement semantics at all — `aria-busy` on the results
-   * container does not (it defers processing WITHIN a live region; that container is
-   * not one).
+   * 🔴 THE LIVE REGION HAS SOMETHING TO ANNOUNCE, AND IS NOT MARKED BUSY.
+   *
+   * ⚠️ THIS TEST USED TO BE `expect(html).toContain('aria-label="Loading apps"')` AND
+   * IT WAS TITLED "announced, once" — a name wider than its body, over markup that
+   * most likely announced NOTHING. The region carried `role="status" aria-busy="true"`
+   * with every descendant `aria-hidden`: `aria-busy="true"` on a live region is the
+   * standard instruction to withhold announcements (and it was a hardcoded literal
+   * that never cleared — the grid unmounts instead), a fully `aria-hidden` subtree has
+   * no announceable content, and a live region announces its CONTENT rather than its
+   * label. An audit found it in the paragraph rewritten to stop overstating exactly
+   * this.
+   *
+   * So the three things asserted are the three the markup has to satisfy: one live
+   * region, NOT busy, with real text inside it.
+   *
+   * ⚠️ WHAT IS STILL NOT CLAIMED: that any particular screen reader announces it.
+   * Nobody has run one — not this PR, not the audit. This is a markup assertion.
    */
-  test('the loading grid is announced, once', () => {
+  test('the loading grid is a live region with announceable text, and is not marked busy', () => {
     const html = serverHtml();
     expect([...html.matchAll(/role="status"/g)]).toHaveLength(1);
-    expect(html).toContain('aria-label="Loading apps"');
+    expect(html).toContain('Loading apps');
+    expect(
+      html,
+      'the live region is marked `aria-busy`, which tells assistive tech to withhold ' +
+        'announcements — and nothing ever clears it, because the grid unmounts instead'
+    ).not.toContain('aria-busy');
+    // …and the text is not itself hidden, which is the other way to announce nothing.
+    expect(html).toMatch(/class="[^"]*sr-only[^"]*"[^>]*>Loading apps/);
   });
 });

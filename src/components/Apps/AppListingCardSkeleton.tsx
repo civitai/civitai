@@ -98,7 +98,11 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * IS VALID HTML. Mantine's `Text` renders a `<p>` and Mantine's `Skeleton` renders a
  * `<div>`, and `<div>` may not descend from `<p>`. An HTML parser auto-closes the
  * `<p>` at the `<div>`, so the parsed DOM is `<p></p><div></div>` while React's tree
- * is `<p><div/></p>` — a HYDRATION MISMATCH on every `/apps` load, 16–20 times over.
+ * is `<p><div/></p>` — a HYDRATION MISMATCH on every `/apps` load, EXACTLY 16 times:
+ * 8 cells (`APP_LISTING_SKELETON_SSR_COLUMNS` x `APP_LISTING_SKELETON_ROWS`) x the two
+ * meta lines each. An earlier draft said "16–20"; 20 would need 10 cells, which no
+ * server render produces, and the mutation reproducing this observed `expected 16 to
+ * be +0`.
  * It shipped in the first round of this PR and was invisible to the parity suite,
  * because the bar is `position: absolute` and therefore contributes no geometry for
  * a box comparison to see; the only signal was a `validateDOMNesting` warning on a
@@ -328,6 +332,50 @@ export const APP_LISTING_SKELETON_SSR_COLUMNS = listingGridColumnsAt(
 );
 
 /**
+ * The inline size an `@container` query would see for `el` — i.e. its CONTENT box.
+ *
+ * 🔴 CONTENT BOX, NOT BORDER BOX. The ladder that actually lays this grid out is an
+ * `@container (min-width: …)` query, and a query container's size is its content box.
+ * `getBoundingClientRect()` returns the BORDER box. Today `.gridContainer` declares
+ * neither padding nor a border, so the two numbers are identical and either would
+ * work — which is precisely the hazard: a later `padding: 8px` on that class would
+ * silently desynchronise the cell COUNT computed here from the track count CSS
+ * renders. Subtracting makes the two definitions agree by construction rather than by
+ * coincidence.
+ *
+ * `getBoundingClientRect()` rather than `clientWidth`: the latter is rounded to an
+ * integer, so a container at 1167.6px would report 1168 and pick the four-column rung
+ * while the (fractional) container query stays on three.
+ *
+ * 🔴 EXPORTED SO IT CAN BE GUARDED DIRECTLY, AND THAT EXPORT IS THE POINT. The first
+ * attempt guarded this relationship end-to-end — "the cell count is two rows of the
+ * grid CSS actually laid out" — and an audit measured that guard PASSING with and
+ * without the desync it was written for. The reason is structural rather than a
+ * mistake in the assertion: the parity fixtures sit deliberately MID-BAND (1376 is
+ * 208px above the 1168 rung, 2450 is 86px above 2364) so that they cannot be tripped
+ * by an off-by-one, and that same margin means no plausible padding can move the
+ * column count. The property that makes them good parity fixtures is what blinded the
+ * desync guard. Two guards wanted opposite fixtures and were sharing one list.
+ *
+ * So the desync is now guarded HERE, against the element's own content box, with no
+ * fixture involved at all — see "the query inline size IS the container's content
+ * box" in `AppListingCardSkeleton.geometry.test.tsx`. The end-to-end count↔row test
+ * is kept, with its claim narrowed to what it actually checks.
+ */
+export function gridQueryInlineSize(el: HTMLElement): number {
+  const rect = el.getBoundingClientRect();
+  const cs = getComputedStyle(el);
+  const px = (v: string) => parseFloat(v) || 0;
+  return (
+    rect.width -
+    px(cs.paddingLeft) -
+    px(cs.paddingRight) -
+    px(cs.borderLeftWidth) -
+    px(cs.borderRightWidth)
+  );
+}
+
+/**
  * The store's loading grid — the SAME markup and the SAME CSS module classes the
  * results grid uses, so a skeleton cell and a card cell get byte-identical track
  * geometry from the container query.
@@ -349,40 +397,7 @@ export function AppListingCardSkeletonGrid() {
   useIsomorphicLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    /**
-     * 🔴 THE CONTENT BOX, NOT THE BORDER BOX — and the difference is currently ZERO,
-     * which is exactly why it is worth writing down.
-     *
-     * The ladder that actually lays this grid out is an `@container (min-width: …)`
-     * query, and a query container's size is its CONTENT box. `getBoundingClientRect()`
-     * returns the BORDER box. Today `.gridContainer` declares neither padding nor a
-     * border, so the two numbers are identical and either would work — meaning a later
-     * `padding: 8px` on that class would silently desynchronise the cell COUNT this
-     * computes from the track count CSS renders, with nothing anywhere going red.
-     * Subtracting them makes the two definitions agree by construction instead of by
-     * coincidence.
-     *
-     * `getBoundingClientRect()` rather than `clientWidth`: the latter is rounded to an
-     * integer, so a container at 1167.6px would report 1168 and pick the four-column
-     * rung while the (fractional) container query stays on three.
-     *
-     * The relationship is guarded end-to-end in
-     * `AppListingCardSkeleton.geometry.test.tsx` — "the cell count is two rows of the
-     * grid CSS ACTUALLY laid out" — which compares this count against the rendered
-     * first row rather than against the ladder, so it catches this and any other cause.
-     */
-    const measure = () => {
-      const rect = el.getBoundingClientRect();
-      const cs = getComputedStyle(el);
-      const px = (v: string) => parseFloat(v) || 0;
-      const inlineSize =
-        rect.width -
-        px(cs.paddingLeft) -
-        px(cs.paddingRight) -
-        px(cs.borderLeftWidth) -
-        px(cs.borderRightWidth);
-      setColumns(listingGridColumnsAt(inlineSize));
-    };
+    const measure = () => setColumns(listingGridColumnsAt(gridQueryInlineSize(el)));
     measure();
     // Keep it right across a resize / a sub-nav reflow. Guarded because the
     // constructor is absent in some non-browser environments; the one-shot
@@ -394,14 +409,34 @@ export function AppListingCardSkeletonGrid() {
   }, []);
 
   return (
-    <div className={gridClasses.gridContainer} ref={containerRef}>
-      <div
-        className={gridClasses.grid}
-        data-testid="apps-listing-skeleton-grid"
-        role="status"
-        aria-busy="true"
-        aria-label="Loading apps"
-      >
+    <div
+      className={gridClasses.gridContainer}
+      ref={containerRef}
+      data-testid="apps-listing-skeleton-grid-container"
+      role="status"
+    >
+      {/* 🔴 NO `aria-busy` HERE, AND THAT IS A CORRECTION, NOT AN OMISSION.
+          This region carried `role="status" aria-busy="true"` with `aria-label="Loading
+          apps"` and EVERY descendant `aria-hidden`. `aria-busy="true"` on a live region
+          is the standard instruction to WITHHOLD announcements until it clears, and it
+          was a hardcoded literal that never flipped to false (the grid unmounts
+          instead); a region whose whole subtree is `aria-hidden` has no content to
+          announce either way; and a live region announces its CONTENT, not its label.
+          So the loading state most likely announced nothing — in markup whose own
+          comment claimed it was the one thing on the page that did.
+          The fix is real text in the live region and no busy flag.
+
+          ⚠️ NOT VERIFIED WITH A SCREEN READER, by me or by the audit that found it.
+          What is claimed is only that the markup can now announce — a live region, not
+          marked busy, with non-hidden text content — not that a particular AT does. */}
+      {/* 🔴 THE LIVE REGION IS THE CONTAINER, NOT THE GRID, so this text can sit
+          INSIDE it without becoming a grid item. On `.grid` it would be a cell —
+          an extra track's worth of layout, in the component whose entire job is
+          reserving exact boxes. (Tailwind's `sr-only` is `position: absolute`, so
+          it would in fact be out of flow either way; relying on that would be a
+          load-bearing detail of a utility class nobody would think to check.) */}
+      <span className="sr-only">Loading apps</span>
+      <div className={gridClasses.grid} data-testid="apps-listing-skeleton-grid">
         {Array.from({ length: columns * APP_LISTING_SKELETON_ROWS }, (_, i) => (
           <div key={i} data-testid="apps-listing-skeleton-col">
             <AppListingCardSkeleton />
