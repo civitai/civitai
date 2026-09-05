@@ -1849,9 +1849,10 @@ export const EARLY_ACCESS_CONFIG: {
   buzzChargedPerDay: 100,
   timeframeValues: [3, 5, 7, 9, 12, 15, 30],
   scoreTimeFrameUnlock: [
-    // The maximum amount of days that can be set based off of score. The entry rung matches the
-    // monetization floor (MONETIZATION_MIN_CREATOR_SCORE) on purpose: early access and pricing open
-    // at the same creator score, so there is one number to explain rather than two.
+    // The maximum amount of days that can be set based off of score. The entry rung is set to the
+    // same figure as MONETIZATION_MIN_CREATOR_SCORE, deliberately — but the two are separate
+    // constants that nothing keeps in step, and clearing this rung is not the same permission as
+    // clearing the pricing floor. Do not read the shared number as a shared rule.
     [10000, 3],
     [65000, 5],
     [90000, 7],

@@ -129,10 +129,10 @@ it lapsed in, which would fix the involuntary case (a failed card is the most co
 Gold is **unlimited**, so "held it at any point this month" would mean unlimited pricing for that month
 off one payment. Left as-is deliberately; revisit with that cost in view.
 
-**Membership tier does not unlock early access.** The ladder reads the creator score (`scores.total`)
-and starts at 10,000 — the same floor as pricing, so early access and monetization open at one
-number — so simulating a tier will never reach it — the studio has a separate moderator-only score simulator
-for this reason. The one non-score unlock is the **granted `thirtyDayEarlyAccess` feature flag**, which by
+**Membership tier does not unlock early access.** The ladder reads the creator score
+(`scores.total`), so simulating a tier will never reach it — the studio has a separate
+moderator-only score simulator for this reason. Its entry rung is 10,000, matching the pricing
+floor. The one non-score unlock is the **granted `thirtyDayEarlyAccess` feature flag**, which by
 itself confers the top rung (30 days, 30 concurrent) at any score.
 
 The fee ceiling blocks **raises only** (`raisesOverCap`): a stored price above it stays chargeable, so a
