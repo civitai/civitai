@@ -149,11 +149,13 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // `containsAirReference` is a case-insensitive SUBSTRING test for `urn:air:`
 // across every string, array element, object value and object KEY.
 //
-// `buildStep` emits exactly `{ model, messages, maxTokens, temperature?, tools?,
-// tool_choice? }` (pinned by the exact-key-set test in
+// `buildStep` emits exactly `{ model, messages, maxTokens, seed, temperature?,
+// tools?, tool_choice? }` (pinned by the exact-key-set test in
 // `__tests__/chat-completion.step.test.ts`). `model` is `z.enum`-bounded to
-// `CHAT_COMPLETION_MODELS`, `maxTokens` and `temperature` are numbers, and
-// `role` is a four-value literal set.
+// `CHAT_COMPLETION_MODELS`, `maxTokens`, `temperature` and `seed` are numbers,
+// and `role` is a four-value literal set. `seed` is generated here rather than
+// accepted from the caller — see `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX` — so it
+// adds no caller-controlled string to this surface.
 //
 // 🔴 THE CALLER-CONTROLLED STRING SET GREW WHEN TOOLS SHIPPED, AND AN EARLIER
 // REVISION OF THIS PARAGRAPH NAMED ONLY ONE OF THEM. It said "**`messages[].content`
@@ -317,6 +319,110 @@ export const CHAT_COMPLETION_MAX_OUTPUT_TOKENS = 4_000;
 
 /** The nominal characters-per-token used in the derivation above. Exported so the test can pin it. */
 export const CHAT_COMPLETION_ASSUMED_CHARS_PER_TOKEN = 4;
+
+/**
+ * 🔴 EXCLUSIVE UPPER BOUND FOR THE PER-SUBMIT `seed` — AND THE SEED IS NOT A
+ * DETERMINISM FEATURE. IT IS WHAT STOPS THIS ENTRY BEING ANSWERED FROM A
+ * MONTH-OLD STORED REPLY, AT FULL PRICE.
+ *
+ * The platform serves a step's result from storage when a later step arrives
+ * with a BYTE-IDENTICAL input, skipping execution entirely. That is deliberate
+ * and it is sound for a step whose output is a pure function of its input — a
+ * seeded image generation asked for the same picture twice.
+ *
+ * 🔴 SO THE SEED IS EMITTED ONLY WHERE THAT PURITY FAILS — `temperature: 0` IS
+ * EXCLUDED, DELIBERATELY. It is a legal, reachable param (`.min(0)`, optional),
+ * and at 0 the stored reply IS the answer this input produces: the catalog data
+ * a tool round retrieved is part of the hashed input, so a stale world cannot
+ * enter through a reply whose input is byte-identical. Reuse is sound there and
+ * the execution saving is worth keeping. The platform's own equivalent surface
+ * makes the same call — the v1 OpenAI-compatible controller randomizes a seed
+ * only when the caller supplied none, on the reasoning that a caller who pins
+ * one is asking for reproducible, reuse-eligible output.
+ *
+ * ⚠ This changes NOTHING about the defect below: the failing traffic omits
+ * `temperature` entirely, which is a provider default of 1, not 0.
+ *
+ * A chat completion at `temperature > 0` is NOT such a step: the same input has
+ * many correct answers, so reusing one is not "the same result", it is LAST
+ * WEEK'S result. `buildChatCompletionInput` below emitted only semantic fields
+ * — model, messages, maxTokens, temperature, tools — so two identical asks
+ * hashed identically, by construction, and the block had NO field with which to
+ * ask for a fresh draw. Measured in production before this change: nearly
+ * HALF of tool-using turns had at least one round served from storage, one of
+ * them a whole answer more than twenty hours old, every replay charged in full. The
+ * question that surfaced it — "what are the most popular models" — is exactly
+ * the shape that breaks: its correct answer changes daily.
+ *
+ * 🔴 IT COMPOUNDS WITH A WITHHELD REPLY, WHICH IS THE HALF THAT LOOKS LIKE A
+ * DIFFERENT BUG. Asking again after a moderation withhold resubmits the same
+ * input, replays the same refused text and charges again — so the withhold
+ * reads as permanent and the retry reads as broken. A per-submit seed is what
+ * makes "ask again" mean it.
+ *
+ * WHY THIS FIELD, AND NOT A NEW ONE. `seed` is already on the input contract
+ * this entry is anchored to, and a fresh seed per submit is the honest
+ * statement of intent — resample — rather than a nonce smuggled through a field
+ * that means something else. `user` was rejected for exactly that reason: it is
+ * an end-user identifier forwarded upstream, and randomising it would corrupt
+ * the abuse signal it exists to carry.
+ *
+ * WHY 2^31 AND NOT `Number.MAX_SAFE_INTEGER`. Providers accept an integer seed
+ * and are not uniformly documented above 32 bits; a 2-billion-value space makes
+ * an accidental collision between two submits of the same conversation
+ * negligible, which is the only property the reuse-avoidance needs.
+ *
+ * 🔴 IT MUST STAY A POWER OF TWO, AND THAT IS NOT COSMETIC. `drawChatCompletionSeed`
+ * reduces a uniform 32-bit draw modulo this value. 2^32 is an exact multiple of
+ * 2^31, so the reduction is exactly uniform; a non-power-of-two bound (say
+ * 1_000_000_000) would make the low values strictly more likely — modulo bias,
+ * which is silent and which no test above would see.
+ *
+ * 🔴 THE COST OF THIS CHANGE, STATED. It gives up the execution saving on a
+ * repeated identical ask for this entry. That saving is real, and it is being
+ * spent deliberately: a stale answer is charged for at full price either way,
+ * so the storage reuse was saving execution while still billing the reader.
+ */
+export const CHAT_COMPLETION_SEED_EXCLUSIVE_MAX = 2 ** 31;
+
+/**
+ * One uniform draw in `[0, CHAT_COMPLETION_SEED_EXCLUSIVE_MAX)`.
+ *
+ * 🔴 WEB CRYPTO, NOT `node:crypto`'s `randomInt`, BECAUSE THIS MODULE IS
+ * REACHABLE FROM CLIENT CODE. The chain is real and was read off the imports,
+ * not assumed: `~/server/schema/blocks/workflow.schema` imports the step
+ * registry for `REGISTERED_STEP_IDS`, the registry imports this module, and
+ * `components/AppBlocks/BlockGenerationSourceUploadModal.tsx` imports that
+ * schema. A `~/server/` path is NOT a guarantee of server-only bundling.
+ *
+ * Whether a bare `import { randomInt } from 'crypto'` would actually break the
+ * client build here is NOT something this change measured — the bundler may
+ * stub it. `globalThis.crypto.getRandomValues` is present in both runtimes and
+ * needs no import at all, so it removes the question instead of answering it.
+ * Note what would NOT have caught a bad choice: `typecheck` and the unit suites
+ * both pass either way, because neither of them bundles.
+ *
+ * 🔴 AND THE CALL IS NOT SERVER-ONLY EITHER — IT RUNS AT MODULE LOAD, IN EVERY
+ * RUNTIME THAT EVALUATES THE REGISTRY, THE CLIENT BUNDLE INCLUDED. `./index`
+ * runs `assertStepInvariants` at MODULE SCOPE, and that calls `buildStep` once
+ * per declared variant (`./index`, the load-time invariant loop). Measured by
+ * spying on `globalThis.crypto.getRandomValues` and importing the registry:
+ * **3 calls, one per `CHAT_COMPLETION_MODELS` entry, before any request exists.**
+ *
+ * That makes the choice above load-bearing rather than merely tidy, and it is
+ * why this docstring no longer says "only ever runs server-side" — it did, and
+ * that was FALSE. A later editor who believed it and reached for `node:crypto`,
+ * `process.env` or a DB read here would not break a request: they would break
+ * **module evaluation of the client bundle**, i.e. the whole page. `:310-316`
+ * already records that `workflow.schema` depends on this path staying light —
+ * module-load work here is a tracked property, so keep the call cheap and
+ * runtime-agnostic.
+ */
+function drawChatCompletionSeed(): number {
+  const draw = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(draw);
+  return draw[0] % CHAT_COMPLETION_SEED_EXCLUSIVE_MAX;
+}
 
 /**
  * Input bounds on the conversation.
@@ -981,6 +1087,10 @@ function buildChatCompletionInput(params: ChatCompletionStepParams): ChatComplet
     model: params.model,
     messages: params.messages,
     maxTokens: params.maxTokens,
+    // Only where the step is NOT a pure function of its input — see
+    // `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX`. At `temperature: 0` the stored reply
+    // IS the answer this input produces, so reuse is sound and worth keeping.
+    ...(params.temperature === 0 ? {} : { seed: drawChatCompletionSeed() }),
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
     ...(params.tools !== undefined ? { tools: params.tools } : {}),
     ...(params.toolChoice !== undefined ? { tool_choice: params.toolChoice } : {}),
