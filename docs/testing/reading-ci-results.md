@@ -35,25 +35,56 @@ Immediately after a force-push it returned the **old** commit. On that single re
 like it failed. Confirm from three sources that agree — local `HEAD`, `origin/<branch>`, and the
 PR's `headRefOid` — before reporting either way.
 
-## Unconfirmed: force-push may not re-trigger either CI system
+## Measured: force-push does not re-trigger Tekton, and Actions can stop firing entirely
 
-**Hypothesis, not established.** On PR #4640 the only push that ever produced runs was the branch's
-**first, non-force** push. Three subsequent `--force-with-lease` pushes and one close/reopen produced
-nothing from GitHub Actions *or* Tekton, while three other PRs open at the same time each had a full
-13 runs at head. All four workflows are `on: pull_request: branches: [main, release]` with no
-`types:`, so the default already includes `synchronize` and `reopened` — the configuration says this
-should have fired.
+Two separate systems post to a PR here and they fail differently. **They are not interchangeable and
+neither substitutes for the other.**
 
-Confirming it needs a second force-pushed PR to compare against, which we did not have.
+| System | Surfaces as | On PR #4640 |
+| --- | --- | --- |
+| Tekton (in-cluster) | **commit statuses** — `tekton / typecheck`, `tekton / fixture-bootstrap` | skipped 3 force-pushes; fired on the next **normal** push, ~3.5 min |
+| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard, Windows dev-env | fired once on the branch's first push, then never again — including on the normal push |
 
-**If it is true, the consequence is the one worth caring about:** a force-pushed PR can sit
-indefinitely at a green belonging to an older commit, while `gh pr checks` reports nothing wrong.
-Reviewers see a PR that looks tested and is not.
+Sequence measured 2026-09-04/05: branch created and pushed → 4 Actions runs + 2 Tekton statuses.
+Three `--force-with-lease` pushes → nothing from either. One close/reopen → nothing. One **normal**
+fast-forward push → **Tekton posted both statuses; Actions produced zero check-runs.**
 
-**Until someone confirms or refutes it: after any force-push, check by SHA that runs exist for the
-new commit.** If none appear, push a real commit rather than re-forcing — that is the only shape of
-push observed to produce runs here, and this repo squash-merges, so the extra commit never reaches
-`main`'s history.
+So the force-push hypothesis holds for Tekton and does **not** explain Actions, which stopped firing
+on this PR for a reason this evidence does not identify.
+
+### The part that will fool you
+
+After that normal push, `gh pr checks` reported:
+
+```
+CI Checks Summary:
+  [ok] Passed: 2
+  [FAIL] Failed: 0
+```
+
+**Two passed, zero failed, and 13 checks that never ran.** Nothing in that output is false and
+nothing in it is missing-looking. Earlier the same command on the same PR said `no checks reported`
+while four passing runs existed against an older commit. It answers about what it found, never about
+what should have been there.
+
+### What to do
+
+- **Count, don't skim.** A healthy internal PR here carries **13 check-runs plus 2 Tekton statuses**
+  at head (measured across #4641–#4643). `Passed: 2` is not a pass.
+- **Check both mechanisms by SHA**, because one can be present while the other is absent:
+
+```bash
+sha=$(gh pr view <pr> --json headRefOid -q .headRefOid)
+gh api repos/<owner>/<repo>/commits/$sha/status     -q '.state + " " + ([.statuses[]?.context]|join(","))'
+gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
+```
+
+- **After a force-push, expect no Tekton status.** Push a real commit instead; this repo
+  squash-merges, so it never reaches `main`'s history.
+- For an internal PR targeting `main`, `tekton / typecheck` is the **authoritative** typecheck — the
+  Actions typecheck job deliberately skips that case (see the header of `.github/workflows/lint.yml`).
+  So Tekton present + Actions absent still leaves Lint, the schema drift gate, the submodule pin
+  guard and the Windows dev-env smoke unrun.
 
 > The workflow file already warns about the general form of this, about a different question:
 > *"Both were reasoning from the workflow's CONFIGURATION, which says nothing about whether the job
