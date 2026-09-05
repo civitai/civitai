@@ -87,7 +87,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { AppsTableColgroup, APPS_OFFSITE_REPORTS_COLUMNS } from '~/components/Apps/appsWideLayout';
 
 /**
  * /apps/review — the OFF-SITE (external-link) pending review section (W13 P3a).
@@ -1350,9 +1349,12 @@ export function OffsiteReportsQueue() {
       ) : (
         <Card withBorder p={0}>
           <Table verticalSpacing="md" horizontalSpacing="md">
-            {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/review`
-                hosts this tab and no longer caps its body. */}
-            <AppsTableColgroup columns={APPS_OFFSITE_REPORTS_COLUMNS} />
+            {/* 🔴 NO COLUMN LEDGER, DELIBERATELY — EXEMPT in `~/components/Apps/appsWideLayout`
+                as `no-surplus`. At 1200 this row's content wants App 240 + Reason 292 (to
+                reach its 260px details cap) + Reporter 94 + Reported 133 + Status 86 +
+                actions 414 = 1259px in 1168px of container, so SOMETHING is under-served
+                there whatever the split. Measured: every candidate ledger was either taller
+                than natural at 1200 or clipped the lineClamp-ed details harder. */}
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>App</Table.Th>
@@ -1395,29 +1397,35 @@ export function OffsiteReportsQueue() {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      <Text size="xs">{r.reporter?.username ?? `#${r.reporter?.id ?? '?'}`}</Text>
+                      {/* 🔴 `nowrap` — these three columns carry shrink-to-content shares, and
+                          a share below min-content only holds one line when min-content is the
+                          whole label. A username, a date and a status badge are each one
+                          token; wrapping them was what made these rows taller than the
+                          browser's own layout. */}
+                      <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
+                        {r.reporter?.username ?? `#${r.reporter?.id ?? '?'}`}
+                      </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap={4}>
+                      <Group gap={4} wrap="nowrap">
                         <IconClock size={14} />
-                        <Text size="xs">{formatDate(r.createdAt)}</Text>
+                        <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
+                          {formatDate(r.createdAt)}
+                        </Text>
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Badge size="sm" color={statusChip.color} variant="light">
+                      <Badge
+                        size="sm"
+                        color={statusChip.color}
+                        variant="light"
+                        style={{ whiteSpace: 'nowrap' }}
+                      >
                         {statusChip.label}
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      {/* 🔴 `flex-start`, NOT `flex-end` — this cell is the ledger's
-                          PRIMARY column (see `APPS_OFFSITE_REPORTS_COLUMNS`), so its
-                          alignment decides where the buttons sit once it absorbs the
-                          container's surplus. `flex-end` pinned them to the table's
-                          right edge, which is the dead-gap defect the ledger exists to
-                          remove. It is a no-op at every width where this column sits at
-                          its min-content (measured 414.11 at 1440 AND 2560 before the
-                          ledger), i.e. everywhere it is not primary. */}
-                      <Group gap={4} justify="flex-start" wrap="nowrap">
+                      <Group gap={4} justify="flex-end" wrap="nowrap">
                         {actions.map((action) => (
                           <Button
                             key={action}

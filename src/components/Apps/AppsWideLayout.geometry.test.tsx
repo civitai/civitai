@@ -21,7 +21,7 @@
  * misplaced `<colgroup>` is "ignored SILENTLY" and that `__tests__/appsWideLayout.test.ts`
  * "cannot see any of that". Both halves were refuted by mutation, in opposite directions:
  *
- *   - a `<colgroup>` moved AFTER `<Table.Tbody>` changed **no rendered width at all** (all
+ *   - a `<colgroup>` moved AFTER `<Table.Tbody>` changed **no rendered width at all** (every
  *     assertion in this file stayed green), because React inserts nodes through the DOM API
  *     so the HTML parser's table foster-parenting never runs and Chromium honours the
  *     columns wherever the element sits — while the unit file's structural guard went red;
@@ -74,7 +74,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { cascadeEvidence, renderAtViewport } from '../../../test/geometry-setup';
+import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { SubscriptionRecord } from '~/server/schema/blocks/subscription.schema';
@@ -246,6 +246,29 @@ const NARROW = { width: 1440, height: 900, content: 1408 } as const;
 const WIDE = { width: 2560, height: 1440, content: 2528 } as const;
 const CONTAINER_DELTA = WIDE.content - NARROW.content; // 1120
 
+/**
+ * 🔴 THE WIDTHS BELOW 1440, AND THE DIMENSION THAT GOES WITH THEM.
+ *
+ * Every arm in this file used to read a WIDTH at 1440/2560 only, and that is precisely why
+ * two bad ledgers shipped through a green suite: a column squeezed below its content does
+ * not get NARROWER than the assertion expects, it gets TALLER. Measured on
+ * `AppActivityPanel`, row height against a natural 36.19:
+ *
+ *                                    768      1200     1440     2560
+ *   [7, 8, 10, null, 6]   round 2   48.09    48.09    48.09    36.19
+ *   [3, 4, 20, 13, null]  round 3   64.89    64.89    64.89    48.09
+ *
+ * Both are invisible to a width assertion at 1440/2560, and round 3's is 79% taller than
+ * `main` on an ordinary laptop. So the tier now measures HEIGHT as well as width, at two
+ * widths BELOW 1440 as well as the two above — 768 and 1200 are where a squeeze bites,
+ * because that is where a percentage share is smallest in absolute px.
+ */
+const TABLET = { width: 768, height: 900, content: 736 } as const;
+const LAPTOP = { width: 1200, height: 900, content: 1168 } as const;
+
+/** The four widths every table-shaped arm should be read at, narrow-first. */
+const ALL_WIDTHS = [TABLET, LAPTOP, NARROW, WIDE] as const;
+
 const px = (n: number) => Math.round(n * 100) / 100;
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -357,6 +380,44 @@ async function renderRoute(ui: React.ReactElement, viewport: { width: number; he
 function headerWidths(): number[] {
   const cells = Array.from(document.querySelectorAll('table thead th'));
   return cells.map((c) => px(c.getBoundingClientRect().width));
+}
+
+/** The first body row's border-box HEIGHT — the dimension a width assertion cannot see. */
+function firstRowHeight(): number {
+  const row = document.querySelector('table tbody tr');
+  if (!row) throw new Error('no table body row to measure');
+  return px(row.getBoundingClientRect().height);
+}
+
+/**
+ * How many LINE BOXES an element's text occupies.
+ *
+ * `range.getClientRects()` returns one rect per line box, so this counts wrapping directly
+ * rather than inferring it from a height and a line-height. Returns `-1` for a missing
+ * element so a caller asserting a number gets a loud wrong answer rather than a throw
+ * inside a `map`.
+ */
+function lineCount(el: Element | null | undefined): number {
+  if (!el) return -1;
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  return range.getClientRects().length;
+}
+
+/** Render `ui` in the real layout at each of `viewports`, applying `read` at each. */
+async function atEachWidth<T>(
+  ui: () => React.ReactElement,
+  read: () => T,
+  viewports: readonly { width: number; height: number }[] = ALL_WIDTHS
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const vp of viewports) {
+    const observed = await renderRoute(ui(), vp);
+    expect(observed).toEqual({ width: vp.width, height: vp.height });
+    out.push(read());
+    await cleanup();
+  }
+  return out;
 }
 
 function widthOf(testId: string): number {
@@ -602,14 +663,12 @@ function bodyCells(): Element[] {
   return Array.from(document.querySelectorAll('table tbody tr:first-child > td'));
 }
 
-describe('/apps/review reports — the primary column is one that can USE the width', () => {
+describe('/apps/review reports — the other table a ledger cannot help', () => {
   /**
-   * 🔴 THE LEDGER THAT WAS WRONG TWICE. Round 2 made `Reason` primary because it is
-   * "operator-written free text". It is `lineClamp={2} style={{ maxWidth: 260 }}`, so it
-   * renders 260px wide at every container width — the column took +816.91 and the sentence
-   * gained nothing. `App` was the earlier guess and is a genuine case-(a) candidate (its
-   * uncapped listing name grows 98.05 → 199.45), just far too small to absorb ~1350px.
-   * With no cell able to use it, the slack trails in the actions column.
+   * 🔴 UNLEDGERED AND DELIBERATELY SO — `__tests__/appsWideLayout.test.ts` requires this arm
+   * BY NAME for the `no-surplus` exemption, so deleting it turns the exemption red rather
+   * than leaving it an unmeasured claim. Three ledgers were tried and every one was either
+   * taller than natural at 1200 or clipped the `lineClamp={2}` details harder.
    */
   const queue = () => <OffsiteReportsQueue />;
 
@@ -621,113 +680,195 @@ describe('/apps/review reports — the primary column is one that can USE the wi
     await cleanup();
   });
 
-  test('🔴 the details box is CAPPED, so `Reason` could never have absorbed the slack', async () => {
-    // The measurement that decided the ledger, kept as the assertion: a column whose text
-    // cannot widen is a case-(b) signal no matter what the field is called. If someone
-    // lifts the 260px cap, this fails and the ledger becomes re-decidable on evidence.
+  test('the reports table is no worse than natural at every width', async () => {
+    // It carries no colgroup, so "natural" is what it renders — the assertion is that the
+    // recorded band is still what the browser produces. A value pin with provenance: these
+    // are the four numbers the exemption was decided on, and a copy change that moves them
+    // should be a decision rather than a drift.
+    const heights = await atEachWidth(queue, firstRowHeight);
+    expect(document.querySelector('table > colgroup')).toBeNull();
+    expect(
+      heights,
+      `row height at ${ALL_WIDTHS.map((v) => v.width).join('/')} — the band the no-surplus ` +
+        'exemption was measured against'
+    ).toEqual([177.88, 88.69, 88.69, 82.89]);
+  });
+
+  test('🔴 the details box is CAPPED, which is why no column could absorb the slack', async () => {
+    // The measurement that rejected `Reason` as a primary: its text is capped at 260px, so
+    // a column given the surplus renders a wider cell around an identical sentence.
     const detailsBox = () => {
       const cell = bodyCells()[1];
       const texts = Array.from(cell.children);
       return px(texts[texts.length - 1].getBoundingClientRect().width);
     };
-    const { narrow, wide } = await atBothWidths(queue, detailsBox);
-    expect(narrow).toBe(260);
-    expect(wide).toBe(260);
-  });
-
-  test('🔴 the Status → first button gap does NOT grow with the container', async () => {
-    // The harm metric: the controls must not recede from the row they act on. This is what
-    // `justify="flex-end"` on the action `Group` would have broken the moment that column
-    // became primary — the buttons would pin to the table's right edge instead.
-    const gap = () => {
-      const statusBadge = bodyCells()[4].firstElementChild;
-      const button = document.querySelector('table tbody button');
-      if (!button) throw new Error('the reports queue rendered no action button');
-      return px(
-        button.getBoundingClientRect().left - (statusBadge as Element).getBoundingClientRect().right
-      );
-    };
-    const { narrow, wide } = await atBothWidths(queue, gap);
-    expect(narrow).toBeGreaterThan(0);
-    expect(
-      wide,
-      `the Status→button gap went ${narrow} → ${wide} across a ${CONTAINER_DELTA}px container increase`
-    ).toBeLessThanOrEqual(narrow + 1);
-  });
-
-  test('…and the APP NAME still grows, which is why its share is content-sized', async () => {
-    // The near-miss, kept as a measurement: `App` really is variable, so its fixed share is
-    // sized to the name rather than shrunk to a slug. A share that stopped tracking it would
-    // re-truncate the one cell on this row that benefits from room.
-    const nameGlyph = () => {
-      const cell = bodyCells()[0];
-      return glyphWidth(cell.children[cell.children.length - 1]);
-    };
-    const { narrow, wide } = await atBothWidths(queue, nameGlyph);
-    expect(wide).toBeGreaterThan(narrow);
+    const boxes = await atEachWidth(queue, detailsBox);
+    expect(Math.max(...boxes)).toBeLessThanOrEqual(260);
   });
 });
 
-describe('/apps/installed activity — the sentence is in ACTION, not DETAIL', () => {
+describe('/apps/installed activity — the table that a ledger cannot help', () => {
   /**
-   * 🔴 ROUND 2 MADE `Detail` PRIMARY AND THE COMPONENT'S OWN COMMENT SAID OTHERWISE.
-   * `describeBlockAction` writes the human sentence into ACTION; DETAIL always holds the
-   * raw technical ref. This block is the render that settled it — the fixture is a RICH
-   * `tip` row, because on a passive row both cells are short and the two readings agree.
+   * 🔴 THIS TABLE IS DELIBERATELY UNLEDGERED, and this arm is what keeps that decision
+   * honest — `__tests__/appsWideLayout.test.ts` requires it BY NAME for the `no-surplus`
+   * exemption, so deleting it turns the exemption red rather than silently unmeasured.
+   *
+   * Its natural layout already renders every cell on one line at every width, because its
+   * max-content sum (~735px) is the container's content width at 768. Both ledgers that
+   * shipped made rows TALLER — 48.09 and 64.89 against 36.19 — and neither was visible to a
+   * width assertion at 1440/2560.
    */
   const panel = () => <AppActivityPanel />;
 
-  test('the fixture really is the RICH shape (guards a vacuous measurement)', async () => {
-    // On a non-rich row `Action` falls back to `humaniseScopeInvocation` and the sentence
-    // never renders, so every assertion below would compare two short strings.
+  test('the fixture is the RICH shape (guards a vacuous measurement)', async () => {
+    // On a passive row every cell is short and nothing can wrap, so the heights below
+    // would agree for a reason that has nothing to do with the layout.
     await renderRoute(panel(), WIDE);
-    const cells = bodyCells();
+    const cells = Array.from(document.querySelectorAll('table tbody tr:first-child > td'));
     expect(cells).toHaveLength(5);
     expect(cells[2].textContent).toContain('Tipped');
     expect(cells[3].textContent).toContain('/api/v1/buzz/tip');
     await cleanup();
   });
 
-  test('🔴 DETAIL is a fixed token — it cannot use a single extra pixel', async () => {
-    const detailGlyph = () => glyphWidth(bodyCells()[3].firstElementChild);
-    const { narrow, wide } = await atBothWidths(panel, detailGlyph);
-    expect(wide).toBe(narrow);
-  });
-
-  test("…and ACTION's share holds its sentence on ONE line at BOTH widths", async () => {
-    // 🔴 THIS ASSERTION WAS WRITTEN FROM THE WRONG LEDGER'S NUMBERS AND HAD TO BE
-    // CORRECTED. Under round 2's `[7, 8, 10, null, 6]` the Action column was 140.8 at 1408,
-    // which WRAPPED the sentence — so its glyph measured 102.97 narrow and 166.34 wide and
-    // "Action grows with the container" looked true. It was measuring a squeeze, not a
-    // benefit. With a share sized to the sentence the glyph is 166.34 at BOTH widths, and
-    // the real claim is that it is never squeezed: constant, with headroom at the narrow
-    // end. A test that expected growth here would be asserting the defect.
-    const read = () => ({
-      glyph: glyphWidth(bodyCells()[2].firstElementChild),
-      cell: px(bodyCells()[2].getBoundingClientRect().width),
-    });
-    const { narrow, wide } = await atBothWidths(panel, read);
-    expect(narrow.glyph).toBe(wide.glyph);
-    // Headroom at the NARROW end is what proves it is not wrapping — the failure mode the
-    // share exists to prevent, and the one round 2 shipped.
-    expect(narrow.cell).toBeGreaterThan(narrow.glyph);
-    // Guard-the-guard: a fixture whose sentence was empty would satisfy both trivially.
-    expect(narrow.glyph).toBeGreaterThan(100);
-  });
-
-  test('🔴 the slack TRAILS the row: the last column takes more than the rest combined', async () => {
-    // The bounded-sentence trap, as an assertion. `Action` is variable but stops growing
-    // after a few hundred px, so making IT primary would park ~1500px mid-row. The last
-    // column takes the surplus instead.
-    const { narrow, wide } = await atBothWidths(panel, headerWidths);
-    const lastDelta = wide[4] - narrow[4];
-    const restDelta = wide.reduce((s, w, i) => (i === 4 ? s : s + (w - narrow[i])), 0);
+  test('the activity table renders ONE LINE per cell at every width', async () => {
+    // 🔴 THE ARM THE EXEMPTION IS NAMED AGAINST. Four widths, two of them below 1440,
+    // asserting HEIGHT — the three things this tier lacked when the two bad ledgers passed.
+    const heights = await atEachWidth(panel, firstRowHeight);
     expect(
-      lastDelta,
-      `the last column took ${px(lastDelta)} of ${CONTAINER_DELTA}px and the other four took ${px(
-        restDelta
-      )}`
-    ).toBeGreaterThan(restDelta);
+      heights,
+      `row height at ${ALL_WIDTHS.map((v) => v.width).join('/')} — every value must be the ` +
+        'single-line height; a taller one means a column was squeezed below its content'
+    ).toEqual([36.19, 36.19, 36.19, 36.19]);
+  });
+
+  test('🔴 DETAIL is a fixed token — no layout can give it a usable pixel', async () => {
+    // Round 2 made this the PRIMARY column on the strength of its name. Its glyph box is
+    // identical at every width, which is half of why no ledger helps this table: one of
+    // the two cells that would have to absorb the surplus cannot.
+    const glyphs = await atEachWidth(panel, () =>
+      glyphWidth(
+        (Array.from(document.querySelectorAll('table tbody tr:first-child > td'))[3] as Element)
+          .firstElementChild
+      )
+    );
+    expect(new Set(glyphs).size, `Detail glyph widths were ${glyphs.join(' / ')}`).toBe(1);
+  });
+
+  test('…and ACTION, the other candidate, is a BOUNDED sentence', async () => {
+    // The other half. It is genuinely variable — unlike `Detail` — but it stops growing,
+    // so handing it the surplus would park the remainder mid-row. Constant here because
+    // natural layout already gives it more than it needs at every width.
+    const read = () => {
+      const cell = Array.from(document.querySelectorAll('table tbody tr:first-child > td'))[2];
+      return {
+        glyph: glyphWidth(cell.firstElementChild),
+        cell: px(cell.getBoundingClientRect().width),
+      };
+    };
+    const measured = await atEachWidth(panel, read);
+    expect(new Set(measured.map((m) => m.glyph)).size).toBe(1);
+    for (const m of measured) expect(m.cell).toBeGreaterThan(m.glyph);
+    // Guard-the-guard: an empty sentence would satisfy both trivially.
+    expect(measured[0].glyph).toBeGreaterThan(100);
+  });
+
+  test('…and the two cells a ledger squeezed are each ONE line box', async () => {
+    // The mechanism behind the height, so a future change that keeps the height constant
+    // some other way is still legible. `When` broke a `YYYY-MM-DD HH:mm` stamp across three
+    // lines under the shipped ledger; `Detail`'s monospace ref broke across two.
+    const linesPerWidth = await atEachWidth(panel, () => {
+      const cells = Array.from(document.querySelectorAll('table tbody tr:first-child > td'));
+      return [lineCount(cells[0].firstElementChild), lineCount(cells[3].firstElementChild)];
+    });
+    expect(linesPerWidth).toEqual([
+      [1, 1],
+      [1, 1],
+      [1, 1],
+      [1, 1],
+    ]);
+  });
+});
+
+describe('🔴 NO LEDGER MAKES ITS ROWS TALLER AT A NARROWER WIDTH', () => {
+  /**
+   * THE TIER-WIDE INVARIANT, and the one that would have caught both bad ledgers.
+   *
+   * A percentage share is smallest in absolute px at the NARROWEST container, so a share
+   * sized from a 1408 measurement can sit below its cell's content at 768 and 1200. The
+   * cell does not then get narrower than a width assertion expects — it gets TALLER. Every
+   * arm in this file read a width at 1440/2560 only, so two ledgers shipped green:
+   * `AppActivityPanel`'s rows were 48.09 and then 64.89 against a natural 36.19.
+   *
+   * The invariant is stated as SHAPE rather than as a number: a table's row height must not
+   * increase as the container gets narrower. It is deliberately not "equals N px" — these
+   * tables have different row contents and a literal per table would rot on any copy
+   * change — and it is not "equals the no-ledger height" either, because this tier cannot
+   * render a component with its own colgroup removed.
+   */
+  const CASES = [
+    {
+      name: '/apps/review queue',
+      ui: () => (
+        <UnifiedReviewList
+          onsiteItems={[ONSITE]}
+          offsiteItems={[OFFSITE]}
+          direction="asc"
+          openOnsiteReview={vi.fn()}
+          openOffsiteReview={vi.fn()}
+          isLoading={false}
+          emptyLabel="empty"
+          dateLabel="Submitted"
+          actionLabel="Review"
+          hasMore={false}
+          onLoadMore={vi.fn()}
+        />
+      ),
+    },
+    { name: '/apps/review previews', ui: () => <ActivePreviewsPanel /> },
+    { name: '/apps/mine', ui: () => <MyAppsBodyView rows={[MINE_ROW]} /> },
+  ] as const;
+
+  test('the case list covers every LEDGERED table this file can mount', () => {
+    // A loop over a list nobody pinned passes vacuously when the list shrinks.
+    expect(CASES.map((c) => c.name)).toEqual([
+      '/apps/review queue',
+      '/apps/review previews',
+      '/apps/mine',
+    ]);
+  });
+
+  test.each(CASES)('$name — the ledger costs no vertical space at any width', async ({ ui }) => {
+    // 🔴 MEASURED AGAINST THE SAME TREE WITH ITS `<colgroup>` REMOVED, not against a
+    // literal and not against the other widths. Rows legitimately get taller at 768 for
+    // ANY table — less width means more wrapping — so "not taller than at 2560" is a claim
+    // no correct table could satisfy. What a ledger must never do is make a row taller
+    // than the browser's own layout would at THAT width, and the only honest baseline for
+    // that is natural layout of the same content. Detaching the `<colgroup>` and
+    // re-measuring gives exactly that, in one render.
+    const offenders: string[] = [];
+    for (const vp of ALL_WIDTHS) {
+      const observed = await renderRoute(ui(), vp);
+      expect(observed).toEqual({ width: vp.width, height: vp.height });
+      const withLedger = firstRowHeight();
+      const colgroup = document.querySelector('table > colgroup');
+      expect(colgroup, 'this case is supposed to be a LEDGERED table').not.toBeNull();
+      colgroup!.remove();
+      await nextLayout();
+      const natural = firstRowHeight();
+      if (withLedger > natural + 0.01) {
+        offenders.push(
+          `@${vp.width}: ${withLedger} with the ledger vs ${natural} without it ` +
+            `(+${px(withLedger - natural)})`
+        );
+      }
+      await cleanup();
+    }
+    expect(
+      offenders,
+      'the column ledger made rows TALLER than the browser lays them out unaided — a share ' +
+        'is below its cell content at that width, which a width assertion cannot see'
+    ).toEqual([]);
   });
 });
 

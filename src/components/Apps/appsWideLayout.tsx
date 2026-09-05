@@ -245,77 +245,59 @@ export const APPS_REVENUE_COLUMNS = {
 export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null];
 
 /**
- * The `/apps/review` REPORTS tab (`OffsiteReportsQueue`) —
- * **App** · Reason · Reporter · Reported · Status · actions.
+ * 🔴 THERE IS NO `APPS_OFFSITE_REPORTS_COLUMNS` EITHER, for the same measured reason as the
+ * activity table above — and this one took three wrong ledgers to establish.
  *
- * 🔴 THE ACTIONS COLUMN IS PRIMARY — case (b), and this ledger got it wrong twice before
- * measurement settled it.
+ * Round 2 made `App` primary, round 3 made `Reason` primary (it is
+ * `lineClamp={2} maxWidth: 260`, so it absorbed +816.91 for nothing), and round 4 made the
+ * actions column primary under case (b). The last one is right in KIND and still
+ * unshippable, because at 1200 this row's content wants
  *
- * The first version made `App` primary on "it names the row". The second made `Reason`
- * primary on "it is operator-written free text, and giving the slack to the slug would
- * widen an identifier while the sentence stayed wrapped". BOTH sentences are about what
- * the fields MEAN; neither is about what the cells can DO, and the second is simply false:
- * the details `Text` is `lineClamp={2} style={{ maxWidth: 260 }}`, so it renders 260px
- * wide at 1440 and 260px wide at 2560. Measured with `Reason` primary, 1440 → 2560:
+ *   App 240 + Reason 292 + Reporter 94 + Reported 133 + Status 86 + actions 414 = 1259px
  *
- *   columns   140.59 | 587.73  | 90.36  | 98.41  | 74.8  | 414.11
- *             252.59 | 1404.64 | 151.55 | 176.81 | 126.3 | 414.11
- *   details box  260 → 260
+ * in 1168px of container. Something is under-served at 1200 whatever the split, and the
+ * browser's own layout picks the least-bad one. Measured: every candidate was either
+ * TALLER than natural at 1200 (105.48 / 177.88 against 88.69) or clipped the lineClamp-ed
+ * details harder than natural (a 150.77px details box against 260) — and the second is
+ * invisible to a row-height check, which is why the tier now A/Bs WIDTH as well as height.
  *
- * — the primary column took +816.91 and the sentence gained nothing.
- *
- * `App` is the near miss worth recording, because it is NOT a slug-only cell: it carries
- * an uncapped listing NAME under the slug, and that name genuinely grows (glyph box
- * 98.05 → 199.45 across the same pair). It is a real case-(a) candidate — and still the
- * wrong one, because ~200px of name cannot absorb ~1350px of surplus either. When NO cell
- * can, case (b) is the answer and the question stops being "which column deserves it".
- *
- * 🔴 `Reason` KEEPS A LARGE FIXED SHARE (21%) EVEN THOUGH IT IS NOT PRIMARY, and the
- * number is set by the NARROW end, not the wide one. Its cell needs `260 + 32` of padding
- * to render the capped text at all, and 12% — the share its content wants at 2528 — is only
- * 169px at 1408, which measured a details box of **136.72** instead of 260. That is losing
- * visible text on a 1440 monitor to tidy up a 2560 one, i.e. exactly what this module's
- * provenance rule forbids. 21% of 1408 is 296, so the cap binds at both ends (260 → 260).
- * The residue is ~239px of dead space inside `Reason` at 2528 — the honest cost of a
- * hard-capped cell in a fluid table, and smaller than any alternative measured.
- * `Reporter`, `Reported` and `Status` are shrink-to-content (3/4/3) so they stay at their
- * own widths and the controls do not recede.
+ * 🔴 THE `justify="flex-end"` ON ITS ACTION GROUP IS THEREFORE BACK. That flip was correct
+ * ONLY as part of case (b): with no ledger the column sits at its min-content and the two
+ * alignments render identically, so the flip would have been an unjustified change.
  */
-export const APPS_OFFSITE_REPORTS_COLUMNS: AppsTableColumns = [10, 21, 3, 4, 3, null];
 
 /**
- * The `/apps/installed` ACTIVITY tab (`AppActivityPanel`) —
- * When · App · Action · **Detail** · Status.
+ * 🔴 THERE IS NO `APPS_ACTIVITY_COLUMNS`, AND THAT IS A MEASURED DECISION.
  *
- * 🔴 `Status` IS PRIMARY, AND `Detail` — WHICH THIS LEDGER PICKED FIRST — IS THE WORST
- * CHOICE ON THE ROW. The original justification ("the variable-length cell is what the app
- * did … the sentence that matters") named the wrong column, and the component's OWN comment
- * at its render site says so: the ACTION cell carries the human sentence when a rich detail
- * is present, and the DETAIL cell always shows the raw technical ref (workflow id / storage
- * key / endpoint). Measured on a rich `tip` row, 1440 → 2560, with `Detail` primary:
+ * `/apps/installed`'s activity tab (`AppActivityPanel`) carried one for two rounds and it
+ * was wrong both times — first with `Detail` primary (a fixed monospace ref), then with
+ * shares set from a 1408 measurement, which squeezed three columns below their content at
+ * every width a real desktop uses. Measured on a rich `tip` row, ROW HEIGHT:
  *
- *   columns        98.55 | 112.63 | 140.8 | 971.56  | 84.47
- *                 176.95 | 202.23 | 252.8 | 1744.34 | 151.67
- *   Action  glyph "Tipped 500 Buzz to user #4242"  102.97 → 166.34   (grows)
- *   Detail  glyph "POST /api/v1/buzz/tip"          151.72 → 151.72   (fixed)
+ *                                    768      1200     1440     2560
+ *   no ledger (natural)             36.19    36.19    36.19    36.19
+ *   [7, 8, 10, null, 6]  (round 2)  48.09    48.09    48.09    36.19
+ *   [3, 4, 20, 13, null] (round 3)  64.89    64.89    64.89    48.09
  *
- * So `Detail` took +772.78 for a token that cannot use one pixel of it.
+ * Round 3 was 79% taller than natural at 1440 — `When` broke a `YYYY-MM-DD HH:mm` stamp
+ * across THREE lines, and `App` sat pinned at its 108.52 min-content from 768 through 2560
+ * so a long name was ellipsised identically on both.
  *
- * 🔴 AND THE FIX IS NOT "MAKE `Action` PRIMARY" — that is the trap one step along. The
- * sentence is variable but BOUNDED: it grows to a few hundred px and stops, so handing it
- * ~1800px would put 1500px of dead space in the MIDDLE of the row instead of the middle-
- * right. `Action` gets a generous FIXED share (20% ≈ 506px at the current container, ~3×
- * its measured glyph) and the LAST column takes the slack, so it trails. This table has no
- * controls at all, which is why case (b)'s "action column" is really "the last column".
+ * 🔴 AND NO LEDGER FIXES IT, WHICH IS THE POINT. This table's max-content sum (~735px) is
+ * the container's content width AT 768, so there is no surplus to place at the narrow end.
+ * Three candidates sized from 1200 all still wrapped at 768 (48.09). The one configuration
+ * that holds a single line everywhere — `[16, 12, 27, 25, null]` — reproduces natural
+ * layout at the wide end to within ~15px on three of five columns:
  *
- * 🔴 `Detail` IS 13%, NOT A SHRINK-TO-CONTENT SLIVER, and that number is again set by
- * the NARROW end. Its ref is a spaced string, so min-content is the longest WORD (~120px)
- * and a small share lets it wrap: measured at 7%, the glyph box was **115.59 at 1408**
- * against 151.72 at 2528 — the monospace ref broken across two lines on an ordinary
- * desktop. 13% of 1408 is 183, which holds it on one line at both ends. `When` and `App`
- * are 3/4 because they genuinely are shrink-to-content and stay at min-content throughout.
+ *   ledger  @2560   404.47 | 303.36 | 682.55 | 632.00 | 505.63
+ *   natural @2560   411.09 | 609.14 | 667.58 | 615.19 | 225.00
+ *
+ * So the choice is between a ledger that wraps text on a laptop and a ledger that is
+ * natural layout with extra steps. Both are worse than none, and this module's own rule —
+ * a share larger than its cell needs is padding relabelled — rules out the second. The
+ * table is EXEMPT; the guard in `__tests__/appsWideLayout.test.ts` records that as a
+ * `no-surplus` exemption and requires a geometry arm to keep proving it.
  */
-export const APPS_ACTIVITY_COLUMNS: AppsTableColumns = [3, 4, 20, 13, null];
 
 /**
  * The agent code-review report's scope table (`ReportTabs`) —
@@ -344,8 +326,6 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
   'revenue (unscoped)': APPS_REVENUE_COLUMNS.withApp,
   'revenue (scoped)': APPS_REVENUE_COLUMNS.scoped,
   'active previews': APPS_ACTIVE_PREVIEWS_COLUMNS,
-  'offsite reports': APPS_OFFSITE_REPORTS_COLUMNS,
-  'app activity': APPS_ACTIVITY_COLUMNS,
   'agent report scopes': APPS_AGENT_REPORT_SCOPE_COLUMNS,
 };
 
@@ -359,7 +339,7 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
  * "A browser ignores a misplaced `<colgroup>`" is what this comment used to say, and it
  * was refuted by mutating it: measured 2026-09-04 in `AppsWideLayout.geometry.test.tsx`,
  * moving this element AFTER `<Table.Tbody>` changed no rendered width at all — every
- * geometry assertions still passed. React inserts nodes through the DOM API rather than
+ * geometry assertion in that file still passed. React inserts nodes through the DOM API rather than
  * the HTML parser, so the parser's table foster-parenting never runs and Chromium applies
  * the columns from wherever the element sits. The ordering is therefore a VALIDITY rule
  * enforced structurally in `__tests__/appsWideLayout.test.ts`, not something the pixels

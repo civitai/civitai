@@ -138,13 +138,21 @@ export function ActivePreviewsPanel() {
                 <Badge
                   size="sm"
                   variant="light"
+                  // 🔴 `nowrap` so min-content == max-content. This column's ledger share is
+                  // deliberately below its content (the shrink-to-content idiom that keeps
+                  // the slug→button gap constant), and a share below min-content only works
+                  // when min-content is the WHOLE label. Without this a one-word state
+                  // broke across lines and the row grew.
+                  style={{ whiteSpace: 'nowrap' }}
                   color={p.state === 'preview-live' ? 'green' : 'blue'}
                 >
                   {p.state.replace('preview-', '')}
                 </Badge>
               </Table.Td>
               <Table.Td>
-                <Text size="xs" c="dimmed">
+                {/* Same reason as the state badge above: a relative-age label
+                    ("3 minutes ago") is one phrase and wrapping it is never right. */}
+                <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
                   {formatAge(p.updatedAt)}
                 </Text>
               </Table.Td>

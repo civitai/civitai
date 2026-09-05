@@ -295,6 +295,11 @@ function UnifiedReviewRowView({
         <Badge
           size="sm"
           variant="light"
+          // 🔴 `nowrap` — this column's ledger share sits below its content on purpose, and
+          // that only works when min-content is the WHOLE label. A one-word kind badge
+          // broke across lines and the row grew; see the height invariant in
+          // `AppsWideLayout.geometry.test.tsx`.
+          style={{ whiteSpace: 'nowrap' }}
           color={row.badgeColor}
           data-testid={`apps-unified-review-kind-${row.key}`}
         >
@@ -317,9 +322,12 @@ function UnifiedReviewRowView({
         </Text>
       </Table.Td>
       <Table.Td onClick={row.onReview}>
-        <Group gap={4}>
+        {/* Same reason as the kind badge: a timestamp is one token and must not wrap. */}
+        <Group gap={4} wrap="nowrap">
           <IconClock size={14} />
-          <Text size="xs">{row.submittedAt.toLocaleString()}</Text>
+          <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
+            {row.submittedAt.toLocaleString()}
+          </Text>
         </Group>
       </Table.Td>
       {showDeploy && (

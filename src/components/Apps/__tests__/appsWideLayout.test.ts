@@ -6,13 +6,11 @@ import {
   APPS_ACTIVE_PREVIEWS_COLUMNS,
   APPS_CARD_LIST_GAP,
   APPS_CARD_LIST_MIN_COLUMN,
-  APPS_ACTIVITY_COLUMNS,
   APPS_AGENT_REPORT_SCOPE_COLUMNS,
   APPS_FULL_MEASURE_CONTENT_WIDTH,
   APPS_LEGACY_CONTENT_WIDTH,
   APPS_MINE_COLUMNS,
   APPS_MOD_LISTINGS_COLUMNS,
-  APPS_OFFSITE_REPORTS_COLUMNS,
   APPS_REVENUE_COLUMNS,
   APPS_REVIEW_QUEUE_COLUMNS,
   APPS_TABLE_COLUMN_LEDGERS,
@@ -133,7 +131,7 @@ describe('appsTableColumnProblems — the rule, on inputs it must REJECT', () =>
 describe('every shipped ledger is valid', () => {
   test('the sweep found the ledgers (guards a vacuous loop)', () => {
     // A loop over an empty record passes having checked nothing.
-    expect(Object.keys(APPS_TABLE_COLUMN_LEDGERS)).toHaveLength(10);
+    expect(Object.keys(APPS_TABLE_COLUMN_LEDGERS)).toHaveLength(8);
   });
 
   test('no ledger has a problem', () => {
@@ -157,8 +155,6 @@ describe('every shipped ledger is valid', () => {
     expect(APPS_REVENUE_COLUMNS.withApp).toHaveLength(7); // Date App Scope Buzz Gross Share Status
     expect(APPS_REVENUE_COLUMNS.scoped).toHaveLength(6); // …minus App
     expect(APPS_ACTIVE_PREVIEWS_COLUMNS).toHaveLength(5); // App Version State Age actions
-    expect(APPS_OFFSITE_REPORTS_COLUMNS).toHaveLength(6); // App Reason Reporter Reported Status actions
-    expect(APPS_ACTIVITY_COLUMNS).toHaveLength(5); // When App Action Detail Status
     expect(APPS_AGENT_REPORT_SCOPE_COLUMNS).toHaveLength(6); // Scope Used Justified Sensitive Evidence Notes
   });
 
@@ -188,8 +184,6 @@ describe('every shipped ledger is valid', () => {
       'revenue (unscoped)': 1, // App — link to the per-app page
       'revenue (scoped)': 1, // Scope — there is no App column
       'active previews': 4, // actions — case (b), no cell can use the room
-      'offsite reports': 5, // actions — case (b), Reason is hard-capped at 260px
-      'app activity': 4, // Status (last) — Action is bounded, Detail is a fixed token
       'agent report scopes': 5, // Notes — uncapped reviewer prose
     };
     // The map and the ledger record must name the SAME set, or a ledger added without a
@@ -263,18 +257,62 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
    * not rendered on any route, and the test below re-derives that by searching the whole
    * of `src` for a JSX render of it. Adding a name cannot silence the guard.
    */
-  const EXEMPT: Record<string, { component: string; why: string }> = {
+  /**
+   * Headed tables that legitimately carry no ledger, each with the reason AND the way that
+   * reason is re-derived. Two kinds, because two different things can make a ledger wrong:
+   *
+   *   `unrendered`  — nothing renders the component, so there is no surface to lay out.
+   *                   Verified by searching the whole of `src` for a JSX render of it.
+   *   `no-surplus`  — the table is rendered, but its natural layout already fills the
+   *                   container at the NARROW end, so every ledger either wraps a cell
+   *                   there or reproduces natural layout at the wide end. Verified by a
+   *                   named geometry arm that keeps measuring it.
+   *
+   * 🔴 VERIFIED, NOT TRUSTED — the same rule the chrome allowlist in
+   * `appsPageWidths.test.ts` holds itself to. An exemption keyed on a name is exactly where
+   * a live table would hide, so adding a name here cannot silence the guard: each kind has
+   * a check below that has to pass.
+   */
+  const EXEMPT: Record<
+    string,
+    | { kind: 'unrendered'; component: string; why: string }
+    | { kind: 'no-surplus'; component: string; why: string; geometryArm: string }
+  > = {
     'src/components/Apps/OffsiteReviewQueue.tsx#0': {
+      kind: 'unrendered',
       component: 'OffsiteReviewQueue',
       why: 'dead — superseded by the unified queue; nothing renders it (the LIVE table in this file is OffsiteReportsQueue, which does carry a ledger)',
     },
     'src/components/Apps/MySubmissionsList.tsx#0': {
+      kind: 'unrendered',
       component: 'MySubmissionsList',
       why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
     },
     'src/components/Apps/OffsiteSubmissionsList.tsx#0': {
+      kind: 'unrendered',
       component: 'OffsiteSubmissionsList',
       why: 'dead — same merge as MySubmissionsList',
+    },
+    'src/components/Apps/OffsiteReviewQueue.tsx#1': {
+      kind: 'no-surplus',
+      component: 'OffsiteReportsQueue',
+      why:
+        'at 1200 its row wants App 240 + Reason 292 + Reporter 94 + Reported 133 + Status ' +
+        '86 + actions 414 = 1259px in 1168px of container, so something is under-served ' +
+        'there whatever the split. Every candidate ledger was taller than natural at 1200 ' +
+        'or clipped the lineClamp-ed details harder. See the note in appsWideLayout.tsx.',
+      geometryArm: 'the reports table is no worse than natural at every width',
+    },
+    'src/components/Apps/AppActivityPanel.tsx#0': {
+      kind: 'no-surplus',
+      component: 'AppActivityPanel',
+      why:
+        'its max-content sum (~735px) is the container content width AT 768, so there is no ' +
+        'surplus to place at the narrow end. Two ledgers shipped and both regressed row ' +
+        'height (48.09 and 64.89 against a natural 36.19); the only configuration that ' +
+        'holds one line everywhere reproduces natural layout at 2560 to within ~15px on ' +
+        'three of five columns. See the note in appsWideLayout.tsx.',
+      geometryArm: 'the activity table renders ONE LINE per cell at every width',
     },
   };
 
@@ -466,24 +504,53 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
     expect(offenders).toEqual([]);
   });
 
-  test('🔴 every EXEMPT table really is unrendered (the allowlist is verified)', () => {
-    // An exemption keyed on a name is where a live table would hide. Each entry claims
-    // "nothing renders this component"; re-derive that rather than believe it.
+  test('🔴 every EXEMPT table exists, and its REASON is re-derived (not believed)', () => {
     const names = Object.keys(EXEMPT);
     expect(names.length, 'the exempt list is empty — nothing to verify').toBeGreaterThan(0);
     const offenders: string[] = [];
+    let unrenderedChecked = 0;
+    let noSurplusChecked = 0;
     for (const id of names) {
-      const { component } = EXEMPT[id];
+      const entry = EXEMPT[id];
       expect(
         SITES.some((s) => s.id === id),
         `${id} is exempted but no such table exists`
       ).toBe(true);
-      const hits = renderSitesOf(component);
-      if (hits.length > 0) {
-        offenders.push(`${component} IS rendered by ${hits.join(', ')} — it needs a ledger`);
+      if (entry.kind === 'unrendered') {
+        unrenderedChecked += 1;
+        const hits = renderSitesOf(entry.component);
+        if (hits.length > 0) {
+          offenders.push(
+            `${entry.component} is exempted as UNRENDERED but is rendered by ${hits.join(', ')}`
+          );
+        }
+      } else {
+        noSurplusChecked += 1;
+        // 🔴 A `no-surplus` TABLE **IS** RENDERED — that is the whole difference — so the
+        // render search would reject it. What has to hold instead is that the measurement
+        // the exemption rests on is still being TAKEN: a named geometry arm covering it.
+        // Without this the reason decays into prose the moment the table's content changes.
+        const geometry = srcOf('src/components/Apps/AppsWideLayout.geometry.test.tsx');
+        if (!geometry.includes(entry.geometryArm)) {
+          offenders.push(
+            `${entry.component} is exempted as NO-SURPLUS but its geometry arm ` +
+              `"${entry.geometryArm}" is not in AppsWideLayout.geometry.test.tsx — the ` +
+              'exemption would be an unmeasured claim'
+          );
+        }
+        if (renderSitesOf(entry.component).length === 0) {
+          offenders.push(
+            `${entry.component} is exempted as NO-SURPLUS but nothing renders it — it is ` +
+              'UNRENDERED, and the two kinds must not be conflated'
+          );
+        }
       }
     }
     expect(offenders).toEqual([]);
+    // Guard-the-guard: both branches must actually be exercised, or one of them is dead
+    // code that would wave through the case it exists for.
+    expect(unrenderedChecked, 'no `unrendered` exemption was checked').toBeGreaterThan(0);
+    expect(noSurplusChecked, 'no `no-surplus` exemption was checked').toBeGreaterThan(0);
   });
 
   test('🔴 POSITIVE CONTROL — the render search can find a component that IS rendered', () => {
@@ -539,7 +606,10 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
     expect(offenders).toEqual([]);
     // Guard-the-guard: an empty offender list is indistinguishable from a loop that
     // resolved no ledgers at all.
-    expect(checked, 'no table had its ledger resolved').toBeGreaterThanOrEqual(7);
+    // Six ledgered tables today — `AppActivityPanel` and `OffsiteReportsQueue` gave theirs
+    // up as `no-surplus` exemptions, so this floor moved DOWN deliberately rather than
+    // drifting. It exists so an empty offender list cannot mean "resolved nothing".
+    expect(checked, 'no table had its ledger resolved').toBeGreaterThanOrEqual(6);
   });
 
   test('🔴 the header-cell counter can SEE a conditional column (negative control)', () => {

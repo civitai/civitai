@@ -20,7 +20,6 @@ import {
   READ_SCOPE_LABELS,
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
-import { AppsTableColgroup, APPS_ACTIVITY_COLUMNS } from '~/components/Apps/appsWideLayout';
 
 /**
  * Shared per-viewer app-activity timeline. Extracted from
@@ -359,10 +358,15 @@ export function AppActivityPanel({
   return (
     <Stack gap="sm">
       <Table>
-        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/installed`
-            hosts this tab and takes the full container; `Detail` is the primary column,
-            not `App`, because this is a per-EVENT feed where the app repeats. */}
-        <AppsTableColgroup columns={APPS_ACTIVITY_COLUMNS} />
+        {/* 🔴 NO COLUMN LEDGER, DELIBERATELY — this table is EXEMPT in
+            `~/components/Apps/appsWideLayout`, and the exemption is the measured outcome
+            rather than an omission. Its natural layout already renders every cell on ONE
+            line at 768/1200/1440/2560 (row height 36.19 at all four), because its
+            max-content sum ≈ the container's content width at 768: there is no surplus to
+            place at the narrow end. Every ledger that meaningfully redistributes at 2560
+            wraps a cell at 768, and the one that does NOT (`[16,12,27,25,null]`) lands
+            within ~15px per column of natural at 2560 — i.e. it buys nothing. See the
+            EXEMPT entry for the full table of measurements. */}
         <Table.Thead>
           <Table.Tr>
             <Table.Th>When</Table.Th>
