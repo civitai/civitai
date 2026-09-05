@@ -83,7 +83,7 @@ vi.mock('redis', () => {
 
 import { createCacheBuilders, type CachedLookupOptions } from '../cached-array';
 import { createCacheRedis } from '../client';
-import { PACKED_BROTLI_SENTINEL, compressPacked } from '../packed-compression';
+import { PACKED_BROTLI_SENTINEL, compressPacked, decompressPacked } from '../packed-compression';
 import type { RedisKeyTemplateCache } from '../client';
 
 const redis = createCacheRedis();
@@ -388,5 +388,78 @@ describe('the symmetry hazard this flag exists to prevent', () => {
     store.set(key, await compressPacked(Buffer.from(pack({ id: 99, blob: bigBlob }))));
     const [viaCompress] = await redis.packed.mGet<Row>([key], { compress: true });
     expect(viaCompress).toEqual({ id: 99, blob: bigBlob });
+  });
+});
+
+describe('packed.mGet index alignment — the OTHER half of the seam', () => {
+  /**
+   * `mGet`'s contract is POSITIONAL: result[i] belongs to keys[i], and a decode failure at i must
+   * evict keys[i] — nobody else. Both halves are unguarded by everything above, because
+   * `createCachedArray` re-keys the batch by `idKey` immediately after the read and so cannot
+   * observe either defect. The next caller would.
+   *
+   * The eviction half is not hypothetical for this PR: during a mixed-fleet rollout a pod WILL
+   * meet entries it cannot decode (see the compress-symmetry test above), so a mis-indexed
+   * `unlink` would repeatedly evict a healthy NEIGHBOUR while leaving the bad entry in place —
+   * a self-sustaining eviction of good data that looks like ordinary cache churn.
+   *
+   * Shape of the fixture, which is what makes both defects visible:
+   *  - THREE keys, failure in the MIDDLE, so an off-by-one and a first-element collapse land on
+   *    different keys and neither can be satisfied by luck;
+   *  - the two good values are PAIRWISE DISTINCT, so a reversed array is detectable (a reversal
+   *    keeps `null` in the middle — only distinct outer values expose it);
+   *  - eviction is asserted as an exact SET over the store, so it fails whether the wrong key is
+   *    evicted, an extra key is evicted, or nothing is evicted at all.
+   */
+  const K = (n: number) => `${KEY}:align-${n}` as RedisKeyTemplateCache;
+  const first = { id: 101, blob: 'first-value' };
+  const last = { id: 103, blob: 'last-value' };
+  // Sentinel-tagged but NOT a valid brotli stream: reaches the compress-aware decode and throws
+  // inside brotliDecompress, which is the realistic corruption on this path.
+  const CORRUPT_COMPRESSED = Buffer.from([PACKED_BROTLI_SENTINEL, 0xff, 0xff, 0xff, 0xff]);
+  // A truncated msgpack map16 header — no sentinel byte, so it is a corrupt LEGACY value and
+  // fails inside `unpack` on the general path.
+  const CORRUPT_PLAIN = Buffer.from([0xde, 0x00, 0x05]);
+
+  it('COMPRESS branch: positional order is preserved and ONLY the failing key is evicted', async () => {
+    store.set(K(1), await compressPacked(Buffer.from(pack(first))));
+    store.set(K(2), CORRUPT_COMPRESSED);
+    store.set(K(3), await compressPacked(Buffer.from(pack(last))));
+
+    const got = await redis.packed.mGet<Row>([K(1), K(2), K(3)], { compress: true });
+
+    // ORDER: index 0 is the FIRST key's value, index 2 is the LAST key's. Reversing the array
+    // keeps the null in the middle, so only these two distinct outer values can catch it.
+    expect(got).toEqual([first, null, last]);
+
+    // EVICTION: exactly the offending key, and nothing else. An exact set rather than three
+    // independent `has` calls, so a wrong/extra/absent eviction all fail the same assertion.
+    const survivors = [K(1), K(2), K(3)].filter((k) => store.has(k));
+    expect(survivors, 'only the undecodable key may be evicted').toEqual([K(1), K(3)]);
+  });
+
+  it('NON-COMPRESS branch: same contract, same fixture shape', async () => {
+    // The general path is PRE-EXISTING code this PR did not touch, but it carries the identical
+    // `keys[i]` shape one line below the branch that was added — so a future edit to one half is
+    // overwhelmingly likely to be made to both. Guarded here to close the class rather than the
+    // instance; this is test-only and expands no production diff.
+    store.set(K(4), Buffer.from(pack(first)));
+    store.set(K(5), CORRUPT_PLAIN);
+    store.set(K(6), Buffer.from(pack(last)));
+
+    const got = await redis.packed.mGet<Row>([K(4), K(5), K(6)]);
+
+    expect(got).toEqual([first, null, last]);
+    const survivors = [K(4), K(5), K(6)].filter((k) => store.has(k));
+    expect(survivors, 'only the undecodable key may be evicted').toEqual([K(4), K(6)]);
+  });
+
+  it('POSITIVE CONTROL: the corrupt fixtures really are undecodable on their own path', () => {
+    // Without this, a fixture that silently DECODED would make both tests above pass while
+    // proving nothing — the null would never be produced and no eviction would ever be attempted.
+    expect(CORRUPT_COMPRESSED[0]).toBe(PACKED_BROTLI_SENTINEL);
+    expect(CORRUPT_PLAIN[0]).not.toBe(PACKED_BROTLI_SENTINEL);
+    expect(() => unpack(CORRUPT_PLAIN)).toThrow();
+    return expect(decompressPacked(CORRUPT_COMPRESSED)).rejects.toThrow();
   });
 });
