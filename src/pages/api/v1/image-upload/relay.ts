@@ -49,17 +49,55 @@ export const config = {
   },
 };
 
-// Bounds what this route will buffer in memory. NOT a general upload limit and NOT
-// "the largest media the app accepts" — `constants.mediaUpload.maxVideoFileSize` is
-// 750MB. It matches `constants.mediaUpload.maxImageFileSize`, which is what the
-// DROPZONE callers of `useCFImageUpload` enforce client-side (`ImageUpload.tsx`,
-// `SimpleImageUpload.tsx`) — THAT is the constant this must stay in sync with, not
-// `richTextEditor.maxFileSize`, which happens to hold the same value today but is
-// used by the rich-text editor rather than by any dropzone. The programmatic callers that upload
-// generated blobs enforce nothing, so this is their only bound. Exists because this
-// route buffers whole. A file above it cannot use the fallback; the direct path is
-// unaffected.
-export const MAX_RELAY_BYTES = 1024 * 1024 * 50;
+/**
+ * The size at which Next TRUNCATES a request body, silently.
+ *
+ * 🔴 This is a property of the framework, not a choice of ours, and it is the reason
+ * this route cannot simply pick its own limit. Next 16 caps the body it will hand a
+ * route at 10MB by default and then just ENDS the stream — the route sees a clean
+ * end-of-body, not an error. `next.config.mjs` does not set
+ * `middlewareClientMaxBodySize`, so the default applies.
+ *
+ * Measured on a deployed preview (Next 16.3.1), sent vs what actually reached the
+ * store, reproduced BOTH through the ingress and by POSTing from inside the container
+ * straight at the app port — so it is the framework, not a proxy in front:
+ *
+ *     sent 10,485,760 -> stored 10,485,760   intact
+ *     sent 12,000,000 -> stored 10,438,916   TRUNCATED
+ *     sent 20,000,000 -> stored 10,483,999   TRUNCATED
+ *     sent 55,000,000 -> stored 10,479,830   TRUNCATED
+ *
+ * The cut is ragged, which is the tell that it is a stream ending early rather than a
+ * fixed-size cap. Before the guards below, a valid 14,523,378-byte PNG relayed as a
+ * 10,485,209-byte object with no `IEND` terminator — `magick` rejects it with
+ * `unexpected end-of-file` — while the route returned `200 {"id": …}`. A corrupt image
+ * reported to the user as a successful upload.
+ */
+export const NEXT_BODY_TRUNCATION_BYTES = 1024 * 1024 * 10;
+
+/**
+ * Bounds what this route will buffer in memory, and what it will accept at all.
+ *
+ * 🔴 Pinned to `NEXT_BODY_TRUNCATION_BYTES` deliberately. It used to be 50MB, to match
+ * `constants.mediaUpload.maxImageFileSize` (what the DROPZONE callers of
+ * `useCFImageUpload` enforce client-side — `ImageUpload.tsx`, `SimpleImageUpload.tsx`).
+ * That constant was UNREACHABLE: Next truncated at 10MB first, so the cap never bound
+ * and the 413 branch below was dead code.
+ *
+ * Raising this above the truncation point requires raising
+ * `middlewareClientMaxBodySize` in `next.config.mjs` IN THE SAME CHANGE — that is a
+ * repo-wide widening of how large a body every route may receive, so it was not done
+ * here. It buys little: sampled 111,097 rows of `Image.metadata->>'size'`, **0.679%**
+ * of images exceed 10MB (p99 = 7.63MB), and this is a fallback that only fires for
+ * clients who cannot resolve the storage host at all. Those few now get an honest 413
+ * instead of a silently corrupted file.
+ *
+ * ⚠ Video is a different population — 17.1% of sampled videos exceed 10MB — so if this
+ * route is ever put on a video path, revisit this and the config knob together.
+ *
+ * A file above this cannot use the fallback; the direct path is unaffected.
+ */
+export const MAX_RELAY_BYTES = NEXT_BODY_TRUNCATION_BYTES;
 
 /**
  * Ceiling on relays held in memory at once, PER POD.
@@ -187,8 +225,10 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
     try {
       body = await readCappedBody(req, res, MAX_RELAY_BYTES);
     } catch (e) {
-      if (e instanceof PayloadTooLargeError) {
-        // The 413 was already written by `readCappedBody` — see the note there.
+      if (e instanceof PayloadTooLargeError || e instanceof TruncatedBodyError) {
+        // The 413 / 400 was already written by `readCappedBody` — see the notes there.
+        // 🔴 Returning here is what skips the store write: neither a refused nor an
+        // incomplete body may reach `uploadImageBufferToStore`.
         return;
       }
       res.status(400).json({ error: 'Failed to read upload body' });
@@ -231,6 +271,20 @@ export class PayloadTooLargeError extends Error {
   constructor() {
     super('Payload too large');
     this.name = 'PayloadTooLargeError';
+  }
+}
+
+/**
+ * The request body ended before the client's declared `Content-Length`.
+ *
+ * Distinct from `PayloadTooLargeError` on purpose: that one means we refused the
+ * request, this one means we could not trust what we received. Both must skip the
+ * store write, and both have already written their own status.
+ */
+export class TruncatedBodyError extends Error {
+  constructor() {
+    super('Request body was truncated');
+    this.name = 'TruncatedBodyError';
   }
 }
 
@@ -291,6 +345,32 @@ async function readCappedBody(
   const chunks: Buffer[] = [];
   let total = 0;
 
+  // Declared length, when the client sends one. `fetch` with a `File`/`Blob` body
+  // always does, which is every real caller of this route; chunked senders will not,
+  // hence every use below is conditional.
+  const declaredRaw = req.headers['content-length'];
+  const declared = Number(Array.isArray(declaredRaw) ? declaredRaw[0] : declaredRaw);
+  const hasDeclared = Number.isInteger(declared) && declared >= 0;
+
+  // 🔴 Reject an over-size body BEFORE reading a byte of it.
+  //
+  // This is what makes the 413 reachable at all. Next truncates at
+  // `NEXT_BODY_TRUNCATION_BYTES` (see that constant), so once `limit` is at the
+  // truncation point the running-total check below can never trip — the stream ends
+  // at the cap instead of exceeding it. Reading the DECLARED length gets us the
+  // refusal before the framework silently cuts anything, and costs no buffering.
+  //
+  // Trusting `Content-Length` to REJECT is safe in a way trusting it to ACCEPT is not:
+  // a client that under-declares still gets caught by the running-total check, and a
+  // client that over-declares only harms itself. That asymmetry is why this does not
+  // contradict the note about not trusting the header for the cap.
+  if (hasDeclared && declared > limit) {
+    if (!res.headersSent) {
+      res.status(413).json({ error: 'File too large for the upload fallback' });
+    }
+    throw new PayloadTooLargeError();
+  }
+
   // 🔴 Iterated MANUALLY rather than with `for await`. Breaking out of a `for await`
   // invokes the iterator's `return()`, which DESTROYS the underlying stream — the
   // exact socket teardown that loses the status, applied by the language rather than
@@ -315,6 +395,30 @@ async function readCappedBody(
       throw new PayloadTooLargeError();
     }
     chunks.push(buf);
+  }
+
+  // 🔴 The body ended EARLY — never store a partial object.
+  //
+  // Next's truncation is indistinguishable from a clean end-of-body at the stream
+  // level: no error, no event, the iterator simply reports `done`. Without this check
+  // the route buffers the fragment, treats it as the whole file, PUTs it and returns
+  // `200 {"id": …}` — the caller is told the upload succeeded and gets a permanently
+  // corrupt image. That is strictly worse than the failure this route exists to fix,
+  // because a failed direct PUT is at least visible.
+  //
+  // Comparing against the declared length is the only signal available here. It also
+  // catches a client that died mid-upload, which deserves the same treatment: we did
+  // not receive the file, so we must not write one.
+  //
+  // 400 rather than 413 — the request was not too large (that is refused above,
+  // before reading), it was incomplete. Distinguishing them keeps a truncation
+  // regression from hiding inside the size-limit case.
+  if (hasDeclared && total < declared) {
+    if (!res.headersSent) {
+      res.status(400).json({ error: 'Upload body was incomplete' });
+    }
+    chunks.length = 0;
+    throw new TruncatedBodyError();
   }
 
   return Buffer.concat(chunks);

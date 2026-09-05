@@ -70,6 +70,7 @@ vi.mock('~/server/utils/origin-helpers', async (importOriginal) => ({
 
 import handler, {
   MAX_RELAY_BYTES,
+  NEXT_BODY_TRUNCATION_BYTES,
   MAX_CONCURRENT_RELAYS,
   RELAY_RETRY_AFTER_SECONDS,
   __getInFlightForTest,
@@ -81,17 +82,49 @@ type Trace = string[];
 
 function makeReq(
   chunks: Buffer[],
-  opts?: { method?: string; contentType?: string; trace?: Trace }
+  opts?: { method?: string; contentType?: string; trace?: Trace; contentLength?: number }
 ): NextApiRequest {
   return decorate(Readable.from(chunks) as unknown as NextApiRequest, opts);
 }
 
+/**
+ * A request whose body records how many chunks were actually pulled from it.
+ *
+ * Needed because "rejected without reading the body" is a claim about CONSUMPTION,
+ * and a status code cannot witness it — the route could read everything and still
+ * answer 413. `pulled` is the observable, so a mutant that drops the pre-read
+ * rejection and falls through to the running-total check is caught by a count rather
+ * than by the status it happens to share.
+ */
+function makeCountingReq(
+  chunks: Buffer[],
+  opts?: { contentLength?: number }
+): { req: NextApiRequest; pulled: Buffer[] } {
+  const pulled: Buffer[] = [];
+  const gen = (function* () {
+    for (const c of chunks) {
+      pulled.push(c);
+      yield c;
+    }
+  })();
+  return {
+    req: decorate(Readable.from(gen) as unknown as NextApiRequest, opts),
+    pulled,
+  };
+}
+
 function decorate(
   stream: NextApiRequest,
-  opts?: { method?: string; contentType?: string; trace?: Trace }
+  opts?: { method?: string; contentType?: string; trace?: Trace; contentLength?: number }
 ): NextApiRequest {
   stream.method = opts?.method ?? 'POST';
-  stream.headers = { 'content-type': opts?.contentType ?? 'image/png' };
+  stream.headers = {
+    'content-type': opts?.contentType ?? 'image/png',
+    // Omitted unless a case asks for it, so every pre-existing case keeps exercising
+    // the no-declared-length path (a chunked sender) rather than silently switching
+    // to the Content-Length guards added for the truncation fix.
+    ...(opts?.contentLength !== undefined ? { 'content-length': String(opts.contentLength) } : {}),
+  };
   stream.query = {};
   const trace = opts?.trace;
   const realDestroy = stream.destroy.bind(stream);
@@ -411,6 +444,87 @@ describe('image-upload relay', () => {
     const half = Math.floor(MAX_RELAY_BYTES / 2) + 1;
     await handler(makeReq([Buffer.alloc(half), Buffer.alloc(half)]), makeRes()); // 413
     expect(__getInFlightForTest()).toBe(before);
+  });
+
+  // AUDIT-5 — these ARE regression guards, and they are red against f47b17e9ff.
+  //
+  // Verified on a deployed preview (Next 16.3.1): the framework truncates a request
+  // body at 10MB and ENDS the stream, so the route saw a clean end-of-body, stored the
+  // fragment and returned 200 with an id. A valid 14,523,378-byte PNG came back as a
+  // 10,485,209-byte object with no IEND terminator. The unit tier could not see it
+  // because these fixtures drive `Readable.from`, which never truncates — so the
+  // guards are what is pinned here, not the framework behaviour.
+  describe('truncated and over-size bodies never reach the store', () => {
+    it('refuses a declared Content-Length over the cap WITHOUT reading the body', async () => {
+      const { req, pulled } = makeCountingReq([Buffer.from('a'), Buffer.from('b')], {
+        contentLength: MAX_RELAY_BYTES + 1,
+      });
+      const res = makeRes();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(413);
+      // The point of rejecting early: nothing was buffered.
+      expect(pulled).toHaveLength(0);
+      expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
+    });
+
+    it('rejects a body that ends short of its declared length', async () => {
+      // 10 bytes promised, 4 delivered — the shape Next's truncation produces.
+      const req = makeReq([Buffer.from('abcd')], { contentLength: 10 });
+      const res = makeRes();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toEqual({ error: 'Upload body was incomplete' });
+      // 🔴 The assertion that matters. A 400 with the object still written would be
+      // the same corruption wearing a different status.
+      expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
+    });
+
+    it('accepts a body that matches its declared length', async () => {
+      // Positive control for BOTH guards above: without it, a mutant that rejects
+      // unconditionally would pass every case in this block.
+      const req = makeReq([Buffer.from('abc'), Buffer.from('de')], { contentLength: 5 });
+      const res = makeRes();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockUploadImageBufferToStore).toHaveBeenCalledTimes(1);
+      const [sent] = mockUploadImageBufferToStore.mock.calls[0] as [Buffer];
+      expect(sent.toString()).toBe('abcde');
+    });
+
+    it('still accepts a complete body when no Content-Length is declared', async () => {
+      // Chunked senders declare nothing; the guards must not turn that into a refusal.
+      const req = makeReq([Buffer.from('abcde')]);
+      const res = makeRes();
+
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(mockUploadImageBufferToStore).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps MAX_RELAY_BYTES at or below the point where Next truncates', () => {
+      // 🔴 A RELATIONSHIP, not a value. Raising MAX_RELAY_BYTES above the framework's
+      // truncation point silently restores the original defect: bodies between the two
+      // are cut mid-stream, and the running-total cap never fires because the stream
+      // ends before it is exceeded. Whoever raises it must raise
+      // `middlewareClientMaxBodySize` in next.config.mjs in the same change — this
+      // fails until they do.
+      expect(MAX_RELAY_BYTES).toBeLessThanOrEqual(NEXT_BODY_TRUNCATION_BYTES);
+    });
+
+    it('releases the in-flight slot after refusing a truncated body', async () => {
+      // The refusal returns through the same `finally`; a leaked slot would wedge the
+      // route into shedding every later request with 429 until the pod restarts.
+      const before = __getInFlightForTest();
+      await handler(makeReq([Buffer.from('ab')], { contentLength: 99 }), makeRes());
+      expect(__getInFlightForTest()).toBe(before);
+    });
   });
 
   it('does NOT put the store error message on the wire', async () => {
