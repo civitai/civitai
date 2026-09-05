@@ -3021,6 +3021,7 @@ export interface Collection {
   availability: Availability;
   nsfwLevel: number;
   collaborationDisabledAt: Date | null;
+  archivedAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
   invites?: CollectionInvite[];

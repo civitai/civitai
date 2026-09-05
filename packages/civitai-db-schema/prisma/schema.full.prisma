@@ -4678,6 +4678,7 @@ model Collection {
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
   collaborationDisabledAt DateTime?
+  archivedAt   DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
