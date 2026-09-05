@@ -166,11 +166,47 @@ export const APPS_REVIEW_QUEUE_COLUMNS = {
  * The `/apps/mine` table (`MyAppsBody`) — **App** · Cover · Status · Updated.
  *
  * App is primary for the same reason as above, and here it also carries the icon and
- * the slug, so it is the cell that most wants the room. Cover is a fixed 96px image, so
- * its 12% is a floor rather than an aspiration; Status holds up to three badges plus
- * the completeness advisory, which is why it is the widest fixed share.
+ * the slug, so it is the cell that most wants the room.
+ *
+ * 🔴 THE COMMENT THAT USED TO SIT HERE WAS WRONG IN BOTH HALVES, AND THE SECOND HALF
+ * DESCRIBED THE DEFECT AS THOUGH IT WERE THE DESIGN. It read: "Cover is a fixed 96px
+ * image, so its 12% is a floor rather than an aspiration; Status holds up to three
+ * badges plus the completeness advisory, which is why it is the widest fixed share."
+ *
+ *   · COVER. The declared value was never 12 — it is 5, and it has never had any effect
+ *     at any width this container reaches. Measured at 1440 (table 1406): the Cover
+ *     column resolves to 128px while 5% is 70.3px, because the cell's min-content is the
+ *     96px image plus the table's 2×16px horizontal padding = 128. At the container's
+ *     2560 cap (table 2526) 5% is 126.3px — still under 128. So the share is INERT over
+ *     the whole supported range and the column is sized by its own min-content floor.
+ *     5 is kept rather than raised to 12 precisely because it is inert: 12% of 1406 is
+ *     168.7px, i.e. raising it to match the sentence would take 40px off the primary
+ *     column to pad a fixed-size image. The number is right; the sentence was not.
+ *
+ *   · STATUS. It does not hold "up to three badges" — `StatusBadges` renders exactly two
+ *     (role, then status-or-owner-chip) plus the completeness advisory glyph. And 10 was
+ *     not "the widest fixed share" in any useful sense: measured at 1440, that row's
+ *     max-content is 185.17px + 32px padding = 217.17px against the 140.59px the 10%
+ *     share resolved to, so the badges painted 60px OUTSIDE their own cell and on top of
+ *     the Updated column at every width ≤ 1440 (+22px of overlap at 1280, +13 at 1366,
+ *     +6 at 1440). Auto table layout could not defend the column because a `nowrap`
+ *     `Group` of `flex-shrink: 0` badges reports a min-content of 78px — far below the
+ *     185.17px it actually paints — so the min-content floor that normally expands a
+ *     squeezed column was satisfied by a number the row never honours. The structural
+ *     half of that fix is in `MyAppsBody`'s `StatusBadges` (the row may now wrap, which
+ *     makes its min-content honest and overflow impossible); the share here is what
+ *     keeps the ordinary row on ONE line: 18% of the 1246px table at 1280 is 224px,
+ *     above the 217.17px the two badges plus the advisory need.
+ *
+ *   · UPDATED. 5% resolved to 88px at 1440 — under the 96.73px ("Sep 4, 2026" max-content
+ *     64.73 + 32 padding) a single line needs — so the date wrapped to two lines at every
+ *     width below 2560. 9% is 112px at 1280, which also covers the widest formatted date.
+ *
+ * The primary column still takes the surplus and still takes most of it: 100 − 32 = 68%
+ * against a widest fixed share of 18%, which is what `appsTableColumnProblems` and the
+ * geometry tier check.
  */
-export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 10, 5];
+export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 18, 9];
 
 /**
  * The `/apps/review` MANAGE-LISTINGS table (`AppListingsModerationTable`) —

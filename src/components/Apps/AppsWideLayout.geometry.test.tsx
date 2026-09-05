@@ -574,6 +574,235 @@ describe('/apps/mine — the author table spends the width on its App column', (
   });
 });
 
+// ── /apps/mine, the REGRESSION this ledger shipped ───────────────────────────
+
+/**
+ * 🔴 THE LEDGER ABOVE PAINTED THE `Updated` DATE ON TOP OF THE `Status` BADGES.
+ *
+ * Both `APPS_MINE_COLUMNS` and `MyAppsBody`'s `<AppsTableColgroup>` were introduced by
+ * `2f3c556c7b` (#4619); `git show 2f3c556c7b^:src/components/Apps/MyAppsBody.tsx` has
+ * neither, i.e. before that commit the browser auto-sized these columns to their content
+ * and an overlap was not expressible. Measured against `origin/main` on the real page,
+ * last status badge's right edge minus the date's left edge:
+ *
+ *      vw      1280   1366   1440   1600   1920   2560
+ *      overlap  +22    +13     +6    −10    −43   −107
+ *      date     2 lines everywhere except 2560
+ *
+ * (Positive = the badge is painted over the date. Read against the ADVISORY GLYPH — the
+ * right-most thing in the cell — rather than the last badge, the overlap runs to +55 at
+ * 1280 and is still +23 at 1600.)
+ *
+ * 🔴 WHY AUTOMATIC TABLE LAYOUT DID NOT SAVE IT, because that is the part a reader will
+ * not guess. A column with a specified width is still floored at its cell's MIN-CONTENT
+ * width — normally the thing that expands a column whose content does not fit. Here the
+ * floor was a lie: Mantine's `Badge` sets `overflow: hidden`, so as a flex item its
+ * automatic minimum size collapses, and the cell reported a min-content of 78px while a
+ * `wrap="nowrap"` row of `flex-shrink: 0` badges actually painted 185.17px. 10% of the
+ * 1406px table is 140.59px, the floor was "satisfied", and `<td>`'s `overflow: visible`
+ * meant the 60px that did not fit was drawn over the next cell rather than clipped.
+ *
+ * 🔴 WHAT THIS GUARD ASSERTS, AND WHY IT IS NOT A CONSTANT PIN. A test reading
+ * `expect(APPS_MINE_COLUMNS[2]).toBe(18)` is walkable by editing the constant, and says
+ * nothing about the two mechanisms that have to agree (the share AND the row being
+ * allowed to wrap). So the assertions are RELATIONSHIPS between painted boxes:
+ * everything in the Status cell ends to the LEFT of where the date begins, the cell does
+ * not overflow itself, and the date occupies one line.
+ *
+ * 🔴 THE WIDTHS ARE THE ONES THAT FAILED, AND BOTH ARE MEASURED. 1366 and 1440 are the
+ * two most common laptop widths and were +13 and +6 at `origin/main`. Neither is the
+ * file's `NARROW`/`WIDE` pair, because those two are about the SURPLUS and this defect
+ * lives at the squeezed end.
+ *
+ * ⚠️ RED→GREEN MATRIX, MEASURED ONE HALF AT A TIME RATHER THAN ASSERTED. This block is
+ * nine tests over the whole `geometry` project's 64; the counts are that project's:
+ *
+ *   both halves reverted (= `origin/main`)      6 failed | 58 passed
+ *   ledger only, `wrap="nowrap"` restored       1 failed | 63 passed  ← the 768 arm
+ *   wrap only, ledger back to [null, 5, 10, 5]  2 failed | 62 passed  ← the ONE-line arms
+ *   both halves in place                        0 failed | 64 passed
+ *
+ * 🔴 READ THE MIDDLE TWO ROWS BEFORE ADDING TO THIS BLOCK. They say that the 1366/1440
+ * overlap arms are satisfied by the SHARE alone — 18% of those tables is wider than the
+ * two-badge row needs, so they cannot see the wrap being taken away. What pins the wrap
+ * is the 768 arm, and what pins the share is the ONE-line pair. Each half has exactly one
+ * arm that fails for its own reason; neither is redundant and neither covers the other.
+ */
+describe('🔴 /apps/mine — the Status badges never paint over the Updated date', () => {
+  /**
+   * 🔴 THE ADVISORY GLYPH IS PART OF THE FIXTURE, and leaving it out would have measured a
+   * narrower cell than production ever renders. `StatusBadges` always renders
+   * `ListingProblemsIndicator`, which returns `null` for an empty `problems` array — and
+   * `MINE_ROW` above omits the field. Every row on the live page carries at least one
+   * advisory, and the glyph is the RIGHT-MOST thing in the cell, i.e. exactly the box this
+   * block is about.
+   */
+  const OVERLAP_ROW: MyAppRow = {
+    ...MINE_ROW,
+    problems: [
+      { code: 'no-screenshots', label: 'Add at least one screenshot', severity: 'advisory' },
+    ],
+  } as MyAppRow;
+
+  const body = () => <MyAppsBodyView rows={[OVERLAP_ROW]} />;
+
+  /** The two laptop widths the defect was measured at. */
+  const OVERLAP_WIDTHS = [
+    { width: 1366, height: 900 },
+    { width: 1440, height: 900 },
+  ] as const;
+
+  /** The Status `<td>` and the Updated `<td>` of the first body row. */
+  function statusAndDateCells(): { status: HTMLTableCellElement; date: HTMLTableCellElement } {
+    const row = document.querySelector('table tbody tr');
+    if (!row) throw new Error('the author table rendered no body row');
+    const cells = Array.from(row.querySelectorAll('td'));
+    if (cells.length !== 4) {
+      throw new Error(`expected the four-column author row, got ${cells.length} cells`);
+    }
+    return {
+      status: cells[2] as HTMLTableCellElement,
+      date: cells[3] as HTMLTableCellElement,
+    };
+  }
+
+  /** Every painted leaf inside an element — the boxes a reader actually sees. */
+  function paintedLeaves(root: Element): Element[] {
+    return Array.from(root.querySelectorAll('*')).filter(
+      (el) => el.children.length === 0 && (el.textContent ?? '').trim().length + el.clientWidth > 0
+    );
+  }
+
+  test('the fixture really renders the two badges AND the advisory (guards a vacuous pass)', async () => {
+    // POSITIVE CONTROL, and the one that matters most here: an empty Status cell trivially
+    // satisfies "nothing in it overlaps the date". Both badges carry a testid, and the
+    // advisory glyph is the third box — if any of them stops rendering, this fails BEFORE
+    // the geometry assertions get a chance to pass for the wrong reason.
+    await renderRoute(body(), OVERLAP_WIDTHS[1]);
+    const { status } = statusAndDateCells();
+    expect(
+      status.querySelector(`[data-testid="apps-mine-role-${OVERLAP_ROW.appListingId}"]`)
+    ).not.toBeNull();
+    expect(
+      status.querySelector(`[data-testid="apps-mine-status-${OVERLAP_ROW.appListingId}"]`)
+    ).not.toBeNull();
+    expect(
+      status.querySelector('[data-testid="apps-submission-problems"]'),
+      'the completeness advisory is the right-most box in the cell; without it this block ' +
+        'measures a narrower cell than the page ever renders'
+    ).not.toBeNull();
+    await cleanup();
+  });
+
+  test.each(OVERLAP_WIDTHS)(
+    'at $width the Status cell ends before the Updated date begins',
+    async (viewport) => {
+      const observed = await renderRoute(body(), viewport);
+      expect(observed).toEqual({ width: viewport.width, height: viewport.height });
+
+      const { status, date } = statusAndDateCells();
+      const leaves = paintedLeaves(status);
+      expect(leaves.length, 'the Status cell painted nothing to measure').toBeGreaterThan(0);
+
+      const rightmost = Math.max(...leaves.map((el) => el.getBoundingClientRect().right));
+      const dateText = paintedLeaves(date)[0];
+      expect(dateText, 'the Updated cell painted no date').toBeTruthy();
+      const dateLeft = dateText.getBoundingClientRect().left;
+
+      expect(
+        px(rightmost - dateLeft),
+        `the right-most box in the Status cell reaches ${px(rightmost)} while the date ` +
+          `starts at ${px(dateLeft)} — a positive number here is the badge painted ON TOP ` +
+          `of the date (measured +55 at 1280 and +23 at 1600 on origin/main)`
+      ).toBeLessThan(0);
+
+      await cleanup();
+    }
+  );
+
+  test.each(OVERLAP_WIDTHS)(
+    'at $width the Status cell does not overflow ITSELF',
+    async (viewport) => {
+      // The same defect stated without reference to the neighbour, so a future layout that
+      // moves the date somewhere else cannot make the overlap check vacuous while the cell
+      // is still painting outside its own box.
+      await renderRoute(body(), viewport);
+      const { status } = statusAndDateCells();
+      expect(
+        status.scrollWidth,
+        `the Status cell paints ${status.scrollWidth}px of content into ` +
+          `${status.clientWidth}px of cell; \`<td>\` is \`overflow: visible\`, so the ` +
+          'difference is drawn over whatever sits to its right'
+      ).toBeLessThanOrEqual(status.clientWidth);
+      await cleanup();
+    }
+  );
+
+  test('🔴 …and at 768, where NO share can hold the row, it still does not overflow', async () => {
+    // 🔴 THIS IS THE ARM THAT PINS THE *WRAP*, AND THE TWO ABOVE DO NOT. Measured by
+    // reverting one half at a time: with the ledger alone (Status back to `wrap="nowrap"`,
+    // share 18%) every assertion at 1366/1440 stays GREEN, because 18% of those tables is
+    // wider than the two-badge row needs. The share cannot be the answer at every width —
+    // 18% of the 736px container here is 132px against the 217px this row paints, and the
+    // widest real row ("Collaborator" + "removed by a moderator" + the advisory) is ~307px
+    // and fits under no percentage that is also sane at 2560.
+    //
+    // What makes the cell safe at ANY width is that the row may wrap: its min-content then
+    // becomes its widest single badge instead of a number no layout can produce, so the
+    // content reflows onto a second line rather than being painted over the neighbour. The
+    // date legitimately wraps at this width too, which is why only the two overflow
+    // relationships are read here — a squeezed column is allowed to get taller, it is not
+    // allowed to paint outside itself.
+    const viewport = { width: TABLET.width, height: TABLET.height };
+    await renderRoute(body(), viewport);
+    const { status, date } = statusAndDateCells();
+    expect(
+      status.scrollWidth,
+      `at 768 the Status cell paints ${status.scrollWidth}px into ${status.clientWidth}px`
+    ).toBeLessThanOrEqual(status.clientWidth);
+    const rightmost = Math.max(
+      ...paintedLeaves(status).map((el) => el.getBoundingClientRect().right)
+    );
+    expect(px(rightmost - date.getBoundingClientRect().left)).toBeLessThanOrEqual(0);
+    await cleanup();
+  });
+
+  test.each(OVERLAP_WIDTHS)('at $width the Updated date stays on ONE line', async (viewport) => {
+    // The second half of the same squeeze: 5% resolved to 88px at 1440 against the 96.73px
+    // ("Sep 4, 2026" max-content 64.73 + 32px cell padding) one line needs, so the date
+    // wrapped at every width below 2560.
+    await renderRoute(body(), viewport);
+    const { date } = statusAndDateCells();
+    const text = paintedLeaves(date)[0];
+    expect(lineCount(text), `the date "${text.textContent}" wrapped`).toBe(1);
+    await cleanup();
+  });
+
+  test('…and the App column still takes MOST of the surplus (the #4619 behaviour is intact)', async () => {
+    // 🔴 THE FIX MUST NOT BE A REVERT. Widening two fixed columns takes the surplus from
+    // the primary one, and past some share the table stops "spending the width" and goes
+    // back to padding it — which is the defect #4619 exists to remove. Same shape as that
+    // PR's own assertion, re-read here so this block owns the trade it made.
+    const { narrow, wide } = await atBothWidths(body, headerWidths);
+    const appDelta = wide[0] - narrow[0];
+    const otherDelta = wide.reduce((s, w, i) => (i === 0 ? s : s + (w - narrow[i])), 0);
+    expect(
+      appDelta,
+      `the App column took ${px(appDelta)} of the container's ${CONTAINER_DELTA}px and the ` +
+        `other three took ${px(otherDelta)}`
+    ).toBeGreaterThan(otherDelta);
+    // …and the table still SPANS the container at both widths rather than capping itself.
+    for (const vp of [NARROW, WIDE]) {
+      await renderRoute(body(), vp);
+      const table = document.querySelector('table')!.getBoundingClientRect().width;
+      expect(px(table), `the table did not span the ${vp.width} container`).toBeGreaterThan(
+        vp.content - 4
+      );
+      await cleanup();
+    }
+  });
+});
+
 // ── table route 3: /apps/review's ACTIVE PREVIEWS — the payload of round 1 ───
 
 describe('/apps/review — the active-previews panel keeps its buttons near its rows', () => {

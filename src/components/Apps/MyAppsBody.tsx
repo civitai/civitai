@@ -317,7 +317,31 @@ function ListingName({ row }: { row: MyAppRow }) {
  */
 function StatusBadges({ row }: { row: MyAppRow }) {
   return (
-    <Group gap={6} wrap="nowrap">
+    /*
+     * 🔴 THIS ROW MAY WRAP, AND THAT IS THE STRUCTURAL HALF OF A LAYOUT FIX — NOT A
+     * COSMETIC PREFERENCE. It was `wrap="nowrap"`, and in the table layout that made the
+     * badges paint ON TOP of the Updated column at every viewport ≤ 1440 (measured, last
+     * badge's right minus the date's left: +22px at 1280, +13 at 1366, +6 at 1440).
+     *
+     * The mechanism, because "make it wrap" is not self-evidently the cure. Under
+     * automatic table layout a column with a specified width is still floored at its
+     * cell's MIN-CONTENT width, which is what normally expands a column whose content
+     * does not fit. Here that floor lied: Mantine's `Badge` sets `overflow: hidden`, so
+     * as a flex item its automatic minimum size collapses, and this cell reported a
+     * min-content of 78px while a `flex-shrink: 0` badge row actually painted 185.17px.
+     * `<td>` is `overflow: visible`, so the 60px that did not fit was not clipped — it was
+     * drawn over the next cell.
+     *
+     * Allowing the row to wrap makes the min-content honest (the widest single badge
+     * rather than a number no layout can produce), so the cell can never paint outside
+     * itself again REGARDLESS of the ledger. The ledger's Status share (18%, see
+     * `APPS_MINE_COLUMNS`) is the other half and does a different job: it keeps the
+     * ordinary two-badge row on ONE line from 1280 up. The long case — "Collaborator" plus
+     * "removed by a moderator" plus the advisory — is ~307px and no percentage that is
+     * also sane at 2560 can hold it on one line; with wrapping it reflows instead of
+     * overlapping, which is the point of keeping both halves.
+     */
+    <Group gap={6}>
       {/* 🔴 The role badge is not decoration: an editor cannot invite, remove or transfer,
           so saying which one they are is what makes the missing controls legible rather
           than looking broken. */}
