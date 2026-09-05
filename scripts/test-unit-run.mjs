@@ -33,6 +33,25 @@ let DAEMON = null;
 let accepted = false;
 const POLL_MS = 2000;
 
+/**
+ * Exit after flushing pending writes.
+ *
+ * process.exit() terminates immediately without waiting for buffered stdout/stderr writes to
+ * complete. When running through a pipe-backed capture (exec background), the last lines of output
+ * are lost — both the exit code and the log then agree on "green" over a red run. Drain both
+ * streams before exiting so the capture file is complete when the process manager fires its
+ * completion notification.
+ */
+function exitAfterDrain(code) {
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  // If the callbacks never fire (e.g. the streams are in an error state), exit anyway after
+  // a short safety net rather than hang.
+  setTimeout(() => process.exit(code), 500).unref();
+}
+
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 export function queueDecision(args, env) {
@@ -183,7 +202,7 @@ async function runQueued(args) {
       // here. The copy that used to live on this line read `state.exitCode || 1`, which passes a
       // signal-killed run's recorded -1 straight through: `process.exit(-1)` gives the shell 255,
       // the exact number `exitCodeFor` exists to avoid, and `[ $? -eq 1 ]` misreads it.
-      process.exit(exitCodeFor(state));
+      exitAfterDrain(exitCodeFor(state));
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }

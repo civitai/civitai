@@ -42,6 +42,25 @@ const daemonHome = resolveDaemonHome(__dirname, projectRoot);
 const pidFile = resolve(daemonHome.skillDir, 'daemon.pid');
 const serverScript = resolve(daemonHome.skillDir, 'scripts/daemon.mjs');
 
+/**
+ * Exit after draining pending writes.
+ *
+ * process.exit() terminates the process WITHOUT waiting for buffered writes to finish, so the last
+ * `console.log`/`console.error` lines can be LOST when stdout/stderr is a pipe-backed capture (e.g.
+ * exec background). Call this instead of process.exit whenever a waiter has just printed output:
+ * the empty-string write is queued after the pending data, and the callback fires only once all
+ * earlier writes have been flushed to the kernel.
+ */
+function drainThenExit(code) {
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  // Safety: if neither callback fires within 500ms (unlikely but makes the bug unreproducible
+  // rather than systemic), exit anyway — a slightly stale exit code is better than a hung process.
+  setTimeout(() => process.exit(code), 500).unref();
+}
+
 // Overridable via DEV_DAEMON_PORT, so a second daemon can be exercised without touching the
 // shared one. The whole decision — port included — is made in scripts/daemon-port.mjs, which is
 // also what the daemon reads, so this file does no arithmetic on a port and cannot drift from it.
@@ -564,11 +583,11 @@ async function cmdTestWait(id) {
         `Run ${id} is unknown to the daemon. It was most likely restarted, which drops queued and ` +
           `in-flight runs. Request a new run.`
       );
-      process.exit(EXIT_UNKNOWN_RUN);
+      drainThenExit(EXIT_UNKNOWN_RUN);
     }
     if (!result.ok) {
       console.error(`Cannot reach the daemon: ${result.error || result.data?.error}`);
-      process.exit(EXIT_UNKNOWN_RUN);
+      drainThenExit(EXIT_UNKNOWN_RUN);
     }
 
     const run = result.data;
@@ -603,7 +622,7 @@ async function cmdTestWait(id) {
         );
       }
       console.log(`Run ${id} ${run.status}${run.error ? ` (${run.error})` : ''}`);
-      process.exit(exitCodeFor(run));
+      drainThenExit(exitCodeFor(run));
     }
 
     await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
