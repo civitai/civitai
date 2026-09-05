@@ -35,22 +35,26 @@ Immediately after a force-push it returned the **old** commit. On that single re
 like it failed. Confirm from three sources that agree — local `HEAD`, `origin/<branch>`, and the
 PR's `headRefOid` — before reporting either way.
 
-## Measured: force-push does not re-trigger Tekton, and Actions can stop firing entirely
+## Two systems post here, they fail independently, and one of them stopped
 
-Two separate systems post to a PR here and they fail differently. **They are not interchangeable and
-neither substitutes for the other.**
-
-| System | Surfaces as | On PR #4640 |
+| System | Surfaces as | Latency |
 | --- | --- | --- |
-| Tekton (in-cluster) | **commit statuses** — `tekton / typecheck`, `tekton / fixture-bootstrap` | skipped 3 force-pushes; fired on the next **normal** push, ~3.5 min |
-| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard, Windows dev-env | fired once on the branch's first push, then never again — including on the normal push |
+| Tekton (in-cluster) | **commit statuses** — `tekton / typecheck`, `tekton / fixture-bootstrap` | ~3.5 min |
+| GitHub Actions | **check-runs** — Lint, Schema drift gate, Submodule Pin Guard, Windows dev-env | ~immediate |
 
-Sequence measured 2026-09-04/05: branch created and pushed → 4 Actions runs + 2 Tekton statuses.
-Three `--force-with-lease` pushes → nothing from either. One close/reopen → nothing. One **normal**
-fast-forward push → **Tekton posted both statuses; Actions produced zero check-runs.**
+Observed on PR #4640 over an evening, in order: branch created and pushed → 4 Actions runs + 2 Tekton
+statuses. Three amend + `--force-with-lease` pushes → **nothing from either**. One close/reopen →
+nothing. Two normal pushes → **Tekton only**. One rebase + `--force-with-lease` → **Tekton only**.
 
-So the force-push hypothesis holds for Tekton and does **not** explain Actions, which stopped firing
-on this PR for a reason this evidence does not identify.
+**What is established:** GitHub Actions fired once, on the branch's first push, and never again —
+through six subsequent pushes of three different shapes. That is a real and unexplained failure, and
+it is why `gh pr checks` on this PR can report a pass over jobs that never ran.
+
+**What is NOT established, and what an earlier revision of this file wrongly claimed:** that
+force-push is the discriminator. It looked that way after three amend-pushes produced nothing and a
+normal push produced Tekton — but a later rebase-and-force-push produced Tekton too. So the shape of
+the push does not explain it, and whatever does is still unidentified. **Do not plan around a rule
+here; measure the SHA you actually have.**
 
 ### The part that will fool you
 
