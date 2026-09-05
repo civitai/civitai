@@ -77,9 +77,14 @@ describe('createCachedArray.update — the write-through path', () => {
     // The entry's OWN key on both the read and the write. Reading `id + 1` while
     // writing `id` would apply one user's delta to another user's cached set, and
     // asserting only the write would not see it.
-    expect(mGetMock).toHaveBeenCalledWith([ENTRY_KEY]);
-    const [key, value, options] = setMock.mock.calls[0];
+    // The 2nd arg is the packed codec options threaded from the cache's `compress` option
+    // (#4588). This cache does not opt in, so it must be `false` here — asserted rather than
+    // loosened to `expect.anything()`, since a read that silently flipped to compress:true
+    // against uncompressed writes is exactly the asymmetry that flag has to avoid.
+    expect(mGetMock).toHaveBeenCalledWith([ENTRY_KEY], { compress: false });
+    const [key, value, options, packedOptions] = setMock.mock.calls[0];
     expect(key).toBe(ENTRY_KEY);
+    expect(packedOptions).toEqual({ compress: false });
     // `cachedAt` carried over, not reset: the entry stays as fresh as it was and no
     // fresher, so its revalidation clock is unchanged.
     expect(value).toEqual({ id: 1, members: [7, 9], cachedAt });

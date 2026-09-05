@@ -50,16 +50,39 @@ export type CachedLookupOptions<T extends object> = {
   // total L1 footprint is bounded regardless of per-value size spikes. A single value larger than the
   // budget is simply not stored (falls through to Redis) — never an error.
   localMaxBytes?: number;
+  // Opt-in brotli compression of the packed value at rest (sentinel-tagged). Enable only for caches
+  // whose values are LARGE and repetitive enough to pay the codec — most per-id values are tiny.
+  //
+  // 🔴 SYMMETRY IS THE WHOLE CONTRACT: this flag is threaded to EVERY redis.packed read AND write
+  // this builder performs (fetch's mGet, the value/notFound writes, bust's debounce marker,
+  // invalidate's mGet + rewrite, refresh's rewrite, update's mGet + rewrite). A key written
+  // compressed but read via the general msgpack path throws → the entry is EVICTED and the read
+  // reports a miss, i.e. a permanent miss+evict loop rather than a visible error. If you add a new
+  // redis.packed call site to this module you MUST pass `{ compress }` to it.
+  //
+  // Back-compat is free in BOTH directions: the compress-aware read is sentinel-discriminated, so
+  // legacy uncompressed entries written before the flag was flipped still decode. No key-bust or
+  // migration is needed to turn this on. (Turning it OFF again is NOT symmetric — see the note on
+  // the general decode path in ./packed-compression — so flip it off only with a key-bust.)
+  //
+  // SENTINEL SAFETY: every value this module writes is an object (`{ ...result, cachedAt }`, the
+  // notFound marker, the debounce marker) and `T extends object`, so the 0x01 sentinel can never
+  // collide with a bare-scalar msgpack payload. See ./packed-compression.
+  compress?: boolean;
 };
 
 /** The slice of the redis client this module needs. */
 type PackedClient = {
   packed: {
-    mGet<T>(keys: RedisKeyTemplateCache[]): Promise<(T | null)[]>;
+    mGet<T>(
+      keys: RedisKeyTemplateCache[],
+      packedOptions?: { compress?: boolean }
+    ): Promise<(T | null)[]>;
     set<T>(
       key: RedisKeyTemplateCache,
       value: T,
-      options?: { EX?: number; NX?: boolean; XX?: boolean }
+      options?: { EX?: number; NX?: boolean; XX?: boolean },
+      packedOptions?: { compress?: boolean }
     ): Promise<unknown>;
   };
   del(key: RedisKeyTemplateCache | RedisKeyTemplateCache[]): Promise<unknown>;
@@ -143,7 +166,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     localTtl,
     localMax = 10000,
     localMaxBytes,
+    compress = false,
   }: CachedLookupOptions<T>) {
+    // Resolved ONCE and passed to every redis.packed read/write below. Keeping a single object
+    // (rather than re-spelling `{ compress }` per call site) makes the symmetry contract in
+    // CachedLookupOptions.compress mechanically obvious: one binding, nine consumers.
+    const packedOptions = { compress } as const;
     // Holds the FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
     // byte-identical to what the Redis path returns and needs no further decoration.
     // Driven with get/set rather than its wrapping .fetch — the access pattern here is a batch mGet,
@@ -271,7 +299,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       try {
         for (const batch of chunk(distinctIds, 200)) {
           const batchResults = await redis.packed.mGet<T>(
-            batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+            batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache),
+            packedOptions
           );
           cacheResults.push(...batchResults.filter(isDefined));
         }
@@ -399,7 +428,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           if (Object.keys(toCache).length > 0)
             await Promise.all(
               Object.entries(toCache).map(([id, value]) =>
-                redis.packed.set(`${key}:${id}` as RedisKeyTemplateCache, value, { EX })
+                redis.packed.set(
+                  `${key}:${id}` as RedisKeyTemplateCache,
+                  value,
+                  { EX },
+                  packedOptions
+                )
               )
             );
 
@@ -409,10 +443,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             const notFoundEX = notFoundTtl ?? EX;
             await Promise.all(
               Object.entries(toCacheNotFound).map(([id, value]) =>
-                redis.packed.set(`${key}:${id}` as RedisKeyTemplateCache, value, {
-                  EX: notFoundEX,
-                  NX: true,
-                })
+                redis.packed.set(
+                  `${key}:${id}` as RedisKeyTemplateCache,
+                  value,
+                  { EX: notFoundEX, NX: true },
+                  packedOptions
+                )
               )
             );
           }
@@ -464,7 +500,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           redis.packed.set(
             `${key}:${id}` as RedisKeyTemplateCache,
             { [idKey]: id, debounce: true },
-            { EX: options.debounceTime ?? debounceTime }
+            { EX: options.debounceTime ?? debounceTime },
+            packedOptions
           )
         )
       );
@@ -479,7 +516,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const cacheResults: T[] = [];
       for (const batch of chunk(ids, 200)) {
         const batchResults = await redis.packed.mGet<T>(
-          batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+          batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache),
+          packedOptions
         );
         cacheResults.push(...batchResults.filter(isDefined));
       }
@@ -500,7 +538,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       if (Object.keys(toCache).length > 0)
         await Promise.all(
           Object.entries(toCache).map(([id, value]) =>
-            redis.packed.set(`${key}:${id}` as RedisKeyTemplateCache, value, { EX })
+            redis.packed.set(`${key}:${id}` as RedisKeyTemplateCache, value, { EX }, packedOptions)
           )
         );
 
@@ -523,7 +561,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cacheable = Object.entries(results).filter(([, x]) => x && !dontCacheFn?.(x));
         await Promise.all(
           cacheable.map(([rid, x]) =>
-            redis.packed.set(`${key}:${rid}` as RedisKeyTemplateCache, { ...x, cachedAt }, { EX })
+            redis.packed.set(
+              `${key}:${rid}` as RedisKeyTemplateCache,
+              { ...x, cachedAt },
+              { EX },
+              packedOptions
+            )
           )
         );
 
@@ -598,7 +641,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
 
       try {
-        const [current] = await redis.packed.mGet<T>([entryKey]);
+        const [current] = await redis.packed.mGet<T>([entryKey], packedOptions);
         const marker = current as AnyRecord | null;
         if (!current || marker?.notFound || marker?.debounce || !marker?.cachedAt) return false;
 
@@ -620,7 +663,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const written = await redis.packed.set(
           entryKey,
           { ...next, cachedAt: marker.cachedAt },
-          { EX, XX: true }
+          { EX, XX: true },
+          packedOptions
         );
         if (written === null) return false;
         // After the write, not before: a concurrent fetch between the two would

@@ -1,27 +1,27 @@
 import { pack, unpack } from 'msgpackr';
 import { describe, expect, it } from 'vitest';
-import {
-  PACKED_BROTLI_SENTINEL,
-  compressPacked,
-  decompressPacked,
-} from '../packed-compression';
+import { PACKED_BROTLI_SENTINEL, compressPacked, decompressPacked } from '../packed-compression';
 
 /**
  * Regression guard for the hardened decode design (PR #2649 review Fix 1).
  *
  * `redis.packed` has TWO decode paths in src/server/redis/client.ts:
  *
- *   GENERAL  (safeUnpack, used by get/mGet/sMembers/sPop/hGet/hGetAll/hmGet across ~30
- *            cache writers): plain `unpack(value)` — NEVER decompresses.
- *   COMPRESS-AWARE (safeUnpackCompressed, used ONLY by get(key, { compress: true }), i.e.
- *            fetchThroughCache's compressed callers): sentinel-detect → brotli-decompress
- *            → unpack, back-compat with legacy uncompressed wrappers.
+ *   GENERAL  (safeUnpack — the DEFAULT for get/mGet, and the only path for
+ *            sMembers/sPop/hGet/hGetAll/hmGet, across ~30 cache writers): plain
+ *            `unpack(value)` — NEVER decompresses.
+ *   COMPRESS-AWARE (safeUnpackCompressed, used ONLY by get/mGet when passed
+ *            `{ compress: true }`: fetchThroughCache's compressed callers, and
+ *            createCachedArray/createCachedObject caches built with `compress: true`
+ *            — #4588 added the mGet half): sentinel-detect → brotli-decompress →
+ *            unpack, back-compat with legacy uncompressed values.
  *
  * The brotli sentinel (0x01) collides with `pack(1)` (=== <01>). Routing decompression
  * through the SHARED general path would mis-read a bare `1` (a count/flag/scalar tRPC
  * result) as a compressed payload → throw → evict → permanent cache miss. Confining
  * decompression to the compress-aware path makes the collision harmless: that path only
- * ever sees the `{ data, cachedAt }` wrapper (first byte = MAP marker, never 0x01).
+ * ever sees OBJECTS — the `{ data, cachedAt }` wrapper, or a cached-array record/marker —
+ * whose first byte is always a MAP marker, never 0x01.
  *
  * These tests model BOTH paths at the exact decode boundary the wrappers use (the same
  * `unpack` / `decompressPacked` calls as client.ts), without booting the full client
@@ -97,7 +97,10 @@ describe('packed decode paths (Fix 1 — confined decompression)', () => {
     });
 
     it('a corrupt/garbage value is treated as a cache miss (null), preserving fail-open', async () => {
-      const garbage = Buffer.concat([Buffer.from([PACKED_BROTLI_SENTINEL]), Buffer.from('not-brotli')]);
+      const garbage = Buffer.concat([
+        Buffer.from([PACKED_BROTLI_SENTINEL]),
+        Buffer.from('not-brotli'),
+      ]);
       expect(await safeUnpackCompressed(garbage)).toBeNull();
     });
   });

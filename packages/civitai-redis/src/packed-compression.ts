@@ -18,13 +18,22 @@ import { promisify } from 'util';
  * On-disk format for a compressed value is a single SENTINEL prefix byte (0x01 = brotli)
  * followed by the brotli stream of the msgpack-packed Buffer.
  *
- * SENTINEL SCOPE: decompression is CONFINED to the compress-aware read path
- * (`redis.packed.get(key, { compress: true })`, used only by `fetchThroughCache` when
- * `compress: true`). The general decode path (`safeUnpack`, used by every other packed
- * read) NEVER touches this code, so the 0x01 sentinel is NOT a global invariant on all
- * packed values — it only applies on the one confined path, where every value is the
- * `{ data, cachedAt }` WRAPPER OBJECT (msgpack first byte is always a MAP marker
- * 0x80–0x8f / 0xde / 0xdf — never 0x01), making the sentinel provably collision-free.
+ * SENTINEL SCOPE: decompression is CONFINED to the compress-aware read paths
+ * (`redis.packed.get(key, { compress: true })` and `redis.packed.mGet(keys,
+ * { compress: true })`). The general decode path (`safeUnpack`, used by every other
+ * packed read) NEVER touches this code, so the 0x01 sentinel is NOT a global invariant
+ * on all packed values — it only applies on those confined paths.
+ *
+ * Two callers opt in today, and BOTH store an object, never a bare scalar, so the
+ * sentinel is provably collision-free on the path (a msgpack map's first byte is always
+ * a MAP marker 0x80–0x8f / 0xde / 0xdf — never 0x01):
+ *   - `fetchThroughCache` — always the `{ data, cachedAt }` WRAPPER OBJECT.
+ *   - `createCachedArray` / `createCachedObject` (`compress: true`) — every value it
+ *     writes is a record: `{ ...result, cachedAt }`, the negative marker
+ *     `{ [idKey]: id, notFound: true, cachedAt }`, and the debounce marker
+ *     `{ [idKey]: id, debounce: true }`. `lookupFn` is typed `T extends object`, so a
+ *     scalar cannot reach the write path.
+ *
  * Do NOT enable `compress` for a caller that stores a bare scalar (a positive-fixint
  * 0x01 would be ambiguous with the sentinel).
  */
