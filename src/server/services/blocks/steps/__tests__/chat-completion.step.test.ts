@@ -395,6 +395,22 @@ describe('chat-completion — buildStep', () => {
     expect(strip(withTools)).toEqual(strip(withTools));
   });
 
+  it('🔴 pins the BOUND itself — 2^31, and a power of two', () => {
+    // 🔴 THE CASE BELOW DOES NOT PIN THIS, AND READ AS IF IT DID. Its
+    // `toBeLessThan(CHAT_COMPLETION_SEED_EXCLUSIVE_MAX)` imports the constant
+    // from the module under test and compares it against a value computed as
+    // `draw % CHAT_COMPLETION_SEED_EXCLUSIVE_MAX` — true by construction for
+    // ANY value of the constant. Its only working assertion is against a
+    // hardcoded 2^20, so it pins "wider than ~2^20", not 2^31. Measured: both
+    // `2 ** 24` and `1_500_000_000` SURVIVED the full 86-test file.
+    //
+    // The second assertion is the one the constant's own 🔴 paragraph asks for:
+    // a non-power-of-two bound makes `draw[0] % BOUND` favour the low values —
+    // silent modulo bias, invisible to every distribution test here.
+    expect(CHAT_COMPLETION_SEED_EXCLUSIVE_MAX).toBe(2 ** 31);
+    expect(Number.isInteger(Math.log2(CHAT_COMPLETION_SEED_EXCLUSIVE_MAX))).toBe(true);
+  });
+
   it('🔴 draws from the full 2^31 space — pins the RANGE, not just that it moves', () => {
     // A mutant that narrows the space (`randomInt(2)`, `randomInt(1000)`) still
     // "varies" and would survive the distinctness case above at some rate. It

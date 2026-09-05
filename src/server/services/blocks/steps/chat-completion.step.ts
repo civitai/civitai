@@ -389,8 +389,21 @@ export const CHAT_COMPLETION_SEED_EXCLUSIVE_MAX = 2 ** 31;
  * Note what would NOT have caught a bad choice: `typecheck` and the unit suites
  * both pass either way, because neither of them bundles.
  *
- * `buildStep` only ever runs server-side; it is the IMPORT, not the call, that
- * had to be made runtime-agnostic.
+ * 🔴 AND THE CALL IS NOT SERVER-ONLY EITHER — IT RUNS AT MODULE LOAD, IN EVERY
+ * RUNTIME THAT EVALUATES THE REGISTRY, THE CLIENT BUNDLE INCLUDED. `./index`
+ * runs `assertStepInvariants` at MODULE SCOPE, and that calls `buildStep` once
+ * per declared variant (`./index`, the load-time invariant loop). Measured by
+ * spying on `globalThis.crypto.getRandomValues` and importing the registry:
+ * **3 calls, one per `CHAT_COMPLETION_MODELS` entry, before any request exists.**
+ *
+ * That makes the choice above load-bearing rather than merely tidy, and it is
+ * why this docstring no longer says "only ever runs server-side" — it did, and
+ * that was FALSE. A later editor who believed it and reached for `node:crypto`,
+ * `process.env` or a DB read here would not break a request: they would break
+ * **module evaluation of the client bundle**, i.e. the whole page. `:310-316`
+ * already records that `workflow.schema` depends on this path staying light —
+ * module-load work here is a tracked property, so keep the call cheap and
+ * runtime-agnostic.
  */
 function drawChatCompletionSeed(): number {
   const draw = new Uint32Array(1);
