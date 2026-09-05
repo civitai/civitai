@@ -115,8 +115,12 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     // (sentinel-detect + brotli-decompress), SYMMETRIC with set's compress. Only enable
     // for keys written with compress — see the SENTINEL SCOPE note in packed-compression.
     get<T>(key: K, packedOptions?: { compress?: boolean }): Promise<T | null>;
-    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
-    mGet<T>(keys: K[]): Promise<(T | null)[]>;
+    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all.
+    // `packedOptions.compress` opts the READ into the compress-aware decode path, exactly as
+    // `get` does — REQUIRED for any caller whose writes compress, since mGet is the batched
+    // read counterpart of set. Without it a compressed value decodes via the general msgpack
+    // path, throws, and is EVICTED — a permanent miss+evict loop, not a soft failure.
+    mGet<T>(keys: K[], packedOptions?: { compress?: boolean }): Promise<(T | null)[]>;
     // `packedOptions.compress` opts the value into brotli compression at rest (sentinel-
     // tagged; reads decode both compressed and legacy-uncompressed values transparently).
     // Only safe for callers that store wrapper objects, never bare scalars — see the
@@ -1280,9 +1284,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // it deliberately does NOT brotli-decompress, so the 0x01 brotli sentinel is NOT a
   // global invariant on all packed values (a bare msgpack `1` packs to <01> and must
   // decode as the integer 1, not be mistaken for a compressed payload). Brotli
-  // decompression is confined to the opt-in compress-aware read path below
-  // (`get(key, { compress: true })`) — see ./packed-compression for why the
-  // sentinel is provably collision-free THERE (wrapper objects only).
+  // decompression is confined to the opt-in compress-aware read paths below
+  // (`get`/`mGet` with `{ compress: true }`) — see ./packed-compression for why the
+  // sentinel is provably collision-free THERE (objects only, never bare scalars).
   const safeUnpack = <T>(value: Buffer, evict: () => Promise<unknown>): T | null => {
     try {
       return unpack(value) as T;
@@ -1297,15 +1301,17 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   };
 
   // Compress-aware decode — the SYMMETRIC counterpart of `set(..., { compress: true })`,
-  // used ONLY by the opt-in `get(key, { compress: true })` read path (currently just
-  // fetchThroughCache's compressed callers, e.g. tensor-metadata full). It awaits the
-  // async brotli codec and discriminates on the sentinel byte so a legacy uncompressed
-  // value (written before compression was enabled) still decodes: first byte === sentinel
-  // → strip + brotli-decompress + unpack; else → unpack as legacy raw. Provably safe HERE
-  // (and only here) because every value on this path is the `{ data, cachedAt }` wrapper
-  // object whose msgpack first byte is always a MAP marker (0x80–0x8f / 0xde / 0xdf),
-  // never 0x01. Preserves safeUnpack's evict-on-failure / fail-open semantics: a
-  // decompress/unpack throw is treated as a cache miss (null) and evicts the bad entry.
+  // used ONLY by the opt-in `get`/`mGet` with `{ compress: true }` read paths
+  // (fetchThroughCache's compressed callers, e.g. tensor-metadata full; and
+  // createCachedArray/createCachedObject caches built with `compress: true`, e.g.
+  // imageMetaCache). It awaits the async brotli codec and discriminates on the sentinel
+  // byte so a legacy uncompressed value (written before compression was enabled) still
+  // decodes: first byte === sentinel → strip + brotli-decompress + unpack; else → unpack
+  // as legacy raw. Provably safe HERE (and only here) because every value on these paths
+  // is an OBJECT (the `{ data, cachedAt }` wrapper, or a cached-array record/marker) whose
+  // msgpack first byte is always a MAP marker (0x80–0x8f / 0xde / 0xdf), never 0x01.
+  // Preserves safeUnpack's evict-on-failure / fail-open semantics: a decompress/unpack
+  // throw is treated as a cache miss (null) and evicts the bad entry.
   const safeUnpackCompressed = async <T>(
     value: Buffer,
     evict: () => Promise<unknown>
@@ -1336,8 +1342,18 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     },
 
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
-    async mGet<T>(keys: K[]): Promise<(T | null)[]> {
+    async mGet<T>(keys: K[], packedOptions?: { compress?: boolean }): Promise<(T | null)[]> {
       const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+      // SYMMETRIC with `set(..., { compress: true })`, same as the single-key `get` above.
+      // The batched read is the one a per-id cache (createCachedArray) actually uses, so a
+      // compressed writer that could not opt its mGet in would corrupt every read.
+      if (packedOptions?.compress) {
+        return Promise.all(
+          results.map((result, i) =>
+            result ? safeUnpackCompressed<T>(result, () => client.unlink(keys[i])) : null
+          )
+        );
+      }
       return results.map((result, i) =>
         result ? safeUnpack<T>(result, () => client.unlink(keys[i])) : null
       );
