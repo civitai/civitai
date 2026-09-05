@@ -331,9 +331,13 @@ beforeEach(() => {
 afterEach(() => {
   consoleErrorSpy?.mockRestore();
   consoleErrorSpy = null;
-  // 🔴 ASSERTED IN THE HOOK, so it covers EVERY test in this file rather than the one
-  // someone remembered to add it to — including the ones whose whole point is to
-  // render the card and the skeleton side by side.
+  // 🔴 ASSERTED IN THE HOOK so no test can forget it — but it is ONE check for the
+  // file, not one per test: React dedupes `validateDOMNesting` per warn-key, so with
+  // the defect present the file reports 1 failed / 9 passed even though 9 of the 10
+  // tests render the offending markup. See the declaration above for the measurement.
+  // (An earlier version of this comment claimed it "covers EVERY test in this file",
+  // and the correction was ADDED beside the declaration while this sentence — the one
+  // a reader debugging a failure actually meets — was left saying the opposite.)
   expect(
     domNestingErrors,
     'React reported invalid DOM nesting while rendering. A parser auto-closes the ' +
@@ -441,10 +445,12 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
       expect(
         m.cells.length,
         `the grid rendered ${rendered} columns but the skeleton emitted ${m.cells.length} ` +
-          `cells, which is not ${APP_LISTING_SKELETON_ROWS} rows of it. The JS column ` +
-          'count and the @container ladder have desynchronised — check whether ' +
-          '`.gridContainer` gained padding or a border (the query reads the CONTENT box, ' +
-          '`getBoundingClientRect()` the BORDER box).'
+          `cells, which is not ${APP_LISTING_SKELETON_ROWS} rows of it — so the cell ` +
+          'count and the rendered track count disagree. Look at ' +
+          '`APP_LISTING_SKELETON_ROWS` and at what the layout effect sets `columns` to. ' +
+          '🔴 NOT a box-model lead: this test is measurably blind to that (see its ' +
+          'docblock), and "the query inline size IS the container\'s content box" is the ' +
+          'guard that owns it — if THAT one is green, padding is not your cause.'
       ).toBe(rendered * APP_LISTING_SKELETON_ROWS);
       // …and the rendered count really is the one the ladder predicts, so a failure
       // above is attributable rather than merely a mismatch between two unknowns.
@@ -508,17 +514,27 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
     expect(container.getBoundingClientRect().width).toBeCloseTo(contentBox(), 1);
 
     // ── ARM 2: the plausible styling change, applied here rather than hoped for.
-    container.style.padding = '8px';
+    //
+    // 🔴 ASYMMETRIC, AND EVERY EDGE DISTINCT. An earlier version used `padding: 8px`
+    // with equal 2px borders, which cannot tell left from right: the copy-paste mutant
+    // `rect.width - px(cs.paddingLeft) - px(cs.paddingLeft)` survived it at 11/11. In
+    // production that mis-subtracts by `paddingRight − paddingLeft` on any asymmetric
+    // padding, and `padding: 8px 16px` is at least as plausible as `padding: 8px`.
+    // Four distinct paddings and two distinct borders make every term observable.
+    container.style.padding = '4px 16px 12px 32px'; // T R B L
     container.style.borderLeft = '2px solid transparent';
-    container.style.borderRight = '2px solid transparent';
+    container.style.borderRight = '6px solid transparent';
     await nextLayout();
+
+    /** left + right padding + left + right border — what the subtraction must remove. */
+    const INLINE_INSETS = 32 + 16 + 2 + 6;
 
     // POSITIVE CONTROL — the box model really moved, so a pass below is about the
     // subtraction and not about a style that silently did nothing.
     expect(
       container.getBoundingClientRect().width - contentBox(),
       'the padding/border did not change the box model — this arm is testing nothing'
-    ).toBeCloseTo(20, 1);
+    ).toBeCloseTo(INLINE_INSETS, 1);
 
     expect(
       Math.abs(gridQueryInlineSize(container) - contentBox()),

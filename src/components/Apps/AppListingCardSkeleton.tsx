@@ -148,8 +148,12 @@ function MetaLineSkeleton({
 /**
  * One store card's worth of reserved space.
  *
- * `aria-hidden` — it carries no information a screen reader wants; the grid it
- * sits in announces "Loading apps" once (see {@link AppListingCardSkeletonGrid}).
+ * `aria-hidden` — it carries no information a screen reader wants. The announceable
+ * text lives in the live region on the grid's CONTAINER (see
+ * {@link AppListingCardSkeletonGrid}), not on the grid: this comment used to name the
+ * grid, and the commit that moved `role="status"` onto the container left the sentence
+ * describing a tree it had just changed. Whether any assistive tech actually announces
+ * it is untested — see the hedge at the render site.
  */
 export function AppListingCardSkeleton() {
   return (

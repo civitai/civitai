@@ -140,32 +140,81 @@ describe('🔴 the server emits a real skeleton grid, not an empty one', () => {
   /**
    * 🔴 THE LIVE REGION HAS SOMETHING TO ANNOUNCE, AND IS NOT MARKED BUSY.
    *
-   * ⚠️ THIS TEST USED TO BE `expect(html).toContain('aria-label="Loading apps"')` AND
-   * IT WAS TITLED "announced, once" — a name wider than its body, over markup that
-   * most likely announced NOTHING. The region carried `role="status" aria-busy="true"`
-   * with every descendant `aria-hidden`: `aria-busy="true"` on a live region is the
-   * standard instruction to withhold announcements (and it was a hardcoded literal
-   * that never cleared — the grid unmounts instead), a fully `aria-hidden` subtree has
-   * no announceable content, and a live region announces its CONTENT rather than its
-   * label. An audit found it in the paragraph rewritten to stop overstating exactly
-   * this.
+   * ⚠️ THIS GUARD HAS NOW BEEN WRONG THREE TIMES IN THE SAME WAY, WHICH IS WHY IT IS
+   * BUILT DIFFERENTLY RATHER THAN BUILT BETTER. v1 asserted `aria-label="Loading apps"`
+   * — a label, which a live region does not announce. v2 asserted three strings over
+   * `serverHtml()`. v3 (this) asserts CONTAINMENT, because the two things the docblock
+   * kept promising — "with real text INSIDE it", "the text is not itself hidden" — are
+   * facts about a TREE, and a flat string scan cannot express either. Both mutants
+   * below were measured passing v2 at 4/4:
+   *   · move the `sr-only` span OUT of the region, rendered as a sibling before it —
+   *     `role="status"` still occurs once, `Loading apps` is still in the string, no
+   *     `aria-busy`, and the class regex still matches;
+   *   · put `aria-hidden` on the span — the old `[^>]*` admitted any other attribute.
+   * Each restores exactly the defect the file's own headline names.
    *
-   * So the three things asserted are the three the markup has to satisfy: one live
-   * region, NOT busy, with real text inside it.
+   * 🔴 WHY THIS ONE PARSES AND THE `<div>`-IN-`<p>` ONE MUST NOT. They ask opposite
+   * questions of the same string. The nesting check is about what the SERIALISED markup
+   * says, and an HTML parser silently REPAIRS that particular offence (auto-closing the
+   * `<p>`), so parsing would destroy the evidence — it stays a string scan. This check
+   * is about ancestry, which only exists in a tree. Same input, two instruments, on
+   * purpose.
    *
-   * ⚠️ WHAT IS STILL NOT CLAIMED: that any particular screen reader announces it.
-   * Nobody has run one — not this PR, not the audit. This is a markup assertion.
+   * ⚠️ WHAT IS STILL NOT CLAIMED: that any particular screen reader announces this.
+   * Nobody has run one — not this PR, not either audit. These are markup properties.
    */
-  test('the loading grid is a live region with announceable text, and is not marked busy', () => {
+  test('the announceable text is INSIDE the live region, unhidden, and the region is not busy', () => {
     const html = serverHtml();
-    expect([...html.matchAll(/role="status"/g)]).toHaveLength(1);
-    expect(html).toContain('Loading apps');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // POSITIVE CONTROL on the parse itself — a DOMParser handed junk returns a
+    // perfectly valid empty document, which would make every query below a confident
+    // `null` and every `.toHaveLength(0)` a pass.
     expect(
-      html,
+      doc.querySelectorAll('[data-testid="apps-listing-skeleton-col"]').length,
+      'the parsed document holds no skeleton cells — the parse, not the markup, is what failed'
+    ).toBe(APP_LISTING_SKELETON_SSR_COLUMNS * APP_LISTING_SKELETON_ROWS);
+
+    const regions = doc.querySelectorAll('[role="status"]');
+    expect(regions, 'expected exactly one live region on the loading path').toHaveLength(1);
+    const region = regions[0] as HTMLElement;
+
+    // ── NOT BUSY. `aria-busy="true"` instructs assistive tech to withhold
+    // announcements, and nothing here ever clears it (the grid unmounts instead).
+    expect(
+      region.getAttribute('aria-busy'),
       'the live region is marked `aria-busy`, which tells assistive tech to withhold ' +
         'announcements — and nothing ever clears it, because the grid unmounts instead'
-    ).not.toContain('aria-busy');
-    // …and the text is not itself hidden, which is the other way to announce nothing.
-    expect(html).toMatch(/class="[^"]*sr-only[^"]*"[^>]*>Loading apps/);
+    ).toBeNull();
+
+    // ── THE TEXT IS **INSIDE** THE REGION. `region.querySelector` is the containment
+    // assertion: a span rendered as a SIBLING of the region satisfies every string
+    // check in the document and fails this one.
+    const text = region.querySelector('.sr-only');
+    expect(
+      text,
+      'the live region contains no `sr-only` text. A region announces its CONTENT, not ' +
+        'its label — text rendered as a SIBLING of the region announces nothing, and ' +
+        'that is exactly what an earlier version of this guard could not tell apart.'
+    ).not.toBeNull();
+    expect(text?.textContent?.trim()).toBe('Loading apps');
+
+    // ── AND NOTHING BETWEEN THE TEXT AND THE REGION HIDES IT. Walked rather than
+    // regexed: `aria-hidden` on the span, or on any ancestor up to and including the
+    // region, removes it from the accessibility tree just as effectively.
+    for (let el: Element | null = text; el; el = el.parentElement) {
+      expect(
+        el.getAttribute('aria-hidden'),
+        `\`aria-hidden\` on <${el.tagName.toLowerCase()}> removes the announceable text ` +
+          'from the accessibility tree — a fully hidden subtree has nothing to announce'
+      ).toBeNull();
+      if (el === region) break;
+    }
+
+    // …and the cards themselves ARE still hidden, which is the state this guard is
+    // distinguishing from — so a pass is not "nothing is hidden anywhere".
+    expect(
+      doc.querySelector('[data-testid="apps-listing-card-skeleton"]')?.getAttribute('aria-hidden')
+    ).toBe('true');
   });
 });
