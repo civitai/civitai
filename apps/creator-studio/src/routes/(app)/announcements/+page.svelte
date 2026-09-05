@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import AllowanceNotice from './AllowanceNotice.svelte';
   import AnnouncementComposer from './AnnouncementComposer.svelte';
   import AnnouncementList from './AnnouncementList.svelte';
+  import AllowanceNotice from './AllowanceNotice.svelte';
   import AnnouncementMetricsNotice from './AnnouncementMetricsNotice.svelte';
-  import MutesPanel from './MutesPanel.svelte';
+  import AudienceStats from './AudienceStats.svelte';
   import type { AnnouncementRow } from '$lib/server/announcements';
   import type { ActionData, PageData } from './$types';
 
@@ -50,7 +50,13 @@
     {/if}
   </div>
 
-  <AllowanceNotice allowance={data.allowance} error={data.allowanceError} />
+  <AudienceStats
+    metrics={data.metrics}
+    allowance={data.allowance}
+    allowanceError={data.allowanceError}
+  />
+
+  <AllowanceNotice allowance={data.allowance} />
 
   <AnnouncementMetricsNotice unavailable={data.metrics === null} />
 
@@ -63,10 +69,6 @@
         onDone={close}
       />
     {/key}
-  {/if}
-
-  {#if data.metrics}
-    <MutesPanel mutedNow={data.metrics.mutedNow} series={data.metrics.muteSeries} />
   {/if}
 
   <AnnouncementList
