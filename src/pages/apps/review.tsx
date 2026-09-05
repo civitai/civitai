@@ -33,7 +33,6 @@ import type {
 } from '~/components/Apps/unifiedReviewRow';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -183,8 +182,15 @@ export default function ReviewQueuePage() {
   return (
     <>
       <Meta title="App publish-request queue — Civitai" deIndex />
+      {/*
+        🔴 NO `measure` — this page took a 1368 cap until the wide-tables pass, and
+        removing it is the point rather than a side effect. The cap existed because four
+        short columns could not spend the container, so the surplus landed as padding
+        between the last column and the Review button. `UnifiedReviewList` now carries a
+        proportional `<colgroup>` (`APPS_REVIEW_QUEUE_COLUMNS`), so the width goes into
+        the App column instead. Re-adding a cap here would hide that rather than help it.
+      */}
       <AppsPageLayout
-        measure={APPS_PAGE_MEASURES['/apps/review']}
         title="App publish-request queue"
         subtitle={`Moderator review for Apps. ${EMBEDDED_KIND_LABEL} + ${STANDALONE_KIND_LABEL} submissions share one queue per tab; Pending is oldest-first, history is newest-first.`}
       >

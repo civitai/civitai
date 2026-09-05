@@ -46,6 +46,7 @@ import {
   sortByRecentlyUpdated,
 } from '~/components/Apps/myAppsView';
 import { ownerListingState, ownerStateChip } from '~/components/Apps/offsiteOwnerControls';
+import { AppsTableColgroup, APPS_MINE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { canOpenListingAuthoringPage } from '~/shared/constants/app-capabilities.constants';
 import { formatDate } from '~/utils/date-helpers';
@@ -513,9 +514,16 @@ function AppGroup({
   return (
     <Card withBorder p={0} data-testid={testId}>
       <Table verticalSpacing="sm" horizontalSpacing="md">
+        {/*
+          🔴 FIRST CHILD, BEFORE the row groups — HTML requires it there; the ordering is
+          pinned by `__tests__/appsWideLayout.test.ts`. `App` carries the icon, the name and
+          the slug and is the ledger's primary column, so the container's surplus width
+          lands there instead of being distributed as padding across four columns.
+        */}
+        <AppsTableColgroup columns={APPS_MINE_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>App</Table.Th>
+            <Table.Th data-testid="apps-mine-col-app">App</Table.Th>
             <Table.Th>Cover</Table.Th>
             <Table.Th>Status</Table.Th>
             <Table.Th>Updated</Table.Th>

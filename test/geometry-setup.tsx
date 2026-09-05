@@ -96,25 +96,27 @@
  * the vacuous pass this harness exists to remove.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * 🔴 WHAT RUNS THIS, TODAY: NOTHING. SAY IT OUT LOUD.
+ * 🔴 WHAT RUNS THIS: THE `Geometry tests` JOB — AND IT IS REPORT-ONLY ON A PR.
  * ─────────────────────────────────────────────────────────────────────────────
- * `.github/workflows/lint.yml` selects projects by name — `--project 'unit*'`,
- * `--project '@civitai/*'`, `--project 'app:*'`. None of those patterns matches
- * `component` and none matches `geometry`, because the Actions runners install no
- * Chromium (the `unit` job's own comment says so). The `component` tier's only CI
- * home is the preview pipeline's `preview / component-tests` status, which is
- * report-only. This project has no CI home at all yet.
+ * ⚠️ THIS PARAGRAPH SAID "NOTHING RUNS THIS, SAY IT OUT LOUD" AND HAD STOPPED BEING
+ * TRUE. `.github/workflows/lint.yml` now carries a `geometry:` job (`Geometry tests`)
+ * that installs Chromium and runs `vitest run --project geometry`, plus a collected-
+ * count ledger so a selector that matches nothing fails instead of exiting 0. It is
+ * observable on any PR's check list. Left uncorrected, the sentence would have talked
+ * the next reader out of relying on a gate that exists — the mirror image of the rot it
+ * was written to prevent.
  *
- * That is a deliberate scope boundary, not an oversight: wiring a new job is a
- * change to a pipeline, not to a test harness, and it deserves its own review. But
- * it has to be stated, because a harness nothing runs rots — the assertions here
- * would drift from the components they measure and nobody would learn of it until
- * someone ran `pnpm test:geometry` by hand. Until this project is wired into a
- * job, treat it as a tool you run deliberately, NOT as a gate you are behind.
+ * What is still true, and is the part that matters when you read a green check:
+ * the job carries `continue-on-error: ${{ github.event_name == 'pull_request' }}`, so
+ * on a PR it REPORTS and on a push to `main` it BLOCKS. Do not write "the blocking
+ * tier" about this project without that qualifier.
  *
- * Two things are already true that make wiring it cheap when someone does:
- * `pnpm run test:geometry` is the whole command, and the glob is disjoint from
- * every other project's, so adding it cannot change what any existing job runs.
+ * `component` is still ungated: no project selector in that workflow matches it, and
+ * its only CI home is the preview pipeline's report-only `preview / component-tests`.
+ *
+ * `pnpm run test:geometry` is still the whole command locally, and the glob is
+ * disjoint from every other project's, so adding a file here cannot change what any
+ * other job runs.
  */
 
 // ── THE CASCADE, IN PRODUCTION ORDER ─────────────────────────────────────────

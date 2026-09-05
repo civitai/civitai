@@ -60,6 +60,7 @@ import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
+import type { AppsMeasure } from './appsPageWidths';
 
 // 🔴 The viewer MUST be one the sub-nav renders for. `AppsSubNav` hides itself
 // entirely below two qualifying tabs, and the summary query is stubbed empty here, so
@@ -81,7 +82,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
-const { APPS_PAGE_MEASURES, APPS_FULL_MEASURE_PAGES } = await import('./appsPageWidths');
+const { APPS_PAGE_MEASURES, APPS_FULL_MEASURE_PAGES, isAppsMeasureBand } = await import(
+  './appsPageWidths'
+);
+
+/**
+ * What a measure RESOLVES TO against a given container content width.
+ *
+ * A number is itself; a BAND is its `clamp()`, evaluated in JS. Both are then capped by
+ * the content width, because a `max-width` cannot make a box wider than its container.
+ */
+function resolveMeasure(measure: AppsMeasure | undefined, contentWidth: number): number {
+  if (measure === undefined) return contentWidth;
+  const wanted = isAppsMeasureBand(measure)
+    ? Math.min(measure.max, Math.max(measure.min, (measure.grow / 100) * contentWidth))
+    : measure;
+  return Math.min(wanted, contentWidth);
+}
 
 /**
  * Every route that renders the shared chrome, with the measure it passes.
@@ -91,7 +108,7 @@ const { APPS_PAGE_MEASURES, APPS_FULL_MEASURE_PAGES } = await import('./appsPage
  * measured; deriving it without pinning would let the set SHRINK to one element (or
  * empty) and the "they all agree" assertion pass vacuously. Both halves are needed.
  */
-const ROUTES: { route: string; measure?: number }[] = [
+const ROUTES: { route: string; measure?: AppsMeasure }[] = [
   ...APPS_FULL_MEASURE_PAGES.map((route) => ({ route, measure: undefined })),
   ...Object.entries(APPS_PAGE_MEASURES).map(([route, measure]) => ({ route, measure })),
 ].sort((a, b) => (a.route < b.route ? -1 : a.route > b.route ? 1 : 0));
@@ -148,7 +165,7 @@ function measure() {
   };
 }
 
-async function renderAndMeasure(measurePx: number | undefined) {
+async function renderAndMeasure(measurePx: AppsMeasure | undefined) {
   renderWithProviders(
     <AppsPageLayout measure={measurePx}>
       <div data-testid="body" style={{ height: 200 }}>
@@ -183,9 +200,10 @@ describe('the /apps route set that renders the shared chrome', () => {
       '/apps/submit',
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
-    // measure-free branch of the layout rather than one of them 13 times.
-    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(5);
-    expect(ROUTES.filter((r) => typeof r.measure === 'number')).toHaveLength(8);
+    // measure-free branch of the layout rather than one of them 13 times. 6/7 since
+    // `/apps/review` gave up its 1368 cap and joined the full-container list.
+    expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(6);
+    expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(7);
   });
 });
 
@@ -236,17 +254,18 @@ describe.each(VIEWPORTS)(
           // route, measured or not. A centred measure box would put it at
           // `navLeft + (contentWidth - m) / 2` and fail here — which is the whole
           // reason the box carries no auto margins.
-          [navLeft, m === undefined ? contentWidth : Math.min(m, contentWidth)],
+          [navLeft, resolveMeasure(m, contentWidth)],
         ])
       );
       expect(seen).toEqual(expected);
 
       // And the measured routes are genuinely DISTINCT widths, so the fixture varies
-      // the dimension under test instead of feeding one value 13 times.
+      // the dimension under test instead of feeding one value 13 times. TWO classes
+      // since the narrow-table cap was deleted.
       const measuredWidths = new Set(
-        ROUTES.filter((r) => typeof r.measure === 'number').map((r) => seen[r.route][1])
+        ROUTES.filter((r) => r.measure !== undefined).map((r) => seen[r.route][1])
       );
-      expect(measuredWidths.size).toBe(3);
+      expect(measuredWidths.size).toBe(2);
     });
 
     test('🔴 a measured page HEADER is bounded too, and the band keeps its 16/32 grouping', async () => {

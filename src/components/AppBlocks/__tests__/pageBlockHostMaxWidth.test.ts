@@ -261,8 +261,15 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    *
    * Lower 1280: below this the cap would be narrower than the widest ORDINARY
    * civitai content measure (Mantine `xl`, 1320 border-box / 1288 content — also
-   * `APPS_TWO_COLUMN_DETAIL_MEASURE`, the store-preview page an app is launched
-   * FROM), so an app would render narrower than the page that linked to it.
+   * `APPS_TWO_COLUMN_DETAIL_MEASURE`'s FLOOR, the store-preview page an app is
+   * launched FROM), so an app would render narrower than the page that linked to it.
+   *
+   * ⚠️ THAT MEASURE IS A BAND NOW, `{min: 1288, max: 1600}`, and this comment used to
+   * cite it as a single number. The lower bound is unaffected — it is keyed on the
+   * floor — but the sibling claim in `PageBlockHost.tsx` that 1600 sits "above every
+   * ordinary content measure on the site" is now PARITY rather than headroom: at the
+   * top of that band the store-preview page and the app cap are the same width. The
+   * conclusion holds, the margin does not, and both files say so.
    *
    * Upper 1920: the width `APPS_PAGE_CONTAINER_WIDTH` held when this band was
    * chosen. ⚠️ THAT CONSTANT IS NOW 2560 — the ultrawide pass moved it — and the
