@@ -1810,6 +1810,19 @@ export const REDIS_SYS_KEYS = {
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
+    /**
+     * MEASUREMENT ONLY — a dark probe, not a cache. Holds `1` against a truncated SHA-256 of the
+     * exact string sent to the external prompt classifier, so we can count how often that string
+     * REPEATS inside a window. Nothing reads the value back to skip work; the classifier is called
+     * every time either way. Written only while EXTERNAL_MODERATION_CACHE_PROBE names a namespace
+     * (it is a deployment LABEL, not an on/off flag, and the accepted labels are a CLOSED
+     * ALLOWLIST — empty, or anything outside it, means disabled),
+     * and the value becomes the segment after this prefix so two armed deployments sharing one
+     * sysRedis cannot collide. Every key carries an EX, so the keyspace evaporates on its own once
+     * the probe is disarmed.
+     * See src/server/integrations/moderation-cache-probe.ts.
+     */
+    MODERATION_CACHE_PROBE: 'generation:moderation-cache-probe',
   },
   TRAINING: {
     STATUS: 'training:status',

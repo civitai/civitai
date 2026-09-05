@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
 import {
   clampExternalModerationSource,
   isAbortDeadlineError,
@@ -62,6 +63,26 @@ async function moderatePrompt(
   }
 
   const preparedPrompt = removeFalsePositiveTriggers(prompt);
+
+  // Dark measurement: would a verdict cache have avoided this call? Off by default, fire-and-forget,
+  // reads nothing back — the request below is issued either way. Placed HERE, on `preparedPrompt`
+  // rather than on `prompt`, because that is the exact string the classifier receives, so the digest
+  // matches what a real cache would key on. `removeFalsePositiveTriggers` is many-to-one, so probing
+  // the raw prompt instead would count two requests that produce an identical classifier call as
+  // distinct and UNDERSTATE the repeat rate.
+  //
+  // It also runs BEFORE the outcome is known, so it claims a window slot even for a call that then
+  // fails. A real cache would store only successful verdicts, so this overstates the hit rate by
+  // exactly the non-`ok` share — measured at ~0.01% in production, i.e. immaterial, but stated
+  // rather than assumed. That is the SAME DIRECTION as the coalescing effect documented on the
+  // `SET NX` in the probe module: both make the reported hit rate optimistic.
+  //
+  // ⚠️ That does NOT make the result "an upper bound", which is what this comment said for two
+  // commits. The probe also differs from a real cache on a SECOND axis — its TTL never extends on
+  // a hit — which points the other way, so the direction depends on which design you are comparing
+  // against. The three cases are enumerated on the `SET NX` note in the probe module; read them
+  // there rather than carrying a direction away from here.
+  probeModerationCacheRepeat(metricSource, preparedPrompt);
 
   // Wall-clock timing of the whole classifier call — the interval the generation submission actually
   // parks on. Started before the span so the observation cannot be biased by span setup, and read
