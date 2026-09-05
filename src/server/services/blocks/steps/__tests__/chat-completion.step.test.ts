@@ -4,6 +4,7 @@ import {
   CHAT_COMPLETION_MAX_OUTPUT_TOKENS,
   CHAT_COMPLETION_MODELS,
   CHAT_COMPLETION_PRICE_BUZZ,
+  CHAT_COMPLETION_SEED_EXCLUSIVE_MAX,
   chatCompletionStep,
   MAX_TOOL_ROUNDS,
   type ChatCompletionStepParams,
@@ -190,6 +191,11 @@ describe('chat-completion — the bounded param surface', () => {
       ['tool_choice', 'auto'],
       ['n', 4],
       ['stop', ['x']],
+      // 🔴 `seed` IS LOAD-BEARING BEYOND `.strict()` HYGIENE — DO NOT MOVE IT TO
+      // THE PARAM SURFACE. `buildStep` generates a fresh seed per submit
+      // precisely so an identical ask is not answered from a stored reply at
+      // full price; a caller who could PIN the seed could re-enable that replay
+      // deliberately. See the reuse-avoidance block in the `buildStep` describe.
       ['seed', 1],
       ['topP', 0.5],
       ['presencePenalty', 1],
@@ -321,10 +327,11 @@ describe('chat-completion — buildStep', () => {
       'maxTokens',
       'messages',
       'model',
+      'seed',
     ]);
     expect(
       Object.keys(chatCompletionStep.buildStep({ ...VALID_PARAMS, temperature: 0.7 }).input).sort()
-    ).toEqual(['maxTokens', 'messages', 'model', 'temperature']);
+    ).toEqual(['maxTokens', 'messages', 'model', 'seed', 'temperature']);
   });
 
   it('forwards the parsed params verbatim', () => {
@@ -333,12 +340,83 @@ describe('chat-completion — buildStep', () => {
       model: 'deepseek/deepseek-chat',
       messages: [{ role: 'user', content: 'hello' }],
       maxTokens: 128,
+      // Not a param — generated per submit. Its VALUE is pinned by the
+      // reuse-avoidance block below; here it only must not displace a param.
+      seed: expect.any(Number),
     });
   });
 
   it('omits temperature entirely when it was not supplied (never sends undefined)', () => {
     expect('temperature' in chatCompletionStep.buildStep(VALID_PARAMS).input).toBe(false);
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 REUSE AVOIDANCE. The platform serves a step's result from storage when a
+  // later step arrives with a BYTE-IDENTICAL input. Before the per-submit
+  // `seed`, this entry emitted only semantic fields, so asking the same
+  // question twice returned the FIRST answer — hours or days old — and charged
+  // full price for it, and a retry after a moderation withhold replayed the
+  // same refused text.
+  //
+  // These four cases are the regression, and they go RED on the pre-change
+  // build for the right reason: it emitted no `seed`, so two builds of the same
+  // params were byte-identical.
+  //
+  // 🔴 EACH ASSERTS A DIFFERENT HALF, BECAUSE "IT VARIES" IS NOT THE WHOLE
+  // PROPERTY. Varying is useless if it perturbs the prompt (case 2), and it is
+  // useless if the caller can pin it back (case 4) — a `seed` param would let a
+  // block re-enable exactly the replay this removes.
+  // ───────────────────────────────────────────────────────────────────────────
+  const seedsFrom = (n: number) =>
+    Array.from(
+      { length: n },
+      () => (chatCompletionStep.buildStep(VALID_PARAMS).input as { seed: number }).seed
+    );
+
+  it('🔴 varies the seed across submits of IDENTICAL params, so an identical ask is not replayed', () => {
+    // 32 draws: a build that emits a constant (or no seed at all, as the
+    // pre-change build did) collapses this set to 1.
+    expect(new Set(seedsFrom(32)).size).toBeGreaterThanOrEqual(31);
+  });
+
+  it('🔴 varies ONLY the seed — the prompt it is attached to is untouched', () => {
+    // The property that makes this safe rather than merely effective. A
+    // cache-buster that reached the prompt would change what the model is
+    // asked, which is the one thing this must never do.
+    const strip = (params: ChatCompletionStepParams) => {
+      const { seed: _seed, ...rest } = chatCompletionStep.buildStep(params).input as Record<
+        string,
+        unknown
+      >;
+      return rest;
+    };
+    expect(strip(VALID_PARAMS)).toEqual(strip(VALID_PARAMS));
+    const withTools = { ...VALID_PARAMS, temperature: 0.7 };
+    expect(strip(withTools)).toEqual(strip(withTools));
+  });
+
+  it('🔴 draws from the full 2^31 space — pins the RANGE, not just that it moves', () => {
+    // A mutant that narrows the space (`randomInt(2)`, `randomInt(1000)`) still
+    // "varies" and would survive the distinctness case above at some rate. It
+    // cannot survive this: across 64 uniform draws from [0, 2^31) the maximum
+    // is below 2^20 with probability (2^-11)^64.
+    const seeds = seedsFrom(64);
+    for (const seed of seeds) {
+      expect(Number.isInteger(seed)).toBe(true);
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThan(CHAT_COMPLETION_SEED_EXCLUSIVE_MAX);
+    }
+    expect(Math.max(...seeds)).toBeGreaterThan(2 ** 20);
+  });
+
+  // 🔴 THE FOURTH HALF — a caller-supplied `seed` must stay REFUSED, or a block
+  // can pin itself back onto a stored reply and re-enable the replay this
+  // removes. Deliberately NOT re-asserted here: `['seed', 1]` is already in the
+  // rejected-field list of 'REJECTS every other orchestrator input field this
+  // entry does not expose' above, and a second copy would be redundant coverage
+  // reading as new. Verified by mutation — adding `seed` to the param schema
+  // turns that case red. The cross-reference is carried there, at the line an
+  // edit would touch.
 
   it('carries NO AIR reference, for every variant (clause 7, re-pinned)', () => {
     for (const variant of CHAT_COMPLETION_MODELS) {
@@ -1101,7 +1179,9 @@ describe('chat-completion — the tool/assistant message members', () => {
 describe('chat-completion — buildStep emits the tool fields on the WIRE names', () => {
   it('omits both fields entirely when no tools are declared', () => {
     const built = chatCompletionStep.buildStep(VALID_PARAMS);
-    expect(Object.keys(built.input).sort()).toEqual(['maxTokens', 'messages', 'model']);
+    // `seed` is unconditional and is NOT a tool field — see the reuse-avoidance
+    // block above. It is listed so this stays an allow-list assertion.
+    expect(Object.keys(built.input).sort()).toEqual(['maxTokens', 'messages', 'model', 'seed']);
   });
 
   it('🔴 emits `tool_choice`, snake-cased, NOT the camelCase param name', () => {
@@ -1114,6 +1194,7 @@ describe('chat-completion — buildStep emits the tool fields on the WIRE names'
       'maxTokens',
       'messages',
       'model',
+      'seed',
       'tool_choice',
       'tools',
     ]);
