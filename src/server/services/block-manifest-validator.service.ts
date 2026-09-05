@@ -214,11 +214,7 @@ export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
  * Re-exported so `ManifestEditForm.tsx` can import the bound + the host list from the
  * validator it already imports, rather than reaching into the schema module directly.
  */
-export {
-  MAX_REPOSITORY_URL_LENGTH,
-  REPOSITORY_HOST_ALLOWLIST,
-  validateRepositoryUrl,
-};
+export { MAX_REPOSITORY_URL_LENGTH, REPOSITORY_HOST_ALLOWLIST, validateRepositoryUrl };
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -234,8 +230,7 @@ export {
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
 export const BUILD_COMMAND_MAX_LENGTH = 128;
-export const BUILD_COMMAND_RE =
-  /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
+export const BUILD_COMMAND_RE = /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the
 // generic allowlist-miss message.
@@ -253,6 +248,37 @@ export { SCOPE_JUSTIFICATION_MAX_LENGTH };
 // registration time is cheaper than fighting them at runtime.
 const HEIGHT_MIN_FLOOR = 40;
 const HEIGHT_MAX_CEILING = 4000;
+
+// 🔴 A TIGHTER CEILING FOR `minHeight` ALONE, and the asymmetry is the point.
+//
+// `maxHeight` is a CEILING the publisher volunteers — a big one costs nothing,
+// because the host's own layers (HARD_HEIGHT_CEILING and the viewport clamp in
+// IframeHost's viewport clamp, added in #4589) bind below it. `minHeight` is a FLOOR the
+// host is obliged to honour: `Math.max(min, viewportBudget)` means a large
+// enough `minHeight` wins over the viewport outright, so at 4000 a single
+// schema-legal field reproduced exactly the defect the viewport clamp exists to
+// prevent — a 4000px slot on a 640px screen — with the clamp fully present.
+//
+// 800 rather than something tighter: measured against the complete approved
+// population (11 of 11 blocks, not a sample) the largest declared `minHeight` is
+// 700, so this rejects NOTHING that exists today and leaves headroom above it.
+// It bounds only what a FUTURE manifest can declare.
+//
+// 🔴 It does NOT make the viewport clamp a total bound, and must not be read as
+// doing so: 600/640/700 are all still legal and all still exceed the budget a
+// 640px viewport leaves after the host chrome. Closing that residue is a
+// per-publisher change or a precedence change, not a constant.
+//
+// Mirrored (as `maximum` on `iframe.minHeight`) in public/schemas/app-block/v1.json,
+// which the Go CLI re-vendors from the LIVE published copy on a 6-hourly cron —
+// see `.github/workflows/revendor-canonical-schema.yml` in civitai/cli. That
+// mirror is byte-compared against the URL, so it goes red only after a
+// `main` → `release` cut publishes these bytes, and its own automation opens the
+// resync PR. The CLI ALSO carries a hand-maintained Go copy of this envelope
+// (`internal/validate/semantic.go`, `heightMaxCeiling`) that the re-vendor does
+// NOT touch — until that is updated the CLI accepts a `minHeight` this validator
+// rejects, which fails CLOSED at the real gate but gives a late error.
+const MIN_HEIGHT_MAX_CEILING = 800;
 
 // SSRF gate for iframe.src and assetBundleUrl. `isPublicHttpsUrl` (and the
 // `PRIVATE_HOSTNAME_PATTERNS` it uses) live in `~/server/utils/ssrf-hostname` (a
@@ -375,9 +401,7 @@ export class BlockManifestValidator {
     opts?: ManifestValidationOptions
   ): ValidationResult {
     const ctx: AppContext =
-      typeof app === 'number'
-        ? { allowedScopes: app, allowedOrigins: [] }
-        : app;
+      typeof app === 'number' ? { allowedScopes: app, allowedOrigins: [] } : app;
     const errors: string[] = [];
     const oauthClientAllowedScopes = ctx.allowedScopes;
 
@@ -495,16 +519,16 @@ export class BlockManifestValidator {
           errors.push(`scope "${scope}" is not a known block scope`);
         }
       }
-      const blockScopes = (m.scopes as unknown[]).filter(
-        (s): s is string => typeof s === 'string'
-      );
+      const blockScopes = (m.scopes as unknown[]).filter((s): s is string => typeof s === 'string');
       const scopeCheck = validateBlockScopesAgainstOauthClient(
         blockScopes,
         oauthClientAllowedScopes
       );
       if (!scopeCheck.valid) {
         errors.push(
-          `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
+          `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(
+            ', '
+          )}`
         );
       }
     }
@@ -521,7 +545,9 @@ export class BlockManifestValidator {
         typeof m.scopeJustifications !== 'object' ||
         Array.isArray(m.scopeJustifications)
       ) {
-        errors.push('scopeJustifications must be an object mapping scope-id to a justification string');
+        errors.push(
+          'scopeJustifications must be an object mapping scope-id to a justification string'
+        );
       } else {
         const declaredScopes = new Set(
           Array.isArray(m.scopes)
@@ -593,9 +619,7 @@ export class BlockManifestValidator {
         return;
       }
       if (!allowedOriginSet.has(origin)) {
-        errors.push(
-          `${field} rejected: origin ${origin} not in OauthClient.allowedOrigins`
-        );
+        errors.push(`${field} rejected: origin ${origin} not in OauthClient.allowedOrigins`);
       }
     }
 
@@ -647,10 +671,10 @@ export class BlockManifestValidator {
       if (
         typeof iframe.minHeight !== 'number' ||
         iframe.minHeight < HEIGHT_MIN_FLOOR ||
-        iframe.minHeight > HEIGHT_MAX_CEILING
+        iframe.minHeight > MIN_HEIGHT_MAX_CEILING
       ) {
         errors.push(
-          `iframe.minHeight must be a number in [${HEIGHT_MIN_FLOOR}, ${HEIGHT_MAX_CEILING}]`
+          `iframe.minHeight must be a number in [${HEIGHT_MIN_FLOOR}, ${MIN_HEIGHT_MAX_CEILING}]`
         );
       }
       if (
@@ -673,9 +697,10 @@ export class BlockManifestValidator {
       if (typeof iframe.resizable !== 'boolean') {
         errors.push('iframe.resizable must be a boolean');
       }
-      const tierForSandbox = (ALLOWED_TRUST_TIERS.has(trustTier)
-        ? trustTier
-        : 'unverified') as 'unverified' | 'verified' | 'internal';
+      const tierForSandbox = (ALLOWED_TRUST_TIERS.has(trustTier) ? trustTier : 'unverified') as
+        | 'unverified'
+        | 'verified'
+        | 'internal';
       if (typeof iframe.sandbox !== 'string' || iframe.sandbox.length === 0) {
         errors.push('iframe.sandbox must be a non-empty string');
       } else {
@@ -713,7 +738,9 @@ export class BlockManifestValidator {
           // slot — the page surface is declared via the `page` field, not a
           // `targets` entry.
           if (isPageSlot(slotId)) {
-            errors.push(`target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`);
+            errors.push(
+              `target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`
+            );
           }
         }
       }
