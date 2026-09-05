@@ -300,7 +300,7 @@ describe('getViewerMonetization — an unset gate/fee is never invented', () => 
 // only case either rule applies to — the "editing is always free" direction is at the end, and is the
 // property that grandfathers everything priced before these rules existed.
 describe('assertMonetizationWrite', () => {
-  const ELIGIBLE = { scores: { models: 50000 } };
+  const ELIGIBLE = { scores: { total: 50000 } };
 
   beforeEach(() => {
     mockCacheFetch.mockImplementation(async () => ({}));
@@ -351,7 +351,9 @@ describe('assertMonetizationWrite', () => {
         ownerId: 1,
         paidAccess: { permanent: true, terms: {} } as never,
         tier: 'gold',
-        userMeta: { scores: { models: 9999 } },
+        // Both keys, unequal: with `total` alone a "take the best of both during migration" edit at
+        // the call site would be a no-op here and re-open the gate in production.
+        userMeta: { scores: { total: 9999, models: 50_000 } },
       })
     ).rejects.toThrow(/creator score of 10,000/);
   });
@@ -390,7 +392,7 @@ describe('assertMonetizationWrite', () => {
         isModerator: true,
         paidAccess: { permanent: true, terms: {} } as never,
         tier: 'free',
-        userMeta: { scores: { models: 100 } },
+        userMeta: { scores: { total: 100 } },
       })
     ).rejects.toThrow(/creator score/);
   });
@@ -429,7 +431,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 5,
           storedLicensingFee: 0,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
@@ -449,7 +451,7 @@ describe('assertMonetizationWrite', () => {
             terms: { download: { price: 99999 } },
           } as never,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
@@ -467,7 +469,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 5,
           storedLicensingFee: 0,
           tier: 'free',
-          userMeta: { scores: { models: 50000 } },
+          userMeta: { scores: { total: 50000 } },
         })
       ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     });
@@ -484,7 +486,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 5,
           storedLicensingFee: 0,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).rejects.toThrow(/creator score/);
     });
@@ -501,7 +503,7 @@ describe('assertMonetizationWrite', () => {
           licensingFee: 0,
           storedLicensingFee: 5,
           tier: 'free',
-          userMeta: { scores: { models: 0 } },
+          userMeta: { scores: { total: 0 } },
         })
       ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
@@ -517,7 +519,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 500,
         storedLicensingFee: 500,
         tier: 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
         baseModel: 'SDXL 1.0',
         storedBaseModel: 'Hunyuan Video',
       })
@@ -534,7 +536,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: undefined,
         storedLicensingFee: 500,
         tier: 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
         baseModel: 'SDXL 1.0',
         storedBaseModel: 'Hunyuan Video',
       })
@@ -549,7 +551,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 500,
         storedLicensingFee: 500,
         tier: 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
         baseModel: 'Hunyuan Video',
         storedBaseModel: 'Hunyuan Video',
       })
@@ -565,7 +567,7 @@ describe('assertMonetizationWrite', () => {
         isModerator: true,
         paidAccess: { permanent: true, terms: {} } as never,
         tier: 'free',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).rejects.toThrow(/3 of 3/);
   });
@@ -581,7 +583,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 5,
         storedLicensingFee: 2,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -593,7 +595,7 @@ describe('assertMonetizationWrite', () => {
         paidAccess: null,
         storedLicensingFee: 2,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -606,7 +608,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 0,
         storedLicensingFee: 0,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -621,7 +623,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 0,
         storedLicensingFee: 5,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
   });
@@ -639,7 +641,7 @@ describe('assertMonetizationWrite', () => {
         licensingFee: 0,
         storedLicensingFee: 5,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -656,7 +658,7 @@ describe('assertMonetizationWrite', () => {
         paidAccess: null,
         storedLicensingFee: 0,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
   });
@@ -668,7 +670,7 @@ describe('assertMonetizationWrite', () => {
         ownerId: 1,
         paidAccess: { permanent: false, timeframeDays: 7, terms: {} } as never,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });

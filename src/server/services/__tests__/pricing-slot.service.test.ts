@@ -12,7 +12,6 @@ import { MONETIZATION_MIN_CREATOR_SCORE } from '@civitai/buzz';
 import {
   assertPricingAllowed,
   countPricingSlotsThisMonth,
-  creatorScoreFromMeta,
   listPricingSlots,
   recordPricingSlot,
   releasePricingSlot,
@@ -284,21 +283,6 @@ describe('releasePricingSlot', () => {
   });
 });
 
-describe('creatorScoreFromMeta', () => {
-  it('reads the models score', () => {
-    expect(creatorScoreFromMeta({ scores: { models: 12345 } })).toBe(12345);
-  });
-
-  it('treats missing, null, or non-numeric meta as a score of 0', () => {
-    expect(creatorScoreFromMeta(undefined)).toBe(0);
-    expect(creatorScoreFromMeta(null)).toBe(0);
-    expect(creatorScoreFromMeta({})).toBe(0);
-    expect(creatorScoreFromMeta({ scores: {} })).toBe(0);
-    expect(creatorScoreFromMeta({ scores: { models: 'lots' } })).toBe(0);
-    expect(creatorScoreFromMeta({ scores: { models: Infinity } })).toBe(0);
-  });
-});
-
 describe('countPricingSlotsThisMonth', () => {
   // afterEach, not a trailing call: a failed assertion would otherwise leak frozen time into every
   // later test in the file and turn one legible failure into a cascade.
@@ -338,7 +322,7 @@ describe('recordPricingSlot', () => {
 });
 
 describe('assertPricingAllowed', () => {
-  const eligible = { scores: { models: MONETIZATION_MIN_CREATOR_SCORE } };
+  const eligible = { scores: { total: MONETIZATION_MIN_CREATOR_SCORE } };
 
   it('spends a slot for a newly priced version', async () => {
     await expect(
@@ -359,7 +343,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: true,
         willBePriced: true,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     expect(mockCount).not.toHaveBeenCalled();
@@ -372,7 +356,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -386,7 +370,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: true,
         willBePriced: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
     // Neither rule is consulted: a creator below the floor may always stop charging.
@@ -407,7 +391,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         tier: async () => 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
   });
@@ -421,7 +405,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         tier: async () => null,
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).rejects.toThrow(/3 of 3/);
   });
@@ -436,7 +420,7 @@ describe('assertPricingAllowed', () => {
       wasPriced: true,
       willBePriced: true,
       tier,
-      userMeta: { scores: { models: 50000 } },
+      userMeta: { scores: { total: 50000 } },
     });
 
     expect(tier).not.toHaveBeenCalled();
@@ -449,7 +433,8 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         tier: 'gold',
-        userMeta: { scores: { models: MONETIZATION_MIN_CREATOR_SCORE - 1 } },
+        // Both keys, unequal — see the note on the same fixture in paid-access.service.test.ts.
+        userMeta: { scores: { total: MONETIZATION_MIN_CREATOR_SCORE - 1, models: 50_000 } },
       })
     ).rejects.toThrow(/creator score/);
 
@@ -502,7 +487,7 @@ describe('assertPricingAllowed', () => {
   });
 
   it('falls back to reading the score when the caller has no user meta', async () => {
-    mockFindUnique.mockResolvedValue({ meta: { scores: { models: 50000 } } } as never);
+    mockFindUnique.mockResolvedValue({ meta: { scores: { total: 50000 } } } as never);
 
     await expect(
       assertPricingAllowed({ userId: 1, wasPriced: false, willBePriced: true, tier: 'free' })

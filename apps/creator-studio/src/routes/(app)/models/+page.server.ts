@@ -31,7 +31,7 @@ import {
 import { checkbox } from '$lib/server/form-fields';
 import {
   resolveCreatorScore,
-  resolveModelsScore,
+  resolveTotalScore,
   TEST_CREATOR_SCORE_COOKIE,
   TEST_MODELS_SCORE_COOKIE,
 } from '$lib/server/creator-score';
@@ -73,7 +73,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
   const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots] =
     await Promise.all([
       getModelsView(locals.user, url, cookies),
-      resolveModelsScore(
+      resolveTotalScore(
         locals.user.id,
         !!locals.user.isModerator,
         cookies.get(TEST_MODELS_SCORE_COOKIE)
@@ -209,7 +209,10 @@ export const actions: Actions = {
     if (!permanent && !locals.user.isModerator) {
       // A timed window is bounded by creator score, not membership — and it has no price ceiling at all,
       // so the permanent price/count caps below don't apply to it.
-      const score = await resolveModelsScore(
+      // Load-bearing: the enclosing `!locals.user.isModerator` is what makes passing the simulator
+      // cookie into an enforced decision safe here — it is always discarded at this call. Dropping
+      // that half of the condition would make the simulator move a money gate.
+      const score = await resolveTotalScore(
         locals.user.id,
         !!locals.user.isModerator,
         cookies.get(TEST_MODELS_SCORE_COOKIE)

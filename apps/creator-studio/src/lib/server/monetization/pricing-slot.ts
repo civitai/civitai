@@ -12,7 +12,7 @@ import {
 import { getClickhouse } from '$lib/server/clickhouse';
 import { withTimeoutFallback } from '$lib/server/timeout';
 import { dbRead, dbWrite } from '$lib/server/db';
-import { getModelsScore } from '$lib/server/creator-score';
+import { getTotalScore } from '$lib/server/creator-score';
 import { cappedTier, type Membership } from '$lib/server/membership';
 
 // This spoke's direct-SQL writes never reach the main app's service layer, so both pricing rules are
@@ -242,9 +242,9 @@ export async function assertPricingAllowed(
 ): Promise<PricingGateResult> {
   if (newlyPricedCount <= 0) return { ok: true };
 
-  // The REAL score, not resolveModelsScore: the moderator score simulator moves what this page shows,
+  // The REAL score, not resolveTotalScore: the moderator score simulator moves what this page shows,
   // never what it enforces. Simulating past a money gate would make the simulator a bypass.
-  const score = await getModelsScore(userId);
+  const score = await getTotalScore(userId);
   if (score < MONETIZATION_MIN_CREATOR_SCORE)
     return { ok: false, status: 403, error: pricingFloorMessage() };
 
