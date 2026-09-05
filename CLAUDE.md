@@ -519,6 +519,68 @@ In an existing checkout that already works:
    until it is shut down — run it under the node from `.nvmrc`. (On NixOS,
    `nix run .#dev-server` does that for you.)
 
+### Local development — the traps that cost hours
+
+Every one of these presents as something OTHER than its cause, which is why they are
+written down. None is OS-specific.
+
+🔴 **`.env.development` is SILENTLY INERT for any key `.env` also defines — but only
+when the dev-server daemon starts the app.** The daemon injects the primary
+checkout's `.env` into the child's ENVIRONMENT, and a real environment variable beats
+any dotenv file, so an override you add to `.env.development` never takes effect while
+the value also exists in `.env`. Keys absent from `.env` DO get through, which is what
+makes it confusing: half your overrides work. Running the app directly (`pnpm dev`)
+uses ordinary Next precedence, where `.env.development` wins as documented.
+**Diagnose it by reading the running process's environment, not the files** — but note
+`/proc/<pid>/environ` (or its equivalent) shows only what was exported at exec time,
+never values dotenv loaded at runtime, so use `@next/env`'s `loadEnvConfig` to see
+what the app actually resolved. The tell is an override that plainly should work and
+does not, e.g. a connection error naming a host you already pointed elsewhere.
+
+🔴 **Sign-in needs the AUTH HUB, and its env does not come with a checkout.**
+`apps/auth/.env` is gitignored, so a fresh clone has none and login simply fails.
+It needs an **EC P-256 keypair whose private half is PKCS8** (a SEC1 key throws at
+import), an issuer/JWKS pair pointing at the hub's own port, and `NEXTAUTH_SECRET` +
+`AUTH_INTERNAL_TOKEN` **identical to the main app's**. Start it via the `/dev-server`
+skill's `auth` verbs. Verify with the hub's JWKS endpoint: it must serve the `kid` of
+the key you just generated — that is the positive control that it signs with your key.
+
+🔴 **The hub always connects to Postgres over SSL, and a stock local Postgres has
+none.** It rewrites its own connection string to `sslmode=no-verify`, so adding
+`?sslmode=disable` to the URL does nothing. Login then fails with a generic
+*"Something went wrong on our end."* on the form, and the real error —
+`The server does not support SSL connections` — appears only in the hub's log. Give
+the local database a self-signed certificate and turn SSL on; `no-verify` accepts it.
+
+🔴 **Two database columns gate a usable local account, and one is silent.**
+`isModerator` is the obvious one. The other is `onboarding`, which must equal
+`OnboardingComplete` (see `src/server/common/enums.ts`) — otherwise every gated route
+renders the **"Welcome!" onboarding wizard**, often with a hydration error, which
+reads exactly like the route being broken. **Sessions are cached**: after changing
+either column, clear the Redis caches AND log in again, or the app keeps serving the
+old values from cache.
+
+🔴 **Feature flags have TWO independent paths, and they fail apart.** Client/SSR gates
+read the feature-flag service, which honours a `FEATURE_FLAG_<KEY>=public` environment
+override (see `getEnvOverrides` in `src/server/services/feature-flags.service.ts`).
+Several server-side gates call Flipt directly and fail closed, so the env override does
+not reach them — set only that and you get a rendered page with an empty result set,
+which looks like a broken query. **Take the flag's real key from `fliptKey` in that
+service; never infer it from the camelCase name** — an unknown key evaluates false and
+is indistinguishable from a feature that is legitimately off.
+
+🔴 **App Blocks need a signing keypair or they 503.** With `BLOCK_TOKEN_PRIVATE_KEY` /
+`BLOCK_TOKEN_PUBLIC_KEY` unset, `POST /api/v1/block-tokens` returns
+`Block tokens not configured` and the UI shows **"Couldn't authenticate this app"** —
+an auth-shaped message whose cause is missing configuration. The `kid` is derived from
+the key, so no third variable is needed. Separately, a block's iframe loads from the
+origin in its manifest, which is usually NOT served locally; the host then sits on its
+boot skeleton indefinitely.
+
+⚠ **`data-testid` attributes are stripped from production builds**
+(`reactRemoveProperties` in `next.config.mjs`). They are reliable selectors for local
+work and match nothing against a deployed environment.
+
 ### Git Worktrees
 
 Worktrees live in `<repos-root>/worktrees/<name>` — all of them, no prefix on the directory name. Keep
