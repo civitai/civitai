@@ -330,6 +330,19 @@ export const CHAT_COMPLETION_ASSUMED_CHARS_PER_TOKEN = 4;
  * and it is sound for a step whose output is a pure function of its input — a
  * seeded image generation asked for the same picture twice.
  *
+ * 🔴 SO THE SEED IS EMITTED ONLY WHERE THAT PURITY FAILS — `temperature: 0` IS
+ * EXCLUDED, DELIBERATELY. It is a legal, reachable param (`.min(0)`, optional),
+ * and at 0 the stored reply IS the answer this input produces: the catalog data
+ * a tool round retrieved is part of the hashed input, so a stale world cannot
+ * enter through a reply whose input is byte-identical. Reuse is sound there and
+ * the execution saving is worth keeping. The platform's own equivalent surface
+ * makes the same call — the v1 OpenAI-compatible controller randomizes a seed
+ * only when the caller supplied none, on the reasoning that a caller who pins
+ * one is asking for reproducible, reuse-eligible output.
+ *
+ * ⚠ This changes NOTHING about the defect below: the failing traffic omits
+ * `temperature` entirely, which is a provider default of 1, not 0.
+ *
  * A chat completion at `temperature > 0` is NOT such a step: the same input has
  * many correct answers, so reusing one is not "the same result", it is LAST
  * WEEK'S result. `buildChatCompletionInput` below emitted only semantic fields
@@ -1074,7 +1087,10 @@ function buildChatCompletionInput(params: ChatCompletionStepParams): ChatComplet
     model: params.model,
     messages: params.messages,
     maxTokens: params.maxTokens,
-    seed: drawChatCompletionSeed(),
+    // Only where the step is NOT a pure function of its input — see
+    // `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX`. At `temperature: 0` the stored reply
+    // IS the answer this input produces, so reuse is sound and worth keeping.
+    ...(params.temperature === 0 ? {} : { seed: drawChatCompletionSeed() }),
     ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
     ...(params.tools !== undefined ? { tools: params.tools } : {}),
     ...(params.toolChoice !== undefined ? { tool_choice: params.toolChoice } : {}),

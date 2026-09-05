@@ -332,6 +332,13 @@ describe('chat-completion — buildStep', () => {
     expect(
       Object.keys(chatCompletionStep.buildStep({ ...VALID_PARAMS, temperature: 0.7 }).input).sort()
     ).toEqual(['maxTokens', 'messages', 'model', 'seed', 'temperature']);
+    // 🔴 `temperature: 0` DROPS `seed`, and that is the one conditional key on
+    // this surface. Asserted here rather than as its own case because THIS test
+    // is the one claiming to pin the exact key set — leaving the conditional
+    // uncovered would make its name wider than what it checks.
+    expect(
+      Object.keys(chatCompletionStep.buildStep({ ...VALID_PARAMS, temperature: 0 }).input).sort()
+    ).toEqual(['maxTokens', 'messages', 'model', 'temperature']);
   });
 
   it('forwards the parsed params verbatim', () => {
