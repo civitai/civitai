@@ -100,6 +100,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
+import type { Tracker } from '~/server/clickhouse/client';
 import { SFW_ONLY_LOCKED_PROPERTIES, setModelSfwOnly } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -111,8 +112,10 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 
 const MODERATOR_ID = 7;
 const MODEL_ID = 42;
+const OWNER_ID = 555;
 
 const baseModelRow = {
+  userId: OWNER_ID,
   poi: false,
   minor: false,
   sfwOnly: false,
@@ -124,6 +127,25 @@ const baseModelRow = {
 
 function mockBefore(overrides: Partial<typeof baseModelRow>) {
   mockDbRead.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
+}
+
+function mockTracker() {
+  return { entityChanges: vi.fn().mockResolvedValue(undefined) };
+}
+
+function changeRowsFrom(tracker: ReturnType<typeof mockTracker>) {
+  // Assert here so a stopped emit fails as 0-calls, not a TypeError on the line below.
+  expect(tracker.entityChanges).toHaveBeenCalledTimes(1);
+  return tracker.entityChanges.mock.calls[0][0] as {
+    entityType: string;
+    entityId: number;
+    ownerId: number;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    actorRole: string;
+    reason: string;
+  }[];
 }
 
 beforeEach(() => {
@@ -304,5 +326,106 @@ describe('setModelSfwOnly — missing model', () => {
     ).rejects.toThrow(/No model with id/);
 
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('setModelSfwOnly — change history', () => {
+  it('emits a field-level change row per watched field the flag moved', async () => {
+    mockBefore({ lockedProperties: ['poi'] });
+    const tracker = mockTracker();
+
+    await setModelSfwOnly({
+      id: MODEL_ID,
+      sfwOnly: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    const rows = changeRowsFrom(tracker);
+    expect(rows.map((r) => r.field).sort()).toEqual(['lockedProperties', 'nsfw', 'sfwOnly']);
+    expect(rows.every((r) => r.entityType === 'Model' && r.entityId === MODEL_ID)).toBe(true);
+    expect(rows.every((r) => r.ownerId === OWNER_ID)).toBe(true);
+    expect(rows.every((r) => r.actorRole === 'moderator')).toBe(true);
+    expect(rows.every((r) => r.reason === 'setSfwOnly')).toBe(true);
+
+    expect(rows.find((r) => r.field === 'sfwOnly')).toMatchObject({
+      oldValue: 'false',
+      newValue: 'true',
+    });
+  });
+
+  it('does not claim nsfw changed on unset', async () => {
+    mockBefore({ sfwOnly: true, nsfw: false, lockedProperties: [...SFW_ONLY_LOCKED_PROPERTIES] });
+    const tracker = mockTracker();
+
+    await setModelSfwOnly({
+      id: MODEL_ID,
+      sfwOnly: false,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    const rows = changeRowsFrom(tracker);
+    expect(rows.map((r) => r.field).sort()).toEqual(['lockedProperties', 'sfwOnly']);
+    expect(rows.every((r) => r.reason === 'unsetSfwOnly')).toBe(true);
+  });
+
+  it('attributes the change to the owner when a moderator flags their own model', async () => {
+    mockBefore({ userId: MODERATOR_ID });
+    const tracker = mockTracker();
+
+    await setModelSfwOnly({
+      id: MODEL_ID,
+      sfwOnly: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(changeRowsFrom(tracker).every((r) => r.actorRole === 'owner')).toBe(true);
+  });
+
+  it('emits nothing and does not throw when the rejected invariants block the write', async () => {
+    mockBefore({ sfwOnly: true, minor: true });
+    const tracker = mockTracker();
+
+    await expect(
+      setModelSfwOnly({
+        id: MODEL_ID,
+        sfwOnly: false,
+        userId: MODERATOR_ID,
+        isModerator: true,
+        tracker: tracker as unknown as Tracker,
+      })
+    ).rejects.toThrow(/Minor models/);
+
+    expect(tracker.entityChanges).not.toHaveBeenCalled();
+  });
+
+  it('flags without a tracker', async () => {
+    mockBefore({});
+
+    await expect(
+      setModelSfwOnly({ id: MODEL_ID, sfwOnly: true, userId: MODERATOR_ID })
+    ).resolves.toBeDefined();
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+  });
+
+  it('runs the fan-out even when the change-history write rejects', async () => {
+    mockBefore({});
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
+    const tracker = { entityChanges: vi.fn().mockRejectedValue(new Error('clickhouse down')) };
+
+    await setModelSfwOnly({
+      id: MODEL_ID,
+      sfwOnly: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
   });
 });
