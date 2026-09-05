@@ -39,6 +39,39 @@
   container-type: inline-size;
 }
 
+/* The STALE-RESULTS affordance, applied alongside `.gridContainer` while the store
+   is showing `keepPreviousData`'s previous page.
+
+   🔴 OPACITY ONLY, ON PURPOSE — no height, no margin, no inserted spinner, nothing
+   that participates in layout. The whole point of keeping the previous result is
+   that nothing MOVES while the new one loads, so the pending signal has to be a
+   repaint; a shimmer or a spinner here would re-introduce the shift this change
+   removes.
+
+   🔴 AND DELIBERATELY **NOT** `pointer-events: none`, which an earlier draft had.
+   It blocks the MOUSE and not the KEYBOARD — focus still lands on every card and
+   Enter still follows it — so it does not actually stop a viewer reaching a stale
+   card; it only stops one of the two ways of doing so, which is worse than either
+   choice made consistently. And the cards are stale, not wrong: each still points
+   at a listing that exists, so following one is a valid navigation rather than a
+   trap. Dim to say "being replaced"; leave it usable.
+
+   🔴 0.7, NOT THE 0.55 THIS STARTED AT, AND THE REASON IS CONTRAST. Opacity composites
+   text toward its background, so it reduces contrast on everything under it — and one
+   thing under it is the card's author line, which `AppListingCard.tsx` records as an
+   ACCEPTED RESIDUAL at contrast 4.73, i.e. AA by 0.23. A heavy dim pushes that under AA
+   for however long the fetch takes, which on a slow connection is not a frame.
+   ⚠️ 0.7 IS A JUDGEMENT, NOT A MEASURED CONTRAST FIGURE — no ratio was computed for the
+   composited result, and this comment deliberately does not quote one. What is claimed
+   is only the direction (less dim, less contrast loss) and that 0.7 is still plainly
+   visible as a state change. If someone needs a guarantee here, the honest fix is to
+   measure the composite and pick a value from it, or to move the signal off opacity
+   entirely. */
+.gridPending {
+  opacity: 0.7;
+  transition: opacity 120ms ease-out;
+}
+
 /* 🔴 DO NOT ADD `align-items` HERE. ITS ABSENCE IS LOAD-BEARING, NOT AN OMISSION.
    `AppListingCard` bottom-pins its action row with `mt="auto"` inside a `Stack h="100%"`
    inside a `Card className="h-full"`, and `h-full` only resolves because this grid
