@@ -3,6 +3,10 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { UNRUNNABLE_JOB_CRON } from '~/server/jobs/job';
+import { BOT_ACCOUNT_COHORT_WINDOW_HOURS } from '~/server/services/bot-account-detection/cohort';
+
+/** The schedule this job is expected to publish. Daily, clear of the other board writers. */
+const DAILY_NOON_UTC = '0 12 * * *';
 
 const RUN_JOBS_ROUTE = path.resolve(
   __dirname,
@@ -37,20 +41,43 @@ function jobsArrayEntries(): string[] {
  * How this job is REGISTERED, as distinct from what it does.
  *
  * `/api/internal/get-jobs` publishes every registered job's cron to the external scheduler, so the
- * cron string in the job file is not documentation — it is the deployment. A real cron here means
- * merging this PR turns the detector on, against preconditions (`MOD_INBOUND_TOKEN` set, the
- * abuse-detection schema applied to `MODERATOR_DATABASE_URL`) that are applied by hand and are not
- * checked by anything. That is a daily 500, repeating until a human notices.
+ * cron string in the job file is not documentation — it is the deployment.
+ *
+ * This job was deliberately unscheduled (`UNRUNNABLE_JOB_CRON`) until two hand-applied preconditions
+ * — `MOD_INBOUND_TOKEN` set, and the abuse-detection schema applied to `MODERATOR_DATABASE_URL` —
+ * were confirmed live, because without them every fire is a 500 repeating until a human notices.
+ * They were confirmed by an on-demand run that completed and landed a run row on the board, so the
+ * schedule below is now real.
+ *
+ * 🔴 The assertion that carries weight here is NOT the cron spelling — it is the RELATIONSHIP
+ * between the cadence and the cohort window. The run does not dedupe against earlier runs, so a
+ * cadence faster than `BOT_ACCOUNT_COHORT_WINDOW_HOURS` re-reports one cohort once per run and a
+ * slower one leaves gaps no run ever scores. Either side can be edited alone by someone who has not
+ * read the other; this pins them together so that edit fails here instead of on the board.
  */
-describe('the bot-account detection job is registered but NOT scheduled', () => {
-  it('carries the unrunnable cron, so merging does not enable it', () => {
-    expect(botAccountDetection.cron).toBe(UNRUNNABLE_JOB_CRON);
+describe('the bot-account detection job is registered AND scheduled to match its window', () => {
+  it('carries the exact cron string that is published to the scheduler', () => {
+    expect(botAccountDetection.cron).toBe(DAILY_NOON_UTC);
+    // It is no longer the unrunnable placeholder — the state this job shipped in originally.
+    expect(botAccountDetection.cron).not.toBe(UNRUNNABLE_JOB_CRON);
+  });
+
+  it('🔴 fires exactly once per cohort window — the cadence/window relationship, not a spelling', () => {
+    const [minute, hour, dom, month, dow] = botAccountDetection.cron.split(' ');
+
+    // A single literal minute+hour with wildcard date fields is what makes the period exactly 24h.
+    // A step (`*/6`), a list (`0,12`) or a range would fire more often and silently duplicate.
+    expect(minute).toMatch(/^\d+$/);
+    expect(hour).toMatch(/^\d+$/);
+    expect([dom, month, dow]).toEqual(['*', '*', '*']);
+
+    const firesEveryHours = 24;
+    expect(firesEveryHours).toBe(BOT_ACCOUNT_COHORT_WINDOW_HOURS);
   });
 
   it('is still named and runnable on demand', () => {
-    // The point of `UNRUNNABLE_JOB_CRON` over deleting the registration: the job stays reachable at
-    // `/api/webhooks/run-jobs/bot-account-detection`, which is exactly what a shadow-phase grading
-    // pass needs.
+    // Scheduling does not remove the on-demand surface: the job stays reachable at
+    // `/api/webhooks/run-jobs/bot-account-detection`, which is what a grading pass uses.
     expect(botAccountDetection.name).toBe('bot-account-detection');
     expect(typeof botAccountDetection.run).toBe('function');
   });
