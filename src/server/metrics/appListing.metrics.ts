@@ -50,15 +50,17 @@ const BATCH_SIZE = 200;
 // `/apps/run/<slug>` SSR resolver started emitting a trusted `App_Open` action per
 // on-site launch (`app-listing-open.service.ts`). The rows are an EVENT STREAM in
 // ClickHouse `actions`, deliberately, so this counter stays recomputable rather than
-// becoming a second no-recompute denormalization like the thumbs pair below.
+// becoming a second no-recompute denormalization like the thumbs pair described in the
+// OWNERSHIP CONTRACT paragraph above.
 // Two obligations for whoever writes that rollup:
 //   1. 🔴 DEDUPE AT READ TIME. The emit is triggered by an unauthenticated GET on an
 //      optional catch-all route with no rate limit, so the raw row count is inflatable
 //      by a refresh loop, a crawler or a link unfurler. Collapse per `userId` (falling
 //      back to `ip`) over a window; the actor columns are kept for exactly this.
-//   2. Add `open_count` to the ON CONFLICT list below when — and only when — you do,
-//      keeping `thumbs_*` out of it. The ownership contract in
-//      `app-listing-review.service.ts` cuts both ways.
+//   2. Add `open_count` to the ON CONFLICT list when — and only when — you do, keeping
+//      `thumbs_*` out of it. That list is NOT in this file: it is
+//      `APP_LISTING_METRIC_UPSERT_SQL` in `appListing.metrics.sql.ts`. The ownership
+//      contract in `app-listing-review.service.ts` cuts both ways.
 // OFF-SITE listings have no trustworthy source at all (their CTA is a third-party
 // anchor), so their count is structurally absent, not zero — do not render it as 0.
 // ---------------------------------------------------------------------------

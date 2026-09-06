@@ -127,6 +127,24 @@ describe('recordAppListingOpen', () => {
     expect(mockCtor).toHaveBeenCalledWith(CTX.req, CTX.res, null);
   });
 
+  it('FORWARDS a non-null session rather than a hardcoded null', async () => {
+    // 🔴 THE ANONYMOUS CASE ABOVE CANNOT SEE A SUBSTITUTION, ONLY AN OMISSION. Its fixture
+    // passes `null` and its assertion names the literal `null`, so a call site rewritten to
+    // `new Tracker(req, res, null)` produces exactly the value the assertion expects —
+    // measured surviving 21/21 before this test existed. The control is mechanical: feed a
+    // value the constant CANNOT equal and watch the argument move.
+    //
+    // What the substitution would cost is not cosmetic: `Tracker`'s constructor sets
+    // `sessionResolved = true` for a `null` too, so it never learns the user — every
+    // App_Open row for a logged-in launch is written anonymous, and the read-time dedup the
+    // service docstring is built on ("collapse per userId, falling back to ip") silently
+    // degrades to IP-only, merging everyone behind one office egress into a single play.
+    const session = { user: { id: 7 } } as any;
+    await recordAppListingOpen({ appBlockId: 'ab_42', session, ctx: CTX });
+
+    expect(mockCtor).toHaveBeenCalledWith(CTX.req, CTX.res, session);
+  });
+
   it('App_Open is a real ActionType but has NO trackActionSchema arm', async () => {
     // 🔴 THE TRUSTED PROPERTY, and the one most likely to be undone by a well-meaning
     // "you forgot to add the schema arm" PR. `trackActionSchema` is what

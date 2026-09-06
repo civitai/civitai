@@ -17,7 +17,10 @@ import '~/pages/apps/run/[slug]/[[...path]]';
  * The other property here is that the recording is NOT AWAITED. It is asserted
  * behaviourally rather than by reading the source for a `void`: the recorder is made to
  * return a promise that never settles, and the resolver is required to produce its props
- * anyway. An `await` added in front of the call hangs that test instead of passing it.
+ * anyway. An `await` added in front of the call reds that one test — by ASSERTION at the
+ * 2 s sentinel, not by hanging the suite; the guard is bounded on purpose. (This sentence
+ * previously claimed a hang. It was corrected in the test body and NOT here, which is how a
+ * retraction ends up half-applied — see that test for the measured failure text.)
  */
 
 const { capturedResolver } = vi.hoisted(() => ({

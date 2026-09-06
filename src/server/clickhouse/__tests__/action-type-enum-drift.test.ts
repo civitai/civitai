@@ -60,10 +60,16 @@ describe('actions.type enum drift', () => {
   const actionsBlocks = enumBlocks.filter((b) => b.table === 'default.actions');
   const actionsBlock = actionsBlocks[actionsBlocks.length - 1];
 
-  // The prod indices this guard was written against (SHOW CREATE TABLE actions,
-  // 2026-08-21). These predate the migrations directory, so no file here introduces them
-  // — but any migration that RESTATES the column must reproduce them exactly, because a
+  // The indices every migration that RESTATES this column must reproduce exactly, because a
   // MODIFY COLUMN is a replacement.
+  //
+  // ⚠️ 1-21 are the prod indices this guard was originally written against (SHOW CREATE
+  // TABLE actions, 2026-08-21) and predate the migrations directory, so no file there
+  // introduces them. 🔴 THAT IS NO LONGER TRUE OF THE WHOLE MAP: 22-25 were added on
+  // 2026-09-05 and ARE introduced by files in that directory (see the block below). The
+  // original sentence said it of every entry, which the four new ones falsify — it is split
+  // rather than deleted because the 1-21 half is still the reason those indices cannot be
+  // re-derived from any file here.
   //
   // 🔴 Do not add a name here to silence a failing case. That is the one-line bypass of
   // this whole guard, and it produces exactly the "looks instrumented, writes no rows"
