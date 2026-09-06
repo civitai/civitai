@@ -70,6 +70,7 @@ const {
   mockRate,
   mockMaturity,
   mockFallbackCovers,
+  mockPlayableSample,
 } = vi.hoisted(() => ({
   mockGetAll: vi.fn(),
   mockItemCount: vi.fn(),
@@ -79,6 +80,7 @@ const {
   mockRate: vi.fn(),
   mockMaturity: vi.fn(),
   mockFallbackCovers: vi.fn(),
+  mockPlayableSample: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -90,6 +92,7 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   hydrateBlockSubject: mockHydrate,
   getFollowedCollectionIds: mockFollowed,
   getFallbackCoverImages: mockFallbackCovers,
+  getCollectionPlayableSample: mockPlayableSample,
   // Cover url helper: a video cover yields a poster (`poster:` prefix), a still
   // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
   toCoverImageUrl: (img: any) =>
@@ -115,27 +118,42 @@ import handler, {
 } from '~/pages/api/v1/blocks/collections/index';
 
 /**
- * Drive the TWO count queries the public branch issues — the ADVERTISED count
- * (no `browsingLevel`) and the PLAYABLE one (clamped to the token's ceiling) —
- * from two id→count tables.
+ * Drive `getCollectionItemCount` from two id→count tables, dispatched on whether
+ * the call clamps: the UNCLAMPED (advertised) table is what `mode=public`
+ * renders, the CLAMPED one is what `mode=mine` renders.
  *
- * Dispatching on `browsingLevel` rather than on call order matters: the two are
- * issued inside one `Promise.all`, so a `mockResolvedValueOnce` pair would pin
- * the order they happen to be listed in and pass just as happily if the endpoint
- * swapped which number it advertises.
+ * Dispatching on `browsingLevel` rather than on call order matters: it makes a
+ * test that expects the advertised number fail if the endpoint starts clamping,
+ * instead of silently reading whichever value happened to be queued first.
  *
  * An id ABSENT from a table yields NO ROW, exactly as `GROUP BY` does for a
- * collection with nothing to count — which is the shape the zero-advertised case
- * below depends on.
+ * collection with nothing to count.
  */
-function itemCounts(advertised: Record<number, number>, playable: Record<number, number>) {
+function itemCounts(advertised: Record<number, number>, clamped: Record<number, number> = {}) {
   mockItemCount.mockImplementation(
     ({ collectionIds, browsingLevel }: { collectionIds: number[]; browsingLevel?: number }) => {
-      const table = browsingLevel === undefined ? advertised : playable;
+      const table = browsingLevel === undefined ? advertised : clamped;
       return Promise.resolve(
         collectionIds.filter((id) => table[id] != null).map((id) => ({ id, count: table[id] }))
       );
     }
+  );
+}
+
+/**
+ * Drive the BOUNDED SAMPLE the playable floor reads: id → `{sampled, playable}`.
+ *
+ * An id ABSENT from the table yields no map entry, exactly as the LATERAL does
+ * for a collection with no countable accepted items — which is the shape the
+ * "nothing sampled" case below depends on.
+ */
+function playableSample(table: Record<number, { sampled: number; playable: number }>) {
+  mockPlayableSample.mockImplementation((collectionIds: number[]) =>
+    Promise.resolve(
+      new Map(
+        collectionIds.filter((id) => table[id] != null).map((id) => [id, table[id]] as const)
+      )
+    )
   );
 }
 
@@ -178,6 +196,9 @@ beforeEach(() => {
   mockHydrate.mockResolvedValue({ id: 42, username: 'mod', isModerator: true });
   mockFollowed.mockResolvedValue(new Set<number>([10]));
   mockFallbackCovers.mockResolvedValue(new Map());
+  // Default: nothing sampled for any id → `meetsPlayableFloor` reads "nothing to
+  // judge, keep", so tests that are not about the floor see no drops.
+  mockPlayableSample.mockResolvedValue(new Map());
   mockItemCount.mockResolvedValue([
     { id: 10, count: 5 },
     { id: 11, count: 2 },
@@ -561,52 +582,84 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(mockFallbackCovers).toHaveBeenCalledWith([], 3);
   });
 
-  // ---- playable-fraction floor + clamped itemCount ----
+  // ---- playable-fraction floor (sampled) + per-mode itemCount ----
   //
   // The problem these cover: a collection's own `nsfwLevel` is a bitmask OR-ed
   // over its items, so a 97%-safe contest collection and a 1%-safe mature one
   // carry the identical value and both pass the bitwise ceiling. What separates
   // them is how much of the collection SURVIVES the ceiling — which discovery did
-  // not compute, so a card advertised the unclamped total while the player served
-  // the clamped one.
+  // not compute.
+  //
+  // 🔴 It is computed here from a BOUNDED SAMPLE, not from an exact clamped count:
+  // the exact count over this over-fetch window is a ~31× regression (~2.6 s vs
+  // ~85 ms, measured on a production-scale replica). `itemCount` on the public
+  // branch therefore stays the ADVERTISED, unclamped size — real, and never a
+  // sample-derived estimate dressed as an exact number.
 
   it('mode=public: DROPS a collection below the playable floor and keeps one above it', async () => {
     // Both are mixed-bucket (29) and both pass the ceiling — the whole point is
     // that the collection-level level cannot tell them apart.
     mockGetAll.mockResolvedValueOnce([row(10), row(11)]);
-    itemCounts(
-      { 10: 2078, 11: 34577 }, // advertised
-      { 10: 216, 11: 33500 } //   playable: 10.4% vs 96.9%
-    );
+    playableSample({
+      10: { sampled: 200, playable: 21 }, // 10.5%
+      11: { sampled: 200, playable: 194 }, // 97%
+    });
+    itemCounts({ 10: 2078, 11: 34577 });
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
     expect(body.items.map((i: any) => i.id)).toEqual([11]);
-    // …and the surviving card advertises the CLAMPED count, not the 34577 the
-    // player cannot serve.
-    expect(body.items[0].itemCount).toBe(33500);
+    // 🔴 …and the surviving card advertises the collection's REAL SIZE. Not the
+    // sample (200), and not the sample extrapolated to a clamped estimate
+    // (34577 * 194/200 = 33540) — `itemCount` reads as exact, so it must be.
+    expect(body.items[0].itemCount).toBe(34577);
+  });
+
+  it('🔴 mode=public: the count query is NOT clamped, and covers only the FINAL page', async () => {
+    // The cost pin. Clamping this call is what made the endpoint ~31× slower; the
+    // clamp joins "Image" and forfeits the covering index the unclamped count
+    // scans. Id 9 is sampled (so the floor can judge it) but must not be counted —
+    // it never appears — and the one surviving call must carry no browsingLevel.
+    mockGetAll.mockResolvedValueOnce([row(10), row(9)]);
+    playableSample({ 10: { sampled: 200, playable: 180 }, 9: { sampled: 200, playable: 2 } });
+    itemCounts({ 10: 4242, 9: 999 });
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items.map((i: any) => i.id)).toEqual([10]);
+    expect(body.items[0].itemCount).toBe(4242);
+
+    const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].browsingLevel).toBeUndefined();
+    expect(calls[0].collectionIds).toEqual([10]);
+    expect(calls[0].status).toBe('ACCEPTED');
   });
 
   it('mode=public: the boundary — EXACTLY at the floor is kept, one item below is dropped', async () => {
     // 20/100 === MIN_PLAYABLE_FRACTION → kept (the test is `>=`, not `>`).
     // 19/100 <  MIN_PLAYABLE_FRACTION → dropped.
     // Derived from the constant so the pair moves with it rather than pinning 0.2.
-    const advertised = 100;
-    const atFloor = Math.round(advertised * MIN_PLAYABLE_FRACTION);
+    const sampled = 100;
+    const atFloor = Math.round(sampled * MIN_PLAYABLE_FRACTION);
     mockGetAll.mockResolvedValueOnce([row(10), row(11)]);
-    itemCounts({ 10: advertised, 11: advertised }, { 10: atFloor, 11: atFloor - 1 });
+    playableSample({
+      10: { sampled, playable: atFloor },
+      11: { sampled, playable: atFloor - 1 },
+    });
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
     expect(body.items.map((i: any) => i.id)).toEqual([10]);
   });
 
-  it('mode=public: a collection advertising ZERO items is NOT dropped (no 0/0 NaN drop)', async () => {
-    // Neither id appears in either table → both counts are 0, and `0 / 0` is NaN,
+  it('mode=public: a collection with NOTHING SAMPLED is NOT dropped (no 0/0 NaN drop)', async () => {
+    // The id is absent from the sample map → `sampled` is 0, and `0 / 0` is NaN,
     // which fails every comparison. Without the explicit zero branch this row is
     // silently dropped by a filter that has nothing to say about it.
     mockGetAll.mockResolvedValueOnce([row(10)]);
-    itemCounts({}, {});
+    playableSample({});
+    itemCounts({});
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
@@ -620,9 +673,8 @@ describe('GET /api/v1/blocks/collections', () => {
     // and terminate the feed while qualifying collections remained further down.
     const rows = [row(10), row(9), row(8), row(7), row(6)];
     mockGetAll.mockResolvedValueOnce(rows);
-    itemCounts(
-      { 10: 100, 9: 100, 8: 100, 7: 100, 6: 100 },
-      { 10: 1, 9: 1, 8: 1, 7: 1, 6: 1 } // 1% — every one below the floor
+    playableSample(
+      Object.fromEntries(rows.map((r) => [r.id, { sampled: 100, playable: 1 }])) // 1%
     );
     const { req, res } = createMocks({ query: { mode: 'public', limit: '1' } });
     await handler(req as never, res as never);
@@ -634,30 +686,29 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(body.nextCursor).toBe(6);
   });
 
-  it('mode=public: counts are resolved over the CEILING-PASSING candidates, before the page is chosen', async () => {
-    // The floor decides which rows the page consumes, so both counts must cover
+  it('mode=public: the SAMPLE covers the CEILING-PASSING candidates, resolved before the page is chosen', async () => {
+    // The floor decides which rows the page consumes, so the sample must cover
     // every row that could still appear — not just the ones that survived. Id 9 is
-    // dropped by the floor yet must have been COUNTED, or the floor could not have
-    // dropped it; id 8 is over the ceiling (8 & 3 === 0) and must NOT be counted,
+    // dropped by the floor yet must have been SAMPLED, or the floor could not have
+    // dropped it; id 8 is over the ceiling (8 & 3 === 0) and must NOT be sampled,
     // since it can never appear.
     mockGetAll.mockResolvedValueOnce([row(10), row(9), row(8, 8)]);
-    itemCounts({ 10: 100, 9: 100 }, { 10: 90, 9: 1 });
+    playableSample({ 10: { sampled: 100, playable: 90 }, 9: { sampled: 100, playable: 1 } });
+    itemCounts({ 10: 100, 9: 100 });
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
     expect(body.items.map((i: any) => i.id)).toEqual([10]);
 
-    const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
-    // Exactly two count queries: one advertised, one clamped to the token ceiling.
-    expect(calls).toHaveLength(2);
-    const advertisedCall = calls.find((a: any) => a.browsingLevel === undefined);
-    const playableCall = calls.find((a: any) => a.browsingLevel !== undefined);
-    expect(advertisedCall).toBeTruthy();
-    expect(playableCall.browsingLevel).toBe(3);
-    for (const call of calls) {
-      expect(call.collectionIds).toEqual([10, 9]);
-      expect(call.status).toBe('ACCEPTED');
-    }
+    // Exactly ONE sample query, over the ceiling-passing ids, at the token ceiling.
+    expect(mockPlayableSample).toHaveBeenCalledTimes(1);
+    const [sampledIds, sampledLevel, ...extra] = mockPlayableSample.mock.calls[0] as any[];
+    expect(sampledIds).toEqual([10, 9]);
+    expect(sampledLevel).toBe(3);
+    // 🔴 No third argument: the endpoint must NOT carry its own copy of the cap.
+    // The measured value lives on PLAYABLE_SAMPLE_SIZE, and a second one here
+    // would drift away from it silently.
+    expect(extra).toEqual([]);
   });
 
   it('🔴 mode=mine: a collection FAR below the floor is STILL RETURNED (the floor is discovery-only)', async () => {
@@ -672,6 +723,8 @@ describe('GET /api/v1/blocks/collections', () => {
       { id: 21, name: 'Mine, mostly safe', description: null, read: 'Public', userId: 42, image: null },
     ]);
     itemCounts({ 20: 2080, 21: 100 }, { 20: 19, 21: 90 }); // 0.9% and 90%
+    // Even if the sample said "drop it", this branch must not consult it.
+    playableSample({ 20: { sampled: 200, playable: 1 }, 21: { sampled: 200, playable: 180 } });
     mockFollowed.mockResolvedValueOnce(new Set<number>());
     const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
     await handler(req as never, res as never);
@@ -679,9 +732,11 @@ describe('GET /api/v1/blocks/collections', () => {
     const body = res._json() as any;
     // BOTH, id DESC — the 0.9% one is not dropped.
     expect(body.items.map((i: any) => i.id)).toEqual([21, 20]);
+    // …and the branch does not pay for a sample it does not use.
+    expect(mockPlayableSample).not.toHaveBeenCalled();
   });
 
-  it('mode=mine: itemCount is CLAMPED (the count is wanted in both modes, only the DROP is not)', async () => {
+  it('🔴 mode=mine: itemCount is the EXACT CLAMPED count (the population here is bounded, so it is affordable)', async () => {
     mockUserCollections.mockResolvedValueOnce([
       { id: 21, name: 'Mine', description: null, read: 'Public', userId: 42, image: null },
     ]);
@@ -691,6 +746,9 @@ describe('GET /api/v1/blocks/collections', () => {
     await handler(req as never, res as never);
     const body = res._json() as any;
     // 19, the number the player will serve — NOT the 2080 the card used to promise.
+    // This branch counts only the subject's own, already-sliced collections: no
+    // over-fetch window and no popularity-ranked giants, so the clamp's cost is
+    // nothing like it is on public discovery.
     expect(body.items[0].itemCount).toBe(19);
     // One count query on this branch, and it carries the ceiling.
     const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
@@ -713,12 +771,12 @@ describe('GET /api/v1/blocks/collections', () => {
 });
 
 describe('meetsPlayableFloor', () => {
-  it('an empty collection is KEPT — the fraction is not computable, not "zero"', () => {
+  it('nothing sampled is KEPT — the fraction is not computable, not "zero"', () => {
     // `0 / 0` is NaN and every NaN comparison is false, so the absence of this
     // branch is a silent drop rather than a visible error.
     expect(meetsPlayableFloor(0, 0)).toBe(true);
-    // Defensive: a negative advertised count can only come from a corrupt read,
-    // and must not be treated as a mismatch either.
+    // Defensive: a negative sampled count can only come from a corrupt read, and
+    // must not be treated as a mismatch either.
     expect(meetsPlayableFloor(-1, 0)).toBe(true);
   });
 
@@ -728,17 +786,18 @@ describe('meetsPlayableFloor', () => {
   });
 
   it('is a FRACTION, not an absolute count', () => {
-    // The live shape the floor is aimed at: a huge collection with a large absolute
-    // playable count is still mostly unplayable. Any threshold on `playable` alone
-    // would keep this (216 items is plenty) and would be the wrong rule.
-    expect(meetsPlayableFloor(2078, 216)).toBe(false);
+    // The live shape the floor is aimed at, scaled into a 200-item sample: a large
+    // absolute playable count is still mostly unplayable. Any threshold on
+    // `playable` alone would keep this (21 of a sample is plenty of items in a
+    // 2,078-item collection) and would be the wrong rule.
+    expect(meetsPlayableFloor(200, 21)).toBe(false);
     // …while a tiny collection that is entirely playable passes on 5 items.
     expect(meetsPlayableFloor(5, 5)).toBe(true);
   });
 
-  it('a fully playable collection always passes, at any size', () => {
+  it('a fully playable collection always passes, at any sample size', () => {
     expect(meetsPlayableFloor(1, 1)).toBe(true);
-    expect(meetsPlayableFloor(34577, 34577)).toBe(true);
+    expect(meetsPlayableFloor(200, 200)).toBe(true);
   });
 
   it('MIN_PLAYABLE_FRACTION is a fraction in (0, 1]', () => {

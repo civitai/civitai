@@ -2507,9 +2507,18 @@ export const updateCollectionItemsStatus = async ({
  * emitted SQL is the unclamped query this function has always run (only the table
  * alias is new), so every existing caller is unaffected. Supply it and the result
  * is the CLAMPED count: how many items a viewer at that maturity ceiling can
- * actually see. That is the number a discovery card should advertise, because it
- * is the number the player will serve — an unclamped count on a mixed-maturity
- * collection promises thousands of items and delivers dozens.
+ * actually see.
+ *
+ * 🔴 THE CLAMPED FORM IS EXACT AND EXPENSIVE — CHECK THE POPULATION BEFORE USING
+ * IT. Unclamped, this is an Index Only Scan on the covering (collectionId, status)
+ * index with no heap access; the clamp's join to "Image" forfeits that index and
+ * becomes a nested loop over every accepted item. Measured on a production-scale
+ * replica: 85 ms unclamped vs 2829 ms clamped over one App Blocks discovery
+ * over-fetch window (97 collections, 298,469 accepted items). Its one production
+ * caller is `mode=mine` of the blocks collections endpoint, whose population is
+ * the subject's own already-sliced collections — bounded, and nothing like the
+ * popularity-sorted discovery window. Public discovery deliberately does NOT use
+ * it; it samples instead (`getCollectionPlayableSample`).
  *
  * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
  * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId`,

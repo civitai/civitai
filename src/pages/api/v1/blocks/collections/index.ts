@@ -14,6 +14,7 @@ import {
 } from '~/server/services/collection.service';
 import {
   collectionWithinCeiling,
+  getCollectionPlayableSample,
   getFallbackCoverImages,
   getFollowedCollectionIds,
   hydrateBlockSubject,
@@ -53,12 +54,21 @@ import {
  * an option: strict containment (`nsfwLevel & ~browsingLevel === 0`) was measured
  * against the live population and drops 87.5% of the first discovery page,
  * including the large contest collections that are the best content on a SFW
- * domain. The separating signal is the CLAMPED ITEM COUNT — see
- * `MIN_PLAYABLE_FRACTION`.
+ * domain. The separating signal is HOW MUCH OF THE COLLECTION SURVIVES THE
+ * CEILING, sampled — see `MIN_PLAYABLE_FRACTION` and `PLAYABLE_SAMPLE_SIZE`.
  *
  * Response: `{ items: [{ id, name, description, coverImageUrl, itemCount,
- *   curator:{ userId, username }, isPublic, followed }], nextCursor }`, where
- * `itemCount` is CLAMPED to the token's ceiling in BOTH modes.
+ *   curator:{ userId, username }, isPublic, followed }], nextCursor }`.
+ *
+ * 🔴 `itemCount` DIFFERS BY MODE, DELIBERATELY. In `mode=mine` it is CLAMPED to
+ * the token's ceiling — that branch counts only the subject's own collections, a
+ * bounded set with no over-fetch window, so the exact clamped count is affordable
+ * there. In `mode=public` it is the collection's ADVERTISED (unclamped) size: the
+ * exact clamped count over the discovery over-fetch window is a ~31× regression
+ * on this endpoint (measured; see `PLAYABLE_SAMPLE_SIZE`), and the sampled
+ * fraction that replaces it is an ESTIMATE, which a field that reads as exact
+ * must not carry. The advertised number is not a lie — it is the collection's
+ * real size — and the playable floor now guarantees that most of it is playable.
  */
 
 export const config = { api: { responseLimit: false } };
@@ -74,14 +84,23 @@ const SORT_ALIAS: Record<string, CollectionSort> = {
 };
 
 /**
- * The PLAYABLE-FRACTION FLOOR: the share of a collection's advertised (accepted)
- * items that must survive the viewer's maturity ceiling for that collection to be
- * worth surfacing in PUBLIC discovery.
+ * The PLAYABLE-FRACTION FLOOR: the share of a collection's SAMPLED accepted items
+ * that must survive the viewer's maturity ceiling for that collection to be worth
+ * surfacing in PUBLIC discovery.
  *
  * A collection at 1% is not a collection the viewer can browse; it is a card
  * promising 2,080 items that opens onto 19. Twenty percent is the point measured
  * to separate the two live populations — the mostly-safe contest collections sit
  * far above it and the mature ones far below — without needing a second signal.
+ *
+ * 🔴 A RANKING HEURISTIC, NOT A SAFETY GATE, AND IT IS FED BY A SAMPLE. The
+ * fraction is computed over the newest `PLAYABLE_SAMPLE_SIZE` items, not over the
+ * whole collection (the exact clamped count is unaffordable here — the cost,
+ * accuracy and order-sensitivity measurements live on that constant). Nothing on
+ * this path protects a viewer from mature media: per-item maturity is enforced on
+ * the DETAIL endpoint where the media is read, and on the cover via
+ * `getFallbackCoverImages`. A collection kept by this floor can still be 79%
+ * mature.
  *
  * 🔴 DISCOVERY ONLY. It is deliberately NOT applied in `mode=mine`; see the drop
  * comment on the public branch and the note above the `mine` branch.
@@ -89,20 +108,20 @@ const SORT_ALIAS: Record<string, CollectionSort> = {
 export const MIN_PLAYABLE_FRACTION = 0.2;
 
 /**
- * Does `playable` of `advertised` items clear {@link MIN_PLAYABLE_FRACTION}?
+ * Does `playable` of `sampled` items clear {@link MIN_PLAYABLE_FRACTION}?
  *
- * 🔴 THE ZERO CASE IS AN EXPLICIT BRANCH, NOT A DIVISION. An empty collection
- * gives `0 / 0 = NaN`, and every comparison against NaN is false — so without
- * this guard an empty collection would be silently DROPPED by a filter that has
+ * 🔴 THE ZERO CASE IS AN EXPLICIT BRANCH, NOT A DIVISION. A collection with
+ * nothing sampled gives `0 / 0 = NaN`, and every comparison against NaN is false
+ * — so without this guard it would be silently DROPPED by a filter that has
  * nothing to say about it. This filter exists to catch a MATURITY MISMATCH
- * between what a card advertises and what it can serve, and a collection
- * advertising nothing has no mismatch to detect. Whether an empty collection
- * belongs in discovery at all is a separate product question this must not decide
- * as a side effect.
+ * between what a card advertises and what it can serve, and a collection with no
+ * items has no mismatch to detect. Whether an empty collection belongs in
+ * discovery at all is a separate product question this must not decide as a side
+ * effect.
  */
-export function meetsPlayableFloor(advertised: number, playable: number): boolean {
-  if (advertised <= 0) return true;
-  return playable / advertised >= MIN_PLAYABLE_FRACTION;
+export function meetsPlayableFloor(sampled: number, playable: number): boolean {
+  if (sampled <= 0) return true;
+  return playable / sampled >= MIN_PLAYABLE_FRACTION;
 }
 
 const querySchema = z.object({
@@ -204,32 +223,25 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         },
       });
 
-      // The playable-fraction floor needs BOTH counts, and it decides which rows
-      // the walk below consumes — so the counts have to be resolved BEFORE the
-      // walk, over every row that could still appear, not after the page is
-      // chosen. Only rows that already clear the collection-level ceiling can
-      // appear, so those are the only ids worth counting.
+      // The playable-fraction floor decides which rows the walk below consumes, so
+      // it has to be resolved BEFORE the walk, over every row that could still
+      // appear — not after the page is chosen. Only rows that already clear the
+      // collection-level ceiling can appear, so those are the only ids worth
+      // sampling.
       //
-      // COST: two grouped counts over up to `OVERFETCH` ids instead of one over
-      // `limit`. Both are the same indexed GROUP BY the page already ran.
+      // 🔴 SAMPLED, NOT COUNTED, AND THAT IS THE WHOLE COST STORY. Computing the
+      // EXACT clamped count over this over-fetch window costs ~2.6-2.8 s against
+      // the ~85 ms this endpoint takes without it — a ~31× regression on the
+      // discovery front door — because the clamp's join to "Image" forfeits the
+      // covering index the unclamped count scans. Narrowing OVERFETCH does not
+      // rescue it (~27%). One bounded, order-pinned LATERAL sample costs ~257 ms
+      // and agreed with the exact count on this floor for 97 of 97 live
+      // collections. Measurements, and the order-sensitivity that forces the
+      // ORDER BY, are on `PLAYABLE_SAMPLE_SIZE`.
       const ceilingOk = (c: (typeof rows)[number]) =>
         collectionWithinCeiling(c.nsfwLevel ?? 0, browsingLevel);
       const candidateIds = rows.filter(ceilingOk).map((c) => c.id);
-      const [advertisedRows, playableRows] = await Promise.all([
-        getCollectionItemCount({
-          collectionIds: candidateIds,
-          status: CollectionItemStatus.ACCEPTED,
-        }),
-        // The SAME count, clamped to this token's ceiling — what the player will
-        // actually serve.
-        getCollectionItemCount({
-          collectionIds: candidateIds,
-          status: CollectionItemStatus.ACCEPTED,
-          browsingLevel,
-        }),
-      ]);
-      const advertisedMap = new Map(advertisedRows.map((c) => [c.id, Number(c.count)]));
-      const playableMap = new Map(playableRows.map((c) => [c.id, Number(c.count)]));
+      const playableSample = await getCollectionPlayableSample(candidateIds, browsingLevel);
 
       const items: typeof rows = [];
       let firstUnconsumedId: number | undefined;
@@ -239,17 +251,17 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           break;
         }
         if (!ceilingOk(rows[i])) continue;
-        // 🔴 THE DROP, AND WHY IT IS INSIDE THIS WALK RATHER THAN AFTER IT. Both
-        // count maps are absent-means-zero (GROUP BY emits no row for a collection
-        // with no accepted items), which `meetsPlayableFloor` reads as "empty, keep".
-        // Filtering here means a dropped row is walked PAST like a clamped-out one,
-        // so the page still fills to `limit` and `firstUnconsumedId` still advances
-        // — filtering the sliced page afterwards would return short pages and, on a
-        // page that filtered to empty, emit no cursor at all and TERMINATE the feed
-        // while qualifying collections remained.
-        const advertised = advertisedMap.get(rows[i].id) ?? 0;
-        const playable = playableMap.get(rows[i].id) ?? 0;
-        if (!meetsPlayableFloor(advertised, playable)) continue;
+        // 🔴 THE DROP, AND WHY IT IS INSIDE THIS WALK RATHER THAN AFTER IT. The
+        // sample map is absent-means-nothing-sampled (the lateral emits no row for
+        // a collection with no accepted items), which `meetsPlayableFloor` reads as
+        // "nothing to judge, keep". Filtering here means a dropped row is walked
+        // PAST like a clamped-out one, so the page still fills to `limit` and
+        // `firstUnconsumedId` still advances — filtering the sliced page afterwards
+        // would return short pages and, on a page that filtered to empty, emit no
+        // cursor at all and TERMINATE the feed while qualifying collections
+        // remained.
+        const sample = playableSample.get(rows[i].id);
+        if (!meetsPlayableFloor(sample?.sampled ?? 0, sample?.playable ?? 0)) continue;
         items.push(rows[i]);
       }
 
@@ -281,13 +293,19 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       const primaryCoverUsable = (c: (typeof items)[number]) =>
         !!c.image?.url && collectionWithinCeiling(c.image.nsfwLevel ?? 0, browsingLevel);
       const missingCoverIds = items.filter((c) => !primaryCoverUsable(c)).map((c) => c.id);
-      const [followed, fallbackCovers] = await Promise.all([
+      const [countRows, followed, fallbackCovers] = await Promise.all([
+        // 🔴 THE ADVERTISED (UNCLAMPED) COUNT — the same query, over the same
+        // `limit`-sized id list, that this endpoint has always run. It is not a
+        // lie: it is the collection's real size, and the floor above now
+        // guarantees most of it is playable. It is deliberately NOT the sampled
+        // fraction extrapolated to a total — `itemCount` reads as an exact number
+        // and must not carry an estimate — and it is deliberately not the exact
+        // clamped count, which is the ~31× regression this design exists to avoid.
+        getCollectionItemCount({ collectionIds: ids, status: CollectionItemStatus.ACCEPTED }),
         getFollowedCollectionIds(subjectUserId, ids),
         getFallbackCoverImages(missingCoverIds, browsingLevel),
       ]);
-      // No third count query here: `playableMap` was already resolved above for the
-      // floor, over a SUPERSET of `ids`, and it is the clamped number the card must
-      // advertise.
+      const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
       res.status(200).json({
         items: items.map((c) => ({
@@ -295,7 +313,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           name: c.name,
           description: c.description ?? null,
           coverImageUrl: toCoverImageUrl(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
-          itemCount: playableMap.get(c.id) ?? 0,
+          itemCount: countMap.get(c.id) ?? 0,
           curator: { userId: c.userId, username: c.user?.username ?? null },
           isPublic: c.read === CollectionReadConfiguration.Public,
           followed: followed.has(c.id),
@@ -341,10 +359,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       !!c.image?.url && collectionWithinCeiling(c.image.nsfwLevel ?? 0, browsingLevel);
     const missingCoverIds = items.filter((c) => !primaryCoverUsable(c)).map((c) => c.id);
     const [countRows, followed, fallbackCovers] = await Promise.all([
-      // CLAMPED here too — the count must agree with what the player serves in
-      // every mode, or a viewer's own card promises items their ceiling hides.
+      // 🔴 THE EXACT CLAMPED COUNT, WHICH THIS BRANCH CAN AFFORD AND PUBLIC
+      // DISCOVERY CANNOT. `itemCount` here is the number the player will serve, so
+      // a viewer's own card never promises items their ceiling hides. The reason
+      // the same choice is impossible on the public branch is not the query — it
+      // is the POPULATION. This branch counts only the subject's own collections:
+      // a bounded set, already sliced to `limit`, with no over-fetch window and no
+      // 34,577-item contest collection dragged in by a popularity sort. Public
+      // discovery counts up to `limit * 4 + 1` candidates chosen precisely because
+      // the sort ranks the biggest ones first, which is what turns the same clamp
+      // into a ~2.6 s query (see `PLAYABLE_SAMPLE_SIZE`).
       //
-      // 🔴 BUT NO PLAYABLE-FRACTION FLOOR ON THIS BRANCH, DELIBERATELY. These are
+      // 🔴 AND NO PLAYABLE-FRACTION FLOOR ON THIS BRANCH, DELIBERATELY. These are
       // the SUBJECT'S OWN collections: they created or bookmarked every one of
       // them and know it is in this list. Dropping one for being mostly mature
       // makes it look deleted, which is the defect class the detail surface

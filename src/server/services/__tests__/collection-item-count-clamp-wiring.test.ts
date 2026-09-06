@@ -6,12 +6,17 @@ import ts from 'typescript';
 /**
  * 🔴 CALL-SITE LEDGER for `getCollectionItemCount`'s `browsingLevel` clamp.
  *
- * The parameter is OPTIONAL, which is what makes every existing caller safe — and
- * is also exactly why nothing else can see a caller that should have passed it and
- * did not. There is no compile error, no runtime error, and no failing assertion:
- * the call simply returns the UNCLAMPED total, and a discovery card goes back to
- * advertising thousands of items the player will not serve. That is the original
- * defect, restored silently, by a caller written months from now.
+ * The parameter is OPTIONAL, and it moves the query between two wildly different
+ * cost classes with no compile error, no runtime error and no failing assertion.
+ * It is silent in BOTH directions:
+ *
+ *   - Adding it where it does not belong restores a ~31× latency regression on
+ *     App Blocks discovery. Unclamped, the query is an Index Only Scan on the
+ *     covering (collectionId, status) index; the clamp joins "Image", forfeits
+ *     that index, and measured 2829 ms against 85 ms over one live over-fetch
+ *     window. Nothing about the response changes shape — it just gets slow.
+ *   - Dropping it where it does belong sends a viewer's own card back to
+ *     advertising items their ceiling hides.
  *
  * So the population is pinned here: every call site in `src/`, enumerated from the
  * TREE rather than from a list someone maintains, keyed by
@@ -19,13 +24,13 @@ import ts from 'typescript';
  * Adding, removing or re-clamping a call site is then a REVIEWABLE EDIT to this
  * table rather than an invisible change.
  *
- * 🔴 THE PIN IS A LIST, NOT A COUNT, BECAUSE ONE KEY COVERS SEVERAL CALLS. The
- * blocks discovery handler issues THREE: an unclamped "advertised" count, a
- * clamped "playable" one on the public branch, and a clamped one on `mine`. A
- * per-key boolean could not distinguish "the advertised call lost its clamp"
- * (correct) from "the playable call lost its clamp" (the bug), because both keys
- * would still read "mixed". A per-key COUNT could not see a clamped call being
- * swapped for an unclamped one at all. The ordered list sees both.
+ * 🔴 THE PIN IS A LIST, NOT A COUNT, BECAUSE ONE KEY CAN COVER SEVERAL CALLS. The
+ * blocks discovery handler issues two: an unclamped one on the public branch and a
+ * clamped one on `mine`. A per-key boolean could not distinguish "the public call
+ * gained a clamp" (the cost regression) from "the `mine` call lost one" (the
+ * correctness one), because the key would read "mixed" either way. A per-key COUNT
+ * could not see a clamped call swapped for an unclamped one at all. The ordered
+ * list sees both.
  *
  * MECHANISM: the TypeScript AST, not a regex. Call sites are matched by
  * IDENTIFIER (so a `mockGetCollectionItemCount(...)` is not a call to
@@ -100,14 +105,14 @@ interface ExpectedCallSite {
  */
 const EXPECTED_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   'src/pages/api/v1/blocks/collections/index.ts::handler': {
-    // Source order: the two public-branch counts inside one `Promise.all`, then
-    // the `mine`-branch count.
-    clamps: ['unclamped', 'clamped', 'clamped'],
+    // Source order: the public-branch count, then the `mine`-branch count.
+    clamps: ['unclamped', 'clamped'],
     siteNote:
-      "public branch: (1) the ADVERTISED count — the floor's denominator, deliberately unclamped; " +
-      "(2) the PLAYABLE count, clamped, which is both the floor's numerator and the rendered " +
-      'itemCount; then (3) the `mine` branch count, clamped because the number must agree with ' +
-      'the player in every mode (only the DROP is discovery-only)',
+      '(1) PUBLIC discovery: the ADVERTISED size, deliberately UNCLAMPED — clamping it over the ' +
+      'discovery over-fetch window is the ~31x regression this endpoint was redesigned to avoid, ' +
+      'and the playable FLOOR is fed by a bounded sample (getCollectionPlayableSample) instead; ' +
+      "(2) `mine`: CLAMPED, because that branch counts only the subject's own already-sliced " +
+      'collections — a bounded population where the exact clamped count is affordable',
   },
   'src/pages/api/v1/collections/index.ts::handler': {
     clamps: ['unclamped'],
