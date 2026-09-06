@@ -8,12 +8,16 @@ import {
   registerInstrumentationMetric,
   redisCommandsInflight,
   redisCommandDuration,
+  packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
 } from '@civitai/telemetry/client';
+// Type-only: the CONSUMER's view of the bridge object published below. A `import type` cannot pull
+// any of @civitai/redis's runtime into this module's graph — it is erased at build.
+import type { RedisMetricsBridge } from '@civitai/redis';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 // request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
@@ -27,15 +31,38 @@ export * from '@civitai/telemetry/client';
 // Publishing here — where prom-client is already loaded — captures them directly. No eager
 // reader exists; consumed only from @civitai/redis client function bodies (self-heal watchdog +
 // routing-retry path).
-(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+//
+// 🔴 THE `satisfies` IS THE GUARD, AND IT IS THE ONLY THING THAT COVERS THE "@civitai/redis GREW A
+// HANDLE" DIRECTION. Every consumer read over there is optional-chained
+// (`getRedisMetrics()?.packedCodecDuration?.observe(...)`), so a handle the package reads and this
+// object does not publish is a metric that is silently dead: no throw, no warning, and an
+// eternally-empty series indistinguishable from "nothing opted in". No runtime test can see it —
+// the package's own suite installs a fake bridge, and this app's bridge test compares this object
+// only against its own hand-written ledger, so both sides move together whenever one person edits
+// them. Comparing against the CONSUMER'S type is the only check with an independent side.
+//
+// `Record<keyof RedisMetricsBridge, unknown>` is deliberately not just `RedisMetricsBridge`: most
+// handles are declared OPTIONAL over there (so an older app publishing fewer still typechecks), and
+// a plain `satisfies RedisMetricsBridge` therefore accepts every one of them being missing — i.e.
+// it would accept exactly the defect. `Record<…>` makes each key REQUIRED here, and intersecting
+// the real type back in keeps the value SHAPES checked. Excess-property checking on the literal
+// covers the other direction (publishing a handle nothing reads).
+//
+// So: add a field to `RedisMetricsBridge` in @civitai/redis without adding it here and this file
+// stops compiling. That is the intended failure — wire the handle, do not widen the type below.
+const redisMetricsBridge = {
   redisCommandsInflight,
   redisCommandDuration,
+  packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
-};
+} satisfies RedisMetricsBridge & Record<keyof RedisMetricsBridge, unknown>;
+
+(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =
+  redisMetricsBridge;
 
 // pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid
 // a module-init cycle (this module imports pgDb → db-helpers, which would import the

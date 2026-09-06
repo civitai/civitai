@@ -128,6 +128,17 @@ type AffectedListing = { id: string; appBlockId: string | null };
 // Populate each with the PR that ships its consumer, not speculatively. None of the
 // four has a source to derive from, so the `open_count` exception does not reach
 // them: populating one would mean inventing the number.
+//
+// 🔴 MERGE NOTE (#4652 -> #4653, resolved deliberately, NOT by keeping both sides).
+// #4652 landed a block here headed "`open_count` IS THE NEXT ONE, AND ITS SOURCE ROWS
+// NOW EXIST", listing two obligations for "whoever writes that rollup": dedupe at read
+// time, and add `open_count` to the ON CONFLICT list. THIS PR IS THAT ROLLUP and
+// discharges both — the dedup rule is stated above and implemented in
+// `buildAppOpenCountSql`; the ON CONFLICT list now names `open_count`. That block was
+// therefore dropped rather than merged: kept, it would tell the next reader the rollup
+// is unwritten and that `open_count` is unpopulated, in the file whose SQL populates it.
+// #4652 also removed `open_count` from the not-populated list's parenthetical for the
+// same reason; that removal is preserved above.
 // ---------------------------------------------------------------------------
 
 export const appListingMetrics = createMetricProcessor({

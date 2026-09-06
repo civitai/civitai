@@ -2500,24 +2500,78 @@ export const updateCollectionItemsStatus = async ({
   return collection;
 };
 
+/**
+ * Accepted-item counts per collection.
+ *
+ * `browsingLevel` is OPTIONAL and defaults to today's behaviour — omit it and the
+ * emitted SQL is the unclamped query this function has always run (only the table
+ * alias is new), so every existing caller is unaffected. Supply it and the result
+ * is the CLAMPED count: how many items a viewer at that maturity ceiling can
+ * actually see.
+ *
+ * 🔴 THE CLAMPED FORM IS EXACT AND EXPENSIVE — CHECK THE POPULATION BEFORE USING
+ * IT. Unclamped, this is an Index Only Scan on the covering (collectionId, status)
+ * index with no heap access; the clamp's join to "Image" forfeits that index and
+ * becomes a nested loop over every accepted item. Measured on a production-scale
+ * replica: 85 ms unclamped vs 2829 ms clamped over one App Blocks discovery
+ * over-fetch window (97 collections, 298,469 accepted items). Its one production
+ * caller is `mode=mine` of the blocks collections endpoint, whose population is
+ * the subject's own already-sliced collections — bounded, and nothing like the
+ * popularity-sorted discovery window. Public discovery deliberately does NOT use
+ * it; it samples instead (`getCollectionPlayableSample`).
+ *
+ * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
+ * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId`,
+ * so model / post / article collections are counted here too. `nsfwLevel` lives on
+ * `Image`, so an INNER `JOIN "Image"` would silently return 0 for every one of
+ * those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
+ * escape: a non-image item has no image maturity to test and is kept
+ * unconditionally.
+ *
+ * An item whose `imageId` points at a row that no longer exists yields a NULL
+ * `nsfwLevel`, and both halves of the bitwise test are NULL → the item is NOT
+ * counted. That is deliberate and fail-closed: an image we cannot rate is one we
+ * cannot promise is playable, and it matches `getFallbackCoverImages`, whose
+ * inner join drops the same row.
+ *
+ * The maturity test itself is BITWISE (`nsfwLevel & browsingLevel != 0`, plus
+ * unrated 0) — the identical authority the images service, the collection detail
+ * path and `getFallbackCoverImages` use. A `<=` would be wrong: level 29 is a
+ * mixed bucket that intersects a SFW ceiling.
+ */
 export function getCollectionItemCount({
   collectionIds: ids,
   status,
+  browsingLevel,
 }: {
   collectionIds: number[];
   status?: CollectionItemStatus;
+  browsingLevel?: number;
 }) {
   if (ids.length === 0) return [] as { id: number; count: number }[];
 
-  const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
-  if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
+  const where = [Prisma.sql`ci."collectionId" IN (${Prisma.join(ids)})`];
+  if (status) where.push(Prisma.sql`ci."status" = ${status}::"CollectionItemStatus"`);
+  // `!= null`, NOT truthiness: a ceiling of 0 is a real (if degenerate) ceiling
+  // that permits only unrated items, and `if (browsingLevel)` would silently read
+  // it as "no clamp" — i.e. return the FULL count for the most restrictive viewer.
+  if (browsingLevel != null)
+    where.push(
+      Prisma.sql`(ci."imageId" IS NULL OR (i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`
+    );
+
+  // Joined only when clamping, so the unclamped plan every existing caller relies
+  // on is untouched.
+  const join =
+    browsingLevel != null ? Prisma.sql`LEFT JOIN "Image" i ON i."id" = ci."imageId"` : Prisma.empty;
 
   return dbRead.$queryRaw<{ id: number; count: number }[]>`
-    SELECT "collectionId" as "id", COUNT(*) as "count"
-    FROM "CollectionItem"
+    SELECT ci."collectionId" as "id", COUNT(*) as "count"
+    FROM "CollectionItem" ci
+    ${join}
     WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
-      AND ("imageId" IS NOT NULL OR "modelId" IS NOT NULL OR "postId" IS NOT NULL OR "articleId" IS NOT NULL)
-    GROUP BY "collectionId"
+      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL)
+    GROUP BY ci."collectionId"
   `;
 }
 

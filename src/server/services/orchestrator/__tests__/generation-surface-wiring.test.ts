@@ -158,6 +158,39 @@ const describeArg = (a: SurfaceArg): string =>
  */
 type SurfacePin = string | { readonly resolvedBy: string; readonly range: readonly string[] };
 
+interface ExpectedCallSite {
+  /**
+   * 🔴 HOW MANY `buildGenerationContext` CALLS THIS KEY COVERS — and the reason this field exists.
+   *
+   * A key is `file::enclosingFunction`, which is NOT 1:1 with call sites: a function may build a
+   * context more than once. Without a count, the membership checks in this file degrade to "does
+   * the key still exist", and TWO mutations become invisible:
+   *
+   *   · a DELETION INSIDE an existing key — the key survives on its remaining call, so the
+   *     "has not disappeared" check this field replaces stayed green;
+   *   · an ADDITION INSIDE an existing key — the "cannot GROW" check above filters on
+   *     `!(keyOf(c) in EXPECTED_SURFACE_BY_CALL_SITE)`, so a second call added inside an
+   *     ALREADY-PINNED function is not "unexpected" and is never reviewed as a new site.
+   *
+   * ⚠️ SCOPE, STATED HONESTLY: every key below is currently `sites: 1`, so the DELETION half is an
+   * invariant guard rather than a live fix — with one call per key, removing it also removes the
+   * key, which the previous membership check already caught. The ADDITION half closes a hole that
+   * is live today. The deletion half arms itself the moment any pinned function gains a second
+   * call, which is exactly when nobody would think to re-check this file. The identical guard in
+   * `moderation-source-wiring.test.ts` was NOT preventative — there, deleting the ACE Audio audit
+   * from `generateFromGraph` took a 9-site ledger to 8 and left it 10/10 green.
+   */
+  sites: number;
+  /**
+   * What the `sites` calls under this key ARE, in source order. Purely for the failure message: a
+   * count mismatch can only report "expected N, found M", so this is what lets the message name the
+   * call that vanished instead of sending the reader to diff the function by hand.
+   */
+  siteNote: string;
+  /** The expression EVERY call under this key must pass in the `surface` slot. */
+  surface: SurfacePin;
+}
+
 /** The ONE approved resolver. Anything else in the surface slot fails. */
 const SURFACE_RESOLVER = 'generationSurfaceForRequest';
 /** …and the ONE module it may be imported from. See {@link importsResolverFromDefiningModule}. */
@@ -172,8 +205,12 @@ const SURFACE_RESOLVER_MODULE = '~/server/services/orchestrator/generation-surfa
  * the `BlockWorkflowSnapshot` wire (see
  * `src/server/schema/blocks/workflow.schema.ts`'s `modelSubstitutions` contract).
  * A row added without that is the failure described above, just made official.
+ *
+ * 🔴 CHANGING A `sites` COUNT IS EQUALLY REVIEWABLE. Lowering one is how a removed
+ * context build gets waved through; do it only when the removal itself is the
+ * intended change, and say why in the same commit.
  */
-const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, SurfacePin> = {
+const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   // 🔴 RESOLVED, NOT LITERAL (#3665). These two procedures serve the on-site
   // generator AND every bearer-token caller — same code path, opposite meanings.
   // On-site, #3520 calls the substitution CORRECT (a stale localStorage id after
@@ -184,12 +221,14 @@ const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, SurfacePin> = {
   // substitution was filed under the one case everyone agrees is working as
   // intended — and thereby excluded from the incidence number gating phase 3.
   'src/server/routers/orchestrator.router.ts::generateFromGraph': {
-    resolvedBy: SURFACE_RESOLVER,
-    range: REQUEST_RESOLVED_GENERATION_SURFACES,
+    sites: 1,
+    siteNote: 'the graph-submit context build, before the workflow is submitted',
+    surface: { resolvedBy: SURFACE_RESOLVER, range: REQUEST_RESOLVED_GENERATION_SURFACES },
   },
   'src/server/routers/orchestrator.router.ts::whatIfFromGraph': {
-    resolvedBy: SURFACE_RESOLVER,
-    range: REQUEST_RESOLVED_GENERATION_SURFACES,
+    sites: 1,
+    siteNote: 'the cost-estimate context build (no submit on this path)',
+    surface: { resolvedBy: SURFACE_RESOLVER, range: REQUEST_RESOLVED_GENERATION_SURFACES },
   },
   // The App Blocks bridge — the surface the issue is about. The id was written
   // by an app author and the correction was unobservable. This ONE function is
@@ -202,11 +241,29 @@ const EXPECTED_SURFACE_BY_CALL_SITE: Record<CallSiteKey, SurfacePin> = {
   // builds a context nor plumbs the record. Adding a call site there without the
   // plumbing must fail — that is the whole reason this table is keyed on the
   // function and not on the file.
-  'src/server/routers/blocks.router.ts::createBlockTextToImageStep': 'block',
+  'src/server/routers/blocks.router.ts::createBlockTextToImageStep': {
+    sites: 1,
+    siteNote: 'the single block text-to-image context build, whose records reach the block wire',
+    surface: 'block',
+  },
   // Comics / preset image generation: server-composed graph input.
-  'src/server/services/orchestrator/preset-image-gen.service.ts::submitPresetImageGen': 'preset',
-  'src/server/services/orchestrator/preset-image-gen.service.ts::whatIfPresetImageGen': 'preset',
+  'src/server/services/orchestrator/preset-image-gen.service.ts::submitPresetImageGen': {
+    sites: 1,
+    siteNote: 'the preset submit context build',
+    surface: 'preset',
+  },
+  'src/server/services/orchestrator/preset-image-gen.service.ts::whatIfPresetImageGen': {
+    sites: 1,
+    siteNote: 'the preset cost-estimate context build',
+    surface: 'preset',
+  },
 };
+
+/** Total pinned call sites — the floor the enumeration guard must clear. */
+const EXPECTED_TOTAL_SITES = Object.values(EXPECTED_SURFACE_BY_CALL_SITE).reduce(
+  (n, pin) => n + pin.sites,
+  0
+);
 
 /**
  * Candidate files, enumerated from the TREE rather than from a hand-kept list.
@@ -418,7 +475,9 @@ describe('generation-context surface wiring', () => {
     if (enumerationError) throw enumerationError;
     // Without this, a broken enumeration would make every assertion below pass
     // vacuously over an empty list.
-    expect(sites.length).toBeGreaterThanOrEqual(Object.keys(EXPECTED_SURFACE_BY_CALL_SITE).length);
+    // Against the SUM of pinned sites, not the number of keys: with per-key counts
+    // the keys are a weaker floor than the sites they claim.
+    expect(sites.length).toBeGreaterThanOrEqual(EXPECTED_TOTAL_SITES);
     // And no call site may resolve to an unnamed scope — that would collapse
     // distinct handlers onto one key and re-create the file-scoped hole.
     expect(sites.filter((c) => c.fn === '<module scope>')).toEqual([]);
@@ -435,20 +494,57 @@ describe('generation-context surface wiring', () => {
     expect(unexpected).toEqual([]);
   });
 
-  it('no pinned call site has disappeared (the table describes the live tree)', () => {
-    // The other direction: a stale row would silently stop guarding anything,
-    // and would also keep the surface-coverage assertion below green off a
-    // function that no longer exists.
-    const live = new Set(sites.map(keyOf));
-    const missing = Object.keys(EXPECTED_SURFACE_BY_CALL_SITE).filter((k) => !live.has(k));
-    expect(missing).toEqual([]);
+  it('🔴 every pinned key covers EXACTLY the number of call sites it claims (no silent SHRINK, and no add hiding inside a key)', () => {
+    // 🔴 COUNTED PER KEY, NOT MERELY PRESENT. This REPLACES a set-membership check
+    // ("no pinned call site has disappeared"), which could only ever ask whether a
+    // key still exists. The key is `file::enclosingFunction`, so a function that
+    // builds two contexts occupies ONE key: membership goes green the moment ANY of
+    // its calls survives, and it is blind in the other direction too, because the
+    // "cannot GROW" check above only looks at keys NOT in the table.
+    //
+    // A stale row still fails here — a row whose function is gone reads as 0 found
+    // against a pinned 1 — so nothing the replaced check covered is given up.
+    const liveByKey = new Map<CallSiteKey, CallSite[]>();
+    for (const c of sites) {
+      const k = keyOf(c);
+      const bucket = liveByKey.get(k);
+      if (bucket) bucket.push(c);
+      else liveByKey.set(k, [c]);
+    }
+
+    const wrong = Object.entries(EXPECTED_SURFACE_BY_CALL_SITE)
+      .map(([key, pin]) => {
+        const live = liveByKey.get(key) ?? [];
+        if (live.length === pin.sites) return null;
+        const where = live.length
+          ? `remaining at line(s) ${live.map((c) => c.line).join(', ')}`
+          : 'NONE remain';
+        if (live.length < pin.sites)
+          return (
+            `${key} — pinned as covering ${pin.sites} ${NEEDLE} call(s), found ${live.length}. ` +
+            `${where}. The pinned calls are: ${pin.siteNote}. A context build was DELETED from ` +
+            `inside this function: if the key still exists, nothing else in this file or the ` +
+            `suite can see it. If the removal is intended, lower \`sites\` on this row in the ` +
+            `same change and say why — do not lower it to make this pass.`
+          );
+        return (
+          `${key} — pinned as covering ${pin.sites} ${NEEDLE} call(s), found ${live.length} ` +
+          `(at line(s) ${live.map((c) => c.line).join(', ')}). The pinned calls are: ` +
+          `${pin.siteNote}. A new context build was added inside an ALREADY-pinned function, so ` +
+          `the "set cannot GROW" check above did not see it — its key is already in the table. ` +
+          `Confirm the new call plumbs its recorded substitutions onward exactly as this row's ` +
+          `surface requires, then raise \`sites\` in the same change.`
+        );
+      })
+      .filter((m): m is string => m !== null);
+    expect(wrong).toEqual([]);
   });
 
   it('🔴 every call site passes the surface its pinned function must declare', () => {
     const wrong = sites
       .filter((c) => keyOf(c) in EXPECTED_SURFACE_BY_CALL_SITE)
       .map((c) => {
-        const pin = EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)];
+        const pin = EXPECTED_SURFACE_BY_CALL_SITE[keyOf(c)].surface;
         const at = `${c.file}:${c.line} inside ${c.fn}()`;
         const got = describeArg(c.surfaceArg);
         if (typeof pin === 'string') {
@@ -522,9 +618,9 @@ describe('generation-context surface wiring', () => {
     // range could list a surface nothing emits and this assertion would certify
     // the orphan instead of catching it.
     const covered = new Set<string>();
-    for (const pin of Object.values(EXPECTED_SURFACE_BY_CALL_SITE)) {
-      if (typeof pin === 'string') covered.add(pin);
-      else for (const s of pin.range) covered.add(s);
+    for (const { surface } of Object.values(EXPECTED_SURFACE_BY_CALL_SITE)) {
+      if (typeof surface === 'string') covered.add(surface);
+      else for (const s of surface.range) covered.add(s);
     }
     expect([...covered].sort()).toEqual([...GENERATION_SURFACES].sort());
   });

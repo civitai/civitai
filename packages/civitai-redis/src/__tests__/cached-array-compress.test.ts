@@ -367,8 +367,12 @@ describe('SEAM LEDGER: every redis.packed call site in cached-array.ts is compre
     expect(missing).toEqual([]);
   });
 
-  it('packedOptions is derived from the option, not hardcoded', () => {
-    expect(src).toMatch(/const packedOptions = \{ compress \} as const;/);
+  // `cacheName: key` joined the binding when the codec duration histogram landed. It is pinned in
+  // the same assertion because it carries its own hazard: `key` is the cache PREFIX, and the label
+  // must never become the per-id `${key}:${id}` (that would be unbounded prom cardinality). Both
+  // halves are the shorthand/identifier form, i.e. derived from the caller, never hardcoded.
+  it('packedOptions is derived from the options, not hardcoded', () => {
+    expect(src).toMatch(/const packedOptions = \{ compress, cacheName: key \} as const;/);
   });
 });
 

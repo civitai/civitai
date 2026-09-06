@@ -60,10 +60,16 @@ describe('actions.type enum drift', () => {
   const actionsBlocks = enumBlocks.filter((b) => b.table === 'default.actions');
   const actionsBlock = actionsBlocks[actionsBlocks.length - 1];
 
-  // The prod indices this guard was written against (SHOW CREATE TABLE actions,
-  // 2026-08-21). These predate the migrations directory, so no file here introduces them
-  // — but any migration that RESTATES the column must reproduce them exactly, because a
+  // The indices every migration that RESTATES this column must reproduce exactly, because a
   // MODIFY COLUMN is a replacement.
+  //
+  // ⚠️ 1-21 are the prod indices this guard was originally written against (SHOW CREATE
+  // TABLE actions, 2026-08-21) and predate the migrations directory, so no file there
+  // introduces them. 🔴 THAT IS NO LONGER TRUE OF THE WHOLE MAP: 22-25 were added on
+  // 2026-09-05 and ARE introduced by files in that directory (see the block below). The
+  // original sentence said it of every entry, which the four new ones falsify — it is split
+  // rather than deleted because the 1-21 half is still the reason those indices cannot be
+  // re-derived from any file here.
   //
   // 🔴 Do not add a name here to silence a failing case. That is the one-line bypass of
   // this whole guard, and it produces exactly the "looks instrumented, writes no rows"
@@ -90,13 +96,38 @@ describe('actions.type enum drift', () => {
     ['Image_Remix_Click', 19],
     ['Generator_Submit', 20],
     ['Generator_JobLinked', 21],
+    // 🔴 22-25 ADDED 2026-09-05, AND THIS IS A WIDENING OF THE GUARD, NOT AN EXEMPTION —
+    // read the warning above before assuming otherwise. Every name below is already
+    // carried by an APPLIED migration at exactly this index (`Feed_TagBar_Click` by
+    // 2026-08-21-feed-tag-bar-action.sql, the three announcement values by
+    // 2026-09-04-announcement-click-action.sql). Listing them here makes the
+    // "restates every pre-existing value at the index it already has" case cover them;
+    // it does NOT exempt anything from needing a migration, because the `it.each` below
+    // is driven by `ActionType` and skips only names present in this map — and each of
+    // these four is in a migration already.
+    //
+    // WHY IT MATTERED: before this, values past 21 were checked for NAME PRESENCE only.
+    // Measured — editing a migration to `'Announcement_Unmute' = 30` passed 10/10, i.e.
+    // the one destructive class the migrations' own headers forbid ("Do NOT renumber…
+    // that WOULD rewrite the whole table") was unguarded, and every value added after
+    // the baseline enlarged the blind set. Positive control from the same measurement:
+    // dropping `'ProfanitySearch' = 16` correctly reds, so the mechanism itself works.
+    ['Feed_TagBar_Click', 22],
+    ['Announcement_Click', 23],
+    ['Announcement_Mute', 24],
+    ['Announcement_Unmute', 25],
   ]);
 
   it('freezes the pre-existing baseline', () => {
     // Growing this map is how a new type gets exempted without a migration, so the size
     // is pinned. If prod legitimately gains a value outside these migrations, update it
     // deliberately and say why.
-    expect(PRE_EXISTING.size).toBe(21);
+    //
+    // 21 -> 25 on 2026-09-05: the four values above were moved from "name checked, index
+    // unchecked" into the index-pinned set. The number is a tripwire on THIS list, so it
+    // moves with it; what must never happen is a name being added here INSTEAD of to a
+    // migration.
+    expect(PRE_EXISTING.size).toBe(25);
   });
 
   it('found an ALTER on default.actions to scan', () => {
