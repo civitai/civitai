@@ -2020,7 +2020,8 @@ export const permaDeleteModelById = async ({
   let versionIds: number[] = [];
 
   // Resolved BEFORE the tx, not inside it and not after: `CollectionItem` cascades
-  // from both `Model` and `Image`, so post-commit there is nothing left to read, and a
+  // from `Model`, `Post` AND `Image` — all three of which this transaction destroys —
+  // so post-commit there is nothing left to read, and a
   // failed statement inside a Postgres tx aborts the whole tx — this bookkeeping read
   // must never be able to take the delete down with it. The resolver is non-throwing,
   // so a failure costs the reindex, not the deletion.
