@@ -94,9 +94,66 @@ export function toCoverImageUrl(
 }
 
 /**
+ * The cover fields a block collection card carries on the wire, produced TOGETHER
+ * from ONE image so they can never describe different images.
+ *
+ * 🔴 `coverNsfwLevel` IS NOT THE COLLECTION'S `nsfwLevel`, AND THE NAME IS THE
+ * GUARD. A Collection's own `nsfwLevel` is a bitmask OR-ed over its items, so a
+ * 97%-safe contest collection and a 1%-safe mature one both carry 29 — it cannot
+ * separate them, and a consumer that blurred on it would blur nearly everything or
+ * nothing. This field is a much narrower claim: the maturity level of THE SINGLE
+ * IMAGE being served as `coverImageUrl`, so a consumer can gate the thumbnail it
+ * is actually about to paint. Never rename it to `nsfwLevel`.
+ *
+ * 🔴 ABSENT MEANS "NO COVER", AND `0` IS A REAL LEVEL (unrated). Consumers branch
+ * on `undefined` (→ fall back to their own domain ceiling) versus a supplied
+ * value (→ authoritative, gate on it), so emitting `0` for "there is no cover"
+ * would silently move them onto the wrong path. When `coverImageUrl` is null the
+ * field is OMITTED; when a cover exists and is unrated, `0` is published as a real
+ * value.
+ */
+export type BlockCollectionCoverFields = {
+  coverImageUrl: string | null;
+  coverNsfwLevel?: number;
+};
+
+/**
+ * Project ONE image into the pair of cover fields — the url and the maturity level
+ * OF THAT SAME IMAGE.
+ *
+ * 🔴 WHY THIS IS ONE FUNCTION AND NOT TWO. The discovery cover is the primary
+ * `Collection.image` OR a maturity-clamped fallback item, chosen per collection.
+ * Publishing the primary's level beside a fallback url is WORSE than publishing
+ * nothing: a consumer treats a supplied level as authoritative and an absent one as
+ * "fall back to the ceiling", so a mismatched level is a lie it will gate on.
+ * Taking a single image and emitting both fields from it makes the mismatch
+ * unrepresentable rather than merely tested for — the caller picks the image once.
+ *
+ * SEMANTIC OF THE LEVEL: it is the level of THE IMAGE BEING SERVED as the cover,
+ * whichever image that is. For a fallback cover that image is the collection's
+ * NEWEST clamped accepted item (`getFallbackCoverImages` orders by
+ * `ci."createdAt" DESC`) — it is deliberately not a "best" or "highest-rated"
+ * representative, and nothing here ranks items.
+ *
+ * The `coverImageUrl === null` test — not a separate "is there an image" check —
+ * is what ties the presence of the level to the presence of the url: the two are
+ * decided by the same expression, so they cannot drift apart.
+ */
+export function toCoverFields(
+  image: { url?: string | null; type?: string | null; nsfwLevel?: number | null } | null | undefined
+): BlockCollectionCoverFields {
+  const coverImageUrl = toCoverImageUrl(image);
+  // No cover → the field is ABSENT (not 0); see the type's doc comment.
+  if (coverImageUrl === null) return { coverImageUrl: null };
+  // A cover with a null/absent level is UNRATED, which is the real level 0 — the
+  // same `?? 0` normalisation every other maturity read on this surface uses.
+  return { coverImageUrl, coverNsfwLevel: image?.nsfwLevel ?? 0 };
+}
+
+/**
  * Fallback cover source for collections whose own cover is null OR is itself over
- * the ceiling: the media (url,type) of each collection's most-recent ACCEPTED
- * item WHOSE OWN `Image.nsfwLevel` is PERMITTED by the token's clamped
+ * the ceiling: the media (url,type,nsfwLevel) of each collection's most-recent
+ * ACCEPTED item WHOSE OWN `Image.nsfwLevel` is PERMITTED by the token's clamped
  * `browsingLevel`. This is the maturity clamp the discovery cover MUST apply — a
  * MIXED-bucket collection (nsfwLevel 29) intersects a SFW ceiling and passes the
  * collection-level discovery gate, but its newest item can be R/X; surfacing that
@@ -108,19 +165,27 @@ export function toCoverImageUrl(
  * collection (filtering after `distinct` would drop the cover entirely). Returns
  * a Map keyed by collectionId; a collection with no permitted item is absent
  * (→ placeholder tile).
+ *
+ * 🔴 `nsfwLevel` IS SELECTED, NOT JUST FILTERED ON. The endpoint publishes the
+ * level of the cover it actually serves (`toCoverFields`), and for a fallback
+ * cover THIS row is that cover — so its own level has to travel with it. Reading
+ * the primary `Collection.image`'s level instead would describe a different image
+ * (that is precisely the image this map exists to REPLACE), which is the one
+ * failure mode a maturity field must not have.
  */
 export async function getFallbackCoverImages(
   collectionIds: number[],
   browsingLevel: number
-): Promise<Map<number, { url: string | null; type: string | null }>> {
+): Promise<Map<number, { url: string | null; type: string | null; nsfwLevel: number }>> {
   if (collectionIds.length === 0) return new Map();
   const rows = await dbRead.$queryRaw<
-    { collectionId: number; url: string | null; type: string | null }[]
+    { collectionId: number; url: string | null; type: string | null; nsfwLevel: number | null }[]
   >`
     SELECT DISTINCT ON (ci."collectionId")
       ci."collectionId" as "collectionId",
       i."url" as "url",
-      i."type"::text as "type"
+      i."type"::text as "type",
+      i."nsfwLevel" as "nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i."id" = ci."imageId"
     WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
@@ -128,10 +193,11 @@ export async function getFallbackCoverImages(
       AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)
     ORDER BY ci."collectionId", ci."createdAt" DESC
   `;
-  const map = new Map<number, { url: string | null; type: string | null }>();
+  const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();
   for (const r of rows) {
     if (r.collectionId != null && r.url) {
-      map.set(r.collectionId, { url: r.url, type: r.type ?? null });
+      // An unrated image stores 0; a null column read is the same "unrated" claim.
+      map.set(r.collectionId, { url: r.url, type: r.type ?? null, nsfwLevel: r.nsfwLevel ?? 0 });
     }
   }
   return map;
