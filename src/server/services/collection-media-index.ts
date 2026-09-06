@@ -36,6 +36,23 @@ import { collectionsSearchIndex } from '~/server/search-index';
 //      (fetched by a separate `db.image.findMany` in pullData and shipped as
 //       `user.profilePicture` on EVERY collection document — not a CTE at all)
 //
+// ⚠️ ROUTE 7 IS NARROWER THAN THE OTHER SIX, AND ONLY COVERS DELETING A *LIVE* AVATAR.
+// It matches `u."profilePictureId" IN (ids)`, i.e. images that are SOMEONE'S AVATAR
+// RIGHT NOW. The usual way an avatar image dies is the deferred reaper, and that path
+// cannot match: `remove-replaced-images` calls `getStillReferencedImageIds`, which
+// filters out every id that is still a `profilePictureId`, before it calls
+// `deleteImages`. So for a REPLACED avatar this leg resolves zero collections, by
+// construction, every time. `deleteUser` is the same shape — it deletes the user's
+// collections before their images.
+//
+// The gap that leaves is real and is NOT closed here: a user changes their avatar, the
+// old Image row and its object are destroyed 30 days later, and every collection they
+// own still ships `user.profilePicture` pointing at a dead url. Closing it needs an
+// enqueue at REPLACEMENT time, which is a different trigger from removal and outside
+// what this module is wired to. Tracked separately. The leg is kept because it is
+// correct for the case it does match (a moderator or ingestion delete of a live
+// avatar) and costs ~28, bounded because `profilePictureId` is `@unique`.
+//
 // Route 6 is the one that matters most on screen: CollectionCard renders
 // `if (data.image) return [data.image]`, so a cover WINS over every item image, and
 // most public collections with a cover use one that is not among their own items.
@@ -157,8 +174,8 @@ async function coverIndexExists() {
  * CollectionItem_model3dId_idx, and User_profilePictureId_key + Collection_userId_idx
  * for the avatar). The article leg is NOT a probe — `CollectionItem_article_idx` is
  * `("collectionId","articleId")` and nothing leads on `articleId`, so it scans that
- * partial index (measured ~2,799 rows per outer row, against 2.00 for postId). It is
- * bounded — the index is 7.7 MB — so it is kept rather than given an index of its own.
+ * partial index: row estimate 271 per outer row, against 6 for the postId leg. It is
+ * bounded — the index is 7,712 kB — so it is kept rather than given one of its own.
  * The cover leg is included only when its index is valid; see `coverIndexExists`.
  */
 function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {

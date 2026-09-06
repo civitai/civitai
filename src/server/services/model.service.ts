@@ -2135,6 +2135,12 @@ export const permaDeleteModelById = async ({
     // `enqueueCollectionRebuild` is non-throwing by contract, but wrapped anyway so
     // this step matches its siblings above rather than resting the S3 and
     // storage-resolver cleanup below on another module keeping that promise.
+    //
+    // ⚠️ This catch is therefore UNREACHABLE through the real callee, and no test
+    // pins it: removing the try/catch entirely leaves the suite green, measured. It is
+    // defence-in-depth against the contract being broken later, not covered behaviour.
+    // Exercising it would mean mocking collection-media-index in a suite that
+    // deliberately runs the real one so its payload assertions mean something.
     try {
       await enqueueCollectionRebuild({
         ...collectionsToRebuild,

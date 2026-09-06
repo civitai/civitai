@@ -193,6 +193,11 @@ describe('getCollectionIdsForImages — routes', () => {
   });
 });
 
+// ⚠️ These gate assertions are SPELLED, not structural: they check the statement text
+// mentions `pg_index` / `indisvalid` / `relnamespace`, so a predicate written
+// `AND x.indisvalid = false` would satisfy them. With `$queryRaw` behind a mock there
+// is no way to evaluate the predicate without a real database, so this is the limit of
+// what a unit test can pin here — recorded rather than papered over.
 describe('getCollectionIdsForImages — the cover-index gate', () => {
   // 🔴 A `CREATE INDEX CONCURRENTLY` row appears in pg_class from the START of the
   // build and stays there permanently if the build FAILS. A name-only check therefore
