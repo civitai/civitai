@@ -16,24 +16,33 @@ import { collectionsSearchIndex } from '~/server/search-index';
 // `Update`, never `Delete`: the collection still exists, only its document needs
 // rebuilding. A `Delete` would evict a collection that is still perfectly real.
 //
-// 🔴 AN IMAGE REACHES A COLLECTION DOCUMENT BY SIX ROUTES, ONLY ONE OF WHICH IS A
+// 🔴 AN IMAGE REACHES A COLLECTION DOCUMENT BY SEVEN ROUTES, ONLY ONE OF WHICH IS A
 // `CollectionItem.imageId` ROW. Resolving by that column alone — the obvious reading —
-// misses five of them, including the two most common. Enumerated from the index's own
-// CTEs (collections.search-index.ts) plus the document's cover field:
+// misses six of them, including the two most common.
 //
-//   1. imageItemImage    CollectionItem.imageId  -> the image directly
-//   2. postItemImage     CollectionItem.postId   -> that post's FIRST image
-//   3. modelItemImage    CollectionItem.modelId  -> image -> Post -> ModelVersion -> Model
-//   4. articleItemImage  CollectionItem.articleId-> Article.coverId
-//   5. model3dItemImage  CollectionItem.model3dId-> Model3D.thumbnailImageId
-//   6. the collection's own cover, Collection.imageId (SetNull, not a CollectionItem)
+// 🔴 ENUMERATE FROM `pullData` AND `transformData`, NOT FROM THE CTEs. An earlier
+// version of this comment said SIX and derived them from the item-image CTE list; that
+// method structurally cannot see route 7, which is a separate `findMany`. If you add a
+// route, the question to ask is "what image ids does the document contain", not "what
+// does the big CTE join".
+//
+//   1. imageItemImage    CollectionItem.imageId   -> the image directly
+//   2. postItemImage     CollectionItem.postId    -> that post's FIRST image
+//   3. modelItemImage    CollectionItem.modelId   -> image -> Post -> ModelVersion -> Model
+//   4. articleItemImage  CollectionItem.articleId -> Article.coverId
+//   5. model3dItemImage  CollectionItem.model3dId -> Model3D.thumbnailImageId
+//   6. the collection's own cover, Collection.imageId
+//   7. the owner's avatar, User.profilePictureId -> Collection.userId
+//      (fetched by a separate `db.image.findMany` in pullData and shipped as
+//       `user.profilePicture` on EVERY collection document — not a CTE at all)
 //
 // Route 6 is the one that matters most on screen: CollectionCard renders
 // `if (data.image) return [data.image]`, so a cover WINS over every item image, and
 // most public collections with a cover use one that is not among their own items.
 //
-// The joins below mirror the CTEs' own conditions — including `m."userId" =
-// p."userId"` — so this and the index agree on which image a collection would show.
+// The joins for routes 2-5 mirror the CTEs' own conditions — including
+// `m."userId" = p."userId"` — so this and the index agree on which image a collection
+// would show.
 //
 // This is a LEAF module on purpose. It is imported by both model.service and
 // image.service, and its sibling collection-index-sync.ts already imports
@@ -49,13 +58,18 @@ import { collectionsSearchIndex } from '~/server/search-index';
 
 // `CollectionItem.modelId` / `.postId` / `.imageId` are all `onDelete: Cascade`, so on
 // a HARD delete the membership rows disappear with the row that owned them. Callers on
-// a hard-delete path must therefore resolve ids BEFORE the delete; a soft delete or an
-// unpublish leaves the rows in place and can resolve after.
+// a hard-delete path must therefore resolve ids BEFORE the delete.
+//
+// ⚠️ `Collection.imageId` and `User.profilePictureId` are NOT cascade-cleared, and in
+// the deployed database they are not even foreign keys — `Collection` carries exactly
+// one FK (`Collection_userId_fkey`), so a cover can and does point at an `Image` row
+// that no longer exists. Nothing here depends on that: routes 6 and 7 are resolved
+// before the delete like the rest. It is recorded because the Prisma schema's
+// `onDelete: SetNull` reads like a guarantee the database does not actually make.
 //
 // 🔴 EVERY LEG MUST BE INDEPENDENTLY INDEXABLE. Bridging two columns with an `OR`
 // makes the predicate non-sargable and costs a full scan of a ~208M-row table, so the
-// legs stay in separate UNION branches and each was checked to produce its own index
-// scan. Do not merge them back into one `WHERE ... OR ...`.
+// legs stay in separate UNION branches. Do not merge them into one `WHERE ... OR ...`.
 const DEFAULT_COLLECTION_CAP = 10_000;
 
 // One enqueue writes its ids into a Redis queue as a single command. Chunking keeps
@@ -83,9 +97,9 @@ function applyCap(rows: { collectionId: number }[], cap: number): CollectionsToR
 }
 
 function logFailure(name: string, source: string, message: string, error: unknown) {
-  // `safeError`, never the raw Error: `logToAxiom` JSON.stringifies its payload and a
-  // bare Error serialises to `{}`, which would record that something failed while
-  // discarding the only part worth logging.
+  // `safeError`, never the raw Error: `logToAxiom` JSON.stringifies its payload and an
+  // Error has no enumerable own properties, so a bare one serialises to `{}` — which
+  // records that something failed while discarding the only part worth logging.
   logToAxiom({
     type: 'error',
     name,
@@ -95,51 +109,57 @@ function logFailure(name: string, source: string, message: string, error: unknow
   }).catch(() => undefined);
 }
 
-/** Collections holding these models as items. Membership rows only — a model item's
- * gallery image is resolved from the model, so no image walk is needed here. */
-function modelLegSql(modelIds: number[], cap: number) {
-  return dbWrite.$queryRaw<{ collectionId: number }[]>`
-    SELECT DISTINCT "collectionId" FROM "CollectionItem"
-    WHERE "modelId" IN (${Prisma.join(modelIds)})
-    LIMIT ${cap + 1}
-  `;
-}
-
 export const COVER_INDEX_NAME = 'Collection_imageId_idx';
 
 /**
- * Is the cover leg's index present?
+ * Is the cover leg's index present AND USABLE?
  *
- * 🔴 The cover leg is GATED on this, because without the index it is a parallel
- * sequential scan of a ~17.3M-row / 4.9 GB table — measured cost 451,531, against
- * ~10,000 for every other leg of the same query combined — on a user-facing delete
- * path, and `deleteImages` would pay it once per 100-image batch. Migrations here are
- * applied by hand, so "the migration ships in the same PR" does not mean the index
- * exists when this code first runs; the gate is what makes that ordering safe rather
- * than merely documented.
+ * 🔴 `pg_class` alone is NOT sufficient, and getting this wrong fails OPEN. A
+ * `CREATE INDEX CONCURRENTLY` row appears in `pg_class` from the START of the build
+ * and stays there permanently if the build fails — so a name-only check returns true
+ * throughout a multi-minute build of a 2.8 GB heap, and forever after a failure. That
+ * is precisely the window this gate exists to cover: the deploy-then-migrate ordering
+ * would switch the cover leg on while the index is still being built, and every image
+ * delete would pay the sequential scan concurrently with the build, on the primary,
+ * up to five at a time (`deleteImages` runs `Limiter({ batchSize: 100 })`, whose
+ * default concurrency is 5). `indisvalid AND indisready` is what makes the gate mean
+ * "usable by the planner" rather than "someone started building this once".
  *
- * A catalog lookup, not a cached flag: it is an index probe on pg_class costing far
- * less than the six-leg query it guards, and re-reading it means the leg starts
- * working the moment the migration is applied, with no deploy or restart.
+ * Schema-qualified because `relname` is not unique across schemas and this database
+ * has a second one (`fk_remediation_backup`).
  *
- * Once the index exists in every environment, this gate and its branch can be deleted.
+ * A catalog lookup, not a cached flag: two index scans, cost 5.01 — far less than the
+ * seven-leg query it guards — and re-reading it means the leg starts working the
+ * moment the index becomes valid, with no deploy or restart.
+ *
+ * Once the index is valid in every environment, this gate and its branch can go.
  */
 async function coverIndexExists() {
   const rows = await dbWrite.$queryRaw<{ present: boolean }[]>`
     SELECT EXISTS (
-      SELECT 1 FROM pg_class WHERE relname = ${COVER_INDEX_NAME} AND relkind = 'i'
+      SELECT 1 FROM pg_class c
+      JOIN pg_index x ON x.indexrelid = c.oid
+      WHERE c.relname = ${COVER_INDEX_NAME}
+        AND c.relkind = 'i'
+        AND c.relnamespace = 'public'::regnamespace
+        AND x.indisvalid
+        AND x.indisready
     ) AS "present"
   `;
   return rows[0]?.present === true;
 }
 
 /**
- * Collections whose document shows any of these images, by all six routes.
+ * Collections whose document shows any of these images, by all seven routes.
  *
- * Plans verified with EXPLAIN on a read replica: five legs are index probes
+ * Plans verified with EXPLAIN on a read replica. Five legs are single-index probes
  * (CollectionItem_imageId_lookup, CollectionItem_postId_lookup, CollectionItem_modelId,
- * CollectionItem_article_idx, CollectionItem_model3dId_idx). The sixth — the cover —
- * is included only when its index exists; see `coverIndexExists`.
+ * CollectionItem_model3dId_idx, and User_profilePictureId_key + Collection_userId_idx
+ * for the avatar). The article leg is NOT a probe — `CollectionItem_article_idx` is
+ * `("collectionId","articleId")` and nothing leads on `articleId`, so it scans that
+ * partial index (measured ~2,799 rows per outer row, against 2.00 for postId). It is
+ * bounded — the index is 7.7 MB — so it is kept rather than given an index of its own.
+ * The cover leg is included only when its index is valid; see `coverIndexExists`.
  */
 function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
   const ids = Prisma.join(imageIds);
@@ -171,79 +191,70 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
       SELECT ci."collectionId" FROM "CollectionItem" ci
         WHERE ci."model3dId" IN (
           SELECT m3.id FROM "Model3D" m3 WHERE m3."thumbnailImageId" IN (${ids}))
+      UNION
+      SELECT c.id AS "collectionId" FROM "Collection" c
+        JOIN "User" u ON u.id = c."userId"
+        WHERE u."profilePictureId" IN (${ids})
     ) x
     LIMIT ${cap + 1}
   `;
 }
 
 /**
- * Resolve the collections whose documents show the given models/images.
+ * Resolve the collections whose documents show any of the given images.
  *
  * Reads through `dbWrite` so a just-committed transaction is visible — the replica may
  * still be behind, and a missed row here is a permanently stale document, not a late
- * one. Never throws: a caller on a hard-delete path runs this immediately before its
- * delete, so an exception would cancel the deletion the user actually asked for.
+ * one. Never throws: callers run this immediately before their delete, so an exception
+ * would cancel the deletion the user actually asked for.
  */
-export async function getCollectionIdsForMedia({
-  modelIds = [],
-  imageIds = [],
+export async function getCollectionIdsForImages({
+  imageIds,
   source = 'unknown',
   cap = DEFAULT_COLLECTION_CAP,
 }: {
-  modelIds?: number[];
-  imageIds?: number[];
+  imageIds: number[];
   source?: string;
   cap?: number;
 }): Promise<CollectionsToRebuild> {
-  const uniqueModelIds = [...new Set(modelIds)];
   const uniqueImageIds = [...new Set(imageIds)];
-  if (!uniqueModelIds.length && !uniqueImageIds.length) return EMPTY;
+  if (!uniqueImageIds.length) return EMPTY;
 
-  // Each media kind is resolved by its own statement and caught separately: a failure
-  // resolving images must not discard collections already found for models. Losing
-  // half the answer is worse than reporting the half we have, because the half we have
-  // is still correct.
-  const rows: { collectionId: number }[] = [];
-
-  if (uniqueModelIds.length) {
-    try {
-      rows.push(...(await modelLegSql(uniqueModelIds, cap)));
-    } catch (error) {
-      logFailure(
-        'collection-media-index-resolve-failed',
-        source,
-        'failed to resolve collections for removed models',
-        error
-      );
-    }
+  // 🔴 The catalog probe gets its OWN catch. Six of the seven legs do not depend on the
+  // cover index, so a timeout or connection blip on this one extra round-trip must not
+  // decide whether they run at all — inside the outer try it would send the whole
+  // resolve to the catch and return nothing.
+  let withCover = false;
+  try {
+    withCover = await coverIndexExists();
+  } catch (error) {
+    logFailure(
+      'collection-media-index-cover-probe-failed',
+      source,
+      `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
+      error
+    );
   }
 
-  if (uniqueImageIds.length) {
-    try {
-      const withCover = await coverIndexExists();
-      if (!withCover)
-        logToAxiom({
-          type: 'warning',
-          name: 'collection-media-index-cover-leg-skipped',
-          message: `${source}: "${COVER_INDEX_NAME}" is missing, so collections whose COVER is a removed image are not being re-indexed. Apply the migration that creates it.`,
-          source,
-        }).catch(() => undefined);
-      rows.push(...(await imageLegsSql(uniqueImageIds, cap, withCover)));
-    } catch (error) {
-      logFailure(
-        'collection-media-index-resolve-failed',
-        source,
-        'failed to resolve collections for removed images',
-        error
-      );
-    }
-  }
+  if (!withCover)
+    logToAxiom({
+      type: 'warning',
+      name: 'collection-media-index-cover-leg-skipped',
+      message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is a removed image are not being re-indexed. Apply the migration that creates it.`,
+      source,
+    }).catch(() => undefined);
 
-  // Checking the union is enough to catch a truncating leg, even though each statement
-  // is capped independently: a leg that truncated returns exactly `cap + 1` distinct
-  // ids, so the union is always at least `cap + 1` and `applyCap` sees it. What is NOT
-  // recoverable is the magnitude — hence `truncated`, not a count.
-  return applyCap(rows, cap);
+  try {
+    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover), cap);
+  } catch (error) {
+    logFailure(
+      'collection-media-index-resolve-failed',
+      source,
+      'failed to resolve collections for removed images',
+      error
+    );
+    return EMPTY;
+  }
 }
 
 /**
@@ -322,7 +333,7 @@ export async function enqueueCollectionRebuild({
   source,
   cap = DEFAULT_COLLECTION_CAP,
 }: CollectionsToRebuild & {
-  /** Names the removal path in logs, e.g. 'model-delete'. */
+  /** Names the removal path in logs, e.g. 'image-delete'. */
   source: string;
   cap?: number;
 }) {
@@ -358,23 +369,4 @@ export async function enqueueCollectionRebuild({
     }).catch(() => undefined);
 
   return { queued: collectionIds.length, truncated };
-}
-
-/**
- * Resolve + enqueue in one step, for the paths whose membership rows survive the
- * removal (a soft delete, an unpublish).
- */
-export async function queueCollectionsForMedia({
-  modelIds = [],
-  imageIds = [],
-  source,
-  cap = DEFAULT_COLLECTION_CAP,
-}: {
-  modelIds?: number[];
-  imageIds?: number[];
-  source: string;
-  cap?: number;
-}) {
-  const resolved = await getCollectionIdsForMedia({ modelIds, imageIds, source, cap });
-  return enqueueCollectionRebuild({ ...resolved, source, cap });
 }

@@ -111,11 +111,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import {
-  deleteModelById,
-  permaDeleteModelById,
-  unpublishModelById,
-} from '~/server/services/model.service';
+import { deleteModelById, permaDeleteModelById } from '~/server/services/model.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
@@ -162,28 +158,22 @@ describe('deleteModelById — soft delete', () => {
     });
   });
 
-  it('queues an Update for every collection that contained the model', async () => {
+  // 🔴 DELIBERATELY NO ENQUEUE. An earlier revision queued a collections rebuild here.
+  // It was provably a no-op: the index's image CTEs filter only on
+  // `i."ingestion" = 'Scanned' AND i."needsReview" IS NULL` — no `Model.status`, no
+  // `Model.deletedAt` — and a soft delete leaves the Model, Post and Image rows intact,
+  // so the rebuild re-emits the same image. The cost was up to 10,000 Meilisearch
+  // enqueues per soft delete for no change in output. When the image is genuinely
+  // removed, deleteImageById/deleteImages enqueue it themselves.
+  //
+  // If the product answer is "hide a soft-deleted model's images from collection
+  // cards", the CTE predicate and this enqueue are needed TOGETHER — neither alone
+  // does anything. Re-adding the enqueue by itself will not fix that, which is what
+  // this guard is here to say.
+  it('does not queue a collections rebuild, which would be a no-op', async () => {
     await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
-    expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith(
-      expectedUpdatePayload([COLLECTION_A, COLLECTION_B])
-    );
-  });
-
-  it('resolves those collections by the deleted model id', async () => {
-    await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
-
-    const call = mockDbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
-      strings.join('?').includes('"CollectionItem"')
-    );
-    expect(call).toBeDefined();
-    expect((call as unknown[])[0].join('?')).toContain('"modelId"');
-    // The id list is bound through `Prisma.join`, which arrives as a Prisma.Sql
-    // fragment carrying its own values — flatten one level to reach the id itself.
-    const boundValues = (call as unknown[])
-      .slice(1)
-      .flatMap((v) => (v && typeof v === 'object' && 'values' in v ? (v as any).values : [v]));
-    expect(boundValues).toContain(MODEL_ID);
+    expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
   });
 
   it('still runs the trailing bid cleanup when the collections enqueue fails', async () => {
@@ -256,40 +246,5 @@ describe('permaDeleteModelById — permanent delete', () => {
 
     expect(mockDbWrite.model.delete).toHaveBeenCalled();
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
-  });
-});
-
-describe('unpublishModelById', () => {
-  beforeEach(() => {
-    mockDbWrite.model.findUniqueOrThrow.mockResolvedValue({
-      id: MODEL_ID,
-      userId: OWNER_ID,
-      status: 'Published',
-      meta: {},
-      nsfwLevel: 1,
-      modelVersions: [{ id: VERSION_ID }],
-    });
-    mockDbWrite.model.update.mockResolvedValue({
-      id: MODEL_ID,
-      userId: OWNER_ID,
-      status: 'Unpublished',
-      meta: {},
-      nsfwLevel: 1,
-      modelVersions: [{ id: VERSION_ID }],
-    });
-    mockDbWrite.post.findMany.mockResolvedValue([{ id: 7012 }]);
-    mockDbWrite.image.findMany.mockResolvedValue([{ id: 6631 }]);
-  });
-
-  it('queues an Update for every collection that contained the unpublished model', async () => {
-    await unpublishModelById({
-      id: MODEL_ID,
-      userId: OWNER_ID,
-      isModerator: true,
-    } as any);
-
-    expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith(
-      expectedUpdatePayload([COLLECTION_A, COLLECTION_B])
-    );
   });
 });
