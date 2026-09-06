@@ -96,12 +96,23 @@ interface ExpectedCallSite {
 /**
  * Every PRODUCTION call site of `getCollectionItemCount`.
  *
- * 🔴 THE THREE UNCLAMPED ROWS ARE NOT OVERSIGHTS. They are the surfaces that
- * predate the clamp and must keep their present behaviour byte for byte: the
- * public REST collections list, the on-site infinite-scroll controller, and the
- * model showcase card. Each renders a count to a viewer whose maturity ceiling is
- * enforced elsewhere in that surface's own pipeline; changing what they count is a
- * separate, deliberate change to those surfaces, not a side effect of this one.
+ * 🔴 NONE OF THE FOUR UNCLAMPED ENTRIES IS AN OVERSIGHT, AND THEY ARE UNCLAMPED
+ * FOR TWO DIFFERENT REASONS.
+ *
+ * Three are surfaces that predate the clamp and must keep their present behaviour
+ * byte for byte: the public REST collections list, the on-site infinite-scroll
+ * controller, and the model showcase card. Each renders a count to a viewer whose
+ * maturity ceiling is enforced elsewhere in that surface's own pipeline; changing
+ * what they count is a separate, deliberate change to those surfaces, not a side
+ * effect of this one.
+ *
+ * The fourth — the blocks PUBLIC discovery branch — is unclamped for COST. The
+ * clamped form of this query is exact and cheap only over a bounded population;
+ * over the discovery over-fetch window it measured 2829 ms against 85 ms, so that
+ * branch advertises the collection's real (unclamped) size and gets its playable
+ * FRACTION from a bounded sample instead. Flipping that entry to 'clamped' is
+ * reintroducing the regression, which is exactly what this ledger is here to make
+ * visible.
  */
 const EXPECTED_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   'src/pages/api/v1/blocks/collections/index.ts::handler': {
