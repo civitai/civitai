@@ -208,8 +208,10 @@ export type CollectionPlayableSample = {
  * NEWEST-FIRST is the defensible end to look at: it is what a viewer opening the
  * collection sees first, and a collection that has recently gone mature should be
  * judged on what it is now rather than on what it was. `ci."id" DESC` is the
- * insertion-order surrogate for `createdAt` and is the column the per-collection
- * item index can walk directly.
+ * insertion-order surrogate for `createdAt` — a serial primary key, so ordering by
+ * it needs no extra column on the row. (The 257 ms figure above was measured with
+ * exactly this ordering; no claim is made here about which index the planner
+ * picks, only that this shape is what was timed.)
  *
  * Shape notes, each of which is load-bearing:
  *   - CROSS JOIN LATERAL, so the LIMIT applies PER COLLECTION. A single ordered
