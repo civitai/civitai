@@ -157,9 +157,9 @@
         },
         "minHeight": {
           "type": "integer",
-          "description": "Minimum iframe height in px.",
+          "description": "Minimum iframe height in px. Capped well below maxHeight's ceiling on purpose: minHeight is a floor the host must honour, so a large value overrides the host's viewport clamp and can push the block off a phone screen.",
           "minimum": 40,
-          "maximum": 4000
+          "maximum": 800
         },
         "maxHeight": {
           "description": "Maximum iframe height in px, or null for unbounded.",
