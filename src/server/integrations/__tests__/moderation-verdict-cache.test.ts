@@ -333,7 +333,9 @@ describe('what must NEVER be cached', () => {
     // never-settling `get` is only survivable if the call is routed through the deadline; an
     // unwrapped `await sysRedis.get(...)` hangs this test instead of failing it.
     installRedisStore();
-    redisMock.sysRedis.get.mockImplementation(() => new Promise(() => {})); // never settles
+    // `() => undefined` rather than `() => {}` — the latter trips
+    // @typescript-eslint/no-empty-function, which is a CI tier I had not run locally.
+    redisMock.sysRedis.get.mockImplementation(() => new Promise(() => undefined));
     // 🔴 `Once`, NOT `mockImplementation`. `vi.restoreAllMocks()` in afterEach does NOT reset a
     // SHARED-module mock's implementation, so a persistent override here leaks into every later
     // case in this file: the first draft of this test made `withSysReadDeadline` throw forever,
