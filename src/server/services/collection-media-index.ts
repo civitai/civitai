@@ -204,7 +204,6 @@ export async function getCollectionIdsForMedia({
   // half the answer is worse than reporting the half we have, because the half we have
   // is still correct.
   const rows: { collectionId: number }[] = [];
-  let truncated = false;
 
   if (uniqueModelIds.length) {
     try {
@@ -240,10 +239,11 @@ export async function getCollectionIdsForMedia({
     }
   }
 
-  const capped = applyCap(rows, cap);
-  // Either statement can independently hit its own `LIMIT cap + 1`, so the union may
-  // already be short before `applyCap` ever sees it.
-  return { ...capped, truncated: capped.truncated || truncated };
+  // Checking the union is enough to catch a truncating leg, even though each statement
+  // is capped independently: a leg that truncated returns exactly `cap + 1` distinct
+  // ids, so the union is always at least `cap + 1` and `applyCap` sees it. What is NOT
+  // recoverable is the magnitude — hence `truncated`, not a count.
+  return applyCap(rows, cap);
 }
 
 /**
