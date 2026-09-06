@@ -153,8 +153,28 @@ export async function getFallbackCoverImages(
  *     unclamped, 97 ids                            84 ms / 78 ms
  *     EXACT CLAMPED count, 97 ids                2829 ms / 2563 ms
  *     exact clamped, 24 ids                      2076 ms / 2079 ms
- *     bounded sample, cap 200/collection          257 ms
- *     bounded sample, cap 500/collection          354 ms
+ *     THIS QUERY, as shipped (ORDER BY id DESC)   399 ms / 412 ms
+ *     ...same, but a bare LIMIT with no ORDER BY  102 ms / 107 ms
+ *     unordered sample, cap 500/collection        354 ms
+ *
+ * 🔴 THE LAST THREE ROWS ARE THE CORRECTION, AND THE REASON THEY ARE SPELLED OUT.
+ * An earlier revision of this block quoted 257 ms for "the bounded sample" and
+ * said it had been measured "with exactly this ordering". It had not: 257 ms was
+ * an UNORDERED `LIMIT 200`, and the order pin this design depends on was added
+ * afterwards. Re-measured on the shipped shape it is ~400 ms — still 7x cheaper
+ * than the exact clamp it replaces, but ~4x the unordered variant and ~4.7x the
+ * unclamped baseline, which is a different trade than the one the old number
+ * described. The figure was never asserted on by anything, which is exactly how
+ * it survived into a comment, a commit message and a PR body.
+ *
+ * WHERE THE ORDER PIN'S COST COMES FROM, since ~4x is more than it looks like it
+ * should be: there is no index giving (collectionId, status) rows in id order, so
+ * the LATERAL reads the WHOLE collection via the covering index — 3,077 rows on
+ * average, 34,577 at the tail — and quicksorts it before taking 200. The cap
+ * bounds what the JOIN and the count touch, NOT what the scan reads. An index on
+ * (collectionId, status, id DESC) would remove the sort; that is a migration, and
+ * migrations here are applied by hand per environment, so it is deliberately left
+ * as a follow-up rather than smuggled into this PR.
  *
  * The unclamped count is an Index Only Scan on the covering
  * (collectionId, status) index — no heap access at all. Joining "Image" forfeits
@@ -209,9 +229,10 @@ export type CollectionPlayableSample = {
  * collection sees first, and a collection that has recently gone mature should be
  * judged on what it is now rather than on what it was. `ci."id" DESC` is the
  * insertion-order surrogate for `createdAt` — a serial primary key, so ordering by
- * it needs no extra column on the row. (The 257 ms figure above was measured with
- * exactly this ordering; no claim is made here about which index the planner
- * picks, only that this shape is what was timed.)
+ * it needs no extra column on the row. (The ~400 ms figure on
+ * {@link PLAYABLE_SAMPLE_SIZE} was measured on THIS shape, ordering included —
+ * see the correction recorded there, because the number that preceded it was
+ * measured on the unordered variant and was ~4x too low.)
  *
  * Shape notes, each of which is load-bearing:
  *   - CROSS JOIN LATERAL, so the LIMIT applies PER COLLECTION. A single ordered

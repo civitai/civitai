@@ -234,10 +234,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // the ~85 ms this endpoint takes without it — a ~31× regression on the
       // discovery front door — because the clamp's join to "Image" forfeits the
       // covering index the unclamped count scans. Narrowing OVERFETCH does not
-      // rescue it (~27%). One bounded, order-pinned LATERAL sample costs ~257 ms
-      // and agreed with the exact count on this floor for 97 of 97 live
-      // collections. Measurements, and the order-sensitivity that forces the
-      // ORDER BY, are on `PLAYABLE_SAMPLE_SIZE`.
+      // rescue it (~27%). One bounded, order-pinned LATERAL sample costs ~400 ms
+      // as shipped and agreed with the exact count on this floor for 97 of 97 live
+      // collections. Measurements, the order-sensitivity that forces the ORDER BY,
+      // and why that pin costs ~4x an unordered LIMIT are on
+      // `PLAYABLE_SAMPLE_SIZE` — including the retraction of an earlier 257 ms
+      // figure that had been measured WITHOUT the ordering.
       const ceilingOk = (c: (typeof rows)[number]) =>
         collectionWithinCeiling(c.nsfwLevel ?? 0, browsingLevel);
       const candidateIds = rows.filter(ceilingOk).map((c) => c.id);
