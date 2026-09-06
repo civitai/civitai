@@ -8,18 +8,19 @@ import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 /**
  * 🔴 REACHABILITY GUARD, not a unit test of a filter.
  *
- * `remove-blocked-images` is the one flow allowed to ask the image-cache service to destroy the
+ * `remove-blocked-images` is the one job allowed to ask the image-cache service to destroy the
  * SHARED, content-addressed stored object behind an image — which removes the full-resolution
- * original for every byte-identical image of every other owner. It is gated on "the image is
- * Blocked, still Blocked, not AiNotVerified, and past the retention window".
+ * original for every byte-identical image of every other owner. It first asked for that on the
+ * reasoning that "Blocked, still Blocked, not AiNotVerified, and past the retention window" made
+ * every image it deletes a moderation takedown.
  *
- * That gate is a statement about DIRECT callers of `deleteImages`. It is NOT a statement about
- * what reaches `remove-blocked-images`, because that job reads a QUEUE, and one of that queue's
- * writers is not a moderation flow at all: a user who deletes their OWN account and picks
- * "delete my images after 7 days" has every
- * one of their images set to `ingestion = 'Blocked'`, `blockedFor = 'moderated'` by
- * `remove-deleted-user-images`, and then enqueued as `BlockedImageDelete`. Nothing was moderated,
- * and `blockedFor` cannot tell the two cases apart — that is stated at `PRIOR_INGESTION_KEY`.
+ * That reasoning is a statement about the DIRECT callers of `deleteImages`. It is NOT a statement
+ * about what reaches `remove-blocked-images`, because that job reads a QUEUE, and one of that
+ * queue's writers is not a moderation flow at all: a user who deletes their OWN account and picks
+ * "delete my images after 7 days" has every one of their images set to `ingestion = 'Blocked'`,
+ * `blockedFor = 'moderated'` by `remove-deleted-user-images`, and then enqueued as
+ * `BlockedImageDelete`. Nothing was moderated, and `blockedFor` cannot tell the two cases apart —
+ * that is stated at `PRIOR_INGESTION_KEY`, which is the marker the job now splits the batch on.
  *
  * So this test drives the whole path — self-service account deletion → grace block → job queue →
  * retention purge — and asserts that the purge does NOT request retraction for those images. A
@@ -363,8 +364,9 @@ describe('self-service account deletion never reaches blob retraction', () => {
         'account must not destroy other owners’ stored bytes'
     ).toBe(false);
 
-    // Both directions. Turning retraction off wholesale would satisfy the assertion above and
-    // silently remove the capability the job exists to provide.
+    // Both directions. Turning retraction off wholesale would satisfy the assertion above while
+    // silently removing the capability altogether, so takedowns would go back to leaving the bytes
+    // in place with nothing to say so.
     expect(
       retractionFor(MODERATED_IMAGE),
       'a moderator takedown stopped asking for retraction'
