@@ -144,9 +144,11 @@ export const LISTING_ACTION_ROW_PT_PX = 10;
  * "with the recommend rollup moved up into the meta block". The rollup is no
  * longer in the meta block — it is a line of its own BELOW the action row, beside
  * the play count (2026-09-06). The row still holds exactly the CTA and the `⋮`
- * trigger, and it holds them for the *stronger* reason: the rollup is not a
- * sibling of the CTA in either direction now, so no future move of it back "up"
- * can put it in this row without also deleting the stats line.
+ * trigger; what changed is only WHERE the third thing went, and the two children
+ * that remain are what this subtraction is about. That the row really holds two
+ * and only two is asserted rather than described — `AppListingCard.browser.test.tsx`
+ * checks `row.children` has length 2, and that the rollup is in neither the row
+ * nor the meta block.
  */
 export const LISTING_ACTION_ROW_GAP_PX = 10;
 
