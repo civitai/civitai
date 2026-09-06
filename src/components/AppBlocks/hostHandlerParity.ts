@@ -86,8 +86,7 @@ export interface MessageSpec {
 // InlineHost is a v1 STUB that throws on render and wires NO message bridge
 // (BlockHost never routes inline installs in v1 — `canUseInline` is always
 // false). So EVERY message is N/A for it today; the shared reason is below.
-export const INLINE_STUB =
-  'InlineHost is a v1 stub (throws on render, no message bridge in v1)';
+export const INLINE_STUB = 'InlineHost is a v1 stub (throws on render, no message bridge in v1)';
 
 export const INVENTORY = {
   // ── Lifecycle / fire-and-forget (no reply ⇒ unhandled never HANGS, but a
@@ -568,6 +567,32 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── Collection follow/unfollow (host bridge) ───────────────────────────────
+  // A block asks the HOST to follow/unfollow a collection as the logged-in
+  // viewer. Replaces the block's own `POST /api/v1/blocks/collections/[id]/follow`
+  // call (which stays live — this bridge does NOT retire it), so an app no longer
+  // needs the `collections:write:self` write scope for an on-site bookmark.
+  //
+  // 🔴 That removal is a real loosening, so the host does NOT just do it: both
+  // hosts open a HOST-CHROME CONSENT CONFIRM first and write only on the viewer's
+  // explicit click — the same boundary PUBLISH_GENERATION_OUTPUTS uses. The full
+  // reasoning (which of the HTTP endpoint's guarantees carry across, and how) is
+  // in `collectionFollowGate.ts`, which both hosts share.
+  //
+  // BOTH real hosts: unlike the page-only affordances above, a collection follow
+  // is a plain on-site bookmark with no page-sized surface behind it — a model-
+  // slot block showing a collection has exactly the same reason to offer it.
+  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
+  // dist union (the SDK's `useCollectionFollow` hook is a co-requisite landing in
+  // civitai-app-starters) — forward-looking coverage, allowed by the one-
+  // directional compile-time gate.
+  SET_COLLECTION_FOLLOW: {
+    request: true,
+    reply: 'COLLECTION_FOLLOW_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**
@@ -594,6 +619,9 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // ─────────────────────────────────────────────────────────────────────────────
 type _SdkCovered = SdkBlockToParentType extends keyof typeof INVENTORY
   ? true
-  : ['INVENTORY missing published SDK message(s):', Exclude<SdkBlockToParentType, keyof typeof INVENTORY>];
+  : [
+      'INVENTORY missing published SDK message(s):',
+      Exclude<SdkBlockToParentType, keyof typeof INVENTORY>
+    ];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _sdkCovered: _SdkCovered = true;
