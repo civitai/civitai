@@ -2007,8 +2007,9 @@ export const REDIS_SYS_KEYS = {
      * segment after THAT is a truncated SHA-256 of the exact string sent to the classifier; the
      * prompt itself is never stored. Every key carries an EX.
      *
-     * Written only while EXTERNAL_MODERATION_CACHE_TTL_SECONDS is a positive integer — that TTL is
-     * the arming switch, and there is deliberately no separate boolean to disagree with it.
+     * Written only while BOTH EXTERNAL_MODERATION_CACHE_TTL_SECONDS is a positive integer AND
+     * EXTERNAL_MODERATION_CACHE_NAMESPACE names an allowlisted deployment — two inputs, because one
+     * says how long entries live and the other says where; neither is inferable from the other.
      * See src/server/integrations/moderation-verdict-cache.ts.
      */
     MODERATION_VERDICT: 'generation:moderation-verdict',

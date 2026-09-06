@@ -121,7 +121,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('the TTL is the arming switch', () => {
+describe('arming needs BOTH an allowlisted namespace and a positive TTL', () => {
   it('is OFF with no TTL: Redis untouched, no series, classifier still called', async () => {
     // Structured as a DIFFERENTIAL. The armed leg proves a read DOES land in this window, so the
     // unarmed leg finding none is evidence rather than a slow lazy import.
@@ -149,11 +149,12 @@ describe('the TTL is the arming switch', () => {
     env.EXTERNAL_MODERATION_CACHE_TTL_SECONDS = 0;
     expect(moderationCacheEnabled()).toBe(false);
     env.EXTERNAL_MODERATION_CACHE_TTL_SECONDS = 0.4;
-    // 0.4 floors to 0 -> off. The env schema rejects non-integers anyway; this is defence in depth.
+    // 0.4 floors to 0 -> off. The schema degrades a non-integer to 0 via `.catch(0)`; this is
+    // defence in depth, not a restatement of a rejection the schema no longer performs.
     expect(moderationCacheEnabled()).toBe(false);
   });
 
-  it('the env schema accepts an integer TTL, rejects a non-number, and defaults to 0 (OFF)', () => {
+  it('the env schema accepts an integer TTL and DEGRADES anything else to 0 (OFF), never throwing', () => {
     const parsed = serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse(undefined);
     expect(parsed.success && parsed.data).toBe(0);
     expect(serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse(300).success).toBe(
@@ -425,13 +426,34 @@ describe('the deployment namespace is required to arm', () => {
     await extModeration.moderatePrompt('ns armed', 'generate');
 
     expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(moderationCacheEnabled()).toBe(false);
     expect(errorSpy).toHaveBeenCalled();
+
+    // 🔴 THE WRITE SIDE TOO — AND IT CANNOT BE ASSERTED IMMEDIATELY. Asserting only the READ left
+    // the write-side arming guard unpinned and it SURVIVED mutation on a green 28/28 suite: a
+    // rejected namespace stopped being inert and wrote `…:null:<policy>:<digest>` into one shared
+    // un-namespaced keyspace.
+    //
+    // 🔴 The obvious fix is ALSO vacuous, and was tried first: `expect(sysRedis.set).not
+    // .toHaveBeenCalled()` right here passes whether or not the guard exists, because
+    // `writeCachedVerdict` is fire-and-forget behind a lazy `import()` — the write has not happened
+    // YET either way. An absence you did not wait for is not an absence.
+    //
+    // So ORDER it. Issue a third call that IS armed, wait for ITS write to land, and only then
+    // assert the keyspace. The rejected call was issued first through the same import-then-set
+    // path, so if it were going to write it would have written by now.
+    env.EXTERNAL_MODERATION_CACHE_NAMESPACE = 'prod';
+    await extModeration.moderatePrompt('ns armed again', 'generate');
+    await untilStored(store, 2);
+
+    expect(store.size).toBe(2); // the two ARMED entries only — the rejected call wrote nothing
+    for (const key of store.keys()) expect(key).toContain(':prod:');
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
   it('🔴 every on/off spelling an operator might reach for is OFF, not a namespace', () => {
     // The charset-plus-denylist approach the probe's audit rejected accepted all of these.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     for (const word of ['y', 'n', 'no', 'off', 'false', 'none', 'null', 'disable', '0', '2']) {
       env.EXTERNAL_MODERATION_CACHE_NAMESPACE = word;
       expect(moderationCacheEnabled()).toBe(false);

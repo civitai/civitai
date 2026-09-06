@@ -76,8 +76,12 @@ const cacheCounter = registerCounterWithLabels({
     'outage would read as "prompts stopped repeating", the reassuring direction and therefore the ' +
     'dangerous one. 🔴 A hit is NOT observed on external_moderation_duration_seconds, so once this ' +
     'is armed that histogram counts CLASSIFIER CALLS and this counter counts moderation CHECKS; ' +
-    'the two diverge by exactly the hit count. Unarmed (no EXTERNAL_MODERATION_CACHE_TTL_SECONDS) ' +
-    'there are no series at all, which is what makes the arming instant readable. The dark probe ' +
+    'the two diverge by exactly the hit count. Unarmed there are no series at all, which is what ' +
+    'makes the arming instant readable — but arming needs BOTH a positive ' +
+    'EXTERNAL_MODERATION_CACHE_TTL_SECONDS and an allowlisted EXTERNAL_MODERATION_CACHE_NAMESPACE, ' +
+    'so an absence of series does NOT mean "no TTL configured": a set TTL with a rejected namespace ' +
+    'looks identical here, and the two are told apart only by the one-off error the namespace ' +
+    'resolver logs. The dark probe ' +
     'this replaces measured 34.3% repeats at a 5m window over 224,989 observations; expect a hit ' +
     'rate at or BELOW that, because the probe claimed its slot when a request STARTED whereas this ' +
     'cache cannot store a verdict until the classifier answers ~200 ms later.',
@@ -124,6 +128,18 @@ function record(source: ExternalModerationSource, result: CacheResult): void {
  * Duplicated from the probe rather than imported: the probe is a temporary instrument scheduled for
  * removal, and a cache on a moderation gate must not acquire a dependency that is expected to be
  * deleted.
+ *
+ * 🔴 BEFORE ADDING A MEMBER, CHECK BOTH — the rule had to come with the value, because the probe's
+ * copy is the one going away and this is the higher-stakes surface. A member must name ONE running
+ * population, not a template other namespaces inherit: `preview` is a CLASS (~10 concurrent
+ * `civitai-pr-*` namespaces on one sysRedis), and `next` looks like a single deployment but is not,
+ * because the PR-preview task copies civitai-next's `civitai-cfg` wholesale into every preview.
+ * Adding either re-opens the cross-deployment hazard this list exists to close.
+ *
+ * A FROZEN ARRAY, not a `ReadonlySet` — that type is erased at runtime, so any importer could
+ * `.add()` to the object this module reads. And ONE object, not an array plus a lookup Set: the
+ * ledger test asserts the array, so a second copy is how that assertion goes false while staying
+ * green.
  */
 export const CACHE_NAMESPACES: readonly string[] = Object.freeze(['prod']);
 
@@ -145,12 +161,17 @@ function cacheNamespace(): string | null {
 }
 
 /**
- * Seconds to hold a verdict, or 0 when the cache is OFF.
+ * Seconds to hold a verdict, or 0 when that half of the arming is absent.
  *
- * 🔴 THE TTL IS THE ARMING SWITCH — there is no separate boolean, for the reason the probe's
- * namespace allowlist exists: a second on/off input is a second thing that can disagree with the
- * first. Absent or 0 means the cache is inert and emits no series at all, which is the state every
- * deployment starts in. A non-numeric value is rejected by the env schema, not silently coerced.
+ * ⚠️ THIS IS ONE OF TWO REQUIRED INPUTS, NOT "THE ARMING SWITCH". An earlier revision of this
+ * docstring said it was, and repeated the "a second on/off input is a second thing that can
+ * disagree with the first" argument that `cacheNamespace` — 35 lines above, in the same file —
+ * had already retracted. The two sentences contradicted each other. {@link armedCache} is the
+ * predicate that actually gates the cache.
+ *
+ * A non-numeric value degrades to 0 (OFF) via `.catch(0)` on the schema; it is NOT rejected, and an
+ * earlier revision of this line said it was. Rejecting would CrashLoop the fleet on an operator
+ * typo, because `src/env/server.ts` throws on any invalid field.
  *
  * ⚠️ IT IS NOT A HOT KILL SWITCH, AND AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS. It said
  * the per-call read meant "a config change takes effect on the next request instead of the next
@@ -172,8 +193,27 @@ function ttlSeconds(): number {
   return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
 }
 
+/**
+ * The single arming predicate: the namespace and TTL to use, or `null` when the cache is off.
+ *
+ * 🔴 ONE RULE, ONE PLACE — and the previous revision had it in THREE. It open-coded
+ * `namespace === null || ttl <= 0` at both live call sites and left `moderationCacheEnabled()` with
+ * ZERO production callers, so seven test assertions were aiming at a function nothing executed
+ * while the two predicates that actually gate the cache were unasserted. That is how the write-side
+ * guard came to survive mutation: the tests were pointed at the copy, not at the original.
+ *
+ * Returning the VALUES rather than a boolean is what makes one predicate sufficient — the call
+ * sites need the namespace and the TTL, which is why they open-coded it in the first place.
+ */
+function armedCache(): { namespace: string; ttl: number } | null {
+  const namespace = cacheNamespace();
+  const ttl = ttlSeconds();
+  return namespace !== null && ttl > 0 ? { namespace, ttl } : null;
+}
+
+/** Derived view of {@link armedCache}, for tests and for readability at a glance. */
 export function moderationCacheEnabled(): boolean {
-  return cacheNamespace() !== null && ttlSeconds() > 0;
+  return armedCache() !== null;
 }
 
 /**
@@ -227,7 +267,8 @@ function promptDigest(preparedPrompt: string): string {
 }
 
 /**
- * `<prefix>:<policyDigest>:<promptDigest>`.
+ * `<prefix>:<namespace>:<policyDigest>:<promptDigest>` — FOUR segments. Anyone reasoning about key
+ * shape (a SCAN, a flush, a capacity estimate) reads this line; the key-shape test pins it.
  *
  * Exported as a pure function taking the policy digest as an ARGUMENT for the reason the probe's
  * `buildProbeKey` was extracted: with one live configuration, a mutant that hardcodes the policy
@@ -281,8 +322,9 @@ export async function readCachedVerdict(
   preparedPrompt: string,
   policy: string
 ): Promise<ModerationVerdict | null> {
-  const namespace = cacheNamespace();
-  if (namespace === null || ttlSeconds() <= 0) return null;
+  const armed = armedCache();
+  if (armed === null) return null;
+  const { namespace } = armed;
   const metricSource = clampExternalModerationSource(source);
   try {
     const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
@@ -335,9 +377,9 @@ export function writeCachedVerdict(
   policy: string,
   verdict: ModerationVerdict
 ): void {
-  const namespace = cacheNamespace();
-  const ttl = ttlSeconds();
-  if (namespace === null || ttl <= 0) return;
+  const armed = armedCache();
+  if (armed === null) return;
+  const { namespace, ttl } = armed;
   void (async () => {
     try {
       const { sysRedis, REDIS_SYS_KEYS } = await import('~/server/redis/client');
