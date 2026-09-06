@@ -76,13 +76,13 @@ type PackedClient = {
   packed: {
     mGet<T>(
       keys: RedisKeyTemplateCache[],
-      packedOptions?: { compress?: boolean }
+      packedOptions?: { compress?: boolean; cacheName?: string }
     ): Promise<(T | null)[]>;
     set<T>(
       key: RedisKeyTemplateCache,
       value: T,
       options?: { EX?: number; NX?: boolean; XX?: boolean },
-      packedOptions?: { compress?: boolean }
+      packedOptions?: { compress?: boolean; cacheName?: string }
     ): Promise<unknown>;
   };
   del(key: RedisKeyTemplateCache | RedisKeyTemplateCache[]): Promise<unknown>;
@@ -171,7 +171,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // Resolved ONCE and passed to every redis.packed read/write below. Keeping a single object
     // (rather than re-spelling `{ compress }` per call site) makes the symmetry contract in
     // CachedLookupOptions.compress mechanically obvious: one binding, nine consumers.
-    const packedOptions = { compress } as const;
+    // `cacheName` rides along on the same binding: it is the `cache_name` label on the codec
+    // duration histogram, and `key` is exactly the value this module already reports to
+    // metrics.hit/miss as cache_name — one scheme, not two. Bounded by construction (it is the
+    // cache prefix, not `${key}:${id}`), and observational only.
+    const packedOptions = { compress, cacheName: key } as const;
     // Holds the FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
     // byte-identical to what the Redis path returns and needs no further decoration.
     // Driven with get/set rather than its wrapping .fetch — the access pattern here is a batch mGet,

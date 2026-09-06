@@ -81,10 +81,14 @@ describe('createCachedArray.update — the write-through path', () => {
     // (#4588). This cache does not opt in, so it must be `false` here — asserted rather than
     // loosened to `expect.anything()`, since a read that silently flipped to compress:true
     // against uncompressed writes is exactly the asymmetry that flag has to avoid.
-    expect(mGetMock).toHaveBeenCalledWith([ENTRY_KEY], { compress: false });
+    // `cacheName` rides on the same object (metrics-only: the `cache_name` label on the codec
+    // duration histogram). Asserted as the cache PREFIX, NOT `ENTRY_KEY` — the two differ by
+    // exactly the per-id suffix, and labelling with the per-id key would make that label
+    // unbounded (one prom series per cached id).
+    expect(mGetMock).toHaveBeenCalledWith([ENTRY_KEY], { compress: false, cacheName: KEY });
     const [key, value, options, packedOptions] = setMock.mock.calls[0];
     expect(key).toBe(ENTRY_KEY);
-    expect(packedOptions).toEqual({ compress: false });
+    expect(packedOptions).toEqual({ compress: false, cacheName: KEY });
     // `cachedAt` carried over, not reset: the entry stays as fresh as it was and no
     // fresher, so its revalidation clock is unchanged.
     expect(value).toEqual({ id: 1, members: [7, 9], cachedAt });
