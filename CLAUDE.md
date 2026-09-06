@@ -37,13 +37,6 @@ This is a pnpm workspace, not just the Next.js app:
 
 To add a new app, use the `scaffold-civitai-app` skill and follow `docs/packages/new-app-integration.md`.
 
-### Additional Libraries
-- React Query (Tanstack Query) for data fetching
-- React Hook Form with Zod validation
-- Tiptap for rich text editing
-- Chart.js for data visualization
-- Stripe/Paddle/PayPal for payments
-
 ## Build Commands
 
 ### Development
@@ -51,11 +44,6 @@ To add a new app, use the `scaffold-civitai-app` skill and follow `docs/packages
 That covers `moderator` and `creator-studio` too — `cli.mjs start --app <name>` runs them from the
 worktree you are in, on a port the daemon reserves, with the auth hub started for you. The other
 `apps/*` have no dev-server integration; use their own `pnpm dev:<name>`.
-
-### Build & Deploy
-```bash
-pnpm run build            # Production build
-```
 
 ### Code Quality
 ```bash
@@ -73,53 +61,29 @@ live in **[`docs/svelte-app-standard.md`](docs/svelte-app-standard.md)**, and ea
 records only its deltas. Review a segment there with `svelte-correctness-review`,
 `svelte-idiom-review` and `svelte-abstraction-review`.
 
-#### In SvelteKit apps (`apps/moderator`, `apps/auth`, `apps/creator-studio`): use `typecheck`, never `check`
+#### In SvelteKit apps: use `typecheck`, never `check`
 
-They are **not** synonyms. `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it
-with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/` — a directory the Vite dev
-server watches — so running it in an edit→verify loop has Vite re-optimising the module graph while
-`svelte-check` loads ~9,000 files. That collision froze an entire day's work before it was diagnosed
-(2026-08-07), and it does not reproduce in the main app because `tsc --noEmit` emits nothing.
-
-Reach for `check` **only** after changing the route tree — adding, removing or renaming a
-`+page`/`+server`/`+layout` file — which is the only time the generated `$types` go stale. Symptom of
-needing it: `Cannot find module './$types'`, or component props resolving to `never`. `prepare` runs
-`sync` on install, so a fresh checkout is already covered.
-
-**`build` runs `svelte-kit sync` too** (`svelte-kit sync && vite build`), so it carries the same cost —
-and it is **not** a check: it catches nothing `svelte-check` doesn't.
-
-**Read `svelte-check`'s WARNING lines, not just ERROR.** It reports Svelte compiler warnings, and
-`state_referenced_locally` — `let x = $state(data.foo)` capturing only the first value, so the UI
-silently shows stale data after a navigation — is a real bug that appears there and nowhere else in
-the loop. Filtering output to `ERROR` hides it.
+🔴 They are **not** synonyms. `check` prefixes `svelte-check` with `svelte-kit sync`, which regenerates ~690
+files under `.svelte-kit/` while the Vite dev server is watching it — that collision froze an entire day
+(2026-08-07). Reach for `check` **only** after changing the route tree; symptom is `Cannot find module
+'./$types'` or props resolving to `never`. `build` runs `sync` too and catches nothing `svelte-check` doesn't.
+**Read `svelte-check`'s WARNING lines, not just ERROR** — `state_referenced_locally` (a `$state` capturing only
+the first value, so the UI silently shows stale data) appears there and nowhere else in the loop.
 
 #### Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
 
-It **empties every file it touches to zero bytes**, and reports success on each one. It took out 28
-components in one command (2026-08-07); they were only recoverable because they were committed. The
-first symptom is `svelte-check` reporting props as `never`, which reads like stale `$types` and sends
-you diagnosing the wrong thing.
-
-Note what `pnpm run prettier:write` does **not** cover: the root Prettier is 2.8.8 and globs
-`.ts`/`.tsx` only, so **no root command formats `.svelte` at all**. `apps/creator-studio` formats
-itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership must be exclusive);
-the other SvelteKit apps' `.svelte` files are hand-formatted.
+🔴 It **empties every file it touches to zero bytes** and reports success on each one — 28 components in one
+command (2026-08-07). The first symptom is `svelte-check` reporting props as `never`, which reads like stale
+`$types` and sends you diagnosing the wrong thing. Note no root command formats `.svelte` at all (root Prettier
+is 2.8.8, globs `.ts`/`.tsx`); `apps/creator-studio` formats itself, the other two are hand-formatted.
 
 #### Prettier runs on UNCOMMITTED files only — never the whole repo
 
-`prettier:write`/`prettier:check` are `scripts/prettier-changed.mjs`, which formats what git reports as
-dirty (modified-vs-HEAD plus untracked) and nothing else. Do not "fix" them back into a `**/*` glob,
-and do not reach for a repo-wide `npx prettier --write` instead.
-
-**The repo is not Prettier-clean and will not be until the 2→3 upgrade reformats it deliberately.**
-`.github/workflows/lint.yml` puts the number at 789 of 4,116 `src` files; across the whole workspace it
-is ~1,000. So a repo-wide `--write` is not a formatting pass, it is a ~1,000-file commit that buries the
-actual change — and it rewrites **other people's uncommitted work in place**, which is how it was found
-(2026-08-08: one `pnpm run prettier:write` produced 1,085 modified files, and telling the reformatting
-apart from real edits afterwards needed a per-file diff against `prettier(HEAD)`).
-
-CI already scopes itself this way and gates only on **added** files for exactly this reason.
+`prettier:write`/`prettier:check` are `scripts/prettier-changed.mjs`, which formats git-dirty files and nothing
+else. 🔴 Do not widen them back to a `**/*` glob, and do not reach for a repo-wide `npx prettier --write`: the
+repo is not Prettier-clean (789 of 4,116 `src` files) so that is a ~1,000-file commit that buries the actual
+change **and rewrites other people's uncommitted work in place** (2026-08-08: one run produced 1,085 modified
+files). CI scopes itself the same way and gates only on **added** files.
 
 ### Testing
 ```bash
@@ -173,42 +137,21 @@ as running all of it. Two source files gave the identical number.
 
 ⚠️ **A green full-suite run can still hide a failure you caused.** Read the failing-file list, not the
 count: when 17 tests fail across 7 files, `git stash` and re-run those same files to see whether they
-already failed on `main`. On Windows several do — see the portability notes below.
+already failed on `main`. On Windows several do — see the portability notes in the `civitai-worktrees` skill.
 
-#### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
-A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
-
-```bash
-VITEST_MAX_WORKERS=8 pnpm exec vitest run --project 'unit*'   # direct run (BOTH unit projects)
-pnpm run test:unit:run --max-workers=8                     # through the dev-server queue
-```
-
-🔴 **The env var does not reach a queued run.** With `CIVITAI_TEST_QUEUE` set, `test:unit:run` hands the run to the dev-server daemon, which spawns it with **its own** environment — so `VITEST_MAX_WORKERS=8 pnpm run test:unit:run` silently runs at the full pool while you believe you capped it. The CLI flag is forwarded and does work (verified: 3 distinct `VITEST_POOL_ID`s from a 40-file probe run through the queue with `--max-workers=3`).
-
-⚠️ Either knob sets the count for **every** project, browser included, and it is **not clamped** to the browser pool's 12 — `getThreadsCount` returns it unchanged, so `--max-workers=16` launches 16 Chromium instances, past what upstream calls safe. It sizes the pool; it does not only shrink it.
-
-**Why uncapped is the default.** A flat cap of 8 lived in `vitest.config.mts` (#3900) because several agents each running a full suite at once saturated the box. The dev-server test queue now serialises `test:unit:run` at concurrency 1 (#3947). Measured on a 32-core Windows box, alternating runs through that queue: **8 workers 507.3s / 526.9s, uncapped (31 workers) 281.4s / 295.8s** — 1.79x on the means. Nothing changes on GitHub CI, which runs on 4-vCPU `ubuntu-latest`, where the old cap's `cpus > 9` guard already made it inert.
-
-⚠️ Only `test:unit:run` is queued. `test:component`, `test:packages:run`, `test:apps:run` and `test:lint-rules` call `vitest` directly, so a queued unit run and an unqueued component run still overlap — 31 workers plus 12 Chromium instances, where the old config bounded the pair at 8 + 6. Cap one of them by hand if you are sharing the box.
-
-⚠️ More workers is not monotonically better once other pool settings move: with `--no-isolate` the same box measured 119s at 8 workers and 1025s at 31. Measure both ends before changing one.
-
-⚠️ In a container limited by a **CPU quota** rather than a cpuset, `os.availableParallelism()` reports the host's cores, so an uncapped run resolves to host-cores-1 workers under a much smaller budget. Nothing in this repo invokes Vitest that way — the only CI that does is `ubuntu-latest` — but a pipeline defined outside it should set `VITEST_MAX_WORKERS` explicitly.
+#### Worker count: sized with `VITEST_MAX_WORKERS` / `--max-workers`, uncapped by default
+Vitest picks its own worker count; both knobs resize **every** project including the browser pool, and
+🔴 the env var does **not** reach a queued `test:unit:run` — only the CLI flag is forwarded. Measurements,
+the container-CPU-quota caveat, and why uncapped is the default: `civitai-testing` skill.
 
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
 
 #### Prefer `importOriginal` over hand-listed `vi.mock` exports
-A `vi.mock` that lists exports by hand couples the test to the **entire transitive import graph** of the thing under test, and nothing warns you when that graph grows. Adding one service import can drag in a module that builds `pLimit`/prom collectors at load (e.g. `~/server/search-index` → `meilisearch/client`), and the suite then fails to load with an error far from the change — `pnpm typecheck` and `pnpm lint` stay green, so **only CI catches it**. Spread the real module and override only what you need:
-```ts
-vi.mock('~/server/prom/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof PromClient>()),
-  dbReadFallbackCounter: { inc: vi.fn() },
-}));
-```
-Use a top-level `import type * as PromClient` — an inline `typeof import('...')` trips `consistent-type-imports`.
-
-**Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
+A hand-listed `vi.mock` couples the test to the entire transitive import graph of the thing under test, and
+nothing warns you when that graph grows — typecheck and lint stay green, so only CI catches it. Spread the
+real module and override only what you need. **Before widening a mock, check whether the import edge is
+needed at all.** Worked example and the two incidents: `civitai-testing` skill.
 
 #### Convention guards run as tests
 Several repo conventions are enforced by tests, not by eslint. 27 live in
@@ -256,41 +199,24 @@ covered too.
 `test:lint-rules` itself.
 
 #### A passing test says nothing about how it FAILS — check the revert
-**"The tests would catch a regression here" is a claim about the failure mode, not about coverage.** A green
-suite proves current behaviour. Whether a revert is *legible* is a separate property, and it is the one that
-decides if the test protects anything. Review your own tests by asking what a reverted fix would look like:
-an assertion message, a timeout, or nothing at all.
+**"The tests would catch a regression here" is a claim about the failure mode, not about coverage.** Review
+your own tests by asking what a reverted fix would print: an assertion message, a timeout, or nothing.
 
 🔴 **Proving a property by absence of termination is not proof — a test runner cannot observe it.** A fake
-that drives a loop and never terminates turns a regression into an infinite loop of `await`-on-already-resolved
-promises. That is a pure **microtask** loop: it starves the macrotask queue, and vitest's `testTimeout` is
-`setTimeout`-based, so **it never fires**. Measured: 4,194,305 iterations in 4 s with a 300 ms `setTimeout`
-that never ran. CI hangs until the job is killed — no assertion failure, no timeout, nothing to read.
-
-So **any fake driving a bounded loop must terminate on its own**, and the test must assert the loop stopped
-early. Capping a cursor fake at 50 pages turns an unreportable hang into `expected 51 to be less than 5` in
-under a second. Same rule as sizing a slow-path regression test so a revert *fails fast* rather than wedging
-the runner — see the `n = 10_000` cap in `session-invalidation.test.ts` and the terminating pages beside it.
-
-Two things this does NOT cover, stated so a green run isn't over-read: the paging guard in
-`test:lint-rules` catches cursor-shaped fakes only, so it reduces this class rather than closing it; and a
-loop driven by something other than a cursor is still on you to bound.
-
-(The formulation above is @ivy's, from reviewing PR #3756 — where the assertions were all correct and the
-failure mode was a hang. Both reviewers checked the assertions; neither asked what a revert would print.)
+that drives a loop and never terminates starves the macrotask queue, so vitest's `setTimeout`-based
+`testTimeout` never fires and CI hangs with nothing to read. **Any fake driving a bounded loop must
+terminate on its own**, and the test must assert the loop stopped early. Numbers and worked examples:
+`civitai-testing` skill.
 
 #### Never `await` a browser-test state that DELETES ITSELF
-`expect.element` polls — first attempt immediate, then every **50 ms** — against the test's remaining budget (browser-mode `testTimeout` defaults to **15 s**, and the `component` project does not override it). Awaiting a state to **arrive** is safe: load only makes it arrive later and the matcher keeps polling. Awaiting a state that will **leave** — a spinner on a ceiling, a debounce window, anything a component tears down on a timer — is a race the matcher cannot win: once the state is gone it never comes back, so every remaining poll is also too late. Such a test is green on a quiet box, red on a busy one, and has no PR to blame.
+Awaiting a state to **arrive** is safe; awaiting one that will **leave** — a spinner on a ceiling, a debounce
+window, anything torn down on a timer — is a race `expect.element` cannot win, green on a quiet box and red
+on a busy one. Fix it structurally: make the state absorbing, or assert the end-state and pin the transient
+via a mock call count.
 
-Fix it structurally, in this order:
-1. **Make the state absorbing** — drive the component so nothing can take the state away (e.g. `rerender` with a window so large the timer can never fire), *then* assert it. Add a negative control proving the prop change alone did not produce the state.
-2. **Don't assert the transient at all** — await the absorbing end-state, and pin that the intermediate step happened via a non-DOM observable (a mock call count).
-
-🔴 Do **not** widen the matcher budget, add a `retry`, or enlarge the component's own timeout instead. Those convert a fast failure into a slow one and leave the race unwinnable whenever the machine is slow enough — which is exactly when CI runs.
-
-⚠️ **A ~15 s failing test is a candidate filter, NOT a diagnosis.** It means only that some `expect.element` was never satisfied: four *non-race* mutations all failed at 14.97–15.09 s, and two **healthy, passing** tests legitimately run 15.06 s / 15.26 s waiting out a real 15 s product timeout. To tell a self-deleting state from one that never arrived, read the observable **synchronously right after the action** (present-then-gone vs never-present), or **enlarge the component's own window** and see whether the failure disappears — diagnostic only, since shipping that widening is what this rule forbids.
-
-Worked examples of both fixes: the two retry tests in `src/components/Apps/AppsSubmitEditView.browser.test.tsx`. Measurements behind every number above: `claudedocs/rca-appblocks-component-suite-flake-2026-08-05.md` (PR #3645).
+🔴 Do **not** widen the matcher budget, add a `retry`, or enlarge the component's own timeout instead — that
+converts a fast failure into a slow one and leaves the race unwinnable exactly when CI is slow. Diagnosis
+procedure and worked examples: `civitai-testing` skill.
 
 ### Database
 ```bash
@@ -304,27 +230,13 @@ pnpm run db:moderator:pull   # Re-introspect the moderator DB into apps/moderato
 
 #### Adding an enum value: DEPLOY FIRST, then migrate, then write
 
-`ALTER TYPE ... ADD VALUE` is harmless on its own. **Writing rows that use the new label is not.**
-Prisma deserializes enum columns strictly, so a row carrying a label the running client doesn't
-know throws on **read** — not on the write that created it. Every page selecting that column 500s,
-and for a Prisma-mapped view the blast radius is every consumer of the view.
-
-Normally this is invisible because the code that writes a new value ships in the same deploy that
-teaches the client about it. A **backfill breaks that coupling**: it writes rows the moment you run
-it, regardless of what is deployed.
-
-So treat an additive enum as expand/contract:
-
-1. **Deploy** the regenerated client (knows the value, writes none) — every reader can now decode it
-2. Apply `ALTER TYPE ... ADD VALUE` — value exists, still unused
-3. Backfill / enable the writes — first rows appear, safely
-
-Applying the migration before the deploy is only safe while **nothing writes the value**. If a
-backfill runs in that window, pods on the previous build break on read until the deploy lands.
-
-(Bit us 2026-08-19 adding `ModelHashType.SHA256_12`: the migration and a 1.5M-row backfill both ran
-ahead of the deploy, and every model detail page reading the `ModelHash` view — which has no type
-filter, so it surfaces every hash type to every reader — started 500ing.)
+🔴 `ALTER TYPE ... ADD VALUE` is harmless on its own; **writing rows that use the new label is not.** Prisma
+deserializes enum columns strictly, so a row carrying a label the running client doesn't know throws on **read**
+— every page selecting that column 500s, and for a Prisma-mapped view that is every consumer of the view.
+Order: **(1)** deploy the regenerated client, **(2)** apply the `ALTER TYPE`, **(3)** backfill / enable writes.
+A backfill run before the deploy is what breaks the coupling — it writes rows regardless of what is deployed.
+(Bit us 2026-08-19 on `ModelHashType.SHA256_12`: migration and a 1.5M-row backfill both ran ahead of the
+deploy, and every model detail page reading the `ModelHash` view started 500ing.)
 
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
 - Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
@@ -369,48 +281,9 @@ If a job genuinely needs a schedule the scheduler cannot express, say why in the
 
 ## Component Standards
 
-### File Structure
-```
-src/
-├── components/          # React components
-│   ├── ComponentName/   # Component folder
-│   │   ├── ComponentName.tsx
-│   │   ├── ComponentName.module.scss  # Optional SCSS module
-│   │   └── utils.ts     # Component utilities
-├── hooks/              # Custom React hooks
-├── server/             # Server-side code
-├── utils/              # Shared utilities
-└── store/              # Zustand stores
-```
-
 ### Component Patterns
 
-#### 1. Mantine Components
-```tsx
-import { Button, Group, Text } from '@mantine/core';
-import { IconBolt } from '@tabler/icons-react';
-```
-
-#### 2. Tailwind Classes with clsx
-```tsx
-import clsx from 'clsx';
-
-<div className={clsx('flex items-center gap-2', conditionalClass && 'bg-blue-500')} />
-```
-
-#### 3. SCSS Modules (when needed)
-```tsx
-import styles from './Component.module.scss';
-
-<div className={styles.container} />
-```
-
-#### 4. TypeScript Patterns
-- Use type imports when possible: `import type { ButtonProps } from '@mantine/core'`
-- Define Props interfaces for components
-- Use enums from `~/shared/utils/prisma/enums`
-
-#### 5. A `Popover` inside anything that clips needs `withinPortal`
+#### A `Popover` inside anything that clips needs `withinPortal`
 
 `src/providers/ThemeProvider.tsx` sets `Popover: { defaultProps: { withinPortal: false } }` for the
 whole app. So a `Popover` rendered inside a `Card`, an `overflow-hidden` wrapper or a scroll area
@@ -432,24 +305,12 @@ tell you which call sites actually needed it.
 6. Types and enums
 7. Styles
 
-#### State Management
-- Use Zustand for global state
-- Use React Query for server state
-- Use React Hook Form for forms
-
-#### API Calls
-```tsx
-import { trpc } from '~/utils/trpc';
-
-const { data, isLoading } = trpc.user.getProfile.useQuery();
-```
-
-#### Authentication
-```tsx
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-
-const currentUser = useCurrentUser();
-```
+#### Enums come from `~/shared/utils/prisma/enums`, not `@prisma/client`
+The instinct in a Prisma codebase is `@prisma/client`, and **nothing stops you** — `no-restricted-imports`
+in `.eslintrc.js` covers `@civitai/generation-metadata` only. The repo is 832 files to 13 on this, so the
+13 counterexamples (`ModelStatus`, `CollectionType`, `CollectionMode`, `ModelType`, `Availability`, …) read
+as permission rather than as drift. Import `Prisma`/`PrismaClient` from `@prisma/client`; import every
+enum from the shim.
 
 #### Comments
 
@@ -474,13 +335,6 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 
 ## Environment Setup
 
-### Required Environment Variables
-- Database connection strings
-- Authentication providers
-- S3/CloudFlare credentials
-- Payment provider keys
-- Search service endpoints
-
 ### Local Development
 
 **Toolchain: node `24.19.0` and pnpm 10.x.** `.nvmrc` is the authority (CI reads it
@@ -489,35 +343,10 @@ declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake owns both — it der
 its node major from `.nvmrc` instead of naming one, and `nix flake check` fails if
 they disagree.
 
-From nothing to a running app (the default path — no Nix):
-
-```bash
-nvm use                                        # .nvmrc -> 24.19.0
-corepack enable
-git submodule update --init event-engine-common
-cp .env-example .env.development
-docker compose -f docker-compose.base.yml up -d
-pnpm install && pnpm dev
-```
-
-**Optional, NixOS only** — the flake does the same in one command. Nothing requires
-it, and it is used by one maintainer; do not assume a contributor has it:
-
-```bash
-nix run .#dev          # docker preflight, submodule, .env.development, compose up,
-                       # wait for postgres, pnpm install, next dev on :3000
-nix run .#dev -- --no-start   # bootstrap only
-nix run .#doctor              # are the flake's pins still in step with the repo?
-```
-
-In an existing checkout that already works:
-1. Install dependencies: `pnpm install`
-2. Generate Prisma client: `pnpm run db:generate`
-3. Start the services if they are down: `make start`
-4. Start dev server: use the `/dev-server` skill. The daemon is spawned with
-   `process.execPath`, so whichever node first ran a CLI verb is the node it keeps
-   until it is shut down — run it under the node from `.nvmrc`. (On NixOS,
-   `nix run .#dev-server` does that for you.)
+Start the dev server with the `/dev-server` skill, never `pnpm run dev`. The daemon is spawned with
+`process.execPath`, so whichever node first ran a CLI verb is the node it keeps until shutdown — run it under
+the node from `.nvmrc`. First-time machine bootstrap (corepack, submodule, `.env.development`, the
+docker-compose base services, and the optional NixOS flake path): `civitai-local-setup` skill.
 
 ### Local development — the traps that cost hours
 
@@ -603,44 +432,29 @@ git -C <repos-root>/worktrees/<name> status -sb | head -1   # must print `## <br
 that something is `origin/main` the worktree is in the broken state described below. Verifying costs a
 second here; not verifying stays invisible until the first `git pull` or `git status` on the branch.
 
-**Always `-b <branch> --no-track origin/main`. Never the shorthand.** All three parts are
-load-bearing and none is optional:
+**Always `-b <branch> --no-track origin/main`. Never the shorthand.** All three parts are load-bearing:
+`-b` creates a new branch and **refuses if the name already exists** (which is what makes this safe to run
+blind); `origin/main` is the base, without which the branch forks from *this* tree's stale `HEAD`; and
+`--no-track` stops that base from also becoming the *upstream*, which `branch.autoSetupMerge` would otherwise
+do behind your back — a base and an upstream are different things and git conflates them here.
 
-- **`-b <branch>`** creates a new branch and **refuses if the name already exists**, which is the
-  property that makes this safe to run without checking first. Without `-b`,
-  `git worktree add <path> <existing-branch>` checks out a branch someone else may be building on.
-- **`origin/main`** is the base. Without it the new branch forks from *this* worktree's `HEAD` — the
-  local `main` you last pulled, not the real one.
-- **`--no-track`** stops that base from also becoming the branch's *upstream*. `branch.autoSetupMerge`
-  defaults to `true`, so `-b <branch> origin/main` sets `branch.<branch>.merge = refs/heads/main`
-  behind your back — a base and an upstream are different things and git conflates them here.
+🔴 **Without `--no-track` your feature branch tracks `main` forever.** `git pull` on it then **merges
+`origin/main` into your feature branch**, and since this repo squash-merges, that merge commit is pure noise in
+the diff. Tell with `git status -sb`: healthy is `## <branch>` alone, or `## <branch>...origin/<branch>` once
+pushed; `## <branch>...origin/main` is the broken state. Fix with `git branch --unset-upstream`, then
+`git push -u origin <branch>` on first push.
 
-🔴 **Without `--no-track` your feature branch tracks `main` forever.** `git status` then reports it as
-"diverged from 'origin/main' … ahead N, behind M" and offers to reconcile — which is confusing but
-harmless — while `git pull` on the branch is the actual hazard: it **merges `origin/main` into your
-feature branch**, and since this repo squash-merges PRs, that merge commit is pure noise in the diff.
-Tell with `git status -sb`: a healthy feature branch prints `## <branch>` alone, or `## <branch>...origin/<branch>`
-once pushed. `## <branch>...origin/main` is the broken state. Fix an existing one with
-`git branch --unset-upstream`, then `git push -u origin <branch>` when you first push, which sets the
-upstream that should have been there.
+🔴 **Do not create worktrees with the `EnterWorktree` tool.** It puts the tree in `.claude/worktrees/` —
+outside the Defender-excluded repos root, so it silently runs slow — and branches the shorthand way, so the new
+branch comes out tracking `origin/main` instead of clean for a new PR. Use the recipe above. Entering an
+*existing* worktree with `EnterWorktree` `path:` is fine — that creates nothing.
 
-🔴 **Do not create worktrees with the `EnterWorktree` tool.** It puts the tree in `.claude/worktrees/`
-— outside the Defender-excluded repos root, so it silently runs slow — and under the default
-`worktree.baseRef: fresh` it branches from `origin/<default-branch>` the shorthand way, so the new
-branch comes out tracking `origin/main` instead of clean for a new PR. Use the `git worktree add`
-recipe above. Entering an existing worktree with `EnterWorktree` `path:` is fine — that only switches
-the session's directory and creates nothing.
-
-🔴 **`git worktree add <path>` with no branch and no base is the other trap**, because it looks like it worked: git
-silently invents a branch named after the directory's basename and forks it from local `HEAD`. You
-get a new branch, so nothing errors, and the staleness only surfaces later as conflicts against a
-`main` that moved. Tell from the outside: **branch name identical to the directory name** is the
-signature. That is how `worktrees/moderator-feedback` was created (2026-08-20) — branch `moderator-feedback`
-based at `74bd61e6d8`, which was the primary worktree's `main`, while `origin/main` was already three
-commits further on at `e21fc62eea`.
-
-`git fetch origin main` on the first line is what keeps `origin/main` honest — the trap is not
-avoided by remembering the flags if the ref they name is itself stale.
+🔴 **`git worktree add <path>` with no branch and no base is the other trap**, because it looks like it worked:
+git silently invents a branch named after the directory's basename and forks it from local `HEAD`. Nothing
+errors, and the staleness only surfaces later as conflicts against a `main` that moved. Signature: **branch
+name identical to the directory name** (that is how `worktrees/moderator-feedback` was created, 2026-08-20).
+`git fetch origin main` on the first line is what keeps the base honest — remembering the flags does not help
+if the ref they name is itself stale.
 
 **Remove one when its PR merges** — don't hand-roll this, and don't reach for `git worktree remove`
 (it refuses whenever `event-engine-common` is checked out):
@@ -650,80 +464,17 @@ node .claude/skills/dev-server/cli.mjs wt stale        # what's finished, and wh
 node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlinks links, deletes, prunes
 ```
 
-`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), and a tree with a
-running dev server (`--stop-server`). It deletes the branch only when `gh` reports a **merged** PR, keeps
-it when commits exist on no remote, and prints the SHA when it does delete. Left alone, worktrees
-accumulate: 22 stale ones were removed in one sweep on 2026-08-12, 15 with already-merged PRs.
+`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`) and one with a running dev
+server (`--stop-server`), and deletes the branch only when `gh` reports a **merged** PR. 🔴 **Do not verify
+merge state by hand with `git merge-base --is-ancestor`, or count unpushed commits with a bare
+`git log --not --remotes`** — this repo squash-merges and the second has no positive rev, so both return
+success-shaped output that tells you nothing. Correct commands and the numbers: `civitai-worktrees` skill.
 
-**Two checks that fail *clean* if you verify merge state yourself.** Both return success-shaped output
-while telling you nothing:
-- `git merge-base --is-ancestor <branch> origin/main` — this repo squash-merges, so a merged branch's tip
-  is never an ancestor. It reported "not merged" for 24 of 26 branches, including ones demonstrably in
-  `main`. Use `gh pr list --state all --head <branch>`.
-- `git log --not --remotes` with **no positive rev** prints nothing, which reads as "no unpushed commits."
-  It has nothing to list commits *from*. Use `git rev-list --count <branch> --not --remotes` — run
-  correctly, six branches turned out to hold commits that existed on no remote at all.
-
-When you create a new worktree, **always initialize the `event-engine-common` submodule
-in it**: `git submodule sync --recursive && git submodule update --init event-engine-common`.
-Worktrees don't check out submodules automatically,
-and without it `pnpm typecheck`/`build` fail with a wall of `Cannot find module '.../event-engine-common/...'`
-errors (and the missing types cascade into unrelated `implicitly has an 'any' type` errors) — noise that looks
-like your change broke something when it didn't.
-
-**The worse consequence is a suite that doesn't fail — it vanishes.** Without the submodule,
-`src/server/routers/__tests__/blocks.router.workflow.test.ts` fails to **collect** and contributes **0 tests**.
-It doesn't report red, it reports nothing, and a run that collected nothing still finishes in a way that reads
-as a pass to anyone checking an exit code or skimming a summary. **Validate any worktree test run by confirming
-that file collected a nonzero count** — it was 308 tests on one base. If it reports 0, the run tells you nothing
-about your change, whatever the summary says.
-
-**A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
-get system Node instead of the flake's pinned version. Measured (when the flake still shipped node 22): system
-Node **26.5.0** against the flake's **22.22.2** produced 7 spurious `window.localStorage is undefined` failures
-under happy-dom plus 8 Prisma `linux-nixos` engine errors — every one a false red that got attributed to the code
-under test. The flake now ships **24.19.0**, matching `.nvmrc`, so the version gap is smaller — but the *Prisma*
-half is unchanged and does not care about the gap: without the flake's env there are no `PRISMA_*_ENGINE_*` paths
-at all, and prisma goes looking for a `linux-nixos` engine that has never been published.
-`cp .envrc.example <worktree>/.envrc && direnv allow`, or run commands through `nix develop`.
-**Then confirm your cwd is actually the worktree**: one run
-whose cwd was set to a different repo lost two suites to collection failures and **77 tests silently never ran**
-(10849 → 10772) while the output otherwise looked entirely normal.
-
-**Browser/component tests on NixOS: the host's browser bundle must match this repo's playwright pin — fix the
-host, not `package.json`.**
-The failure is *not* "no `chromium` on `PATH`" — a NixOS host that sets `PLAYWRIGHT_BROWSERS_PATH` (nixpkgs
-`playwright-driver.browsers`) already has Chromium. Playwright pins **one exact Chromium build per release** and
-looks it up by revision under that path, so a driver/bundle mismatch fails with
-`browserType.launch: Executable doesn't exist at .../chromium_headless_shell-<rev>/...` — and the whole
-`component` project then reports **`Test Files (130)` / `Tests no tests`**, i.e. 0 of 130 executed. That reads
-like a broken suite, not a missing browser.
-
-**The repo pin is `^1.57.0` and stays there — adapt the host to it.** `playwright` / `@playwright/test` resolve
-to **1.57.0**, which wants Chromium revision **1200**. Before running, check the two numbers that have to be
-equal: `node_modules/playwright/../playwright-core/browsers.json` (the revision playwright will look for) against
-`ls $PLAYWRIGHT_BROWSERS_PATH` (the revisions the bundle actually has). If they differ, point
-`PLAYWRIGHT_BROWSERS_PATH` at a `playwright-driver` bundle of the *matching* version instead of bumping the repo.
-Nixpkgs carries exactly one playwright version per revision, so a host that drives several repos on different
-playwright lines needs one pinned nixpkgs input per line and a per-project selector — the version skew is a
-property of the host, not of this repo.
-
-**Do not "fix" this by bumping the pin — the bump is not self-contained.** It was tried and reverted. CI runs
-some Playwright jobs in **version-matched container images that ship their own browsers** (`PLAYWRIGHT_BROWSERS_PATH`
-pointing inside the image) while executing the *workspace-local* `./node_modules/.bin/playwright`. Bumping this
-repo alone desynchronises that pair and reproduces the same bug in CI: the preview smoke suite went **2 passed /
-59 failed**, and every one of the 59 was `browserType.launch: Executable doesn't exist at
-/ms-playwright/chromium_headless_shell-1228/...` — 177 occurrences (59 × 3 retries) and **zero** assertion or
-timeout failures. Not one spec executed. So a bump needs a lockstep image-tag change owned by someone else, in
-the same window, in both directions. Adapting the host costs one person nothing and no one else anything.
-
-A caret range is also not a pin for a package with a 1:1 browser mapping: `^1.57.0` floating within the 1.57
-line is fine (the Chromium build is stable across a minor line), but bumping the *minor* changes the revision.
-
-Escape hatch if your host's bundle can't match the pin: `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=<abs path to a
-chrome/chrome-headless-shell binary>` — honoured by `vitest.config.mts`'s provider, and it bypasses the revision
-lookup entirely. Before blaming any of this: **a stale `node_modules/.vite` cache — typical after a `kill -9` —
-hangs for minutes at near-zero CPU. Clear it first.**
+**Setting the tree up once it exists** — initialize the `event-engine-common` submodule and create the
+gitignored `.envrc`, or test runs from that tree are silently wrong: without the submodule
+`src/server/routers/__tests__/blocks.router.workflow.test.ts` collects **0 tests** and still reads as a pass.
+Full procedure, the NixOS `.envrc`/Prisma-engine consequences, and matching a host browser bundle to the
+repo playwright pin: `civitai-worktrees` skill.
 
 ## Important Notes
 
@@ -805,9 +556,6 @@ The follow-ups list is a queue to be worked down, not an archive.
 
 ## Common Patterns
 
-### Infinite Scroll
-Use MasonryGrid or virtual scrolling components with React Query infinite queries.
-
 ### Modals
 Use Mantine modals with proper accessibility and keyboard handling.
 
@@ -817,15 +565,6 @@ The project uses a dialog-registry system for managing modals:
 - Use `DialogProvider` for context-based modal management
 - `RoutedDialogProvider` for URL-based modal state
 - Access dialogs through the registry for consistent modal handling across the app
-
-### Forms
-Use React Hook Form with Zod schemas for validation.
-
-### File Uploads
-Use the S3 upload hooks and providers in the codebase.
-
-### Image Handling
-Use EdgeImage component for optimized image loading with CDN support.
 
 ## Debug Endpoints (`src/pages/api/testing/*`)
 
@@ -859,25 +598,6 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
 | Civitai Link | [docs/features/civitai-link.md](docs/features/civitai-link.md) |
-
-## Troubleshooting
-
-### Memory Issues
-Use cross-env NODE_OPTIONS with increased memory:
-```bash
-pnpm run dev-debug  # Includes --max_old_space_size=8192
-```
-
-### Build Failures
-1. Clear .next folder
-2. Clear node_modules and reinstall
-3. Check for circular dependencies
-4. Ensure all environment variables are set
-
-### Database Issues
-1. Check connection string
-2. Apply pending migrations manually (we do NOT use `prisma migrate deploy` — see Database section above)
-3. Regenerate client: `pnpm run db:generate`
 
 <!-- BEGIN:nextjs-agent-rules -->
 
