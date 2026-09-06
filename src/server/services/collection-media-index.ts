@@ -42,8 +42,13 @@ import { collectionsSearchIndex } from '~/server/search-index';
 // cannot match: `remove-replaced-images` calls `getStillReferencedImageIds`, which
 // filters out every id that is still a `profilePictureId`, before it calls
 // `deleteImages`. So for a REPLACED avatar this leg resolves zero collections, by
-// construction, every time. `deleteUser` is the same shape — it deletes the user's
-// collections before their images.
+// construction, every time.
+//
+// `deleteUser` reaches the same outcome by a DIFFERENT mechanism: it nulls
+// `profilePictureId` inside its own transaction, so by the time that user's images are
+// destroyed (later, by `remove-deleted-user-images`) nothing matches this leg either.
+// It does NOT delete the user's collections — `removeAllContent` is the function that
+// does that, and it is a separate moderator endpoint.
 //
 // The gap that leaves is real and is NOT closed here: a user changes their avatar, the
 // old Image row and its object are destroyed 30 days later, and every collection they
@@ -51,7 +56,7 @@ import { collectionsSearchIndex } from '~/server/search-index';
 // enqueue at REPLACEMENT time, which is a different trigger from removal and outside
 // what this module is wired to. Tracked separately. The leg is kept because it is
 // correct for the case it does match (a moderator or ingestion delete of a live
-// avatar) and costs ~28, bounded because `profilePictureId` is `@unique`.
+// avatar) and costs 9.47, bounded because `profilePictureId` is `@unique`.
 //
 // Route 6 is the one that matters most on screen: CollectionCard renders
 // `if (data.image) return [data.image]`, so a cover WINS over every item image, and
@@ -100,7 +105,7 @@ const ENQUEUE_BATCH_SIZE = 500;
  * Every lookup stops at `LIMIT cap + 1`, so the largest overflow any of them can
  * observe is one — the query is deliberately not in a position to learn the true
  * total. Reporting a number here would mean reporting `1` in exactly the case the
- * warning exists for: real models sit far past the cap (measured: one in 86,153
+ * warning exists for: real models sit far past the cap (measured: one in 86,156
  * distinct collections), so "1 more is stale" would understate by five orders of
  * magnitude. The overflow is unknown, and the warning says so.
  */
@@ -169,10 +174,10 @@ async function coverIndexExists() {
 /**
  * Collections whose document shows any of these images, by all seven routes.
  *
- * Plans verified with EXPLAIN on a read replica. Five legs are single-index probes
- * (CollectionItem_imageId_lookup, CollectionItem_postId_lookup, CollectionItem_modelId,
- * CollectionItem_model3dId_idx, and User_profilePictureId_key + Collection_userId_idx
- * for the avatar). The article leg is NOT a probe — `CollectionItem_article_idx` is
+ * Plans verified with EXPLAIN on a read replica. Five legs are index probes:
+ * CollectionItem_imageId_lookup, CollectionItem_postId_lookup, CollectionItem_modelId
+ * and CollectionItem_model3dId_idx, plus the avatar leg, which is two probes joined
+ * (User_profilePictureId_key then Collection_userId_idx, cost 9.47). The article leg is NOT a probe — `CollectionItem_article_idx` is
  * `("collectionId","articleId")` and nothing leads on `articleId`, so it scans that
  * partial index: row estimate 271 per outer row, against 6 for the postId leg. It is
  * bounded — the index is 7,712 kB — so it is kept rather than given one of its own.
