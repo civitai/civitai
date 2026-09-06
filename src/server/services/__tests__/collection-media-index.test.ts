@@ -139,6 +139,30 @@ describe('getCollectionIdsForModelCascade', () => {
       dropped: 0,
     });
   });
+
+  // `CollectionItem` is a ~208M-row table. Bridging the two columns with a single
+  // `OR` makes the predicate non-sargable: Postgres can use NEITHER the modelId nor
+  // the imageId index, and falls back to scanning an unrelated index end to end with
+  // the whole condition as a post-scan Filter (measured: 43.3M estimated rows, total
+  // cost 3,336,745). Split into two UNIONed legs, each probes its own index
+  // (measured: cost 73.76, both legs index-only scans; 74.52 for the parameterised
+  // generic plan, which is the shape Prisma sends).
+  //
+  // The guard is "no OR anywhere in this statement" rather than a spelling check on
+  // the good form: this query has no other legitimate use for one, so any OR that
+  // appears here is the non-sargable shape coming back.
+  it('splits the two columns into UNIONed legs so each can use its own index', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows(COLLECTION_A));
+
+    await getCollectionIdsForModelCascade({ modelId: MODEL_ID });
+
+    const sql = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(sql).toMatch(/\bUNION\b/);
+    // Two independent scans of the table, one per column.
+    expect(sql.match(/FROM "CollectionItem"/g)).toHaveLength(2);
+    // The non-sargable bridge must not come back.
+    expect(sql).not.toMatch(/\bOR\b/);
+  });
 });
 
 describe('enqueueCollectionRebuild', () => {
@@ -203,6 +227,25 @@ describe('enqueueCollectionRebuild', () => {
         cap: 3,
       })
     );
+  });
+
+  // Every lookup here stops at `LIMIT cap + 1`, so the count that comes back is only
+  // ever "at least one more than the cap" — the true overflow is never observed and
+  // cannot be. A message asserting an exact figure would be a claim the query was
+  // never in a position to make, so the wording is pinned as a lower bound.
+  it('words the truncation warning as a lower bound, not an exact count', async () => {
+    await enqueueCollectionRebuild({
+      collectionIds: [COLLECTION_B],
+      dropped: 4,
+      source: 'model-perma-delete',
+      cap: 2,
+    });
+
+    const warning = loggingMock.logToAxiom.mock.calls
+      .map((c) => c[0] as { name?: string; message?: string })
+      .find((a) => a?.name === 'collection-media-index-enqueue-truncated');
+
+    expect(warning?.message).toContain('at least');
   });
 
   it('never throws when the queue write fails, so post-delete cleanup still runs', async () => {
