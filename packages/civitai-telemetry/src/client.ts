@@ -373,17 +373,44 @@ export const redisCommandDuration = registerHistogram({
 //     histogram improve while adding codec cost it structurally cannot observe.
 // So this is the only signal that can answer "what does compression cost us".
 //
-// `cache_name` matches the label the cache hit/miss counters carry (the cache PREFIX, e.g.
-// `packed:caches:image-meta`), so codec cost joins to cache traffic. Cardinality is bounded by the
-// small set of caches that opt into `compress`. Callers with no bounded name report 'unknown'.
+// `cache_name` is the cache PREFIX (e.g. `packed:caches:image-meta`). It is chosen so cardinality
+// stays bounded by the small set of caches that opt into `compress`; callers with no bounded name
+// report 'unknown'.
 //
-// Buckets are milliseconds-scaled, not the redis command scale: the values here are sub-ms for a
-// typical cached record, with a tail into tens of ms for a large blob.
+// HOW FAR THE JOIN TO CACHE TRAFFIC GOES — it holds for ONE of the two consumers, so do not plan a
+// dashboard on it without checking which:
+//   - createCachedArray / createCachedObject DO join: the builder passes its `key` as this label
+//     AND passes the same `key` as `cache_name` to cacheHitCounter/cacheMissCounter, so the two
+//     label values are equal by construction.
+//   - fetchThroughCache does NOT join: it emits no hit/miss counters at all, so there is no
+//     cache-traffic series carrying this `cache_name` to join against. (The nearest counter a
+//     reader might reach for — the tensor-metadata in-process LRU — labels itself
+//     'tensor-metadata-full', a different value naming a different cache.) The label still earns
+//     its place there by separating one cache's codec cost from another's; it is simply not a join
+//     key today.
+//
+// BUCKETS — seconds, and the floor has to be tens of MICROseconds. "Sub-ms for a typical record"
+// is true and was still the wrong floor: the two live compress-aware caches sit at opposite ends.
+// imageMetaCache values are ~0.5-4 KB and decompress in ~0.026 ms, so against a 0.0005 first edge
+// the overwhelming majority of all samples land in the first bucket and histogram_quantile is
+// pinned to that edge no matter what the codec does. tensor-metadata's ~335 KB blob is the
+// tens-of-ms tail. The edge set below spans both, and the four smallest exist so the common case
+// is resolvable at all rather than reported as "somewhere under half a millisecond".
+// ⚠️ Changing these edges resets every series' history — settle them before this ships.
+//
+// Exported so the resolution invariant can be checked mechanically rather than by eye: see
+// ./__tests__/packed-codec-buckets.test.ts, which pins that the measured common case is not
+// swallowed by the first bucket and that the large-blob tail is still covered.
+export const PACKED_CODEC_DURATION_BUCKETS = [
+  0.00002, 0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25,
+  0.5, 1,
+] as const;
+
 export const packedCodecDuration = registerHistogram({
   name: 'packed_codec_duration_seconds',
-  help: 'Brotli codec wall-clock duration for compressed redis.packed values, by op and cache_name (invisible to CPU profiles — the codec runs on the libuv threadpool — and not covered by redis_command_duration_seconds, which stops at the round trip)',
+  help: 'Brotli codec duration for compressed redis.packed values, by op and cache_name. Wall clock as seen by the caller, so it includes libuv threadpool QUEUE WAIT as well as codec work: it is what the codec cost the request, NOT CPU time, and it rises under unrelated threadpool load with no change in codec cost. Invisible to CPU profiles (the codec runs off the JS stack) and not covered by redis_command_duration_seconds, which stops at the round trip.',
   labelNames: ['op', 'cache_name'] as const,
-  buckets: [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+  buckets: [...PACKED_CODEC_DURATION_BUCKETS],
 });
 
 // SELF-HEAL reconnect counter. Incremented once each time an inflight-leak self-heal watchdog forces

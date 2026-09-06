@@ -197,6 +197,8 @@ describe('packed codec metrics — labels and wiring', () => {
   });
 
   it('does not throw when the app has published no metrics bridge', async () => {
+    // NOTE: absence is a no-op — `?.` short-circuits and no callback runs. That is a strictly
+    // weaker claim than the throwing-bridge block below, which is where the damage lives.
     removeBridge();
     await expect(
       redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE })
@@ -253,5 +255,86 @@ describe('packed codec metrics — labels and wiring', () => {
     );
     expect(readLabels).toEqual(new Set([BUILDER_CACHE]));
     expect(observed.filter((o) => o.op === 'decompress')).toHaveLength(2);
+  });
+});
+
+/**
+ * 🔴 A METRICS FAULT MUST NOT DESTROY A CACHE ENTRY.
+ *
+ * The timer call sits INSIDE `decompressPacked`, which sits inside `safeUnpackCompressed`'s try —
+ * and that catch does not mean "something went wrong", it means "the stored bytes are corrupt", so
+ * it logs, UNLINKS the key and returns null. A bridge whose `observe()` throws (duplicate metric
+ * registration, a rejected label value, an exhausted registry) therefore does not merely lose a
+ * sample: a VALID entry is reported as a miss and DELETED, on every read, for as long as the fault
+ * lasts — an observability change turning into a cache-eviction bug that presents as a cache with
+ * a mysterious 0% hit rate.
+ *
+ * The "no metrics bridge" test above cannot see this: absence short-circuits at `?.` and no
+ * callback runs at all. Absence and throw are different mechanisms, and only one of them is
+ * dangerous.
+ */
+describe('packed codec metrics — a metrics fault must never fail a read or a write', () => {
+  /**
+   * Counts every call BEFORE throwing. The count is the positive control: without it, all three
+   * tests below would also pass against a client that had stopped calling the timer entirely —
+   * "nothing threw" is exactly what a dead wire looks like too. Asserting `attempts > 0` says the
+   * throwing path was really entered and really swallowed.
+   */
+  let attempts = 0;
+  const BOOM = 'prom registry exploded';
+
+  function installThrowingBridge() {
+    attempts = 0;
+    (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+      packedCodecDuration: {
+        observe: () => {
+          attempts += 1;
+          throw new Error(BOOM);
+        },
+      },
+    };
+  }
+
+  it('a throwing observe() neither loses the value nor unlinks the key on a compressed get', async () => {
+    store.set(KEY, await compressPacked(Buffer.from(pack(record))));
+    installThrowingBridge();
+
+    const got = await redis.packed.get<typeof record>(KEY, {
+      compress: true,
+      cacheName: DIRECT_CACHE,
+    });
+
+    expect(attempts, 'the throwing observe() was actually reached').toBe(1);
+    // Asserted BEFORE the value: the deletion is the damaging half, and it outlives the request.
+    expect(store.has(KEY), 'the healthy entry was NOT unlinked by a metrics fault').toBe(true);
+    expect(got, 'a valid entry is still returned when the metrics bridge throws').toEqual(record);
+  });
+
+  it('a throwing observe() does not fail a compressed set', async () => {
+    installThrowingBridge();
+
+    await expect(
+      redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE })
+    ).resolves.toBeDefined();
+    expect(attempts, 'the throwing observe() was actually reached').toBe(1);
+    expect(store.has(KEY), 'the compressed write still landed').toBe(true);
+  });
+
+  it('a throwing observe() leaves a whole compressed mGet batch intact', async () => {
+    store.set(KEY, await compressPacked(Buffer.from(pack(record))));
+    store.set(KEY_LEGACY, await compressPacked(Buffer.from(pack(record))));
+    installThrowingBridge();
+
+    const got = await redis.packed.mGet<typeof record>([KEY, KEY_LEGACY], {
+      compress: true,
+      cacheName: DIRECT_CACHE,
+    });
+
+    expect(attempts, 'the throwing observe() was reached once per compressed value').toBe(2);
+    expect(
+      [store.has(KEY), store.has(KEY_LEGACY)],
+      'no key in the batch was unlinked by a metrics fault'
+    ).toEqual([true, true]);
+    expect(got, 'every entry in the batch still decodes').toEqual([record, record]);
   });
 });

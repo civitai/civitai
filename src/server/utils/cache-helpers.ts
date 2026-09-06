@@ -365,11 +365,17 @@ export async function fetchThroughCache<T>(
 
       // Wait for the fetcher to do their thing...
       await sleep((lockTTL * 1000) / 2);
+      // Every option the caller gave must survive the recursion — this is the ONE path that
+      // re-spells them by hand rather than passing `options` through, so anything omitted here
+      // silently reverts to its default on a retry only. `cacheName` is the easy one to miss
+      // because nothing observable changes: the retry's codec samples just move to the client's
+      // 'unknown' label while the first attempt still looked correct.
       return fetchThroughCache(key, fetchFn, {
         ttl,
         lockTTL,
         retryCount: retryCount - 1,
         compress,
+        cacheName,
       });
     }
   } else if (cachedData) return cachedData.data;

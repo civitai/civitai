@@ -44,7 +44,16 @@ const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
 /**
- * Wall-clock recorder for one codec call, in SECONDS (prom convention).
+ * Recorder for one codec call, in SECONDS (prom convention).
+ *
+ * 🔴 WHAT THE NUMBER ACTUALLY CONTAINS. The clock starts BEFORE the promisified call is enqueued
+ * and stops when its callback resolves, so a sample is libuv threadpool QUEUE WAIT + codec work.
+ * That is the right quantity for "what did compression cost this request", and it is deliberately
+ * not CPU time: the value rises when the threadpool is busy with unrelated work (other brotli
+ * calls, fs, dns, crypto) while the codec's own cost is unchanged. So read a rise as "the codec
+ * PATH got slower", never as "brotli got more expensive", without a second signal to separate
+ * them. Narrowing the window to the codec alone is not possible from JS — the enqueue and the
+ * threadpool hand-off are both below the promisified boundary.
  *
  * WHY THE TIMING LIVES IN THIS MODULE rather than at the call sites: the codec is ASYNC, so
  * it runs on the libuv threadpool and never appears on the JS stack. A V8 CPU profile
@@ -64,8 +73,8 @@ export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) 
 /**
  * Brotli-compress an already-msgpack-packed Buffer and prepend the sentinel byte.
  *
- * `onTiming` (optional) receives the wall time of the compress call itself, labelled
- * `compress`.
+ * `onTiming` (optional) receives the elapsed time of the compress call as this caller sees it —
+ * threadpool queue wait included, so not CPU time; see PackedCodecTimer — labelled `compress`.
  */
 export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer): Promise<Buffer> {
   const startedAt = performance.now();
@@ -86,7 +95,8 @@ export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer
  * Only the compress-aware read path calls this — see the SENTINEL SCOPE note above for
  * why the first-byte sentinel check is collision-free there.
  *
- * `onTiming` (optional) is called ONLY when a brotli-decompress actually ran. The legacy
+ * `onTiming` (optional) is called ONLY when a brotli-decompress actually ran, and records elapsed
+ * time as this caller sees it — threadpool queue wait included; see PackedCodecTimer. The legacy
  * raw-msgpack passthrough deliberately records NOTHING: it is a sentinel check and a return,
  * not a codec call, and mixing those near-zero samples into the `decompress` histogram would
  * drag the quantiles toward "the cost of not decompressing" — a number that answers no

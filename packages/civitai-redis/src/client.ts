@@ -73,8 +73,14 @@ type CommandType = ClientCommandOptions;
  * `compress` is BEHAVIOURAL and must be symmetric across a cache's reads and writes (see the
  * SENTINEL SCOPE note in ./packed-compression). `cacheName` is purely OBSERVATIONAL — it names
  * the `cache_name` label on the codec duration histogram and changes no behaviour. Give it the
- * cache PREFIX (`packed:caches:image-meta`), the same value the cache hit/miss counters carry —
- * never a per-id key, which would be unbounded label cardinality.
+ * cache PREFIX (`packed:caches:image-meta`) — never a per-id key, which would be unbounded label
+ * cardinality.
+ *
+ * Whether that label JOINS to a cache's hit/miss counters depends on the caller, and only one of
+ * the two consumers joins: createCachedArray/createCachedObject pass their `key` both here and as
+ * the `cache_name` on cacheHitCounter/cacheMissCounter, so the values match by construction;
+ * `fetchThroughCache` emits no hit/miss counters at all, so for those call sites the label
+ * separates caches from each other but joins to nothing.
  */
 export type PackedOptions = { compress?: boolean; cacheName?: string };
 
@@ -127,7 +133,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     // for keys written with compress — see the SENTINEL SCOPE note in packed-compression.
     // `packedOptions.cacheName` is metrics-only: the `cache_name` label on the codec
     // duration histogram. It must be the cache PREFIX (`packed:caches:image-meta`), never
-    // a per-id key, and it matches the `cache_name` the cache hit/miss counters carry.
+    // a per-id key. See PackedOptions for which callers it joins to the hit/miss counters.
     get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null>;
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all.
     // `packedOptions.compress` opts the READ into the compress-aware decode path, exactly as
@@ -739,11 +745,30 @@ export const PACKED_CODEC_UNNAMED_CACHE = 'unknown';
  * Build the codec timing callback handed to compressPacked/decompressPacked. The bridge is read
  * PER CALL (not captured once) because it is published by the app's prom module after this
  * module loads — capturing it at client-construction time would pin `undefined` forever.
+ *
+ * 🔴 THE try/catch IS LOAD-BEARING, not defensive habit. This callback runs INSIDE
+ * `decompressPacked`, which runs inside `safeUnpackCompressed`'s try — and that catch does not
+ * mean "something went wrong", it means "THE STORED BYTES ARE CORRUPT", so it logs, UNLINKS the
+ * key and returns null. Without this guard a prom fault (a duplicate-metric registration, a bad
+ * label value, an exhausted registry) would therefore turn a perfectly valid cache entry into a
+ * miss AND delete it, on every read, for as long as the fault lasted — an observability change
+ * silently becoming a cache-eviction bug. The compress side is milder but the same shape: a throw
+ * there escapes `packed.set` and fails the write.
+ *
+ * Guarding here rather than at the three call sites is deliberate: one predicate, both ops, every
+ * caller — a second copy is how the two drift apart.
  */
 function packedCodecTimer(cacheName?: string): PackedCodecTimer {
   const cache_name = cacheName ?? PACKED_CODEC_UNNAMED_CACHE;
-  return (op, seconds) =>
-    getRedisMetrics()?.packedCodecDuration?.observe({ op, cache_name }, seconds);
+  return (op, seconds) => {
+    try {
+      getRedisMetrics()?.packedCodecDuration?.observe({ op, cache_name }, seconds);
+    } catch {
+      // Metrics must never fail a read or a write. A lost sample is a gap in a graph; a throw
+      // here would be a deleted cache entry (see above). Deliberately silent — the logger on this
+      // path is the one that reports "corrupt entry", which is precisely the wrong claim.
+    }
+  };
 }
 
 /**

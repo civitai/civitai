@@ -17,12 +17,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *      never contains `tensors`).
  *   3. The full path returns the full analysis INCLUDING `tensors`.
  *   4. The full cache write opts into `compress: true`; the summary write does not.
+ *   5. The full cache write names itself (`cacheName`, the codec histogram's `cache_name` label);
+ *      the summary write does not, because no codec runs there.
+ *
+ * ⚠️ `makeFetchers` below MIRRORS the endpoint's composition, so it is a model, not the thing.
+ * That the real call site passes these options is pinned separately, against the real handler
+ * module, in src/tests/api/v1/model-files/tensor-metadata-cache-name.test.ts — keep both in step.
  */
 
-// In-memory packed store keyed by redis key. `compress` is recorded per-set so we can
-// assert the full cache opts in and the summary does not.
+// In-memory packed store keyed by redis key. `compress` and `cacheName` are recorded per-set so we
+// can assert the full cache opts in / names itself and the summary does neither.
 const store = new Map<string, unknown>();
 const setCompressFlags = new Map<string, boolean | undefined>();
+const setCacheNames = new Map<string, string | undefined>();
 
 const packedGet = redisMock.redis.packed.get;
 const packedSet = redisMock.redis.packed.set;
@@ -41,15 +48,28 @@ vi.mock('~/server/prom/client', () => ({
 import { CacheTTL } from '~/server/common/constants';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-redisMock.redis.packed.get.mockImplementation(async (key: string) => (store.has(key) ? store.get(key) : null));
-redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown, _opts?: unknown, packedOptions?: { compress?: boolean }) => {
+redisMock.redis.packed.get.mockImplementation(async (key: string) =>
+  store.has(key) ? store.get(key) : null
+);
+redisMock.redis.packed.set.mockImplementation(
+  async (
+    key: string,
+    value: unknown,
+    _opts?: unknown,
+    packedOptions?: { compress?: boolean; cacheName?: string }
+  ) => {
     store.set(key, value);
     setCompressFlags.set(key, packedOptions?.compress);
-  });
+    setCacheNames.set(key, packedOptions?.cacheName);
+  }
+);
 redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
 redisMock.redis.del.mockResolvedValue(undefined);
 
-const FULL_KEY = 'packed:caches:tensor-metadata:42';
+// The PREFIX is the codec histogram's `cache_name`; the KEY it reads is `${prefix}:${id}`. They
+// are deliberately different values — labelling with the key would be one series per cached file.
+const FULL_CACHE_NAME = 'packed:caches:tensor-metadata';
+const FULL_KEY = `${FULL_CACHE_NAME}:42`;
 const SUMMARY_KEY = 'packed:caches:tensor-metadata-summary:42';
 
 const makeAnalysis = () => ({
@@ -68,7 +88,11 @@ const makeAnalysis = () => ({
 // Mirrors the endpoint's composition exactly.
 function makeFetchers(parse: () => Promise<ReturnType<typeof makeAnalysis>>) {
   const fetchFull = () =>
-    fetchThroughCache(FULL_KEY as never, parse, { ttl: CacheTTL.month, compress: true });
+    fetchThroughCache(FULL_KEY as never, parse, {
+      ttl: CacheTTL.month,
+      compress: true,
+      cacheName: FULL_CACHE_NAME,
+    });
   const fetchSummary = () =>
     fetchThroughCache(
       SUMMARY_KEY as never,
@@ -85,6 +109,7 @@ function makeFetchers(parse: () => Promise<ReturnType<typeof makeAnalysis>>) {
 beforeEach(() => {
   store.clear();
   setCompressFlags.clear();
+  setCacheNames.clear();
   packedGet.mockClear();
   packedSet.mockClear();
   setNxMock.mockClear().mockResolvedValue(true);
@@ -108,6 +133,10 @@ describe('tensor-metadata summary/full cache split', () => {
     expect(store.has(FULL_KEY)).toBe(true);
     expect(setCompressFlags.get(FULL_KEY)).toBe(true);
     expect(setCompressFlags.get(SUMMARY_KEY)).toBeFalsy();
+    // …and the compressed one names itself for the codec histogram, with the PREFIX not the key.
+    expect(setCacheNames.get(FULL_KEY)).toBe(FULL_CACHE_NAME);
+    expect(setCacheNames.get(FULL_KEY)).not.toBe(FULL_KEY);
+    expect(setCacheNames.get(SUMMARY_KEY)).toBeUndefined();
   });
 
   it('summary HIT does NOT invoke the full fetcher / parse (never touches the big blob)', async () => {
@@ -160,6 +189,7 @@ describe('bustFetchThroughCache compress threading', () => {
   it('threads compress=true to the get AND the set when busting a compressed key', async () => {
     store.set(FULL_KEY, { data: { x: 1 }, cachedAt: 999 });
     setCompressFlags.clear();
+    setCacheNames.clear();
     packedGet.mockClear();
 
     await bustFetchThroughCache(FULL_KEY as never, { compress: true });
@@ -173,6 +203,7 @@ describe('bustFetchThroughCache compress threading', () => {
   it('defaults to compress=false (general path) for uncompressed callers', async () => {
     store.set(SUMMARY_KEY, { data: { y: 2 }, cachedAt: 999 });
     setCompressFlags.clear();
+    setCacheNames.clear();
     packedGet.mockClear();
 
     await bustFetchThroughCache(SUMMARY_KEY as never);
