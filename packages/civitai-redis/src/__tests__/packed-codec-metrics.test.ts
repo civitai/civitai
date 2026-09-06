@@ -354,9 +354,11 @@ describe('packed codec metrics — a metrics fault must never fail a read or a w
  *
  * It is rate-limited rather than one-shot: a throwing bridge throws on EVERY codec call, so an
  * unthrottled line would be per-cache-read log spam, while a strict one-shot would go quiet for the
- * whole life of the process no matter how long the fault lasted. The three properties below are
- * asserted in one test on purpose — the throttle is module-scoped state, so "did not log" only
- * means "throttled" relative to a known earlier log in the same sequence.
+ * whole life of the process no matter how long the fault lasted. The properties below are asserted
+ * in one test on purpose — the throttle is module-scoped state, so "did not log" only means
+ * "throttled" relative to a known earlier log in the same sequence. The window is walked from BOTH
+ * sides (just under it, then just over it) so the interval constant is bracketed rather than merely
+ * bounded from above; see the comment at the 59_999 advance for why the one-sided version was inert.
  */
 describe('packed codec metrics — a swallowed observe failure leaves a breadcrumb', () => {
   const BREADCRUMB = 'packed codec metrics observe FAILED';
@@ -411,16 +413,84 @@ describe('packed codec metrics — a swallowed observe failure leaves a breadcru
         'a second failure inside the window is throttled, not logged'
       ).toHaveLength(1);
 
+      // 🔴 LOWER BOUND ON THE INTERVAL, and it is the half that is easy to leave out. Crossing the
+      // window (below) pins the constant only from ABOVE — it says "no larger than the advance",
+      // which every value down to 1 ms satisfies. Measured: with the interval set to 1 the whole
+      // package stayed 193/193 green, so a 60_000 → 60 unit slip would restore near-per-call log
+      // spam under a sustained fault with nothing red. This advance stops JUST SHORT of the window
+      // and must still be throttled, which pins it from BELOW; the two together bracket the
+      // constant into (59_999, 60_001].
+      clock += 59_999;
+      await redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE });
+      expect(attempts, 'the third failure really happened').toBe(3);
+      expect(
+        breadcrumbs(),
+        'a failure just BELOW the throttle window is still throttled — the window is ~60s, not milliseconds'
+      ).toHaveLength(1);
+
       // Past the window → speaks again, and carries the count accumulated while it was quiet.
-      clock += 60_001;
+      clock += 2; // 60_001 since the first (and so far only) breadcrumb
       await redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE });
       expect(breadcrumbs(), 'the breadcrumb returns after the throttle window').toHaveLength(2);
       expect(
         breadcrumbs()[1],
-        'the throttled failures are still counted, so the line reports 3 rather than 1'
-      ).toContain('failures=3');
+        'the throttled failures are still counted, so the line reports 4 rather than 1'
+      ).toContain('failures=4');
     } finally {
       nowSpy.mockRestore();
+      createCacheRedis({ log: () => undefined });
+      installBridge();
+      __resetPackedCodecObserveFailureState();
+    }
+  });
+
+  // 🔴 THE REPORTING PATH IS ITSELF INSIDE THE LOAD-BEARING CATCH, and it has to be, because `log`
+  // is INJECTED BY THE APP and is therefore arbitrary code. A throw from it escapes the swallow and
+  // lands in `safeUnpackCompressed`'s catch — which UNLINKS THE KEY. That is the same
+  // observability-change-becomes-cache-eviction bug the outer catch exists to stop, reintroduced
+  // one layer further in by the very line that reports the swallow. Verified by mutation: remove
+  // the nested try/catch in `packedCodecTimer` and this test deletes a healthy entry.
+  it('a throwing log() on the breadcrumb path still does not unlink a healthy entry', async () => {
+    __resetPackedCodecObserveFailureState();
+    store.set(KEY, await compressPacked(Buffer.from(pack(record))));
+    // Throws ONLY on the breadcrumb line, not on every call: `createCacheRedis` logs during client
+    // construction, so a globally-throwing logger would blow up before reaching the path under
+    // test — and a real logger failing on one payload (an over-long line, a serialiser choking on
+    // an interpolated value) is the shape this is actually defending against anyway.
+    let breadcrumbThrows = 0;
+    createCacheRedis({
+      log: (msg: string) => {
+        if (!String(msg).includes(BREADCRUMB)) return;
+        breadcrumbThrows += 1;
+        throw new Error('the injected logger exploded');
+      },
+    });
+    installThrowingBridgeHere();
+
+    try {
+      const got = await redis.packed.get<typeof record>(KEY, {
+        compress: true,
+        cacheName: DIRECT_CACHE,
+      });
+
+      // Positive controls, both needed. `attempts` says the observe threw, so the outer catch ran;
+      // `breadcrumbThrows` says the throttle then ADMITTED the line, the logger really was called,
+      // and it really threw. Without the second, this test would also pass against a build where
+      // the breadcrumb never fires at all — i.e. against no guard being exercised.
+      expect(attempts, 'the throwing observe() was reached, so the swallow path really ran').toBe(
+        1
+      );
+      expect(
+        breadcrumbThrows,
+        'the breadcrumb line was actually emitted and the injected logger actually threw'
+      ).toBe(1);
+      // Asserted before the value: the deletion is the damaging half and it outlives the request.
+      expect(
+        store.has(KEY),
+        'the healthy entry survived a throwing LOGGER, not merely a throwing observe()'
+      ).toBe(true);
+      expect(got, 'a valid entry is still returned').toEqual(record);
+    } finally {
       createCacheRedis({ log: () => undefined });
       installBridge();
       __resetPackedCodecObserveFailureState();

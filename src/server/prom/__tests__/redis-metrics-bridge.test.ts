@@ -19,11 +19,30 @@ import type * as PromClient from '~/server/prom/client';
  * REAL module rather than a stub of it.
  *
  * Two halves, because either alone is walkable:
- *   - a LEDGER of the published key set, asserted for equality so it fails when the set SHRINKS
- *     (the deletion above) or GROWS (a handle added here but never consumed, or vice versa);
+ *   - a LEDGER of the PUBLISHED key set, asserted for equality so it fails when what
+ *     `src/server/prom/client.ts` publishes SHRINKS (the deletion above) or GROWS;
  *   - a BEHAVIOURAL check that the published `packedCodecDuration` handle is a real registered
  *     histogram whose observations reach the scraped exposition text. A structural check alone
  *     passes against a key holding `undefined`, a stub, or a metric on a registry nobody serves.
+ *
+ * 🔴 WHAT THIS FILE DOES *NOT* COVER, AND WHERE THAT LIVES INSTEAD. An earlier version of this
+ * comment claimed the ledger also caught "a handle added here but never consumed, or vice versa".
+ * The "vice versa" half was false. Both halves above only ever look at the PUBLISHER:
+ * `PUBLISHED_HANDLES` is a hand-written literal compared against the object
+ * `src/server/prom/client.ts` builds, and one person edits both, so this file cannot see the other
+ * direction at all — `@civitai/redis` growing a handle that nothing here publishes, which is the
+ * silently dead metric this whole seam exists to prevent. Measured: adding a ninth field to
+ * `RedisMetricsBridge` and reading it at the codec timer, while leaving the publish at eight, left
+ * this file 2/2 green and the package 193/193 green.
+ *
+ * That direction is enforced at COMPILE time instead, and deliberately not here: the consumer's
+ * type is the only independent statement of what is read, and `src/**\/__tests__/**` is excluded
+ * from `tsconfig.json`, so a type-level assertion written in THIS file would never be evaluated by
+ * `pnpm typecheck` — coverage that reads as coverage while providing none. The live check is the
+ * `satisfies RedisMetricsBridge & Record<keyof RedisMetricsBridge, unknown>` on the published
+ * object in `src/server/prom/client.ts`; growing the package's type without publishing the handle
+ * fails the typecheck there. The runtime equality below then fails too, as the second step, once
+ * the publish grows to satisfy it — which is what keeps the ledger in this file honest.
  */
 
 // `src/__tests__/setup.ts` replaces this module wholesale with call-recording stubs, to keep the
@@ -36,9 +55,10 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
 }));
 
 /**
- * Every handle `@civitai/redis` reads off the bridge (the `RedisMetricsBridge` type in
- * packages/civitai-redis/src/client.ts). Asserted as a SET, both directions: a missing key is a
- * silently dead metric, an extra key is a handle the consumer never reads.
+ * Every handle `src/server/prom/client.ts` publishes. Asserted as a SET, so it fails whether the
+ * publish loses a key or gains one — but note what that is and is not: this is a ledger of the
+ * PUBLISHER, kept by hand, not a reading of `RedisMetricsBridge`. It cannot tell you the consumer
+ * reads exactly these; see the second half of the block comment above for where that is checked.
  */
 const PUBLISHED_HANDLES = [
   'packedCodecDuration',

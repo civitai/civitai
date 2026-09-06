@@ -691,7 +691,17 @@ function parseClusterNodes(fallbackUrl: string): { url: string }[] {
 // never drags prom-client's fs/cluster requires into the client bundle. Undefined until the
 // app's prom module has loaded server-side (always true by the time real commands run);
 // instrumentation simply no-ops until then (leak-free).
-type RedisMetricsBridge = {
+//
+// 🔴 EXPORTED SO THE PUBLISHER CAN BE CHECKED AGAINST IT — a type export only, erased at build, so
+// it adds nothing to any bundle. Every read below is optional-chained, so a handle THIS package
+// reads and the app never publishes is a metric that is silently dead: no throw, no warning, and a
+// permanently empty series that looks exactly like "the feature is off". No runtime test on either
+// side can see it — this package's own suite installs a FAKE bridge (rightly: it is testing the
+// client, not the app), and the app's bridge test compares the published object against a
+// hand-written ledger that the same person edits. So the app pins its published object against
+// this type at COMPILE time instead: see the `redisMetricsBridge` const in
+// `src/server/prom/client.ts`. Adding a field here without publishing it there is a type error.
+export type RedisMetricsBridge = {
   redisCommandsInflight: {
     inc: (labels: { client: string }) => void;
     dec: (labels: { client: string }) => void;
@@ -768,13 +778,18 @@ export const PACKED_CODEC_UNNAMED_CACHE = 'unknown';
  * an unthrottled line would be per-cache-read log spam).
  *
  * Two honest limits on that breadcrumb. It goes to `log()`, this module's GENERAL-PURPOSE debug
- * logger — the same one used for topology, deadline and fail-open lines, called with 35 distinct
- * messages in this file, so a distinct line here is unremarkable. (An earlier revision of this
- * comment claimed the opposite — that the logger on this path "reports corrupt entry" and so
+ * logger — the same one used for topology, deadline and fail-open lines, among many messages in
+ * this file, so a distinct line here is unremarkable. NO COUNT IS ASSERTED, deliberately: this
+ * sentence has carried a figure twice and been wrong both times ("~20", then "35", the second
+ * landing in a commit made solely to correct the first and not surviving its own head either). The
+ * only claim the number ever supported is that this logger already carries plenty of unrelated
+ * traffic, which needs no figure — while a count of log sites drifts on every edit and nothing
+ * checks it, so it is exactly the kind of fact a comment should not assert. (An earlier revision
+ * claimed the opposite thing too — that the logger on this path "reports corrupt entry" and so
  * could not be used. That was simply false: the corrupt-entry line is `Packed (compressed) unpack
- * failed, evicting bad cache entry` in `safeUnpackCompressed` below, one of that logger's 35
- * messages — not the logger's identity.) But `log()` defaults to a NO-OP and is only wired by the
- * app shim (`createLogger('redis')`), itself gated on the app's LOGGING config — so this is a
+ * failed, evicting bad cache entry` in `safeUnpackCompressed` below, one message among that
+ * logger's many — not the logger's identity.) But `log()` defaults to a NO-OP and is only wired by
+ * the app shim (`createLogger('redis')`), itself gated on the app's LOGGING config — so this is a
  * breadcrumb for whoever goes looking, not an alert. Nothing here pages anyone.
  */
 
@@ -793,14 +808,28 @@ function packedCodecTimer(cacheName?: string): PackedCodecTimer {
       // here would be a deleted cache entry (see above). So it is swallowed — but counted, and
       // reported at most once a minute so the gap is attributable instead of mysterious.
       packedCodecObserveFailures += 1;
-      const now = Date.now();
-      if (now - packedCodecObserveLastLoggedAt >= PACKED_CODEC_OBSERVE_LOG_INTERVAL_MS) {
-        packedCodecObserveLastLoggedAt = now;
-        log(
-          `packed codec metrics observe FAILED and was swallowed — packed_codec_duration_seconds is losing samples [op=${op}, cache_name=${cache_name}, failures=${packedCodecObserveFailures}]: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
+      // 🔴 THE BREADCRUMB IS ITSELF WRAPPED, so this catch stays TOTAL. Everything between here and
+      // the closing brace can throw: `log` is INJECTED BY THE APP and is therefore arbitrary code,
+      // and `String(err)` invokes a `toString`/`Symbol.toPrimitive` on a value we did not
+      // construct. A throw escaping from inside this handler escapes into `safeUnpackCompressed`'s
+      // catch exactly as the original would have, and that catch UNLINKS THE KEY — so an
+      // unprotected line in the REPORTING path reintroduces the whole observability-becomes-cache-
+      // eviction bug the outer catch exists to stop, one layer further in and on a rarer input.
+      // Low reachability is not totality; the nesting is what makes it total.
+      try {
+        const now = Date.now();
+        if (now - packedCodecObserveLastLoggedAt >= PACKED_CODEC_OBSERVE_LOG_INTERVAL_MS) {
+          packedCodecObserveLastLoggedAt = now;
+          log(
+            `packed codec metrics observe FAILED and was swallowed — packed_codec_duration_seconds is losing samples [op=${op}, cache_name=${cache_name}, failures=${packedCodecObserveFailures}]: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      } catch {
+        // Reporting the swallow must never be worse than the swallow itself, and there is nothing
+        // left to report TO — the reporter is what just failed. The failure count above is still
+        // incremented, so a later successful line carries it.
       }
     }
   };
