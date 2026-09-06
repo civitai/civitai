@@ -99,6 +99,11 @@ import {
   getUserCollectionPermissionsById,
   saveItemInCollections,
 } from '~/server/services/collection.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForModelCascade,
+  queueCollectionsForMedia,
+} from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
@@ -1890,6 +1895,12 @@ export const deleteModelById = async ({
       });
     }
   }
+  // Rebuild every collection that contained this model. The collections index
+  // denormalizes item images, and its incremental sweep only revisits newly created
+  // collections — so without this the collection keeps showing the deleted model's
+  // thumbnail forever. Safe to resolve here: a soft delete leaves the CollectionItem
+  // rows in place. Non-throwing, so the trailing cache bust and bid cleanup still run.
+  await queueCollectionsForMedia({ modelIds: [id], source: 'model-delete' });
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
@@ -2015,6 +2026,13 @@ export const permaDeleteModelById = async ({
   // post-commit storage-resolver deregister can reach every reaped version.
   let versionIds: number[] = [];
 
+  // Resolved BEFORE the tx, not inside it and not after: `CollectionItem` cascades
+  // from both `Model` and `Image`, so post-commit there is nothing left to read, and a
+  // failed statement inside a Postgres tx aborts the whole tx — this bookkeeping read
+  // must never be able to take the delete down with it. The resolver is non-throwing,
+  // so a failure costs the reindex, not the deletion.
+  const collectionsToRebuild = await getCollectionIdsForModelCascade({ modelId: id });
+
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
       // Snapshot ModelFile URLs inside the tx — read before the cascade nukes the rows.
@@ -2118,6 +2136,14 @@ export const permaDeleteModelById = async ({
         });
       }
     }
+    // Rebuild the collections that held this model or its gallery images, using the
+    // pre-tx snapshot — the membership rows cascaded away with the delete, so this is
+    // the only remaining record of which documents went stale. Non-throwing, so the
+    // S3 and storage-resolver cleanup below still runs.
+    await enqueueCollectionRebuild({
+      ...collectionsToRebuild,
+      source: 'model-perma-delete',
+    });
     // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
     if (modelFileUrls.length > 0) {
       try {
@@ -3500,6 +3526,13 @@ export const unpublishModelById = async ({
       error,
     });
   }
+
+  // An unpublished model is dropped from the model index and its images from the
+  // image index, but the collections holding it keep a denormalized snapshot that no
+  // sweep revisits. Rebuild them so the collection stops rendering a thumbnail whose
+  // post is no longer published. The model row survives an unpublish, so the
+  // CollectionItem rows are still resolvable here.
+  await queueCollectionsForMedia({ modelIds: [id], source: 'model-unpublish' });
 
   await deleteBidsForModel({ modelId: id });
 
