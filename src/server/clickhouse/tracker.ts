@@ -177,6 +177,18 @@ export const ActionType = [
   'Announcement_Click',
   'Announcement_Mute',
   'Announcement_Unmute',
+  // App store "plays" — one row per on-site app LAUNCH, emitted from the
+  // `/apps/run/<slug>` SSR resolver. Same Enum16 hazard as the two blocks above: the
+  // widening migration (src/server/clickhouse/migrations/2026-09-05-app-open-action.sql)
+  // must be applied to prod BEFORE this deploys, or the store's play count reads a
+  // permanent zero that looks exactly like "nobody opened it".
+  //
+  // 🔴 SERVER-ONLY, AND THAT IS THE WHOLE POINT OF THE TYPE. It is deliberately absent
+  // from `trackActionSchema` (see the note there), following `BuzzLimit_Set` and the
+  // announcement mute pair: that schema is what `/api/track/batch` accepts from a
+  // browser, so a client arm would let anyone inflate any app's play count by POSTing.
+  // A number printed on a public store card has to be one a script cannot manufacture.
+  'App_Open',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
