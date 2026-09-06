@@ -41,10 +41,28 @@ const BATCH_SIZE = 200;
 // to a feature that isn't live): `connect_count` (off-site OAuth-connect grants —
 // OAuth-connect submission is a locked-deferred product decision, so there are no
 // connect listings yet and nothing reads the count), `open_count`, `visit_count`,
-// `tipped_count`, `tipped_amount_count` (open/visit are never recorded
-// server-side; AppListing is not a BuzzTip entity — BuzzTip.entityId is Int,
-// AppListing.id is a string ULID). Populate each with the PR that ships its
-// consumer, not speculatively.
+// `tipped_count`, `tipped_amount_count` (AppListing is not a BuzzTip entity —
+// BuzzTip.entityId is Int, AppListing.id is a string ULID). Populate each with the
+// PR that ships its consumer, not speculatively.
+//
+// 🔴 `open_count` IS THE NEXT ONE, AND ITS SOURCE ROWS NOW EXIST. This paragraph used
+// to say "open/visit are never recorded server-side"; that stopped being true when the
+// `/apps/run/<slug>` SSR resolver started emitting a trusted `App_Open` action per
+// on-site launch (`app-listing-open.service.ts`). The rows are an EVENT STREAM in
+// ClickHouse `actions`, deliberately, so this counter stays recomputable rather than
+// becoming a second no-recompute denormalization like the thumbs pair described in the
+// OWNERSHIP CONTRACT paragraph above.
+// Two obligations for whoever writes that rollup:
+//   1. 🔴 DEDUPE AT READ TIME. The emit is triggered by an unauthenticated GET on an
+//      optional catch-all route with no rate limit, so the raw row count is inflatable
+//      by a refresh loop, a crawler or a link unfurler. Collapse per `userId` (falling
+//      back to `ip`) over a window; the actor columns are kept for exactly this.
+//   2. Add `open_count` to the ON CONFLICT list when — and only when — you do, keeping
+//      `thumbs_*` out of it. That list is NOT in this file: it is
+//      `APP_LISTING_METRIC_UPSERT_SQL` in `appListing.metrics.sql.ts`. The ownership
+//      contract in `app-listing-review.service.ts` cuts both ways.
+// OFF-SITE listings have no trustworthy source at all (their CTA is a third-party
+// anchor), so their count is structurally absent, not zero — do not render it as 0.
 // ---------------------------------------------------------------------------
 
 export const appListingMetrics = createMetricProcessor({

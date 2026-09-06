@@ -678,6 +678,22 @@ const announcementClickSchema = z.object({
 //
 // Emitted SERVER-SIDE from the tRPC mutation, not from the browser: unlike the impression
 // beacon this number cannot be inflated by a script posting to /api/track/batch.
+
+// App store play count — the `App_Open` half. (Blank line above is load-bearing: without
+// it this block reads as a continuation of the mute pair's rationale directly overhead,
+// and the play-count reasoning attaches to the wrong schemas.)
+//
+// 🔴 DELIBERATELY ABSENT FROM `trackActionSchema`, for the same reason as the mute pair
+// above and `BuzzLimit_Set` before it: this schema is what `/api/track/batch` accepts from
+// a browser, so an arm here would let anyone inflate ANY app's play count by POSTing —
+// and unlike a chart in an admin page, that number is printed on a public marketplace card
+// next to the review count. It is emitted SERVER-SIDE only, from the `/apps/run/<slug>`
+// SSR resolver (`recordAppListingOpen`), i.e. from a request this server actually served
+// after the flag gate, the approved-app resolution and the host rating check all passed.
+//
+// The containment direction in `action-type-enum-drift.test.ts` is what keeps this true in
+// one direction (every arm here must be an `ActionType`); the reverse is deliberately not
+// asserted, which is exactly what lets a server-only type exist.
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;

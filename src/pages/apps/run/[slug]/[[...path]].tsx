@@ -14,6 +14,7 @@ import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
 import { readListingIconBySlugForRender } from '~/server/services/blocks/app-listing-icon.service';
+import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { Page } from '~/components/AppLayout/Page';
@@ -81,7 +82,7 @@ interface PageProps {
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
-  resolver: async ({ features, ctx }) => {
+  resolver: async ({ features, ctx, session }) => {
     // GATE FIRST, fail-closed. Both flags required. A viewer without them gets
     // a 404 — the page is invisible/un-enumerable until W10 launch widens the
     // `app-blocks-pages-enabled` segment.
@@ -140,6 +141,24 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     if (!ratingAllowedOnHost(page.contentRating, host)) {
       return { notFound: true };
     }
+
+    // ── RECORD THE PLAY ────────────────────────────────────────────────────────
+    // 🔴 AFTER EVERY FAIL-CLOSED GATE, DELIBERATELY. A launch that 404s — flags off,
+    // no such approved page app, or a mature app on a non-red host — is not a play,
+    // and recording before these returns would make the count include requests that
+    // never rendered an app. This is the first line that can only be reached by a
+    // launch that actually succeeds.
+    //
+    // 🔴 NOT AWAITED, and the `void` is load-bearing rather than stylistic: this is the
+    // app-launch critical path that the whole `Promise.all` above exists to keep short,
+    // so a ClickHouse insert must never sit in front of the page. `recordAppListingOpen`
+    // swallows its own errors for the same reason — see its docstring.
+    // `?? null` is an assertion, not a shrug: this route is `useSession: true`, so
+    // `createServerSideProps` has already resolved the session before calling this
+    // resolver — the `undefined` is only in the type. Passing an explicit `null` tells the
+    // Tracker "known anonymous" so it skips a second JWE decrypt, which is precisely the
+    // anonymous case its constructor note calls out.
+    void recordAppListingOpen({ appBlockId: page.appBlockId, session: session ?? null, ctx });
 
     return {
       props: {
