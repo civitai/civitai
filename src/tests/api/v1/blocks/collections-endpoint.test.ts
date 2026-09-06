@@ -109,7 +109,47 @@ vi.mock('~/server/utils/region-blocking', () => ({
   isRegionRestricted: () => false,
 }));
 
-import handler from '~/pages/api/v1/blocks/collections/index';
+import handler, {
+  MIN_PLAYABLE_FRACTION,
+  meetsPlayableFloor,
+} from '~/pages/api/v1/blocks/collections/index';
+
+/**
+ * Drive the TWO count queries the public branch issues — the ADVERTISED count
+ * (no `browsingLevel`) and the PLAYABLE one (clamped to the token's ceiling) —
+ * from two id→count tables.
+ *
+ * Dispatching on `browsingLevel` rather than on call order matters: the two are
+ * issued inside one `Promise.all`, so a `mockResolvedValueOnce` pair would pin
+ * the order they happen to be listed in and pass just as happily if the endpoint
+ * swapped which number it advertises.
+ *
+ * An id ABSENT from a table yields NO ROW, exactly as `GROUP BY` does for a
+ * collection with nothing to count — which is the shape the zero-advertised case
+ * below depends on.
+ */
+function itemCounts(advertised: Record<number, number>, playable: Record<number, number>) {
+  mockItemCount.mockImplementation(
+    ({ collectionIds, browsingLevel }: { collectionIds: number[]; browsingLevel?: number }) => {
+      const table = browsingLevel === undefined ? advertised : playable;
+      return Promise.resolve(
+        collectionIds.filter((id) => table[id] != null).map((id) => ({ id, count: table[id] }))
+      );
+    }
+  );
+}
+
+/** A discovery row at the given id; `nsfw` 29 is the live mixed-bucket shape. */
+const row = (id: number, nsfw = 29) => ({
+  id,
+  name: `C${id}`,
+  description: null,
+  read: 'Public',
+  nsfwLevel: nsfw,
+  userId: 1,
+  user: { id: 1, username: 'a' },
+  image: null,
+});
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   return {
@@ -521,6 +561,143 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(mockFallbackCovers).toHaveBeenCalledWith([], 3);
   });
 
+  // ---- playable-fraction floor + clamped itemCount ----
+  //
+  // The problem these cover: a collection's own `nsfwLevel` is a bitmask OR-ed
+  // over its items, so a 97%-safe contest collection and a 1%-safe mature one
+  // carry the identical value and both pass the bitwise ceiling. What separates
+  // them is how much of the collection SURVIVES the ceiling — which discovery did
+  // not compute, so a card advertised the unclamped total while the player served
+  // the clamped one.
+
+  it('mode=public: DROPS a collection below the playable floor and keeps one above it', async () => {
+    // Both are mixed-bucket (29) and both pass the ceiling — the whole point is
+    // that the collection-level level cannot tell them apart.
+    mockGetAll.mockResolvedValueOnce([row(10), row(11)]);
+    itemCounts(
+      { 10: 2078, 11: 34577 }, // advertised
+      { 10: 216, 11: 33500 } //   playable: 10.4% vs 96.9%
+    );
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items.map((i: any) => i.id)).toEqual([11]);
+    // …and the surviving card advertises the CLAMPED count, not the 34577 the
+    // player cannot serve.
+    expect(body.items[0].itemCount).toBe(33500);
+  });
+
+  it('mode=public: the boundary — EXACTLY at the floor is kept, one item below is dropped', async () => {
+    // 20/100 === MIN_PLAYABLE_FRACTION → kept (the test is `>=`, not `>`).
+    // 19/100 <  MIN_PLAYABLE_FRACTION → dropped.
+    // Derived from the constant so the pair moves with it rather than pinning 0.2.
+    const advertised = 100;
+    const atFloor = Math.round(advertised * MIN_PLAYABLE_FRACTION);
+    mockGetAll.mockResolvedValueOnce([row(10), row(11)]);
+    itemCounts({ 10: advertised, 11: advertised }, { 10: atFloor, 11: atFloor - 1 });
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items.map((i: any) => i.id)).toEqual([10]);
+  });
+
+  it('mode=public: a collection advertising ZERO items is NOT dropped (no 0/0 NaN drop)', async () => {
+    // Neither id appears in either table → both counts are 0, and `0 / 0` is NaN,
+    // which fails every comparison. Without the explicit zero branch this row is
+    // silently dropped by a filter that has nothing to say about it.
+    mockGetAll.mockResolvedValueOnce([row(10)]);
+    itemCounts({}, {});
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items.map((i: any) => i.id)).toEqual([10]);
+    expect(body.items[0].itemCount).toBe(0);
+  });
+
+  it('🔴 mode=public: a page where EVERY row is dropped by the floor still ADVANCES the cursor', async () => {
+    // limit 1 → OVERFETCH 5. Returning exactly 5 rows, all below the floor, is the
+    // "filtered to empty" page. Filtering AFTER the slice would emit no cursor here
+    // and terminate the feed while qualifying collections remained further down.
+    const rows = [row(10), row(9), row(8), row(7), row(6)];
+    mockGetAll.mockResolvedValueOnce(rows);
+    itemCounts(
+      { 10: 100, 9: 100, 8: 100, 7: 100, 6: 100 },
+      { 10: 1, 9: 1, 8: 1, 7: 1, 6: 1 } // 1% — every one below the floor
+    );
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '1' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const body = res._json() as any;
+    // A short (here: empty) page is the accepted cost…
+    expect(body.items).toEqual([]);
+    // …but the feed MUST stay walkable. Resume from the last fetched row.
+    expect(body.nextCursor).toBe(6);
+  });
+
+  it('mode=public: counts are resolved over the CEILING-PASSING candidates, before the page is chosen', async () => {
+    // The floor decides which rows the page consumes, so both counts must cover
+    // every row that could still appear — not just the ones that survived. Id 9 is
+    // dropped by the floor yet must have been COUNTED, or the floor could not have
+    // dropped it; id 8 is over the ceiling (8 & 3 === 0) and must NOT be counted,
+    // since it can never appear.
+    mockGetAll.mockResolvedValueOnce([row(10), row(9), row(8, 8)]);
+    itemCounts({ 10: 100, 9: 100 }, { 10: 90, 9: 1 });
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items.map((i: any) => i.id)).toEqual([10]);
+
+    const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
+    // Exactly two count queries: one advertised, one clamped to the token ceiling.
+    expect(calls).toHaveLength(2);
+    const advertisedCall = calls.find((a: any) => a.browsingLevel === undefined);
+    const playableCall = calls.find((a: any) => a.browsingLevel !== undefined);
+    expect(advertisedCall).toBeTruthy();
+    expect(playableCall.browsingLevel).toBe(3);
+    for (const call of calls) {
+      expect(call.collectionIds).toEqual([10, 9]);
+      expect(call.status).toBe('ACCEPTED');
+    }
+  });
+
+  it('🔴 mode=mine: a collection FAR below the floor is STILL RETURNED (the floor is discovery-only)', async () => {
+    // The subject put these in their own list. Hiding one for being mostly mature
+    // makes it look deleted — the defect class the detail surface already settled
+    // the other way (empty own-collection → disabled WITH A REASON, never hidden).
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockUserCollections.mockResolvedValueOnce([
+      { id: 20, name: 'Mine, mostly mature', description: null, read: 'Private', userId: 42, image: null },
+      { id: 21, name: 'Mine, mostly safe', description: null, read: 'Public', userId: 42, image: null },
+    ]);
+    itemCounts({ 20: 2080, 21: 100 }, { 20: 19, 21: 90 }); // 0.9% and 90%
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const body = res._json() as any;
+    // BOTH, id DESC — the 0.9% one is not dropped.
+    expect(body.items.map((i: any) => i.id)).toEqual([21, 20]);
+  });
+
+  it('mode=mine: itemCount is CLAMPED (the count is wanted in both modes, only the DROP is not)', async () => {
+    mockUserCollections.mockResolvedValueOnce([
+      { id: 21, name: 'Mine', description: null, read: 'Public', userId: 42, image: null },
+    ]);
+    itemCounts({ 21: 2080 }, { 21: 19 });
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    // 19, the number the player will serve — NOT the 2080 the card used to promise.
+    expect(body.items[0].itemCount).toBe(19);
+    // One count query on this branch, and it carries the ceiling.
+    const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].browsingLevel).toBe(3);
+  });
+
   it('400 returns a STRING error message + flattened details (not a raw ZodError)', async () => {
     // limit 0 fails the .min(1) gate deterministically.
     const { req, res } = createMocks({ query: { mode: 'public', limit: '0' } });
@@ -532,5 +709,44 @@ describe('GET /api/v1/blocks/collections', () => {
     // flatten() shape: { formErrors, fieldErrors }.
     expect(body.details).toBeTruthy();
     expect(body.details).toHaveProperty('fieldErrors');
+  });
+});
+
+describe('meetsPlayableFloor', () => {
+  it('an empty collection is KEPT — the fraction is not computable, not "zero"', () => {
+    // `0 / 0` is NaN and every NaN comparison is false, so the absence of this
+    // branch is a silent drop rather than a visible error.
+    expect(meetsPlayableFloor(0, 0)).toBe(true);
+    // Defensive: a negative advertised count can only come from a corrupt read,
+    // and must not be treated as a mismatch either.
+    expect(meetsPlayableFloor(-1, 0)).toBe(true);
+  });
+
+  it('is inclusive at the floor and exclusive below it', () => {
+    expect(meetsPlayableFloor(100, Math.round(100 * MIN_PLAYABLE_FRACTION))).toBe(true);
+    expect(meetsPlayableFloor(100, Math.round(100 * MIN_PLAYABLE_FRACTION) - 1)).toBe(false);
+  });
+
+  it('is a FRACTION, not an absolute count', () => {
+    // The live shape the floor is aimed at: a huge collection with a large absolute
+    // playable count is still mostly unplayable. Any threshold on `playable` alone
+    // would keep this (216 items is plenty) and would be the wrong rule.
+    expect(meetsPlayableFloor(2078, 216)).toBe(false);
+    // …while a tiny collection that is entirely playable passes on 5 items.
+    expect(meetsPlayableFloor(5, 5)).toBe(true);
+  });
+
+  it('a fully playable collection always passes, at any size', () => {
+    expect(meetsPlayableFloor(1, 1)).toBe(true);
+    expect(meetsPlayableFloor(34577, 34577)).toBe(true);
+  });
+
+  it('MIN_PLAYABLE_FRACTION is a fraction in (0, 1]', () => {
+    // Pins the UNITS. A value expressed as a percentage (20) instead of a fraction
+    // (0.2) would make the floor unreachable and empty public discovery entirely,
+    // while every relative test above — which derives its fixtures from the
+    // constant — would keep passing.
+    expect(MIN_PLAYABLE_FRACTION).toBeGreaterThan(0);
+    expect(MIN_PLAYABLE_FRACTION).toBeLessThanOrEqual(1);
   });
 });
