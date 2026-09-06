@@ -917,9 +917,11 @@ describe('fetchAppOpenCounts — chunking and merge', () => {
  * 🔴 THE ABSOLUTE BOUNDS ON THE CLICKHOUSE CHUNK SIZE. Everything in the block above
  * is stated RELATIVE to `APP_OPEN_CH_CHUNK_SIZE` ("no chunk exceeds the constant",
  * "ceil(n / the constant) queries"), so all of it stays green for ANY value of the
- * constant — including values that are a hard query error at one end and a ~39x cost
- * regression at the other. That blindness is not hypothetical: it is exactly how a
- * shared constant of 200 was adopted for a query whose cost is flat in its `IN` list.
+ * constant — including values that are a hard query error at one end and a 9.75x cost
+ * regression at the other (39 scans against the 4 the split constant gives; 39x is
+ * the other comparison, against the single unchunked query). That blindness is not
+ * hypothetical: it is exactly how a shared constant of 200 was adopted for a query
+ * whose cost is flat in its `IN` list.
  *
  * Every number below is a LITERAL, on purpose. None of them moves when
  * `APP_OPEN_CH_CHUNK_SIZE` or `APP_LISTING_BATCH_SIZE` moves, which is the whole
@@ -1054,15 +1056,31 @@ describe('MV-trigger diagnostic — the marker discriminates the expensive read'
     // actually built from (no second spelling)", and neither assertion can observe
     // that. Measured: replacing the interpolated `${APP_OPEN_COUNT_QUERY_MARKER}` in
     // `buildAppOpenCountSql` with a literal `sum(dailyActors)` — exactly the second
-    // spelling the old title forbade — leaves this file 93/93 GREEN. A `toContain`
-    // cannot distinguish interpolation from duplication; only reading the source
-    // could, and that is not what this asserts.
+    // spelling the old title forbade — leaves this whole file GREEN, every test
+    // passing. A `toContain` cannot distinguish interpolation from duplication; only
+    // reading the source could, and that is not what this asserts.
     //
-    // The HAZARD is still covered, just not here: renaming the aggregate in the SQL
-    // while leaving the constant reds three assertions in this block (including the
-    // one above, which requires the marker to be absent from the discovery query).
-    // So the drift is caught by a sibling — this test is the cheap consistency pin,
-    // and its title now claims only that.
+    // 🔴 WHERE THE RENAME HAZARD IS ACTUALLY COVERED — and the first version of this
+    // note got it WRONG, which is why it is now spelled out per-mutation. It claimed
+    // "three assertions in this block, including the one above". Both halves are
+    // false. Measured, on the two readings of "rename the aggregate":
+    //
+    //   • alias only (`AS dailyActors` -> `AS dailyActrs2`, constant untouched):
+    //     ONE test reds — `the count query buckets by UTC day and counts DISTINCT
+    //     actors per bucket` — and NOTHING in this block does.
+    //   • de-interpolate AND rename (literal `sum(dailyActrs2) AS openCount` plus the
+    //     alias, constant left at `sum(dailyActors)`): THREE tests red — that same
+    //     one, plus TWO in this block (`the marker IS present…` and this test).
+    //
+    // 🔴 `the marker is ABSENT from the cheap discovery query` PASSES UNDER BOTH and
+    // always will: `recent` never contains `dailyActors` in any spelling, so its
+    // `not.toContain` is satisfied whatever the count query says. It provides ZERO of
+    // this coverage. Crediting it was the defect — a coverage claim wider than its
+    // implementation, which is the very thing this test's own retitling was fixing.
+    //
+    // So the sibling that actually pins the alias literal is `the count query buckets
+    // by UTC day…`; if you trim or move THAT, this hazard loses its only guard under
+    // an alias-only rename.
     expect(counts).toContain(`${APP_OPEN_COUNT_QUERY_MARKER} AS openCount`);
     expect(APP_OPEN_COUNT_QUERY_MARKER).toBe('sum(dailyActors)');
   });

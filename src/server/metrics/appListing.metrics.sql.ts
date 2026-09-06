@@ -452,15 +452,35 @@ export const APP_LISTING_BATCH_SIZE = 200;
  *   • the exact hard ceiling is 7,696 ids (262,124 bytes); 7,697 is 262,158 and
  *     fails with `Code: 62`;
  *   • at n = 2,000 the query is 68,460 bytes — 3.83x under the ceiling;
- *   • the seed/restore path this file's docstrings name (~7,700 approved on-site
- *     listings) takes ceil(7700/2000) = 4 scans here, against ceil(7700/200) = 39
- *     at the old shared constant of 200 — i.e. splitting the constants is worth
- *     **9.75x** on that path (39 -> 4).
+ *   • at a seed/restore population of 7,700 listings the read takes
+ *     ceil(7700/2000) = 4 scans here, against ceil(7700/200) = 39 at the old shared
+ *     constant of 200 — i.e. splitting the constants is worth **9.75x** at that
+ *     size (39 -> 4).
  *
- * ⚠️ TWO DENOMINATORS, DO NOT CONFLATE THEM. The "39x" quoted at the count query's
- * own docstring is 39 scans against the ONE unchunked query that preceded chunking;
- * the 9.75x here is 39 against 4. An earlier draft of this paragraph used "39x" for
- * both, which is right for neither comparison as stated.
+ * 🔴 WHERE 7,700 COMES FROM, BECAUSE IT IS NOT A MEASUREMENT AND EVERY THRESHOLD
+ * BELOW IS DERIVED FROM IT. It is this file's own hard ceiling (7,696 ids) rounded
+ * up — i.e. the largest population an UNCHUNKED query could have served — reused as
+ * a stand-in for the seed population. It was never a count of approved on-site
+ * listings, and an earlier draft cited it as "the seed/restore path this file's
+ * docstrings name", which is a self-reference, not a source.
+ * The real seed size is today's approved on-site listing count, which is not
+ * recorded anywhere in this repo. So treat 7,700 as an ORDER OF MAGNITUDE chosen
+ * because it is where the unchunked query broke: the 9.75x and the 2,567 / 3,850
+ * thresholds below are exact GIVEN that input and move with it. If you need them to
+ * be load-bearing, measure the population first.
+ *
+ * ⚠️ TWO DENOMINATORS, DO NOT CONFLATE THEM — and here is the full census, because
+ * an earlier draft of this paragraph used "39x" for both (right for neither as
+ * stated) and then pointed at the wrong file for one of them:
+ *
+ *   • 39 vs the ONE unchunked query that preceded chunking — `39x`. Stated at
+ *     `APP_LISTING_BATCH_SIZE`'s docstring above, NOT at `buildAppOpenCountSql`'s,
+ *     which quotes no such figure.
+ *   • 39 vs the 4 scans this constant produces — `9.75x`. That is the value of
+ *     SPLITTING the constants, and it is the number this paragraph is about.
+ *
+ * `fetchAppOpenCounts`'s docstring says "39 scans instead of 4", which is the second
+ * comparison written out rather than as a ratio.
  *
  * Raising it further buys at most ONE scan, and part of the range is unavailable.
  * The literal byte budget asserted in the tests (a full chunk under 131,072 bytes,

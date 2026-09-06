@@ -20,8 +20,10 @@ const log = createLogger('metrics:appListing');
 /**
  * POSTGRES upsert batch size. NOT the ClickHouse chunk size — see the
  * two-directional-pressure note on both constants in appListing.metrics.sql.ts.
- * They were one constant until it was measured that sharing them costs ~39x on the
- * ClickHouse side at seed scale.
+ * They were one constant until it was measured that sharing them costs 9.75x on the
+ * ClickHouse side at seed scale — 39 scans against the 4 that splitting them gives.
+ * (39x is a DIFFERENT comparison: 39 scans against the one unchunked query that
+ * preceded chunking at all. The two are censused at the constants' own docstrings.)
  */
 const BATCH_SIZE = APP_LISTING_BATCH_SIZE;
 
