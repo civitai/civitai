@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
+import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
@@ -536,10 +537,14 @@ export const removeBlockedImages = createJob(
     // upload, making anything blocked more than a week after upload deletable on the next run.
     const blockedAt = new Map(jobQueue.map((j) => [j.entityId, j.createdAt]));
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
+    // `fromAccountDeletion` separates the two populations that arrive here wearing the same
+    // `blockedFor`. See the retraction split below for why that matters; `PRIOR_INGESTION_KEY`
+    // is written by `remove-deleted-user-images` and by nothing else.
     const images = await dbRead.$queryRaw<
-      { id: number; userId: number; blockedFor: string | null }[]
+      { id: number; userId: number; blockedFor: string | null; fromAccountDeletion: boolean }[]
     >`
-    SELECT id, "userId", "blockedFor"
+    SELECT id, "userId", "blockedFor",
+           ("metadata" -> ${PRIOR_INGESTION_KEY}) IS NOT NULL AS "fromAccountDeletion"
     FROM "Image"
     WHERE id = ANY(${imageIds})
       AND ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -601,9 +606,65 @@ export const removeBlockedImages = createJob(
       });
     }
 
-    // Delete images that are past retention period
-    if (imagesToDelete.length > 0) {
-      await deleteImages(imagesToDelete.map((x) => x.id));
+    // Delete images that are past retention period.
+    //
+    // 🔴 THE ONE FLOW THAT RETRACTS — but NOT every image it deletes. `retractPublicBlobs` asks
+    // the image-cache service to destroy the shared stored object, not just this image's derived
+    // variants: the full-resolution original stops existing.
+    //
+    // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not by
+    // this job's own callers. `trg_blocked_image_delete_queue` enqueues every row that ends up
+    // `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified', whatever put it
+    // there. Enumerated over every write of that column in `src`, `apps` and `packages`, those
+    // writers are:
+    //   MODERATION — `handleBlockImages` and the block in `image.controller`; the moderator app's
+    //     own `blockImage`; the CSAM branch of `report.service`; `softDeleteUser` and the
+    //     "remove all media" branch of `toggleBan` in `user.service`; and the scan webhook's block
+    //     outcome (`image-scan-result.service` and `api/webhooks/image-scan-result`).
+    //   NOT MODERATION, and there is exactly one — `remove-deleted-user-images`, which hides the
+    //     images of a user who deleted their OWN account and chose the 7-day grace option, and
+    //     enqueues them here explicitly via `queueBlockedImagesForDelete` as well.
+    // The grace pass writes `blockedFor = 'moderated'`, exactly what a moderator block writes, so
+    // `blockedFor` cannot tell the two apart — that is stated at `PRIOR_INGESTION_KEY`. Nothing is
+    // moderated in that case and it must not reach another owner's bytes, so the split below keys
+    // on the metadata marker the grace pass writes and no other writer does. Both populations are
+    // still hard-deleted here; only the retraction differs.
+    //
+    // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
+    // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
+    // the moderator bulk endpoint all keep today's variant-only invalidation.
+    //
+    // 🔴 KNOWN AND ACCEPTED COLLATERAL, documented here because it is not discoverable later.
+    // The stored object is content-addressed, so it is shared by every BYTE-IDENTICAL image of
+    // EVERY owner. Retracting it removes their original too, while their database rows survive
+    // and go on serving a broken image — the orphaned-row symptom, deliberately reintroduced.
+    // Accepted because a bit-identical copy of content that must not exist is the same content,
+    // and a takedown that leaves copies serving is not a takedown. It is NOT fixed here: the app
+    // stores no content-hash key per image, and `pHash` is a PERCEPTUAL hash — a similarity
+    // signal, not a byte-identity key — so those rows cannot be enumerated from this codebase at
+    // all. Building that fan-out is separate work; do not infer from this comment that it exists.
+    // The `image-blob-retraction-requested` log line in `deleteImageFromS3` is the only trail.
+    //
+    // The marker is read as "did NOT come from a takedown", so a row whose marker is missing —
+    // including one this query could not classify — falls into the retracting set, which is the
+    // pre-existing behaviour rather than a silent loss of the capability.
+    //
+    // Known one-way inaccuracy, and it errs toward keeping the bytes: an image already carrying
+    // the marker that a moderator then blocks keeps it, because no block path clears the marker,
+    // so that takedown gets no retraction and behaves exactly as it did before this option
+    // existed. `unblockAccountDeletionImages` (the restore path) is the only writer that removes
+    // it. The opposite mistake — a takedown misread as an account deletion — needs the marker to
+    // be written onto a moderated image, and `remove-deleted-user-images` is its only writer:
+    // both of its branches are gated on the owner's `deletedAt` being set.
+    const takedowns = imagesToDelete.filter((img) => !img.fromAccountDeletion).map((x) => x.id);
+    const accountDeletions = imagesToDelete
+      .filter((img) => img.fromAccountDeletion)
+      .map((x) => x.id);
+    if (takedowns.length > 0) {
+      await deleteImages(takedowns, true, { retractPublicBlobs: true });
+    }
+    if (accountDeletions.length > 0) {
+      await deleteImages(accountDeletions, true);
     }
 
     // Remove processed and stale entries from queue
@@ -619,6 +680,10 @@ export const removeBlockedImages = createJob(
 
     return {
       deleted: imagesToDelete.length,
+      // Reported separately so the two populations are legible in the job's own output: the
+      // second number is deletions that deliberately left the shared stored object alone.
+      retracted: takedowns.length,
+      accountDeletionDeleted: accountDeletions.length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,

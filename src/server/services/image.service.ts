@@ -276,13 +276,31 @@ const {
  */
 export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
 
+/**
+ * 🔴 Ask the image-cache service to destroy the SHARED STORED OBJECT too, not just this image's
+ * derived variants. Off unless a caller says otherwise, and only a moderation takedown may say so.
+ *
+ * The stored object is content-addressed, so it is shared by every byte-identical image, of every
+ * owner. Destroying it removes the full-resolution original for all of them at once — a
+ * cross-account destructive act, not a cache invalidation, and not reversible from here.
+ *
+ * 🔴 KNOWN AND ACCEPTED COLLATERAL. The other images keep their database rows and will serve a
+ * broken original. The app cannot enumerate them: it does not store the content-hash key per
+ * image, and the perceptual hash it does store is a similarity signal, NOT a byte-identity key,
+ * so it cannot stand in for one. Accepted because a byte-identical copy of content that must not
+ * exist is the same content — the point of a takedown is that no copy survives. The
+ * `image-blob-retraction-requested` log line below is the only attribution trail there is.
+ */
+export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
+
 export async function purgeResizeCache({
   url,
   scope = 'all',
+  retractPublicBlobs = false,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
-}) {
+} & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
@@ -325,11 +343,37 @@ export async function purgeResizeCache({
       }
     })();
 
-    const query = `imageKey=${encodeURIComponent(url)}${keepParam}`;
+    // Retraction is only coherent for a FULL purge. A narrower scope means the image is still
+    // live — only the pre-flip variants are being cleared — so destroying the shared object there
+    // would take down an image nobody asked to remove, plus every byte-identical copy of it.
+    // The combination degrades to NO retraction rather than to the wider blast radius, and says
+    // so, because it can only mean a caller is confused about what it is asking for.
+    const retract = retractPublicBlobs === true && scope === 'all';
+    if (retractPublicBlobs === true && scope !== 'all') {
+      logToAxiom({
+        type: 'warning',
+        name: 'image-blob-retraction-refused',
+        message: 'blob retraction was requested with a partial scope; not retracting',
+        imageKey: url,
+        scope,
+      }).catch(() => {
+        // swallow — best effort logging
+      });
+    }
+    // The exact literal the service gates on; it fails closed on anything else.
+    const retractParam = retract ? '&retractPublicBlobs=true' : '';
 
-    // The endpoint requires this header once its destructive mode is enabled, and rejects the
-    // call outright without it. Sending it whenever it is configured means enabling that mode is
-    // a change on ONE side, not a synchronised deploy across two services.
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}${retractParam}`;
+
+    // Sent whenever the secret is configured, rather than only on a retracting call, so THIS
+    // caller does not have to be redeployed in step with a change on the service side.
+    //
+    // 🔴 That is a statement about this caller, not about the endpoint's contract, and it does not
+    // generalise: `apps/moderator/src/lib/server/image-deletion.ts` open-codes its own POST to the
+    // same endpoint with no header, no response check and no retraction parameter, so it
+    // invalidates variants only and is unaffected by any of this. What the service does with a
+    // missing header is not observable from this repo — the `!res.ok` branch below is what makes a
+    // rejection visible here, and it is the only thing that would.
     const headers: Record<string, string> = {};
     if (env.IMAGE_CACHER_ADMIN_SECRET) {
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
@@ -350,9 +394,10 @@ export async function purgeResizeCache({
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
         // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
         // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
-        // line. That is the failure mode this check exists for, not a hypothetical one: the
-        // service's auth gate switches on when its delete mode is enabled, and the first symptom
-        // of a secret mismatch would otherwise be stale images with no signal anywhere.
+        // line. That is the failure mode this check exists for: whatever the service decides to do
+        // with a rejected call, this branch is the only place it becomes visible on this side, and
+        // the first symptom of a stale shared secret would otherwise be stale images with no
+        // signal anywhere.
         if (!res.ok) {
           return logToAxiom({
             type: 'warning',
@@ -381,7 +426,13 @@ export async function purgeResizeCache({
   }
 }
 
-export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
+export async function deleteImageFromS3({
+  id,
+  url,
+  // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
+  // destroys and for the collateral that is knowingly accepted along with it.
+  retractPublicBlobs = false,
+}: { id: number; url: string } & PurgeResizeCacheRetraction) {
   if (!env.DATABASE_IS_PROD) return;
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
@@ -472,11 +523,26 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
     }).catch(() => undefined);
   }
 
+  // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
+  // byte-identical image of every owner, and the app cannot enumerate those rows — it stores no
+  // content-hash key, and the perceptual hash it does store is not a byte-identity key. Their
+  // rows survive and will serve a broken original. Emitted before the request rather than after,
+  // so a request that is made but never confirmed still leaves a record.
+  if (retractPublicBlobs) {
+    await logToAxiom({
+      type: 'warning',
+      name: 'image-blob-retraction-requested',
+      message: 'moderation requested retraction of the shared stored object for this image',
+      imageId: id,
+      url,
+    }).catch(() => undefined);
+  }
+
   // Outside the try: a failed object delete is exactly when invalidation matters, because the
   // bytes are still in the bucket and a live cache entry keeps serving content whose row is
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
-  // to an image that is still live.
-  await purgeResizeCache({ url: url });
+  // to an image that is still live, so its bytes are not ours to retract either.
+  await purgeResizeCache({ url: url, retractPublicBlobs });
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
@@ -642,7 +708,17 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
-export async function deleteImages(ids: number[], updatePosts = true) {
+/**
+ * 🔴 A NAMED options object, deliberately not a third positional boolean beside `updatePosts`.
+ * The thing it turns on is cross-account and irreversible, so it must be impossible to reach by
+ * getting an argument position wrong. Default is off, stated explicitly at every layer rather
+ * than left to `undefined` being falsy.
+ */
+export async function deleteImages(
+  ids: number[],
+  updatePosts = true,
+  { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
+) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
@@ -672,7 +748,9 @@ export async function deleteImages(ids: number[], updatePosts = true) {
     await Limiter({ batchSize: 5 }).process(
       results,
       async (results) =>
-        await Promise.all(results.map(({ id, url }) => deleteImageFromS3({ id, url })))
+        await Promise.all(
+          results.map(({ id, url }) => deleteImageFromS3({ id, url, retractPublicBlobs }))
+        )
     );
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
 
