@@ -57,7 +57,11 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
+// `articlesSearchIndex` is load-bearing here, not decoration: image.service imports it,
+// so a factory that omits it leaves the module with a missing binding — the stale
+// wholesale-mock shape that has broken suites elsewhere in this repo.
 vi.mock('~/server/search-index', () => ({
+  articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
   imagesSearchIndex: { queueUpdate: vi.fn() },
@@ -85,6 +89,12 @@ const expectedUpdatePayload = (ids: number[]) =>
 const isCollectionLookup = (strings: ArrayLike<string>) =>
   Array.from(strings).join('?').includes('"CollectionItem"');
 
+// The image resolve asks the catalog whether the cover-leg index exists before it
+// builds its query. These suites answer "yes" so they exercise the shape that runs
+// once the migration is applied.
+const isCoverIndexGate = (strings: ArrayLike<string>) =>
+  Array.from(strings).join('?').includes('pg_class');
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(imageService, 'queueImageSearchIndexUpdate').mockImplementation(
@@ -101,11 +111,12 @@ describe('deleteImageById', () => {
       nsfwLevel: 1,
       userId: OWNER_ID,
     });
-    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
-      isCollectionLookup(strings)
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isCoverIndexGate(strings)) return [{ present: true }];
+      return isCollectionLookup(strings)
         ? [{ collectionId: COLLECTION_A }, { collectionId: COLLECTION_B }]
-        : []
-    );
+        : [];
+    });
   });
 
   it('queues an Update for every collection that contained the deleted image', async () => {
@@ -160,7 +171,9 @@ describe('deleteImageById', () => {
 describe('deleteImages — bulk', () => {
   beforeEach(() => {
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
-      isCollectionLookup(strings)
+      isCoverIndexGate(strings)
+        ? [{ present: true }]
+        : isCollectionLookup(strings)
         ? [{ collectionId: COLLECTION_B }, { collectionId: COLLECTION_A }]
         : [
             { id: IMAGE_ID, url: 'a', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID },
@@ -197,5 +210,32 @@ describe('deleteImages — bulk', () => {
     await deleteImages([IMAGE_ID], false);
 
     expect(order).toEqual(['resolve', 'delete']);
+  });
+
+  // `deleteImages` has no try/catch of its own and the resolve is its FIRST statement,
+  // so the whole bulk delete — the DELETE itself, the index de-queue and the S3
+  // cleanup that follows — rests on the resolve never throwing. Nothing else in this
+  // suite would notice if that contract broke.
+  it('still issues the bulk DELETE when the collections lookup fails', async () => {
+    const seen: string[] = [];
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      const sql = Array.from(strings).join('?');
+      if (isCoverIndexGate(strings)) throw new Error('connection reset');
+      if (sql.includes('DELETE FROM "Image"')) {
+        seen.push('delete');
+        return [{ id: IMAGE_ID, url: 'a', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID }];
+      }
+      return [];
+    });
+
+    // Asserted on the statements the path issues rather than on the intra-module
+    // helpers: `vi.spyOn(imageService, …)` cannot intercept a call image.service makes
+    // to its own binding, so a "was deleteImageFromS3 called" assertion would be
+    // unobservable here and would pass or fail for reasons unrelated to this contract.
+    const result = await deleteImages([IMAGE_ID], false);
+
+    expect(seen).toEqual(['delete']);
+    expect(result).toBeDefined();
+    expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
   });
 });
