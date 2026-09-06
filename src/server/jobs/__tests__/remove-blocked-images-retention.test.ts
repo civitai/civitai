@@ -138,6 +138,10 @@ async function runJob() {
 function deletedIds() {
   return (mockDeleteImages.mock.calls[0]?.[0] as number[] | undefined) ?? [];
 }
+/** The options object this job hands `deleteImages` — the retraction intent lives here. */
+function deleteOptions() {
+  return mockDeleteImages.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
+}
 function queuePruneIds() {
   const call = execLog.find((c) => c.sql.includes('DELETE FROM "JobQueue"'));
   return (call?.values.find(Array.isArray) as number[] | undefined) ?? [];
@@ -182,6 +186,27 @@ describe('remove-blocked-images retention clock', () => {
     expect(deletedIds()).toContain(1);
     // Deleted rows leave the queue.
     expect(queuePruneIds()).toContain(1);
+  });
+
+  // This job is the ONE moderation flow allowed to ask the image-cache service to destroy the
+  // shared stored object, not just the derived variants. Every other caller of `deleteImages`
+  // (replaced-image reaping, deleted-user cleanup, the moderator bulk endpoint) omits the
+  // option and gets today's behaviour. The intent has to be stated here, in words, or it does
+  // not travel: `deleteImages` defaults it off at every layer below.
+  it('asks for blob retraction, because this is a moderation takedown', async () => {
+    await runJob();
+
+    expect(mockDeleteImages).toHaveBeenCalledTimes(1);
+    expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
+  });
+
+  // The option is the third argument; `updatePosts` is the second and must keep its value.
+  // Passing the options object in the wrong position would read as `updatePosts = {…}` —
+  // truthy, so nothing visibly breaks, while the retraction silently never happens.
+  it('leaves post updating on while doing so', async () => {
+    await runJob();
+
+    expect(mockDeleteImages.mock.calls[0]?.[1]).toBe(true);
   });
 
   it('holds media of a user with an open CSAM report', async () => {

@@ -601,9 +601,32 @@ export const removeBlockedImages = createJob(
       });
     }
 
-    // Delete images that are past retention period
+    // Delete images that are past retention period.
+    //
+    // 🔴 THE ONE FLOW THAT RETRACTS. `retractPublicBlobs` asks the image-cache service to destroy
+    // the shared stored object, not just this image's derived variants — the full-resolution
+    // original stops existing. Every image reaching this line was blocked by moderation, is still
+    // blocked, is not awaiting AI re-verification, and has sat out the retention window, so a
+    // takedown is exactly what it is. No other caller of `deleteImages` passes this: an ordinary
+    // user deleting their own picture, a replaced image being reaped, a deleted account being
+    // drained and the moderator bulk endpoint all keep today's variant-only invalidation.
+    //
+    // 🔴 KNOWN AND ACCEPTED COLLATERAL, documented here because it is not discoverable later.
+    // The stored object is content-addressed, so it is shared by every BYTE-IDENTICAL image of
+    // EVERY owner. Retracting it removes their original too, while their database rows survive
+    // and go on serving a broken image — the orphaned-row symptom, deliberately reintroduced.
+    // Accepted because a bit-identical copy of content that must not exist is the same content,
+    // and a takedown that leaves copies serving is not a takedown. It is NOT fixed here: the app
+    // stores no content-hash key per image, and `pHash` is a PERCEPTUAL hash — a similarity
+    // signal, not a byte-identity key — so those rows cannot be enumerated from this codebase at
+    // all. Building that fan-out is separate work; do not infer from this comment that it exists.
+    // The `image-blob-retraction-requested` log line in `deleteImageFromS3` is the only trail.
     if (imagesToDelete.length > 0) {
-      await deleteImages(imagesToDelete.map((x) => x.id));
+      await deleteImages(
+        imagesToDelete.map((x) => x.id),
+        true,
+        { retractPublicBlobs: true }
+      );
     }
 
     // Remove processed and stale entries from queue
