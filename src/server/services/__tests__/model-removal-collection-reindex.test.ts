@@ -1,20 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * Regression coverage: removing a model must rebuild every collection that contained
- * it.
+ * Coverage for the two model removal paths, which want OPPOSITE things.
  *
  * `collections_v3` denormalizes an image for each of a collection's first items, and
  * `prepareBatches` in collections.search-index.ts filters on
  * `c."createdAt" >= lastUpdatedAt` — so the incremental sweep only ever revisits NEWLY
  * CREATED collections. An existing collection is rebuilt only when something enqueues
- * it explicitly, and none of the three model removal paths did: soft delete, permanent
- * delete and unpublish each queued the MODEL index (and the image index) while leaving
- * the collections holding that model pointing at a thumbnail that no longer resolves.
+ * it explicitly.
  *
- * These assert the real resolve→enqueue chain, not a spy on a wrapper: the collections
- * index client is the only thing mocked, so a payload assertion here pins the ids and
- * the action that actually reach it.
+ *   permaDeleteModelById  MUST enqueue. The rows genuinely go away, so the document
+ *                         would otherwise keep a thumbnail that no longer resolves.
+ *                         These tests assert the real resolve→enqueue chain: the
+ *                         collections index client is the only thing mocked, so the
+ *                         payload assertions pin the ids and the action that actually
+ *                         reach it, and the ordering assertions pin that the resolve
+ *                         happens before the cascade removes what it reads.
+ *
+ *   deleteModelById       MUST NOT enqueue. A soft delete leaves every row intact and
+ *                         the index CTEs filter only on ingestion/needsReview, so a
+ *                         rebuild re-emits the same image — the enqueue was a provable
+ *                         no-op costing up to 10,000 queue writes per delete. The test
+ *                         below pins its absence; see the comment there for what would
+ *                         have to change for it to be worth re-adding.
+ *
+ * `unpublishModelById` was in an earlier revision of this file for the same reason as
+ * the soft delete, and is not exercised here at all now that it has no enqueue.
  *
  * Fixture discipline: the model id, the collection ids and the version/post/image ids
  * are pairwise distinct and distinct from one another's magnitudes, so an id read from
@@ -174,13 +185,6 @@ describe('deleteModelById — soft delete', () => {
     await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
-  });
-
-  it('still runs the trailing bid cleanup when the collections enqueue fails', async () => {
-    mockCollectionsQueueUpdate.mockRejectedValueOnce(new Error('redis unavailable'));
-
-    await expect(deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any)).resolves.toBeTruthy();
-    expect(mockDeleteBidsForModel).toHaveBeenCalledWith({ modelId: MODEL_ID });
   });
 });
 
