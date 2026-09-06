@@ -54,6 +54,11 @@ import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  buildCollectionFollowConsentCopy,
+  resolveCollectionFollowRequest,
+} from './collectionFollowGate';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -1095,6 +1100,13 @@ export function IframeHost({
   // link was clicked from. So the predicate mirrors the route's own
   // `getServerSideProps` conjunction, not just the pages flag.
   const features = useFeatureFlags();
+  // The AUTHORITATIVE signed-in signal for this host. Deliberately not
+  // `context.viewerUserId`: that is a slot-context field the producing page fills
+  // in, so it describes the render context rather than the live session, and the
+  // SET_COLLECTION_FOLLOW handler below refuses an anonymous viewer on it (the
+  // property the HTTP endpoint enforced with a 403 on an anonymous block token).
+  // `AppBlockChrome` already calls this hook, so it costs nothing new here.
+  const currentUser = useCurrentUser();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   // The host trust frame (`framed()` below) — the box the VIEWER sees, which is
   // the chrome bar plus the iframe. Needed so layer 4 of the height clamp can
@@ -2485,6 +2497,14 @@ export function IframeHost({
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
   const sharedReportMutation = trpc.apps.shared.report.useMutation();
+  // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
+  // (protectedProcedure) — these are the SAME procedures the site's own follow
+  // button calls, so the handler self-binds to `ctx.user.id` server-side and
+  // reuses `addContributorToCollection` / `removeContributorFromCollection`
+  // verbatim. The block token is deliberately NOT involved: the point of this
+  // bridge is that a block needs no `collections:write:self` scope.
+  const followCollectionMutation = trpc.collection.follow.useMutation();
+  const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
 
   useEffect(() => {
     const off = onMessage<
@@ -2785,6 +2805,85 @@ export function IframeHost({
     );
     return off;
   }, [onMessage, send, token, trpcUtils, sharedReportMutation]);
+
+  // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
+  //
+  // A block asks the host to follow / unfollow a collection for the viewer. The
+  // decision layer is SHARED with PageBlockHost (`collectionFollowGate.ts`) and
+  // carries the full rationale; the only thing this host contributes is its own
+  // signed-in signal (`currentUser`). There is no mod-review sandbox on the model
+  // slot, so `reviewNack` is constant false here.
+  //
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK. This bridge exists so a block
+  // no longer needs the `collections:write:self` scope, which was the viewer's
+  // consent step on the HTTP path. The replacement is host chrome the sandboxed
+  // iframe cannot fake or restyle: NOTHING is written until the viewer clicks
+  // through `ConfirmDialog`. Do not "simplify" this by calling the mutation
+  // directly — that silently converts a consented action into an unconsented one.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / cancel / success / error)
+  // MUST reply exactly once or the block hangs to its SDK timeout; the `settled`
+  // latch guards a double-reply. Only a payload with no usable requestId is
+  // dropped — there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
+      const gate = resolveCollectionFollowRequest({
+        raw,
+        signedIn: currentUser?.id != null,
+        // The model slot has no review sandbox (pending apps are reviewed on the
+        // page host), so there is nothing to NACK for here.
+        reviewNack: false,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('COLLECTION_FOLLOW_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, collectionId, follow } = gate.request;
+      let settled = false;
+      const reply = (payload: Record<string, unknown>) => {
+        if (settled) return;
+        settled = true;
+        send('COLLECTION_FOLLOW_RESULT', { requestId, ...payload });
+      };
+      const copy = buildCollectionFollowConsentCopy({ follow, appName: install.manifest.name });
+      dialogStore.trigger({
+        component: ConfirmDialog,
+        props: {
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              reply({ error: err instanceof Error ? err.message : 'unknown' });
+            }
+          },
+          // Dismiss (Cancel / X / escape) = consent DECLINED. Settle the block's
+          // promise explicitly rather than leaving it to time out.
+          onCancel: () => reply({ error: 'declined' }),
+        },
+      });
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    currentUser,
+    install.manifest.name,
+    followCollectionMutation,
+    unfollowCollectionMutation,
+  ]);
 
   useEffect(() => {
     if (status !== 'ready') return;

@@ -32,6 +32,10 @@ import {
   toHostGateStatus,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  buildCollectionFollowConsentCopy,
+  resolveCollectionFollowRequest,
+} from './collectionFollowGate';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -1864,6 +1868,15 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
+  // (protectedProcedure), like resolveWildcardPack above and for the same reason:
+  // these are the SAME procedures the site's own follow button calls, so the
+  // handler self-binds to `ctx.user.id` server-side and reuses
+  // `addContributorToCollection` / `removeContributorFromCollection` verbatim.
+  // The block token is deliberately NOT involved — the point of this bridge is
+  // that a block needs no `collections:write:self` scope.
+  const followCollectionMutation = trpc.collection.follow.useMutation();
+  const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
   // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
   // so incrementing/decrementing never re-renders and the count is read
   // synchronously in the message handler (JS is single-threaded, so the
@@ -3755,6 +3768,86 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
+
+  // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
+  //
+  // A block asks the host to follow / unfollow a collection for the viewer. The
+  // decision layer is SHARED with IframeHost (`collectionFollowGate.ts`) and
+  // carries the full rationale; the two things this host contributes are its own
+  // `viewer` prop (the signed-in signal) and `reviewNack`.
+  //
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK. This bridge exists so a block
+  // no longer needs the `collections:write:self` scope, which was the viewer's
+  // consent step on the HTTP path. The replacement is host chrome the sandboxed
+  // iframe cannot fake or restyle: NOTHING is written until the viewer clicks
+  // through `ConfirmDialog`, exactly as PUBLISH_GENERATION_OUTPUTS does. Do not
+  // "simplify" this by calling the mutation directly — that silently converts a
+  // consented action into an unconsented one.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / cancel / success / error)
+  // MUST reply exactly once or the block hangs to its SDK timeout; the `settled`
+  // latch guards a double-reply the way the publish handler's does. Only a
+  // payload with no usable requestId is dropped — there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
+      const gate = resolveCollectionFollowRequest({
+        raw,
+        // `viewer` is non-null ONLY for a signed-in viewer (the page route
+        // renders for logged-out viewers too, with viewer: null).
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('COLLECTION_FOLLOW_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, collectionId, follow } = gate.request;
+      let settled = false;
+      const reply = (payload: Record<string, unknown>) => {
+        if (settled) return;
+        settled = true;
+        send('COLLECTION_FOLLOW_RESULT', { requestId, ...payload });
+      };
+      const copy = buildCollectionFollowConsentCopy({ follow, appName });
+      dialogStore.trigger({
+        component: ConfirmDialog,
+        props: {
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              reply({ error: err instanceof Error ? err.message : 'unknown' });
+            }
+          },
+          // Dismiss (Cancel / X / escape) = consent DECLINED. Settle the block's
+          // promise explicitly rather than leaving it to time out.
+          onCancel: () => reply({ error: 'declined' }),
+        },
+      });
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    viewer,
+    reviewNack,
+    appName,
+    followCollectionMutation,
+    unfollowCollectionMutation,
+  ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from
