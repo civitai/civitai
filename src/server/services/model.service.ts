@@ -30,7 +30,7 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   isTransientMeiliError,
   MeiliCallTimeoutError,
@@ -99,6 +99,10 @@ import {
   getUserCollectionPermissionsById,
   saveItemInCollections,
 } from '~/server/services/collection.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForModelCascade,
+} from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
@@ -2015,6 +2019,14 @@ export const permaDeleteModelById = async ({
   // post-commit storage-resolver deregister can reach every reaped version.
   let versionIds: number[] = [];
 
+  // Resolved BEFORE the tx, not inside it and not after: `CollectionItem` cascades
+  // from `Model`, `Post` AND `Image` — all three of which this transaction destroys —
+  // so post-commit there is nothing left to read, and a
+  // failed statement inside a Postgres tx aborts the whole tx — this bookkeeping read
+  // must never be able to take the delete down with it. The resolver is non-throwing,
+  // so a failure costs the reindex, not the deletion.
+  const collectionsToRebuild = await getCollectionIdsForModelCascade({ modelId: id });
+
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
       // Snapshot ModelFile URLs inside the tx — read before the cascade nukes the rows.
@@ -2117,6 +2129,33 @@ export const permaDeleteModelById = async ({
           error,
         });
       }
+    }
+    // Rebuild the collections that held this model, its posts or its gallery images,
+    // using the pre-tx snapshot — the membership rows cascaded away with the delete,
+    // so this is the only remaining record of which documents went stale.
+    // `enqueueCollectionRebuild` is non-throwing by contract, but wrapped anyway so
+    // this step matches its siblings above rather than resting the S3 and
+    // storage-resolver cleanup below on another module keeping that promise.
+    //
+    // ⚠️ This catch is therefore UNREACHABLE through the real callee, and no test
+    // pins it: removing the try/catch entirely leaves the suite green, measured. It is
+    // defence-in-depth against the contract being broken later, not covered behaviour.
+    // Exercising it would mean mocking collection-media-index in a suite that
+    // deliberately runs the real one so its payload assertions mean something.
+    try {
+      await enqueueCollectionRebuild({
+        ...collectionsToRebuild,
+        source: 'model-perma-delete',
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-perma-delete-collection-search-index',
+        message: `Failed to queue collection search index update for model ${id}`,
+        // `logToAxiom` JSON.stringifies its payload and a bare Error serialises to
+        // `{}`. The siblings above predate that finding; this one does not.
+        error: safeError(error),
+      });
     }
     // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
     if (modelFileUrls.length > 0) {
