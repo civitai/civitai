@@ -360,8 +360,17 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
-// Wall time of the brotli codec on the opt-in compressed `redis.packed` paths, by `op`
+// Duration of the brotli codec on the opt-in compressed `redis.packed` paths, by `op`
 // (compress | decompress) and `cache_name`.
+//
+// 🔴 WHAT A SAMPLE CONTAINS, because the name says "codec" and the number is wider than that. The
+// clock starts before the promisified call is enqueued and stops at the `await` CONTINUATION on the
+// JS thread, so a sample is threadpool queue wait + codec work + whatever event-loop delay sits
+// between the completion landing and the continuation running. Measured: a 50 ms main-thread block
+// held while a decompress is in flight yields a 50.79 ms sample — event-loop delay is absorbed ~1:1.
+// And the floor is dispatch, not codec: a 1-byte payload (no real codec work) round-trips in ~11 µs
+// p50 on one machine and ~22 µs on another, against a typical ~25-36 µs decompress — i.e. roughly
+// half or more of a typical sample is the hand-off, not brotli. Read the low buckets accordingly.
 //
 // WHY A SEPARATE HISTOGRAM. Two existing signals both LOOK like they cover this and neither does:
 //   - CPU profiles: the codec is `promisify(zlib.brotli*)`, i.e. it runs on the libuv threadpool.
@@ -398,9 +407,12 @@ export const redisCommandDuration = registerHistogram({
 // is resolvable at all rather than reported as "somewhere under half a millisecond".
 // ⚠️ Changing these edges resets every series' history — settle them before this ships.
 //
-// Exported so the resolution invariant can be checked mechanically rather than by eye: see
-// ./__tests__/packed-codec-buckets.test.ts, which pins that the measured common case is not
-// swallowed by the first bucket and that the large-blob tail is still covered.
+// Exported so the resolution invariant can be checked mechanically rather than by eye. The guard
+// in ./__tests__/packed-codec-buckets.test.ts does NOT read this constant for its verdict — it
+// observes a sample and reads the `le` set back off the REGISTERED histogram, so editing `buckets:`
+// below without editing this list (or the reverse) fails. It pins three properties: the measured
+// common case is not swallowed by the first bucket, no adjacent pair of edges is more than 4x
+// apart (so no single bucket can span the resolvable range), and the large-blob tail is covered.
 export const PACKED_CODEC_DURATION_BUCKETS = [
   0.00002, 0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25,
   0.5, 1,
@@ -408,7 +420,7 @@ export const PACKED_CODEC_DURATION_BUCKETS = [
 
 export const packedCodecDuration = registerHistogram({
   name: 'packed_codec_duration_seconds',
-  help: 'Brotli codec duration for compressed redis.packed values, by op and cache_name. Wall clock as seen by the caller, so it includes libuv threadpool QUEUE WAIT as well as codec work: it is what the codec cost the request, NOT CPU time, and it rises under unrelated threadpool load with no change in codec cost. Invisible to CPU profiles (the codec runs off the JS stack) and not covered by redis_command_duration_seconds, which stops at the round trip.',
+  help: 'Brotli codec duration for compressed redis.packed values, by op and cache_name. Wall clock as the CALLER sees it, NOT CPU time: the clock stops at the await continuation on the JS thread, so a sample is libuv threadpool QUEUE WAIT + codec work + EVENT-LOOP DELAY before the completion is delivered (a blocked JS thread inflates it ~1:1 — a 50ms block measured 50.79ms). The threadpool round-trip floor is ~10-25us even for a byte-sized payload, so the lowest buckets are dispatch overhead rather than codec time. A rise means the codec PATH got slower; it does NOT on its own mean brotli got more expensive. Invisible to CPU profiles (the codec runs off the JS stack) and not covered by redis_command_duration_seconds, which stops at the round trip.',
   labelNames: ['op', 'cache_name'] as const,
   buckets: [...PACKED_CODEC_DURATION_BUCKETS],
 });

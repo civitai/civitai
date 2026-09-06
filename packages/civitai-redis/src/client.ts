@@ -703,7 +703,9 @@ type RedisMetricsBridge = {
   // the wire, so enabling compression makes this histogram look BETTER while adding codec work
   // it cannot see. `packedCodecDuration` is the metric for that.
   redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
-  // Wall time of the brotli codec on the compress-aware packed paths, by `op` and `cache_name`.
+  // Duration of the brotli codec on the compress-aware packed paths, by `op` and `cache_name`.
+  // Wall clock as the caller sees it — threadpool queue wait and event-loop delay included, so
+  // wider than codec work; see PackedCodecTimer in ./packed-compression.
   // Optional (like the newer handles below) so an app that has not published it still works.
   packedCodecDuration?: {
     observe: (labels: { op: 'compress' | 'decompress'; cache_name: string }, value: number) => void;
@@ -757,18 +759,60 @@ export const PACKED_CODEC_UNNAMED_CACHE = 'unknown';
  *
  * Guarding here rather than at the three call sites is deliberate: one predicate, both ops, every
  * caller — a second copy is how the two drift apart.
+ *
+ * 🔴 AND IT LEAVES A BREADCRUMB, because swallowing silently is its own failure. A bridge whose
+ * `observe()` throws on every call produces a histogram that never has data — which is EXACTLY what
+ * "no cache opted into compress" looks like, on the one metric that exists to answer whether
+ * compression is worth its cost. A reassuring zero is indistinguishable from a probe wired to
+ * nothing, so the catch says so once, rate-limited (a throwing bridge throws on every codec call;
+ * an unthrottled line would be per-cache-read log spam).
+ *
+ * Two honest limits on that breadcrumb. It goes to `log()`, this module's GENERAL-PURPOSE debug
+ * logger — the same one used for topology, deadline and fail-open lines, called with ~20 distinct
+ * messages, so a distinct line here is unremarkable. (An earlier revision of this comment claimed
+ * the opposite — that the logger on this path "reports corrupt entry" and so could not be used.
+ * That was simply false: the corrupt-entry line is one of this logger's many messages, not the
+ * logger's identity.) But `log()` defaults to a NO-OP and is only wired by the app shim
+ * (`createLogger('redis')`), which is itself gated on the app's LOGGING config — so this is a
+ * breadcrumb for whoever goes looking, not an alert. Nothing here pages anyone.
  */
+
+/** At most one observe-failure line per this many ms, per process. */
+const PACKED_CODEC_OBSERVE_LOG_INTERVAL_MS = 60_000;
+let packedCodecObserveFailures = 0;
+let packedCodecObserveLastLoggedAt = 0;
+
 function packedCodecTimer(cacheName?: string): PackedCodecTimer {
   const cache_name = cacheName ?? PACKED_CODEC_UNNAMED_CACHE;
   return (op, seconds) => {
     try {
       getRedisMetrics()?.packedCodecDuration?.observe({ op, cache_name }, seconds);
-    } catch {
+    } catch (err) {
       // Metrics must never fail a read or a write. A lost sample is a gap in a graph; a throw
-      // here would be a deleted cache entry (see above). Deliberately silent — the logger on this
-      // path is the one that reports "corrupt entry", which is precisely the wrong claim.
+      // here would be a deleted cache entry (see above). So it is swallowed — but counted, and
+      // reported at most once a minute so the gap is attributable instead of mysterious.
+      packedCodecObserveFailures += 1;
+      const now = Date.now();
+      if (now - packedCodecObserveLastLoggedAt >= PACKED_CODEC_OBSERVE_LOG_INTERVAL_MS) {
+        packedCodecObserveLastLoggedAt = now;
+        log(
+          `packed codec metrics observe FAILED and was swallowed — packed_codec_duration_seconds is losing samples [op=${op}, cache_name=${cache_name}, failures=${packedCodecObserveFailures}]: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
     }
   };
+}
+
+/**
+ * Test seam for the rate-limited observe-failure breadcrumb above: the throttle state is
+ * module-scoped and per-process, so a suite that exercises the catch twice cannot otherwise tell
+ * "throttled" from "never logged". Not used by production code.
+ */
+export function __resetPackedCodecObserveFailureState() {
+  packedCodecObserveFailures = 0;
+  packedCodecObserveLastLoggedAt = 0;
 }
 
 /**

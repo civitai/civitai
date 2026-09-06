@@ -74,7 +74,11 @@ vi.mock('redis', () => {
 });
 
 import { createCacheBuilders } from '../cached-array';
-import { createCacheRedis, PACKED_CODEC_UNNAMED_CACHE } from '../client';
+import {
+  createCacheRedis,
+  PACKED_CODEC_UNNAMED_CACHE,
+  __resetPackedCodecObserveFailureState,
+} from '../client';
 import type { RedisKeyTemplateCache } from '../client';
 import { compressPacked } from '../packed-compression';
 
@@ -336,5 +340,106 @@ describe('packed codec metrics — a metrics fault must never fail a read or a w
       'no key in the batch was unlinked by a metrics fault'
     ).toEqual([true, true]);
     expect(got, 'every entry in the batch still decodes').toEqual([record, record]);
+  });
+});
+
+/**
+ * 🔴 A SWALLOWED FAILURE MUST NOT BE A SILENT ONE.
+ *
+ * The block above proves the catch protects the cache. It says nothing about whether anyone would
+ * ever find out. A bridge whose `observe()` throws on every call yields a histogram that never has
+ * data — which is byte-for-byte what "no cache opted into compress" looks like, on the only metric
+ * that can answer whether compression is worth its cost. A reassuring zero is indistinguishable
+ * from a probe wired to nothing, so the catch has to say so.
+ *
+ * It is rate-limited rather than one-shot: a throwing bridge throws on EVERY codec call, so an
+ * unthrottled line would be per-cache-read log spam, while a strict one-shot would go quiet for the
+ * whole life of the process no matter how long the fault lasted. The three properties below are
+ * asserted in one test on purpose — the throttle is module-scoped state, so "did not log" only
+ * means "throttled" relative to a known earlier log in the same sequence.
+ */
+describe('packed codec metrics — a swallowed observe failure leaves a breadcrumb', () => {
+  const BREADCRUMB = 'packed codec metrics observe FAILED';
+  const BOOM_MSG = 'prom registry exploded';
+  let attempts = 0;
+
+  function installThrowingBridgeHere() {
+    attempts = 0;
+    (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+      packedCodecDuration: {
+        observe: () => {
+          attempts += 1;
+          throw new Error(BOOM_MSG);
+        },
+      },
+    };
+  }
+
+  it('logs the first failure, throttles the next, and speaks again once the window has passed', async () => {
+    __resetPackedCodecObserveFailureState();
+    const lines: string[] = [];
+    // `log` is module-scoped in ../client and injected here; this rebinds it for the rest of the
+    // file, which is why the bridge is restored in the `finally` below.
+    createCacheRedis({ log: (msg: string) => lines.push(String(msg)) });
+    installThrowingBridgeHere();
+
+    // A controlled clock: the throttle reads Date.now(). Nothing else on this path does — the
+    // deadline wrapper uses setTimeout — so freezing it cannot stall the client.
+    let clock = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const breadcrumbs = () => lines.filter((l) => l.includes(BREADCRUMB));
+
+    try {
+      await redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE });
+
+      // Positive control: the throwing path was actually entered. Without it every "logged N
+      // times" assertion below would also hold against a client that stopped timing entirely.
+      expect(attempts, 'the throwing observe() was actually reached').toBe(1);
+      expect(breadcrumbs(), 'the FIRST swallowed failure is reported').toHaveLength(1);
+      // The line has to be diagnosable on its own: which op, which cache, and the underlying
+      // error. A bare "metrics failed" would not distinguish this from any other swallow.
+      expect(breadcrumbs()[0]).toContain('op=compress');
+      expect(breadcrumbs()[0]).toContain(DIRECT_CACHE);
+      expect(breadcrumbs()[0]).toContain(BOOM_MSG);
+      expect(breadcrumbs()[0]).toContain('failures=1');
+
+      // Same window → counted, not logged.
+      await redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE });
+      expect(attempts, 'the second failure really happened').toBe(2);
+      expect(
+        breadcrumbs(),
+        'a second failure inside the window is throttled, not logged'
+      ).toHaveLength(1);
+
+      // Past the window → speaks again, and carries the count accumulated while it was quiet.
+      clock += 60_001;
+      await redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE });
+      expect(breadcrumbs(), 'the breadcrumb returns after the throttle window').toHaveLength(2);
+      expect(
+        breadcrumbs()[1],
+        'the throttled failures are still counted, so the line reports 3 rather than 1'
+      ).toContain('failures=3');
+    } finally {
+      nowSpy.mockRestore();
+      createCacheRedis({ log: () => undefined });
+      installBridge();
+      __resetPackedCodecObserveFailureState();
+    }
+  });
+
+  it('NEGATIVE CONTROL: a healthy bridge logs no breadcrumb at all', async () => {
+    __resetPackedCodecObserveFailureState();
+    const lines: string[] = [];
+    createCacheRedis({ log: (msg: string) => lines.push(String(msg)) });
+    installBridge();
+
+    try {
+      await redis.packed.set(KEY, record, undefined, { compress: true, cacheName: DIRECT_CACHE });
+      expect(observed, 'the healthy bridge really did receive the sample').toHaveLength(1);
+      expect(lines.filter((l) => l.includes(BREADCRUMB))).toHaveLength(0);
+    } finally {
+      createCacheRedis({ log: () => undefined });
+      __resetPackedCodecObserveFailureState();
+    }
   });
 });

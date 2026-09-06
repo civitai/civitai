@@ -365,18 +365,19 @@ export async function fetchThroughCache<T>(
 
       // Wait for the fetcher to do their thing...
       await sleep((lockTTL * 1000) / 2);
-      // Every option the caller gave must survive the recursion — this is the ONE path that
-      // re-spells them by hand rather than passing `options` through, so anything omitted here
-      // silently reverts to its default on a retry only. `cacheName` is the easy one to miss
-      // because nothing observable changes: the retry's codec samples just move to the client's
-      // 'unknown' label while the first attempt still looked correct.
-      return fetchThroughCache(key, fetchFn, {
-        ttl,
-        lockTTL,
-        retryCount: retryCount - 1,
-        compress,
-        cacheName,
-      });
+      // 🔴 SPREAD `options`, never re-spell the fields. Every option the caller gave has to
+      // survive the recursion, and this used to list all five by hand — which is correct only
+      // until a sixth is added, and the omission is invisible: the retry silently falls back to
+      // that option's default while the first attempt still looked right. (`cacheName` was the
+      // worst of them — a missed one just moves the retry's codec samples to the 'unknown'
+      // label.) Spreading makes the whole class impossible rather than pinning it with a comment.
+      //
+      // Behaviour-identical to the hand-listed version: every default above is a CONSTANT
+      // (`CacheTTL.sm`, 10, 3, false, undefined), applied with `??`, so passing an option through
+      // as `undefined` re-derives exactly the same value the resolved local held. `retryCount` is
+      // the one field that must NOT be passed through, hence the explicit override after the
+      // spread — order matters here.
+      return fetchThroughCache(key, fetchFn, { ...options, retryCount: retryCount - 1 });
     }
   } else if (cachedData) return cachedData.data;
 

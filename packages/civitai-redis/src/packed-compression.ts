@@ -46,14 +46,27 @@ const brotliDecompress = promisify(zlib.brotliDecompress);
 /**
  * Recorder for one codec call, in SECONDS (prom convention).
  *
- * 🔴 WHAT THE NUMBER ACTUALLY CONTAINS. The clock starts BEFORE the promisified call is enqueued
- * and stops when its callback resolves, so a sample is libuv threadpool QUEUE WAIT + codec work.
- * That is the right quantity for "what did compression cost this request", and it is deliberately
- * not CPU time: the value rises when the threadpool is busy with unrelated work (other brotli
- * calls, fs, dns, crypto) while the codec's own cost is unchanged. So read a rise as "the codec
- * PATH got slower", never as "brotli got more expensive", without a second signal to separate
- * them. Narrowing the window to the codec alone is not possible from JS — the enqueue and the
- * threadpool hand-off are both below the promisified boundary.
+ * 🔴 WHAT THE NUMBER ACTUALLY CONTAINS, and it is wider than "codec" in TWO directions. The clock
+ * starts BEFORE the promisified call is enqueued and stops at the `await` CONTINUATION on the JS
+ * thread — not when the threadpool finishes. So a sample is:
+ *   threadpool QUEUE WAIT + codec work + EVENT-LOOP DELAY before the continuation is delivered.
+ * Both of the non-codec terms are real and neither is small:
+ *   - queue wait rises when the threadpool is busy with unrelated work (other brotli calls, fs,
+ *     dns, crypto) while the codec's own cost is unchanged;
+ *   - event-loop delay is absorbed roughly 1:1, because the completion cannot be delivered while
+ *     the JS thread is busy. Measured: a 50 ms main-thread block held while a decompress was in
+ *     flight produced a 50.79 ms sample for a call that normally takes ~0.02 ms. A rise in this
+ *     histogram is therefore just as likely to be event-loop pressure as codec cost.
+ * And the FLOOR is dispatch, not codec: a 1-byte payload, with no real codec work to do,
+ * round-trips in ~11 µs p50 on one machine and ~22 µs on another, against a typical decompress of
+ * ~25-36 µs. So roughly half or more of a typical sample is the promise/threadpool hand-off. Do
+ * not read the low buckets as "what brotli cost"; they are mostly the cost of asking.
+ *
+ * That is still the right quantity for "what did compression cost this request", and it is
+ * deliberately not CPU time — but read a rise as "the codec PATH got slower", never as "brotli got
+ * more expensive", without a second signal (event-loop lag, threadpool depth) to separate them.
+ * Narrowing the window to the codec alone is not possible from JS: the enqueue, the threadpool
+ * hand-off and the continuation scheduling are all below the promisified boundary.
  *
  * WHY THE TIMING LIVES IN THIS MODULE rather than at the call sites: the codec is ASYNC, so
  * it runs on the libuv threadpool and never appears on the JS stack. A V8 CPU profile
@@ -74,7 +87,8 @@ export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) 
  * Brotli-compress an already-msgpack-packed Buffer and prepend the sentinel byte.
  *
  * `onTiming` (optional) receives the elapsed time of the compress call as this caller sees it —
- * threadpool queue wait included, so not CPU time; see PackedCodecTimer — labelled `compress`.
+ * threadpool queue wait AND event-loop delay included, so not CPU time and not codec-only; see
+ * PackedCodecTimer — labelled `compress`.
  */
 export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer): Promise<Buffer> {
   const startedAt = performance.now();
@@ -96,7 +110,8 @@ export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer
  * why the first-byte sentinel check is collision-free there.
  *
  * `onTiming` (optional) is called ONLY when a brotli-decompress actually ran, and records elapsed
- * time as this caller sees it — threadpool queue wait included; see PackedCodecTimer. The legacy
+ * time as this caller sees it — threadpool queue wait AND event-loop delay included; see
+ * PackedCodecTimer. The legacy
  * raw-msgpack passthrough deliberately records NOTHING: it is a sentinel check and a return,
  * not a codec call, and mixing those near-zero samples into the `decompress` histogram would
  * drag the quantiles toward "the cost of not decompressing" — a number that answers no
