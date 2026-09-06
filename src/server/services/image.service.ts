@@ -365,9 +365,15 @@ export async function purgeResizeCache({
 
     const query = `imageKey=${encodeURIComponent(url)}${keepParam}${retractParam}`;
 
-    // The endpoint requires this header once its destructive mode is enabled, and rejects the
-    // call outright without it. Sending it whenever it is configured means enabling that mode is
-    // a change on ONE side, not a synchronised deploy across two services.
+    // Sent whenever the secret is configured, rather than only on a retracting call, so THIS
+    // caller does not have to be redeployed in step with a change on the service side.
+    //
+    // 🔴 That is a statement about this caller, not about the endpoint's contract, and it does not
+    // generalise: `apps/moderator/src/lib/server/image-deletion.ts` open-codes its own POST to the
+    // same endpoint with no header, no response check and no retraction parameter, so it
+    // invalidates variants only and is unaffected by any of this. What the service does with a
+    // missing header is not observable from this repo — the `!res.ok` branch below is what makes a
+    // rejection visible here, and it is the only thing that would.
     const headers: Record<string, string> = {};
     if (env.IMAGE_CACHER_ADMIN_SECRET) {
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
@@ -388,9 +394,10 @@ export async function purgeResizeCache({
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
         // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
         // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
-        // line. That is the failure mode this check exists for, not a hypothetical one: the
-        // service's auth gate switches on when its delete mode is enabled, and the first symptom
-        // of a secret mismatch would otherwise be stale images with no signal anywhere.
+        // line. That is the failure mode this check exists for: whatever the service decides to do
+        // with a rejected call, this branch is the only place it becomes visible on this side, and
+        // the first symptom of a stale shared secret would otherwise be stale images with no
+        // signal anywhere.
         if (!res.ok) {
           return logToAxiom({
             type: 'warning',
