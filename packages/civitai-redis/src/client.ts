@@ -768,12 +768,13 @@ export const PACKED_CODEC_UNNAMED_CACHE = 'unknown';
  * an unthrottled line would be per-cache-read log spam).
  *
  * Two honest limits on that breadcrumb. It goes to `log()`, this module's GENERAL-PURPOSE debug
- * logger — the same one used for topology, deadline and fail-open lines, called with ~20 distinct
- * messages, so a distinct line here is unremarkable. (An earlier revision of this comment claimed
- * the opposite — that the logger on this path "reports corrupt entry" and so could not be used.
- * That was simply false: the corrupt-entry line is one of this logger's many messages, not the
- * logger's identity.) But `log()` defaults to a NO-OP and is only wired by the app shim
- * (`createLogger('redis')`), which is itself gated on the app's LOGGING config — so this is a
+ * logger — the same one used for topology, deadline and fail-open lines, called with 35 distinct
+ * messages in this file, so a distinct line here is unremarkable. (An earlier revision of this
+ * comment claimed the opposite — that the logger on this path "reports corrupt entry" and so
+ * could not be used. That was simply false: the corrupt-entry line is `Packed (compressed) unpack
+ * failed, evicting bad cache entry` in `safeUnpackCompressed` below, one of that logger's 35
+ * messages — not the logger's identity.) But `log()` defaults to a NO-OP and is only wired by the
+ * app shim (`createLogger('redis')`), itself gated on the app's LOGGING config — so this is a
  * breadcrumb for whoever goes looking, not an alert. Nothing here pages anyone.
  */
 
