@@ -131,9 +131,19 @@ describe('🔴 the server emits a real skeleton grid, not an empty one', () => {
         'the Skeleton (NOT `component="div"` to the Text — that moves the element the ' +
         'meta line is measured on).'
     ).toBe(0);
-    // The offending elements are still THERE — this is not passing by rendering less.
-    expect(html).toContain('apps-listing-skeleton-creator');
+    // The offending element is still THERE — this is not passing by rendering less.
+    //
+    // ⚠️ THIS USED TO NAME TWO `MetaLineSkeleton`s, and dropping one of them is a
+    // WEAKENING OF THE CONTROL that has to be declared rather than absorbed. The
+    // skeleton reserved a creator line AND a rollup line inside the meta block; the
+    // card dropped its author chip and moved the rollup below the action row, so
+    // `apps-listing-skeleton-creator` no longer exists and asserting it would fail.
+    // One `<p>`-wrapping-a-`Skeleton` pairing still renders per cell, which is all
+    // this control needs: the check below is `toBe(0)` on the whole document, so its
+    // strength does not scale with the number of instances — only its non-vacuity
+    // does, and one instance is enough for that.
     expect(html).toContain('apps-listing-skeleton-rollup');
+    expect(html).not.toContain('apps-listing-skeleton-creator');
     expect(html).toContain('<p');
   });
 

@@ -40,16 +40,31 @@
  * 🔴 THE FIXTURE IS PART OF THE CLAIM — READ THIS BEFORE QUOTING A RESULT
  * ─────────────────────────────────────────────────────────────────────────────
  * The skeleton reserves the card's INVARIANT parts: the 16:9 cover, the icon, the
- * two RESERVED title lines, the creator line and the always-rendered recommend
- * rollup line, plus the 46px action row. A card can also render a `line-clamp-3`
- * tagline, a Beta badge and an owner-only "Incomplete" badge — none of which a
- * loading state can predict.
+ * two RESERVED title lines, the 46px action row, and the always-rendered stats line
+ * BELOW that row. A card can also render a `line-clamp-3` tagline, a Beta badge and
+ * an owner-only "Incomplete" badge — none of which a loading state can predict.
  *
- * So the fixture below is a listing of exactly that invariant shape: a creator, no
- * tagline, not beta, viewed signed-out. What this file proves is "the invariant box
- * matches EXACTLY", NOT "no card ever moves". A listing carrying a tagline is
- * taller than its skeleton and the grid still resizes — stated in the component's
- * header and in the PR body rather than papered over here.
+ * So the fixture below is a listing of exactly that invariant shape: no tagline, not
+ * beta, viewed signed-out. What this file proves is "the invariant box matches
+ * EXACTLY", NOT "no card ever moves". A listing carrying a tagline is taller than
+ * its skeleton and the grid still resizes — stated in the component's header and in
+ * the PR body rather than papered over here.
+ *
+ * 🔴 TWO THINGS THAT USED TO BE PART OF "THE INVARIANT SHAPE" NO LONGER ARE, AND
+ * THAT IS THIS CHANGE'S WHOLE EFFECT ON THIS FILE (2026-09-06):
+ *   · THE CREATOR. This paragraph used to open the fixture list with "a creator",
+ *     because the skeleton reserved an author line the card only sometimes rendered
+ *     — the one DOWNWARD variance axis. The card renders no author chip now, the
+ *     skeleton reserves no such line, and `creator` no longer moves the box in
+ *     either direction. Pinned as an equality by the retargeted "a card with NO
+ *     CREATOR is EXACTLY its skeleton" test below.
+ *   · THE KIND. The stats line carries a PLAY COUNT that an off-site listing omits
+ *     (`openCount === null` — nothing on-platform observes a third-party CTA). That
+ *     omission shares the rollup's flex line, so it costs WIDTH and not height —
+ *     which is what lets the skeleton reserve one line without knowing a kind it
+ *     structurally cannot know. Pinned by "an OFF-SITE card (no play count) is
+ *     EXACTLY its skeleton too" below, because "it costs no height" is a
+ *     measurement, not a promise.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
@@ -264,6 +279,20 @@ const q = (n: number) => Math.round(n * 100) / 100;
  * Resolved structurally because `AppListingCard` puts no testid on the CTA, and
  * VALIDATED rather than trusted: a silently mis-resolved element would make the
  * comparison below compare the wrong boxes and pass.
+ *
+ * 🔴 THE WALK NO LONGER ENDS AT THE STACK'S **LAST** CHILD, AND THAT IS A REAL
+ * BREAK THIS CHANGE CAUSED RATHER THAN A REFACTOR. It used to be
+ * `card.lastElementChild` → `stack.lastElementChild` → `firstElementChild`, on the
+ * premise that the action row is the last thing in the card's `Stack`. The stats
+ * line (recommend rollup + play count) now renders AFTER that row, so
+ * `lastElementChild` resolves to the stats line, its first child is the rollup
+ * `Group`, and the `BUTTON`/`A` check would throw on every call — loudly, which is
+ * the one mercy of having built the check.
+ *
+ * The row is located by `mt="auto"` instead: it is the only bottom-pinned element
+ * on the card, and it is the SAME discriminator `AppListingCard.browser.test.tsx`'s
+ * `actionRow()` and `__tests__/appListingCardView.test.ts`'s prop-ledger test use.
+ * A positional index would have to move again on the next insertion; this does not.
  */
 function ctaWidths(): number[] {
   const cells = Array.from(
@@ -272,8 +301,16 @@ function ctaWidths(): number[] {
   return cells.map((cell) => {
     const card = cell.firstElementChild as HTMLElement | null;
     const stack = card?.lastElementChild as HTMLElement | null;
-    const actionRow = stack?.lastElementChild as HTMLElement | null;
-    const cta = actionRow?.firstElementChild as HTMLElement | null;
+    const actionRow = Array.from(stack?.children ?? []).find(
+      (el) => (el as HTMLElement).style.marginTop === 'auto'
+    ) as HTMLElement | undefined;
+    if (!actionRow) {
+      throw new Error(
+        `no bottom-pinned (mt="auto") action row among the card stack's children: ` +
+          `${stack?.outerHTML.slice(0, 200) ?? 'null'}`
+      );
+    }
+    const cta = actionRow.firstElementChild as HTMLElement | null;
     if (!cta || !(cta.tagName === 'BUTTON' || cta.tagName === 'A')) {
       throw new Error(
         `the walk did not land on the CTA control: ${cta?.outerHTML.slice(0, 200) ?? 'null'}`
@@ -551,38 +588,51 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
   });
 
   /**
-   * 🔴 THE FOURTH CONTENT-VARIANCE AXIS, AND THE ONLY ONE THAT RUNS **DOWNWARD**.
+   * 🔴 THE FOURTH CONTENT-VARIANCE AXIS — THE ONLY ONE THAT RAN **DOWNWARD** — IS
+   * GONE, AND THIS TEST PINS THE ABSENCE RATHER THAN BEING DELETED WITH IT.
    *
-   * `ListingCard.creator` is nullable and `AppListingCard`'s `CreatorChip` returns
-   * `null` for a listing without one, while this skeleton reserves that line
-   * unconditionally. So such a card is SHORTER than its skeleton — the opposite
-   * direction from the tagline and the two badges, and it went undocumented for a
-   * round while the header and the PR body both said only "taller". It is not
-   * hypothetical: this PR's own `keepPreviousData` fixture uses `creator: null`.
+   * ⚠️ RETARGETED, AND THE OLD CLAIM IS RECORDED SO THE CHANGE IS LEGIBLE. This test
+   * used to be "a card with NO CREATOR is SHORTER than its skeleton, by exactly the
+   * reserved line": `ListingCard.creator` is nullable, `AppListingCard`'s
+   * `CreatorChip` returned `null` for a listing without one, and this skeleton
+   * reserved that line unconditionally — so such a card was shorter by the creator
+   * line plus the meta stack's gap (measured −22.29px at 1376/4, −22.30px at 2450/5).
    *
-   * 🔴 THE DELTA IS DERIVED FROM THE RENDER, NOT RESTATED. Asserting "−22.29px" would
-   * pin a number nobody could check; asserting that the shortfall equals the skeleton's
-   * own creator line plus the meta stack's gap — both measured off the live tree — says
-   * WHY it is what it is, and stays true if the type scale moves.
+   * The store card renders NO author chip at all now (2026-09-06, operator's call)
+   * and the skeleton reserves no creator line, so the two arms are the SAME height
+   * and the downward axis has no subject. Asserting the old delta would be a test
+   * that can only fail; deleting it silently would drop the only guard that would
+   * notice the chip coming back. So it asserts EQUALITY — with the same two arms,
+   * the same fixtures and the same non-vacuity control — and it is mutation-visible
+   * in exactly the direction that matters: restore `CreatorChip` to the card and arm
+   * B (creator: null) goes short of arm A again.
+   *
+   * 🔴 THE `keepPreviousData` FIXTURE THAT MOTIVATED THE ORIGINAL IS STILL
+   * `creator: null`, which is now simply fine rather than a documented shortfall.
    */
-  test('🔴 a card with NO CREATOR is SHORTER than its skeleton, by exactly the reserved line', async () => {
+  test('🔴 a card with NO CREATOR is EXACTLY its skeleton — the downward variance axis is gone', async () => {
     const GRID_WIDTH = 1376;
 
-    // The skeleton, and the two meta lines it reserves.
     const skel = await renderStore(GRID_WIDTH, { loading: true });
-    const creatorLine = box(
-      document.querySelector('[data-testid="apps-listing-skeleton-creator"]') as HTMLElement
-    );
-    const rollupLine = box(
-      document.querySelector('[data-testid="apps-listing-skeleton-rollup"]') as HTMLElement
-    );
-    // The meta `Stack`'s gap, measured rather than spelled: the card writes `gap={2}`
-    // and so does the skeleton, and neither number is in the geometry module.
-    const metaGap = q(rollupLine.top - creatorLine.bottom);
     const skeletonHeight = skel.boxes[0].height;
 
+    // 🔴 NON-VACUITY ON THE SKELETON ITSELF, FIRST. The retired creator line's
+    // testid must be GONE — if it still rendered, both arms would be equally
+    // over-reserved and the equality below would hold for the wrong reason.
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-skeleton-creator"]'),
+      'the skeleton still reserves a creator line, but the card renders no author chip — ' +
+        'every card in the store is then SHORTER than its skeleton by that whole line'
+    ).toHaveLength(0);
+    // …and the line it DOES still reserve is there, so the count above is a real read
+    // and not a query against a tree that never rendered.
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-skeleton-rollup"]').length,
+      'the skeleton reserved no stats line at all — the absence above is vacuous'
+    ).toBe(skel.cells.length);
+
     // Arm A — WITH a creator. This is the parity fixture, and the parity test above
-    // already pins it equal to the skeleton; re-read here so the subtraction below is
+    // already pins it equal to the skeleton; re-read here so the comparison below is
     // between two numbers this test measured itself.
     const withCreator = await renderStore(GRID_WIDTH, {
       loading: false,
@@ -596,30 +646,111 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
       items: POOL.slice(0, skel.cells.length).map((c) => ({ ...c, creator: null })),
     });
 
-    // NON-VACUITY: the chip really is gone, so the height change has a named cause.
+    // NON-VACUITY: no profile link on EITHER arm — arm A because the card no longer
+    // renders one at all, arm B because its fixture has no creator to render. The
+    // first of those is the claim; the second is what the original test checked.
     expect(
       document.querySelectorAll('[data-testid="apps-listing-grid-col"] a[href^="/user/"]'),
-      'the creator chip still rendered — the fixture did not actually drop it'
+      'a creator profile link rendered on the store card — the author chip is back'
     ).toHaveLength(0);
+    // …and the cards really did render, so that zero is about the chip.
+    expect(withoutCreator.cells.length).toBe(skel.cells.length);
 
-    const shortfall = q(withCreator.boxes[0].height - withoutCreator.boxes[0].height);
-    const reserved = q(creatorLine.height + metaGap);
-    // 🔴 A SUB-PIXEL TOLERANCE, AND WHY IT DOES NOT WEAKEN THE CLAIM. Both sides are
-    // fractional layouts rounded independently (measured: 22.29 vs 20.3 + 2 = 22.30),
-    // so exact equality pins float noise rather than the reservation. 0.1px is far
-    // below the smallest thing that could be wrongly reserved here — the meta lines are
-    // 16.8 and 20.3 tall and the title box is 48 — so no incorrect reservation fits
-    // inside it.
+    const delta = q(withCreator.boxes[0].height - withoutCreator.boxes[0].height);
     expect(
-      Math.abs(shortfall - reserved),
-      `a creator-less card is ${shortfall}px shorter than its skeleton, which should be ` +
-        `the reserved creator line (${creatorLine.height}) plus the meta stack gap ` +
-        `(${metaGap}) = ${reserved}. If these disagree by more than sub-pixel rounding, ` +
-        'the skeleton is reserving something else too.'
-    ).toBeLessThan(0.1);
+      delta,
+      `a creator-less card is ${delta}px off a card with a creator. The store card renders ` +
+        'no author chip, so `creator` must not move its box at all — a non-zero delta here ' +
+        'means a byline came back, and the skeleton (which reserves nothing for one) is ' +
+        'then wrong for every listing that has a creator.'
+    ).toBe(0);
+    // …and both are EXACTLY the skeleton, stated as its own assertion because
+    // "the two arms agree" is also true of two arms that are equally wrong.
+    expect(withoutCreator.boxes[0].height).toBe(skeletonHeight);
+  });
 
-    // …and state the DIRECTION explicitly, because that is the half the docs got wrong.
-    expect(withoutCreator.boxes[0].height).toBeLessThan(skeletonHeight);
+  /**
+   * 🔴 THE PLAY COUNT'S OMISSION COSTS NO HEIGHT — MEASURED, BECAUSE THE SKELETON'S
+   * LICENCE TO IGNORE THE LISTING'S KIND RESTS ON IT.
+   *
+   * The card's stats line renders the recommend rollup always and the play count only
+   * when `openCount != null`. `null` means the number is structurally unmeasurable —
+   * an off-site listing's CTA is a third-party `target="_blank"` anchor, so nothing
+   * on-platform observes the click — and the operator's call (2026-09-06) is to omit
+   * the stat entirely rather than print a `0` about an app we cannot measure.
+   *
+   * A loading state cannot know whether the card it is reserving for is on-site or
+   * off-site, so the skeleton reserves ONE stats line for both. That is only correct
+   * while the omission changes WIDTH and not HEIGHT — i.e. while the two halves share
+   * a `wrap="nowrap"` flex line. This measures exactly that, at a real grid width,
+   * rather than trusting the `nowrap`.
+   *
+   * 🔴 THE FIXTURE IS A GENUINE OFF-SITE LISTING, not an on-site one with `openCount`
+   * nulled: `cardOpenCount` discriminates on `kind`, so an on-site card can never
+   * produce `null` in production and a fixture that forced it would be testing a
+   * state the DTO cannot emit. Off-site also changes the CTA (an external `Visit`
+   * anchor), which is part of what makes this a worthwhile second shape.
+   */
+  test('🔴 an OFF-SITE card (no play count) is EXACTLY its skeleton too', async () => {
+    const GRID_WIDTH = 1376;
+
+    const skel = await renderStore(GRID_WIDTH, { loading: true });
+    const skeletonHeight = skel.boxes[0].height;
+
+    const onsite = await renderStore(GRID_WIDTH, {
+      loading: false,
+      items: POOL.slice(0, skel.cells.length),
+    });
+    // 🔴 READ NOW, NOT LATER. `renderStore` cleans the document before each render,
+    // so a count taken after the off-site arm would be a count of the off-site tree.
+    // This is the POSITIVE half of the control: the selector CAN match.
+    const onsitePlayCounts = document.querySelectorAll(
+      '[data-testid="apps-listing-play-count"]'
+    ).length;
+
+    const offsite = await renderStore(GRID_WIDTH, {
+      loading: false,
+      items: POOL.slice(0, skel.cells.length).map(
+        (c): ListingCard => ({
+          ...c,
+          kind: 'offsite',
+          openCount: null,
+          kindData: { kind: 'offsite', externalUrl: `https://${c.slug}.example` },
+        })
+      ),
+    });
+
+    // 🔴 NON-VACUITY, BOTH DIRECTIONS, before any height is compared. The play count
+    // must be PRESENT on the on-site arm (read above, while that tree existed) and
+    // ABSENT here — otherwise "the heights agree" is a fact about two identical
+    // renders, and a `0` from a selector that matches nothing anywhere would look
+    // exactly like the behaviour under test.
+    expect(
+      onsitePlayCounts,
+      'the ON-SITE arm rendered no play count, so the absence on the off-site arm is a ' +
+        'fact about the selector rather than about `openCount === null`'
+    ).toBe(onsite.cells.length);
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-play-count"]'),
+      'an off-site card rendered a play count — `openCount === null` must omit the stat'
+    ).toHaveLength(0);
+    // The rollup half DID render, so the zero above is about the play count and not
+    // about a stats line that failed to render at all.
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-recommend-rollup"]').length,
+      'the off-site cards rendered no stats line at all — the absence above is vacuous'
+    ).toBe(offsite.cells.length);
+
+    expect(
+      offsite.boxes[0].height,
+      'an off-site card is not the height its skeleton reserves. The play count is ' +
+        'supposed to share the rollup\'s `wrap="nowrap"` flex line, so omitting it costs ' +
+        'WIDTH and nothing else — if that is no longer true, the skeleton cannot reserve ' +
+        'one box for both kinds and it would have to know a kind it cannot know.'
+    ).toBe(skeletonHeight);
+    // …and the on-site arm, which DOES render the play count, is the same height.
+    expect(onsite.boxes[0].height).toBe(skeletonHeight);
+    expect(offsite.boxes).toEqual(onsite.boxes);
   });
 
   /**

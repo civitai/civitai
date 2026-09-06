@@ -313,19 +313,36 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
  * `__tests__/app-listing.service.test.ts`; every other fixture there is onsite/offsite
  * and cannot tell this form apart from the fail-OPEN `=== 'offsite'` one.
  *
- * 🔴 MERGE-ORDER CONSTRAINT — READ BEFORE SHIPPING THE RENDERER (Stage 4).
- * NOTHING WRITES `open_count` YET. `appListing.metrics.sql.ts` populates `install_count`
- * only — its own suite asserts `expect(upsert).not.toContain('open_count')` — and no
- * other writer exists, so this function returns a literal `0` for EVERY on-site listing
- * in production today. The DTO has no third state for "measurable but not yet
- * measured": `null` means unmeasurable and `0` means measured-as-none, and the honest
- * answer right now is neither.
+ * ✅ MERGE-ORDER CONSTRAINT — DISCHARGED. THIS PARAGRAPH IS RE-DERIVED, NOT EDITED
+ * AROUND, SO READ IT RATHER THAN THE ONE IT REPLACES.
  *
- * So the renderer MUST NOT merge before the rollup that populates the column (#4653),
- * or must gate the rendered stat row behind a flag until it lands. Shipping it first
- * makes the public `/apps` grid print "0 plays" on every on-site app INCLUDING heavily
- * used ones — by this field's own written standard the worst outcome available, and on
- * the public surface. The flag is deliberately NOT built here.
+ * It used to open "🔴 READ BEFORE SHIPPING THE RENDERER (Stage 4). NOTHING WRITES
+ * `open_count` YET. `appListing.metrics.sql.ts` populates `install_count` only — its
+ * own suite asserts `expect(upsert).not.toContain('open_count')`", and it required the
+ * renderer either to wait for #4653 or to ship behind a flag, on the grounds that a
+ * premature renderer would print "0 plays" on every on-site app INCLUDING heavily used
+ * ones — by this field's own standard the worst outcome available, and on a public
+ * surface.
+ *
+ * Every clause of that is now false, checked rather than assumed:
+ *   · #4653 IS MERGED (`f9f81dcfb5`, "derive app_listing_metrics.open_count from
+ *     App_Open events"), and #4652 before it (`6ff42aed42`) ships the App_Open events
+ *     it derives from;
+ *   · `appListing.metrics.sql.ts` names `open_count` in its INSERT and ON CONFLICT
+ *     lists, and the suite assertion quoted above has INVERTED — the same file now
+ *     asserts `toContain('COALESCE(oc."open_count", 0)')` and
+ *     `toContain('"open_count" = EXCLUDED."open_count"')`;
+ *   · the count is DERIVED from an all-time read on every rollup run rather than
+ *     accumulated, so there is no backfill step gating correctness — a listing's
+ *     number becomes right the first time the job covers it.
+ *
+ * The renderer (stage 4) therefore ships unflagged, and the flag this paragraph
+ * declined to build is still not built and is no longer wanted.
+ *
+ * ⚠️ WHAT IS **NOT** CLAIMED HERE: that the rollup has already RUN over the whole
+ * catalog in any given environment. That is an operational fact about a scheduled
+ * job, not a property of this code — an on-site listing whose row the job has not yet
+ * covered reads a truthful-by-the-DTO's-rule `0` until it does.
  */
 function cardOpenCount(row: HydratedListing): number | null {
   if (row.kind !== 'onsite') return null;
