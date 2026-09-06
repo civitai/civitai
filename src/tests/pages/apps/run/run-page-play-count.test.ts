@@ -167,11 +167,22 @@ describe('run-page SSR — play recording', () => {
   });
 
   it('does not wait for the recording — a hung tracker still serves the app', async () => {
-    // 🔴 THE FIRE-AND-FORGET GUARD, asserted behaviourally. `await`ing the call would make
-    // this resolver never settle, so this test fails by TIMEOUT rather than by assertion —
-    // which is the honest failure for the defect it describes (a ClickHouse stall becoming
-    // an app-launch stall).
+    // 🔴 THE FIRE-AND-FORGET GUARD, asserted behaviourally: the recorder is made to return a
+    // promise that never settles, and the resolver must produce its props anyway. An `await`
+    // in front of the call reds this test and nothing else — measured.
+    //
+    // ⚠️ It fails by ASSERTION, not by timeout. An earlier draft of this comment (and the
+    // PR body) claimed "by TIMEOUT, the honest failure for that defect"; the `Promise.race`
+    // below resolves to the sentinel at 2 s and the expectation rejects it, so the observed
+    // failure is `expected 'TIMED_OUT' not to be 'TIMED_OUT'` in ~2005 ms. That is the
+    // better behaviour — a bounded, named failure rather than a suite-wide hang — but the
+    // description was wrong, so it is corrected rather than made true.
     mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    // A promise that never settles IS the fixture; an empty executor is the only way to
+    // express it. (The disable must sit on the line DIRECTLY above the code — a two-line
+    // comment puts the second line in that slot and the rule fires anyway, which is how
+    // this shipped red the first time.)
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     mockRecordOpen.mockReturnValue(new Promise<void>(() => {}));
 
     const resolver = await loadResolver();

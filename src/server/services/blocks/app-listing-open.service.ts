@@ -7,13 +7,38 @@ import type { Session } from '~/types/session';
 /**
  * App store PLAY recording — one `App_Open` row per on-site app launch.
  *
- * 🔴 WHY THIS IS A SERVER-SIDE EMIT AND NOT A BEACON, WHICH IS THE WHOLE POINT OF THE
- * NUMBER. The count it feeds is printed on a PUBLIC store card next to the review count,
- * so it has to be one a script cannot manufacture. `App_Open` is therefore deliberately
- * absent from `trackActionSchema` — the schema `/api/track/batch` accepts from a browser —
- * following `BuzzLimit_Set` and the announcement mute pair. The only writer is this
- * function, called from the `/apps/run/<slug>` SSR resolver, i.e. from a request the
- * server itself served after the flag gate and the approved-app resolution both passed.
+ * 🔴 WHY THIS IS A SERVER-SIDE EMIT AND NOT A BEACON. The count it feeds is printed on a
+ * PUBLIC store card next to the review count, so it has to be one a script cannot cheaply
+ * manufacture. `App_Open` is therefore deliberately absent from `trackActionSchema` — the
+ * schema `/api/track/batch` accepts from a browser — following `BuzzLimit_Set` and the
+ * announcement mute pair. The only writer is this function, called from the
+ * `/apps/run/<slug>` SSR resolver, i.e. from a request the server itself served after the
+ * flag gate and the approved-app resolution both passed.
+ *
+ * 🔴 THAT CLOSES THE POST CHANNEL, NOT THE WHOLE PROBLEM — AND THE DIFFERENCE IS STAGE 2'S
+ * TO CLOSE, NOT THIS FILE'S. The write is still triggered by a plain, unauthenticated
+ * `GET /apps/run/<slug>`, and:
+ *   - the route is an optional catch-all, so `/apps/run/<slug>/1`, `/2`, … are distinct
+ *     URLs that each record a play for the same app — no CDN cache, no URL-level dedup;
+ *   - there is no per-route rate limit, and `robots.txt` does not disallow `/apps/run/*`,
+ *     so a crawler or a chat-client link unfurler records a play per fetch (the page's
+ *     `deIndex` only takes effect AFTER the fetch that reads it);
+ *   - nothing dedups at write time.
+ * Today this is contained because both `appBlocks` and `appBlocksPages` are moderator-only,
+ * so the reachable population is tiny. It stops being contained the moment those flags
+ * widen — which is the plan.
+ * 🔴 **SO STAGE 2 MUST DEDUPE AT READ TIME; the counter is not honest without it.** Actor
+ * metadata is kept below precisely so it can (collapse per `userId`, falling back to `ip`,
+ * over a window). If you are writing the rollup and this paragraph is still here, that
+ * obligation is still open.
+ *
+ * 🔴 RECOMPUTABILITY HAS ONE HOLE, NAMED RATHER THAN LEFT TO BE DISCOVERED. These rows are
+ * an event stream so `open_count` can always be recomputed — that is why this arc does not
+ * use a `+1` counter. But the recompute joins `details.appBlockId` to
+ * `AppListing.appBlockId`, and that relation is `onDelete: SetNull`: deleting an `AppBlock`
+ * nulls the listing's `app_block_id` and every historical row for it becomes permanently
+ * unjoinable. Rarer trigger, same unrepairable-drift outcome the `+1` counter was rejected
+ * for. If that becomes a real case, carry the listing id in `details` as well.
  *
  * 🔴 WHAT THIS DOES **NOT** COVER, stated here because the gap is invisible from the
  * store card: OFF-SITE listings. Their CTA is a plain `target="_blank"` anchor to a third

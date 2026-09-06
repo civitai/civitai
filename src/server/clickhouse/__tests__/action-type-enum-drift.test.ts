@@ -90,13 +90,38 @@ describe('actions.type enum drift', () => {
     ['Image_Remix_Click', 19],
     ['Generator_Submit', 20],
     ['Generator_JobLinked', 21],
+    // 🔴 22-25 ADDED 2026-09-05, AND THIS IS A WIDENING OF THE GUARD, NOT AN EXEMPTION —
+    // read the warning above before assuming otherwise. Every name below is already
+    // carried by an APPLIED migration at exactly this index (`Feed_TagBar_Click` by
+    // 2026-08-21-feed-tag-bar-action.sql, the three announcement values by
+    // 2026-09-04-announcement-click-action.sql). Listing them here makes the
+    // "restates every pre-existing value at the index it already has" case cover them;
+    // it does NOT exempt anything from needing a migration, because the `it.each` below
+    // is driven by `ActionType` and skips only names present in this map — and each of
+    // these four is in a migration already.
+    //
+    // WHY IT MATTERED: before this, values past 21 were checked for NAME PRESENCE only.
+    // Measured — editing a migration to `'Announcement_Unmute' = 30` passed 10/10, i.e.
+    // the one destructive class the migrations' own headers forbid ("Do NOT renumber…
+    // that WOULD rewrite the whole table") was unguarded, and every value added after
+    // the baseline enlarged the blind set. Positive control from the same measurement:
+    // dropping `'ProfanitySearch' = 16` correctly reds, so the mechanism itself works.
+    ['Feed_TagBar_Click', 22],
+    ['Announcement_Click', 23],
+    ['Announcement_Mute', 24],
+    ['Announcement_Unmute', 25],
   ]);
 
   it('freezes the pre-existing baseline', () => {
     // Growing this map is how a new type gets exempted without a migration, so the size
     // is pinned. If prod legitimately gains a value outside these migrations, update it
     // deliberately and say why.
-    expect(PRE_EXISTING.size).toBe(21);
+    //
+    // 21 -> 25 on 2026-09-05: the four values above were moved from "name checked, index
+    // unchecked" into the index-pinned set. The number is a tripwire on THIS list, so it
+    // moves with it; what must never happen is a name being added here INSTEAD of to a
+    // migration.
+    expect(PRE_EXISTING.size).toBe(25);
   });
 
   it('found an ALTER on default.actions to scan', () => {

@@ -17,12 +17,27 @@ import { trackActionSchema } from '~/server/schema/track.schema';
  * bottom, against the real schema rather than against this module.
  */
 
-const { mockAction } = vi.hoisted(() => ({
+const { mockAction, mockCtor } = vi.hoisted(() => ({
   mockAction: vi.fn<(...a: any[]) => Promise<boolean>>(),
+  // 🔴 A SEPARATE CONSTRUCTOR SPY, AND IT IS NOT DECORATION. With `class { action = … }`
+  // the constructor is empty and can never throw, so the "constructing the tracker throws"
+  // case below was asserted by nothing — its throw came from `action`, the same call site
+  // the async-rejection case already used. Measured: hoisting `new Tracker(…)` out of the
+  // `try` (a plausible tidy-up) left all 13 tests green while a real constructor throw
+  // would escape an un-awaited call, which on Node's default `--unhandled-rejections=throw`
+  // exits the process on the app-launch path.
+  //
+  // It also records its ARGUMENTS, which nothing pinned either: deleting the third
+  // (`session`) argument passed 42/42, silently reinstating the second `getServerAuthSession`
+  // round trip on the critical path that the resolver's comment claims to avoid.
+  mockCtor: vi.fn<(...a: any[]) => void>(),
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
+    constructor(...args: any[]) {
+      mockCtor(...args);
+    }
     action = mockAction;
   },
 }));
@@ -36,6 +51,7 @@ describe('recordAppListingOpen', () => {
   beforeEach(() => {
     mockAction.mockReset();
     mockAction.mockResolvedValue(true);
+    mockCtor.mockReset();
   });
 
   it('emits one App_Open carrying the block id', async () => {
@@ -72,10 +88,10 @@ describe('recordAppListingOpen', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('RESOLVES when constructing the tracker throws', async () => {
-    // The other half of the same property: the throw can come from the constructor (a
-    // malformed req) rather than from the send, and a try/catch wrapped around only the
-    // await would miss it.
+  it('RESOLVES when the tracker throws SYNCHRONOUSLY from action()', async () => {
+    // A sync throw takes a different path out of an `async` function than a rejected
+    // promise, so both arms are needed: a `.catch()` chained onto the send would handle the
+    // rejection and miss this one.
     mockAction.mockImplementation(() => {
       throw new Error('sync boom');
     });
@@ -83,6 +99,32 @@ describe('recordAppListingOpen', () => {
     await expect(
       recordAppListingOpen({ appBlockId: 'ab_42', session: null, ctx: CTX })
     ).resolves.toBeUndefined();
+  });
+
+  it('RESOLVES when the tracker CONSTRUCTOR throws', async () => {
+    // 🔴 THE CASE THAT USED TO BE VACUOUS. The construction must be INSIDE the try — moving
+    // `new Tracker(…)` above it is a plausible refactor that reds nothing without this, and
+    // it would let a constructor throw escape an un-awaited call, which Node's default
+    // `--unhandled-rejections=throw` turns into a process exit on the app-launch path.
+    mockCtor.mockImplementation(() => {
+      throw new Error('ctor boom');
+    });
+
+    await expect(
+      recordAppListingOpen({ appBlockId: 'ab_42', session: null, ctx: CTX })
+    ).resolves.toBeUndefined();
+    expect(mockAction).not.toHaveBeenCalled();
+  });
+
+  it('hands the Tracker the request, response AND the resolved session', async () => {
+    // 🔴 THE THIRD ARGUMENT IS THE POINT. Omitting `session` leaves `sessionResolved` false,
+    // so `Tracker.send` re-runs `getServerAuthSession` — a full JWE decrypt — on every
+    // launch, which is exactly the cost the resolver's comment claims to avoid. Nothing
+    // pinned it before: deleting the argument passed the whole suite.
+    await recordAppListingOpen({ appBlockId: 'ab_42', session: null, ctx: CTX });
+
+    expect(mockCtor).toHaveBeenCalledTimes(1);
+    expect(mockCtor).toHaveBeenCalledWith(CTX.req, CTX.res, null);
   });
 
   it('App_Open is a real ActionType but has NO trackActionSchema arm', async () => {

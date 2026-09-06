@@ -678,7 +678,10 @@ const announcementClickSchema = z.object({
 //
 // Emitted SERVER-SIDE from the tRPC mutation, not from the browser: unlike the impression
 // beacon this number cannot be inflated by a script posting to /api/track/batch.
-// App store play count — the `App_Open` half.
+
+// App store play count — the `App_Open` half. (Blank line above is load-bearing: without
+// it this block reads as a continuation of the mute pair's rationale directly overhead,
+// and the play-count reasoning attaches to the wrong schemas.)
 //
 // 🔴 DELIBERATELY ABSENT FROM `trackActionSchema`, for the same reason as the mute pair
 // above and `BuzzLimit_Set` before it: this schema is what `/api/track/batch` accepts from
