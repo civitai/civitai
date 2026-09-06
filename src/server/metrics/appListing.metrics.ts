@@ -45,11 +45,6 @@ const BATCH_SIZE = 200;
 // server-side; AppListing is not a BuzzTip entity — BuzzTip.entityId is Int,
 // AppListing.id is a string ULID). Populate each with the PR that ships its
 // consumer, not speculatively.
-//
-// 🔴 `open_count` NOW HAS A CONSUMER and is still NOT POPULATED here: the store CARD
-// DTO reads it (`ListingCard.openCount` via `projectListingCard` → `cardOpenCount` in
-// app-listing.service.ts), so every on-site card reports a literal 0 until a writer for
-// this column ships. That is this job's turn to take under the rule above.
 // ---------------------------------------------------------------------------
 
 export const appListingMetrics = createMetricProcessor({

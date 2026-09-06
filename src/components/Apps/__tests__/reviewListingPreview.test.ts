@@ -125,33 +125,37 @@ describe('buildListingCardPreview', () => {
   });
 
   /**
-   * 🔴 THE PLAY COUNT IS KIND-DISCRIMINATED HERE TOO, and this builder is the SECOND
-   * producer of the field on the SAME screen: `ListingPreviewSection` renders
-   * `previewQuery.data?.card ?? buildListingCardPreview(request)`, and the primary side
-   * (`getListingPreviewForReview` → `projectListingCard` → `cardOpenCount`) returns a
-   * NUMBER for an on-site row. An unconditional `null` here would make the two
-   * producers disagree about which kind is measurable.
+   * 🔴 THE PLAY COUNT IS `null` HERE FOR EVERY KIND, and the reason is what this test
+   * exists to pin — because an earlier round asserted the OPPOSITE and was wrong.
    *
-   * The DTO's own rule (`app-listing-read.schema.ts`, `ListingCard.openCount`) is what
-   * settles it: off-site is ABSENT (`null`), on-site with nothing recorded is a genuine
-   * `0`. And an `onsite` review row is a listing-MEDIA revision of an already-approved,
-   * already-live app — so "nobody could have opened it" is not true of it.
+   * This builder never reads an `AppListingMetric`, so it cannot measure the row at
+   * all, for any kind. The DTO's own definitions (`app-listing-read.schema.ts`,
+   * `ListingCard.openCount`) then decide it: `null` = "not measurable on this surface",
+   * `0` = "measured, and the answer is none". A producer that cannot measure is in the
+   * `null` case.
    *
-   * 🔴 BOTH kinds are asserted, so NO SINGLE CONSTANT passes: a hardcoded `null` reds
-   * the on-site case, a hardcoded `0` reds the off-site case.
+   * 🔴 IT DELIBERATELY DISAGREES WITH `cardOpenCount`, which returns a NUMBER for an
+   * on-site row, and that divergence is the point. Making the two agree on shape (the
+   * earlier round's `0`) bought kind-parity at the price of showing a moderator
+   * "0 plays" for an app with 40,000 — permanently, since this builder never gains a
+   * metric row and `previewQuery` is `retry: false`. Operator call, 2026-09-06: truth
+   * over parity. If you are about to "restore parity", read that trade first.
+   *
+   * 🔴 ON-SITE IS THE LOAD-BEARING CASE. `kind: 'onsite'` is asserted explicitly so the
+   * mutant that reinstates a kind-discriminated `0` reds HERE rather than silently
+   * passing an all-null assertion.
    */
-  it('🔴 openCount: 0 on an on-site row, null off-site — no single constant satisfies both', () => {
+  it('🔴 openCount: null for EVERY kind — this builder can never measure, so it never claims 0', () => {
     const onsite = buildListingCardPreview(row({ id: 'r6', kind: 'onsite' }));
     expect(onsite.kind).toBe('onsite');
-    expect(onsite.openCount).toBe(0);
-    expect(onsite.openCount).not.toBeNull();
+    expect(onsite.openCount).toBeNull();
 
     const offsite = buildListingCardPreview(row({ id: 'r6b', kind: 'offsite' }));
     expect(offsite.kind).toBe('offsite');
     expect(offsite.openCount).toBeNull();
 
     // A row carrying no `kind` at all defaults to off-site (the review adapters'
-    // backward-compatible default) — so it takes the off-site answer, not the on-site one.
+    // backward-compatible default). Same answer, different route to it.
     const defaulted = buildListingCardPreview(row({ id: 'r6c' }));
     expect(defaulted.kind).toBe('offsite');
     expect(defaulted.openCount).toBeNull();
