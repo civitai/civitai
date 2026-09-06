@@ -254,6 +254,11 @@ type FetchThroughCacheOptions = {
   // fetchThroughCache always stores the `{ data, cachedAt }` wrapper object (never a
   // bare scalar) — see the SENTINEL SAFETY note in redis/client.ts.
   compress?: boolean;
+  // Metrics-only: the `cache_name` label put on the codec duration histogram for this key's
+  // compress/decompress calls. Pass the cache PREFIX, never the full per-id key — `key` here is
+  // routinely `${prefix}:${id}`, so using it directly would be unbounded label cardinality.
+  // Ignored entirely unless `compress` is on (nothing else records codec time).
+  cacheName?: string;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
@@ -304,6 +309,7 @@ export async function fetchThroughCache<T>(
   const lockTTL = options.lockTTL ?? 10;
   const retryCount = options.retryCount ?? 3;
   const compress = options.compress ?? false;
+  const cacheName = options.cacheName;
   const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
 
   // --- Redis READ (cache lookup) -------------------------------------------------
@@ -318,7 +324,7 @@ export async function fetchThroughCache<T>(
     // Thread `compress` to the READ so it's symmetric with the compressed write below:
     // only a compressed caller's get attempts brotli-decompress, and only that path
     // carries the sentinel invariant. Non-compress callers read via the general path.
-    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress });
+    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName });
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
     return fetchThroughCacheFailOpen(key, fetchFn);
@@ -377,7 +383,7 @@ export async function fetchThroughCache<T>(
     const data = await fetchFn();
     const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
     try {
-      await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress });
+      await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName });
     } catch (err) {
       logSysRedisFailOpen('write-degraded', 'fetchThroughCache set (cache cluster)', err, { key });
     }

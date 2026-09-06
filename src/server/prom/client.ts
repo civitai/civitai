@@ -8,6 +8,7 @@ import {
   registerInstrumentationMetric,
   redisCommandsInflight,
   redisCommandDuration,
+  packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
@@ -30,6 +31,7 @@ export * from '@civitai/telemetry/client';
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
   redisCommandsInflight,
   redisCommandDuration,
+  packedCodecDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,

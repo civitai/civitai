@@ -43,14 +43,39 @@ const PACKED_BROTLI_QUALITY = 6;
 const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
-/** Brotli-compress an already-msgpack-packed Buffer and prepend the sentinel byte. */
-export async function compressPacked(packed: Buffer): Promise<Buffer> {
+/**
+ * Wall-clock recorder for one codec call, in SECONDS (prom convention).
+ *
+ * WHY THE TIMING LIVES IN THIS MODULE rather than at the call sites: the codec is ASYNC, so
+ * it runs on the libuv threadpool and never appears on the JS stack. A V8 CPU profile
+ * therefore contains no `brotli*` frame at all — searching one for the codec returns zero,
+ * which reads as "free" rather than "unobservable". And the redis command histogram cannot
+ * stand in for it: that observation closes when the round trip does, while decode happens
+ * strictly after — plus a compressed payload is SMALLER, so the command histogram actually
+ * IMPROVES when the codec gets more expensive. This callback is the only signal that can
+ * answer "what does the codec cost".
+ *
+ * Injected rather than imported so this module (reachable from the client bundle via
+ * ./client) stays free of a static prom-client import; ./client passes a closure over the
+ * globalThis metrics bridge. Undefined = no-op, so nothing here depends on prom being loaded.
+ */
+export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) => void;
+
+/**
+ * Brotli-compress an already-msgpack-packed Buffer and prepend the sentinel byte.
+ *
+ * `onTiming` (optional) receives the wall time of the compress call itself, labelled
+ * `compress`.
+ */
+export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer): Promise<Buffer> {
+  const startedAt = performance.now();
   const compressed = await brotliCompress(packed, {
     params: {
       [zlib.constants.BROTLI_PARAM_QUALITY]: PACKED_BROTLI_QUALITY,
       [zlib.constants.BROTLI_PARAM_SIZE_HINT]: packed.length,
     },
   });
+  onTiming?.('compress', (performance.now() - startedAt) / 1000);
   return Buffer.concat([Buffer.from([PACKED_BROTLI_SENTINEL]), compressed]);
 }
 
@@ -60,10 +85,23 @@ export async function compressPacked(packed: Buffer): Promise<Buffer> {
  *
  * Only the compress-aware read path calls this — see the SENTINEL SCOPE note above for
  * why the first-byte sentinel check is collision-free there.
+ *
+ * `onTiming` (optional) is called ONLY when a brotli-decompress actually ran. The legacy
+ * raw-msgpack passthrough deliberately records NOTHING: it is a sentinel check and a return,
+ * not a codec call, and mixing those near-zero samples into the `decompress` histogram would
+ * drag the quantiles toward "the cost of not decompressing" — a number that answers no
+ * question. The sentinel discrimination therefore stays in this ONE function; the caller
+ * never re-derives it (a second copy of that predicate is how the two drift apart).
  */
-export async function decompressPacked(value: Buffer): Promise<Buffer> {
+export async function decompressPacked(
+  value: Buffer,
+  onTiming?: PackedCodecTimer
+): Promise<Buffer> {
   if (value.length > 0 && value[0] === PACKED_BROTLI_SENTINEL) {
-    return brotliDecompress(value.subarray(1));
+    const startedAt = performance.now();
+    const inflated = await brotliDecompress(value.subarray(1));
+    onTiming?.('decompress', (performance.now() - startedAt) / 1000);
+    return inflated;
   }
   return value;
 }

@@ -21,7 +21,7 @@ import {
   recordClusterCommandSettle,
   resetClusterDeadlineHits,
 } from './cluster-deadline-hits';
-import { compressPacked, decompressPacked } from './packed-compression';
+import { compressPacked, decompressPacked, type PackedCodecTimer } from './packed-compression';
 import { applyCacheKeyPrefix } from './cache-key-prefix';
 
 export { CACHE_KEY_NAMESPACE, CACHE_KEY_PREFIX, prefixCacheKey } from './cache-key-prefix';
@@ -66,6 +66,17 @@ interface ClientCommandOptions extends QueueCommandOptions {
 // };
 // type CommandType = CommandOptions<ClientCommandOptions>;
 type CommandType = ClientCommandOptions;
+
+/**
+ * Per-call options for the `packed` codec (msgpack, plus opt-in brotli).
+ *
+ * `compress` is BEHAVIOURAL and must be symmetric across a cache's reads and writes (see the
+ * SENTINEL SCOPE note in ./packed-compression). `cacheName` is purely OBSERVATIONAL — it names
+ * the `cache_name` label on the codec duration histogram and changes no behaviour. Give it the
+ * cache PREFIX (`packed:caches:image-meta`), the same value the cache hit/miss counters carry —
+ * never a per-id key, which would be unbounded label cardinality.
+ */
+export type PackedOptions = { compress?: boolean; cacheName?: string };
 
 interface CustomRedisClient<K extends RedisKeyTemplates>
   extends Omit<
@@ -114,13 +125,16 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     // `packedOptions.compress` opts the READ into the compress-aware decode path
     // (sentinel-detect + brotli-decompress), SYMMETRIC with set's compress. Only enable
     // for keys written with compress — see the SENTINEL SCOPE note in packed-compression.
-    get<T>(key: K, packedOptions?: { compress?: boolean }): Promise<T | null>;
+    // `packedOptions.cacheName` is metrics-only: the `cache_name` label on the codec
+    // duration histogram. It must be the cache PREFIX (`packed:caches:image-meta`), never
+    // a per-id key, and it matches the `cache_name` the cache hit/miss counters carry.
+    get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null>;
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all.
     // `packedOptions.compress` opts the READ into the compress-aware decode path, exactly as
     // `get` does — REQUIRED for any caller whose writes compress, since mGet is the batched
     // read counterpart of set. Without it a compressed value decodes via the general msgpack
     // path, throws, and is EVICTED — a permanent miss+evict loop, not a soft failure.
-    mGet<T>(keys: K[], packedOptions?: { compress?: boolean }): Promise<(T | null)[]>;
+    mGet<T>(keys: K[], packedOptions?: PackedOptions): Promise<(T | null)[]>;
     // `packedOptions.compress` opts the value into brotli compression at rest (sentinel-
     // tagged; reads decode both compressed and legacy-uncompressed values transparently).
     // Only safe for callers that store wrapper objects, never bare scalars — see the
@@ -132,7 +146,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
       key: K,
       value: T,
       setOptions?: SetOptions,
-      packedOptions?: { compress?: boolean }
+      packedOptions?: PackedOptions
     ): Promise<unknown>;
     // mSet still disabled - sets are more complex with different argument formats
     // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
@@ -676,7 +690,18 @@ type RedisMetricsBridge = {
     inc: (labels: { client: string }) => void;
     dec: (labels: { client: string }) => void;
   };
+  // NOTE ON SCOPE: this histogram closes when the redis ROUND TRIP closes — inside the command
+  // wrapper's done() below. It deliberately does NOT include the packed decode (msgpack unpack,
+  // and brotli-decompress on the compress-aware read paths), which runs afterwards in
+  // client.packed.get/mGet. Do not read it as a decode cost: a compressed value is SMALLER on
+  // the wire, so enabling compression makes this histogram look BETTER while adding codec work
+  // it cannot see. `packedCodecDuration` is the metric for that.
   redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
+  // Wall time of the brotli codec on the compress-aware packed paths, by `op` and `cache_name`.
+  // Optional (like the newer handles below) so an app that has not published it still works.
+  packedCodecDuration?: {
+    observe: (labels: { op: 'compress' | 'decompress'; cache_name: string }, value: number) => void;
+  };
   sysredisSentinelTopologyChangesCounter: {
     labels: (labels: Record<string, string>) => { inc: () => void };
   };
@@ -700,6 +725,25 @@ type RedisMetricsBridge = {
 function getRedisMetrics(): RedisMetricsBridge | undefined {
   return (globalThis as unknown as { __civitaiRedisMetrics?: RedisMetricsBridge })
     .__civitaiRedisMetrics;
+}
+
+/**
+ * Label value used when a compress-aware call site did not name its cache. Not every packed
+ * caller has a bounded name to give (an ad-hoc key would be unbounded cardinality), and prom
+ * needs the label present on every sample of the series, so it is spelled explicitly rather
+ * than left off.
+ */
+export const PACKED_CODEC_UNNAMED_CACHE = 'unknown';
+
+/**
+ * Build the codec timing callback handed to compressPacked/decompressPacked. The bridge is read
+ * PER CALL (not captured once) because it is published by the app's prom module after this
+ * module loads — capturing it at client-construction time would pin `undefined` forever.
+ */
+function packedCodecTimer(cacheName?: string): PackedCodecTimer {
+  const cache_name = cacheName ?? PACKED_CODEC_UNNAMED_CACHE;
+  return (op, seconds) =>
+    getRedisMetrics()?.packedCodecDuration?.observe({ op, cache_name }, seconds);
 }
 
 /**
@@ -830,6 +874,10 @@ export function instrumentCommands(
         dec = true;
       }
       metrics?.redisCommandsInflight.dec(labels);
+      // ROUND TRIP ONLY — this closes here, so it excludes the packed DECODE (msgpack unpack, and
+      // brotli-decompress on the compress-aware paths), which runs afterwards in
+      // client.packed.get/mGet. Not changed deliberately: the codec has its own histogram
+      // (packedCodecDuration). See the note on redisCommandDuration in RedisMetricsBridge.
       metrics?.redisCommandDuration.observe(labels, durationMs / 1000);
       // SELF-HEAL SIGNAL (cluster client only): record a wedge "hit" whenever a cluster command's
       // OBSERVED settle duration reaches the slow threshold — the SAME settle-time observation as
@@ -1314,10 +1362,11 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // throw is treated as a cache miss (null) and evicts the bad entry.
   const safeUnpackCompressed = async <T>(
     value: Buffer,
-    evict: () => Promise<unknown>
+    evict: () => Promise<unknown>,
+    cacheName?: string
   ): Promise<T | null> => {
     try {
-      return unpack(await decompressPacked(value)) as T;
+      return unpack(await decompressPacked(value, packedCodecTimer(cacheName))) as T;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Packed (compressed) unpack failed, evicting bad cache entry: ${msg}`);
@@ -1329,20 +1378,20 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   };
 
   client.packed = {
-    async get<T>(key: K, packedOptions?: { compress?: boolean }): Promise<T | null> {
+    async get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null> {
       const result = await bufferClient.get<Buffer>(key);
       if (!result) return null;
       // Only the opt-in compress-aware read attempts sentinel-detect + brotli-decompress
       // (symmetric with `set(..., { compress: true })`). Non-compress callers use the
       // general decode path verbatim, so no decompression ever runs for them.
       if (packedOptions?.compress) {
-        return safeUnpackCompressed<T>(result, () => client.unlink(key));
+        return safeUnpackCompressed<T>(result, () => client.unlink(key), packedOptions.cacheName);
       }
       return safeUnpack<T>(result, () => client.unlink(key));
     },
 
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
-    async mGet<T>(keys: K[], packedOptions?: { compress?: boolean }): Promise<(T | null)[]> {
+    async mGet<T>(keys: K[], packedOptions?: PackedOptions): Promise<(T | null)[]> {
       const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
       // SYMMETRIC with `set(..., { compress: true })`, same as the single-key `get` above.
       // The batched read is the one a per-id cache (createCachedArray) actually uses, so a
@@ -1350,7 +1399,13 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       if (packedOptions?.compress) {
         return Promise.all(
           results.map((result, i) =>
-            result ? safeUnpackCompressed<T>(result, () => client.unlink(keys[i])) : null
+            result
+              ? safeUnpackCompressed<T>(
+                  result,
+                  () => client.unlink(keys[i]),
+                  packedOptions.cacheName
+                )
+              : null
           )
         );
       }
@@ -1366,12 +1421,14 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       key: K,
       value: T,
       options?: SetOptions,
-      packedOptions?: { compress?: boolean }
+      packedOptions?: PackedOptions
     ): Promise<unknown> {
       const packed = pack(value);
       // Opt-in brotli (sentinel-tagged), async so the codec runs on the libuv threadpool
       // and never blocks the event loop. The symmetric read is get(key, { compress: true }).
-      const payload = packedOptions?.compress ? await compressPacked(packed) : packed;
+      const payload = packedOptions?.compress
+        ? await compressPacked(packed, packedCodecTimer(packedOptions.cacheName))
+        : packed;
       return client.set(key, payload, options);
     },
 

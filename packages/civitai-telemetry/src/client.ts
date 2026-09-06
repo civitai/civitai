@@ -360,6 +360,32 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
+// Wall time of the brotli codec on the opt-in compressed `redis.packed` paths, by `op`
+// (compress | decompress) and `cache_name`.
+//
+// WHY A SEPARATE HISTOGRAM. Two existing signals both LOOK like they cover this and neither does:
+//   - CPU profiles: the codec is `promisify(zlib.brotli*)`, i.e. it runs on the libuv threadpool.
+//     Threadpool work carries no JS stack, so no `brotli*` frame is ever sampled — a profile search
+//     returns zero, which reads as "the codec is free" rather than "the profiler cannot see it".
+//   - redis_command_duration_seconds: that observation closes when the redis round trip closes,
+//     while compress happens before the write and decompress after the read. Worse, it moves the
+//     WRONG WAY — a compressed payload is smaller on the wire, so turning compression on makes that
+//     histogram improve while adding codec cost it structurally cannot observe.
+// So this is the only signal that can answer "what does compression cost us".
+//
+// `cache_name` matches the label the cache hit/miss counters carry (the cache PREFIX, e.g.
+// `packed:caches:image-meta`), so codec cost joins to cache traffic. Cardinality is bounded by the
+// small set of caches that opt into `compress`. Callers with no bounded name report 'unknown'.
+//
+// Buckets are milliseconds-scaled, not the redis command scale: the values here are sub-ms for a
+// typical cached record, with a tail into tens of ms for a large blob.
+export const packedCodecDuration = registerHistogram({
+  name: 'packed_codec_duration_seconds',
+  help: 'Brotli codec wall-clock duration for compressed redis.packed values, by op and cache_name (invisible to CPU profiles — the codec runs on the libuv threadpool — and not covered by redis_command_duration_seconds, which stops at the round trip)',
+  labelNames: ['op', 'cache_name'] as const,
+  buckets: [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+});
+
 // SELF-HEAL reconnect counter. Incremented once each time an inflight-leak self-heal watchdog forces
 // a full client reconnect. Healthy pods never touch this; a nonzero rate flags a pod that hit the
 // binary-wedge state and was auto-recovered (vs needing a human rolling-restart). `client`
