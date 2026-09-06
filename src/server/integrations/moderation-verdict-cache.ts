@@ -81,11 +81,12 @@ const cacheCounter = registerCounterWithLabels({
     'makes the arming instant readable — but arming needs BOTH a positive ' +
     'EXTERNAL_MODERATION_CACHE_TTL_SECONDS and an allowlisted EXTERNAL_MODERATION_CACHE_NAMESPACE, ' +
     'so an absence of series does NOT mean "no TTL configured" — a set TTL with a rejected ' +
-    'namespace looks identical, and so does an ARMED deployment nothing scrapes. A rejected ' +
-    'namespace logs one error line (which separates it from the other two, NOT the pair of them ' +
-    'from each other, because the namespace is resolved whether or not a TTL is set); an unscraped ' +
-    'deployment is invisible from here by construction and has to be ruled out at the ' +
-    'ServiceMonitor. The dark probe ' +
+    'namespace looks identical, and so does an ARMED deployment nothing scrapes. What the one-off ' +
+    'error line tells you is narrow and worth stating exactly: it fires when the namespace is set ' +
+    'but unrecognised, regardless of the TTL, so it identifies a REJECTED namespace and nothing ' +
+    'else — it is silent when the namespace is simply unset, and it says nothing about whether a ' +
+    'TTL is configured. An unscraped deployment is invisible from here by construction and has to ' +
+    'be ruled out at the ServiceMonitor. The dark probe ' +
     'this replaces measured 34.3% repeats at a 5m window over 224,989 observations; expect a hit ' +
     'rate at or BELOW that, because the probe claimed its slot when a request STARTED whereas this ' +
     'cache cannot store a verdict until the classifier answers ~200 ms later.',
@@ -101,7 +102,13 @@ function record(source: ExternalModerationSource, result: CacheResult): void {
 }
 
 /**
- * The deployment this cache may write under, or `null` when it is not armed.
+ * The deployment this cache may write under, or `null` when no allowlisted deployment is named.
+ *
+ * ⚠️ A NON-NULL RESULT DOES NOT MEAN THE CACHE IS ARMED — an earlier revision of this line said
+ * "or `null` when it is not armed", which asserts an equivalence that holds in only one direction:
+ * with `NAMESPACE=prod` and `TTL=0` this returns `'prod'` while the cache is off. It is the mirror
+ * of the TTL-only claim retracted elsewhere in this file, written for the other half. {@link
+ * armedCache} is the only function whose null means "not armed".
  *
  * 🔴 WITHOUT THIS SEGMENT THE CACHE IS CROSS-DEPLOYMENT, AND THAT IS A MODERATION BUG, NOT A
  * TIDINESS ONE. Several civitai-web deployments share ONE sysRedis, and sys keys — unlike cache

@@ -651,7 +651,9 @@ export const serverSchema = z
     // 🔴 THE VERDICT CACHE NEEDS BOTH OF THE NEXT TWO VARIABLES. Neither alone arms it: this one
     // says WHERE entries live, the TTL below says HOW LONG. Setting only one leaves the cache inert
     // and emitting no metric series, which looks identical to "not configured" — so if you set a
-    // TTL and see no `external_moderation_cache_total`, check this variable before concluding the
+    // TTL and see no `civitai_app_external_moderation_cache_total` (PROM_PREFIX is prepended at
+    // registration, so the bare name in the counter's help text is NOT queryable), check this
+    // variable before concluding the
     // metric is broken.
     //
     // ⚠️ An earlier revision of this block said the TTL was "THE ARMING SWITCH" with "deliberately
