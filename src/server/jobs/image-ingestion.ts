@@ -615,15 +615,20 @@ export const removeBlockedImages = createJob(
     // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not by
     // this job's own callers. `trg_blocked_image_delete_queue` enqueues every row that ends up
     // `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified', whatever put it
-    // there. Those writers are `handleBlockImages`, the moderator app's own `blockImage`, the CSAM
-    // branch of `report.service`, and the scan webhook's block outcome — all takedowns — plus ONE
-    // that is not: `remove-deleted-user-images`, which hides the images of a user who deleted
-    // their OWN account and chose the 7-day grace option, and enqueues them here explicitly via
-    // `queueBlockedImagesForDelete` as well. It writes `blockedFor = 'moderated'`, exactly what a
-    // moderator block writes, so `blockedFor` cannot tell the two apart — that is stated at
-    // `PRIOR_INGESTION_KEY`. Nothing is moderated in that case and it must not reach another
-    // owner's bytes, so the split below keys on the metadata marker the grace pass writes and no
-    // other writer does. Both populations are still hard-deleted here; only the retraction differs.
+    // there. Enumerated over every write of that column in `src`, `apps` and `packages`, those
+    // writers are:
+    //   MODERATION — `handleBlockImages` and the block in `image.controller`; the moderator app's
+    //     own `blockImage`; the CSAM branch of `report.service`; `softDeleteUser` and the
+    //     "remove all media" branch of `toggleBan` in `user.service`; and the scan webhook's block
+    //     outcome (`image-scan-result.service` and `api/webhooks/image-scan-result`).
+    //   NOT MODERATION, and there is exactly one — `remove-deleted-user-images`, which hides the
+    //     images of a user who deleted their OWN account and chose the 7-day grace option, and
+    //     enqueues them here explicitly via `queueBlockedImagesForDelete` as well.
+    // The grace pass writes `blockedFor = 'moderated'`, exactly what a moderator block writes, so
+    // `blockedFor` cannot tell the two apart — that is stated at `PRIOR_INGESTION_KEY`. Nothing is
+    // moderated in that case and it must not reach another owner's bytes, so the split below keys
+    // on the metadata marker the grace pass writes and no other writer does. Both populations are
+    // still hard-deleted here; only the retraction differs.
     //
     // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
     // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
