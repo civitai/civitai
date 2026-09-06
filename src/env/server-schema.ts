@@ -656,7 +656,20 @@ export const serverSchema = z
     // bound on a classifier whose model can change behind a stable name; the measured value of a
     // longer window is small anyway (12x the TTL bought ~7 points of hit rate).
     // See src/server/integrations/moderation-verdict-cache.ts.
-    EXTERNAL_MODERATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(3600).default(0),
+    // The deployment this cache writes under. REQUIRED to arm it — several civitai-web deployments
+    // share one sysRedis and sys keys carry no environment segment, and the PR-preview task copies
+    // civitai-cfg WHOLESALE, so the TTL below is inherited by every open preview. A closed
+    // allowlist lives in moderation-verdict-cache.ts (one rule, one place); anything outside it is
+    // OFF and logged once. See that module for why the policy digest cannot substitute for this.
+    EXTERNAL_MODERATION_CACHE_NAMESPACE: z.string().trim().optional().default(''),
+    // 🔴 `.catch(0)`, NOT `.default(0)` — the same rule TRPC_MAX_BATCH_SIZE and
+    // EXTERNAL_MODERATION_TIMEOUT_MS carry above. `src/env/server.ts` THROWS on any invalid field,
+    // and env is parsed only at container start, so a typo here (`=off`, `=false`, `=3600s`,
+    // `=7200` over the cap) does nothing visible at the time and then CrashLoops the whole fleet at
+    // the next rollout, hours detached from the change — during the very incident this lever exists
+    // to end. `.catch(0)` degrades an unparseable value to OFF, which is the safe direction for a
+    // cache in front of a moderation gate.
+    EXTERNAL_MODERATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(3600).catch(0),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 

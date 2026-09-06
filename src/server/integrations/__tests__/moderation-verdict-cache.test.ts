@@ -29,6 +29,7 @@ const env = vi.hoisted(() => ({
   EXTERNAL_MODERATION_CATEGORIES: undefined as Record<string, string> | undefined,
   EXTERNAL_MODERATION_CACHE_PROBE: '' as string,
   EXTERNAL_MODERATION_CACHE_TTL_SECONDS: 300,
+  EXTERNAL_MODERATION_CACHE_NAMESPACE: 'prod' as string,
 }));
 vi.mock('~/env/server', () => ({ env }));
 
@@ -37,6 +38,7 @@ import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
 import {
   buildVerdictKey,
+  CACHE_NAMESPACES,
   moderationCacheEnabled,
   policyDigest,
 } from '~/server/integrations/moderation-verdict-cache';
@@ -105,6 +107,7 @@ beforeEach(() => {
   promClient.register.getSingleMetric(CACHE)?.reset();
   promClient.register.getSingleMetric(HIST)?.reset();
   env.EXTERNAL_MODERATION_CACHE_TTL_SECONDS = 300;
+  env.EXTERNAL_MODERATION_CACHE_NAMESPACE = 'prod';
   env.EXTERNAL_MODERATION_THRESHOLD = 0.5;
   env.EXTERNAL_MODERATION_CATEGORIES = undefined;
   // `resetSharedMocks()` runs once PER FILE, not per test, so call history accumulates across
@@ -156,14 +159,13 @@ describe('the TTL is the arming switch', () => {
     expect(serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse(300).success).toBe(
       true
     );
-    expect(serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse('nope').success).toBe(
-      false
-    );
-    // Capped: a cached verdict is a stale verdict, and the TTL is the only bound on a classifier
-    // whose model can move behind a stable name.
-    expect(serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse(3601).success).toBe(
-      false
-    );
+    // 🔴 `.catch(0)`, so an operator typo degrades to OFF instead of throwing. An earlier revision
+    // pinned `success === false` — i.e. it asserted the fleet-CrashLooping behaviour AS INTENDED,
+    // because env.ts throws on any invalid field and env parses only at container start.
+    const typo = serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse('off');
+    expect(typo.success && typo.data).toBe(0);
+    const over = serverSchema.shape.EXTERNAL_MODERATION_CACHE_TTL_SECONDS.safeParse(7200);
+    expect(over.success && over.data).toBe(0);
   });
 });
 
@@ -279,6 +281,22 @@ describe('what must NEVER be cached', () => {
     expect(result.flagged).toBe(false); // from the live call, not from the malformed entry
   });
 
+  it('🔴 a non-string CATEGORY element is an ERROR and re-calls (the other half of the strict guard)', async () => {
+    // This guard had NO test: deleting the `c.some(x => typeof x !== 'string')` clause left the
+    // suite fully green, because every other malformed case attacks `f` or the JSON parse. A stored
+    // `{"f":false,"c":[{"x":1}]}` would deserialize to categories:[{x:1}], and those values flow on
+    // to PromptTrigger `message`/`matchedWord` and into reportProhibitedRequest.
+    const store = installRedisStore();
+    const fetchSpy = stubFetchOk();
+    await extModeration.moderatePrompt('nonstring cats', 'generate');
+    await untilStored(store, 1);
+    store.set([...store.keys()][0], '{"f":false,"c":[1]}');
+
+    await extModeration.moderatePrompt('nonstring cats', 'generate');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(await cacheCount('error')).toBe(1);
+  });
+
   it('unparseable JSON is an error and re-calls', async () => {
     const store = installRedisStore();
     const fetchSpy = stubFetchOk();
@@ -302,6 +320,34 @@ describe('what must NEVER be cached', () => {
     expect(result).toEqual({ flagged: false, categories: [] });
     expect(await cacheCount('error')).toBe(1);
     expect(await cacheCount('hit')).toBe(0);
+  });
+
+  it('🔴 the awaited read is DEADLINE-WRAPPED — a hung sysRedis cannot park the submit path', async () => {
+    // 🔴 THE DEFECT THIS PINS IS A HANG, NOT A REJECTION, and the try/catch cannot see one. The sys
+    // client has no socketTimeout, so on a silent half-open a written command parks in node-redis's
+    // reply queue until OS TCP keepalive errors the socket — ~11 MINUTES on Linux defaults — on
+    // every authenticated request. This read is awaited on the generation submission path.
+    //
+    // Driven through the mock's `withSysReadDeadline` SEAM, whose default is the REAL wrapper. A
+    // never-settling `get` is only survivable if the call is routed through the deadline; an
+    // unwrapped `await sysRedis.get(...)` hangs this test instead of failing it.
+    installRedisStore();
+    redisMock.sysRedis.get.mockImplementation(() => new Promise(() => {})); // never settles
+    // 🔴 `Once`, NOT `mockImplementation`. `vi.restoreAllMocks()` in afterEach does NOT reset a
+    // SHARED-module mock's implementation, so a persistent override here leaks into every later
+    // case in this file: the first draft of this test made `withSysReadDeadline` throw forever,
+    // and the threshold-invalidation test three describes down failed with 2 fetch calls instead
+    // of 1. Same per-file persistence trap the beforeEach already clears `get`/`set` for.
+    redisMock.withSysReadDeadline.mockImplementationOnce(async () => {
+      throw new Error('sys read deadline exceeded');
+    });
+    const fetchSpy = stubFetchOk();
+
+    const result = await extModeration.moderatePrompt('hung redis', 'generate');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1); // fell through to the classifier
+    expect(result).toEqual({ flagged: false, categories: [] });
+    expect(await cacheCount('error')).toBe(1);
   });
 
   it('a Redis WRITE failure does not fail the request', async () => {
@@ -362,11 +408,63 @@ describe('the policy digest is the staleness answer', () => {
   });
 });
 
+describe('the deployment namespace is required to arm', () => {
+  it('🔴 an unknown namespace disables the cache — an unrecognised deployment must never share a keyspace', async () => {
+    const store = installRedisStore();
+    const fetchSpy = stubFetchOk();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // Differential: the armed leg proves a read lands in this window.
+    env.EXTERNAL_MODERATION_CACHE_NAMESPACE = 'prod';
+    await extModeration.moderatePrompt('ns armed', 'generate');
+    await untilStored(store, 1);
+    expect(redisMock.sysRedis.get).toHaveBeenCalled();
+
+    redisMock.sysRedis.get.mockClear();
+    env.EXTERNAL_MODERATION_CACHE_NAMESPACE = 'preview';
+    await extModeration.moderatePrompt('ns armed', 'generate');
+
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(moderationCacheEnabled()).toBe(false);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it('🔴 every on/off spelling an operator might reach for is OFF, not a namespace', () => {
+    // The charset-plus-denylist approach the probe's audit rejected accepted all of these.
+    for (const word of ['y', 'n', 'no', 'off', 'false', 'none', 'null', 'disable', '0', '2']) {
+      env.EXTERNAL_MODERATION_CACHE_NAMESPACE = word;
+      expect(moderationCacheEnabled()).toBe(false);
+    }
+  });
+
+  it('an empty namespace is the deliberately-unarmed case and logs nothing', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    env.EXTERNAL_MODERATION_CACHE_NAMESPACE = '';
+    expect(moderationCacheEnabled()).toBe(false);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('the allowlist is asserted as a LEDGER — it fails when the set grows OR shrinks', () => {
+    expect([...CACHE_NAMESPACES]).toEqual(['prod']);
+  });
+});
+
 describe('key shape', () => {
+  it('🔴 separates two DEPLOYMENTS for the same prompt and policy', () => {
+    // 🔴 THE ONLY PLACE THIS IS REACHABLE. `CACHE_NAMESPACES` has one member, so no test driven
+    // through the public surface can distinguish a key that carries the namespace from one that
+    // hardcodes it — the same blind spot the probe documented when its allowlist narrowed to one.
+    // Passing the namespace as an ARGUMENT is what makes the segment testable at all.
+    const prod = buildVerdictKey('generation:moderation-verdict', 'prod', 'p', 'd');
+    const preview = buildVerdictKey('generation:moderation-verdict', 'preview', 'p', 'd');
+    expect(prod).not.toBe(preview);
+  });
+
   it('separates two policies for the same prompt', () => {
-    const a = buildVerdictKey('generation:moderation-verdict', 'policyA', 'deadbeef');
-    const b = buildVerdictKey('generation:moderation-verdict', 'policyB', 'deadbeef');
-    expect(a).toBe('generation:moderation-verdict:policyA:deadbeef');
+    const a = buildVerdictKey('generation:moderation-verdict', 'prod', 'policyA', 'deadbeef');
+    const b = buildVerdictKey('generation:moderation-verdict', 'prod', 'policyB', 'deadbeef');
+    expect(a).toBe('generation:moderation-verdict:prod:policyA:deadbeef');
     expect(a).not.toBe(b);
   });
 
@@ -380,7 +478,7 @@ describe('key shape', () => {
     const key = [...store.keys()][0];
     expect(key).not.toContain(secret);
     expect(key).not.toContain('distinctive');
-    expect(key).toMatch(/^generation:moderation-verdict:[0-9a-f]{16}:[0-9a-f]{32}$/);
+    expect(key).toMatch(/^generation:moderation-verdict:prod:[0-9a-f]{16}:[0-9a-f]{32}$/);
     // The stored VALUE carries the verdict only, never the prompt.
     expect(store.get(key)).not.toContain('distinctive');
   });

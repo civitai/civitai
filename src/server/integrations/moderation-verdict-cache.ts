@@ -33,8 +33,9 @@
 //     caching a failure would convert one transient gateway error into TTL-long silent
 //     under-moderation of that exact prompt. A failure must cost a retry, every time.
 //   * CACHE ERRORS. A Redis failure resolves to a MISS and the classifier is called. There is no
-//     path from a cache problem to a weaker verdict; the worst case is the latency we already pay
-//     today.
+//     path from a cache problem to a weaker verdict. The added latency is bounded by
+//     `withSysReadDeadline` (`REDIS_SYS_READ_TIMEOUT_MS`, default 2000 ms) — NOT by the Redis
+//     client, which has no socket timeout, and NOT by the try/catch, which cannot see a hang.
 import { createHash } from 'node:crypto';
 
 import { registerCounterWithLabels } from '@civitai/telemetry/client';
@@ -92,6 +93,58 @@ function record(source: ExternalModerationSource, result: CacheResult): void {
 }
 
 /**
+ * The deployment this cache may write under, or `null` when it is not armed.
+ *
+ * 🔴 WITHOUT THIS SEGMENT THE CACHE IS CROSS-DEPLOYMENT, AND THAT IS A MODERATION BUG, NOT A
+ * TIDINESS ONE. Several civitai-web deployments share ONE sysRedis, and sys keys — unlike cache
+ * keys — carry no environment segment. Worse, the PR-preview Tekton task copies civitai-next's
+ * `civitai-cfg` ConfigMap WHOLESALE into every `civitai-pr-<N>` namespace, overriding only an
+ * explicit key list, so a NEW variable like the TTL below is inherited by every open PR's preview,
+ * and ~10 of those share one `civitai-pr-sysredis`.
+ *
+ * The policy digest cannot close this. It covers the model, threshold and category map — but not
+ * `EXTERNAL_MODERATION_ENDPOINT`, not the token, and above all not the CODE in `moderation.ts` that
+ * derives `flagged` from the scores. A preview branch that changes that derivation, or points the
+ * endpoint at a stub, writes `{"f":false,"c":[]}` under a policy digest IDENTICAL to production's,
+ * and any other armed deployment reads it as an authoritative "not flagged".
+ *
+ * 🔴 SO ARMING AND NAMESPACING ARE ONE ACTION — the rule the dark probe already established for a
+ * WRITE-ONLY instrument whose worst outcome was a biased number. This one SERVES VERDICTS ON A
+ * MODERATION GATE, so it inherits that rule a fortiori.
+ *
+ * ⚠️ THIS IS A SECOND REQUIRED INPUT, AND AN EARLIER REVISION OF THIS MODULE ARGUED AGAINST ONE
+ * ("a second on/off input is a second thing that can disagree with the first"). That argument was
+ * wrong here: these are not two on/off switches. One names WHERE the entries live and one says HOW
+ * LONG they live; neither can be inferred from the other, and both are necessary by construction.
+ *
+ * A CLOSED ALLOWLIST, not a charset plus a denylist — the probe's audit enumerated the survivors of
+ * the charset approach (`y`, `n`, `none`, `null`, `disable`, `2`), and `y`/`n` are exactly how an
+ * operator spells "off", which would ARM the cache under a namespace called `n`.
+ *
+ * Duplicated from the probe rather than imported: the probe is a temporary instrument scheduled for
+ * removal, and a cache on a moderation gate must not acquire a dependency that is expected to be
+ * deleted.
+ */
+export const CACHE_NAMESPACES: readonly string[] = Object.freeze(['prod']);
+
+let warnedNamespace: string | null = null;
+
+function cacheNamespace(): string | null {
+  const raw = env.EXTERNAL_MODERATION_CACHE_NAMESPACE?.trim() ?? '';
+  if (raw === '') return null;
+  if (CACHE_NAMESPACES.includes(raw)) return raw;
+  if (warnedNamespace !== raw) {
+    warnedNamespace = raw;
+    console.error(
+      `[moderation-verdict-cache] EXTERNAL_MODERATION_CACHE_NAMESPACE=${JSON.stringify(raw)} is ` +
+        `not a known deployment (${CACHE_NAMESPACES.join(', ')}). The cache is DISABLED. This is ` +
+        `the safe direction: an unrecognised deployment must never share a verdict keyspace.`
+    );
+  }
+  return null;
+}
+
+/**
  * Seconds to hold a verdict, or 0 when the cache is OFF.
  *
  * 🔴 THE TTL IS THE ARMING SWITCH — there is no separate boolean, for the reason the probe's
@@ -99,9 +152,20 @@ function record(source: ExternalModerationSource, result: CacheResult): void {
  * first. Absent or 0 means the cache is inert and emits no series at all, which is the state every
  * deployment starts in. A non-numeric value is rejected by the env schema, not silently coerced.
  *
- * The value is read per call rather than captured at module load so a config change takes effect on
- * the next request instead of the next deploy — this is the kill switch, and a kill switch that
- * needs a rollout is not one.
+ * ⚠️ IT IS NOT A HOT KILL SWITCH, AND AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS. It said
+ * the per-call read meant "a config change takes effect on the next request instead of the next
+ * deploy". That is FALSE: `src/env/server.ts` runs `serverSchema.safeParse(process.env)` ONCE at
+ * import and exports `env` as a plain object spread, so reading it per call re-reads a frozen
+ * snapshot for the life of the process. DISABLING THIS REQUIRES A ROLLOUT, exactly as much as a
+ * module-level `const` would.
+ *
+ * 🔴 The suite could not have caught that, and still cannot: it mocks `~/env/server` with a MUTABLE
+ * hoisted object and flips it mid-test, so the fixture makes the false claim true. The claim is
+ * corrected here rather than pinned by a test, because pinning it would need a test that imports
+ * the real env module.
+ *
+ * The per-call read is kept anyway — it costs nothing and keeps this function honest about where
+ * the value comes from — but do not read it as a rollout-free lever.
  */
 function ttlSeconds(): number {
   const raw = env.EXTERNAL_MODERATION_CACHE_TTL_SECONDS;
@@ -109,7 +173,7 @@ function ttlSeconds(): number {
 }
 
 export function moderationCacheEnabled(): boolean {
-  return ttlSeconds() > 0;
+  return cacheNamespace() !== null && ttlSeconds() > 0;
 }
 
 /**
@@ -172,10 +236,11 @@ function promptDigest(preparedPrompt: string): string {
  */
 export function buildVerdictKey<P extends string>(
   prefix: P,
+  namespace: string,
   policy: string,
   digest: string
 ): `${P}:${string}` {
-  return `${prefix}:${policy}:${digest}`;
+  return `${prefix}:${namespace}:${policy}:${digest}`;
 }
 
 /**
@@ -216,16 +281,29 @@ export async function readCachedVerdict(
   preparedPrompt: string,
   policy: string
 ): Promise<ModerationVerdict | null> {
-  if (!moderationCacheEnabled()) return null;
+  const namespace = cacheNamespace();
+  if (namespace === null || ttlSeconds() <= 0) return null;
   const metricSource = clampExternalModerationSource(source);
   try {
-    const { sysRedis, REDIS_SYS_KEYS } = await import('~/server/redis/client');
+    const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
     const key = buildVerdictKey(
       REDIS_SYS_KEYS.GENERATION.MODERATION_VERDICT,
+      namespace,
       policy,
       promptDigest(preparedPrompt)
     );
-    const raw = await sysRedis.get(key);
+    // 🔴 DEADLINE-WRAPPED, AND THE UNWRAPPED VERSION WAS A DEPLOY-BLOCKER. The sys client carries
+    // NO socketTimeout (`REDIS_SYS_SOCKET_TIMEOUT_MS` defaults to 0, to avoid a reconnect-storm
+    // wedge on the single-replica backend), so on a SILENT half-open a written command parks in
+    // node-redis's reply queue until OS TCP keepalive errors the socket — Linux default ~11 MINUTES
+    // — on every authenticated request. The `try/catch` below catches REJECTIONS, not HANGS.
+    //
+    // This read is awaited on the generation submission path, so unwrapped it would park the whole
+    // tRPC handler off-CPU. That is the exact failure `moderation.ts` added `AbortSignal.timeout`
+    // for after an observed ~194 s api-primary tail — putting an UNBOUNDED wait in front of that
+    // bounded call would have reinstated it. `promptAuditing.ts`, the immediate caller, wraps all
+    // four of its own sys reads the same way; this is the convention, not a precaution.
+    const raw = await withSysReadDeadline(sysRedis.get(key));
     if (raw == null) {
       record(metricSource, 'miss');
       return null;
@@ -257,13 +335,15 @@ export function writeCachedVerdict(
   policy: string,
   verdict: ModerationVerdict
 ): void {
+  const namespace = cacheNamespace();
   const ttl = ttlSeconds();
-  if (ttl <= 0) return;
+  if (namespace === null || ttl <= 0) return;
   void (async () => {
     try {
       const { sysRedis, REDIS_SYS_KEYS } = await import('~/server/redis/client');
       const key = buildVerdictKey(
         REDIS_SYS_KEYS.GENERATION.MODERATION_VERDICT,
+        namespace,
         policy,
         promptDigest(preparedPrompt)
       );

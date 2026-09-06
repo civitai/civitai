@@ -1999,7 +1999,9 @@ export const REDIS_SYS_KEYS = {
      * Read-through cache of external prompt-moderation VERDICTS — unlike MODERATION_CACHE_PROBE
      * above, this one IS read back, and a hit skips the classifier call entirely.
      *
-     * The segment after this prefix is a digest of the POLICY that produced the verdict (model,
+     * The segment after this prefix is the DEPLOYMENT namespace — several deployments share one
+     * sysRedis and sys keys carry no environment segment, so without it a preview could serve a
+     * verdict to production. The segment after THAT is a digest of the POLICY (model,
      * score threshold, category map), not a deployment label: changing any of them changes every
      * key, so a policy change invalidates the whole cache atomically with no flush step. The
      * segment after THAT is a truncated SHA-256 of the exact string sent to the classifier; the
