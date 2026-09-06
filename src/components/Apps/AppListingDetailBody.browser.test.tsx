@@ -343,6 +343,7 @@ function relatedCard(id: string, name: string): ListingCard {
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
     kindData: {
       kind: 'onsite',
       appBlockId: `ab-${id}`,

@@ -208,6 +208,59 @@ export type ListingCard = {
    * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingCard`.
    */
   isBeta: boolean;
+  /**
+   * Play count from the `AppListingMetric` rollup (`open_count`) — how many times
+   * the app was OPENED — or `null` when the number is structurally unmeasurable.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — AND IT IS **NOT** THE SAME ARGUMENT AS
+   * `ListingDetail.installCount`. An earlier draft of this comment called it "the exact
+   * same argument, one step weaker and still sufficient", which flattered it on an axis
+   * it never named. What the two DO share: both are aggregates over the whole audience,
+   * so neither identifies a user, neither reveals WHO opened or installed the app or
+   * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
+   *
+   *   1. A NEW PUBLIC FACT, not added precision. `installCount` is already publicly
+   *      OBSERVABLE: the store's `popular` sort is `install_count DESC`, so the full
+   *      ordering of every approved listing by it is derivable from the public list
+   *      endpoint already, and surfacing the number only sharpens it. NO sort exposes
+   *      `open_count` (`listingSortSchema` = top-rated | popular | newest | name), so
+   *      this number is a genuinely new fact about the catalog.
+   *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
+   *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
+   *      — a public, anon-capable REST list returning up to 50 cards per page — so an
+   *      unauthenticated client can page the play count of the ENTIRE approved catalog
+   *      cheaply. `installCount` costs one `GET /api/v1/apps/<slug>` per app.
+   *
+   * 🔴 BOTH DELTAS WERE RAISED AND ACCEPTED DELIBERATELY (round-1 audit of this PR).
+   * The reasoning, recorded so the next reviewer does not have to re-open a settled
+   * question: printing a play count on a public store card WAS the decision, so bulk
+   * readability is a CONSEQUENCE of it rather than a separate one — and the `popular`
+   * sort already makes relative ordering by usage publicly inferable, so the catalog's
+   * usage shape is not newly disclosed in kind. It is the store analogue of the public
+   * play/view counts every other content type on the platform already renders, and
+   * that is the intent: a store card should be able to say how used an app is.
+   *
+   * This paragraph exists to hand the next reader the ACCURATE comparison rather than
+   * the flattering one. If the exposure ever needs revisiting, delta 2 is the axis.
+   *
+   * 🔴 `null` IS NOT `0`, AND THE DIFFERENCE IS A TRUTH CLAIM RATHER THAN A STYLE ONE.
+   * An OFF-SITE listing's CTA is a plain `target="_blank"` anchor to a third party, so
+   * no on-platform request follows the click and there is nothing trustworthy to count.
+   * Its play count is ABSENT, not zero — the renderer omits the stat row entirely for
+   * `null`, whereas a `0` would render as "nobody has ever used this app", a false
+   * statement about an app we simply cannot measure. `app_listing_metrics.open_count`
+   * is `Int NOT NULL DEFAULT 0`, so an off-site row DOES carry a literal `0` in the
+   * column; `projectListingCard` discriminates on `kind` precisely so that column value
+   * never reaches this field.
+   *
+   * 🔴 The mirror is equally load-bearing: an ON-SITE listing nobody has opened yet is a
+   * genuine `0` and must stay `0`. A missing metric row means "no plays recorded yet",
+   * which is 0 — the same COALESCE-to-0 reading `installCount` documents.
+   *
+   * Reads `0` for every on-site listing until the rollup that populates `open_count`
+   * ships and the events feeding it exist.
+   */
+  openCount: number | null;
   kindData: ListingCardKindData;
 };
 

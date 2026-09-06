@@ -66,6 +66,7 @@ function makeOnsiteCard(args: {
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
     kindData: {
       kind: 'onsite',
       appBlockId: args.appBlockId === undefined ? `blk_${args.slug}` : args.appBlockId,

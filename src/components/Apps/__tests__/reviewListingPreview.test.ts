@@ -124,6 +124,50 @@ describe('buildListingCardPreview', () => {
     );
   });
 
+  /**
+   * 🔴 THE PLAY COUNT IS `null` HERE FOR EVERY KIND, and the reason is what this test
+   * exists to pin — because an earlier round asserted the OPPOSITE and was wrong.
+   *
+   * 🔴 THIS OVERRIDES THE DTO'S RULE RATHER THAN FOLLOWING IT. The DTO says an on-site
+   * listing with no metric row is a genuine `0` and must not be over-nulled, and that is
+   * exactly this builder's on-site input — so the written rule yields `0` here. We return
+   * `null` anyway, on a judgement about this surface: `OffsitePendingRow` carries no
+   * `AppListingMetric` and this builder never reads one, so unlike `cardOpenCount` it can
+   * never become right later, and a `0` is wrong permanently on a moderator screen for an
+   * app that may have 40,000 plays. Operator call, 2026-09-06: truth over parity.
+   *
+   * 🔴 Do NOT restate that as "a producer that cannot measure returns null". An earlier
+   * draft did, and it is wider than the decision: `cardOpenCount` cannot measure today
+   * either, so that phrasing licenses nulling on-site rows on the PUBLIC card DTO — the
+   * defect this PR's own mutant M2 exists to catch.
+   *
+   * 🔴 IT DELIBERATELY DISAGREES WITH `cardOpenCount`, which returns a NUMBER for an
+   * on-site row, and that divergence is the point. Making the two agree on shape (the
+   * earlier round's `0`) bought kind-parity at the price of showing a moderator
+   * "0 plays" for an app with 40,000 — permanently, since this builder never gains a
+   * metric row and `previewQuery` is `retry: false`. Operator call, 2026-09-06: truth
+   * over parity. If you are about to "restore parity", read that trade first.
+   *
+   * 🔴 ON-SITE IS THE LOAD-BEARING CASE. `kind: 'onsite'` is asserted explicitly so the
+   * mutant that reinstates a kind-discriminated `0` reds HERE rather than silently
+   * passing an all-null assertion.
+   */
+  it('🔴 openCount: null for EVERY kind — this builder can never measure, so it never claims 0', () => {
+    const onsite = buildListingCardPreview(row({ id: 'r6', kind: 'onsite' }));
+    expect(onsite.kind).toBe('onsite');
+    expect(onsite.openCount).toBeNull();
+
+    const offsite = buildListingCardPreview(row({ id: 'r6b', kind: 'offsite' }));
+    expect(offsite.kind).toBe('offsite');
+    expect(offsite.openCount).toBeNull();
+
+    // A row carrying no `kind` at all defaults to off-site (the review adapters'
+    // backward-compatible default). Same answer, different route to it.
+    const defaulted = buildListingCardPreview(row({ id: 'r6c' }));
+    expect(defaulted.kind).toBe('offsite');
+    expect(defaulted.openCount).toBeNull();
+  });
+
   it('passes resolved image URLs straight through when provided', () => {
     const card = buildListingCardPreview(row({ id: 'r5' }), {
       iconUrl: 'https://cdn/icon.png',

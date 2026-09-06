@@ -64,6 +64,7 @@ function makeCard(id: string, name: string, tagline: string | null = 'tag'): Lis
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
