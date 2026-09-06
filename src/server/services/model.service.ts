@@ -1895,11 +1895,23 @@ export const deleteModelById = async ({
       });
     }
   }
-  // Rebuild every collection that contained this model. The collections index
-  // denormalizes item images, and its incremental sweep only revisits newly created
-  // collections — so without this the collection keeps showing the deleted model's
-  // thumbnail forever. Safe to resolve here: a soft delete leaves the CollectionItem
-  // rows in place. Non-throwing, so the trailing cache bust and bid cleanup still run.
+  // Queue a rebuild of every collection holding this model, so the document is
+  // refreshed from current data. Safe to resolve here: a soft delete leaves the
+  // CollectionItem rows in place. Non-throwing, so the trailing cache bust and bid
+  // cleanup still run.
+  //
+  // ⚠️ This does NOT by itself stop the collection rendering the model's thumbnail.
+  // The index's image CTEs filter on `i."ingestion" = 'Scanned' AND i."needsReview"
+  // IS NULL` and nothing else — no `Model.status`, no `Model.deletedAt`. A soft delete
+  // leaves the Model, Post and Image rows intact, so a rebuild re-emits the same
+  // image. (Verified against production: a model with `status=Deleted` and `deletedAt`
+  // set is an ACCEPTED item in 41 collections and its `modelItemImage` join still
+  // returns live images.) The enqueue is kept because it is correct and does the right
+  // thing once the image is genuinely gone — a later hard delete, or the image being
+  // removed — and because a rebuild from current data is never wrong. Whether a
+  // soft-deleted model should keep supplying collection art is a product question
+  // about collection-card semantics, not something to settle by adding a status
+  // predicate to a shared index CTE.
   await queueCollectionsForMedia({ modelIds: [id], source: 'model-delete' });
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
@@ -2136,14 +2148,25 @@ export const permaDeleteModelById = async ({
         });
       }
     }
-    // Rebuild the collections that held this model or its gallery images, using the
-    // pre-tx snapshot — the membership rows cascaded away with the delete, so this is
-    // the only remaining record of which documents went stale. Non-throwing, so the
-    // S3 and storage-resolver cleanup below still runs.
-    await enqueueCollectionRebuild({
-      ...collectionsToRebuild,
-      source: 'model-perma-delete',
-    });
+    // Rebuild the collections that held this model, its posts or its gallery images,
+    // using the pre-tx snapshot — the membership rows cascaded away with the delete,
+    // so this is the only remaining record of which documents went stale.
+    // `enqueueCollectionRebuild` is non-throwing by contract, but wrapped anyway so
+    // this step matches its siblings above rather than resting the S3 and
+    // storage-resolver cleanup below on another module keeping that promise.
+    try {
+      await enqueueCollectionRebuild({
+        ...collectionsToRebuild,
+        source: 'model-perma-delete',
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-perma-delete-collection-search-index',
+        message: `Failed to queue collection search index update for model ${id}`,
+        error,
+      });
+    }
     // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
     if (modelFileUrls.length > 0) {
       try {
@@ -3529,9 +3552,16 @@ export const unpublishModelById = async ({
 
   // An unpublished model is dropped from the model index and its images from the
   // image index, but the collections holding it keep a denormalized snapshot that no
-  // sweep revisits. Rebuild them so the collection stops rendering a thumbnail whose
-  // post is no longer published. The model row survives an unpublish, so the
-  // CollectionItem rows are still resolvable here.
+  // sweep revisits. Queue a rebuild so the document is refreshed from current data.
+  // The model row survives an unpublish, so the CollectionItem rows are resolvable
+  // here.
+  //
+  // ⚠️ Same caveat as the soft-delete path: this does NOT stop the collection
+  // rendering the model's art. The index's image CTEs filter only on
+  // `i."ingestion" = 'Scanned' AND i."needsReview" IS NULL` — no `Post.publishedAt` —
+  // and an unpublish nulls `publishedAt` while leaving Post and Image rows intact, so
+  // the rebuild re-emits the same image. Kept for the same reason: it is correct, and
+  // it is what makes the document right once the underlying image actually goes.
   await queueCollectionsForMedia({ modelIds: [id], source: 'model-unpublish' });
 
   await deleteBidsForModel({ modelId: id });

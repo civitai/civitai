@@ -51,6 +51,7 @@ vi.mock('~/server/redis/caches', () => ({
 }));
 
 vi.mock('~/server/search-index', () => ({
+  articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
   imagesSearchIndex: { queueUpdate: vi.fn() },
@@ -233,6 +234,19 @@ describe('permaDeleteModelById — permanent delete', () => {
     await permaDeleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
 
     expect(order).toEqual(['resolve', 'delete']);
+  });
+
+  // model.service hard-deletes the model's Posts in the same transaction, and
+  // CollectionItem.postId is onDelete: Cascade while the index denormalizes a post
+  // item's first image — so Post-type membership rows go stale too and must be
+  // resolved before the cascade removes them.
+  it('resolves the posts the cascade deletes, not only the model and its images', async () => {
+    await permaDeleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
+
+    const call = mockDbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
+      strings.join('?').includes('"CollectionItem"')
+    );
+    expect((call as unknown[])[0].join('?')).toContain('ci."postId"');
   });
 
   it('still deletes the model when the collections lookup fails', async () => {
