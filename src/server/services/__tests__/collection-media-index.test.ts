@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * Unit coverage for the collections-reindex enqueue used by every model/image removal
- * path.
+ * Unit coverage for the collections-reindex enqueue used by the image and
+ * permanent-model-delete removal paths.
  *
  * The defect it exists for: `prepareBatches` in collections.search-index.ts filters on
  * `c."createdAt" >= lastUpdatedAt`, so the incremental sweep only revisits NEWLY
@@ -30,9 +30,8 @@ vi.mock('~/server/search-index', () => ({
 import {
   COVER_INDEX_NAME,
   enqueueCollectionRebuild,
-  getCollectionIdsForMedia,
+  getCollectionIdsForImages,
   getCollectionIdsForModelCascade,
-  queueCollectionsForMedia,
 } from '~/server/services/collection-media-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -64,8 +63,8 @@ const sqlOf = (call: unknown[]) => {
 
 const isGate = (sql: string) => sql.includes('pg_class');
 
-/** The image path asks the catalog whether the cover index exists before building its
- *  query, so every image fixture has to answer that question first. */
+/** The image path asks the catalog whether the cover index is usable before it builds
+ *  its query, so every image fixture has to answer that question first. */
 function primeImageLookup({ coverIndex, found }: { coverIndex: boolean; found: number[] }) {
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = Array.from(strings).join('?');
@@ -74,88 +73,31 @@ function primeImageLookup({ coverIndex, found }: { coverIndex: boolean; found: n
   });
 }
 
-/** The SQL the image path actually built, i.e. not the catalog gate. */
-const imageQuerySql = () =>
-  sqlOf(
-    dbMock.dbWrite.$queryRaw.mock.calls.find(
-      ([strings]: [string[]]) => !isGate(Array.from(strings).join('?'))
-    ) as unknown[]
-  );
+const callMatching = (want: boolean) =>
+  dbMock.dbWrite.$queryRaw.mock.calls.find(
+    ([strings]: [string[]]) => isGate(Array.from(strings).join('?')) === want
+  ) as unknown[] | undefined;
 
-const warningNamed = (name: string) =>
+/** The SQL the image path actually built, i.e. not the catalog gate. */
+const imageQuerySql = () => sqlOf(callMatching(false)!);
+const gateSql = () => sqlOf(callMatching(true)!);
+
+const logNamed = (name: string) =>
   loggingMock.logToAxiom.mock.calls
-    .map((c) => c[0] as { name?: string; message?: string })
+    .map((c) => c[0] as { name?: string; message?: string; error?: unknown })
     .find((a) => a?.name === name);
+
+/** Axiom JSON.stringifies its payload; asserting after that round-trip is the only way
+ *  to tell `safeError(e)` from a raw `Error`, which satisfies `objectContaining` too. */
+const serialisedError = (name: string) =>
+  JSON.parse(JSON.stringify({ e: logNamed(name)?.error })).e as Record<string, unknown> | undefined;
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('getCollectionIdsForMedia — models', () => {
-  it('resolves collections by modelId and enqueues nothing on its own', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows(COLLECTION_A, COLLECTION_B));
-
-    const result = await getCollectionIdsForMedia({ modelIds: [MODEL_ID] });
-
-    expect(result).toEqual({ collectionIds: [COLLECTION_A, COLLECTION_B], truncated: false });
-    expect(sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0])).toContain('"CollectionItem"');
-    expect(sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0])).toContain('"modelId"');
-    expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
-  });
-
-  it('does not query at all when given no ids', async () => {
-    const result = await getCollectionIdsForMedia({ modelIds: [], imageIds: [] });
-
-    expect(result).toEqual({ collectionIds: [], truncated: false });
-    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
-  });
-
-  it('flags truncation when the cap is exceeded', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(
-      rows(COLLECTION_A, COLLECTION_B, COLLECTION_C, 5519, 6284)
-    );
-
-    const result = await getCollectionIdsForMedia({ modelIds: [MODEL_ID], cap: 3 });
-
-    expect(result.collectionIds).toEqual([COLLECTION_A, COLLECTION_B, COLLECTION_C]);
-    expect(result.truncated).toBe(true);
-  });
-
-  it('never throws when the lookup fails, so a caller can resolve before its delete', async () => {
-    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
-
-    const result = await getCollectionIdsForMedia({ modelIds: [MODEL_ID], source: 'model-delete' });
-
-    expect(result).toEqual({ collectionIds: [], truncated: false });
-    expect(warningNamed('collection-media-index-resolve-failed')).toBeDefined();
-  });
-
-  // `logToAxiom` JSON.stringifies its payload, and an Error has no enumerable own
-  // properties — so a raw one serialises to `{}` and the cause is lost.
-  //
-  // 🔴 The assertion has to be made AFTER that round-trip. Asserting
-  // `objectContaining({ message })` on the payload directly passes for a raw Error too
-  // (a live Error really does have `.message`), so it cannot tell the two apart — it
-  // was written that way first and a mutant swapping `safeError(error)` for `error`
-  // survived it. Serialising here is what makes the guard able to fail.
-  it('logs the cause through safeError, which survives JSON serialisation', async () => {
-    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
-
-    await getCollectionIdsForMedia({ modelIds: [MODEL_ID], source: 'model-delete' });
-
-    const payload = warningNamed('collection-media-index-resolve-failed') as
-      | { error?: unknown }
-      | undefined;
-    const serialised = JSON.parse(JSON.stringify({ error: payload?.error })) as {
-      error?: Record<string, unknown>;
-    };
-
-    expect(serialised.error).toMatchObject({ name: 'Error', message: 'connection reset' });
-  });
-});
-
-describe('getCollectionIdsForMedia — images', () => {
-  // An image reaches a collection document by six routes and only ONE of them is a
+describe('getCollectionIdsForImages — routes', () => {
+  // An image reaches a collection document by seven routes and only ONE of them is a
   // CollectionItem.imageId row. Resolving by that column alone — the obvious reading —
   // misses the two commonest (a Model item's gallery image, a Post item's first
   // image), which is how the collection that prompted this work stayed stale: both its
@@ -163,7 +105,7 @@ describe('getCollectionIdsForMedia — images', () => {
   it('resolves every route by which an image reaches a collection document', async () => {
     primeImageLookup({ coverIndex: true, found: [COLLECTION_A] });
 
-    await getCollectionIdsForMedia({ imageIds: [IMAGE_ID], source: 'image-delete' });
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
 
     const sql = imageQuerySql();
     expect(sql).toContain('ci."imageId"'); // 1. the image as an item
@@ -172,6 +114,20 @@ describe('getCollectionIdsForMedia — images', () => {
     expect(sql).toContain('ci."modelId"'); // 4. a model item's gallery image
     expect(sql).toContain('ci."articleId"'); // 5. an article item's cover
     expect(sql).toContain('ci."model3dId"'); // 6. a model3d item's thumbnail
+    expect(sql).toContain('u."profilePictureId"'); // 7. the owner's avatar
+  });
+
+  // Route 7 is invisible to the CTE list: pullData fetches profile pictures with a
+  // separate `db.image.findMany` and transformData ships it as `user.profilePicture`
+  // on EVERY collection document. Enumerating from the CTEs alone misses it.
+  it('resolves the owner-avatar route, which is not one of the index CTEs', async () => {
+    primeImageLookup({ coverIndex: true, found: [COLLECTION_A] });
+
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
+
+    const sql = imageQuerySql();
+    expect(sql).toMatch(/JOIN "User" u ON u\.id = c\."userId"/);
+    expect(sql).toContain('u."profilePictureId"');
   });
 
   // Mirrors modelItemImage's own join in collections.search-index.ts. Without the
@@ -179,7 +135,7 @@ describe('getCollectionIdsForMedia — images', () => {
   it('mirrors the index CTE join, including the post/model owner equality', async () => {
     primeImageLookup({ coverIndex: true, found: [COLLECTION_A] });
 
-    await getCollectionIdsForMedia({ imageIds: [IMAGE_ID], source: 'image-delete' });
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
 
     const sql = imageQuerySql();
     expect(sql).toContain('"ModelVersion"');
@@ -192,55 +148,124 @@ describe('getCollectionIdsForMedia — images', () => {
   it('keeps the routes in UNIONed legs rather than one OR-ed predicate', async () => {
     primeImageLookup({ coverIndex: true, found: [COLLECTION_A] });
 
-    await getCollectionIdsForMedia({ imageIds: [IMAGE_ID], source: 'image-delete' });
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
 
     const sql = imageQuerySql();
     expect(sql).toMatch(/\bUNION\b/);
     expect(sql).not.toMatch(/\bOR\b/i);
   });
 
-  // Without "Collection_imageId_idx" the cover leg is a parallel sequential scan of a
-  // ~4.9 GB table (measured cost 451,531 against 9,974 for the whole rest of the
-  // query). Migrations here are applied by hand, so the code cannot assume the index
-  // exists just because the migration shipped alongside it.
-  it('omits the cover leg and warns when its index is missing', async () => {
+  it('does not query at all when given no ids', async () => {
+    const result = await getCollectionIdsForImages({ imageIds: [] });
+
+    expect(result).toEqual({ collectionIds: [], truncated: false });
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('flags truncation when the cap is exceeded', async () => {
+    primeImageLookup({
+      coverIndex: true,
+      found: [COLLECTION_A, COLLECTION_B, COLLECTION_C, 5519, 6284],
+    });
+
+    const result = await getCollectionIdsForImages({ imageIds: [IMAGE_ID], cap: 3 });
+
+    expect(result.collectionIds).toEqual([COLLECTION_A, COLLECTION_B, COLLECTION_C]);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('never throws when the lookup fails, so a caller can resolve before its delete', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isGate(Array.from(strings).join('?'))) return [{ present: true }];
+      throw new Error('connection reset');
+    });
+
+    const result = await getCollectionIdsForImages({
+      imageIds: [IMAGE_ID],
+      source: 'image-delete',
+    });
+
+    expect(result).toEqual({ collectionIds: [], truncated: false });
+    expect(serialisedError('collection-media-index-resolve-failed')).toMatchObject({
+      name: 'Error',
+      message: 'connection reset',
+    });
+  });
+});
+
+describe('getCollectionIdsForImages — the cover-index gate', () => {
+  // 🔴 A `CREATE INDEX CONCURRENTLY` row appears in pg_class from the START of the
+  // build and stays there permanently if the build FAILS. A name-only check therefore
+  // returns true throughout a multi-minute build of a 2.8 GB heap, and forever after a
+  // failure — switching the cover leg on in exactly the window the gate exists to
+  // cover, so every image delete pays a parallel sequential scan concurrently with the
+  // build. `indisvalid AND indisready` is what makes the gate mean "usable".
+  it('asks whether the index is VALID and READY, not merely named', async () => {
+    primeImageLookup({ coverIndex: true, found: [COLLECTION_A] });
+
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
+
+    const sql = gateSql();
+    expect(sql).toContain('pg_index');
+    expect(sql).toContain('indisvalid');
+    expect(sql).toContain('indisready');
+  });
+
+  // `relname` is not unique across schemas and this database has a second one, so an
+  // unqualified match could be satisfied by an index of the same name elsewhere.
+  it('qualifies the catalog lookup to the public schema', async () => {
+    primeImageLookup({ coverIndex: true, found: [COLLECTION_A] });
+
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
+
+    expect(gateSql()).toContain('relnamespace');
+  });
+
+  it('omits the cover leg and warns when the index is not usable', async () => {
     primeImageLookup({ coverIndex: false, found: [COLLECTION_B] });
 
-    const result = await getCollectionIdsForMedia({ imageIds: [IMAGE_ID], source: 'image-delete' });
+    const result = await getCollectionIdsForImages({
+      imageIds: [IMAGE_ID],
+      source: 'image-delete',
+    });
 
     const sql = imageQuerySql();
     expect(sql).not.toContain('c."imageId"');
     expect(sql).toContain('ci."imageId"'); // the other legs still run
     expect(result.collectionIds).toEqual([COLLECTION_B]);
-
-    const warning = warningNamed('collection-media-index-cover-leg-skipped');
-    expect(warning?.message).toContain(COVER_INDEX_NAME);
+    expect(logNamed('collection-media-index-cover-leg-skipped')?.message).toContain(
+      COVER_INDEX_NAME
+    );
   });
 
-  it('does not warn about the cover leg when the index is present', async () => {
+  it('does not warn about the cover leg when the index is usable', async () => {
     primeImageLookup({ coverIndex: true, found: [COLLECTION_B] });
 
-    await getCollectionIdsForMedia({ imageIds: [IMAGE_ID], source: 'image-delete' });
+    await getCollectionIdsForImages({ imageIds: [IMAGE_ID], source: 'image-delete' });
 
-    expect(warningNamed('collection-media-index-cover-leg-skipped')).toBeUndefined();
+    expect(logNamed('collection-media-index-cover-leg-skipped')).toBeUndefined();
   });
 
-  // A failure resolving images must not throw away collections already resolved for
-  // models: half a correct answer beats none.
-  it('keeps the model-leg results when the image leg fails', async () => {
-    dbMock.dbWrite.$queryRaw
-      .mockResolvedValueOnce(rows(COLLECTION_C)) // model leg
-      .mockResolvedValueOnce([{ present: true }]) // cover-index gate
-      .mockRejectedValueOnce(new Error('statement timeout')); // image legs
+  // Six of the seven legs do not depend on the cover index, so a blip on that one
+  // extra catalog round-trip must not decide whether they run. Inside the main try it
+  // would send the whole resolve to the catch and return nothing — a regression the
+  // gate itself introduced, since before the gate there was no probe to fail.
+  it('still resolves the other six legs when the catalog probe fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (isGate(Array.from(strings).join('?'))) throw new Error('statement timeout');
+      return rows(COLLECTION_C);
+    });
 
-    const result = await getCollectionIdsForMedia({
-      modelIds: [MODEL_ID],
+    const result = await getCollectionIdsForImages({
       imageIds: [IMAGE_ID],
-      source: 'model-perma-delete',
+      source: 'image-delete',
     });
 
     expect(result.collectionIds).toEqual([COLLECTION_C]);
-    expect(warningNamed('collection-media-index-resolve-failed')).toBeDefined();
+    expect(imageQuerySql()).toContain('ci."postId"');
+    expect(serialisedError('collection-media-index-cover-probe-failed')).toMatchObject({
+      message: 'statement timeout',
+    });
   });
 });
 
@@ -266,8 +291,7 @@ describe('getCollectionIdsForModelCascade', () => {
 
     await getCollectionIdsForModelCascade({ modelId: MODEL_ID });
 
-    const sql = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
-    expect(sql).toContain('ci."postId"');
+    expect(sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0])).toContain('ci."postId"');
   });
 
   it('never throws, so a failed lookup cannot cancel the delete that follows', async () => {
@@ -284,9 +308,6 @@ describe('getCollectionIdsForModelCascade', () => {
   // scans an unrelated one end to end with the whole condition as a post-scan Filter
   // (measured: 43.3M estimated rows, total cost 3,336,745). As separate UNIONed legs
   // every branch is an index scan (measured: cost 89.68 for the three-leg form).
-  //
-  // The guard is "no OR anywhere in this statement" rather than a spelling check on
-  // the good form: this query has no other legitimate use for one.
   it('splits the columns into UNIONed legs so each can use its own index', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows(COLLECTION_A));
 
@@ -304,7 +325,7 @@ describe('enqueueCollectionRebuild', () => {
     await enqueueCollectionRebuild({
       collectionIds: [COLLECTION_A, COLLECTION_C],
       truncated: false,
-      source: 'model-delete',
+      source: 'image-delete',
     });
 
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledTimes(1);
@@ -318,7 +339,7 @@ describe('enqueueCollectionRebuild', () => {
     const result = await enqueueCollectionRebuild({
       collectionIds: [],
       truncated: false,
-      source: 'model-delete',
+      source: 'image-delete',
     });
 
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
@@ -333,7 +354,7 @@ describe('enqueueCollectionRebuild', () => {
     await enqueueCollectionRebuild({
       collectionIds: ids,
       truncated: false,
-      source: 'model-delete',
+      source: 'image-delete',
     });
 
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledTimes(3);
@@ -377,7 +398,7 @@ describe('enqueueCollectionRebuild', () => {
       cap: 2,
     });
 
-    const warning = warningNamed('collection-media-index-enqueue-truncated');
+    const warning = logNamed('collection-media-index-enqueue-truncated');
     expect(warning?.message).toContain('unknown number');
     expect(warning?.message).not.toMatch(/\b1 more\b/);
   });
@@ -392,32 +413,11 @@ describe('enqueueCollectionRebuild', () => {
     });
 
     expect(result.queued).toBe(0);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'collection-media-index-enqueue-failed',
-        error: expect.objectContaining({ message: 'redis unavailable' }),
-      })
-    );
-  });
-});
-
-describe('queueCollectionsForMedia', () => {
-  it('resolves then enqueues an Update for each resolved collection', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows(COLLECTION_C, COLLECTION_A));
-
-    await queueCollectionsForMedia({ modelIds: [MODEL_ID], source: 'model-delete' });
-
-    expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith([
-      { id: COLLECTION_C, action: SearchIndexUpdateQueueAction.Update },
-      { id: COLLECTION_A, action: SearchIndexUpdateQueueAction.Update },
-    ]);
-  });
-
-  it('enqueues nothing when the model was in no collection', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
-
-    await queueCollectionsForMedia({ modelIds: [MODEL_ID], source: 'model-delete' });
-
-    expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
+    // Asserted after the JSON round-trip for the same reason as the resolve failure:
+    // `objectContaining({ message })` is satisfied by a raw Error too.
+    expect(serialisedError('collection-media-index-enqueue-failed')).toMatchObject({
+      name: 'Error',
+      message: 'redis unavailable',
+    });
   });
 });

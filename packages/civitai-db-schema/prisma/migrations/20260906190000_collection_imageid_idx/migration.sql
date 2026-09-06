@@ -2,17 +2,28 @@
 --
 -- The collections search index denormalizes a cover image onto every collection document, and
 -- CollectionCard renders `if (data.image) return [data.image]` — the cover wins over item images.
--- `Collection.imageId -> Image` is `onDelete: SetNull`, so deleting a cover image leaves the
--- document holding a dead thumbnail with no CollectionItem row pointing at it. The reindex enqueue
--- therefore has to look the collection up BY that column.
+-- Deleting a cover image otherwise leaves the document holding a dead thumbnail with no
+-- CollectionItem row pointing at it, so the reindex enqueue has to look the collection up BY that
+-- column. (`Collection.imageId` is not a foreign key in the deployed database, so nothing clears
+-- it on delete either.)
 --
--- Without this index that lookup is a parallel sequential scan of a ~17.3M-row / 4.9 GB table
--- (measured cost 451,531, against ~10,000 for every other leg of the same query combined), on a
--- user-facing image-delete path. With it the leg is an index probe.
+-- Without this index that lookup is a parallel sequential scan of the ~17.3M-row / 2,817 MB heap:
+-- measured, the seven-leg resolve costs 461,408 with the leg enabled and unindexed, against 9,876
+-- with it disabled. That is on a user-facing image-delete path which `deleteImages` runs at up to
+-- five concurrent batches.
 --
--- 🔴 APPLY THIS BEFORE DEPLOYING the collections-reindex change that reads it. Migrations here are
--- applied by hand, so the ordering is a human step, not something the deploy enforces.
+-- 🔴 NO `IF NOT EXISTS`, DELIBERATELY. `CREATE INDEX CONCURRENTLY` leaves an INVALID index behind
+-- when it fails, and that index still occupies the name — so `IF NOT EXISTS` would turn the retry
+-- into a silent no-op that prints `CREATE INDEX` and repairs nothing. Without it the retry errors
+-- loudly and you take the recovery below. The application gate reads `indisvalid AND indisready`
+-- rather than mere existence, so a half-built or failed index does NOT switch the cover leg on.
 --
--- CONCURRENTLY cannot run inside a transaction block; run this statement on its own.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "Collection_imageId_idx" ON "Collection" ("imageId")
+-- Recovery if this fails partway (check: `SELECT indisvalid, indisready FROM pg_index
+-- WHERE indexrelid = '"Collection_imageId_idx"'::regclass;` — anything but `t | t` is unusable):
+--
+--   DROP INDEX CONCURRENTLY "Collection_imageId_idx";
+--   -- then re-run the CREATE below
+--
+-- CONCURRENTLY cannot run inside a transaction block; run each statement on its own.
+CREATE INDEX CONCURRENTLY "Collection_imageId_idx" ON "Collection" ("imageId")
   WHERE "imageId" IS NOT NULL;

@@ -147,7 +147,7 @@ import {
 } from '~/server/services/collection.service';
 import {
   enqueueCollectionRebuild,
-  getCollectionIdsForMedia,
+  getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -553,7 +553,7 @@ export const deleteImageById = async ({
     // only sweeps newly created collections, so without this they keep rendering a
     // thumbnail for an image that no longer exists. The resolver is non-throwing, so
     // a failure here costs the reindex rather than cancelling the delete.
-    const collectionsToRebuild = await getCollectionIdsForMedia({
+    const collectionsToRebuild = await getCollectionIdsForImages({
       imageIds: [id],
       source: 'image-delete',
     });
@@ -663,7 +663,7 @@ export async function deleteImages(ids: number[], updatePosts = true) {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
     // of which collection documents now hold a dead thumbnail.
-    const collectionsToRebuild = await getCollectionIdsForMedia({
+    const collectionsToRebuild = await getCollectionIdsForImages({
       imageIds: ids,
       source: 'image-delete-bulk',
     });
