@@ -3,7 +3,7 @@ import { createCohortReader } from '~/server/services/bot-account-detection/coho
 import { createEvidenceReader } from '~/server/services/bot-account-detection/evidence';
 import { runBotAccountDetection } from '~/server/services/bot-account-detection/run';
 import { moderatorApp } from '~/server/services/moderator-app.service';
-import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import { createJob } from './job';
 
 /**
  * Bot-account detection, SHADOW MODE.
@@ -20,18 +20,36 @@ import { createJob, UNRUNNABLE_JOB_CRON } from './job';
  * configuration of this job that can act on an account — turning it live is a code change here and
  * in the run, not a flag.
  *
- * 🔴 REGISTERED BUT NOT SCHEDULED — `UNRUNNABLE_JOB_CRON` is a deliberate choice, not a leftover.
- * `/api/internal/get-jobs` publishes every registered job's cron to the external scheduler, so a
- * real cron here means MERGING THIS ENABLES IT: at 03:20 UTC the next day it would POST to a board
- * whose table may not have been applied yet (`apps/moderator/abuse-detection/schema.sql` is applied
- * by hand per this repo's convention — without its `(detector, started_at)` unique index every POST
- * 500s on a `42P10`), with a `MOD_INBOUND_TOKEN` that may be unset. That is a daily 500 repeating
- * until somebody notices, and the noticing is the only part that is not automatic.
+ * 🔴 SCHEDULED DAILY — this replaced `UNRUNNABLE_JOB_CRON`, and the two preconditions that choice
+ * was waiting on have since been CONFIRMED LIVE by an on-demand run that completed and landed a run
+ * row on the board: the abuse-detection schema is applied on the moderator database (a missing
+ * `(detector, started_at)` unique index would have 500'd the POST on a `42P10`), and
+ * `MOD_INBOUND_TOKEN` is set. Those were the whole of the "daily 500 repeating until somebody
+ * notices" risk that kept this unscheduled, and they were verified by execution rather than by
+ * reading config. `/api/internal/get-jobs` publishes this cron to the external scheduler, so the
+ * string below is the deployment — changing it changes when this runs in production.
  *
- * `UNRUNNABLE_JOB_CRON` (a Feb 31st that never comes) keeps the job REGISTERED and on-demand
- * runnable at `/api/webhooks/run-jobs/bot-account-detection` — which is the whole of what a
- * shadow-phase grading pass needs — while firing no schedule. Restoring a real cron is a one-token
- * change once both preconditions are confirmed live; the PR body records what they are.
+ * 🔴 THE CADENCE IS PINNED TO THE COHORT WINDOW. `BOT_ACCOUNT_COHORT_WINDOW_HOURS` is 24 and the run
+ * does NOT dedupe against findings from earlier runs, so a cadence faster than the window re-reports
+ * the same accounts once per run — the board would fill with duplicates of one cohort. Daily makes
+ * cadence and window equal. If the window is ever changed, change this with it, or add dedupe first.
+ *
+ * 🔴 THAT TILES THE **REGISTRATION** AXIS EXACTLY ONCE — IT IS NOT FULL DETECTION COVERAGE, AND
+ * DAILY IS THE SETTING THAT MAXIMISES THE GAP. The window filters `createdAt`, but membership also
+ * requires the account to have posted BY THE TIME THE RUN LOOKS. An account that registers at 11:00
+ * and first posts at 13:00 is not a member at the 12:00 run, and by the next run its `createdAt` is
+ * 25 h old and outside the window — so no run ever scores it. The dormant-then-burst account is a
+ * pattern this detector would want, and its grace period is `next_run − registration_time`: on
+ * average 12 h, sometimes minutes.
+ *
+ * This is a REAL COST OF DAILY, not an argument for it. A faster cadence WITH cross-run dedupe would
+ * strictly dominate on detection; that is more work than this change, and it is the honest reason
+ * daily is chosen here rather than an inherent virtue of daily. Do not read the paragraph above as
+ * saying the cohort is fully covered — it says only that no account is scored twice.
+ *
+ * Still SHADOW MODE: scheduling changes only how often the scoring runs, not what it may do. The run
+ * holds no write client and no restriction service, and `actioned: false` is a literal in
+ * `report.ts` — see the paragraph above about turning it live being a code change, not a flag.
  *
  * 🔴 `lockExpiration` IS THE MITIGATION FOR THE DUPLICATE RUN, and it is the only one. The run-jobs
  * route hard-caps the lock hold at exactly this value and then RELEASES the lock while the run
@@ -45,7 +63,14 @@ import { createJob, UNRUNNABLE_JOB_CRON } from './job';
  */
 export const botAccountDetection = createJob(
   'bot-account-detection',
-  UNRUNNABLE_JOB_CRON,
+  // Daily, and daily specifically because the cohort window is 24h with no cross-run dedupe.
+  //
+  // Noon UTC keeps it clear of the two sibling detectors that write the same board on the 11:00 and
+  // 11:30 UTC hours. 🔴 Those run OUT OF THIS REPO, as their own deployed services — so a repo-wide
+  // grep for another board producer finds nothing and that absence is NOT evidence against this
+  // comment; an audit round read it that way. Their schedules were confirmed from their own run rows
+  // on the board, which is the surface where all three are visible at once.
+  '0 12 * * *',
   async (ctx) => {
     return runBotAccountDetection({
       reader: createCohortReader(),
