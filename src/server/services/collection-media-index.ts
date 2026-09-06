@@ -56,7 +56,9 @@ import { collectionsSearchIndex } from '~/server/search-index';
 // enqueue at REPLACEMENT time, which is a different trigger from removal and outside
 // what this module is wired to. Tracked separately. The leg is kept because it is
 // correct for the case it does match (a moderator or ingestion delete of a live
-// avatar) and costs 9.47, bounded because `profilePictureId` is `@unique`.
+// avatar). Its cost scales with the number of bound ids — measured 9.47 at one,
+// 18.94 at two, 28.41 at three — so at the 100-id batch `deleteImages` uses it is
+// ~950, not 9.47. Bounded per id because `profilePictureId` is `@unique`.
 //
 // Route 6 is the one that matters most on screen: CollectionCard renders
 // `if (data.image) return [data.image]`, so a cover WINS over every item image, and
@@ -177,8 +179,9 @@ async function coverIndexExists() {
  * Plans verified with EXPLAIN on a read replica. Five legs are index probes:
  * CollectionItem_imageId_lookup, CollectionItem_postId_lookup, CollectionItem_modelId
  * and CollectionItem_model3dId_idx, plus the avatar leg, which is two probes joined
- * (User_profilePictureId_key then Collection_userId_idx, cost 9.47). The article leg is NOT a probe — `CollectionItem_article_idx` is
- * `("collectionId","articleId")` and nothing leads on `articleId`, so it scans that
+ * (User_profilePictureId_key then Collection_userId_idx; see the route-7 note above
+ * for its per-id cost). The article leg is NOT a probe — `CollectionItem_article_idx`
+ * is `("collectionId","articleId")` and nothing leads on `articleId`, so it scans that
  * partial index: row estimate 271 per outer row, against 6 for the postId leg. It is
  * bounded — the index is 7,712 kB — so it is kept rather than given one of its own.
  * The cover leg is included only when its index is valid; see `coverIndexExists`.
