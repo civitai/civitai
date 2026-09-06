@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AFFECTED_APPROVED_LISTINGS_SQL,
+  APP_LISTING_BATCH_SIZE,
   APP_LISTING_METRIC_UPSERT_SQL,
   APP_OPEN_ACTION_TYPE,
   appOpenActorKey,
@@ -11,7 +12,12 @@ import {
   computeAppListingMetricUpdates,
   computeAppOpenCounts,
   escapeClickhouseString,
+  fetchAppOpenCounts,
+  fetchRecentlyOpenedBlockIds,
+  selectAffectedApprovedListings,
+  type AffectedListingsInput,
   type AppListingComputeInput,
+  type AppOpenCountRow,
   type AppOpenEvent,
 } from '~/server/metrics/appListing.metrics.sql';
 
@@ -187,6 +193,14 @@ describe('play dedup — one distinct actor per app per UTC day', () => {
   it('the day boundary is UTC, not local — two instants 2s apart across midnight UTC are 2 days', () => {
     // Pinned explicitly because the SQL says `toDate(time, 'UTC')`: a bucketing
     // that used the server's local zone would merge or split these differently.
+    //
+    // 🔴 ON ITS OWN THIS ASSERTION IS VACUOUS WHEREVER IT ACTUALLY GATES. It only
+    // fails on a runner whose local zone differs from UTC; `vitest.config.mts` pins
+    // no `TZ` and CI containers are conventionally UTC, where "local" and "UTC" are
+    // the same thing and a `toLocaleDateString('en-CA')` implementation passes it.
+    // Measured: that mutant gave 3 failed / 45 passed under TZ=America/Chicago and
+    // 48 passed — SURVIVED — under TZ=UTC. The zone-varying block below is the real
+    // guard; this one is kept as the plain statement of the expected values.
     expect(appOpenUtcDay('2026-09-05T23:59:59.000Z')).toBe('2026-09-05');
     expect(appOpenUtcDay('2026-09-06T00:00:01.000Z')).toBe('2026-09-06');
   });
@@ -236,6 +250,82 @@ describe('play dedup — one distinct actor per app per UTC day', () => {
 
   it('an app block with no events has no entry (the caller reads that as 0)', () => {
     expect(computeAppOpenCounts([]).get('apb_alpha')).toBeUndefined();
+  });
+});
+
+/**
+ * 🔴 THE UTC-DAY RULE, PROVEN AS A PROPERTY RATHER THAN AS AN ACCIDENT OF THE
+ * RUNNER'S ZONE.
+ *
+ * The spec⇄SQL lockstep rests on `appOpenUtcDay` mirroring `toDate(time, 'UTC')`.
+ * A single-zone assertion cannot see the failure it is written to catch: on a UTC
+ * runner — which `vitest.config.mts` does not pin, and which CI containers
+ * conventionally are — a local-zone implementation IS the UTC one, so it passes.
+ * Measured on the `toLocaleDateString('en-CA')` mutant: KILLED (3 failed / 45
+ * passed) under TZ=America/Chicago, SURVIVED (48 passed) under TZ=UTC. The guard
+ * held nowhere it actually gates.
+ *
+ * So the property is exercised under SEVERAL ambient zones, straddling the instants
+ * in both directions (UTC-5 pulls a just-after-midnight instant back a day; UTC+14
+ * pushes a just-before-midnight instant forward one). Whatever zone the runner is
+ * in, at least two of these disagree with it.
+ */
+describe('appOpenUtcDay is independent of the runner ambient timezone', () => {
+  const ZONES = ['UTC', 'America/Chicago', 'Asia/Kolkata', 'Pacific/Kiritimati'];
+  /** Renders as the NEXT day in Kiritimati (UTC+14). */
+  const LATE = '2026-09-05T23:59:59.000Z';
+  /** Renders as the PREVIOUS day in Chicago (UTC-5). */
+  const EARLY = '2026-09-06T00:00:01.000Z';
+
+  function withAmbientTimezone<T>(tz: string, fn: () => T): T {
+    const previous = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+      return fn();
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  }
+
+  const localDay = (tz: string, instant: string) =>
+    withAmbientTimezone(tz, () => new Date(instant).toLocaleDateString('en-CA'));
+
+  it('POSITIVE CONTROL: the zone override actually moves a local-zone reading', () => {
+    // Without this, a Node/pool combination that ignored a runtime `process.env.TZ`
+    // change would turn every assertion below into a re-run of the ambient zone —
+    // the exact vacuity this block exists to remove, wearing four zone names.
+    expect(localDay('UTC', LATE)).toBe('2026-09-05');
+    expect(localDay('Pacific/Kiritimati', LATE)).toBe('2026-09-06');
+    expect(localDay('America/Chicago', EARLY)).toBe('2026-09-05');
+  });
+
+  it.each(ZONES)('bucket boundaries stay UTC under TZ=%s', (tz) => {
+    withAmbientTimezone(tz, () => {
+      expect(appOpenUtcDay(LATE)).toBe('2026-09-05');
+      expect(appOpenUtcDay(EARLY)).toBe('2026-09-06');
+    });
+  });
+
+  it.each(ZONES)('the dedup buckets by UTC day, not local day, under TZ=%s', (tz) => {
+    withAmbientTimezone(tz, () => {
+      // Same actor, two instants inside ONE UTC day that fall on DIFFERENT local
+      // days in Kiritimati (UTC+14 renders them 23:59:59 and 00:00:01). Still 1.
+      expect(
+        computeAppOpenCounts([
+          play({ userId: 71, time: '2026-09-05T09:59:59.000Z' }),
+          play({ userId: 71, time: '2026-09-05T10:00:01.000Z' }),
+        ]).get('apb_alpha')
+      ).toBe(1);
+      // Same actor either side of UTC midnight, which Chicago (UTC-5) renders as a
+      // single local day. Still 2.
+      expect(
+        computeAppOpenCounts([
+          play({ userId: 71, time: LATE }),
+          play({ userId: 71, time: EARLY }),
+        ]).get('apb_alpha')
+      ).toBe(2);
+    });
   });
 });
 
@@ -334,16 +424,21 @@ describe('production SQL — ownership contract (regression guard)', () => {
     expect(upsert).not.toContain('thumbs_down_count');
   });
 
-  it('does not write connect/visit/tipped counters (no reader; feature not live)', () => {
-    // 🔴 DELIBERATELY NARROWED. This guard used to include `open_count`, on the
-    // grounds that nothing read it. Stage 2 gave it a reader and a trusted source
-    // (the ClickHouse `App_Open` stream), so open_count moved OUT of this list and
-    // INTO the ON CONFLICT assertion above. The remaining three are unchanged:
-    // connect is a locked-deferred product decision, visit has no server-side
-    // source, and AppListing is not a BuzzTip entity.
+  it('does not write connect/visit/tipped counters (no source; feature not live)', () => {
+    // 🔴 DELIBERATELY NARROWED — and NOT because open_count gained a reader. It has
+    // no reader at this ref; its consumer lands in stage 3. What it gained in stage
+    // 2 is a trusted server-side SOURCE (the ClickHouse `App_Open` stream) feeding
+    // a value that is derived and idempotent, which is what makes writing it ahead
+    // of its reader safe. So it moved OUT of this list and INTO the ON CONFLICT
+    // assertion above. The remaining four have no source at all: connect is a
+    // locked-deferred product decision, visit is never recorded server-side, and
+    // AppListing is not a BuzzTip entity. Do not cite open_count to populate them.
     expect(upsert).not.toContain('connect_count');
     expect(upsert).not.toContain('visit_count');
-    expect(upsert).not.toContain('tipped_count');
+    // `tipped` unqualified, so BOTH tipped_count and tipped_amount_count are
+    // covered — `tipped_count` is not a substring of `tipped_amount_count`, so the
+    // narrower spelling silently asserted nothing about the amount column.
+    expect(upsert).not.toContain('tipped');
   });
 
   it('the active-install filter is enabled = TRUE', () => {
@@ -393,6 +488,180 @@ describe('production SQL — affected-set discovery includes new plays', () => {
   it('still has the subscription-change arm and the seed arm', () => {
     expect(affected).toContain(`bus."created_at" > $1 OR bus."updated_at" > $1`);
     expect(affected).toContain('NOT EXISTS');
+  });
+
+  it('has the REPAIR arm — a lost join key with a non-zero count still published', () => {
+    // 🔴 Pinned as the WHOLE normalised arm, not a keyword. `AppListing.appBlock` is
+    // `onDelete: SetNull`; once `app_block_id` goes NULL the listing matches none of
+    // the three arms above (it has a metric row, so not the seed arm; the install
+    // arm requires a non-null key; `NULL = ANY($2)` is NULL, never true) and a
+    // published `open_count = 777` is frozen at 777 with no path to correct it. A
+    // reworded-but-equivalent arm is meant to fail this and be re-read, not slip
+    // through on a matching keyword. The behaviour it produces is asserted against
+    // the executable spec in the block below.
+    expect(affected).toContain(
+      `OR ( al."app_block_id" IS NULL AND EXISTS ( SELECT 1 FROM "app_listing_metrics" m ` +
+        `WHERE m."app_listing_id" = al.id AND (m."open_count" <> 0 OR m."install_count" <> 0) ) )`
+    );
+  });
+});
+
+/**
+ * The affected-set arms, behaviourally — `selectAffectedApprovedListings` is the
+ * in-memory mirror of `AFFECTED_APPROVED_LISTINGS_SQL`, so the arms are testable
+ * without Postgres. The repair arm is the reason this mirror exists: its absence is
+ * SILENT in production (the listing simply never comes back), so a structural
+ * assertion alone would leave the behaviour unpinned.
+ */
+describe('affected-set selection — arms, including the repair arm', () => {
+  const WATERMARK = '2026-09-05T10:00:00.000Z';
+  const BEFORE = '2026-09-05T09:00:00.000Z';
+  const AFTER = '2026-09-05T11:00:00.000Z';
+
+  const affectedInput = (over: Partial<AffectedListingsInput> = {}): AffectedListingsInput => ({
+    listings: [],
+    metrics: [],
+    subscriptions: [],
+    recentlyOpenedBlockIds: [],
+    since: WATERMARK,
+    ...over,
+  });
+
+  it('SEED: an approved listing with no metric row is selected', () => {
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [base({ id: 'apl_new', kind: 'onsite', appBlockId: 'apb_alpha' })],
+      })
+    );
+    expect(out).toEqual(['apl_new']);
+  });
+
+  it('INSTALL: a subscription touched after the watermark selects its listing', () => {
+    const listings = [base({ id: 'apl_1', kind: 'onsite', appBlockId: 'apb_alpha' })];
+    const metrics = [{ appListingId: 'apl_1', installCount: 2, openCount: 4 }];
+
+    expect(
+      selectAffectedApprovedListings(
+        affectedInput({
+          listings,
+          metrics,
+          subscriptions: [{ appBlockId: 'apb_alpha', createdAt: BEFORE, updatedAt: AFTER }],
+        })
+      )
+    ).toEqual(['apl_1']);
+
+    // Untouched since the watermark → not affected. (Negative control: without it,
+    // an arm that selected everything would pass the assertion above.)
+    expect(
+      selectAffectedApprovedListings(
+        affectedInput({
+          listings,
+          metrics,
+          subscriptions: [{ appBlockId: 'apb_alpha', createdAt: BEFORE, updatedAt: BEFORE }],
+        })
+      )
+    ).toEqual([]);
+  });
+
+  it('PLAY: a block ClickHouse reports as opened selects its listing', () => {
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [base({ id: 'apl_1', kind: 'onsite', appBlockId: 'apb_alpha' })],
+        metrics: [{ appListingId: 'apl_1', installCount: 0, openCount: 1 }],
+        recentlyOpenedBlockIds: ['apb_alpha'],
+      })
+    );
+    expect(out).toEqual(['apl_1']);
+  });
+
+  it('REPAIR: a NULL join key with a non-zero published open_count is selected', () => {
+    // The frozen-count shape: the AppBlock was deleted, `app_block_id` was
+    // SetNull'd, and open_count = 777 is still on a public card.
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [base({ id: 'apl_orphan', kind: 'onsite', appBlockId: null })],
+        metrics: [{ appListingId: 'apl_orphan', installCount: 0, openCount: 777 }],
+      })
+    );
+    expect(out).toEqual(['apl_orphan']);
+  });
+
+  it('REPAIR: also fires on a non-zero install_count, and on an OFF-SITE row', () => {
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [
+          base({ id: 'apl_installs', kind: 'onsite', appBlockId: null }),
+          base({ id: 'apl_offsite', kind: 'offsite', appBlockId: null }),
+        ],
+        metrics: [
+          { appListingId: 'apl_installs', installCount: 12, openCount: 0 },
+          { appListingId: 'apl_offsite', installCount: 0, openCount: 5 },
+        ],
+      })
+    );
+    expect(out).toEqual(['apl_installs', 'apl_offsite']);
+  });
+
+  it('REPAIR is SELF-TERMINATING: once the counts are 0 the row stops being selected', () => {
+    // 🔴 Not decoration. An arm that kept matching after the repair would put every
+    // orphaned listing into every 5-minute run forever.
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [base({ id: 'apl_orphan', kind: 'onsite', appBlockId: null })],
+        metrics: [{ appListingId: 'apl_orphan', installCount: 0, openCount: 0 }],
+      })
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('END TO END: the repaired listing then recomputes to 0, not to its stale value', () => {
+    // The repair is only worth anything if the upsert that follows CLEARS the
+    // number. Selection + recompute, together.
+    const listing = base({ id: 'apl_orphan', kind: 'onsite', appBlockId: null });
+    expect(
+      selectAffectedApprovedListings(
+        affectedInput({
+          listings: [listing],
+          metrics: [{ appListingId: 'apl_orphan', installCount: 3, openCount: 777 }],
+        })
+      )
+    ).toEqual(['apl_orphan']);
+
+    expect(
+      computeAppListingMetricUpdates({
+        listings: [listing],
+        subscriptions: [{ appBlockId: 'apb_alpha', enabled: true }],
+        openEvents: [play({ appBlockId: 'apb_alpha', userId: 71 })],
+      })
+    ).toEqual([{ appListingId: 'apl_orphan', installCount: 0, openCount: 0 }]);
+  });
+
+  it('a NON-APPROVED listing is never selected, by any arm', () => {
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [
+          base({ id: 'apl_draft', status: 'draft', kind: 'onsite', appBlockId: null }),
+          base({ id: 'apl_pending', status: 'pending', kind: 'onsite', appBlockId: 'apb_alpha' }),
+        ],
+        metrics: [{ appListingId: 'apl_draft', installCount: 0, openCount: 777 }],
+        recentlyOpenedBlockIds: ['apb_alpha'],
+      })
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('a settled approved listing matches NO arm (negative control)', () => {
+    // If this ever passes something through, every "is selected" assertion above is
+    // vacuous — they would all be reading an arm that selects unconditionally.
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [base({ id: 'apl_settled', kind: 'onsite', appBlockId: 'apb_alpha' })],
+        metrics: [{ appListingId: 'apl_settled', installCount: 2, openCount: 4 }],
+        subscriptions: [{ appBlockId: 'apb_alpha', createdAt: BEFORE, updatedAt: BEFORE }],
+        recentlyOpenedBlockIds: ['apb_other'],
+      })
+    );
+    expect(out).toEqual([]);
   });
 });
 
@@ -534,5 +803,156 @@ describe('spec ⇄ SQL lockstep', () => {
     // The literal, so the derived comparison above cannot drift silently in both
     // directions at once (two wrongs agreeing is still a pass for the pair test).
     expect(sqlCounters).toEqual(['install_count', 'open_count']);
+  });
+});
+
+/**
+ * 🔴 THE `IN` LIST IS A HARD CEILING, NOT A SLOW PATH. Measured against ClickHouse
+ * 26.8.2.7: 7,000 ids returns HTTP 200 (238,460 bytes of query text); 8,000 ids
+ * returns `Code: 62 Max query size exceeded`. The count read fails HARD by design,
+ * so one over-long query takes `install_count` down with it — and two live triggers
+ * reach that size: the seed arm on a fresh or restored `app_listing_metrics`, and
+ * the store simply growing past ~7,700 approved on-site listings.
+ */
+describe('fetchAppOpenCounts — chunking and merge', () => {
+  // Deliberately NOT a multiple of the batch size: the last chunk is partial, so a
+  // mutant that drops or double-counts a trailing chunk cannot land on the boundary.
+  const BLOCK_COUNT = APP_LISTING_BATCH_SIZE * 2 + 37;
+  const allIds = Array.from({ length: BLOCK_COUNT }, (_, i) => `apb_${i}`);
+  // Per-id distinct, and distinct from the batch size, the chunk count and the
+  // index — a mutant returning a constant or the wrong chunk's numbers cannot pass.
+  const expectedCount = (id: string) => Number(id.slice('apb_'.length)) * 3 + 11;
+
+  function idsIn(sql: string): string[] {
+    const inList = sql.slice(sql.indexOf('IN ('));
+    return [...inList.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  }
+
+  const recordingRunner = () => {
+    const queries: string[] = [];
+    const runQuery = async (sql: string): Promise<AppOpenCountRow[]> => {
+      queries.push(sql);
+      return idsIn(sql).map((id) => ({ appBlockId: id, openCount: expectedCount(id) }));
+    };
+    return { queries, runQuery };
+  };
+
+  it('POSITIVE CONTROL: the id extractor can actually see ids in a query', () => {
+    // A regex that matched nothing would make every "chunk contents" assertion
+    // below pass over an empty list.
+    expect(idsIn(buildAppOpenCountSql(['apb_a', 'apb_b']))).toEqual(['apb_a', 'apb_b']);
+  });
+
+  it('splits into ceil(n / APP_LISTING_BATCH_SIZE) queries, none over the batch size', async () => {
+    const { queries, runQuery } = recordingRunner();
+    await fetchAppOpenCounts(allIds, runQuery);
+    expect(queries).toHaveLength(Math.ceil(BLOCK_COUNT / APP_LISTING_BATCH_SIZE));
+    for (const sql of queries) {
+      expect(idsIn(sql).length).toBeLessThanOrEqual(APP_LISTING_BATCH_SIZE);
+    }
+  });
+
+  it('the merged map is COMPLETE and per-id correct across every chunk', async () => {
+    const { runQuery } = recordingRunner();
+    const counts = await fetchAppOpenCounts(allIds, runQuery);
+    expect(counts.size).toBe(BLOCK_COUNT);
+    for (const id of allIds) expect(counts.get(id)).toBe(expectedCount(id));
+  });
+
+  it('every id is asked about exactly once — chunks are disjoint and cover the set', async () => {
+    const { queries, runQuery } = recordingRunner();
+    await fetchAppOpenCounts(allIds, runQuery);
+    expect(queries.flatMap(idsIn)).toEqual(allIds);
+  });
+
+  it('dedupes and drops empty ids before chunking', async () => {
+    const { queries, runQuery } = recordingRunner();
+    await fetchAppOpenCounts(['apb_1', 'apb_1', '', 'apb_2'], runQuery);
+    expect(queries).toHaveLength(1);
+    expect(idsIn(queries[0])).toEqual(['apb_1', 'apb_2']);
+  });
+
+  it('runs ZERO queries for an empty set (`IN ()` is a syntax error)', async () => {
+    const { queries, runQuery } = recordingRunner();
+    const counts = await fetchAppOpenCounts([], runQuery);
+    expect(queries).toEqual([]);
+    expect(counts.size).toBe(0);
+  });
+
+  it('coerces a string openCount (ClickHouse 64-bit rendering) to a number', async () => {
+    const counts = await fetchAppOpenCounts(['apb_a'], async () => [
+      { appBlockId: 'apb_a', openCount: '42' },
+    ]);
+    expect(counts.get('apb_a')).toBe(42);
+  });
+
+  it('a chunk failure PROPAGATES — the count read fails hard by design', async () => {
+    // Asymmetric with the discovery read on purpose: `open_count` is derived, so a
+    // partial map is written over live counts as 0 rather than left alone.
+    await expect(
+      fetchAppOpenCounts(allIds, async () => {
+        throw new Error('Code: 62. DB::Exception: Max query size exceeded');
+      })
+    ).rejects.toThrow('Code: 62');
+  });
+});
+
+describe('fetchRecentlyOpenedBlockIds — discovery degrades, it does not fail the run', () => {
+  const SINCE = '2026-09-05T10:00:00.000Z';
+
+  it('returns the deduped, non-empty ids on a good read (positive control)', async () => {
+    const seen: string[] = [];
+    const out = await fetchRecentlyOpenedBlockIds(
+      SINCE,
+      async (sql) => {
+        seen.push(sql);
+        return [
+          { appBlockId: 'apb_a' },
+          { appBlockId: 'apb_a' },
+          { appBlockId: '' },
+          { appBlockId: 'apb_b' },
+        ];
+      },
+      () => {
+        throw new Error('onDegrade must not be called on a successful read');
+      }
+    );
+    expect(out).toEqual(['apb_a', 'apb_b']);
+    expect(seen[0]).toContain(`parseDateTimeBestEffort('${SINCE}')`);
+  });
+
+  it('🔴 a ClickHouse failure degrades to "no new plays" so install_count still runs', async () => {
+    // The regression this exists to prevent: the discovery read happens BEFORE the
+    // `if (!affected.length) return`, so a throw here aborted `update()`,
+    // `setLastUpdate()` never ran, and the store's `popular` sort
+    // (`install_count DESC`) froze for the whole ClickHouse outage — a pure-Postgres
+    // counter held hostage, with a retry of exactly the same shape.
+    const degraded: unknown[] = [];
+    const out = await fetchRecentlyOpenedBlockIds(
+      SINCE,
+      async () => {
+        throw new Error('MEMORY_LIMIT_EXCEEDED');
+      },
+      (error) => degraded.push(error)
+    );
+    expect(out).toEqual([]);
+    expect(degraded).toHaveLength(1);
+    expect((degraded[0] as Error).message).toBe('MEMORY_LIMIT_EXCEEDED');
+  });
+
+  it('onDegrade MAY VETO by throwing — a canceled job is not "no plays"', async () => {
+    // The processor's onDegrade calls `jobContext.checkIfCanceled()` first, so an
+    // aborted query surfaces as a cancellation instead of being swallowed.
+    await expect(
+      fetchRecentlyOpenedBlockIds(
+        SINCE,
+        async () => {
+          throw new Error('The user aborted a request.');
+        },
+        () => {
+          throw new Error('Job was canceled');
+        }
+      )
+    ).rejects.toThrow('Job was canceled');
   });
 });
