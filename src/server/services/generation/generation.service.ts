@@ -1374,6 +1374,34 @@ export async function getResourceData(
 
 const EMPTY_HASH = 'e3b0c44298fc';
 
+/**
+ * Mirrors the role vocabularies and the excluded file types in get_image_resources.sql. Matching on
+ * hash value alone credits an image to whoever else happens to host the same bundled component file
+ * -- see that function's header for the incident. Change both together.
+ */
+const RESOURCE_ROLES = new Set([
+  'model', 'checkpoint', 'refinermodel',
+  'lora', 'lycoris', 'locon', 'dora',
+  'embed', 'embedding', 'textualinversion', 'used_embeddings',
+  'hypernet',
+]);
+const COMPONENT_ROLES = new Set([
+  'vae', 'refinervae', 'clip', 'clipvision', 'cliplmodel', 'unet',
+  'textencoder', 'text_encoder', 'upscaler', 'controlnet',
+  'qwenmodel', 'llamamodel', 'txxlmodel', 'seedvrmodel',
+]);
+const NON_RESOURCE_FILE_TYPES = [
+  'Training Data', 'Archive', 'Config', 'Workflow',
+  'VAE', 'Text Encoder', 'CLIPVision',
+];
+
+/** A role we cannot read is not a role we can reject -- see the hashes branch in the SQL. */
+const roleFromHashKey = (key: string) => {
+  const role = key.toLowerCase().split(':')[0];
+  return RESOURCE_ROLES.has(role) || COMPONENT_ROLES.has(role) ? role : undefined;
+};
+const isResourceRole = (role: string | undefined) => !role || RESOURCE_ROLES.has(role);
+
 type HashCandidate = {
   hash: string;
   name: string;
@@ -1433,6 +1461,7 @@ function extractHashCandidates(
   if (input.resources) {
     for (const r of input.resources) {
       if (!r.hash || r.name === 'vae') continue;
+      if (!isResourceRole(r.type?.toLowerCase())) continue;
       const hash = r.hash.toLowerCase();
       if (hash === EMPTY_HASH) continue;
       candidates.push({
@@ -1447,6 +1476,7 @@ function extractHashCandidates(
   if (input.hashes) {
     for (const [key, value] of Object.entries(input.hashes)) {
       if (key === 'vae') continue;
+      if (!isResourceRole(roleFromHashKey(key))) continue;
       const hash = value.toLowerCase();
       if (hash === EMPTY_HASH) continue;
       candidates.push({ hash, name: key, strength: null });
@@ -1515,6 +1545,7 @@ export async function resolveImageMeta({
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE mfh.hash IN (${Prisma.join(uniqueHashes)})
         AND m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation')
+        AND mf.type NOT IN (${Prisma.join(NON_RESOURCE_FILE_TYPES)})
     `;
 
     // Build a map of hash → best matching modelVersionId

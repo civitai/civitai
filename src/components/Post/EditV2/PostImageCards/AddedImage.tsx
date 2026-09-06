@@ -497,11 +497,13 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   });
 
   const handleRemoveResource = () => {
-    if (!canAdd || !modelVersionId || detected) return;
+    if (!canAdd || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
-      children: 'Are you sure you want to remove this resource from this image?',
+      children: detected
+        ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
+        : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -567,10 +569,10 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           </LegacyActionIcon>
         </Tooltip>
       )}
-      {!canAdd || detected ? (
+      {!canAdd ? (
         <></>
       ) : (
-        <Tooltip label="Delete">
+        <Tooltip label={detected ? 'Not what you used? Remove it' : 'Delete'}>
           <LegacyActionIcon
             color="red"
             size="sm"

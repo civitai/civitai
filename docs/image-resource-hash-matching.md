@@ -21,7 +21,7 @@ produced slightly different counts, the later figure is used and the drift noted
 Detection runs in `packages/civitai-db-schema/prisma/programmability/get_image_resources.sql` as a
 four-stage pipeline.
 
-**Stage 1 — collect candidates** (lines 12–86). Five `UNION ALL` branches pull `(name, hash)` pairs
+**Stage 1 — collect candidates** (lines 70–154). Five `UNION ALL` branches pull `(name, hash)` pairs
 out of `Image.meta`, because different tools write metadata differently:
 
 | Branch | Source | Shape |
@@ -39,17 +39,33 @@ Branches 1 and 2 both carry the affected values — `automatic.metadata.ts:259-2
 `resources[]` array from the same `Lora hashes` field that populates `hashes{}`. Both hold the
 identical hash string, so both fail identically; there is no rescue path between them.
 
-**Stage 2 — resolve** (line 99). The entire resolution step is one exact string equality,
-case-insensitive via `citext`, **with no `type` filter**:
+**Stage 2 — resolve** (line 167). The join itself is one exact string equality, case-insensitive
+via `citext`, **with no HASH-type filter** — see the note below on the role and file-type filters
+that were since added beside it, which constrain what may match but not which algorithm:
 
 ```sql
 LEFT JOIN "ModelFileHash" mfh ON mfh.hash = irh.hash::citext
 ```
 
-**Stages 3–4 — dedup and filter** (lines 106–132). Two `row_number` windows pick one winner per
+**Stages 3–4 — dedup and filter** (lines 181–211). Two `row_number` windows pick one winner per
 hash and one per version, preferring `detected` → has-strength → published → oldest version →
 lowest `fileId`. Versions carrying `excludeFromAutoDetection` are dropped, and the
 `lora:` / `embed:` / `hypernet:` name prefixes are stripped.
+
+### Since superseded in part: matching values is now constrained by ROLE and FILE TYPE
+
+ClickUp 868m16ckn (FD 69881) found the mirror-image of this document's bug. Matching values rather
+than identities does not only MISS resources — it also matches the WRONG one. A component file that
+many creators bundle beside their checkpoint (an upstream text encoder, a VAE) resolves to every
+version hosting it, and the Stage 3 tie-break awards the image to the earliest published: a
+stranger's model, credited on a page the uploader cannot correct. One Qwen3-VL text encoder did that
+to 51 images across 7 creators; 12,812 AutoV3 hashes sit on files owned by more than one user.
+
+Two filters now sit in `image_resource_merge` (and in the TypeScript mirror): the role the metadata
+declares must be one a Civitai model version can be, and the matched file must not be of a type that
+can never be the resource. They constrain WHAT may match, not which algorithm produced the value, so
+everything this document says about hash widths still holds. Full rationale and the production
+measurements are in the header of `get_image_resources.sql`.
 
 ### The design property that causes the bug
 
@@ -322,9 +338,9 @@ scan-pipeline change.
 
 **Two** implementations, not three:
 
-1. `packages/civitai-db-schema/prisma/programmability/get_image_resources.sql:99` — read **and**
+1. `packages/civitai-db-schema/prisma/programmability/get_image_resources.sql:167` — read **and**
    write path
-2. `src/server/services/generation/generation.service.ts:1488` — TypeScript mirror
+2. `src/server/services/generation/generation.service.ts:1542` — TypeScript mirror
 
 ⚠️ **`insert_image_resource.sql` is dead code. Do not change it.** Migration
 `20250319210024_image_resource_new` dropped the function, nothing in `src/` calls it, and it is

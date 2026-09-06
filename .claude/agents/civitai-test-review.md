@@ -178,7 +178,7 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-27 live in `src/server/services/__tests__/no-*.test.ts`:
+28 live in `src/server/services/__tests__/no-*.test.ts`:
 `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
 `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
@@ -192,6 +192,8 @@ owner checked — see `assertWorkflowOwner`), `no-unguarded-user-text`, `no-unlo
 `no-unmuteable-comment-processor`, `no-unscoped-email-verification-exemption`,
 `no-untruthy-query-gate` (a query gated on a feature flag must coerce it — a sparse
 flag reads `undefined`, and React Query treats that as enabled), `no-unverified-provenance-write`,
+`no-unroled-image-resource-match` (resource detection must not match an image to a model on
+hash value alone — a bundled upstream component file otherwise credits a stranger's checkpoint),
 `no-unpriced-default-model`, `no-unwrapped-knob-rotation`, `no-wholesale-module-mock`.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
@@ -199,7 +201,7 @@ fail only in a full-suite run. Five were missing when this was last audited, on 
 wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
-`test:lint-rules` names 32 files today.
+`test:lint-rules` names 33 files today.
 
 Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
 above literally — edit the numbers, not the shapes.
