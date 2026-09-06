@@ -39,7 +39,11 @@ function logError({ error, name, details }: { error: Error; name: string; detail
 // Type for cancellable check functions
 type CancellableCheckFn = (signal: AbortSignal) => Promise<boolean>;
 
-const checkFns: Record<string, CancellableCheckFn> = {
+// `satisfies Record<CheckKey, …>` rather than an annotation: it makes the compiler reject a
+// check added here without extending the CheckKey union (previously silently widened by the
+// `as CheckKey[]` cast on ALL_CHECK_KEYS) AND a CheckKey with no implementation. The type alias
+// is declared below; aliases are hoisted, so the forward reference is fine.
+const checkFns = {
   // Prisma checks (Prisma doesn't support AbortSignal). `statement_timeout`
   // only bounds the query's *server-side duration once it RUNS* — it does NOT
   // bound the wait to acquire a pool connection (the slow path during a deploy
@@ -161,7 +165,7 @@ const checkFns: Record<string, CancellableCheckFn> = {
       return false;
     }
   },
-};
+} satisfies Record<CheckKey, CancellableCheckFn>;
 // Exported because it appears in the public signature of `runHealthChecks`
 // below (its `results` return type), which /api/ready imports. A module-private
 // name in an exported signature compiles under `next build` but errors under
@@ -202,6 +206,78 @@ const envDisabledChecks: CheckKey[] = (env.HEALTHCHECK_DISABLED ?? []).filter(
 // Scoped to sysRedis ONLY — every other check (DB, pg, cluster redis, meili,
 // clickhouse) stays critical and still flips `healthy` on failure.
 const STATIC_NON_CRITICAL_CHECKS: readonly CheckKey[] = ['sysRedis'];
+
+// Checks that are critical at STARTUP but NOT in steady-state readiness.
+//
+// WHY THE SPLIT: the DB *write* checks gate a SHARED dependency. When the write
+// primary stalls, `write` and `pgWrite` fail on EVERY replica in the same probe
+// window, so a critical `write` check takes the whole fleet out of the load
+// balancer at once and the site serves "no available server" while every process
+// is alive, healthy and CPU-idle. Removing one replica from the pool is a useful
+// reaction to THAT replica being sick; removing every replica because a shared
+// dependency is sick converts a partial degradation into a total outage.
+//
+// The startup and steady-state cases genuinely differ, and this is the whole
+// reason the set is mode-scoped rather than folded into
+// STATIC_NON_CRITICAL_CHECKS:
+//   - a pod that has NEVER reached the DB must not enter the pool  → fail CLOSED
+//   - a pod already serving that LOSES write must stay and degrade → fail OPEN
+//
+// `read`/`pgRead` deliberately stay critical in BOTH modes: a pod that cannot
+// read is genuinely useless and SHOULD leave the pool.
+//
+// BOTH write checks are listed, not just the Prisma one. They are separate
+// clients over separate pools and they fail INDEPENDENTLY, so leaving either one
+// critical re-arms the fleet shed on its own — in the incident that motivated
+// this, the Prisma `write` failures and the `pgWrite` timeouts peaked within the
+// same minute at the same order of magnitude. Listing only `write` would have
+// been inert.
+//
+// Like STATIC_NON_CRITICAL_CHECKS this is HARDCODED rather than read from the
+// runtime NON_CRITICAL_HEALTHCHECKS config, for the same self-consistency reason
+// documented above: that list is read from a dependency, and on a failed read
+// runHealthChecks degrades to "run ALL checks, suppress NOTHING" — so a runtime
+// lever evaporates during precisely the incident it exists to mitigate.
+//
+// These checks still RUN in both modes and still record their result, increment
+// their counters/histogram and log on failure. This changes ONLY whether the
+// result flips the overall `healthy` boolean. Do NOT reach for
+// HEALTHCHECK_DISABLED instead: that stops the check running and loses the
+// metric, which is the signal an operator needs during the incident.
+const STARTUP_ONLY_CRITICAL_CHECKS: readonly CheckKey[] = ['write', 'pgWrite'];
+
+// Runtime list of every check, exported so a test can DERIVE its coverage from the real set
+// rather than mirroring it by hand. A hand-written mirror silently omits any check added
+// later — the new check simply gets no case, and nothing goes red to say so.
+export const ALL_CHECK_KEYS = Object.keys(checkFns) as CheckKey[]; // keys proven by the `satisfies` above
+
+/**
+ * Which readiness contract the caller wants.
+ *
+ * 'startup'   — fail CLOSED on the DB write path: a pod that has never reached
+ *               the database must not enter the pool. Used by /api/ready.
+ * 'readiness' — steady-state: the write path must not shed a serving pod.
+ *               Used by /api/health. Default, so a new caller cannot accidentally
+ *               opt INTO fleet-shedding by omission.
+ */
+export type HealthCheckMode = 'startup' | 'readiness';
+
+/**
+ * The set whose failure must NOT flip `healthy`, for a given mode.
+ *
+ * EXPORTED so a test can pin the resolved SET, not only the behaviour. A behavioural case
+ * cannot see a check being ADDED to the soft set when the harness is structurally unable to
+ * make that check fail: `clickhouse` and `searchMetrics` early-return `true` for a null
+ * client, so a test that mocks either as null stays green while the check silently becomes
+ * non-critical. Two such set-widening mutants survived the entire suite before this was
+ * pinned. A membership assertion catches any widening or narrowing, for every check —
+ * including ones no fixture in the file can break.
+ */
+export function softCheckKeysForMode(mode: HealthCheckMode): readonly CheckKey[] {
+  return mode === 'startup'
+    ? STATIC_NON_CRITICAL_CHECKS
+    : [...STATIC_NON_CRITICAL_CHECKS, ...STARTUP_ONLY_CRITICAL_CHECKS];
+}
 
 const counters = (() =>
   [...Object.keys(checkFns), 'overall'].reduce((agg, name) => {
@@ -274,7 +350,11 @@ function getOverallDeadlineMs() {
  * map plus the computed `healthy` flag and whether the overall deadline fired.
  */
 export async function runHealthChecks(
-  signal: AbortSignal
+  signal: AbortSignal,
+  // Mode defaults to 'readiness' — the NON-shedding contract. A caller that
+  // wants fail-closed startup semantics has to ask for them explicitly, so
+  // adding a new probe route can never silently re-arm the fleet shed.
+  { mode = 'readiness' }: { mode?: HealthCheckMode } = {}
 ): Promise<{ healthy: boolean; results: Record<CheckKey, boolean>; deadlineTimedOut: boolean }> {
   // Start the overall deadline at the TOP — before the config-fetch leg — so
   // the timer bounds the WHOLE run (config fetch + checks), not just the check
@@ -382,12 +462,15 @@ export async function runHealthChecks(
       });
     }
 
+    // Static soft-dependency exclusions are unioned in FIRST and independently of
+    // the sysRedis-read `nonCriticalChecks`, so they hold even when that config
+    // read fails during a real outage. In 'readiness' mode this also covers the
+    // DB write checks (see STARTUP_ONLY_CRITICAL_CHECKS); in 'startup' mode it
+    // does not, so a pod that has never reached the DB still fails closed.
+    const softChecks = softCheckKeysForMode(mode);
     const healthy = activeChecks.every(
       ([name]) =>
-        // Static soft-dependency exclusion (sysRedis) is unioned in FIRST and
-        // independently of the sysRedis-read `nonCriticalChecks`, so it holds
-        // even when that config read fails during a real sysRedis outage.
-        STATIC_NON_CRITICAL_CHECKS.includes(name as CheckKey) ||
+        softChecks.includes(name as CheckKey) ||
         nonCriticalChecks.includes(name as CheckKey) ||
         results[name as CheckKey]
     );
@@ -422,6 +505,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  // No mode → 'readiness': the DB write checks run and report, but do not flip
+  // `healthy`. This route is the steady-state readiness target, and a shared
+  // write-primary stall must not empty the load balancer. Startup's fail-closed
+  // contract lives on /api/ready, which passes mode: 'startup'.
   const { healthy, results } = await runHealthChecks(signal);
 
   // Clean up the close listener
