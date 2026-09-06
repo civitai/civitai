@@ -46,6 +46,7 @@ import type {
   ListingRecommendRollup,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
@@ -86,6 +87,53 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
   if (recommend.recommendPct == null) return 'No reviews yet';
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
+}
+
+/**
+ * Play count → display label (`0 plays` / `1 play` / `12.4k plays`), or `null` when
+ * there is no honest number to print.
+ *
+ * 🔴 `null` IN, `null` OUT — AND THAT IS AN OPERATOR OVERRIDE RECORDED AS A
+ * DECISION, NOT A FORMATTING DERIVATION. `ListingCard.openCount` is `null` exactly
+ * when the count is STRUCTURALLY UNMEASURABLE: an off-site listing's CTA is a
+ * third-party `target="_blank"` anchor, so no on-platform request follows the click
+ * and nothing observes it. The operator's call (2026-09-06) is that such a card
+ * renders NO play stat at all — a `0` there would read as "nobody has ever used
+ * this app" about an app we simply cannot measure. The DTO says the same thing in
+ * two places (`app-listing-read.schema.ts`'s `openCount`, and
+ * `app-listing.service.ts`'s `cardOpenCount`, whose own comment promises "the
+ * renderer omits the stat row"); this function is where that promise becomes code.
+ *
+ * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
+ * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
+ * only covered by the browser `component` project, which is REPORT-ONLY; the node
+ * `unit` project is the one that reddens a `main` push. A null-vs-zero rule
+ * expressed as JSX (`card.openCount != null && …`) would be invisible to the only
+ * tier that ever goes red on its own. Expressed as this function's return type it
+ * is pinned in `__tests__/appListingCardView.test.ts`, and the component is left
+ * with a branch that has nothing to get wrong.
+ *
+ * 🔴 AND `0` IS A REAL ANSWER — the mirror half, equally load-bearing. An ON-SITE
+ * listing nobody has opened yet is a genuine zero (the COALESCE-to-0 reading
+ * `cardOpenCount` documents), so this returns "0 plays" rather than treating a
+ * falsy value as absence. A truthiness test here (`if (!openCount) return null`)
+ * would collapse the two cases and is exactly what the guard below refuses.
+ *
+ * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
+ * `getRecommendLabel` above rather than an inconsistency. A review count is an
+ * exactness claim inside a parenthetical; a play count is a magnitude on a dense
+ * grid tile, where "12.4k" reads at a glance and "12,431" does not.
+ * `abbreviateNumber` is the repo-wide helper for that (`~/utils/number-helpers`) —
+ * what every other public count on the platform renders through — so this is reuse,
+ * not a second formatter.
+ *
+ * Pluralisation reads the RAW value, not the abbreviated string: exactly 1 is
+ * "1 play"; everything else — including 0, and including 1000 (which abbreviates to
+ * "1k") — is "plays".
+ */
+export function getPlayCountLabel(openCount: number | null): string | null {
+  if (openCount == null) return null;
+  return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
 }
 
 /**

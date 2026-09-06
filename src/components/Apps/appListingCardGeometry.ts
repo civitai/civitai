@@ -62,7 +62,14 @@
  */
 export const LISTING_CARD_COVER_ASPECT_RATIO = '16 / 9';
 
-// ── The meta block (icon + title + creator + rollup) ─────────────────────────
+// ── The meta block (icon + title + badges) ───────────────────────────────────
+//
+// 🔴 THIS HEADING USED TO READ "(icon + title + creator + rollup)" AND BOTH OF
+// THOSE LEFT THE BLOCK IN ONE CHANGE (2026-09-06): the author chip was dropped
+// from the store card entirely, and the recommend rollup moved to its own line
+// BELOW the action row, where it now sits beside the play count. What the block
+// still holds is the app icon, the two-line reserved title, and the two
+// conditional badges (Beta / owner-only Incomplete).
 
 /** The publisher app-icon avatar's edge length, in px (square). */
 export const LISTING_CARD_ICON_SIZE_PX = 40;
@@ -72,12 +79,19 @@ export const LISTING_CARD_ICON_SIZE_PX = 40;
  * the title clamps to.
  *
  * 🔴 THE TWO ARE ONE NUMBER ON PURPOSE. Reserving fewer lines than the clamp
- * allows lets a long title push the creator line down; reserving more leaves dead
- * space under every short one. Because the reservation is a `min-height` and the
- * clamp is a `-webkit-line-clamp`, the rendered title box is exactly this many
- * lines tall for EVERY listing — which is what puts the creator chip at the same
- * y on every card in a row. Splitting these into two literals is precisely the
+ * allows lets a long title push everything under it down; reserving more leaves
+ * dead space under every short one. Because the reservation is a `min-height` and
+ * the clamp is a `-webkit-line-clamp`, the rendered title box is exactly this many
+ * lines tall for EVERY listing. Splitting these into two literals is precisely the
  * drift this module exists to prevent.
+ *
+ * 🔴 WHAT IT ALIGNS IS NARROWER THAN IT WAS — RE-DERIVED, not edited around. This
+ * used to say "which is what puts the creator chip at the same y on every card in
+ * a row". There is no creator chip on the card any more (2026-09-06) and the
+ * recommend rollup left the meta block in the same change, so what the reservation
+ * aligns today is the two conditional badges and the TAGLINE below the block. The
+ * action row and the stats line under it are bottom-pinned by `mt="auto"` and were
+ * never a function of title length, so they are not what this buys.
  */
 export const LISTING_CARD_TITLE_LINES = 2;
 
@@ -122,9 +136,19 @@ export const LISTING_ACTION_ROW_PT_PX = 10;
 /**
  * The gap between the CTA and the `⋮` trigger, in px — Mantine `gap="xs"`.
  *
- * This is what the CTA's width is the row MINUS: with the recommend rollup moved
- * up into the meta block the row holds only those two children, so
- * `cta = row − trigger − gap`.
+ * This is what the CTA's width is the row MINUS: the row holds only those two
+ * children, so `cta = row − trigger − gap`.
+ *
+ * 🔴 THE ARITHMETIC IS UNCHANGED BUT ITS JUSTIFICATION IS NOT, SO READ THIS RATHER
+ * THAN THE SENTENCE IT REPLACED. That sentence said the row holds two children
+ * "with the recommend rollup moved up into the meta block". The rollup is no
+ * longer in the meta block — it is a line of its own BELOW the action row, beside
+ * the play count (2026-09-06). The row still holds exactly the CTA and the `⋮`
+ * trigger; what changed is only WHERE the third thing went, and the two children
+ * that remain are what this subtraction is about. That the row really holds two
+ * and only two is asserted rather than described — `AppListingCard.browser.test.tsx`
+ * checks `row.children` has length 2, and that the rollup is in neither the row
+ * nor the meta block.
  */
 export const LISTING_ACTION_ROW_GAP_PX = 10;
 

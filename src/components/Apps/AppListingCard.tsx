@@ -11,15 +11,15 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconApps, IconThumbUp } from '@tabler/icons-react';
+import { IconApps, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
-import { type MouseEvent, useState } from 'react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useState } from 'react';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import {
   getListingCta,
   getListingDetailHref,
+  getPlayCountLabel,
   getRecommendLabel,
 } from '~/components/Apps/appListingCardView';
 import {
@@ -50,10 +50,21 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * App Store Listings (W13) — P2b unified store CARD, over BOTH kinds.
  *
  * Renders one `ListingCard` (from `appListings.listAvailable`): cover + app icon
- * + name + tagline + creator chip + the Steam-style recommend rollup + a
- * kind-aware CTA (Open / View details / Visit ↗). Mirrors the visual language of
- * the live `AppBlockCard` (Mantine Card + category-glyph cover placeholder) so
- * listings feel native.
+ * + name + tagline + a kind-aware CTA (Open / View details / Visit ↗) + a stats
+ * line BELOW that CTA carrying the Steam-style recommend rollup and, for a
+ * measurable listing, the play count. Mirrors the visual language of the live
+ * `AppBlockCard` (Mantine Card + category-glyph cover placeholder) so listings
+ * feel native.
+ *
+ * 🔴 THERE IS NO AUTHOR CHIP ON THIS CARD. A "by {creator}" line used to sit
+ * under the title; the operator dropped it from the store card (2026-09-06) —
+ * a grid of ~24 tiles is a browsing surface, and the byline competed with the
+ * title for the one line a shopper actually reads. Attribution is NOT lost: the
+ * DETAIL surfaces carry it independently and are untouched by that decision —
+ * `AppDetailsModal`, `appDetailAuthorView` and `AppListingDetailBody` (which has
+ * its own, separate `CreatorChip`). `ListingCard.creator` is still on the DTO and
+ * still read here for the owner test (`isOwner`), so this is a rendering change,
+ * not a schema one.
  *
  * 🔴 THE CARD'S GEOMETRY IS NOT SPELLED HERE — it is READ from
  * `appListingCardGeometry.ts`: cover ratio, icon size, reserved title lines and
@@ -70,15 +81,31 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * rather than a hand-maintained list, so the claim cannot quietly outgrow the code
  * again.
  *
- * 🔴 THE RECOMMEND ROLLUP LIVES IN THE META BLOCK, NOT THE ACTION ROW. It used to
- * sit opposite the CTA under `justify="space-between"`, which cost an enforced
- * `min-width` floor, a `@container` breakpoint that hid it entirely below 264px,
- * and a derived threshold constant with its own drift guard — all of it apparatus
- * for making two things share a row that did not need to. As a dimmed line under
- * the creator chip it has the meta block's full width, never competes with the
- * CTA, and the row is left holding only the CTA + the `⋮` trigger. Whether a
- * viewer gets a `⋮` no longer has any geometry consequence beyond the trigger's
- * own 36px, so the card no longer computes that predicate at all.
+ * 🔴 THE RECOMMEND ROLLUP IS IN NEITHER THE META BLOCK NOR THE ACTION ROW — IT IS
+ * A LINE OF ITS OWN, BELOW THE ROW. Its history is two moves, and both are worth
+ * knowing because each deleted apparatus that must not come back:
+ *   1. It first sat OPPOSITE the CTA inside the action row under
+ *      `justify="space-between"`, which cost an enforced `min-width` floor, a
+ *      `@container` breakpoint that hid it entirely below 264px, and a derived
+ *      threshold constant with its own drift guard. All of that is deleted.
+ *   2. It then sat in the META BLOCK, under the author chip. The operator moved
+ *      it below the CTA (2026-09-06), in the same pass that dropped the author.
+ * What it keeps from move 1 is the property that mattered: it does not share a
+ * flex line with the CTA, so it needs no floor, no breakpoint and no threshold —
+ * the action row still holds exactly the CTA + the `⋮` trigger. Whether a viewer
+ * gets a `⋮` still has no geometry consequence beyond the trigger's own 36px, so
+ * the card still does not compute that predicate.
+ *
+ * 🔴 THE PLAY COUNT SITS BESIDE THE ROLLUP, AND `openCount === null` RENDERS
+ * NOTHING AT ALL — NOT A `0`. That is an OPERATOR OVERRIDE recorded as a decision,
+ * not a formatting derivation: an off-site listing's CTA is a third-party
+ * `target="_blank"` anchor, so no on-platform request follows the click and the
+ * number is STRUCTURALLY ABSENT. A `0` would read as "nobody has ever used this
+ * app" about an app we cannot measure. The mirror is equally deliberate — an
+ * ON-SITE listing with a genuine `0` DOES render "0 plays", because there the
+ * zero is a measurement. The DTO makes the same distinction at
+ * `app-listing-read.schema.ts`'s `openCount` and at `app-listing.service.ts`'s
+ * `cardOpenCount`; this component is the renderer those two comments promise.
  *
  * 🔴 THERE IS NO KIND BADGE ON THIS CARD. This line used to claim "a kind badge
  * (App / Connect app / Off-site)" — doubly wrong: two of those labels no longer
@@ -215,53 +242,24 @@ function ListingCover({
 }
 
 /**
- * "by {creator}" chip — restores the attribution line AppBlockCard dropped. Uses
- * the public creator chip (id / username / image). Links to the creator profile.
- * (UserAvatarSimple wants a rich `ProfileImage` + cosmetics object; the DTO only
- * carries a bare `image` string, so we render a lightweight avatar here — noted
- * as a reuse tradeoff in the PR.)
+ * ── WHERE THE AUTHOR CHIP WENT ──────────────────────────────────────────────
+ *
+ * A `CreatorChip` used to live here: a 20px avatar plus a dimmed "by {username}"
+ * `TruncatedText`, linking to `/user/<username>`. It is DELETED rather than left
+ * unreferenced, because an exported-but-uncalled component is the shape that gets
+ * wired back in by the next person who wants a byline.
+ *
+ * 🔴 IT WAS NOT A SHARED COMPONENT, so nothing else broke: the name is spelled in
+ * four places in this codebase and they are four INDEPENDENT things —
+ * `AppListingDetailBody` declares its own local `CreatorChip` over
+ * `ListingDetail['creator']`, and `AppDetailsModal` / `appDetailAuthorView` only
+ * MENTION the name in prose while rendering their own attribution. Checked by
+ * grep before deleting, not assumed.
+ *
+ * The detail surfaces are deliberately untouched: dropping the byline is a
+ * decision about a DENSE BROWSING GRID, not about attribution, and an app's
+ * author is still one click away on every card (the title links to the detail).
  */
-function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
-  if (!creator || !creator.username) return null;
-  const avatarSrc = creator.image ? getEdgeUrl(creator.image, { width: 64 }) : undefined;
-  return (
-    <Anchor
-      component={Link}
-      href={`/user/${encodeURIComponent(creator.username)}`}
-      underline="never"
-      c="dimmed"
-      onClick={(e: MouseEvent) => e.stopPropagation()}
-    >
-      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-        <Avatar src={avatarSrc} alt="" radius="xl" size={20} style={{ flexShrink: 0 }}>
-          {creator.username.charAt(0).toUpperCase()}
-        </Avatar>
-        {/* Tuned to fit in the common case; the Tooltip reveals a long username
-            only when it would still clip. */}
-        {/* 🔴 S5 — AUTHOR is size + weight ONLY: 12px/400 -> 14px/500, matching the
-            `/models` author line. `c="dimmed"` is KEPT deliberately (Zach's call):
-            taking BOTH title and author to white flattens the title-over-author
-            hierarchy on a `dark-6` card body, and `/models` needs white there only
-            because its author line is overlaid on media.
-
-            🔴 ACCEPTED RESIDUAL, on the record rather than an oversight: this leaves
-            the author line at contrast 4.73 — AA pass by 0.23, AAA fail. Do not
-            "fix" it to white in a later PR without revisiting that decision; the
-            verification asserts the colour did NOT change. */}
-        <TruncatedText
-          size="sm"
-          fw={500}
-          c="dimmed"
-          lineClamp={1}
-          tooltipLabel={creator.username}
-          style={{ minWidth: 0 }}
-        >
-          {`by ${creator.username}`}
-        </TruncatedText>
-      </Group>
-    </Anchor>
-  );
-}
 
 export interface AppListingCardProps {
   card: ListingCard;
@@ -298,6 +296,14 @@ export function AppListingCard({
   const CtaGlyph = ACTION_GLYPH_ICONS[cardActionGlyph(cta.action)];
   const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
+  // 🔴 THE NULL-VS-ZERO DECISION IS **NOT** MADE HERE — `getPlayCountLabel` owns it
+  // and returns `null` for an unmeasurable listing. That is deliberate: this
+  // component is covered only by the REPORT-ONLY browser project, while the pure
+  // view-model is covered by the node `unit` project that reddens a `main` push. A
+  // `card.openCount != null && …` written into the JSX below would put the rule in
+  // the one tier that never goes red on its own. All this line does is carry the
+  // answer to the render, and all the render does is omit a `null`.
+  const playCountLabel = getPlayCountLabel(card.openCount);
 
   const isOwner = !!currentUser?.id && currentUser.id === card.creator?.id;
 
@@ -325,8 +331,8 @@ export function AppListingCard({
 
   // 🔴 `@container` IS GONE, AND SO IS THE `hasMenu` PREDICATE THAT DROVE IT.
   // The card declared itself a query container for exactly ONE consumer: the
-  // recommend rollup's `hidden @[264px]:flex`. With the rollup relocated to the
-  // meta block there is no container query left on this card, so keeping
+  // recommend rollup's `hidden @[264px]:flex`. With the rollup on a line of its
+  // own below the action row there is no container query left on this card, so keeping
   // `container-type: inline-size` would be an unread containment declaration
   // that a later reader has to prove unused before touching. Nothing else on the
   // card is size-queried; re-add it WITH its consumer if that changes.
@@ -432,18 +438,30 @@ export function AppListingCard({
                   🔴 THE TITLE BOX RESERVES ITS FULL TWO LINES WHETHER OR NOT IT
                   NEEDS THEM. `min-height` = lines x line-height, in `em` so it
                   tracks the title's own font-size. Without it a one-line title is
-                  24px and a wrapped one is 48px, so the creator chip — and every
-                  row of the meta block under it — lands at a DIFFERENT y on every
-                  card in a grid row, which reads as sloppy alignment rather than
-                  as variable content. It adds NO truncation: the title already
-                  clamped at two lines, and the clamp is still two lines because
-                  both numbers are now the same constant.
+                  24px and a wrapped one is 48px, so everything under the title
+                  lands at a DIFFERENT y on every card in a grid row, which reads
+                  as sloppy alignment rather than as variable content. It adds NO
+                  truncation: the title already clamped at two lines, and the clamp
+                  is still two lines because both numbers are now the same constant.
+
+                  🔴 WHAT "EVERYTHING UNDER THE TITLE" MEANS NOW IS NARROWER THAN
+                  IT WAS, AND SAYING SO IS THE POINT. This sentence used to name the
+                  creator chip "and every row of the meta block under it". The chip
+                  is gone and the rollup moved out, so the meta block below the
+                  title holds only the two conditional badges — the rows the
+                  reservation actually aligns today are those badges and the
+                  TAGLINE below the block. The action row and the stats line under
+                  it are bottom-pinned by `mt="auto"`, so they were never affected
+                  by title length and are not evidence for this reservation. The
+                  guard in `AppListingCard.browser.test.tsx` measures the TAGLINE
+                  for exactly this reason.
 
                   🔴 `TruncatedText` REPLACES the `line-clamp-2` utility class, and
                   the swap is not cosmetic. (a) The class would be a SECOND copy of
                   the line count that `min-height` derives from — exactly the drift
                   this PR's geometry module exists to remove. (b) It buys the
-                  hover fallback the creator chip already has: a name clamped at
+                  hover fallback the retired creator chip used to have: a name
+                  clamped at
                   two lines is unreadable, and `TruncatedText` reveals it in a
                   Tooltip ONLY when it actually clips (a runtime scrollHeight
                   measurement, not a guess). `clampLines` selects that component's
@@ -461,42 +479,6 @@ export function AppListingCard({
                 {card.name}
               </TruncatedText>
             </Anchor>
-            <CreatorChip creator={card.creator} />
-            {/* ── THE RECOMMEND ROLLUP ────────────────────────────────────────
-                "N% recommend (M)", or "No reviews yet" when there are none.
-
-                🔴 IT ALWAYS RENDERS, AND THAT IS THE POINT. A card with no reviews
-                still gets the line — dropping it would make card heights depend on
-                review state inside an `h-full` grid row, which is the same class of
-                misalignment the title's reserved lines above fix.
-
-                🔴 IT MOVED HERE FROM THE ACTION ROW, and what it left behind is the
-                headline of this change. Opposite the CTA it needed an enforced
-                `min-width` floor (so a growing CTA could not starve it), a
-                `@container` query hiding it below 264px (so a narrow card did not
-                render a two-character stub), and a derived threshold constant with
-                a drift guard asserting the Tailwind class spelled the same number.
-                All three are DELETED: as a meta-block line it has the block's full
-                width, competes with nothing, and truncates against the card body
-                rather than against a button.
-
-                Dimmed + `xs`, i.e. quieter than the creator line above it: it is
-                corroboration, not identity. */}
-            <Group
-              gap={4}
-              wrap="nowrap"
-              style={{ minWidth: 0 }}
-              data-testid="apps-listing-recommend-rollup"
-            >
-              <IconThumbUp
-                size={13}
-                style={{ flexShrink: 0 }}
-                className={card.recommend.recommendPct == null ? 'text-gray-500' : 'text-green-500'}
-              />
-              <Text size="xs" c="dimmed" truncate>
-                {recommendLabel}
-              </Text>
-            </Group>
             {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape directly
                 below, with two deliberate differences: it is PUBLIC (that one is owner-only
                 — `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
@@ -550,9 +532,9 @@ export function AppListingCard({
             stepping up the size scale again — see the CTA's own note below.
 
             🔴 THE ROW HOLDS THE CTA AND THE `⋮` TRIGGER, AND NOTHING ELSE. The
-            recommend rollup used to sit opposite them; it is now a meta-block
-            line (see its note above). Three pieces of apparatus died with the
-            move, and none of them should come back with it:
+            recommend rollup used to sit opposite them; it is now the stats line
+            BELOW this row (see its note there). Three pieces of apparatus died
+            with the first move, and none of them should come back with it:
               - `justify="space-between"` — moot with one growing child, and it
                 was the reason a lone item could jump to flex-START;
               - `marginLeft: 'auto'` on the action cluster — it existed as a
@@ -571,6 +553,18 @@ export function AppListingCard({
             would put the `⋮` on its own row, and a card WITH a menu would then be
             taller than one without — inside an `h-full` grid row that grows every
             card in the row across the store.
+
+            🔴 `mt="auto"` STILL BOTTOM-PINS, AND IT NOW PINS A PAIR. The stats
+            line renders AFTER this row, so this Group is no longer the Stack's
+            last child. That does not weaken the pin: `margin-top: auto` on a
+            column flex item absorbs ALL the free space above it, so the row and
+            everything after it are pushed to the bottom together. The thing to
+            re-check on any future insertion is the same one: the auto margin must
+            stay on the FIRST of the bottom-pinned children, or a gap opens between
+            them. The `actionRow()` helper in `AppListingCard.browser.test.tsx`
+            still discriminates on that `mt="auto"`, so it keeps landing here — but
+            two geometry helpers that walked to the Stack's LAST child did have to
+            move (`ctaWidths()` in `AppListingCardSkeleton.geometry.test.tsx`).
 
             🔴 ROW HEIGHT IS A CONSTANT 46px AND MUST STAY ONE, and it is now
             DERIVED rather than asserted: `LISTING_ACTION_ROW_HEIGHT_PX` =
@@ -745,6 +739,76 @@ export function AppListingCard({
             triggerTooltip
             stopPropagation
           />
+        </Group>
+
+        {/* ── THE STATS LINE ───────────────────────────────────────────────
+            Reviews, then plays — BELOW the CTA, which is the operator's ask
+            (2026-09-06) and the reason the author chip above it is gone.
+
+            🔴 THE ROLLUP HALF ALWAYS RENDERS, AND THAT IS THE POINT. A card with
+            no reviews still gets "No reviews yet" — dropping the line would make
+            card heights depend on review state inside an `h-full` grid row, which
+            is the same class of misalignment the title's reserved lines fix, and
+            it is what lets `AppListingCardSkeleton` reserve this line
+            unconditionally.
+
+            🔴 THE PLAY HALF IS CONDITIONAL, AND ITS ABSENCE COSTS NO HEIGHT. It
+            shares this ONE flex line with the rollup rather than taking a line of
+            its own, so `openCount === null` changes the card's width usage and
+            nothing else. That is what keeps the skeleton exact without the
+            skeleton having to know the listing's kind — a loading state cannot
+            know whether the card it is reserving for is on-site or off-site.
+
+            🔴 `wrap="nowrap"` IS LOAD-BEARING, NOT TIDINESS. A wrapped stats line
+            is a SECOND line, i.e. a card taller than its skeleton by one `xs` line
+            box on every card in that `h-full` grid row. (That is ~17px — DERIVED
+            from the 16.8px figure `AppListingCardSkeleton.geometry.test.tsx`
+            measured for this type token, not re-measured here.) The rollup absorbs
+            any deficit
+            (`minWidth: 0` + `truncate`); the play count is `flexShrink: 0`
+            because it is short, bounded by `abbreviateNumber` (never more than
+            ~6 characters) and useless truncated.
+
+            Dimmed + `xs` — corroboration, not identity, same as when this line
+            lived in the meta block. */}
+        <Group gap="sm" wrap="nowrap" data-testid="apps-listing-card-stats">
+          <Group
+            gap={4}
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            data-testid="apps-listing-recommend-rollup"
+          >
+            <IconThumbUp
+              size={13}
+              style={{ flexShrink: 0 }}
+              className={card.recommend.recommendPct == null ? 'text-gray-500' : 'text-green-500'}
+            />
+            <Text size="xs" c="dimmed" truncate>
+              {recommendLabel}
+            </Text>
+          </Group>
+          {/* 🔴 RENDERED ONLY WHEN THE COUNT IS MEASURABLE. `playCountLabel` is
+              `null` exactly when `card.openCount` is `null`, i.e. off-site — the
+              rule and its OPERATOR OVERRIDE live in `getPlayCountLabel`, not here.
+              An on-site `0` yields "0 plays" and must keep rendering.
+
+              🔴 `!= null`, NOT `{playCountLabel && …}`. The label is a string, and
+              the empty string is falsy — so a truthiness test would silently
+              suppress a legitimately empty label if the copy ever changed shape.
+              The type is `string | null`; test for the `null`. */}
+          {playCountLabel != null && (
+            <Group
+              gap={4}
+              wrap="nowrap"
+              style={{ flexShrink: 0 }}
+              data-testid="apps-listing-play-count"
+            >
+              <IconPlayerPlay size={13} style={{ flexShrink: 0 }} className="text-gray-500" />
+              <Text size="xs" c="dimmed">
+                {playCountLabel}
+              </Text>
+            </Group>
+          )}
         </Group>
       </Stack>
     </Card>
