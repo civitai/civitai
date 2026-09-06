@@ -29,11 +29,23 @@ import { createJob } from './job';
  * reading config. `/api/internal/get-jobs` publishes this cron to the external scheduler, so the
  * string below is the deployment — changing it changes when this runs in production.
  *
- * 🔴 THE CADENCE IS NOT FREE-CHOICE: it is pinned to the cohort window. `BOT_ACCOUNT_COHORT_WINDOW_HOURS`
- * is 24 and the run does NOT dedupe against findings from earlier runs, so a cadence faster than the
- * window re-reports the same accounts once per run — the board would fill with duplicates of one
- * cohort. Daily makes cadence and window equal, which tiles the timeline exactly once. If the window
- * is ever changed, change this with it, or add dedupe first.
+ * 🔴 THE CADENCE IS PINNED TO THE COHORT WINDOW. `BOT_ACCOUNT_COHORT_WINDOW_HOURS` is 24 and the run
+ * does NOT dedupe against findings from earlier runs, so a cadence faster than the window re-reports
+ * the same accounts once per run — the board would fill with duplicates of one cohort. Daily makes
+ * cadence and window equal. If the window is ever changed, change this with it, or add dedupe first.
+ *
+ * 🔴 THAT TILES THE **REGISTRATION** AXIS EXACTLY ONCE — IT IS NOT FULL DETECTION COVERAGE, AND
+ * DAILY IS THE SETTING THAT MAXIMISES THE GAP. The window filters `createdAt`, but membership also
+ * requires the account to have posted BY THE TIME THE RUN LOOKS. An account that registers at 11:00
+ * and first posts at 13:00 is not a member at the 12:00 run, and by the next run its `createdAt` is
+ * 25 h old and outside the window — so no run ever scores it. The dormant-then-burst account is a
+ * pattern this detector would want, and its grace period is `next_run − registration_time`: on
+ * average 12 h, sometimes minutes.
+ *
+ * This is a REAL COST OF DAILY, not an argument for it. A faster cadence WITH cross-run dedupe would
+ * strictly dominate on detection; that is more work than this change, and it is the honest reason
+ * daily is chosen here rather than an inherent virtue of daily. Do not read the paragraph above as
+ * saying the cohort is fully covered — it says only that no account is scored twice.
  *
  * Still SHADOW MODE: scheduling changes only how often the scoring runs, not what it may do. The run
  * holds no write client and no restriction service, and `actioned: false` is a literal in

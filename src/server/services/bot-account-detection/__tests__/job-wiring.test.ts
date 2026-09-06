@@ -63,7 +63,17 @@ describe('the bot-account detection job is registered AND scheduled to match its
   });
 
   it('🔴 fires exactly once per cohort window — the cadence/window relationship, not a spelling', () => {
-    const [minute, hour, dom, month, dow] = botAccountDetection.cron.split(' ');
+    const fields = botAccountDetection.cron.trim().split(/\s+/);
+
+    // 🔴 FIELD COUNT FIRST, and it is not a formality. Every assertion below is POSITIONAL, so a
+    // 6-field (Quartz) cron shifts all of them: five names destructured out of six fields silently
+    // bind `[second, minute, hour, dom, month]`, and `'0 0 * * * ?'` — every hour, i.e. 24 fires per
+    // cohort window, exactly the duplicate hazard this test exists to catch — passes the lot. That
+    // is not a theoretical shape here: `UNRUNNABLE_JOB_CRON` is itself 6-field, and
+    // `process-enqueued-comic-panels` ships a live `'*/30 * * * * *'`.
+    expect(fields).toHaveLength(5);
+
+    const [minute, hour, dom, month, dow] = fields;
 
     // A single literal minute+hour with wildcard date fields is what makes the period exactly 24h.
     // A step (`*/6`), a list (`0,12`) or a range would fire more often and silently duplicate.
@@ -71,6 +81,8 @@ describe('the bot-account detection job is registered AND scheduled to match its
     expect(hour).toMatch(/^\d+$/);
     expect([dom, month, dow]).toEqual(['*', '*', '*']);
 
+    // Sound ONLY because of the four assertions above: five fields, literal minute and hour, and
+    // wildcard date fields together admit exactly one firing per day and nothing else.
     const firesEveryHours = 24;
     expect(firesEveryHours).toBe(BOT_ACCOUNT_COHORT_WINDOW_HOURS);
   });
