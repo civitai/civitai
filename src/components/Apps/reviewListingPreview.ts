@@ -115,6 +115,13 @@ export function buildListingCardPreview(
     // beta. The REAL preview comes from `getListingPreviewForReview`, which projects the
     // actual listing row and does carry it.
     isBeta: false,
+    // 🔴 ALWAYS `null` HERE, and it is the same own-the-limitation move as `isBeta`
+    // above. `OffsitePendingRow` carries no `AppListingMetric`, so there is no play
+    // count to report — and a listing still in the review queue has not been openable
+    // by anyone, so there is not even a real `0` to report. `null` is the honest
+    // "absent" the DTO defines (the renderer omits the stat row); a `0` would tell a
+    // moderator "nobody has ever used this app" about an app nobody COULD have used.
+    openCount: null,
     kindData: cardKindData(row),
   };
 }

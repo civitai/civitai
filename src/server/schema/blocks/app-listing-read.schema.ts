@@ -208,6 +208,36 @@ export type ListingCard = {
    * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingCard`.
    */
   isBeta: boolean;
+  /**
+   * Play count from the `AppListingMetric` rollup (`open_count`) — how many times
+   * the app was OPENED — or `null` when the number is structurally unmeasurable.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. The exact same argument as `ListingDetail.installCount`,
+   * one step weaker and still sufficient: an aggregate over the whole audience that
+   * identifies no user, reveals nothing about WHO opened the app or WHEN, and gates
+   * nothing. It is the store analogue of the public play/view counts every other
+   * content type on the platform already renders. Unlike `installCount` it is not yet
+   * derivable from a public sort, so this does surface a new (aggregate) fact — which
+   * is the intent: a store card should be able to say how used an app is.
+   *
+   * 🔴 `null` IS NOT `0`, AND THE DIFFERENCE IS A TRUTH CLAIM RATHER THAN A STYLE ONE.
+   * An OFF-SITE listing's CTA is a plain `target="_blank"` anchor to a third party, so
+   * no on-platform request follows the click and there is nothing trustworthy to count.
+   * Its play count is ABSENT, not zero — the renderer omits the stat row entirely for
+   * `null`, whereas a `0` would render as "nobody has ever used this app", a false
+   * statement about an app we simply cannot measure. `app_listing_metrics.open_count`
+   * is `Int NOT NULL DEFAULT 0`, so an off-site row DOES carry a literal `0` in the
+   * column; `projectListingCard` discriminates on `kind` precisely so that column value
+   * never reaches this field.
+   *
+   * 🔴 The mirror is equally load-bearing: an ON-SITE listing nobody has opened yet is a
+   * genuine `0` and must stay `0`. A missing metric row means "no plays recorded yet",
+   * which is 0 — the same COALESCE-to-0 reading `installCount` documents.
+   *
+   * Reads `0` for every on-site listing until the rollup that populates `open_count`
+   * ships and the events feeding it exist.
+   */
+  openCount: number | null;
   kindData: ListingCardKindData;
 };
 

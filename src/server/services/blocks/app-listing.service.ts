@@ -237,7 +237,14 @@ export const listingHydrateSelect = {
   // column the public `popular` sort already orders every approved listing by
   // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
   // already — see the DTO field's allowlist justification.
-  metric: { select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true } },
+  // `openCount` feeds the store CARD's play-count stat. Selected here (the shared
+  // card+detail select) but projected onto the CARD only — see `cardOpenCount` and
+  // the DTO field's allowlist justification. It is an aggregate over the whole
+  // audience; the column is `Int NOT NULL DEFAULT 0`, so the null-vs-zero decision
+  // is made in the projection, never here.
+  metric: {
+    select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true, openCount: true },
+  },
   // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
@@ -280,6 +287,35 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
 }
 
 /**
+ * The card's play count: a NUMBER for an on-site listing, `null` for an off-site one.
+ *
+ * 🔴 THE DISCRIMINATION IS THE WHOLE POINT, and `row.metric?.openCount ?? 0` alone —
+ * the obvious implementation — is WRONG for every off-site card. `open_count` is
+ * `Int NOT NULL DEFAULT 0`, so an off-site row carries a literal `0`; projecting it
+ * would render "nobody has ever used this app" for an app whose CTA is a plain
+ * `target="_blank"` anchor to a third party, where no on-platform request follows the
+ * click and there is therefore nothing trustworthy to count. That number is ABSENT,
+ * not zero, and `null` is how the DTO says so (the renderer omits the stat row).
+ *
+ * 🔴 AND DO NOT OVER-NULL. An on-site listing nobody has opened yet is a genuine `0`.
+ * A missing metric row means "no plays recorded yet" ⇒ `0`, the same COALESCE-to-0
+ * reading `installCount` uses — NOT `null`.
+ *
+ * 🔴 DISCRIMINATE ON `kind`, NEVER ON `appBlockId` NULLNESS. They are not the same
+ * predicate: `schema.prisma` states at the `appBlockId` field that a natively-created
+ * OFF-SITE listing also leaves it NULL, so an `appBlockId`-based test would be right
+ * by accident on some rows and wrong on others.
+ *
+ * The positive `=== 'onsite'` test (rather than `!== 'offsite'`) is deliberate: it
+ * fails CLOSED to `null` for any kind added later, because an omitted stat row is
+ * honest about an unmeasured app while a `0` is a false claim about it.
+ */
+function cardOpenCount(row: HydratedListing): number | null {
+  if (row.kind !== 'onsite') return null;
+  return row.metric?.openCount ?? 0;
+}
+
+/**
  * Project a hydrated listing row → the PUBLIC card DTO (allowlist).
  *
  * 🔴 `beta` is passed IN, and it is the SAME manual-apply trap `projectListingDetail`
@@ -314,6 +350,8 @@ export function projectListingCard(
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
+    // Number for on-site, `null` for off-site — see `cardOpenCount`.
+    openCount: cardOpenCount(row),
     kindData: cardKindData(row),
   };
 }

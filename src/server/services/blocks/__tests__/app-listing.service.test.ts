@@ -44,12 +44,15 @@ vi.mock('~/server/utils/cache-helpers', () => ({
       mockDbRead.$queryRaw(sql),
 }));
 
+import fs from 'fs';
+import path from 'path';
 import {
   decodeListingCursor,
   encodeListingCursor,
   getListingDetail,
   getListingPreviewForReview,
   listAvailableListings,
+  listingHydrateSelect,
   moderationStatusWhere,
   projectListingCard,
   projectListingDetail,
@@ -223,6 +226,11 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         'kind',
         'kindData',
         'name',
+        // 🔴 The play count is a CARD field. Unlike `installCount` (detail-only), the
+        // whole point of this number is to tell a browsing user how used an app is
+        // BEFORE they click into it, so the grid tile is its primary surface. It is
+        // `number | null`, and the null-vs-zero suite below pins which is which.
+        'openCount',
         'recommend',
         'reviewCount',
         'slug',
@@ -1081,6 +1089,218 @@ describe('🔴 sourceRepoUrl is a DETAIL field and is NEVER on the card', () => 
     // Explicitly NULL on the wire, not dropped — a client must not have to write `?? null`.
     expect('sourceRepoUrl' in empty).toBe(true);
     expect(empty.sourceRepoUrl).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 `openCount` — THE PLAY COUNT, AND THE NULL-vs-ZERO RULE.
+ *
+ * The rule this suite exists to pin, in both directions:
+ *
+ *   on-site  → a NUMBER. `row.metric?.openCount ?? 0`. A listing nobody has opened
+ *              yet is a genuine `0`, and so is one with no metric row at all.
+ *   off-site → `null`, ALWAYS, whatever the column holds.
+ *
+ * Why the off-site half is not cosmetic: an off-site listing's CTA is a plain
+ * `target="_blank"` anchor to a third party, so no on-platform request follows the
+ * click and there is nothing trustworthy to count. The number is ABSENT, not zero.
+ * The renderer omits the stat row for `null`; a `0` would render as "nobody has ever
+ * used this app", a false statement about an app we cannot measure.
+ *
+ * 🔴 EVERY OFF-SITE FIXTURE BELOW CARRIES A NON-ZERO `openCount`, and that is the
+ * load-bearing property of this suite rather than a detail. `app_listing_metrics.
+ * open_count` is `Int NOT NULL DEFAULT 0`, so a real off-site row DOES hold a literal
+ * `0` — which means a fixture seeded with `0` cannot tell the correct projection apart
+ * from the naive `row.metric?.openCount ?? 0`. Both would return the same thing and the
+ * suite would be green over a broken projection. The counts are also pairwise distinct
+ * and none of them is `0`, `1` or any other constant an assertion here names, so a
+ * mutant that hardcodes a literal cannot survive by coincidence.
+ */
+describe('🔴 openCount — a NUMBER on-site, NULL off-site (never a false zero)', () => {
+  /** A hydrated OFF-SITE row carrying a real, non-zero play count in the column. */
+  function offsiteRow(over: Record<string, unknown> = {}) {
+    return hydratedRow({
+      kind: 'offsite',
+      appBlockId: null,
+      appBlock: null,
+      connectClientId: 'oauth_abc',
+      externalUrl: 'https://third-party.example/app',
+      metric: { thumbsUpCount: 9, thumbsDownCount: 1, openCount: 8123 },
+      ...over,
+    });
+  }
+
+  it('the shared hydrate select actually asks for the column (otherwise nothing can be projected)', () => {
+    // Positive control on the select rather than on the projection: if `openCount`
+    // silently left `listingHydrateSelect`, every real card would read the
+    // no-metric branch and report `0` forever while this suite's hand-built
+    // fixtures kept passing.
+    expect(listingHydrateSelect.metric.select.openCount).toBe(true);
+    // …and the columns it already carried are still there (this is an ADD, not a swap).
+    expect(listingHydrateSelect.metric.select.installCount).toBe(true);
+    expect(listingHydrateSelect.metric.select.thumbsUpCount).toBe(true);
+    expect(listingHydrateSelect.metric.select.thumbsDownCount).toBe(true);
+  });
+
+  it('ON-SITE with plays: the number from the metric rollup', () => {
+    const card = projectListingCard(
+      hydratedRow({ metric: { thumbsUpCount: 9, thumbsDownCount: 1, openCount: 4213 } }) as never
+    );
+    expect(card.kind).toBe('onsite');
+    expect(card.openCount).toBe(4213);
+  });
+
+  it('ON-SITE with NO metric row at all: 0, not null ("no plays recorded yet" IS zero)', () => {
+    const card = projectListingCard(hydratedRow({ metric: null }) as never);
+    expect(card.kind).toBe('onsite');
+    expect(card.openCount).toBe(0);
+    expect(card.openCount).not.toBeNull();
+  });
+
+  it('ON-SITE with a metric row that omits the column: 0, not null', () => {
+    // `hydratedRow()`'s default metric carries thumbs only — the `?? 0` branch.
+    const card = projectListingCard(hydratedRow() as never);
+    expect(card.openCount).toBe(0);
+    expect(card.openCount).not.toBeNull();
+  });
+
+  it('ON-SITE whose metric row holds a literal 0: 0, not null (do NOT over-null)', () => {
+    const card = projectListingCard(
+      hydratedRow({ metric: { thumbsUpCount: 0, thumbsDownCount: 0, openCount: 0 } }) as never
+    );
+    expect(card.openCount).toBe(0);
+    expect(card.openCount).not.toBeNull();
+  });
+
+  it('🔴 OFF-SITE whose metric row holds a NON-ZERO count: null — the column is ignored', () => {
+    // THE case a projection ignoring `kind` cannot pass. A `0`-seeded fixture here
+    // would be satisfied by `row.metric?.openCount ?? 0` and prove nothing.
+    const card = projectListingCard(offsiteRow() as never);
+    expect(card.kind).toBe('offsite');
+    expect(card.openCount).toBeNull();
+    expect(card.openCount).not.toBe(8123);
+    expect(card.openCount).not.toBe(0);
+  });
+
+  it('🔴 OFF-SITE with NO metric row: null (not 0)', () => {
+    const card = projectListingCard(offsiteRow({ metric: null }) as never);
+    expect(card.openCount).toBeNull();
+  });
+
+  it('🔴 OFF-SITE stays null across every off-site shape, at four distinct non-zero counts', () => {
+    // Sweeps the sub-shapes the store actually has: OAuth-connected, grandfathered
+    // (no client id), and the `#2821` off-site row that DOES have a backing AppBlock.
+    // Distinct counts so no single hardcoded literal can satisfy the loop.
+    const shapes = [
+      { connectClientId: 'oauth_abc', appBlockId: null, metric: { openCount: 4517 } },
+      { connectClientId: null, appBlockId: null, metric: { openCount: 9902 } },
+      { connectClientId: 'oauth_abc', appBlockId: 'ab_7', metric: { openCount: 3311 } },
+      { connectClientId: null, appBlockId: 'ab_8', metric: { openCount: 7604 } },
+    ];
+    for (const shape of shapes) {
+      const card = projectListingCard(offsiteRow(shape) as never);
+      expect(card.openCount, JSON.stringify(shape)).toBeNull();
+    }
+  });
+
+  /**
+   * 🔴 THE DISCRIMINATOR IS `kind`, NOT `appBlockId` NULLNESS — and the two disagree
+   * on real rows in BOTH directions, which is why this needs two assertions rather
+   * than one. `schema.prisma` says so at the `appBlockId` field: a natively-created
+   * OFF-SITE listing also leaves it NULL, while the `#2821` off-site rows DO carry
+   * one. So an `appBlockId`-based test is wrong for an off-site row with a block
+   * (a false number) and wrong for an on-site row without one (a false null).
+   */
+  it('🔴 ON-SITE with a NULL appBlockId is still a NUMBER (an appBlockId test would null it)', () => {
+    const card = projectListingCard(
+      hydratedRow({
+        appBlockId: null,
+        metric: { thumbsUpCount: 9, thumbsDownCount: 1, openCount: 6178 },
+      }) as never
+    );
+    expect(card.kind).toBe('onsite');
+    expect(card.openCount).toBe(6178);
+  });
+
+  it('🔴 OFF-SITE WITH a backing appBlockId is still NULL (an appBlockId test would number it)', () => {
+    const card = projectListingCard(offsiteRow({ appBlockId: 'ab_9' }) as never);
+    expect(card.kind).toBe('offsite');
+    expect(card.openCount).toBeNull();
+  });
+
+  it('🔴 two rows differing ONLY in kind land on opposite sides of the rule', () => {
+    // Identical metric, identical everything else — so the difference in the output
+    // can only have come from `kind`.
+    const metric = { thumbsUpCount: 9, thumbsDownCount: 1, openCount: 5290 };
+    const onsite = projectListingCard(hydratedRow({ metric }) as never);
+    const offsite = projectListingCard(
+      hydratedRow({ kind: 'offsite', appBlock: null, metric }) as never
+    );
+    expect(onsite.openCount).toBe(5290);
+    expect(offsite.openCount).toBeNull();
+  });
+
+  it('the field is JSON-safe and EXPLICITLY null on the wire, not dropped', () => {
+    // The card DTO also crosses the transformer-less public REST `GET /api/v1/apps`
+    // boundary. A client must not have to write `?? null` to tell "absent" from
+    // "the key was omitted".
+    const offsite = JSON.parse(JSON.stringify(projectListingCard(offsiteRow() as never))) as Record<
+      string,
+      unknown
+    >;
+    expect('openCount' in offsite).toBe(true);
+    expect(offsite.openCount).toBeNull();
+
+    const onsite = JSON.parse(
+      JSON.stringify(
+        projectListingCard(
+          hydratedRow({
+            metric: { thumbsUpCount: 9, thumbsDownCount: 1, openCount: 2748 },
+          }) as never
+        )
+      )
+    ) as Record<string, unknown>;
+    expect(onsite.openCount).toBe(2748);
+    expect(typeof onsite.openCount).toBe('number');
+  });
+
+  /**
+   * 🔴 THE TYPE MUST ADMIT `null`, or the whole rule above is unrepresentable — and
+   * this is the ONLY tier that can see it from inside this file.
+   *
+   * 🔴 A COMPILE-TIME ASSERTION WRITTEN HERE WOULD BE INERT, and that is a measured
+   * fact about this repo rather than a guess: `tsconfig.json` excludes every
+   * `__tests__` directory under `src` from the root program, so THIS FILE is never
+   * type-checked. A `const x: ListingCard['openCount'] = null;` written here would
+   * compile-error nowhere and pass at runtime whatever the type said. Hence the source
+   * parse — the same read-the-authority-out-of-the-schema move
+   * `appListingGrid.test.ts` uses for the page-size cap, with the same positive
+   * control on the parse itself.
+   *
+   * The typecheck tier IS covered, just not from here: narrowing the field to `number`
+   * reds `pnpm typecheck` at the PRODUCTION call sites, which are in scope — measured
+   * at 5 errors, including `app-listing.service.ts` (this projection returns
+   * `number | null`) and `reviewListingPreview.ts` (which passes a literal `null`).
+   */
+  it('🔴 the DTO declares `openCount: number | null` (source tier — visible to a plain vitest run)', () => {
+    const schemaSrc = fs.readFileSync(
+      path.resolve(__dirname, '../../../schema/blocks/app-listing-read.schema.ts'),
+      'utf8'
+    );
+    // Positive control on the parse: the card type must be findable at all, and it
+    // must contain a field we know is there. A regex that matched nothing would
+    // otherwise report "no violation" for a file it never read.
+    const cardDecl = schemaSrc.match(/export type ListingCard = \{([\s\S]*?)\n\};/);
+    expect(cardDecl, 'could not locate `export type ListingCard`').not.toBeNull();
+    const body = cardDecl![1];
+    expect(body, 'positive control: reviewCount should be in the parsed body').toMatch(
+      /^\s*reviewCount: number;$/m
+    );
+    // …and now the claim itself.
+    expect(body).toMatch(/^\s*openCount: number \| null;$/m);
+    expect(body).not.toMatch(/^\s*openCount: number;$/m);
   });
 });
 
