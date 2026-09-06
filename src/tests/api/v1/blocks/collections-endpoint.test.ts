@@ -97,6 +97,17 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
   toCoverImageUrl: (img: any) =>
     img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null,
+  // FAITHFUL PORT of toCoverFields: both fields derived from THE ONE image passed
+  // in, level omitted entirely when there is no url. Written this way on purpose —
+  // it means these tests can only observe WHICH IMAGE the endpoint chose, which is
+  // the endpoint's half of the contract. The projection's own semantics (0 vs
+  // absent, null → 0, the url/level pairing) are exercised against the REAL
+  // function in block-collections-cover.test.ts.
+  toCoverFields: (img: any) => {
+    const coverImageUrl = img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null;
+    if (coverImageUrl === null) return { coverImageUrl: null };
+    return { coverImageUrl, coverNsfwLevel: img?.nsfwLevel ?? 0 };
+  },
   // REAL bitwise semantics (Flags.intersects OR unrated 0) — NOT a `<=` — so the
   // maturity clamp on covers is exercised faithfully: a MIXED bucket (29) still
   // intersects a SFW ceiling (3), and a mature bucket (28) does NOT (28 & 3 = 0).
@@ -286,6 +297,8 @@ describe('GET /api/v1/blocks/collections', () => {
       name: 'A',
       description: 'desc A',
       coverImageUrl: 'edge:img10',
+      // The primary cover carries no explicit level → unrated, published as a real 0.
+      coverNsfwLevel: 0,
       itemCount: 5,
       curator: { userId: 100, username: 'alice' },
       isPublic: true,
@@ -754,6 +767,236 @@ describe('GET /api/v1/blocks/collections', () => {
     const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
     expect(calls).toHaveLength(1);
     expect(calls[0].browsingLevel).toBe(3);
+  });
+
+  // ---- coverNsfwLevel: the maturity of the cover ACTUALLY SERVED ----
+  //
+  // The consumer (the playable-collections block) gates its card blur on
+  // `coverNsfwLevel` when present and falls back to its own domain ceiling when it
+  // is absent. That makes a SUPPLIED level authoritative, so the only thing worse
+  // than not publishing it is publishing one that describes a different image than
+  // the one in `coverImageUrl` — which is exactly what happens when the cover is a
+  // maturity-clamped FALLBACK and the level comes from the primary that was just
+  // rejected. These pin the pairing at the endpoint, i.e. which image it hands to
+  // the projection; the projection's own rules are pinned against the real
+  // function in block-collections-cover.test.ts.
+
+  it('🔴 mode=public: a MATURE primary is clamped out → the level is the FALLBACK\'s, not the rejected primary\'s', async () => {
+    // The headline case. Collection passes discovery (1 & 3), its own cover is
+    // mature (28 & 3 === 0) so the served cover is the clamped fallback. Publishing
+    // 28 beside the SFW fallback url would tell the consumer to blur an image that
+    // is safe — and, run the other way, would hand it a safe-looking level for a
+    // mature thumbnail.
+    mockGetAll.mockResolvedValueOnce([
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'mature-cover', type: 'image', nsfwLevel: 28 },
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[10, { url: 'sfw-item', type: 'image', nsfwLevel: 1 }]])
+    );
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 3 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items[0].coverImageUrl).toBe('edge:sfw-item');
+    expect(body.items[0].coverNsfwLevel).toBe(1);
+    // …and emphatically NOT the level of the image that was rejected.
+    expect(body.items[0].coverNsfwLevel).not.toBe(28);
+  });
+
+  it('🔴 mode=public: a USABLE primary → the level is the PRIMARY\'s, even when a fallback row exists', async () => {
+    // The other direction of the same pairing. The fallback map is deliberately
+    // populated for this id with a DIFFERENT level; the endpoint serves the primary
+    // url, so it must publish the primary's level. Reading the level off the map
+    // unconditionally passes the mature case above and fails here.
+    mockGetAll.mockResolvedValueOnce([
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'primary-cover', type: 'image', nsfwLevel: 2 },
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[10, { url: 'other-item', type: 'image', nsfwLevel: 16 }]])
+    );
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 3 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items[0].coverImageUrl).toBe('edge:primary-cover');
+    expect(body.items[0].coverNsfwLevel).toBe(2);
+    expect(body.items[0].coverNsfwLevel).not.toBe(16);
+  });
+
+  it('🔴 mode=public: NO cover at all → coverNsfwLevel is ABSENT from the item, never 0', async () => {
+    // No primary, no fallback → `coverImageUrl` is null and there is nothing to
+    // make a claim about. `0` means UNRATED, a real level, and the consumer's guard
+    // branches on `undefined` vs a value — so a 0 here silently changes its path.
+    //
+    // 🔴 THE SECOND COLLECTION IS WHAT MAKES THIS A TEST. An "is the key absent?"
+    // assertion is satisfied for free by a response that never carries the field at
+    // all — it passed on pre-change code, which publishes no level anywhere. The
+    // cover-bearing sibling in the SAME page proves this response DOES publish
+    // levels, so the absence on id 10 is a decision rather than a vacuum.
+    mockGetAll.mockResolvedValueOnce([
+      { id: 10, name: 'Bare', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      // Level 2 INTERSECTS the ceiling 3, so this primary is served — a level that
+      // did not (4 & 3 === 0) would be clamped out onto an empty fallback and leave
+      // this collection cover-less too, quietly restoring the vacuum.
+      { id: 9, name: 'Covered', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'k9', type: 'image', nsfwLevel: 2 } },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(new Map());
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 0 }, { id: 9, count: 1 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    const [bare, covered] = body.items;
+    expect(covered.coverImageUrl).toBe('edge:k9');
+    expect(covered.coverNsfwLevel).toBe(2); // the field IS being published here…
+    expect(bare.coverImageUrl).toBeNull(); // …and withheld here, on purpose.
+    expect('coverNsfwLevel' in bare).toBe(false);
+    expect(bare.coverNsfwLevel).toBeUndefined();
+    // And it survives the wire: JSON drops an absent key rather than nulling it.
+    expect(JSON.parse(JSON.stringify(bare))).not.toHaveProperty('coverNsfwLevel');
+  });
+
+  it('🔴 mode=public: an UNRATED (0) cover publishes a real 0 — presence is not "truthy"', async () => {
+    // The mirror of the absence case, and the mutation that a `if (level)` guard
+    // would pass: unrated is a level, and the card must be told so rather than
+    // being pushed onto the no-claim path.
+    mockGetAll.mockResolvedValueOnce([
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'unrated-cover', type: 'image', nsfwLevel: 0 },
+      },
+    ]);
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 3 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect(body.items[0].coverImageUrl).toBe('edge:unrated-cover');
+    expect(body.items[0].coverNsfwLevel).toBe(0);
+    expect('coverNsfwLevel' in body.items[0]).toBe(true);
+  });
+
+  it('🔴 mode=public: EVERY item\'s level matches the image its url came from (mixed page)', async () => {
+    // A relationship assertion over a page holding all three shapes at once —
+    // primary-served, fallback-served, no-cover. A per-shape test can be satisfied
+    // by three separate right answers; this fails if the endpoint ever pairs one
+    // item's url with another item's (or another image's) level.
+    mockGetAll.mockResolvedValueOnce([
+      // 10: usable primary (2 & 3 !== 0) → primary url + primary level.
+      { id: 10, name: 'P', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'p10', type: 'image', nsfwLevel: 2 } },
+      // 11: mature primary (8 & 3 === 0) → clamped out, fallback url + fallback level.
+      { id: 11, name: 'F', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'p11', type: 'image', nsfwLevel: 8 } },
+      // 12: no primary and no fallback row → no cover at all.
+      { id: 12, name: 'N', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+    ]);
+    // The levels here are pairwise distinct AND distinct from every primary level
+    // above, so no mutant can produce the expected value by coincidence.
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[11, { url: 'f11', type: 'image', nsfwLevel: 1 }]])
+    );
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }, { id: 11, count: 1 }, { id: 12, count: 1 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+
+    // The level each url is KNOWN to carry, keyed by the url the endpoint served.
+    const levelOfServedImage: Record<string, number> = { 'edge:p10': 2, 'edge:f11': 1 };
+    expect(body.items).toHaveLength(3);
+    for (const item of body.items) {
+      if (item.coverImageUrl === null) {
+        expect('coverNsfwLevel' in item).toBe(false);
+      } else {
+        expect(levelOfServedImage).toHaveProperty(item.coverImageUrl);
+        expect(item.coverNsfwLevel).toBe(levelOfServedImage[item.coverImageUrl]);
+      }
+    }
+    // Pin the shapes too, so a page that silently collapsed to one shape cannot
+    // satisfy the loop above vacuously.
+    expect(body.items.map((i: any) => i.coverImageUrl)).toEqual(['edge:p10', 'edge:f11', null]);
+  });
+
+  it('🔴 mode=mine: the served cover\'s level is published on the subject\'s OWN collections too', async () => {
+    // The `mine` branch is a second, independent mapping site — the pairing has to
+    // hold there as well, and it has its own primary/fallback/none mix.
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockUserCollections.mockResolvedValueOnce([
+      // 22: usable primary.
+      { id: 22, name: 'Own primary', description: null, read: 'Public', userId: 42, image: { url: 'own22', type: 'image', nsfwLevel: 2 } },
+      // 21: mature primary (8 & 3 === 0) → clamped out onto the fallback.
+      { id: 21, name: 'Own mature cover', description: null, read: 'Private', userId: 42, image: { url: 'own21', type: 'image', nsfwLevel: 8 } },
+      // 20: no cover anywhere.
+      { id: 20, name: 'Own bare', description: null, read: 'Public', userId: 42, image: null },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[21, { url: 'own21-fallback', type: 'image', nsfwLevel: 1 }]])
+    );
+    mockItemCount.mockResolvedValueOnce([{ id: 22, count: 1 }]);
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const body = res._json() as any;
+    const byId = Object.fromEntries(body.items.map((i: any) => [i.id, i]));
+    expect(byId[22].coverImageUrl).toBe('edge:own22');
+    expect(byId[22].coverNsfwLevel).toBe(2);
+    expect(byId[21].coverImageUrl).toBe('edge:own21-fallback');
+    expect(byId[21].coverNsfwLevel).toBe(1);
+    expect(byId[21].coverNsfwLevel).not.toBe(8);
+    expect(byId[20].coverImageUrl).toBeNull();
+    expect('coverNsfwLevel' in byId[20]).toBe(false);
+    // The clamped-out own cover is the one sent to the fallback lookup, at the
+    // token ceiling — same authority as public discovery.
+    expect(mockFallbackCovers).toHaveBeenCalledWith([21, 20], 3);
+  });
+
+  it('the item never carries a bare `nsfwLevel` key (that name means the COLLECTION bitmask)', async () => {
+    // Invariant guard, not regression coverage — it also held before this change.
+    // The collection-level `nsfwLevel` is OR-ed over items and cannot separate a
+    // 97%-safe collection from a 1%-safe one, so leaking it under that name onto a
+    // per-card response would invite a consumer to gate on the wrong quantity.
+    mockGetAll.mockResolvedValueOnce([
+      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 29, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'k', type: 'image', nsfwLevel: 1 } },
+    ]);
+    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    const body = res._json() as any;
+    expect('nsfwLevel' in body.items[0]).toBe(false);
+    expect(Object.keys(body.items[0]).sort()).toEqual([
+      'coverImageUrl',
+      'coverNsfwLevel',
+      'curator',
+      'description',
+      'followed',
+      'id',
+      'isPublic',
+      'itemCount',
+      'name',
+    ]);
   });
 
   it('400 returns a STRING error message + flattened details (not a raw ZodError)', async () => {

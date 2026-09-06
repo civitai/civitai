@@ -18,7 +18,7 @@ import {
   getFallbackCoverImages,
   getFollowedCollectionIds,
   hydrateBlockSubject,
-  toCoverImageUrl,
+  toCoverFields,
 } from '~/server/services/blocks/block-collections.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
@@ -57,8 +57,23 @@ import {
  * domain. The separating signal is HOW MUCH OF THE COLLECTION SURVIVES THE
  * CEILING, sampled — see `MIN_PLAYABLE_FRACTION` and `PLAYABLE_SAMPLE_SIZE`.
  *
- * Response: `{ items: [{ id, name, description, coverImageUrl, itemCount,
- *   curator:{ userId, username }, isPublic, followed }], nextCursor }`.
+ * Response: `{ items: [{ id, name, description, coverImageUrl, coverNsfwLevel?,
+ *   itemCount, curator:{ userId, username }, isPublic, followed }], nextCursor }`.
+ *
+ * 🔴 `coverNsfwLevel` IS THE LEVEL OF THE COVER BEING SERVED — NOT THE
+ * COLLECTION'S `nsfwLevel`, AND THE NAME IS DELIBERATE. The collection-level value
+ * is the OR-ed bitmask described above, which cannot separate a 97%-safe contest
+ * collection from a 1%-safe mature one; a field named `nsfwLevel` on this response
+ * would invite exactly that confusion. This one describes a SINGLE IMAGE: whichever
+ * image `coverImageUrl` resolves to — the primary `Collection.image` when it is
+ * usable, otherwise the maturity-clamped fallback, which is the collection's
+ * NEWEST permitted accepted item (not a "highest-rated representative"; nothing
+ * here ranks items). Both fields are produced together by `toCoverFields` from the
+ * one chosen image, so they can never describe different images.
+ *
+ * 🔴 IT IS OMITTED WHEN THERE IS NO COVER, AND `0` IS A REAL LEVEL. A consumer
+ * reads `undefined` as "no claim — use your own domain ceiling" and any supplied
+ * value as authoritative, so `0` (unrated) must never stand in for "absent".
  *
  * 🔴 `itemCount` DIFFERS BY MODE, DELIBERATELY. In `mode=mine` it is CLAMPED to
  * the token's ceiling — that branch counts only the subject's own collections, a
@@ -314,7 +329,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           id: c.id,
           name: c.name,
           description: c.description ?? null,
-          coverImageUrl: toCoverImageUrl(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
+          // ONE image in, BOTH cover fields out — the url and the level of that
+          // same image. Splitting these back into two expressions is how a
+          // fallback cover ends up advertising the primary's level.
+          ...toCoverFields(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
           itemCount: countMap.get(c.id) ?? 0,
           curator: { userId: c.userId, username: c.user?.username ?? null },
           isPublic: c.read === CollectionReadConfiguration.Public,
@@ -394,7 +412,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         id: c.id,
         name: c.name,
         description: c.description ?? null,
-        coverImageUrl: toCoverImageUrl(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
+        // Same single-image projection as public discovery — see the note there.
+        ...toCoverFields(primaryCoverUsable(c) ? c.image : fallbackCovers.get(c.id)),
         itemCount: countMap.get(c.id) ?? 0,
         curator: { userId: c.userId, username: subjectUser.username ?? null },
         isPublic: c.read === CollectionReadConfiguration.Public,
