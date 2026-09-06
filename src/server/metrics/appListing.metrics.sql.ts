@@ -65,21 +65,39 @@ export const APP_OPEN_ACTION_TYPE = 'App_Open';
  * problem: its source rows are append-only ClickHouse events and the count is a
  * full recompute over all of them, never a delta.
  *
- * 🔴 THE REPAIR ARM EXISTS BECAUSE LOSING THE JOIN KEY OTHERWISE FREEZES A
- * PUBLISHED NUMBER RATHER THAN CLEARING IT. `AppListing.appBlock` is
- * `onDelete: SetNull`, so deleting an AppBlock nulls the listing's
- * `app_block_id`. Once that happens the listing matches NONE of the three arms
- * above — it has a metric row (so not the seed arm), its `app_block_id` is NULL
- * (so the install arm's `IS NOT NULL` fails and the play arm's `= ANY($2)` is
- * NULL, never true) — and a listing sitting at `open_count = 777` stays at 777
- * forever, with no path back. Under stage 4 that is a permanently stale PUBLIC
- * number for an app whose block no longer exists. The repair arm selects exactly
- * that shape so the upsert's `measurable` gate recomputes it to 0.
+ * 🔴 THE REPAIR ARM'S PREDICATE IS "NULL JOIN KEY WITH A NON-ZERO PUBLISHED
+ * COUNT" — IT IS NOT "the AppBlock was deleted", AND MUST NOT BE READ AS ONE.
+ * `app_block_id IS NULL` is not a kind discriminator; the schema says so at the
+ * field itself (`AppListing.appBlockId` in
+ * packages/civitai-db-schema/prisma/schema.prisma): "It is NOT a kind
+ * discriminator: discriminate on `kind`, never on appBlockId nullness. Only a
+ * natively-created off-site listing (no backing AppBlock) leaves it NULL." So the
+ * arm covers TWO populations, and only the first is a deletion:
+ *
+ *   1. THE FROZEN-NUMBER CASE — the reason the arm exists. `AppListing.appBlock`
+ *      is `onDelete: SetNull`, so deleting an AppBlock nulls that listing's
+ *      `app_block_id`. It then matches NONE of the three arms above — it has a
+ *      metric row (so not the seed arm), its `app_block_id` is NULL (so the
+ *      install arm's `IS NOT NULL` fails and the play arm's `= ANY($2)` is NULL,
+ *      never true) — and a listing sitting at `open_count = 777` stays at 777
+ *      forever, with no path back. Under stage 4 that is a permanently stale
+ *      PUBLIC number for an app whose block no longer exists. The arm selects
+ *      exactly that shape so the upsert's `measurable` gate recomputes it to 0.
+ *
+ *   2. A NATIVELY-CREATED OFF-SITE LISTING, which never had an AppBlock to lose:
+ *      its `app_block_id` was NULL from birth. The upsert writes both counters 0
+ *      for every off-site row, so such a listing should never hold a non-zero
+ *      count and this population is expected to be EMPTY — the arm is a no-op over
+ *      it. If a row does show up, the published number is wrong by definition and
+ *      clearing it to 0 is the correct repair, which is why the arm is
+ *      deliberately NOT gated on `kind`.
+ *
+ * 🔴 CONSEQUENCE FOR ANY FOLLOW-UP: do not build an alert or a report that reads
+ * "the repair arm fired ⇒ an AppBlock was deleted". Population 2 makes that
+ * inference invalid. To count deletions, observe deletions.
  *
  * It is SELF-TERMINATING, not a per-run treadmill: the run it fires on writes the
- * counters to 0, after which the `<> 0` predicate no longer matches. It is
- * deliberately NOT gated on `kind` — an off-site row carrying a stale non-zero
- * count is the same defect and wants the same repair.
+ * counters to 0, after which the `<> 0` predicate no longer matches.
  */
 export const AFFECTED_APPROVED_LISTINGS_SQL = `
   SELECT al.id, al."app_block_id"
@@ -102,10 +120,13 @@ export const AFFECTED_APPROVED_LISTINGS_SQL = `
       OR (
         al."kind" = 'onsite' AND al."app_block_id" = ANY($2::text[])
       )
-      -- Repair: the join key is gone (AppBlock deleted -> app_block_id SetNull)
-      -- but a non-zero count is still published. Matches no arm above, so without
-      -- this the stale number is frozen forever. Self-terminating: the upsert
-      -- writes 0, and then this predicate stops matching.
+      -- Repair: NULL join key + a non-zero count still published. That predicate
+      -- covers the deleted-AppBlock case (SetNull froze a public number, which is
+      -- why this arm exists) AND -- vacuously, since their counters are always
+      -- written 0 -- natively-created off-site rows, which never had an AppBlock:
+      -- app_block_id nullness is NOT a kind discriminator. Matches no arm above,
+      -- so without this the stale number is frozen forever. Self-terminating: the
+      -- upsert writes 0, and then this predicate stops matching.
       OR (
         al."app_block_id" IS NULL AND EXISTS (
           SELECT 1 FROM "app_listing_metrics" m
@@ -213,12 +234,30 @@ export const APP_LISTING_METRIC_UPSERT_SQL = `
 //
 // 🔴 CONCRETE TRIGGER FOR DOING IT — do not wait for a page to time out: build the
 // MV when ANY of these is true.
-//   • the count query's wall time exceeds ~5 s, or its `read_rows` exceeds ~100M
-//     (`SELECT query_duration_ms, read_rows FROM system.query_log
-//        WHERE query LIKE '%App_Open%' AND type = 'QueryFinish'`);
+//   • the count query's wall time exceeds ~5 s, or its `read_rows` exceeds ~100M;
 //   • `App_Open` passes ~1% of the `actions` table's total rows;
 //   • this rollup's schedule is tightened below the current 5 minutes, or the
 //     all-time figure gains a timeframe/window variant (either multiplies the scan).
+//
+// 🔴 THE DIAGNOSTIC QUERY MUST DISCRIMINATE THE EXPENSIVE READ FROM THE CHEAP ONE.
+// BOTH queries in this file embed the literal `App_Open`, so `query LIKE
+// '%App_Open%'` matches the unbounded count read AND the time-bounded discovery
+// read — and the discovery read runs at least as often and is cheap, so its rows
+// DOMINATE the result set and drag the numbers down. An operator reading that mix
+// concludes "nowhere near the trigger" and defers the MV past the point this note
+// exists to catch. `sum(dailyActors)` appears ONLY in the count query
+// (`APP_OPEN_COUNT_QUERY_MARKER` below, which is interpolated into it rather than
+// spelled twice, so the two cannot drift; the spec test asserts it is absent from
+// the discovery query). Bound the window and order by cost, or a years-long
+// unordered dump buries the slow tail:
+//
+//   SELECT event_time, query_duration_ms, read_rows, memory_usage
+//     FROM system.query_log
+//    WHERE type = 'QueryFinish'
+//      AND event_date >= today() - 7
+//      AND query LIKE '%sum(dailyActors)%'
+//    ORDER BY query_duration_ms DESC
+//    LIMIT 20
 // ---------------------------------------------------------------------------
 
 /**
@@ -275,20 +314,51 @@ export type AppOpenRecentRow = { appBlockId: string };
  * `onDegrade` receives the error before the degrade and MAY THROW to veto it. The
  * processor uses that to rethrow a job cancellation — an aborted query is not a
  * ClickHouse failure and must not be swallowed into "no plays".
+ *
+ * 🔴 THE `try` WRAPS THE AWAITED QUERY AND NOTHING ELSE — DELIBERATELY, AND IT MUST
+ * NOT BE WIDENED BACK. The soft-fail contract above is a claim about ONE failure
+ * mode: ClickHouse could not answer. A `try` that also covered the SQL builder or
+ * the `rows.map(...)` below would convert every PROGRAMMING error into the same
+ * silent `[]` — a builder that throws on a bad `sinceIso`, or a `runQuery` that
+ * resolves to something non-array so `.map` is a `TypeError`. Those do not
+ * self-heal on the next run the way a ClickHouse blip does: they return `[]` on
+ * EVERY run, forever, so the play arm never fires and a listing whose only change
+ * is new plays is never recomputed again. Degrading is right for the outage and
+ * wrong for the bug; the narrow `try` is what tells them apart. The spec file pins
+ * both directions (a query rejection degrades; a builder or mapping throw
+ * propagates).
  */
 export async function fetchRecentlyOpenedBlockIds(
   sinceIso: string,
   runQuery: (sql: string) => Promise<AppOpenRecentRow[]>,
   onDegrade: (error: unknown) => void
 ): Promise<string[]> {
+  // OUTSIDE the try on purpose: a builder throw is a bug, not a ClickHouse outage.
+  const sql = buildAppOpenRecentBlockIdsSql(sinceIso);
+  let rows: AppOpenRecentRow[];
   try {
-    const rows = await runQuery(buildAppOpenRecentBlockIdsSql(sinceIso));
-    return [...new Set(rows.map((r) => r.appBlockId).filter(Boolean))];
+    rows = await runQuery(sql);
   } catch (error) {
     onDegrade(error);
     return [];
   }
+  // Also outside: a non-array result is a contract violation, not an outage.
+  return [...new Set(rows.map((r) => r.appBlockId).filter(Boolean))];
 }
+
+/**
+ * The aggregate expression that appears ONLY in the all-time count query — never
+ * in the cheap, time-bounded discovery query beside it.
+ *
+ * 🔴 IT IS A DIAGNOSTIC DISCRIMINATOR, NOT DECORATION. Both queries embed
+ * `App_Open`, so the obvious `system.query_log` filter (`query LIKE '%App_Open%'`)
+ * cannot tell the unbounded scan from the cheap read and returns a set the cheap
+ * one dominates. This string is interpolated into `buildAppOpenCountSql` rather
+ * than spelled there and quoted here, so the MV-trigger runbook above and the
+ * query it grades cannot drift apart. If you rename `dailyActors`, this constant
+ * moves with it and the runbook stays correct.
+ */
+export const APP_OPEN_COUNT_QUERY_MARKER = 'sum(dailyActors)';
 
 /**
  * ALL-TIME deduped play count per app_block_id.
@@ -321,7 +391,7 @@ export async function fetchRecentlyOpenedBlockIds(
 export function buildAppOpenCountSql(appBlockIds: string[]): string {
   const inList = appBlockIds.map((id) => `'${escapeClickhouseString(id)}'`).join(', ');
   return `
-    SELECT appBlockId, sum(dailyActors) AS openCount
+    SELECT appBlockId, ${APP_OPEN_COUNT_QUERY_MARKER} AS openCount
     FROM (
       SELECT
         JSONExtractString(details, 'appBlockId') AS appBlockId,
@@ -337,10 +407,60 @@ export function buildAppOpenCountSql(appBlockIds: string[]): string {
 }
 
 /**
- * Chunk size for BOTH the Postgres upsert batches and the ClickHouse count reads.
- * Single-sourced here so the two cannot drift apart.
+ * Chunk size for the POSTGRES upsert batches (`APP_LISTING_METRIC_UPSERT_SQL`).
+ *
+ * 🔴 THIS IS NOT THE CLICKHOUSE CHUNK SIZE, AND THE TWO MUST NEVER BE RE-MERGED —
+ * THEIR OPTIMA PUSH IN OPPOSITE DIRECTIONS. A single shared constant is what made
+ * the round-1 fix cost ~39x more than the defect it fixed.
+ *
+ *   • THIS constant wants to be SMALL. Each batch is a real write transaction with
+ *     five of them in flight (`limitConcurrency(tasks, 5)`); a bigger batch means a
+ *     longer-held row-lock set, a fatter `ANY($1::text[])` and a coarser
+ *     cancellation granularity. Nothing about the upsert gets cheaper by asking
+ *     about more listings at once.
+ *
+ *   • `APP_OPEN_CH_CHUNK_SIZE` wants to be LARGE, for the reason spelled out on it:
+ *     each ClickHouse chunk is a FULL SCAN of `actions` whose cost does not shrink
+ *     with the size of the `IN` list, so halving the chunk size doubles the total
+ *     work. Its only upper bound is `max_query_size`.
+ *
+ * Moving one for the other's reasons is therefore always wrong. A relative test
+ * ("no chunk exceeds the constant") cannot see that — the guard is the ABSOLUTE
+ * byte/id ceiling pinned in the spec file, which does not move when either
+ * constant does.
  */
 export const APP_LISTING_BATCH_SIZE = 200;
+
+/**
+ * Chunk size for the CLICKHOUSE all-time count reads (`buildAppOpenCountSql`).
+ *
+ * 🔴 SIZED TO MINIMISE THE NUMBER OF FULL SCANS, SUBJECT TO `max_query_size`. Every
+ * chunk is an unbounded scan of `actions` (see the EXPLAIN note above), so the cost
+ * of this read is ~linear in the CHUNK COUNT and ~flat in the chunk size. The only
+ * thing pushing the chunk size down is the hard query-text ceiling.
+ *
+ * THE ARITHMETIC, so the next person can re-derive it rather than trusting it. An
+ * app block id is `apb_` + a 26-char ULID = 30 chars, rendered into the `IN` list as
+ * `'<id>', ` = 34 bytes. The rest of the query is a fixed 460 bytes, so
+ *
+ *     bytes(n) = 460 + 34n
+ *
+ * (measured, not estimated: `bytes(7000) = 238,460`, which is exactly the figure
+ * the ceiling note on `fetchAppOpenCounts` reports from a live ClickHouse.) Against
+ * the `max_query_size` default of 262,144 bytes:
+ *
+ *   • the exact hard ceiling is 7,696 ids (262,124 bytes); 7,697 is 262,158 and
+ *     fails with `Code: 62`;
+ *   • at n = 2,000 the query is 68,460 bytes — 3.83x under the ceiling;
+ *   • the seed/restore path this file's docstrings name (~7,700 approved on-site
+ *     listings) takes ceil(7700/2000) = 4 scans here, against ceil(7700/200) = 39
+ *     at the old shared constant of 200. That 39x is the cost of merging them.
+ *
+ * Raising it further buys little (4 -> 2 scans at n = 4,000) and spends most of the
+ * headroom; 2,000 keeps ~3.8x of margin against a ceiling that is a per-server
+ * SETTING, not a protocol constant, and so can be lowered under us.
+ */
+export const APP_OPEN_CH_CHUNK_SIZE = 2_000;
 
 /** One row of `buildAppOpenCountSql`'s result set. */
 export type AppOpenCountRow = { appBlockId: string; openCount: number | string };
@@ -352,11 +472,21 @@ export type AppOpenCountRow = { appBlockId: string; openCount: number | string }
  * 🔴 THE IN LIST IS A HARD CEILING, NOT A SOFT ONE — an over-long list is a query
  * ERROR, not a slow query. Measured against ClickHouse 26.8.2.7: 7,000 ids returns
  * HTTP 200 (238,460 bytes of query text); **8,000 ids returns `Code: 62 Max query
- * size exceeded`**. The count read is HARD-failing by design (see the processor),
- * so an unchunked query past that ceiling takes `install_count` down with it. Two
- * live triggers reach it: the seed arm on a fresh or restored
- * `app_listing_metrics` table, and the store simply growing past ~7,700 approved
- * on-site listings. Chunking at `APP_LISTING_BATCH_SIZE` leaves ~38x of headroom.
+ * size exceeded`**. By the `bytes(n) = 460 + 34n` model on `APP_OPEN_CH_CHUNK_SIZE`
+ * — which reproduces that 238,460 exactly — the ceiling falls at 7,696 ids against
+ * the 262,144-byte `max_query_size` default. The count read is HARD-failing by
+ * design (see the processor), so an unchunked query past that ceiling takes
+ * `install_count` down with it. Two live triggers reach it: the seed arm on a fresh
+ * or restored `app_listing_metrics` table, and the store simply growing past ~7,700
+ * approved on-site listings.
+ *
+ * 🔴 CHUNKED AT `APP_OPEN_CH_CHUNK_SIZE` (2,000 => 68,460 bytes, 3.83x of headroom)
+ * AND EXPLICITLY *NOT* AT `APP_LISTING_BATCH_SIZE`. Chunking is not free here: each
+ * chunk is a FULL `actions` scan whose cost does not shrink with the `IN` list, so
+ * the chunk count is the cost. At the Postgres batch size of 200 the same seed-path
+ * workload costs 39 scans instead of 4 — and 39 chances to hit the fail-hard path
+ * instead of 4. See the two-directional pressure note on both constants; do not
+ * re-merge them.
  *
  * Chunks are disjoint by construction (ids are deduped first), so merging is a
  * plain `set` with no clobber; a block absent from every chunk's result set is
@@ -371,7 +501,7 @@ export type AppOpenCountRow = { appBlockId: string; openCount: number | string }
 export async function fetchAppOpenCounts(
   appBlockIds: string[],
   runQuery: (sql: string) => Promise<AppOpenCountRow[]>,
-  batchSize: number = APP_LISTING_BATCH_SIZE
+  batchSize: number = APP_OPEN_CH_CHUNK_SIZE
 ): Promise<Map<string, number>> {
   const unique = [...new Set(appBlockIds.filter(Boolean))];
   const counts = new Map<string, number>();

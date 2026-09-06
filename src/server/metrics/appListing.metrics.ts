@@ -6,15 +6,23 @@ import {
   AFFECTED_APPROVED_LISTINGS_SQL,
   APP_LISTING_BATCH_SIZE,
   APP_LISTING_METRIC_UPSERT_SQL,
+  APP_OPEN_CH_CHUNK_SIZE,
   fetchAppOpenCounts,
   fetchRecentlyOpenedBlockIds,
 } from '~/server/metrics/appListing.metrics.sql';
+import { recordAppListingOpenDiscoveryDegrade } from '~/server/metrics/appListing.metrics.prom';
 import { logToAxiom } from '~/server/logging/client';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:appListing');
+/**
+ * POSTGRES upsert batch size. NOT the ClickHouse chunk size — see the
+ * two-directional-pressure note on both constants in appListing.metrics.sql.ts.
+ * They were one constant until it was measured that sharing them costs ~39x on the
+ * ClickHouse side at seed scale.
+ */
 const BATCH_SIZE = APP_LISTING_BATCH_SIZE;
 
 /** One affected listing plus the join key both counters need. */
@@ -88,6 +96,18 @@ type AffectedListing = { id: string; appBlockId: string | null };
 // it so the recompute writes 0 — "we cannot measure this any more" instead of a
 // stale public number. Recovering the real count still needs the listing id carried
 // in `details`; do that if deletions become a real case.
+//
+// 🔴 BUT THE ARM'S PREDICATE IS NOT "an AppBlock was deleted" — it is "NULL join
+// key AND a non-zero published count", and `app_block_id IS NULL` is NOT a kind
+// discriminator (the schema says so on `AppListing.appBlockId`: "discriminate on
+// `kind`, never on appBlockId nullness"). It therefore also matches a
+// NATIVELY-CREATED OFF-SITE listing, which never had an AppBlock to lose. That
+// population is expected to be empty — off-site rows are written 0 by this very
+// upsert — so the arm is a no-op over it and there is no behavioural defect; a row
+// that DID appear there would be wrong by definition and wants the same clearing.
+// The consequence is for FOLLOW-UPS: an alert reading "repair arm fired ⇒ an
+// AppBlock was deleted" would misfire on ordinary off-site rows. Full statement of
+// both populations is on `AFFECTED_APPROVED_LISTINGS_SQL`.
 //
 // 🔴 `open_count` HAS NO READER AT THIS REF — its consumer lands in STAGE 3. The
 // rule below ("populate with the PR that ships its consumer") is real and this
@@ -176,9 +196,26 @@ export const appListingMetrics = createMetricProcessor({
  * `ctx.ch.$query` exposes no abort handle, so these reads used to outlive a
  * cancelled job while the Postgres queries beside them (which DO get a
  * `jobContext.on('cancel', query.cancel)`) were torn down. Dropping to
- * `ctx.ch.query` is what makes `abort_signal` reachable. The count read in
- * particular is a full `actions` scan — exactly the thing that must not be left
- * running server-side after the job that asked for it is gone.
+ * `ctx.ch.query` is what makes `abort_signal` reachable.
+ *
+ * 🔴 WHAT THIS ACTUALLY BUYS, STATED NARROWLY — IT IS A CLIENT-SIDE TEARDOWN, NOT A
+ * SERVER-SIDE KILL. `AbortController.abort()` ends the Node-side HTTP request: the
+ * `@clickhouse/client` promise rejects, the response stream stops being consumed
+ * and the socket is released, so a cancelled job stops holding a connection and
+ * stops buffering rows. It does NOT cancel the query inside ClickHouse. A
+ * server-side abort on client disconnect requires
+ * `cancel_http_readonly_queries_on_client_close`, which defaults to 0 and which
+ * `createClickhouseClient` does not set — its `clickhouse_settings` are
+ * `async_insert`, `wait_for_async_insert` and
+ * `output_format_json_quote_64bit_integers` only
+ * (packages/civitai-clickhouse/src/client.ts).
+ *
+ * 🔴 SO SIZE CLICKHOUSE FOR THE SCAN RUNNING TO COMPLETION. That matters
+ * concretely for the count read, which is a full `actions` scan issued once per
+ * `APP_OPEN_CH_CHUNK_SIZE` chunk: on the seed path those in-flight scans finish
+ * server-side whether or not the job that asked for them still exists. To make the
+ * stronger claim true, set that setting (per-query or on the client) — do not
+ * assume it from the presence of `abort_signal`.
  */
 async function chCancellableQuery<T extends object>(
   ctx: MetricProcessorRunContext,
@@ -233,6 +270,14 @@ async function getRecentlyOpenedBlockIds(ctx: MetricProcessorRunContext): Promis
       // failure, and must not be reported as "no plays".
       ctx.jobContext.checkIfCanceled();
       log('appListingMetrics play-discovery read failed; continuing without it', error);
+      // 🔴 THE AGGREGABLE SIGNAL, and the reason the log line beside it is not
+      // enough. A degraded run is INDISTINGUISHABLE from a quiet one — both yield
+      // an empty candidate set and an unchanged `open_count` — so the only way to
+      // tell "blipped once" from "dead for a week" is a rate over time, which one
+      // Axiom warning per run cannot express as an alert. The counter makes
+      // PERSISTENCE alertable; the log keeps the per-run attribution (the error
+      // message) that a label-free counter deliberately does not carry.
+      recordAppListingOpenDiscoveryDegrade();
       logToAxiom({
         type: 'warning',
         name: 'app-listing-metrics-open-discovery-degraded',
@@ -269,10 +314,16 @@ async function getAffectedListings(
  * Failing the run is the correct outcome: the counts stay at their last good values
  * and the next run recomputes them.
  *
- * CHUNKED at APP_LISTING_BATCH_SIZE because the `IN` list has a hard ceiling that
- * this read can genuinely reach (measured: 8,000 ids => `Code: 62 Max query size
- * exceeded`). Combined with the fail-hard above, one over-long query would take
- * `install_count` down with it — see the ceiling note on `fetchAppOpenCounts`.
+ * CHUNKED at APP_OPEN_CH_CHUNK_SIZE — its OWN constant, not the Postgres batch size
+ * — because the `IN` list has a hard ceiling this read can genuinely reach
+ * (measured: 8,000 ids => `Code: 62 Max query size exceeded`; the arithmetic puts
+ * the exact ceiling at 7,696 ids). Combined with the fail-hard above, one over-long
+ * query would take `install_count` down with it. But chunking is NOT free here:
+ * every chunk is a full `actions` scan whose cost is flat in the `IN` list size, so
+ * the chunk count IS the cost, and it is also the number of chances to hit that
+ * fail-hard path. Hence a large ClickHouse chunk (2,000, ~3.8x under the ceiling)
+ * against a small Postgres batch (200). See the ceiling note on
+ * `fetchAppOpenCounts`.
  */
 async function getAllTimeOpenCounts(
   ctx: MetricProcessorRunContext,
@@ -282,6 +333,6 @@ async function getAllTimeOpenCounts(
   return fetchAppOpenCounts(
     appBlockIds,
     (sql) => chCancellableQuery<AppOpenCountRow>(ctx, sql),
-    BATCH_SIZE
+    APP_OPEN_CH_CHUNK_SIZE
   );
 }

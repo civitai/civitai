@@ -5,6 +5,8 @@ import {
   APP_LISTING_BATCH_SIZE,
   APP_LISTING_METRIC_UPSERT_SQL,
   APP_OPEN_ACTION_TYPE,
+  APP_OPEN_CH_CHUNK_SIZE,
+  APP_OPEN_COUNT_QUERY_MARKER,
   appOpenActorKey,
   appOpenUtcDay,
   buildAppOpenCountSql,
@@ -587,6 +589,14 @@ describe('affected-set selection — arms, including the repair arm', () => {
   });
 
   it('REPAIR: also fires on a non-zero install_count, and on an OFF-SITE row', () => {
+    // 🔴 THE PREDICATE IS "NULL JOIN KEY + NON-ZERO COUNT", NOT "the AppBlock was
+    // deleted". `app_block_id IS NULL` is not a kind discriminator (schema.prisma
+    // on `AppListing.appBlockId`), so the arm also covers a natively-created
+    // off-site listing that never had a block to lose — `apl_offsite` here IS that
+    // population. In production its counters are written 0 by the same upsert, so
+    // the arm is a no-op over it; a row that does hold a non-zero count is wrong by
+    // definition and wants the same clearing. Do not read a firing of this arm as
+    // evidence of a deletion.
     const out = selectAffectedApprovedListings(
       affectedInput({
         listings: [
@@ -813,11 +823,17 @@ describe('spec ⇄ SQL lockstep', () => {
  * so one over-long query takes `install_count` down with it — and two live triggers
  * reach that size: the seed arm on a fresh or restored `app_listing_metrics`, and
  * the store simply growing past ~7,700 approved on-site listings.
+ *
+ * 🔴 BUT CHUNKING SMALLER IS NOT "SAFER" — IT IS LINEARLY MORE EXPENSIVE, AND EVERY
+ * ASSERTION IN THIS BLOCK IS RELATIVE TO THE CONSTANT, SO NONE OF THEM CAN SEE IT.
+ * Each chunk is an unbounded `actions` scan whose cost does not shrink with the `IN`
+ * list, so the chunk COUNT is the cost. The absolute block below is the guard that
+ * survives the constant moving in either direction.
  */
 describe('fetchAppOpenCounts — chunking and merge', () => {
-  // Deliberately NOT a multiple of the batch size: the last chunk is partial, so a
+  // Deliberately NOT a multiple of the chunk size: the last chunk is partial, so a
   // mutant that drops or double-counts a trailing chunk cannot land on the boundary.
-  const BLOCK_COUNT = APP_LISTING_BATCH_SIZE * 2 + 37;
+  const BLOCK_COUNT = APP_OPEN_CH_CHUNK_SIZE * 2 + 37;
   const allIds = Array.from({ length: BLOCK_COUNT }, (_, i) => `apb_${i}`);
   // Per-id distinct, and distinct from the batch size, the chunk count and the
   // index — a mutant returning a constant or the wrong chunk's numbers cannot pass.
@@ -843,12 +859,12 @@ describe('fetchAppOpenCounts — chunking and merge', () => {
     expect(idsIn(buildAppOpenCountSql(['apb_a', 'apb_b']))).toEqual(['apb_a', 'apb_b']);
   });
 
-  it('splits into ceil(n / APP_LISTING_BATCH_SIZE) queries, none over the batch size', async () => {
+  it('splits into ceil(n / APP_OPEN_CH_CHUNK_SIZE) queries, none over the chunk size', async () => {
     const { queries, runQuery } = recordingRunner();
     await fetchAppOpenCounts(allIds, runQuery);
-    expect(queries).toHaveLength(Math.ceil(BLOCK_COUNT / APP_LISTING_BATCH_SIZE));
+    expect(queries).toHaveLength(Math.ceil(BLOCK_COUNT / APP_OPEN_CH_CHUNK_SIZE));
     for (const sql of queries) {
-      expect(idsIn(sql).length).toBeLessThanOrEqual(APP_LISTING_BATCH_SIZE);
+      expect(idsIn(sql).length).toBeLessThanOrEqual(APP_OPEN_CH_CHUNK_SIZE);
     }
   });
 
@@ -894,6 +910,150 @@ describe('fetchAppOpenCounts — chunking and merge', () => {
         throw new Error('Code: 62. DB::Exception: Max query size exceeded');
       })
     ).rejects.toThrow('Code: 62');
+  });
+});
+
+/**
+ * 🔴 THE ABSOLUTE BOUNDS ON THE CLICKHOUSE CHUNK SIZE. Everything in the block above
+ * is stated RELATIVE to `APP_OPEN_CH_CHUNK_SIZE` ("no chunk exceeds the constant",
+ * "ceil(n / the constant) queries"), so all of it stays green for ANY value of the
+ * constant — including values that are a hard query error at one end and a ~39x cost
+ * regression at the other. That blindness is not hypothetical: it is exactly how a
+ * shared constant of 200 was adopted for a query whose cost is flat in its `IN` list.
+ *
+ * Every number below is a LITERAL, on purpose. None of them moves when
+ * `APP_OPEN_CH_CHUNK_SIZE` or `APP_LISTING_BATCH_SIZE` moves, which is the whole
+ * point — the constant is bracketed from BOTH sides:
+ *
+ *   • UPPER — ClickHouse `max_query_size` defaults to 262,144 bytes and an over-long
+ *     `IN` list is `Code: 62`, not a slow query. The budget asserted here is HALF of
+ *     that (131,072), because the ceiling is a per-server SETTING that can be lowered
+ *     under us, not a protocol constant.
+ *   • LOWER — the seed/restore path (~7,700 approved on-site listings) must not cost
+ *     more than 4 full `actions` scans. At the old shared value of 200 it cost 39.
+ */
+describe('🔴 ABSOLUTE bounds on the ClickHouse chunk size (literals, not relatives)', () => {
+  /** ClickHouse's `max_query_size` default, in bytes. A LITERAL — do not import it. */
+  const MAX_QUERY_SIZE_BYTES = 262_144;
+  /** Half of it: the headroom budget a full chunk must fit inside. */
+  const HEADROOM_BUDGET_BYTES = MAX_QUERY_SIZE_BYTES / 2;
+  /** The largest `IN` list round 1 measured returning HTTP 200 from a live server. */
+  const MEASURED_SAFE_IDS = 7_000;
+  /** The seed/restore population this file's docstrings size against. */
+  const SEED_LISTINGS = 7_700;
+
+  /**
+   * A production-shaped id: `apb_` + a 26-char ULID = 30 chars, which renders into
+   * the `IN` list as `'<id>', ` = 34 bytes. Using `apb_1` here instead would make
+   * every byte figure below an underestimate — i.e. would make the guard pass a
+   * chunk size that is a `Code: 62` in production.
+   */
+  const realisticIds = (n: number) =>
+    Array.from({ length: n }, (_, i) => `apb_${String(i).padStart(26, '0')}`);
+  const queryBytes = (n: number) =>
+    Buffer.byteLength(buildAppOpenCountSql(realisticIds(n)), 'utf8');
+
+  it('POSITIVE CONTROL: the byte measurement can actually exceed the ceiling', () => {
+    // Without this, a `realisticIds` that silently produced short or zero ids would
+    // make every "under the budget" assertion below pass over a tiny query. This
+    // also re-derives round 1's live finding from the builder alone: 8,000 ids is
+    // over `max_query_size`, which is the `Code: 62` it measured.
+    expect(realisticIds(1)[0]).toHaveLength(30);
+    expect(queryBytes(8_000)).toBeGreaterThan(MAX_QUERY_SIZE_BYTES);
+  });
+
+  it('the docstring arithmetic bytes(n) = 460 + 34n reproduces the live measurement', () => {
+    // 238,460 at 7,000 ids is the figure round 1 measured against ClickHouse
+    // 26.8.2.7. The builder reproducing it exactly is what licenses using the model
+    // to state an EXACT ceiling instead of the 7,000/8,000 bracket.
+    expect(queryBytes(MEASURED_SAFE_IDS)).toBe(238_460);
+    expect(queryBytes(1)).toBe(460 + 34);
+    expect(queryBytes(2_000)).toBe(460 + 34 * 2_000);
+  });
+
+  it('the EXACT hard ceiling is 7,696 ids — 7,697 does not fit', () => {
+    expect(queryBytes(7_696)).toBeLessThanOrEqual(MAX_QUERY_SIZE_BYTES);
+    expect(queryBytes(7_697)).toBeGreaterThan(MAX_QUERY_SIZE_BYTES);
+  });
+
+  it('🔴 UPPER BOUND: one FULL chunk of realistic ids fits in half of max_query_size', () => {
+    // The assertion the relative ones cannot make. Raise APP_OPEN_CH_CHUNK_SIZE past
+    // ~3,841 and this reds; raise it past 7,696 and production returns `Code: 62`
+    // while every relative assertion above stays green.
+    expect(queryBytes(APP_OPEN_CH_CHUNK_SIZE)).toBeLessThan(HEADROOM_BUDGET_BYTES);
+  });
+
+  it('🔴 UPPER BOUND: the chunk size never exceeds the largest list measured safe', () => {
+    expect(APP_OPEN_CH_CHUNK_SIZE).toBeLessThanOrEqual(MEASURED_SAFE_IDS);
+  });
+
+  it('🔴 LOWER BOUND: the ~7,700-listing seed path costs at most 4 ClickHouse scans', async () => {
+    // Each chunk is a FULL `actions` scan whose cost does not shrink with the `IN`
+    // list, so the chunk count IS the cost — and also the number of chances to hit
+    // the fail-hard path. At the Postgres batch size of 200 this is 39.
+    const queries: string[] = [];
+    await fetchAppOpenCounts(realisticIds(SEED_LISTINGS), async (sql) => {
+      queries.push(sql);
+      return [];
+    });
+    expect(queries.length).toBeLessThanOrEqual(4);
+  });
+
+  it('🔴 the ClickHouse chunk and the Postgres batch are SEPARATE, non-equal constants', () => {
+    // Their optima push in opposite directions (see the two-directional-pressure
+    // note on both). Re-merging them is the round-1 defect; equality is its tell.
+    expect(APP_OPEN_CH_CHUNK_SIZE).not.toBe(APP_LISTING_BATCH_SIZE);
+    expect(APP_OPEN_CH_CHUNK_SIZE).toBeGreaterThan(APP_LISTING_BATCH_SIZE);
+  });
+
+  it('🔴 fetchAppOpenCounts DEFAULTS to the ClickHouse constant, not the Postgres batch', async () => {
+    // Called without an explicit size, as the spec tests above do. A default wired
+    // back to APP_LISTING_BATCH_SIZE would reintroduce the 39-scan seed path with
+    // every relative assertion still green.
+    const queries: string[] = [];
+    await fetchAppOpenCounts(realisticIds(SEED_LISTINGS), async (sql) => {
+      queries.push(sql);
+      return [];
+    });
+    expect(queries.length).toBe(Math.ceil(SEED_LISTINGS / APP_OPEN_CH_CHUNK_SIZE));
+    expect(queries.length).toBeLessThan(Math.ceil(SEED_LISTINGS / APP_LISTING_BATCH_SIZE));
+  });
+});
+
+/**
+ * 🔴 THE MV-TRIGGER RUNBOOK'S DIAGNOSTIC QUERY MUST BE ABLE TO SEE THE EXPENSIVE
+ * READ ALONE. Both queries in the module embed the literal `App_Open`, so the
+ * obvious `system.query_log` filter matches the unbounded count scan AND the cheap
+ * time-bounded discovery read — and the cheap one runs at least as often, so it
+ * dominates the sample and drags `query_duration_ms` / `read_rows` down. An operator
+ * reads "nowhere near the trigger" and defers the MV past the point the comment
+ * exists to catch.
+ */
+describe('MV-trigger diagnostic — the marker discriminates the expensive read', () => {
+  const recent = buildAppOpenRecentBlockIdsSql('2026-09-05T10:00:00.000Z');
+  const counts = buildAppOpenCountSql(['apb_alpha']);
+
+  it('POSITIVE CONTROL: `App_Open` alone CANNOT discriminate — both queries carry it', () => {
+    // The defect being fixed, stated as an assertion rather than as prose. If this
+    // ever fails, the marker below is solving a problem that no longer exists and
+    // the runbook should be re-read rather than the test relaxed.
+    expect(counts).toContain(APP_OPEN_ACTION_TYPE);
+    expect(recent).toContain(APP_OPEN_ACTION_TYPE);
+  });
+
+  it('the marker IS present in the expensive all-time count query', () => {
+    expect(counts).toContain(APP_OPEN_COUNT_QUERY_MARKER);
+  });
+
+  it('🔴 the marker is ABSENT from the cheap discovery query', () => {
+    expect(recent).not.toContain(APP_OPEN_COUNT_QUERY_MARKER);
+  });
+
+  it('the marker is what the count query is actually built from (no second spelling)', () => {
+    // Interpolated, not duplicated — so renaming `dailyActors` moves the constant
+    // and the runbook stays correct instead of silently grading the wrong queries.
+    expect(counts).toContain(`${APP_OPEN_COUNT_QUERY_MARKER} AS openCount`);
+    expect(APP_OPEN_COUNT_QUERY_MARKER).toBe('sum(dailyActors)');
   });
 });
 
@@ -954,5 +1114,64 @@ describe('fetchRecentlyOpenedBlockIds — discovery degrades, it does not fail t
         }
       )
     ).rejects.toThrow('Job was canceled');
+  });
+
+  /**
+   * 🔴 THE SOFT PATH COVERS *ONE* FAILURE MODE — "ClickHouse could not answer" —
+   * AND MUST NOT COVER PROGRAMMING ERRORS. The `try` used to wrap the SQL builder,
+   * the awaited query AND the `rows.map(...)`. Under that shape a builder throw or a
+   * non-array result returns `[]` on EVERY run, not just this one: the play arm
+   * never fires, and any listing whose only change is new plays is never recomputed
+   * again. Unlike a ClickHouse blip, that does not self-heal on the next watermark —
+   * and the only outward sign is a per-run warning log, which cannot distinguish
+   * "blipped once" from "dead for a week" (hence the Prometheus counter on the
+   * processor's onDegrade).
+   *
+   * These two cases fail ONLY when the `try` is widened back, which is what makes
+   * them the guard rather than decoration.
+   */
+  it('🔴 a BUILDER throw PROPAGATES — it is a bug, not a ClickHouse outage', async () => {
+    // The builder runs `escapeClickhouseString(sinceIso).replace(...)`; a non-string
+    // watermark is a TypeError inside it. It is constructed OUTSIDE the try, so it
+    // must surface. Widen the try and this degrades to [] instead.
+    const degraded: unknown[] = [];
+    await expect(
+      fetchRecentlyOpenedBlockIds(
+        null as unknown as string,
+        async () => [],
+        (error) => degraded.push(error)
+      )
+    ).rejects.toThrow(TypeError);
+    expect(degraded).toEqual([]);
+  });
+
+  it('🔴 a non-array result PROPAGATES from rows.map — a contract violation, not an outage', async () => {
+    // The exact edit the audit named: a later change makes the result non-array, so
+    // `.map` is a TypeError. Inside the try that is silently "no plays", forever.
+    const degraded: unknown[] = [];
+    await expect(
+      fetchRecentlyOpenedBlockIds(
+        SINCE,
+        async () => undefined as unknown as { appBlockId: string }[],
+        (error) => degraded.push(error)
+      )
+    ).rejects.toThrow(TypeError);
+    expect(degraded).toEqual([]);
+  });
+
+  it('NEGATIVE CONTROL: a genuine query REJECTION still degrades, in the same file', async () => {
+    // The pair matters: the two assertions above must not be satisfiable by simply
+    // deleting the try. Same function, same shape of failure, opposite outcome.
+    const degraded: unknown[] = [];
+    await expect(
+      fetchRecentlyOpenedBlockIds(
+        SINCE,
+        async () => {
+          throw new TypeError('socket hang up');
+        },
+        (error) => degraded.push(error)
+      )
+    ).resolves.toEqual([]);
+    expect(degraded).toHaveLength(1);
   });
 });
