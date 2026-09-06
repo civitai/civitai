@@ -121,12 +121,31 @@ export function buildListingCardPreview(
     // first-class, already-approved, already-LIVE app (see `OffsitePendingRow.kind`),
     // which may have any number of real opens.
     //
-    // The correct reason is narrower and applies to BOTH kinds: `OffsitePendingRow`
-    // carries no `AppListingMetric`, and this builder never reads one, so it cannot
-    // measure this row at all — ever, for any kind. The DTO's own definitions then
-    // decide it (`app-listing-read.schema.ts`): `null` = "not measurable on this
-    // surface", `0` = "measured, and the answer is none". A producer that cannot
-    // measure is in the `null` case.
+    // 🔴 THIS IS A DELIBERATE OVERRIDE OF THE DTO'S RULE, NOT A DERIVATION FROM IT.
+    // Read that plainly, because an earlier draft of this very comment claimed the
+    // opposite and the claim was WIDER THAN THE DECISION IT RECORDED — which is how a
+    // later change talks itself into breaking the public card.
+    //
+    // What the DTO actually says (`app-listing-read.schema.ts`, and imperatively at
+    // `app-listing.service.ts`'s `cardOpenCount`): an ON-SITE listing with no metric
+    // row is a genuine `0` — "no plays recorded yet" — and you must NOT over-null it.
+    // `null` there means "structurally unmeasurable", a property of the KIND (an
+    // off-site `target="_blank"` anchor nothing on-platform observes). This builder's
+    // on-site input is exactly "on-site, no metric row", so the DTO's written rule
+    // yields `0` here.
+    //
+    // We return `null` anyway. The reason is not a rule, it is a judgement about THIS
+    // surface: `OffsitePendingRow` carries no `AppListingMetric` and this builder never
+    // reads one, so unlike `cardOpenCount` it can never become right later — a `0` here
+    // is wrong permanently, on a moderator screen, for an app that may have 40,000
+    // plays. Operator call, 2026-09-06: truth over parity.
+    //
+    // 🔴 DO NOT GENERALISE THIS INTO A RULE. "A producer that cannot measure returns
+    // `null`" is the phrasing that was here before, and it is dangerous: `cardOpenCount`
+    // also cannot measure today (nothing writes `open_count` yet), so that sentence
+    // licenses returning `null` for on-site rows on the PUBLIC `GET /api/v1/apps` card —
+    // which is mutant M2 in this PR's matrix and precisely what the DTO's "do not
+    // over-null" paragraph exists to forbid. The override is scoped to this builder.
     //
     // 🔴 THIS DELIBERATELY DIVERGES FROM `cardOpenCount`, which returns a NUMBER for an
     // on-site row — and the divergence is the point, not an oversight. That function
@@ -195,8 +214,15 @@ export function buildListingDetailPreview(
     // that one is pinned in `__tests__/reviewListingPreview.test.ts`, so the claim is a
     // guarded one rather than a comment anybody has to take on trust.
     updatedAt: new Date(row.submittedAt).toISOString(),
-    // An unapproved listing has never been installable. Same reasoning as the
-    // `EMPTY_RECOMMEND` rollup above: zero is the fact, not a placeholder.
+    // ⚠️ "An unapproved listing has never been installable" — the reason this line used
+    // to give — is FALSE for the same input the `openCount` note above refutes it for:
+    // an `onsite` review row is a media revision of an already-approved, already-LIVE
+    // app, which is installable and may have real installs. This is a false zero of the
+    // same class, left in place deliberately: it is out of scope for the PR that noticed
+    // it, and it is inert on both consumers — `buildListingStatChips` returns `[]` under
+    // `preview`, and `buildListingDetailRows`' install row is `!opts.preview`-gated too.
+    // Fix it with a reader, not speculatively; do not cite it as precedent for turning
+    // the `openCount` override above back into a `0`.
     installCount: 0,
     screenshots: images?.screenshots ?? [],
     kindData: detailKindData(row),

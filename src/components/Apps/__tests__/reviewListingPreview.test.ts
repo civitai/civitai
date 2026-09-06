@@ -128,11 +128,18 @@ describe('buildListingCardPreview', () => {
    * 🔴 THE PLAY COUNT IS `null` HERE FOR EVERY KIND, and the reason is what this test
    * exists to pin — because an earlier round asserted the OPPOSITE and was wrong.
    *
-   * This builder never reads an `AppListingMetric`, so it cannot measure the row at
-   * all, for any kind. The DTO's own definitions (`app-listing-read.schema.ts`,
-   * `ListingCard.openCount`) then decide it: `null` = "not measurable on this surface",
-   * `0` = "measured, and the answer is none". A producer that cannot measure is in the
-   * `null` case.
+   * 🔴 THIS OVERRIDES THE DTO'S RULE RATHER THAN FOLLOWING IT. The DTO says an on-site
+   * listing with no metric row is a genuine `0` and must not be over-nulled, and that is
+   * exactly this builder's on-site input — so the written rule yields `0` here. We return
+   * `null` anyway, on a judgement about this surface: `OffsitePendingRow` carries no
+   * `AppListingMetric` and this builder never reads one, so unlike `cardOpenCount` it can
+   * never become right later, and a `0` is wrong permanently on a moderator screen for an
+   * app that may have 40,000 plays. Operator call, 2026-09-06: truth over parity.
+   *
+   * 🔴 Do NOT restate that as "a producer that cannot measure returns null". An earlier
+   * draft did, and it is wider than the decision: `cardOpenCount` cannot measure today
+   * either, so that phrasing licenses nulling on-site rows on the PUBLIC card DTO — the
+   * defect this PR's own mutant M2 exists to catch.
    *
    * 🔴 IT DELIBERATELY DISAGREES WITH `cardOpenCount`, which returns a NUMBER for an
    * on-site row, and that divergence is the point. Making the two agree on shape (the
