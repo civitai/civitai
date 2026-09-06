@@ -375,17 +375,34 @@ async function getPoolForecast(month?: Date) {
   return result.balance * (env.CREATOR_POOL_FORECAST_PORTION / 100);
 }
 
+function isBankingClosed(phases: ReturnType<typeof getPhases>) {
+  return dayjs.utc().isAfter(dayjs.utc(phases.bank[1]));
+}
+
+// After the deadline no new Buzz can be banked, so the pool can only shrink; the forecasted size
+// can't exceed current, keeping every derived forecast at or above the banked value.
+function clampForecastAfterBankingDeadline(
+  size: { current: number; forecasted: number },
+  phases: ReturnType<typeof getPhases>
+) {
+  if (!isBankingClosed(phases)) return size;
+  return { ...size, forecasted: Math.min(size.forecasted, size.current) };
+}
+
 export async function getCompensationPool({ month }: CompensationPoolInput = {}) {
   if (month) {
     // Skip caching if fetching specific month
+    const phases = getPhases({ month, flip: (await getFlippedPhaseStatus()) === 'true' });
     return {
       value: await getPoolValue(month),
-      size: {
-        current: await getPoolSize(month),
-        forecasted: await getPoolForecast(month),
-      },
-
-      phases: getPhases({ month, flip: (await getFlippedPhaseStatus()) === 'true' }),
+      size: clampForecastAfterBankingDeadline(
+        {
+          current: await getPoolSize(month),
+          forecasted: await getPoolForecast(month),
+        },
+        phases
+      ),
+      phases,
     };
   }
 
@@ -404,14 +421,13 @@ export async function getCompensationPool({ month }: CompensationPoolInput = {})
     { ttl: CacheTTL.day }
   );
 
+  // TODO: Remove flip when we're ready to go live
+  const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
+
   return {
     value,
-    size: {
-      current,
-      forecasted,
-    },
-    // TODO: Remove flip when we're ready to go live
-    phases: getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' }),
+    size: clampForecastAfterBankingDeadline({ current, forecasted }, phases),
+    phases,
   };
 }
 
@@ -469,7 +485,7 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
 
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
-  if (new Date() > phases.bank[1]) throw new Error('Banking phase is closed');
+  if (isBankingClosed(phases)) throw new Error('Banking phase is closed');
 
   // Adjust to not exceed cap (unified cap across all buzz types)
   const banked = await getBanked(userId);
