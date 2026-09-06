@@ -19,7 +19,8 @@
 // trust-and-safety trade, not a performance detail, and it was accepted deliberately rather than
 // arrived at. Two things bound it:
 //
-//   1. The TTL is short and operator-set, and the cache is OFF unless a TTL is configured.
+//   1. The TTL is short and operator-set, and the cache is OFF unless BOTH an allowlisted
+//      EXTERNAL_MODERATION_CACHE_NAMESPACE and a positive TTL are set — see `armedCache`.
 //   2. 🔴 THE KEY CARRIES A DIGEST OF THE POLICY THAT PRODUCED THE VERDICT — see `policyDigest`.
 //      A change to the model, the score threshold or the category map changes the key, so every
 //      previously-cached verdict becomes unreachable AT ONCE, without a flush and without anyone
@@ -79,9 +80,12 @@ const cacheCounter = registerCounterWithLabels({
     'the two diverge by exactly the hit count. Unarmed there are no series at all, which is what ' +
     'makes the arming instant readable — but arming needs BOTH a positive ' +
     'EXTERNAL_MODERATION_CACHE_TTL_SECONDS and an allowlisted EXTERNAL_MODERATION_CACHE_NAMESPACE, ' +
-    'so an absence of series does NOT mean "no TTL configured": a set TTL with a rejected namespace ' +
-    'looks identical here, and the two are told apart only by the one-off error the namespace ' +
-    'resolver logs. The dark probe ' +
+    'so an absence of series does NOT mean "no TTL configured" — a set TTL with a rejected ' +
+    'namespace looks identical, and so does an ARMED deployment nothing scrapes. A rejected ' +
+    'namespace logs one error line (which separates it from the other two, NOT the pair of them ' +
+    'from each other, because the namespace is resolved whether or not a TTL is set); an unscraped ' +
+    'deployment is invisible from here by construction and has to be ruled out at the ' +
+    'ServiceMonitor. The dark probe ' +
     'this replaces measured 34.3% repeats at a 5m window over 224,989 observations; expect a hit ' +
     'rate at or BELOW that, because the probe claimed its slot when a request STARTED whereas this ' +
     'cache cannot store a verdict until the classifier answers ~200 ms later.',
@@ -135,6 +139,14 @@ function record(source: ExternalModerationSource, result: CacheResult): void {
  * `civitai-pr-*` namespaces on one sysRedis), and `next` looks like a single deployment but is not,
  * because the PR-preview task copies civitai-next's `civitai-cfg` wholesale into every preview.
  * Adding either re-opens the cross-deployment hazard this list exists to close.
+ *
+ * ...AND (2) that something actually SCRAPES it. This is the half an earlier revision dropped while
+ * keeping the words "CHECK BOTH" — a heading promising two checks and supplying one is what stops
+ * the next person looking for the missing half. It is the criterion that removed `next-stage` from
+ * the probe's list: no ServiceMonitor or PodMonitor, so an armed deployment emits no series at all.
+ * For the PROBE that meant a measurement nobody could read. For THIS cache it is worse: it changes
+ * moderation behaviour, so an unscraped deployment would serve cached verdicts on a moderation gate
+ * with zero observability.
  *
  * A FROZEN ARRAY, not a `ReadonlySet` — that type is erased at runtime, so any importer could
  * `.add()` to the object this module reads. And ONE object, not an array plus a lookup Set: the

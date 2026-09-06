@@ -105,7 +105,8 @@ async function moderatePrompt(
   // there rather than carrying a direction away from here.
   probeModerationCacheRepeat(metricSource, preparedPrompt);
 
-  // Read-through verdict cache. OFF unless EXTERNAL_MODERATION_CACHE_TTL_SECONDS is set.
+  // Read-through verdict cache. OFF unless BOTH EXTERNAL_MODERATION_CACHE_NAMESPACE names an
+  // allowlisted deployment AND EXTERNAL_MODERATION_CACHE_TTL_SECONDS is positive.
   //
   // 🔴 PLACED AFTER THE PROBE ON PURPOSE. The probe measures how often this exact string RECURS, and
   // that is a property of the traffic, not of whether we happened to answer from cache. Returning

@@ -648,20 +648,33 @@ export const serverSchema = z
     // probe. See src/server/integrations/moderation-cache-probe.ts.
     EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
     //
-    // Seconds to hold a cached external-moderation verdict. THIS IS THE ARMING SWITCH for the
-    // verdict cache: absent or 0 means the cache is inert and emits no metric series at all.
-    // There is deliberately no separate boolean — a second on/off input is a second thing that can
-    // disagree with the first, which is the trap the probe's namespace allowlist above exists to
-    // avoid. Capped at 3600 because a cached verdict is a STALE verdict and the TTL is the only
-    // bound on a classifier whose model can change behind a stable name; the measured value of a
-    // longer window is small anyway (12x the TTL bought ~7 points of hit rate).
-    // See src/server/integrations/moderation-verdict-cache.ts.
-    // The deployment this cache writes under. REQUIRED to arm it — several civitai-web deployments
-    // share one sysRedis and sys keys carry no environment segment, and the PR-preview task copies
-    // civitai-cfg WHOLESALE, so the TTL below is inherited by every open preview. A closed
-    // allowlist lives in moderation-verdict-cache.ts (one rule, one place); anything outside it is
-    // OFF and logged once. See that module for why the policy digest cannot substitute for this.
+    // 🔴 THE VERDICT CACHE NEEDS BOTH OF THE NEXT TWO VARIABLES. Neither alone arms it: this one
+    // says WHERE entries live, the TTL below says HOW LONG. Setting only one leaves the cache inert
+    // and emitting no metric series, which looks identical to "not configured" — so if you set a
+    // TTL and see no `external_moderation_cache_total`, check this variable before concluding the
+    // metric is broken.
+    //
+    // ⚠️ An earlier revision of this block said the TTL was "THE ARMING SWITCH" with "deliberately
+    // no separate boolean". That was retracted across the module, the counter help text, the redis
+    // key registry and the PR body — and survived HERE, five lines above the comment contradicting
+    // it, which is the surface an operator actually reads. Stated once, in full, at both fields.
+    //
+    // The deployment this cache writes under. Several civitai-web deployments share one sysRedis
+    // and sys keys carry no environment segment, and the PR-preview task copies civitai-cfg
+    // WHOLESALE, so the TTL below is inherited by every open preview. A closed allowlist lives in
+    // moderation-verdict-cache.ts (one rule, one place); anything outside it is OFF and logged
+    // once. See that module for why the policy digest cannot substitute for this.
     EXTERNAL_MODERATION_CACHE_NAMESPACE: z.string().trim().optional().default(''),
+    // Seconds to hold a cached external-moderation verdict — the second of the two required inputs
+    // described above. Capped at 3600 because a cached verdict is a STALE verdict and the TTL is
+    // the only bound on a classifier whose model can change behind a stable name; the measured
+    // value of a longer window is small anyway (12x the TTL bought ~7 points of hit rate).
+    // See src/server/integrations/moderation-verdict-cache.ts.
+    //
+    // ⚠️ This descriptive comment was ORPHANED for two commits — it sat above the NAMESPACE
+    // declaration, so a reader of that field was told it is measured in seconds and capped at 3600.
+    // Introduced by inserting the namespace field between this text and the field it describes.
+    //
     // 🔴 `.catch(0)`, NOT `.default(0)` — the same rule TRPC_MAX_BATCH_SIZE and
     // EXTERNAL_MODERATION_TIMEOUT_MS carry above. `src/env/server.ts` THROWS on any invalid field,
     // and env is parsed only at container start, so a typo here (`=off`, `=false`, `=3600s`,
