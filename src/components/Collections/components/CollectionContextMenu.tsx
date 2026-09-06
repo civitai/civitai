@@ -2,6 +2,8 @@ import type { MenuProps } from '@mantine/core';
 import { Menu } from '@mantine/core';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  IconArchive,
+  IconArchiveOff,
   IconEdit,
   IconRobot,
   IconHome,
@@ -86,6 +88,26 @@ export function CollectionContextMenu({
     },
     onSettled: async () => {
       await queryUtils.collection.getAllUser.invalidate();
+    },
+  });
+
+  const isArchived = permissions?.archived ?? false;
+  const setArchivedMutation = trpc.collection.setArchived.useMutation({
+    async onSuccess(_res, { archived }) {
+      showSuccessNotification({
+        title: archived ? 'Collection archived' : 'Collection unarchived',
+        message: archived
+          ? "This collection is now hidden from the 'Save to collection' list and won't accept new entries until you unarchive it."
+          : 'This collection can receive new entries again.',
+      });
+      await queryUtils.collection.getById.invalidate({ id: collectionId });
+      await queryUtils.collection.getAllUser.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update collection',
+        error: new Error(error.message),
+      });
     },
   });
 
@@ -296,6 +318,25 @@ export function CollectionContextMenu({
               </Menu.Item>
             )}
           </>
+        )}
+        {!isBookmarkCollection && (isOwner || isMod) && (
+          <Menu.Item
+            leftSection={
+              isArchived ? (
+                <IconArchiveOff size={14} stroke={1.5} />
+              ) : (
+                <IconArchive size={14} stroke={1.5} />
+              )
+            }
+            disabled={setArchivedMutation.isPending}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setArchivedMutation.mutate({ id: collectionId, archived: !isArchived });
+            }}
+          >
+            {isArchived ? 'Unarchive collection' : 'Archive collection'}
+          </Menu.Item>
         )}
         {currentUser && permissions?.read && (
           <Menu.Item
