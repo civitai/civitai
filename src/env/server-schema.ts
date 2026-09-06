@@ -647,6 +647,16 @@ export const serverSchema = z
     // as perfectly good namespaces, so the likeliest spelling of "turn this off" would ARM the
     // probe. See src/server/integrations/moderation-cache-probe.ts.
     EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
+    //
+    // Seconds to hold a cached external-moderation verdict. THIS IS THE ARMING SWITCH for the
+    // verdict cache: absent or 0 means the cache is inert and emits no metric series at all.
+    // There is deliberately no separate boolean — a second on/off input is a second thing that can
+    // disagree with the first, which is the trap the probe's namespace allowlist above exists to
+    // avoid. Capped at 3600 because a cached verdict is a STALE verdict and the TTL is the only
+    // bound on a classifier whose model can change behind a stable name; the measured value of a
+    // longer window is small anyway (12x the TTL bought ~7 points of hit rate).
+    // See src/server/integrations/moderation-verdict-cache.ts.
+    EXTERNAL_MODERATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(3600).default(0),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 

@@ -1995,6 +1995,21 @@ export const REDIS_SYS_KEYS = {
      * See src/server/integrations/moderation-cache-probe.ts.
      */
     MODERATION_CACHE_PROBE: 'generation:moderation-cache-probe',
+    /**
+     * Read-through cache of external prompt-moderation VERDICTS — unlike MODERATION_CACHE_PROBE
+     * above, this one IS read back, and a hit skips the classifier call entirely.
+     *
+     * The segment after this prefix is a digest of the POLICY that produced the verdict (model,
+     * score threshold, category map), not a deployment label: changing any of them changes every
+     * key, so a policy change invalidates the whole cache atomically with no flush step. The
+     * segment after THAT is a truncated SHA-256 of the exact string sent to the classifier; the
+     * prompt itself is never stored. Every key carries an EX.
+     *
+     * Written only while EXTERNAL_MODERATION_CACHE_TTL_SECONDS is a positive integer — that TTL is
+     * the arming switch, and there is deliberately no separate boolean to disagree with it.
+     * See src/server/integrations/moderation-verdict-cache.ts.
+     */
+    MODERATION_VERDICT: 'generation:moderation-verdict',
   },
   TRAINING: {
     STATUS: 'training:status',
