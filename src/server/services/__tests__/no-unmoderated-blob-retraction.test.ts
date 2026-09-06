@@ -24,10 +24,9 @@ import { uniq } from 'lodash-es';
  * 🔴 It counts CALL SITES, not files, and it walks the whole workspace, not just `src/`. Both are
  * scars. Ledgering file NAMES over a walk rooted at `src/` left two ways to add a retracting call
  * with the guard green: append a second one to a file already on the ledger — `image-ingestion.ts`
- * hosts
- * several jobs, so that is exactly where a copy-paste lands — or put it anywhere outside `src/`,
- * which is most of this repo (`apps/`, `packages/`, `scripts/`). Both were demonstrated against the
- * previous version of this file.
+ * hosts several jobs, so that is exactly where a copy-paste lands — or put it anywhere outside
+ * `src/`, which is most of this repo (`apps/`, `packages/`, `scripts/`). Both were demonstrated
+ * against the previous version of this file.
  *
  * A legitimate change to either set edits the ledger below, in the same commit, with a reason.
  * That is the point: adding a caller should require saying out loud that you are adding one.
