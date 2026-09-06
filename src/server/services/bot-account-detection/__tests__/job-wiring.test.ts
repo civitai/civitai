@@ -77,12 +77,20 @@ describe('the bot-account detection job is registered AND scheduled to match its
 
     // A single literal minute+hour with wildcard date fields is what makes the period exactly 24h.
     // A step (`*/6`), a list (`0,12`) or a range would fire more often and silently duplicate.
-    expect(minute).toMatch(/^\d+$/);
-    expect(hour).toMatch(/^\d+$/);
+    //
+    // 🔴 RANGE-BOUNDED, NOT JUST `\d+`. A bare `/^\d+$/` checks SHAPE and not VALUE, so `'0 99 * * *'`
+    // — five fields, digit minute and hour, wildcard dates — satisfied every assertion here while
+    // hour 99 is out of range and the job fires NEVER. That is the opposite failure from the
+    // duplicate one, and it is the half this describe block calls "a slower one leaves gaps no run
+    // ever scores": a job that never fires leaves nothing but gaps. Bounding both fields is what
+    // makes the count below actually follow.
+    expect(minute).toMatch(/^([0-5]?\d)$/);
+    expect(hour).toMatch(/^([01]?\d|2[0-3])$/);
     expect([dom, month, dow]).toEqual(['*', '*', '*']);
 
-    // Sound ONLY because of the four assertions above: five fields, literal minute and hour, and
-    // wildcard date fields together admit exactly one firing per day and nothing else.
+    // Sound ONLY because of the four assertions above: exactly five fields, an IN-RANGE literal
+    // minute and hour, and wildcard date fields together admit exactly one firing per day — not
+    // more (no step/list/range) and not fewer (no unsatisfiable field).
     const firesEveryHours = 24;
     expect(firesEveryHours).toBe(BOT_ACCOUNT_COHORT_WINDOW_HOURS);
   });

@@ -64,7 +64,12 @@ import { createJob } from './job';
 export const botAccountDetection = createJob(
   'bot-account-detection',
   // Daily, and daily specifically because the cohort window is 24h with no cross-run dedupe.
-  // Noon UTC keeps it clear of the other detectors that write to the same board.
+  //
+  // Noon UTC keeps it clear of the two sibling detectors that write the same board on the 11:00 and
+  // 11:30 UTC hours. 🔴 Those run OUT OF THIS REPO, as their own deployed services — so a repo-wide
+  // grep for another board producer finds nothing and that absence is NOT evidence against this
+  // comment; an audit round read it that way. Their schedules were confirmed from their own run rows
+  // on the board, which is the surface where all three are visible at once.
   '0 12 * * *',
   async (ctx) => {
     return runBotAccountDetection({
