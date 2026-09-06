@@ -454,11 +454,26 @@ export const APP_LISTING_BATCH_SIZE = 200;
  *   • at n = 2,000 the query is 68,460 bytes — 3.83x under the ceiling;
  *   • the seed/restore path this file's docstrings name (~7,700 approved on-site
  *     listings) takes ceil(7700/2000) = 4 scans here, against ceil(7700/200) = 39
- *     at the old shared constant of 200. That 39x is the cost of merging them.
+ *     at the old shared constant of 200 — i.e. splitting the constants is worth
+ *     **9.75x** on that path (39 -> 4).
  *
- * Raising it further buys little (4 -> 2 scans at n = 4,000) and spends most of the
- * headroom; 2,000 keeps ~3.8x of margin against a ceiling that is a per-server
- * SETTING, not a protocol constant, and so can be lowered under us.
+ * ⚠️ TWO DENOMINATORS, DO NOT CONFLATE THEM. The "39x" quoted at the count query's
+ * own docstring is 39 scans against the ONE unchunked query that preceded chunking;
+ * the 9.75x here is 39 against 4. An earlier draft of this paragraph used "39x" for
+ * both, which is right for neither comparison as stated.
+ *
+ * Raising it further buys at most ONE scan, and part of the range is unavailable.
+ * The literal byte budget asserted in the tests (a full chunk under 131,072 bytes,
+ * half of `max_query_size`) caps this constant at **3,841 ids** (131,054 bytes;
+ * 3,842 is 131,088 and reds). Against the ~7,700 seed path that leaves exactly one
+ * improvement in reach — **4 -> 3 scans, from n >= 2,567** — while 2 scans needs
+ * n >= 3,850 (131,360 bytes) and n = 4,000 (136,460) are both OVER the budget and
+ * cannot be chosen at all.
+ *
+ * 2,000 is kept over 2,567 deliberately: one scan is not worth a 28% larger query
+ * (68,460 -> 87,738 bytes, i.e. 14.7% more of the 131,072 budget) against a ceiling
+ * that is a per-server SETTING, not a protocol constant, and so can be lowered
+ * under us.
  */
 export const APP_OPEN_CH_CHUNK_SIZE = 2_000;
 

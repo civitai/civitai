@@ -1049,9 +1049,20 @@ describe('MV-trigger diagnostic — the marker discriminates the expensive read'
     expect(recent).not.toContain(APP_OPEN_COUNT_QUERY_MARKER);
   });
 
-  it('the marker is what the count query is actually built from (no second spelling)', () => {
-    // Interpolated, not duplicated — so renaming `dailyActors` moves the constant
-    // and the runbook stays correct instead of silently grading the wrong queries.
+  it('the marker matches the count query and names the aggregate the runbook greps for', () => {
+    // ⚠️ TITLE NARROWED DELIBERATELY — it used to say "is what the count query is
+    // actually built from (no second spelling)", and neither assertion can observe
+    // that. Measured: replacing the interpolated `${APP_OPEN_COUNT_QUERY_MARKER}` in
+    // `buildAppOpenCountSql` with a literal `sum(dailyActors)` — exactly the second
+    // spelling the old title forbade — leaves this file 93/93 GREEN. A `toContain`
+    // cannot distinguish interpolation from duplication; only reading the source
+    // could, and that is not what this asserts.
+    //
+    // The HAZARD is still covered, just not here: renaming the aggregate in the SQL
+    // while leaving the constant reds three assertions in this block (including the
+    // one above, which requires the marker to be absent from the discovery query).
+    // So the drift is caught by a sibling — this test is the cheap consistency pin,
+    // and its title now claims only that.
     expect(counts).toContain(`${APP_OPEN_COUNT_QUERY_MARKER} AS openCount`);
     expect(APP_OPEN_COUNT_QUERY_MARKER).toBe('sum(dailyActors)');
   });
