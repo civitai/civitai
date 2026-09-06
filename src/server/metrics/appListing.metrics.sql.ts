@@ -14,6 +14,11 @@
 // each maps to a feature that isn't live yet (OAuth-connect submission is a
 // locked-deferred product decision; open/visit/tip have no server-side source
 // table). Populate each with the PR that ships its consumer, not speculatively.
+//
+// 🔴 `open_count` NOW HAS A CONSUMER and is still NOT POPULATED here: the store CARD
+// DTO reads it (`ListingCard.openCount` via `projectListingCard` → `cardOpenCount` in
+// app-listing.service.ts), so every on-site card reports a literal 0 until a writer for
+// this column ships. That is this job's turn to take under the rule above.
 // ---------------------------------------------------------------------------
 
 /**

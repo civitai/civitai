@@ -1230,6 +1230,32 @@ describe('🔴 openCount — a NUMBER on-site, NULL off-site (never a false zero
     expect(card.openCount).toBeNull();
   });
 
+  /**
+   * 🔴 THE FAIL-CLOSED PROPERTY, GUARDED RATHER THAN ASSERTED.
+   *
+   * `cardOpenCount`'s doc comment claims the negative `row.kind !== 'onsite'` test
+   * "fails CLOSED to `null` for any kind added later". Every OTHER fixture in this file
+   * is `onsite` or `offsite`, so not one of them can tell that form apart from the
+   * fail-OPEN `row.kind === 'offsite'` — under which a future kind (or a mid-migration
+   * row) would project a literal `0`: the exact false "nobody has ever used this app"
+   * this field exists to prevent, on a PUBLIC card. This row is the only thing in the
+   * suite that can see the difference, so the claim stops being a comment.
+   *
+   * The metric column carries a distinct NON-ZERO count, so a pass here also cannot come
+   * from the `?? 0` branch or from a hardcoded literal.
+   */
+  it('🔴 an UNKNOWN future kind projects null — the discriminator FAILS CLOSED, never to 0', () => {
+    const card = projectListingCard(
+      hydratedRow({
+        kind: 'embedded',
+        metric: { thumbsUpCount: 9, thumbsDownCount: 1, openCount: 1487 },
+      }) as never
+    );
+    expect(card.openCount).toBeNull();
+    expect(card.openCount).not.toBe(0);
+    expect(card.openCount).not.toBe(1487);
+  });
+
   it('🔴 two rows differing ONLY in kind land on opposite sides of the rule', () => {
     // Identical metric, identical everything else — so the difference in the output
     // can only have come from `kind`.

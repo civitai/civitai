@@ -212,13 +212,36 @@ export type ListingCard = {
    * Play count from the `AppListingMetric` rollup (`open_count`) — how many times
    * the app was OPENED — or `null` when the number is structurally unmeasurable.
    *
-   * 🔴 ALLOWLIST JUSTIFICATION. The exact same argument as `ListingDetail.installCount`,
-   * one step weaker and still sufficient: an aggregate over the whole audience that
-   * identifies no user, reveals nothing about WHO opened the app or WHEN, and gates
-   * nothing. It is the store analogue of the public play/view counts every other
-   * content type on the platform already renders. Unlike `installCount` it is not yet
-   * derivable from a public sort, so this does surface a new (aggregate) fact — which
-   * is the intent: a store card should be able to say how used an app is.
+   * 🔴 ALLOWLIST JUSTIFICATION — AND IT IS **NOT** THE SAME ARGUMENT AS
+   * `ListingDetail.installCount`. An earlier draft of this comment called it "the exact
+   * same argument, one step weaker and still sufficient", which flattered it on an axis
+   * it never named. What the two DO share: both are aggregates over the whole audience,
+   * so neither identifies a user, neither reveals WHO opened or installed the app or
+   * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
+   *
+   *   1. A NEW PUBLIC FACT, not added precision. `installCount` is already publicly
+   *      OBSERVABLE: the store's `popular` sort is `install_count DESC`, so the full
+   *      ordering of every approved listing by it is derivable from the public list
+   *      endpoint already, and surfacing the number only sharpens it. NO sort exposes
+   *      `open_count` (`listingSortSchema` = top-rated | popular | newest | name), so
+   *      this number is a genuinely new fact about the catalog.
+   *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
+   *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
+   *      — a public, anon-capable REST list returning up to 50 cards per page — so an
+   *      unauthenticated client can page the play count of the ENTIRE approved catalog
+   *      cheaply. `installCount` costs one `GET /api/v1/apps/<slug>` per app.
+   *
+   * 🔴 BOTH DELTAS WERE RAISED AND ACCEPTED DELIBERATELY (round-1 audit of this PR).
+   * The reasoning, recorded so the next reviewer does not have to re-open a settled
+   * question: printing a play count on a public store card WAS the decision, so bulk
+   * readability is a CONSEQUENCE of it rather than a separate one — and the `popular`
+   * sort already makes relative ordering by usage publicly inferable, so the catalog's
+   * usage shape is not newly disclosed in kind. It is the store analogue of the public
+   * play/view counts every other content type on the platform already renders, and
+   * that is the intent: a store card should be able to say how used an app is.
+   *
+   * This paragraph exists to hand the next reader the ACCURATE comparison rather than
+   * the flattering one. If the exposure ever needs revisiting, delta 2 is the axis.
    *
    * 🔴 `null` IS NOT `0`, AND THE DIFFERENCE IS A TRUTH CLAIM RATHER THAN A STYLE ONE.
    * An OFF-SITE listing's CTA is a plain `target="_blank"` anchor to a third party, so

@@ -308,7 +308,24 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
  *
  * The positive `=== 'onsite'` test (rather than `!== 'offsite'`) is deliberate: it
  * fails CLOSED to `null` for any kind added later, because an omitted stat row is
- * honest about an unmeasured app while a `0` is a false claim about it.
+ * honest about an unmeasured app while a `0` is a false claim about it. That property
+ * is GUARDED, not merely stated — see the unknown-future-kind case in
+ * `__tests__/app-listing.service.test.ts`; every other fixture there is onsite/offsite
+ * and cannot tell this form apart from the fail-OPEN `=== 'offsite'` one.
+ *
+ * 🔴 MERGE-ORDER CONSTRAINT — READ BEFORE SHIPPING THE RENDERER (Stage 4).
+ * NOTHING WRITES `open_count` YET. `appListing.metrics.sql.ts` populates `install_count`
+ * only — its own suite asserts `expect(upsert).not.toContain('open_count')` — and no
+ * other writer exists, so this function returns a literal `0` for EVERY on-site listing
+ * in production today. The DTO has no third state for "measurable but not yet
+ * measured": `null` means unmeasurable and `0` means measured-as-none, and the honest
+ * answer right now is neither.
+ *
+ * So the renderer MUST NOT merge before the rollup that populates the column (#4653),
+ * or must gate the rendered stat row behind a flag until it lands. Shipping it first
+ * makes the public `/apps` grid print "0 plays" on every on-site app INCLUDING heavily
+ * used ones — by this field's own written standard the worst outcome available, and on
+ * the public surface. The flag is deliberately NOT built here.
  */
 function cardOpenCount(row: HydratedListing): number | null {
   if (row.kind !== 'onsite') return null;

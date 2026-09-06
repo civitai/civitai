@@ -115,13 +115,28 @@ export function buildListingCardPreview(
     // beta. The REAL preview comes from `getListingPreviewForReview`, which projects the
     // actual listing row and does carry it.
     isBeta: false,
-    // 🔴 ALWAYS `null` HERE, and it is the same own-the-limitation move as `isBeta`
-    // above. `OffsitePendingRow` carries no `AppListingMetric`, so there is no play
-    // count to report — and a listing still in the review queue has not been openable
-    // by anyone, so there is not even a real `0` to report. `null` is the honest
-    // "absent" the DTO defines (the renderer omits the stat row); a `0` would tell a
-    // moderator "nobody has ever used this app" about an app nobody COULD have used.
-    openCount: null,
+    // 🔴 KIND-DISCRIMINATED, exactly as `cardOpenCount` does it in
+    // `app-listing.service.ts` — NOT an unconditional `null`. `OffsitePendingRow`
+    // carries no `AppListingMetric`, so this builder cannot report a measured count
+    // either way; the only question is which ABSENT value is honest for each kind, and
+    // the DTO field already answers it.
+    //
+    // ON-SITE → `0`. An `onsite` review row is a listing-MEDIA revision of a
+    // first-class, already-approved, already-LIVE app (see `OffsitePendingRow.kind`),
+    // so it is emphatically not true that nobody could have opened it. `0` is the
+    // COALESCE-to-0 "nothing recorded on this surface" the DTO mandates for on-site —
+    // the same call the sibling `installCount: 0` below makes — whereas `null` would
+    // assert "structurally unmeasurable", which is false for an on-site app.
+    //
+    // OFF-SITE → `null`. Its CTA is a plain `target="_blank"` anchor to a third party,
+    // so no on-platform request follows the click: the number is genuinely absent and
+    // the renderer omits the stat row.
+    //
+    // This is the FALLBACK either way; the real number comes from
+    // `getListingPreviewForReview` → `projectListingCard`, which reads the rollup and
+    // returns a NUMBER for an on-site row. The two producers feed the same component
+    // (`ListingPreviewSection`), so they must agree on which kind gets which absence.
+    openCount: listingKind(row) === 'onsite' ? 0 : null,
     kindData: cardKindData(row),
   };
 }

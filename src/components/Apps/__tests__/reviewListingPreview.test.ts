@@ -124,6 +124,39 @@ describe('buildListingCardPreview', () => {
     );
   });
 
+  /**
+   * 🔴 THE PLAY COUNT IS KIND-DISCRIMINATED HERE TOO, and this builder is the SECOND
+   * producer of the field on the SAME screen: `ListingPreviewSection` renders
+   * `previewQuery.data?.card ?? buildListingCardPreview(request)`, and the primary side
+   * (`getListingPreviewForReview` → `projectListingCard` → `cardOpenCount`) returns a
+   * NUMBER for an on-site row. An unconditional `null` here would make the two
+   * producers disagree about which kind is measurable.
+   *
+   * The DTO's own rule (`app-listing-read.schema.ts`, `ListingCard.openCount`) is what
+   * settles it: off-site is ABSENT (`null`), on-site with nothing recorded is a genuine
+   * `0`. And an `onsite` review row is a listing-MEDIA revision of an already-approved,
+   * already-live app — so "nobody could have opened it" is not true of it.
+   *
+   * 🔴 BOTH kinds are asserted, so NO SINGLE CONSTANT passes: a hardcoded `null` reds
+   * the on-site case, a hardcoded `0` reds the off-site case.
+   */
+  it('🔴 openCount: 0 on an on-site row, null off-site — no single constant satisfies both', () => {
+    const onsite = buildListingCardPreview(row({ id: 'r6', kind: 'onsite' }));
+    expect(onsite.kind).toBe('onsite');
+    expect(onsite.openCount).toBe(0);
+    expect(onsite.openCount).not.toBeNull();
+
+    const offsite = buildListingCardPreview(row({ id: 'r6b', kind: 'offsite' }));
+    expect(offsite.kind).toBe('offsite');
+    expect(offsite.openCount).toBeNull();
+
+    // A row carrying no `kind` at all defaults to off-site (the review adapters'
+    // backward-compatible default) — so it takes the off-site answer, not the on-site one.
+    const defaulted = buildListingCardPreview(row({ id: 'r6c' }));
+    expect(defaulted.kind).toBe('offsite');
+    expect(defaulted.openCount).toBeNull();
+  });
+
   it('passes resolved image URLs straight through when provided', () => {
     const card = buildListingCardPreview(row({ id: 'r5' }), {
       iconUrl: 'https://cdn/icon.png',
