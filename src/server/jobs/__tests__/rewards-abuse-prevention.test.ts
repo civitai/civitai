@@ -103,6 +103,11 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
 });
 
 const sqlOf = () => (chQuery.mock.calls[0]?.[0] as string) ?? '';
+type DryRunReport = {
+  wouldDisable: number;
+  ipsFlagged: number;
+  sample: { ip: string; user_count: number; awarded: number; user_ids: number[] }[];
+};
 const runWith = (config: Record<string, unknown>) => {
   hGet.mockResolvedValue(JSON.stringify(config));
   return rewardsAbusePrevention.run().result;
@@ -120,19 +125,19 @@ describe('rewards-abuse-prevention — detection shape', () => {
     expect(sql).not.toContain('user_count <=');
   });
 
-  it('matches a whole award family by prefix', async () => {
+  it('emits a startsWith clause for each award-family prefix', async () => {
     await runWith({ award_types: [], award_type_prefixes: ['encouragement:'] });
 
     expect(sqlOf()).toContain("startsWith(be.type, 'encouragement:')");
   });
 
-  it('matches nothing rather than everything when both type lists are empty', async () => {
+  it('emits an always-false predicate rather than none when both type lists are empty', async () => {
     await runWith({ award_types: [], award_type_prefixes: [] });
 
     expect(sqlOf()).toContain('1 = 0');
   });
 
-  it('requires the IP to carry no other earning users when exclusivity is on', async () => {
+  it('emits the exclusivity aggregates and having-clause when exclusivity is on', async () => {
     await runWith({
       require_exclusive_ip: true,
       award_types: [],
@@ -147,7 +152,7 @@ describe('rewards-abuse-prevention — detection shape', () => {
     expect(sql).not.toContain('AND startsWith');
   });
 
-  it('caps cluster size when max_user_count is set', async () => {
+  it('emits a cluster-size ceiling when max_user_count is set', async () => {
     await runWith({ max_user_count: 5 });
 
     expect(sqlOf()).toContain('AND user_count <= 5');
@@ -156,12 +161,12 @@ describe('rewards-abuse-prevention — detection shape', () => {
   it('rejects a config value that would break out of the SQL string', async () => {
     hGet.mockResolvedValue(JSON.stringify({ award_types: ["dailyBoost') OR 1=1 --"] }));
 
-    await expect(rewardsAbusePrevention.run().result).rejects.toThrow();
+    await expect(rewardsAbusePrevention.run().result).rejects.toThrow(/SQL-significant characters/);
     expect(chQuery).not.toHaveBeenCalled();
   });
 });
 
-describe('rewards-abuse-prevention — report mode', () => {
+describe('rewards-abuse-prevention — dry run', () => {
   const abusers = [
     { ip: '203.0.113.7', user_count: 3, ip_user_count: 3, awarded: 300, user_ids: [1, 2, 3] },
   ];
@@ -169,11 +174,11 @@ describe('rewards-abuse-prevention — report mode', () => {
   it('reports what it would disable without touching a single account', async () => {
     chQuery.mockResolvedValue(abusers);
 
-    const result = await runWith({ mode: 'report', require_exclusive_ip: true });
+    const result = await runWith({ dryRun: true, require_exclusive_ip: true });
 
     expect(chQuery).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
-      mode: 'report',
+      dryRun: true,
       usersDisabled: 0,
       wouldDisable: 3,
       ipsFlagged: 1,
@@ -191,5 +196,60 @@ describe('rewards-abuse-prevention — report mode', () => {
     expect(dbQueryRawUnsafe).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ usersDisabled: 3 });
+  });
+  it('hands back the flagged clusters, not just a count', async () => {
+    chQuery.mockResolvedValue(abusers);
+
+    const result = (await runWith({ dryRun: true })) as DryRunReport;
+
+    expect(result.sample).toEqual([
+      { ip: '203.0.113.7', user_count: 3, awarded: 300, user_ids: [1, 2, 3] },
+    ]);
+  });
+
+  it('caps the sample so a wide run cannot return every cluster it found', async () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      ip: `203.0.113.${i}`,
+      user_count: 2,
+      ip_user_count: 2,
+      awarded: 200,
+      user_ids: [i * 2, i * 2 + 1],
+    }));
+    chQuery.mockResolvedValue(many);
+
+    const result = (await runWith({ dryRun: true })) as DryRunReport;
+
+    expect(result.ipsFlagged).toBe(40);
+    expect(result.sample).toHaveLength(25);
+  });
+
+  it('counts a user flagged on two IPs once', async () => {
+    chQuery.mockResolvedValue([
+      { ip: '203.0.113.7', user_count: 2, ip_user_count: 2, awarded: 200, user_ids: [1, 2] },
+      { ip: '203.0.113.8', user_count: 2, ip_user_count: 2, awarded: 200, user_ids: [2, 3] },
+    ]);
+
+    const result = (await runWith({ dryRun: true })) as DryRunReport;
+
+    expect(result.wouldDisable).toBe(3);
+  });
+});
+
+describe('rewards-abuse-prevention — scan bounds and config safety', () => {
+  it('bounds the scan on the partition-key column, not only on createdDate', async () => {
+    await runWith({});
+
+    const sql = sqlOf();
+    expect(sql).toContain('createdDate > subtractDays(now(), 1)');
+    // `createdDate` is MATERIALIZED and prunes nothing; without this the scan reads the
+    // whole table rather than the window it claims to.
+    expect(sql).toContain('time > subtractDays(now(), 3)');
+  });
+
+  it('rejects an excluded IP that would break out of the SQL string', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ excludedIps: ["1.1.1.1') OR 1=1 --"] }));
+
+    await expect(rewardsAbusePrevention.run().result).rejects.toThrow(/SQL-significant characters/);
+    expect(chQuery).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,11 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const REPORT_SAMPLE_SIZE = 25;
 
+// `createdDate` is MATERIALIZED, so it prunes no partitions and the scan reads the whole table.
+// `time` is what the partition key is built from; a bound wide enough to sit outside the
+// createdDate window prunes without being able to change which rows match.
+const DATE_BOUND_SLACK_DAYS = 3;
+
 export const rewardsAbusePrevention = createJob(
   'rewards-abuse-prevention',
   '0 3 * * *',
@@ -63,6 +68,7 @@ export const rewardsAbusePrevention = createJob(
         array_agg(distinct be.toUserId) as user_ids
       FROM buzzEvents be
       WHERE createdDate > subtractDays(now(), 1)
+      AND time > subtractDays(now(), ${DATE_BOUND_SLACK_DAYS})
       ${exclusivity.where}
       AND ip NOT IN (${excludedIps})
       AND awardAmount > 0
@@ -78,11 +84,11 @@ export const rewardsAbusePrevention = createJob(
 
     const usersToDisable = abusers?.map((abuser) => abuser.user_ids).flat() ?? [];
 
-    if (abuseLimits.mode === 'report') {
+    if (abuseLimits.dryRun) {
       return {
-        mode: 'report' as const,
+        dryRun: true as const,
         usersDisabled: 0,
-        wouldDisable: usersToDisable.length,
+        wouldDisable: new Set(usersToDisable).size,
         ipsFlagged: abusers?.length ?? 0,
         sample:
           abusers?.slice(0, REPORT_SAMPLE_SIZE).map(({ ip, user_count, awarded, user_ids }) => ({
@@ -166,7 +172,7 @@ const abuseLimitsSchema = z.object({
   user_count: z.number().default(10),
   max_user_count: z.number().optional(),
   require_exclusive_ip: z.boolean().default(false),
-  mode: z.enum(['enforce', 'report']).default('enforce'),
+  dryRun: z.boolean().default(false),
   excludedIps: sqlSafeToken.array().default(['1.1.1.1', '']), // "10.124.0.14","10.124.0.17","10.124.0.32","10.124.0.70","10.124.0.84","10.124.0.94"
   award_types: sqlSafeToken.array().default(['dailyBoost']),
   award_type_prefixes: sqlSafeToken.array().default([]),
