@@ -105,8 +105,8 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
-  scanFailed: boolean;
-  scanNotFound: boolean;
+  isScanFailed: boolean;
+  isScanNotFound: boolean;
   canAdd: boolean;
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
@@ -205,8 +205,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
-  const scanFailed = ingestion === ImageIngestionStatus.Error;
-  const scanNotFound = ingestion === ImageIngestionStatus.NotFound;
+  const isScanFailed = ingestion === ImageIngestionStatus.Error;
+  const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
   const canAdd = canAddFunc(type, meta);
@@ -301,8 +301,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
-        scanFailed,
-        scanNotFound,
+        isScanFailed,
+        isScanNotFound,
         canAdd,
         otherImages,
         allowedResources,
@@ -613,8 +613,8 @@ function EditDetail() {
     isBlocked,
     isPending,
     isScanned,
-    scanFailed,
-    scanNotFound,
+    isScanFailed,
+    isScanNotFound,
     onEditMetaClick,
     isDeleting,
     isUpdating,
@@ -1152,7 +1152,7 @@ function EditDetail() {
             </Text>
           </Alert>
         )}
-        {scanFailed && (
+        {isScanFailed && (
           <Alert
             color="red"
             w="100%"
@@ -1167,7 +1167,7 @@ function EditDetail() {
             </Text>
           </Alert>
         )}
-        {scanNotFound && (
+        {isScanNotFound && (
           <Alert
             color="red"
             w="100%"

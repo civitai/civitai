@@ -464,10 +464,10 @@ export async function processImageScanWorkflow({
 }
 
 /**
- * Push the resolved ingestion state to the uploader's open editor. Every terminal
- * state has to send: the editor renders Pending as an in-progress spinner, so an
- * image that stops at Error or NotFound without a signal sits there claiming to be
- * analyzing until the page is reloaded.
+ * Push the resolved ingestion state to the uploader's open editor. The editor renders
+ * Pending as an in-progress spinner, so any state that LEAVES Pending has to send —
+ * Error included, retryable though it is — or the card goes on claiming to analyze
+ * until the page is reloaded.
  */
 async function sendIngestionSignal({
   imageId,
