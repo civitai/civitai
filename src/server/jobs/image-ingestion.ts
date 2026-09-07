@@ -489,15 +489,25 @@ const CSAM_HOLD_MAX_DAYS = 30;
  * Both values are `ModActivity.activity` rows written against `entityType = 'image'`. Enumerated
  * over every `trackModActivity`/`recordModActivity` call in `src` and `apps` that carries
  * `entityType: 'image'`, the complete vocabulary is:
- *   'review'        — `handleAcceptImages` and `handleBlockImages` (image.service),
+ *   'review'        — `handleUnblockImages` and `handleBlockImages` (image.service),
  *                     `setTosViolationHandler` (image.controller), `acceptImage` and `blockImage`
  *                     (moderator app), `/api/mod/unblock-images`. Every one of them writes one row
  *                     per NAMED image id — several of them take a list, but none of them stands in
  *                     for a set it was never handed. Three of the six are the un-block direction,
  *                     which is why the timestamp comparison at the call site is load-bearing and
- *                     not decoration: an accept or unblock leaves the row not-Blocked, so it
- *                     cannot be in this batch at all unless something re-blocked it afterwards,
- *                     and then the activity predates that re-block.
+ *                     not decoration — and it is worth being exact about what that comparison
+ *                     does, because the obvious reading of it is wrong. It compares the activity
+ *                     against the QUEUE ROW's `createdAt`, not against the re-block, and
+ *                     `create_job_queue_record` is `ON CONFLICT DO NOTHING`: a queue row that
+ *                     survives an un-block keeps the FIRST block's timestamp, so an un-block dated
+ *                     after it reads as a takedown. What actually closes that for most of the
+ *                     un-block direction is the writers dropping the queue row —
+ *                     `handleUnblockImages` and `/api/mod/unblock-images` both call
+ *                     `dropBlockedImageDeleteQueue`, leaving nothing to compare against. The
+ *                     moderator app's `acceptImage` does not, so accept followed by an automated
+ *                     re-block inside one hourly run is a real (bounded) window in which an
+ *                     un-block licenses retraction. Listed as accepted imprecision in the
+ *                     ── WHERE THIS IS DELIBERATELY IMPRECISE ── note at the split below.
  *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
  *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
  *                     NO per-image row, by its own design; that is what keeps a library-wide block
@@ -713,15 +723,28 @@ export const removeBlockedImages = createJob(
     //   • `recordModActivity` in the moderator app is best-effort and swallows its own failures,
     //     and `trackModActivity` is `ON CONFLICT DO NOTHING`. A block whose activity row failed
     //     to land is deleted without retraction.
+    //     🔴 That second clause is a claim about a database that still carries ModActivity's
+    //     (activity, entityType, entityId) unique index, and PRODUCTION no longer does — the
+    //     `20260805120000_mod_activity_append_only` migration has been applied there, so the
+    //     targetless `ON CONFLICT DO NOTHING` suppresses nothing and a repeat takedown always
+    //     gets its own row. `containers/db/docker-init/02_all_dll.sql` still CREATES that index,
+    //     so a database built from the local dump diverges from production on exactly this
+    //     behaviour: reproducing a "the second takedown did not retract" report locally can show
+    //     a suppression that cannot happen in production. The comment on `trackModActivity` in
+    //     `src/server/services/moderator.service.ts` says the same thing about the clause itself.
     //   • Rows queued before this shipped keep their old queue `createdAt`. For anything the
     //     2026-08-06 completeness migration backfilled, that timestamp is the migration's own and
     //     is therefore later than any moderator activity on those images, so none of them retract.
     // Toward RETRACTING (a non-takedown that does): an image blocked by automation, unblocked by
     //   a moderator (a `review` row), then re-blocked by automation, all inside one retention
     //   window — the surviving queue row still carries the FIRST block's timestamp, so the
-    //   moderator's unblock dates after it and reads as a takedown. Closing that needs `review`
-    //   split into distinct block/unblock activities, which is a change to the mod audit
-    //   vocabulary the account-history panel buckets on; not done here.
+    //   moderator's unblock dates after it and reads as a takedown. It needs a queue row to
+    //   survive the un-block, which narrows it to ONE writer: the moderator app's `acceptImage`
+    //   is the only un-block path that does not call `dropBlockedImageDeleteQueue`
+    //   (`handleUnblockImages` and `/api/mod/unblock-images` both do, and a dropped row cannot be
+    //   compared against). Closing it properly needs `review` split into distinct block/unblock
+    //   activities, which is a change to the mod audit vocabulary the account-history panel
+    //   buckets on; not done here.
     //
     // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
     // own picture, a replaced image being reaped, an account being drained in `immediate` mode and

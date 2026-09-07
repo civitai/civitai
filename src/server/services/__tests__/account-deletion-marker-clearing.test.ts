@@ -11,9 +11,13 @@ import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image
  * makes this worth a guard: self-delete with the 7-day grace option marks every image, a report
  * lands on day 3, a moderator blocks, the account is later restored.
  *
- * Every moderation block therefore strips both keys. The main app's sites do it through
- * `clearAccountDeletionImageMarkers`, and their behaviour is pinned in
- * `src/server/jobs/__tests__/blob-retraction-writer-reachability.test.ts`.
+ * Every moderation block therefore strips both keys. The main app's three sites do it through
+ * `clearAccountDeletionImageMarkers`, and `src/server/jobs/__tests__/blob-retraction-writer-reachability.test.ts`
+ * drives each of them and asserts the breadcrumb is gone afterwards: `handleBlockImages`
+ * (image.service), `setTosViolationHandler` (image.controller) and `softDeleteUser`
+ * (user.service). The same file pins the SCOPE of the fourth main-app case, `toggleBan`'s
+ * remove-all-media branch, in both directions — the rows its UPDATE blocked lose the breadcrumb,
+ * the rows the grace pass had already blocked keep it.
  *
  * 🔴 This file exists for the site that CANNOT share that helper: `apps/moderator` is a separate
  * SvelteKit app that does not import the main app's `src/`, so it re-declares the two key strings
@@ -65,18 +69,37 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
     }
   });
 
-  it('strips both keys on the block write itself', () => {
+  /**
+   * `blockImage` writes `metadata` through a TERNARY on `needsReview === 'remixSource'`, and the
+   * two arms spell the subject of the strip differently: the remixSource arm has to `COALESCE`
+   * the column (it appends a stamp with `||`, which NULL-propagates), the other arm does not.
+   * A guard that pins one literal covers ONE arm — removing the strip from the other leaves it
+   * green, which is what happened until this was widened. Each arm is asserted separately so a
+   * failure names which one lost it.
+   *
+   * The two patterns cannot satisfy each other: in the remixSource arm the character after
+   * `"metadata"` is a comma, so the bare-subject pattern below cannot match it.
+   */
+  const STRIP_KEYS =
+    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_INGESTION_KEY\}::text` +
+    String.raw`\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY\}::text`;
+  const BRANCHES = [
+    ['remixSource', String.raw`COALESCE\("metadata",\s*'\{\}'::jsonb\)`],
+    ['every other', String.raw`"metadata"`],
+  ] as const;
+
+  it('strips both keys on the block write itself, in both metadata branches', () => {
     const body = blockImageBody(source());
     // The `-` operator, applied to both keys, inside the statement that sets `ingestion: 'Blocked'`.
     // Asserting the operator and not just the names is what separates "the block removes them"
     // from "the block happens to mention them".
     expect(body.includes("ingestion: 'Blocked'"), 'blockImage no longer blocks').toBe(true);
-    expect(
-      /"metadata"\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_INGESTION_KEY\}::text\s*-\s*\$\{ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY\}::text/.test(
-        body
-      ),
-      'the moderator app block no longer removes both breadcrumbs from metadata, so a later ' +
-        'account restore can un-block content it hid'
-    ).toBe(true);
+    for (const [label, subject] of BRANCHES) {
+      expect(
+        new RegExp(subject + STRIP_KEYS).test(body),
+        `the ${label} branch of blockImage's metadata write no longer removes both breadcrumbs, ` +
+          'so a later account restore can un-block content it hid'
+      ).toBe(true);
+    }
   });
 });
