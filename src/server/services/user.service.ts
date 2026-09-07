@@ -76,6 +76,7 @@ import {
   disarmAccountDeletionImagePurge,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImageById } from '~/server/services/image.service';
 import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
@@ -1329,6 +1330,10 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
       blockedFor: BlockedReason.CSAM,
     },
   });
+  // A CSAM block outranks an account-deletion grace block. If this account had already
+  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
+  // later restore would un-block CSAM-blocked content.
+  await clearAccountDeletionImageMarkers({ userId: id });
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1997,6 +2002,10 @@ export const toggleBan = async ({
             blockedFor: BlockedReason.Moderated,
           },
         });
+        // Same reasoning as the CSAM block in `softDeleteUser`: a ban outranks a grace block, so
+        // the restore breadcrumbs come off rather than being left for a later account restore to
+        // act on. Scoped to the account, because the ids of what was just blocked are not returned.
+        await clearAccountDeletionImageMarkers({ userId: id });
       } catch (error) {
         logToAxiom({
           type: 'error',

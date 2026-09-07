@@ -165,6 +165,7 @@ import {
   queueComicsForPanelImages,
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -940,6 +941,14 @@ export async function handleBlockImages({
       // pre-block (visible) state.
       queueComicsForPanelImages(ids),
     ]);
+    // A moderator block outranks an account-deletion grace block: left on, a later account restore
+    // would read the grace breadcrumbs and un-block what was just moderated. See
+    // `clearAccountDeletionImageMarkers`.
+    //
+    // Sequenced AFTER the batch above rather than joining it: both statements UPDATE the same rows
+    // by id, and two concurrent row-lock acquisitions over one id set are how you buy a deadlock
+    // for nothing. Nothing here depends on the order, so it costs a round trip and no risk.
+    await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
