@@ -318,6 +318,9 @@ export async function processImageScanWorkflow({
   // widening this catch past it would overwrite a verdict that already landed.
   let image: ScanImage;
   let outcome: Awaited<ReturnType<typeof resolveScanOutcome>>;
+  // blockImageFromRating lands a verdict partway through the block below, so the
+  // catch has to know whether one is already on the row.
+  let hardBlocked = false;
   try {
     const pHash = computePerceptualHash(mediaHash?.hashes?.perceptual);
 
@@ -327,6 +330,7 @@ export async function processImageScanWorkflow({
     // The orchestrator content rating can hard-block the image outright.
     if (mediaRating.isBlocked) {
       await blockImageFromRating({ imageId, pHash, blockedReason: mediaRating.blockedReason });
+      hardBlocked = true;
     }
 
     image = await loadImageForScan(imageId);
@@ -355,6 +359,27 @@ export async function processImageScanWorkflow({
     if (error instanceof Error && error.message.startsWith('image not found')) throw error;
 
     const reason = error instanceof Error ? error.message : 'Unknown error';
+    // Marking Error here would un-block a hard-blocked image and hand it back to the
+    // retry pipeline. The verdict stands; only the tagging and side-effect work is lost.
+    if (hardBlocked) {
+      logToAxiom(
+        {
+          name: 'image-scan-result',
+          type: 'error',
+          message: 'failed to process a workflow after its rating hard-blocked the image',
+          source: 'image-scan-result.service',
+          stack: error instanceof Error ? error.stack : undefined,
+          reason,
+          imageId,
+          workflowId,
+          status,
+        },
+        'webhooks'
+      ).catch(() => null);
+      if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
+      return;
+    }
+
     const { retryCount, mediaType, failureClass } = await markImageScanError({
       workflowId,
       imageId,

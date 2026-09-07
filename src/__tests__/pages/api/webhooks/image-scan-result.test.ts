@@ -636,6 +636,47 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(stamped).toBeDefined();
     });
 
+    it('leaves a hard-blocked image Blocked rather than flipping it back to Error', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        if (strings.join('').includes('INSERT INTO "Tag"'))
+          throw new Error('Raw query failed. Code: `23502`.');
+        return passthrough(query, ...values);
+      });
+
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-blocked-then-failing',
+          status: 'succeeded',
+          imageId: 13,
+          steps: [
+            {
+              $type: 'wdTagging',
+              output: { tags: { 'a tag that cannot be created': 0.9 }, rating: { general: 0.9 } },
+            },
+            {
+              $type: 'mediaRating',
+              output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+            },
+          ] as any,
+        })
+      ).resolves.toBeUndefined();
+
+      // blockImageFromRating already persisted Blocked. markImageScanError is
+      // unconditional, so running it here would un-block the image.
+      const blocked = mockDbWrite.image.updateMany.mock.calls.find(
+        (call: any) => call[0].where.id === 13
+      );
+      expect(blocked?.[0].data.ingestion).toBe(ImageIngestionStatus.Blocked);
+
+      const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
+        const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
+        return strings.join('').includes("'{retryCount}'");
+      });
+      expect(errorFlips).toHaveLength(0);
+    });
+
     it('still surfaces a deleted image so the webhook can ACK it as skipped', async () => {
       mockDbWrite.image.findUnique.mockResolvedValue(null);
 
