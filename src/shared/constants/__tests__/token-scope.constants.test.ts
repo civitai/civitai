@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  TokenScope,
-  ALL_SCOPES,
-  tokenScopeLabels,
-} from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES, tokenScopeLabels } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
 describe('TokenScope constants', () => {
@@ -21,18 +17,31 @@ describe('TokenScope constants', () => {
     expect(Flags.hasFlag(TokenScope.Full, TokenScope.AppBlocksSubmit)).toBe(false);
   });
 
-  it('ALL_SCOPES includes every defined bit, including the opt-in App Blocks scopes', () => {
+  it('ALL_SCOPES includes every defined bit, including the opt-in scopes', () => {
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppBlocksSubmit)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppBlocksDevTunnel)).toBe(true);
+    expect(Flags.hasFlag(ALL_SCOPES, TokenScope.LinkConnect)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.UserRead)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.VaultWrite)).toBe(true);
-    // ALL_SCOPES = Full | the opt-in bits NOT folded into Full. AppBlocksDevTunnel
-    // (bit 26, 67108864) was added beyond AppBlocksSubmit (bit 25), so ALL_SCOPES
-    // is now the OR of bits 0..26 = (1 << 27) - 1.
+    // ALL_SCOPES = Full | the opt-in bits NOT folded into Full: AppBlocksSubmit (25),
+    // AppBlocksDevTunnel (26) and LinkConnect (27).
     expect(ALL_SCOPES).toBe(
-      TokenScope.Full | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel
+      TokenScope.Full |
+        TokenScope.AppBlocksSubmit |
+        TokenScope.AppBlocksDevTunnel |
+        TokenScope.LinkConnect
     );
-    expect(ALL_SCOPES).toBe(134217727); // (1 << 27) - 1
+    expect(ALL_SCOPES).toBe(268435455); // (1 << 28) - 1
+  });
+
+  it('the Civitai Link desktop grant is UserRead|VaultRead|VaultWrite|LinkConnect = 159383553', () => {
+    const linkScope =
+      TokenScope.UserRead | TokenScope.VaultRead | TokenScope.VaultWrite | TokenScope.LinkConnect;
+    expect(linkScope).toBe(159383553);
+    // Exceeds Full, so the OAuth bound checks must use ALL_SCOPES — same reason as the CLI grant.
+    expect(linkScope > TokenScope.Full).toBe(true);
+    expect(linkScope <= ALL_SCOPES).toBe(true);
+    expect(Flags.hasFlag(TokenScope.Full, TokenScope.LinkConnect)).toBe(false);
   });
 
   it('a UserRead|AppBlocksSubmit token (the civitai-cli scope) is within ALL_SCOPES but exceeds Full', () => {

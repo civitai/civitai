@@ -170,6 +170,25 @@ export const ActionType = [
   // (src/server/clickhouse/migrations/2026-08-21-feed-tag-bar-action.sql) must be
   // applied to prod BEFORE this deploys, or the bar ships blind.
   'Feed_TagBar_Click',
+  // Creator announcement analytics. Same Enum16 hazard as the line above: the widening
+  // migration (src/server/clickhouse/migrations/2026-09-04-announcement-click-action.sql)
+  // must be applied to prod BEFORE this deploys, or the Creator Studio page reads a
+  // permanent zero that looks exactly like "nobody clicked".
+  'Announcement_Click',
+  'Announcement_Mute',
+  'Announcement_Unmute',
+  // App store "plays" — one row per on-site app LAUNCH, emitted from the
+  // `/apps/run/<slug>` SSR resolver. Same Enum16 hazard as the two blocks above: the
+  // widening migration (src/server/clickhouse/migrations/2026-09-05-app-open-action.sql)
+  // must be applied to prod BEFORE this deploys, or the store's play count reads a
+  // permanent zero that looks exactly like "nobody opened it".
+  //
+  // 🔴 SERVER-ONLY, AND THAT IS THE WHOLE POINT OF THE TYPE. It is deliberately absent
+  // from `trackActionSchema` (see the note there), following `BuzzLimit_Set` and the
+  // announcement mute pair: that schema is what `/api/track/batch` accepts from a
+  // browser, so a client arm would let anyone inflate any app's play count by POSTing.
+  // A number printed on a public store card has to be one a script cannot manufacture.
+  'App_Open',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -591,13 +610,21 @@ export class Tracker {
     });
   }
 
-  public action(values: { type: ActionType; details?: any }) {
+  // `skipActorMeta` drops `ip` and `userAgent`, keeping only `userId`. Reach for it when the
+  // event records a private judgement rather than an interaction: `actions` has no TTL, so a
+  // row outlives the state that produced it and an IP-stamped record of who disliked whom is
+  // not what a reversible, private product control should leave behind.
+  public action(values: { type: ActionType; details?: any }, options?: { skipActorMeta: boolean }) {
     const { details, ...rest } = values;
-    return this.track('actions', {
-      ...rest,
-      details:
-        details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
-    });
+    return this.track(
+      'actions',
+      {
+        ...rest,
+        details:
+          details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
+      },
+      options
+    );
   }
 
   public activity(activity: string) {

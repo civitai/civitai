@@ -88,8 +88,11 @@ function reviewKey(appListingId: string, userId: number) {
 // 🔴 "No recompute" is a TWO-SIDED contract, not a property of this file. The
 // `app_listing_metrics` row is ALSO written by the metric processor
 // (`src/server/metrics/appListing.metrics.sql.ts`), which deliberately names only
-// `install_count` in its INSERT and ON CONFLICT lists so a row created here
-// survives the rollup untouched. Each side pins the other:
+// `install_count` / `open_count` in its INSERT and ON CONFLICT lists so a row
+// created here survives the rollup untouched. Both of those counters are FULL
+// RECOMPUTES (installs from `block_user_subscriptions`, plays from the ClickHouse
+// `App_Open` event stream) — which is what makes that side a legal writer under
+// the last line of this paragraph. Each side pins the other:
 //   - that side is pinned by `src/server/metrics/__tests__/appListing.metrics.test.ts`
 //     ("NEVER writes thumbs_up_count / thumbs_down_count");
 //   - this side is pinned by the writer-set ledger in

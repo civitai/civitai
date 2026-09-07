@@ -1,7 +1,8 @@
 # Paid Model Loading — implementation checklist
 
 Companion to [paid-model-loading.md](paid-model-loading.md), which holds the contract and the
-decisions. This file is the order of work and the state of it.
+decisions, and [paid-model-loading-build-plan.md](paid-model-loading-build-plan.md), which is the
+inventory of files, procedures, pages and components. This file is the state of the work.
 
 ClickUp ids are the C-numbers from the 2026-08-18 lab call. Items with no C-number are gaps found
 while reading the contract and the code; they have no ClickUp task and no owner yet.
@@ -10,17 +11,18 @@ while reading the contract and the code; they have no ClickUp task and no owner 
 
 ## Phase 0 — resolve before writing site code
 
-Nothing in Phase 1 onward is safe to start until these land. Two are decisions, one is a fact
-check.
+Nothing in Phase 1 onward is safe to start until these land. All four are decisions — the
+orchestrator questions are answered and recorded below.
 
 - [ ] **C14 — decide: standalone demo client, mod-only launch, or straight into the platform.**
       Justin owns it. Gates C5–C8. ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
       *Closes when:* Justin states the choice in the task.
-- [ ] **Confirm `GET /v2/resources?view=queue` is live in the deployed orchestrator.** The SDK
-      (`0.2.0-beta.98`) has `ResourceView.QUEUE` and `queryResources`; the call recorded it as
-      unbuilt. Ask Koen. This is a five-minute question that changes whether C8 is blocked.
-      *Closes when:* a call against the deployed orchestrator returns 200, or Koen says it is not
-      deployed.
+- [ ] 🔴 **Decide what we can honestly sell, given the 48-hour guarantee is not implemented.**
+      Verified against deployed orchestrator source: nothing pins a prepared resource, so a paid
+      load buys a download and then ordinary eviction. Either Koen builds retention (`PinModelJob`
+      looks like the intended primitive, but nothing creates one), or the surfaces stop saying
+      "48 hours". See [Orchestrator state](#orchestrator-state--verified-against-source).
+      *Closes when:* residency exists, or the copy is rewritten to promise only a load.
 - [ ] **Decide "select any model", and decide it as two questions.** `GenerationCoverage` is a
       **view**, not a flag. LoRAs/TI/VAE/LoCon/DoRA are already covered once licensed and scanned —
       they are merely not resident, which is the thing paid loading fixes, and need **no view
@@ -38,9 +40,10 @@ check.
 
 Not blocking site work, but blocking **launch**:
 
-- [ ] **C2 — pricing by model size, and enable charging.** Koen. Loading is free today; no site
-      surface may reach production before this.
-      ([868ktt57p](https://app.clickup.com/t/868ktt57p))
+- [ ] **C2 — pricing by model size, and enable charging.** Koen.
+      ([868ktt57p](https://app.clickup.com/t/868ktt57p)) Verified: this is not a toggle —
+      `PrepareResourceHandler.CalculateCost` returns a hardcoded zero, so the pricing function has
+      to be written. Until then `whatif` returns 0 and the CTA has no number.
 
 Already done, verified:
 
@@ -79,13 +82,19 @@ against a real download.
       the site does not.
   - [ ] 🔴 call `assertWorkflowOwner` on the result — the `no-unguarded-billable-submit` guard
         fails otherwise, and this feature is literally the case its docstring describes
-  - [ ] price the CTA from a `whatIf` submit, not a site-side size→price table
+  - [ ] price the CTA from a `whatIf` submit, not a site-side size→price table — blocked on C2,
+        since `whatif` returns zero today
   - [ ] refuse when `status === 'unsupported'`
+  - [ ] surface the orchestrator's own `CanGenerate` rejection cleanly — `PrepareResourceInput`
+        throws a ValidationException before any charge
   - [ ] refuse (without charging) when already `available`
   - [ ] refuse when the model lacks a `RentCivit` licence (see Phase 0)
-  - [ ] decide the concurrent-purchase behaviour — two users, same model, same moment
 - [ ] **C10 — per-tier daily rate limits.** ([868ktt5aq](https://app.clickup.com/t/868ktt5aq))
-  - [ ] four `rateLimit()` entries with `userReq` tier predicates, `period` = 1 day
+  - [ ] 🔴 the free row must be an **unconditional catch-all**, and `founder` needs its own row —
+        `userTiers` is `[free, founder, bronze, silver, gold]`, and a tier matching no row gets
+        **no limit at all**, not the strictest one
+  - [ ] see [the build plan](paid-model-loading-build-plan.md#2-server--the-trpc-surface) for the
+        exact `rateLimit()` shape
   - [ ] apply the **same `sharedKey`** on the generation submit path, or the implicit
         prepare-via-txt2img route bypasses the cap entirely
   - [ ] `onlyCountSuccess: true`, so a refused purchase does not burn a slot
@@ -122,7 +131,9 @@ the platform second.
 - [ ] **C8 — queue page.** ([868ktt59y](https://app.clickup.com/t/868ktt59y))
   - [ ] reads `queryResources({ view: 'queue' })`, polled
   - [ ] signal subscriptions only for the items *this* user is waiting on
-  - [ ] flatten per-provider ranks into one 1..n list; it is a ranking, not a position
+  - [ ] ranking across providers is already done server-side — do not rebuild it
+  - [ ] ⚠️ the cursor is an integer offset over a live re-ranked list, so paging is unstable; keep
+        `take` small (each item costs two grain calls server-side)
 - [ ] **C9 — notification on load complete.** ([868ktt5aj](https://app.clickup.com/t/868ktt5aj))
   - [ ] goes to the purchaser **and** to everyone who pressed subscribe on C5
   - [ ] needs a `NotificationCategory` and a settings entry — the
@@ -146,6 +157,83 @@ the platform second.
 
 ---
 
+## Orchestrator state — verified against source
+
+Read directly from the orchestrator repo (`civitai-orchestration`, `main` at `9306e7333`), not from
+the SDK. This section supersedes a list of questions that turned out to be answerable ourselves.
+
+**This commit is deployed**, so everything below marked as built is live.
+
+### Built and working
+
+| Thing | State |
+| --- | --- |
+| `GET /v2/resources?view=queue` | **Implemented** (`ResourcesController.QueryAsync`). Merges every enabled provider's queue, de-dupes by AIR, ranks, and pages. One unreachable provider degrades to empty rather than failing the call. So Justin's "flatten the per-provider ranks into one 1..n list" is already done server-side — we do not build it. |
+| `GET /v2/resources/{air}` | **Implemented**, stitches `availability` onto `ResourceInfo` at the controller and is response-cached per resource. |
+| Four availability states | Confirmed exactly as the SDK types say (`ResourceAvailability.cs`), including `queuePosition` living only on `unavailable`. |
+| `prepareResource` as a **workflow step** | **It exists** — `PrepareResourceStep`, with a handler, a `PrepareResourceJob`, and lifecycle validation. Marked `[Preview]`. It is not recipe-only, so the call's signal design holds. |
+| Progress events | **They exist**, and `step:*` already receives them — see below. |
+| Insta-success when already resident | The handler checks availability and emits no job if the resource is `available`. A duplicate prepare is therefore free and instant. |
+
+### Progress events — resolved, and better than the SDK suggests
+
+A step stuck on a download publishes a `WorkflowStepEvent` carrying
+`Preparation { Resource, QueuePosition, Progress, EtaSeconds }` — the exact payload the UI needs.
+
+- Refresh interval is **10 seconds** (`PreparationRefreshInterval`), which is where the call's
+  "every 10 seconds" comes from. The comment explains why tighter is pointless: workers report
+  resource costs at roughly that rate anyway.
+- Publishing is **deduplicated on change**, at 1% progress granularity
+  (`PreparationProgressPublishThreshold = 0.01`), so a full download costs at most ~100 events.
+- The gating rule is "the least-progressed job gates the step".
+
+🔴 **`step:preparing` is deliberately hidden from the OpenAPI enum.**
+`WorkflowCallbackSchemaFilter` explicitly removes `preparing` and `scheduled` from the advertised
+values, which is why the generated SDK union lists only lifecycle transitions and why this looked
+like a missing feature. It is not missing — it is unadvertised.
+
+**Subscribe with `step:*`, which matches every status including `Preparing`** — the dispatch test is
+`x.EventType is null || x.EventType == @event.Status`. `getOrchestratorCallbacks` already uses
+`step:*`, so generation receives these today.
+
+### Not built — and one of them is the product
+
+| Gap | Consequence |
+| --- | --- |
+| 🔴 **The 48-hour residency guarantee does not exist.** `PrepareResourceJob` downloads the model and ends; the copy is then subject to ordinary worker eviction like any other. The one primitive that looks intended for it — **`PinModelJob`** — is defined and has a `PushWorkerHandler` handler, but **nothing in the repo creates one**, and `PrepareResourceHandler` does not issue it. | This is the thing being sold. Without it, a paid load buys a download and no residency at all. **Nothing on the site should promise 48 hours until this exists.** |
+| 🔴 **Cost is hardcoded to zero.** `PrepareResourceHandler.CalculateCost` returns `{ Factors = [], Fixed = [] }`, and its own comment says both collections empty is what short-circuits to a zero cost. | C2 is not a config toggle — the size-scaled pricing function has not been written. `?whatif=true` today returns **zero**, not a price, so the CTA has no number to show. |
+
+### Site-relevant details worth knowing
+
+- **The queue cursor is an integer offset, not a stable cursor.** Ranking is recomputed from live
+  provider state on every request, so items shift between pages while the queue mutates. Fine for a
+  single first page; do not build a paginated view that assumes stability.
+- `take` is clamped to **1..500**, default 100.
+- The queue call fans out `GetInfoAsync` + `GetAvailabilityAsync` **per item**. A 500-item page is
+  1,000 grain calls. Keep pages small and poll gently.
+- `PrepareResourceInput.OnInitializedAsync` **rejects a resource whose `CanGenerate` is false**,
+  with a `ValidationException`. That is the orchestrator's own coverage gate and it will refuse
+  before we ever charge — worth surfacing as a clean error rather than a 400.
+- `PrepareResourceJob` has a **24-hour** `MaxTimeout` and a 2-minute claim duration. Given ~10 KB/s
+  observed bandwidth, a large checkpoint can plausibly hit that ceiling.
+- `GET /v2/resources` requires the **Consumer** role; `DELETE` requires **Manager**. Our cache-bust
+  path already uses a system token for the delete.
+- A callback `url` is an arbitrary string, so pointing one at a signals **group**
+  (`/groups/model-version:{id}/signals/{message}`) is a site-side choice and needs nothing from the
+  orchestrator. That is how bystander subscriptions can work without a C4 endpoint.
+
+### Still worth asking Koen
+
+Deployment, concurrent prepares and the site-side rate-limit posture are all settled and no longer
+need asking. C2 (pricing) is the other open item and lives in Phase 0.
+
+- [ ] Is the 48-hour residency planned, and where? **`PinModelJob` looks like the intended
+      primitive** — it is defined and `[Preview]`, and `PushWorkerHandler` has a handler for it,
+      but nothing in the repo creates one and `PrepareResourceHandler` does not issue it. This
+      decides whether C5–C8 can say "48 hours" at all.
+- [ ] Is `step:preparing` unadvertised on purpose? `step:*` works, but if consumers are meant to
+      subscribe narrowly we should know.
+
 ## Not in v1, on the record
 
 - Pay to boost queue position — Justin expects it back if bot armies defeat the rate limits.
@@ -161,4 +249,3 @@ Real work with no task and no owner. Listed so they are decided rather than disc
 
 - [ ] **Refund path** for a load that fails or never completes.
 - [ ] **48-hour residency display** — nothing shows the user when what they bought expires.
-- [ ] **Concurrent purchase** of the same resource by two users.

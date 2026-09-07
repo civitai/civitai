@@ -30,6 +30,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { AppsCardGrid } from '~/components/Apps/appsWideLayout';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
@@ -217,7 +218,9 @@ interface InstalledAppCardProps {
  * surfaces are active happens through the existing AppSettingsModal (the
  * Manage button), which already supports both scopes.
  */
-function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
+/** 🔴 EXPORTED SO ITS GEOMETRY CAN BE MEASURED — `AppsWideLayout.geometry.test.tsx`
+ *  mounts THIS card rather than a fixture copy of its markup. */
+export function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
   const { blanketPublisher, blanketViewer, pinned } = app;
   const name = app.manifest.name ?? app.blockId;
   // Any blanket sub on the app is enough to seed the Manage modal — it
@@ -355,7 +358,7 @@ function ScopeGrantsPanel() {
     return <EmptyState label="No apps installed or subscribed yet." />;
   }
   return (
-    <Stack gap="md">
+    <AppsCardGrid testId="apps-installed-grants-grid">
       {grants.map((grant) => (
         <Card key={grant.appBlockId} withBorder padding="sm" radius="md">
           <Stack gap="xs">
@@ -379,7 +382,7 @@ function ScopeGrantsPanel() {
           </Stack>
         </Card>
       ))}
-    </Stack>
+    </AppsCardGrid>
   );
 }
 
@@ -409,7 +412,10 @@ function HiddenBlocksPanel() {
   }
 
   return (
-    <Stack gap="sm">
+    /* `gap={12}` — this list was `<Stack gap="sm">`, not `md`. Carrying its own number
+       keeps `APPS_CARD_LIST_MIN_COLUMN`'s "nothing a 1440 or 1920 monitor shows changes"
+       literally true on this tab; the column ladder is identical at both gaps. */
+    <AppsCardGrid testId="apps-installed-hidden-grid" gap={12}>
       {hidden.map((block) => (
         <Card key={block.blockInstanceId} withBorder padding="sm" radius="md">
           <Group justify="space-between" wrap="nowrap" gap="md" align="center">
@@ -446,7 +452,7 @@ function HiddenBlocksPanel() {
           </Group>
         </Card>
       ))}
-    </Stack>
+    </AppsCardGrid>
   );
 }
 
@@ -530,11 +536,13 @@ export default function InstalledAppsPage() {
             ) : groupedApps.length === 0 ? (
               <EmptyState label="Nothing installed yet — browse the marketplace." />
             ) : (
-              <Stack gap="md">
+              /* A GRID, NOT A `Stack` — the 640px dead-gap fix. Rationale + the measured
+                 ladder: `APPS_CARD_LIST_MIN_COLUMN` in `~/components/Apps/appsPageWidths`. */
+              <AppsCardGrid testId="apps-installed-apps-grid">
                 {groupedApps.map((app) => (
                   <InstalledAppCard key={app.appBlockId} app={app} onManage={handleManage} />
                 ))}
-              </Stack>
+              </AppsCardGrid>
             )}
           </Tabs.Panel>
 

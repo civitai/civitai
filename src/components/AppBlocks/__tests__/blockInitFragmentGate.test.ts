@@ -192,7 +192,81 @@ describe('blockInitFragmentEnabled — the PRODUCTION allowlist', () => {
     // Pinned as a sorted array rather than `.has(...)` + `.size`: an exact
     // whole-set comparison fails on an ADDITION as well as a removal, and names
     // the offending entry in its own diff.
-    expect([...BLOCK_INIT_FRAGMENT_ALLOWLIST].sort()).toEqual(['app-requests']);
+    expect([...BLOCK_INIT_FRAGMENT_ALLOWLIST].sort()).toEqual([
+      'app-requests',
+      'custom-generators',
+      'model-benchmarking',
+      'sensei',
+    ]);
+  });
+
+  // 🔴 EACH NEW BLOCK IS ASSERTED ON ITS OWN, not covered by the `app-requests`
+  // case below. Three entries went in together, and one shared assertion would
+  // pass with any single member present — which is how a batch addition loses a
+  // member silently. Both keys and each key alone, for the same reason the
+  // `app-requests` case gives: a regression dropping one lookup branch still
+  // passes if only the combined shape is tested.
+  it.each(['custom-generators', 'model-benchmarking', 'sensei'])(
+    '🔴 enables the fast path for %s on page-run, by either key',
+    (id) => {
+      expect(blockInitFragmentEnabled({ surface: 'page-run', slug: id, blockId: id })).toBe(true);
+      expect(blockInitFragmentEnabled({ surface: 'page-run', slug: id })).toBe(true);
+      expect(blockInitFragmentEnabled({ surface: 'page-run', blockId: id })).toBe(true);
+    }
+  );
+
+  // The surface check must hold for the new entries too: allowlisting a PUBLISHED
+  // app must never reach a moderator's preview of its next UNREVIEWED submission,
+  // nor the author's dev tunnel. Paired with the page-run assertion above, which is
+  // what stops this being vacuous — the SAME id returns true on an eligible
+  // surface, so only the surface check can be producing false here.
+  it.each(['custom-generators', 'model-benchmarking', 'sensei'])(
+    '🔴 does NOT leak onto dev-tunnel or review-preview for %s',
+    (id) => {
+      for (const surface of ['dev-tunnel', 'review-preview'] as const) {
+        expect(blockInitFragmentEnabled({ surface, slug: id, blockId: id })).toBe(false);
+      }
+    }
+  );
+
+  // 🔴 The DENYLIST must still beat the widened allowlist. `playable-collections`
+  // shipped the same boot skeleton as the three above, in the same batch, and is
+  // the one block of that set which reads `location.hash` for its own routing — so
+  // it is deliberately NOT allowlisted.
+  //
+  // 🔴 THIS TEST WAS VACUOUS AS FIRST WRITTEN and the rewrite is the point. It
+  // asserted `blockInitFragmentEnabled({slug:'playable-collections'}) === false`,
+  // which passes for the WRONG REASON: that block is refused because it is not in
+  // the allowlist, not because the denylist works. Rewiring the production wrapper
+  // to pass an EMPTY denylist left it green — a guard reading as protection while
+  // providing none.
+  //
+  // What it pins now is precedence against the REAL denylist: feed a synthetic
+  // allowlist that DOES contain the block, alongside the real denylist, so the only
+  // thing that can produce `false` is the denylist check winning.
+  it('🔴 the REAL denylist beats an allowlist that contains the same block', () => {
+    expect(BLOCK_INIT_FRAGMENT_ALLOWLIST.has('playable-collections')).toBe(false);
+
+    const allowedAnyway = new Set([...BLOCK_INIT_FRAGMENT_ALLOWLIST, 'playable-collections']);
+
+    // 🔴 EACH KEY ALONE, not just the combined shape — the same rule the `it.each`
+    // above states, which the first version of THIS test broke by passing `slug`
+    // and `blockId` together. Measured: with both keys supplied, deleting EITHER
+    // denylist branch on its own left this test green, because the surviving branch
+    // still matched. Driving each key alone is what makes a single deleted branch
+    // fail here rather than only in the pre-existing per-key tests.
+    for (const args of [
+      { surface: 'page-run', slug: 'playable-collections' },
+      { surface: 'page-run', blockId: 'playable-collections' },
+      { surface: 'page-run', slug: 'playable-collections', blockId: 'playable-collections' },
+    ] as const) {
+      // Positive control: with the denylist EMPTY the same call returns true, so a
+      // false below is the denylist winning and not the surface or a missing entry.
+      expect(blockInitFragmentEnabledWith(args, allowedAnyway, new Set<string>())).toBe(true);
+      expect(
+        blockInitFragmentEnabledWith(args, allowedAnyway, BLOCK_INIT_FRAGMENT_DENYLIST)
+      ).toBe(false);
+    }
   });
 
   it('🔴 enables the fast path for app-requests on page-run', () => {

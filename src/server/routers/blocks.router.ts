@@ -7051,10 +7051,26 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * at load time.
  *
  * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
- * `whatif:true` quote and the real submit go through here, so the two can never
- * price different things and neither can be given a step the other would have
- * refused. Extracting it is what makes "estimate quotes what submit bills" a
- * property of the code rather than of two call sites staying in step.
+ * `whatif:true` quote and the real submit go through here, so neither can be
+ * given a step the other would have refused. Extracting it is what makes
+ * "estimate quotes what submit bills" a property of the code rather than of two
+ * call sites staying in step.
+ *
+ * 🔴 BUT THIS IS NO LONGER A PURE FUNCTION, SO "THE TWO CAN NEVER PRICE
+ * DIFFERENT THINGS" IS NOT THE STRUCTURAL GUARANTEE IT READS AS. The estimate
+ * (`estimateStepWorkflow`) and the submit (`submitStepWorkflow`) are SEPARATE
+ * requests, each calling this helper once. `chat-completion`'s `buildStep`
+ * emits a fresh per-submit `seed` (see its `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX`
+ * for why), so the two requests build steps that DIFFER in that field.
+ *
+ * The guarantee still holds today, but it now rests on an ORCHESTRATOR fact
+ * that nothing in this repo pins: chat-completion is priced from a token
+ * estimate and the price does not depend on the seed. **If the orchestrator
+ * ever prices a dedupe-eligible step cheaper — an obvious optimisation for a
+ * content-addressed store — the estimate would quote one seed's price and the
+ * submit reserve another's, and nothing here would go red.** Any future
+ * `buildStep` that varies a PRICED field breaks this outright. Keep
+ * per-request variation confined to fields the quote cannot see.
  */
 function buildStepOrchestratorStep(
   step: ReturnType<typeof resolveBlockStep>,

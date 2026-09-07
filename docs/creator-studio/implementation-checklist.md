@@ -51,6 +51,15 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 - [x] Content/creator section (**B4b**): reactions/followers/images/posts/profile views over time + top-images; Redis-cached
 - [x] Date-range control — 7/30/90d presets + day/week granularity (URL-driven)
 - [x] Zero-activity + unavailable empty states
+- [x] Audience tab — follower **active reach** (share of followers active in the last 30/60/100 days) +
+      follower **country** doughnut. `getFollowerReach` (`$lib/server/follower-reach.ts`) probes the new
+      `default.user_activity_rollup` (per-user last-seen + last-known country) with the creator's follower
+      ids from Postgres. Refreshed by the `user-activity-rollup` cron (`*/30`,
+      `src/server/jobs/user-activity-rollup.ts`); **DDL + backfill are hand-applied** —
+      `src/server/clickhouse/migrations/2026-09-04-user-activity-rollup.sql`, and they must land *before*
+      the job or the page deploys. Panels are suppressed under 25 followers and countries under 5
+      followers are folded into "Other" (disclosure rule, enforced server-side in `redactReach`); an empty
+      or >12h-stale rollup renders "unavailable" rather than a confident 0%.
 - *(route moved `/earnings/analytics` → `/analytics`)*
 
 ### `/settings` — Payout & settings

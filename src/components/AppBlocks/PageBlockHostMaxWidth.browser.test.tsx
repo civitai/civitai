@@ -63,6 +63,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   // down to "0 tests collected".
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -341,9 +348,10 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
     // Lower: below ~1280 the cap would be narrower than the widest ORDINARY
     // civitai content measure (Mantine `xl`, 1320 border-box / 1288 content), i.e.
     // an app would render narrower than the store page that launched it.
-    // Upper: above ~1920 (`APPS_PAGE_CONTAINER_WIDTH`) the cap would be wider than
-    // the widest first-party surface on the site and would stop being a cap at the
-    // sizes that motivated it.
+    // Upper: ~1920 is the width `APPS_PAGE_CONTAINER_WIDTH` held when this bound was
+    // chosen; that constant is now 2560 and the bound deliberately does not follow it
+    // (see `__tests__/pageBlockHostMaxWidth.test.ts` — keeping 1920 is the tighter,
+    // still-true ceiling, and the cap is 1600, nowhere near either).
     expect(hostWidth, 'at 2560x1080 the capped host is implausibly narrow').toBeGreaterThanOrEqual(
       1280
     );

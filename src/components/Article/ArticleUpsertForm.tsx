@@ -35,6 +35,7 @@ import {
   InputMultiFileUpload,
   InputMultiSelect,
   InputRTE,
+  InputSwitch,
   InputSelect,
   InputSimpleImageUpload,
   InputTags,
@@ -123,6 +124,7 @@ export function ArticleUpsertForm({ article }: Props) {
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
       lockedProperties: article?.lockedProperties ?? [],
+      isOfficial: article?.isOfficial ?? false,
     } as any,
   });
   const clearStorage = useFormStorage({
@@ -178,6 +180,7 @@ export function ArticleUpsertForm({ article }: Props) {
     userNsfwLevel,
     moderatorNsfwLevel,
     lockedProperties,
+    isOfficial,
     content,
     ...rest
   }: z.infer<typeof schema>) => {
@@ -213,6 +216,11 @@ export function ArticleUpsertForm({ article }: Props) {
           status: args?.status ? args.status : publishing ? ArticleStatus.Published : undefined,
           coverImage,
           lockedProperties: lockedPropertiesRef.current,
+          // Same shape as moderatorNsfwLevel above, and for a stronger reason: the server
+          // DROPS this field for a non-moderator rather than refusing the save, so a
+          // non-mod payload carrying it would be silently ignored. Not sending the key at
+          // all keeps the client honest about what it is asking for.
+          isOfficial: currentUser?.isModerator ? isOfficial : undefined,
         },
         {
           async onSuccess(result) {
@@ -564,11 +572,18 @@ export function ArticleUpsertForm({ article }: Props) {
             <UploadNotice className="-mt-2" />
             {currentUser?.isModerator && (
               <Paper radius="md" p="xl" withBorder>
-                <InputMultiSelect
-                  name="lockedProperties"
-                  label="Locked properties"
-                  data={lockableProperties}
-                />
+                <Stack gap="md">
+                  <InputSwitch
+                    name="isOfficial"
+                    label="Official Civitai article"
+                    description="Shows the Official badge on the card and the article page. Moderators only."
+                  />
+                  <InputMultiSelect
+                    name="lockedProperties"
+                    label="Locked properties"
+                    data={lockableProperties}
+                  />
+                </Stack>
               </Paper>
             )}
             <ActionButtons

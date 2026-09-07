@@ -185,6 +185,9 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [
+      // pnpm link: to the local checkout during the data-graph port — Turbopack
+      // won't resolve the out-of-root symlink without transpiling it
+      'form-graph',
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',

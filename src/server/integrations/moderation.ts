@@ -1,4 +1,11 @@
 import { env } from '~/env/server';
+import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
+import {
+  type ModerationVerdict,
+  policyDigest,
+  readCachedVerdict,
+  writeCachedVerdict,
+} from '~/server/integrations/moderation-verdict-cache';
 import {
   clampExternalModerationSource,
   isAbortDeadlineError,
@@ -7,6 +14,15 @@ import {
   type ExternalModerationSource,
 } from '~/server/prom/external-moderation.metrics';
 import { setActiveSpanAttributes, withSpan } from '~/server/utils/otel-helpers';
+
+/**
+ * The classifier model, named ONCE.
+ *
+ * 🔴 It is both sent in the request body and folded into the verdict cache's policy digest. Two
+ * spellings would let a cache key claim a policy the request did not actually use, which is the
+ * one way a policy-digested key can still serve a stale verdict.
+ */
+const MODERATION_MODEL = 'omni-moderation-latest';
 
 const falsePositiveTriggers = Object.entries({
   '\\d*girl': 'woman',
@@ -26,6 +42,12 @@ function removeFalsePositiveTriggers(prompt: string) {
 /**
  * Call the external prompt classifier.
  *
+ * 🔴 THE RETURN TYPE WAS WIDENED FROM `{ flagged: false }` TO `boolean` (`ModerationVerdict`), and
+ * that was a latent BUG, not a loosening. This function returns `flagged: true` whenever the
+ * classifier flags — the literal `false` only ever type-checked because `results[0].flagged` comes
+ * off an untyped `res.json()`, so `any` flowed straight past the annotation. Any consumer TS had
+ * narrowed to "never flagged" was being told something false about a moderation gate.
+ *
  * `source` is OBSERVABILITY ONLY — it selects the `source` label on
  * `civitai_app_external_moderation_duration_seconds` and changes nothing about the request, the
  * deadline or the verdict. It is optional and defaults to `other` so an undeclared caller can never
@@ -34,7 +56,7 @@ function removeFalsePositiveTriggers(prompt: string) {
 async function moderatePrompt(
   prompt: string,
   source: ExternalModerationSource = 'other'
-): Promise<{ flagged: false; categories: string[] }> {
+): Promise<ModerationVerdict> {
   // Clamp once, here, so every instrument below shares one bounded value.
   //
   // 🔴 NOT because callers build these options by spread — none do, and that rationale was fiction;
@@ -62,6 +84,51 @@ async function moderatePrompt(
   }
 
   const preparedPrompt = removeFalsePositiveTriggers(prompt);
+
+  // Dark measurement: would a verdict cache have avoided this call? Off by default, fire-and-forget,
+  // reads nothing back — the request below is issued either way. Placed HERE, on `preparedPrompt`
+  // rather than on `prompt`, because that is the exact string the classifier receives, so the digest
+  // matches what a real cache would key on. `removeFalsePositiveTriggers` is many-to-one, so probing
+  // the raw prompt instead would count two requests that produce an identical classifier call as
+  // distinct and UNDERSTATE the repeat rate.
+  //
+  // It also runs BEFORE the outcome is known, so it claims a window slot even for a call that then
+  // fails. A real cache would store only successful verdicts, so this overstates the hit rate by
+  // exactly the non-`ok` share — measured at ~0.01% in production, i.e. immaterial, but stated
+  // rather than assumed. That is the SAME DIRECTION as the coalescing effect documented on the
+  // `SET NX` in the probe module: both make the reported hit rate optimistic.
+  //
+  // ⚠️ That does NOT make the result "an upper bound", which is what this comment said for two
+  // commits. The probe also differs from a real cache on a SECOND axis — its TTL never extends on
+  // a hit — which points the other way, so the direction depends on which design you are comparing
+  // against. The three cases are enumerated on the `SET NX` note in the probe module; read them
+  // there rather than carrying a direction away from here.
+  probeModerationCacheRepeat(metricSource, preparedPrompt);
+
+  // Read-through verdict cache. OFF unless BOTH EXTERNAL_MODERATION_CACHE_NAMESPACE names an
+  // allowlisted deployment AND EXTERNAL_MODERATION_CACHE_TTL_SECONDS is positive.
+  //
+  // 🔴 PLACED AFTER THE PROBE ON PURPOSE. The probe measures how often this exact string RECURS, and
+  // that is a property of the traffic, not of whether we happened to answer from cache. Returning
+  // before it would make the probe count only cache misses and silently understate the very rate it
+  // exists to report — so if the probe is ever re-armed alongside the cache, the two measure
+  // different things and both stay honest.
+  //
+  // 🔴 THE POLICY DIGEST IS COMPUTED FROM THE SAME VALUES THE VERDICT IS DERIVED FROM BELOW, and
+  // the model literal is shared with the request body via MODERATION_MODEL rather than written
+  // twice — two spellings of the model would let the key claim a policy the request did not use.
+  const policy = policyDigest(
+    MODERATION_MODEL,
+    env.EXTERNAL_MODERATION_THRESHOLD,
+    env.EXTERNAL_MODERATION_CATEGORIES
+  );
+  const cached = await readCachedVerdict(metricSource, preparedPrompt, policy);
+  if (cached) {
+    // No histogram observation and no span: this call did not happen. Recording it would drag down
+    // the p50 of the one instrument that measures what a classifier call costs. The cache counter
+    // already recorded the hit.
+    return cached;
+  }
 
   // Wall-clock timing of the whole classifier call — the interval the generation submission actually
   // parks on. Started before the span so the observation cannot be biased by span setup, and read
@@ -92,7 +159,7 @@ async function moderatePrompt(
           },
           body: JSON.stringify({
             input: preparedPrompt,
-            model: 'omni-moderation-latest',
+            model: MODERATION_MODEL,
           }),
           signal: AbortSignal.timeout(env.EXTERNAL_MODERATION_TIMEOUT_MS),
         });
@@ -122,6 +189,10 @@ async function moderatePrompt(
         }
 
         recordOutcome(metricSource, 'ok', elapsedSeconds());
+        // Store ONLY here, on the `ok` path. A failure must cost a retry every time — see the
+        // module header on why caching one transient error would be TTL-long under-moderation.
+        // Fire-and-forget: nothing waits on the write.
+        writeCachedVerdict(preparedPrompt, policy, { flagged, categories });
         return { flagged, categories };
       } catch (e) {
         // Exactly one observation per call — here on the throw path, XOR on the resolve path above.

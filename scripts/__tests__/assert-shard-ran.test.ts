@@ -32,9 +32,26 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const SCRIPT = resolve(__dirname, '../ci/assert-shard-ran.mjs');
 
-// Kept in step with BASE_TESTS in the script. The band at N=4 is 1662..9971 around an
-// expected ~5539, so the boundary cases below are computed rather than hardcoded.
-const BASE_TESTS = 22157;
+/**
+ * 🔴 READ OUT OF THE SCRIPT, NOT RESTATED. This was `const BASE_TESTS = 22157` with a
+ * comment saying it was "kept in step with BASE_TESTS in the script" — i.e. two copies of
+ * one number, kept in step by convention. That convention broke the first time the script's
+ * copy moved: re-pinning it to 37,857 (the suite had grown past the old figure and this gate
+ * went red on `main`) left this copy at 22,157, and three of the tests below failed while
+ * the script itself was correct. A test asserting a stale constant reds the gate it exists
+ * to protect.
+ *
+ * Parsing the source rather than importing it is deliberate: the script is a CLI that reads
+ * `process.argv` and calls `process.exit` at module scope, so an `import` would execute it.
+ * The `?? throw` is the point — a rename must fail loudly here rather than silently fall
+ * back to a default and take every boundary case with it.
+ */
+const BASE_TESTS = (() => {
+  const src = readFileSync(SCRIPT, 'utf8');
+  const m = src.match(/^const BASE_TESTS = (\d+);$/m);
+  if (!m) throw new Error(`could not read BASE_TESTS out of ${SCRIPT} — was it renamed?`);
+  return Number(m[1]);
+})();
 const expectedFor = (total: number) => BASE_TESTS / total;
 const floorFor = (total: number) => Math.max(100, Math.round(expectedFor(total) * 0.3));
 const ceilingFor = (total: number) => Math.round(expectedFor(total) * 1.8);
@@ -146,10 +163,20 @@ describe('assert-shard-ran', () => {
   // 🔴 The bounds must SCALE with `total`. A count that is a healthy quarter is a collapsed
   // half and an impossible sixteenth — the same number, three verdicts.
   it('scales its band with the shard total — one count, three verdicts', () => {
-    // Bands at BASE_TESTS=22157:  N=2 3324..19941   N=4 1662..9971   N=16 415..2493
-    // 3000 is the only interesting region: inside N=4, under N=2's floor, over N=16's
-    // ceiling. Computed rather than hardcoded so it follows BASE_TESTS.
-    const count = 3000;
+    // The interesting region is above N=16's ceiling and below N=2's floor — a count that
+    // is a healthy quarter, a collapsed half and an impossible sixteenth all at once.
+    //
+    // 🔴 GENUINELY COMPUTED NOW. This read `const count = 3000` under a comment claiming it
+    // was "computed rather than hardcoded so it follows BASE_TESTS" — it did not follow it,
+    // and when BASE_TESTS moved 22,157 -> 37,857 the region slid out from under it (it
+    // became 4259..5679, leaving 3000 below N=16's ceiling) and this test failed. The
+    // comment described what the code should have done rather than what it did.
+    const lo = ceilingFor(16);
+    const hi = floorFor(2);
+    // Fail loudly if the multipliers ever close this region, rather than silently picking a
+    // midpoint that satisfies neither bound.
+    expect(hi).toBeGreaterThan(lo + 1);
+    const count = Math.round((lo + hi) / 2);
     expect(count).toBeGreaterThan(ceilingFor(16));
     expect(count).toBeLessThan(floorFor(2));
 

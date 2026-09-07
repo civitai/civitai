@@ -32,6 +32,14 @@ import {
   toHostGateStatus,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  buildCollectionFollowConsentCopy,
+  createCollectionFollowSettlement,
+  createCollectionLookupBudget,
+  resolveCollectionFollowRequest,
+  resolveCollectionIdentity,
+  type CollectionLookupBudget,
+} from './collectionFollowGate';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -311,9 +319,17 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *
  * 🔴 WHO IS ACTUALLY UNDEFENDED — enumerated, because the obvious premise ("apps
  * do not cap themselves") is only half true, and the half that is false is what
- * decides where this value sits. Across the 13 first-party App Block repos — 11
- * with a `page` surface; the other two are `model.sidebar_top` slot blocks and a
- * PAGE cap cannot reach them:
+ * decides where this value sits.
+ *
+ * ⚠️ THE CENSUS BELOW IS A CROSS-REPO READING, NOT SOMETHING THIS REPO CAN CHECK, AND
+ * NOTHING ASSERTS IT. It was taken by reading 13 separate first-party App Block repos
+ * at whatever refs they were at when the cap was chosen; no ref is recorded, no
+ * fixture reproduces it, and every number in it (13 repos, 11 page surfaces, the nine
+ * wells, median 860, max 1100) would silently rot as those repos change. Treat it as
+ * the RATIONALE that was in front of whoever picked 1600, not as a live measurement —
+ * and re-take it, recording refs, before leaning on it to move the cap. Across those
+ * 13 repos as read then — 11 with a `page` surface; the other two are
+ * `model.sidebar_top` slot blocks and a PAGE cap cannot reach them:
  *
  *   · NINE of the eleven page apps DO cap themselves, at 640 / 720 / 720 / 760 /
  *     820 / 880 / 900 / 960 / 1100 px — a hand-copied `contentStyle` well; median
@@ -339,23 +355,48 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *   1288  the widest ORDINARY civitai content measure — Mantine `xl` (1320
  *         border-box) is the widest container size in use across `src/pages`,
  *         and `APPS_TWO_COLUMN_DETAIL_MEASURE` (the store-preview page an app is
- *         usually launched FROM) is exactly it. An app capped below this would
+ *         usually launched FROM) starts there. An app capped below this would
  *         render narrower than the page that linked to it, which reads as a
  *         downgrade rather than a frame.
- *   1920  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
+ *         ⚠️ THAT CONSTANT IS NO LONGER A SINGLE NUMBER, and the sentence above used
+ *         to say "is exactly it". It is a BAND now — `{min: 1288, max: 1600}` — so on
+ *         a wide screen the store-preview page reaches 1600, which is EXACTLY this
+ *         cap rather than 312px below it. The conclusion survives (an app is never
+ *         narrower than the page that launched it) but the MARGIN this paragraph
+ *         implied is gone: at the top of that band the two are equal. If the
+ *         store-preview band is ever raised again, this cap stops being a ceiling
+ *         over it and the reasoning here has to be re-made rather than re-read.
+ *   2560  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
  *         outlier for a reason that does NOT transfer: it exists for card GRIDS
  *         and wide TABLES (`appsPageWidths.ts` records the measurements), which
  *         genuinely spend the space. An app block may be a grid, but it may just
  *         as easily be a single form, and the host cannot tell which.
+ *         ⚠️ IT WAS 1920 WHEN THIS BAND WAS CHOSEN and the ultrawide pass moved it
+ *         to 2560. The gap between the cap and the outlier therefore WIDENED, which
+ *         does not by itself justify widening the cap — see below.
  *
- * 1600 is above every ordinary content measure on the site and below the grid
- * container, i.e. no app is ever narrower than a civitai page and none is ever
- * wider than the widest first-party surface. It also clears the widest
- * app-imposed well (1100) by ~45%, so the cap can never letterbox an app that has
- * already thought about its own width, while leaving a two-pane shell like
- * Notepad or Sensei a ~1350px content pane — the case the cap exists for.
+ * 1600 is at-or-above every ordinary content measure on the site and below the grid
+ * container, i.e. no app is ever narrower than a civitai page. ⚠️ "AT-OR-ABOVE" IS THE
+ * CORRECTION: this read "above every ordinary content measure" while
+ * `APPS_TWO_COLUMN_DETAIL_MEASURE` was the fixed 1288. It is a band now, topping out at
+ * exactly 1600, so on a wide screen the store-preview page and this cap are the SAME
+ * width. The claim that matters — no app renders narrower than the page that launched it
+ * — still holds at equality; the headroom it used to have does not. It also clears the
+ * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
+ * that has already thought about its own width, while leaving a two-pane shell
+ * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
  * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
- * four, 1920 holds six).
+ * four, 2560 holds eight).
+ *
+ * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
+ * used to appear here and it is a moving target: the apps container has taken three
+ * values over time — 1600 → 1920 → 2560 — without any of them being a statement about
+ * how wide a THIRD-PARTY app should be. The cap's real justification is the two bounds above
+ * it does control — at-or-above every ordinary content measure, and comfortably clear of
+ * the widest app-imposed well — neither of which moves when the apps CONTAINER does.
+ * (The store-preview band's ceiling does sit exactly on the first of those two, so it is
+ * a bound this cap now touches rather than clears; raising that band again would invert
+ * it, and this reasoning would have to be re-made.) Widening 1600 is a separate decision with its own evidence.
  *
  * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
  * rather than after it: Playable Collections. Re-read at its DEPLOYED ref
@@ -1831,6 +1872,22 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
+  // (protectedProcedure), like resolveWildcardPack above and for the same reason:
+  // these are the SAME procedures the site's own follow button calls, so the
+  // handler self-binds to `ctx.user.id` server-side and reuses
+  // `addContributorToCollection` / `removeContributorFromCollection` verbatim.
+  // The block token is deliberately NOT involved — the point of this bridge is
+  // that a block needs no `collections:write:self` scope.
+  const followCollectionMutation = trpc.collection.follow.useMutation();
+  const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
+  // 🔴 This block instance's DISTINCT-collection-id lookup budget. A ref, not
+  // module scope and not state: per-instance (two blocks on a page cannot drain
+  // each other), reset on remount, and read synchronously inside the message
+  // handler. Lazily constructed so a render never allocates a Set it throws away.
+  // The reasoning — and the authenticated visibility oracle it closes — lives on
+  // `createCollectionLookupBudget`.
+  const collectionLookupBudgetRef = useRef<CollectionLookupBudget | null>(null);
   // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
   // so incrementing/decrementing never re-renders and the count is read
   // synchronously in the message handler (JS is single-threaded, so the
@@ -3722,6 +3779,142 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
+
+  // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
+  //
+  // A block asks the host to follow / unfollow a collection for the viewer. The
+  // decision layer is SHARED with IframeHost (`collectionFollowGate.ts`) and
+  // carries the full rationale; the two things this host contributes are its own
+  // `viewer` prop (the signed-in signal) and `reviewNack`.
+  //
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK, AND IT IS THE ONLY CONSENT THIS
+  // PATH HAS EVER HAD. The HTTP endpoint's `collections:write:self` scope is
+  // CONSENT-EXEMPT server-side, so it never prompted anyone — see the retracted
+  // claim recorded in `collectionFollowGate.ts`. This bridge therefore TIGHTENS a
+  // zero-prompt path into one prompt per action. Do not "simplify" it by calling
+  // the mutation directly, and do not delete the confirm as redundant with a
+  // scope grant that does not exist.
+  //
+  // 🔴 THE DIALOG MUST NAME THE COLLECTION, and the name must be the one the HOST
+  // resolved from `collectionId` — never one the block supplied. A block can
+  // render its own "Follow ⭐ Cute Cats" card and post a different id; host chrome
+  // that asserts nothing about the object cannot contradict it.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / lookup failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs to its SDK
+  // timeout; `createCollectionFollowSettlement` owns that latch AND the consent
+  // latch that keeps `declined` meaning "no write occurred". Only a payload with
+  // no usable requestId is dropped — there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
+      const gate = resolveCollectionFollowRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        // `viewer` is non-null ONLY for a signed-in viewer (the page route
+        // renders for logged-out viewers too, with viewer: null).
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('COLLECTION_FOLLOW_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, collectionId, follow } = gate.request;
+      const settlement = createCollectionFollowSettlement({
+        requestId,
+        emit: (payload) => send('COLLECTION_FOLLOW_RESULT', payload),
+      });
+      // 🔴 BOUND THE PROBE, BEFORE SPENDING AN AUTHENTICATED READ. The identity
+      // lookup below runs in the VIEWER'S session and completes before any
+      // dialog, so without a bound it is a per-id "can this viewer see it?"
+      // oracle the block can drive at the transport's 30 msg/s. DISTINCT ids,
+      // not calls — a repeat is free forever, so re-following a collection the
+      // viewer has already been asked about keeps working past the cap. The
+      // refusal deliberately reuses `collection-unavailable`; a distinct code
+      // would hand back the bit the cap withholds. Full reasoning (incl. why a
+      // distinct-id cap rather than a time window) on the factory.
+      const lookupBudget = (collectionLookupBudgetRef.current ??= createCollectionLookupBudget());
+      if (!lookupBudget.admit(collectionId)) {
+        settlement.reply({ error: 'collection-unavailable' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHO/WHAT the viewer is being asked about, server-side, from the
+        // same id we are about to act on. A failed lookup refuses WITH a reply —
+        // never a hang, and never a dialog missing the name it promised.
+        let identity;
+        try {
+          identity = resolveCollectionIdentity(
+            await trpcUtils.collection.getById.fetch({ id: collectionId }, { staleTime: 0 })
+          );
+        } catch {
+          // Not found / not visible / feature-flagged / network — all one
+          // outcome, so the reply cannot be used to probe for existence.
+          identity = { kind: 'unavailable' } as const;
+        }
+        if (identity.kind !== 'ok') {
+          settlement.reply({ error: 'collection-unavailable' });
+          return;
+        }
+        const copy = buildCollectionFollowConsentCopy({
+          follow,
+          appName,
+          collectionId,
+          collection: identity.identity,
+        });
+        dialogStore.trigger({
+          // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
+          // not reproducible, since rendering a Mantine modal costs >1 ms.)
+          id: `block-collection-follow-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: copy.message,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a write that is under way.
+              settlement.markConsented();
+              try {
+                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+                // actor and target, so `collectionId` is the ONLY thing the block
+                // influences.
+                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+                else await unfollowCollectionMutation.mutateAsync({ collectionId });
+                settlement.reply({ result: { collectionId, followed: follow } });
+              } catch (err) {
+                // FORBIDDEN from the collection services (e.g. a private
+                // collection this viewer may not follow) lands here as a message,
+                // never as a hang.
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    followCollectionMutation,
+    unfollowCollectionMutation,
+  ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from

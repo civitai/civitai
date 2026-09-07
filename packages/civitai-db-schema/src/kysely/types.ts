@@ -601,6 +601,7 @@ export type Article = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
 };
 export type ArticleEngagement = {
@@ -4059,6 +4060,7 @@ export type UserHubSource = {
   targetId: number;
   alias: string | null;
   enabled: Generated<boolean>;
+  exclude: Generated<boolean>;
   index: Generated<number>;
 };
 export type UserLink = {

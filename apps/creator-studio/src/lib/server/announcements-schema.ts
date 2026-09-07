@@ -84,8 +84,10 @@ export const count = z.union([z.number(), z.string(), z.null(), z.undefined()]).
 });
 
 // `limit` and `windowDays` decide whether the composer offers to post at all, so an absent or
-// unreadable value has to fail the parse and show "allowance unavailable" — coercing it to 0 would
-// render a confident "no slots left" for what is actually a broken upstream.
+// unreadable value has to fail the parse rather than coerce to 0 — a 0 would render a confident
+// "no broadcasts left" for what is actually a broken upstream. A failed parse surfaces as the
+// Broadcasts left card saying it could not load, and the composer stays usable because the limit is
+// re-checked server-side on save.
 const required = z.union([z.number(), z.string()]).transform((v, ctx) => {
   const n = typeof v === 'string' ? Number(v) : v;
   if (!Number.isFinite(n)) {

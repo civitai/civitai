@@ -59,6 +59,7 @@ import {
   useGraphSubscriptions,
   MultiController,
 } from '~/libs/data-graph/react';
+import { useGenerationFormValue } from '~/components/Generate/useGenerationFormBridge';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -80,6 +81,8 @@ import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { isDefined } from '~/utils/type-guards';
 import {
   workflowConfigByKey,
   getEcosystemsForWorkflow,
@@ -349,12 +352,10 @@ function ConnectedBuzzTypeSelector() {
  */
 export function useSelfHostedBlock() {
   const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
-  const graph = useGraph<GenerationGraphTypes>();
-  // Subscribe to only `ecosystem` — not the whole graph — so prompt/seed/etc.
-  // edits (which fire the global watcher) don't needlessly re-render this.
-  const { ecosystem: selectedEcosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
-    ecosystem?: string;
-  };
+  // Subscribe to only `ecosystem` — not the whole form — so prompt/seed/etc.
+  // edits don't needlessly re-render this. Bridge-based: GenerationLayout
+  // renders in both form lanes.
+  const selectedEcosystem = useGenerationFormValue<string>('ecosystem');
   if (!selectedEcosystem)
     return { blockedEcosystem: undefined, state: undefined, message: undefined };
 
@@ -1308,6 +1309,19 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       }
     }
 
+    // Provenance tokens for whichever sources are still in the form.
+    //
+    // Deliberately NOT inside the `needsSourceMetadata` branch above: that gate is
+    // `enhancement === true`, and the workflows this matters most for — img2vid
+    // and img2img:edit, the two the Remix menu drives — are not enhancements. A
+    // token only exists for a source the user reached through a remix entry
+    // point, so reading the store for every image costs nothing when there is
+    // none, and collecting by CURRENT url is what drops a token whose image the
+    // user has since swapped out.
+    const sourceProvenance = (snapshot.images ?? [])
+      .map((img) => remixProvenanceStore.getToken(img.url))
+      .filter(isDefined);
+
     // Calculate total cost including tips
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
@@ -1332,6 +1346,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
       });

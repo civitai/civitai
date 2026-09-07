@@ -1,6 +1,8 @@
 import {
   MOD_ACTION,
+  abuseReportInput,
   imageModerateInput,
+  type AbuseReportInput,
   type ImageModerateInput,
   type ModActionName,
 } from './schema';
@@ -83,6 +85,20 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
     /** Block or unblock one or more images. Validates the payload locally before the network call. */
     imageModerate: (input: ImageModerateInput): Promise<unknown> =>
       call(MOD_ACTION.imageModerate, imageModerateInput.parse(input)),
+    /**
+     * File one run of an automated abuse detector on the moderation board.
+     *
+     * `.parse` rather than a hand-rolled body, and that is the point of having a method here at all:
+     * the receiving table carries CHECK constraints whose violation aborts the transaction and loses
+     * the WHOLE run, so a malformed finding must be refused on the producer's side of the wire — a
+     * thrown ZodError names the offending field, where a 400 from the spoke names only the request.
+     * A producer that reaches for `call(MOD_ACTION.abuseReport, …)` directly skips that.
+     *
+     * Write-only, like the endpoint behind it: this stores what a detector found and grants nothing.
+     * It cannot mute, exclude or ban, and adding a method here can never make it able to.
+     */
+    abuseReport: (input: AbuseReportInput): Promise<unknown> =>
+      call(MOD_ACTION.abuseReport, abuseReportInput.parse(input)),
   };
 }
 

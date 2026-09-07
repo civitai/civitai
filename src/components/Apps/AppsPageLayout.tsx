@@ -1,7 +1,11 @@
 import { Box, Container, Group, Stack, Text, Title } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { AppsSubNav } from '~/components/Apps/AppsSubNav';
-import { APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
+import {
+  APPS_PAGE_CONTAINER_WIDTH,
+  appsMeasureCss,
+  type AppsMeasure,
+} from '~/components/Apps/appsPageWidths';
 
 /**
  * Shared chrome for every `/apps/*` surface.
@@ -85,8 +89,15 @@ export function AppsPageLayout({
    * Values come from `APPS_PAGE_MEASURES` in `~/components/Apps/appsPageWidths` —
    * they are CONTENT widths (the old container widths minus the `Container`'s own
    * `2 × 16px` gutter), because this box sits INSIDE that gutter.
+   *
+   * 🔴 A MEASURE IS NOW EITHER A NUMBER OR A BAND, and this layout does NOT decide
+   * which: it hands whatever it is to `appsMeasureCss` and applies the result. A band
+   * renders as a `clamp()` whose middle term is a PERCENTAGE, which resolves against
+   * this box's containing block — the `Container`'s content box — so the ramp is
+   * bounded by the container's own cap. Nothing about the box changes: still one
+   * `maw`, still no margin, still a direct child of the root stack.
    */
-  measure?: number;
+  measure?: AppsMeasure;
   children: ReactNode;
 }) {
   const hasHeader = Boolean(title || subtitle || actions);
@@ -116,7 +127,8 @@ export function AppsPageLayout({
    *     RESOLVED geometry — body left edge == nav left edge on every route — which is
    *     the check that catches a centring mechanism of any spelling.
    */
-  const bounded = (node: ReactNode) => (measure != null ? <Box maw={measure}>{node}</Box> : node);
+  const bounded = (node: ReactNode) =>
+    measure != null ? <Box maw={appsMeasureCss(measure)}>{node}</Box> : node;
   // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts
   // directly under the global header instead of 16px below it; the BOTTOM pad
   // stays because this Container is the outermost element on every apps page, so

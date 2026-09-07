@@ -43,6 +43,10 @@ import {
 // explicitly wants to block for the workflow, so we must not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
+const IMAGE_TAGGING_MODEL =
+  'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar';
+const IMAGE_TAGGING_THRESHOLD = 0.55;
+
 export async function createImageIngestionRequest({
   imageId,
   url,
@@ -82,8 +86,8 @@ export async function createImageIngestionRequest({
               priority,
               input: {
                 mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                model: 'wd14-vit.v1',
-                threshold: 0.5,
+                model: IMAGE_TAGGING_MODEL,
+                threshold: IMAGE_TAGGING_THRESHOLD,
               },
             } as WorkflowStepTemplate,
             {
@@ -142,8 +146,8 @@ export async function createImageIngestionRequest({
                       $ref: 'frame',
                       path: 'url',
                     },
-                    model: 'wd14-vit.v1',
-                    threshold: 0.5,
+                    model: IMAGE_TAGGING_MODEL,
+                    threshold: IMAGE_TAGGING_THRESHOLD,
                   },
                 },
               },

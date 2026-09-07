@@ -166,6 +166,7 @@ import {
   queueComicsForPanelImages,
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -277,13 +278,31 @@ const {
  */
 export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
 
+/**
+ * 🔴 Ask the image-cache service to destroy the SHARED STORED OBJECT too, not just this image's
+ * derived variants. Off unless a caller says otherwise, and only a moderation takedown may say so.
+ *
+ * The stored object is content-addressed, so it is shared by every byte-identical image, of every
+ * owner. Destroying it removes the full-resolution original for all of them at once — a
+ * cross-account destructive act, not a cache invalidation, and not reversible from here.
+ *
+ * 🔴 KNOWN AND ACCEPTED COLLATERAL. The other images keep their database rows and will serve a
+ * broken original. The app cannot enumerate them: it does not store the content-hash key per
+ * image, and the perceptual hash it does store is a similarity signal, NOT a byte-identity key,
+ * so it cannot stand in for one. Accepted because a byte-identical copy of content that must not
+ * exist is the same content — the point of a takedown is that no copy survives. The
+ * `image-blob-retraction-requested` log line below is the only attribution trail there is.
+ */
+export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
+
 export async function purgeResizeCache({
   url,
   scope = 'all',
+  retractPublicBlobs = false,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
-}) {
+} & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
@@ -326,11 +345,37 @@ export async function purgeResizeCache({
       }
     })();
 
-    const query = `imageKey=${encodeURIComponent(url)}${keepParam}`;
+    // Retraction is only coherent for a FULL purge. A narrower scope means the image is still
+    // live — only the pre-flip variants are being cleared — so destroying the shared object there
+    // would take down an image nobody asked to remove, plus every byte-identical copy of it.
+    // The combination degrades to NO retraction rather than to the wider blast radius, and says
+    // so, because it can only mean a caller is confused about what it is asking for.
+    const retract = retractPublicBlobs === true && scope === 'all';
+    if (retractPublicBlobs === true && scope !== 'all') {
+      logToAxiom({
+        type: 'warning',
+        name: 'image-blob-retraction-refused',
+        message: 'blob retraction was requested with a partial scope; not retracting',
+        imageKey: url,
+        scope,
+      }).catch(() => {
+        // swallow — best effort logging
+      });
+    }
+    // The exact literal the service gates on; it fails closed on anything else.
+    const retractParam = retract ? '&retractPublicBlobs=true' : '';
 
-    // The endpoint requires this header once its destructive mode is enabled, and rejects the
-    // call outright without it. Sending it whenever it is configured means enabling that mode is
-    // a change on ONE side, not a synchronised deploy across two services.
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}${retractParam}`;
+
+    // Sent whenever the secret is configured, rather than only on a retracting call, so THIS
+    // caller does not have to be redeployed in step with a change on the service side.
+    //
+    // 🔴 That is a statement about this caller, not about the endpoint's contract, and it does not
+    // generalise: `apps/moderator/src/lib/server/image-deletion.ts` open-codes its own POST to the
+    // same endpoint with no header, no response check and no retraction parameter, so it
+    // invalidates variants only and is unaffected by any of this. What the service does with a
+    // missing header is not observable from this repo — the `!res.ok` branch below is what makes a
+    // rejection visible here, and it is the only thing that would.
     const headers: Record<string, string> = {};
     if (env.IMAGE_CACHER_ADMIN_SECRET) {
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
@@ -351,9 +396,10 @@ export async function purgeResizeCache({
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
         // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
         // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
-        // line. That is the failure mode this check exists for, not a hypothetical one: the
-        // service's auth gate switches on when its delete mode is enabled, and the first symptom
-        // of a secret mismatch would otherwise be stale images with no signal anywhere.
+        // line. That is the failure mode this check exists for: whatever the service decides to do
+        // with a rejected call, this branch is the only place it becomes visible on this side, and
+        // the first symptom of a stale shared secret would otherwise be stale images with no
+        // signal anywhere.
         if (!res.ok) {
           return logToAxiom({
             type: 'warning',
@@ -382,7 +428,13 @@ export async function purgeResizeCache({
   }
 }
 
-export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
+export async function deleteImageFromS3({
+  id,
+  url,
+  // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
+  // destroys and for the collateral that is knowingly accepted along with it.
+  retractPublicBlobs = false,
+}: { id: number; url: string } & PurgeResizeCacheRetraction) {
   if (!env.DATABASE_IS_PROD) return;
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
@@ -473,11 +525,26 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
     }).catch(() => undefined);
   }
 
+  // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
+  // byte-identical image of every owner, and the app cannot enumerate those rows — it stores no
+  // content-hash key, and the perceptual hash it does store is not a byte-identity key. Their
+  // rows survive and will serve a broken original. Emitted before the request rather than after,
+  // so a request that is made but never confirmed still leaves a record.
+  if (retractPublicBlobs) {
+    await logToAxiom({
+      type: 'warning',
+      name: 'image-blob-retraction-requested',
+      message: 'moderation requested retraction of the shared stored object for this image',
+      imageId: id,
+      url,
+    }).catch(() => undefined);
+  }
+
   // Outside the try: a failed object delete is exactly when invalidation matters, because the
   // bytes are still in the bucket and a live cache entry keeps serving content whose row is
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
-  // to an image that is still live.
-  await purgeResizeCache({ url: url });
+  // to an image that is still live, so its bytes are not ours to retract either.
+  await purgeResizeCache({ url: url, retractPublicBlobs });
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
@@ -643,7 +710,17 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
-export async function deleteImages(ids: number[], updatePosts = true) {
+/**
+ * 🔴 A NAMED options object, deliberately not a third positional boolean beside `updatePosts`.
+ * The thing it turns on is cross-account and irreversible, so it must be impossible to reach by
+ * getting an argument position wrong. Default is off, stated explicitly at every layer rather
+ * than left to `undefined` being falsy.
+ */
+export async function deleteImages(
+  ids: number[],
+  updatePosts = true,
+  { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
+) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
@@ -673,7 +750,9 @@ export async function deleteImages(ids: number[], updatePosts = true) {
     await Limiter({ batchSize: 5 }).process(
       results,
       async (results) =>
-        await Promise.all(results.map(({ id, url }) => deleteImageFromS3({ id, url })))
+        await Promise.all(
+          results.map(({ id, url }) => deleteImageFromS3({ id, url, retractPublicBlobs }))
+        )
     );
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
 
@@ -863,6 +942,14 @@ export async function handleBlockImages({
       // pre-block (visible) state.
       queueComicsForPanelImages(ids),
     ]);
+    // A moderator block outranks an account-deletion grace block: left on, a later account restore
+    // would read the grace breadcrumbs and un-block what was just moderated. See
+    // `clearAccountDeletionImageMarkers`.
+    //
+    // Sequenced AFTER the batch above rather than joining it: both statements UPDATE the same rows
+    // by id, and two concurrent row-lock acquisitions over one id set are how you buy a deadlock
+    // for nothing. Nothing here depends on the order, so it costs a round trip and no risk.
+    await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
@@ -3441,12 +3528,53 @@ function hubFilterArms(
     if (!hideManualResources)
       arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
   }
+  // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
+  // attribute on the metrics index since 2024, and the ids are denormalised onto the
+  // documents at index time. Verified against the prod index rather than assumed —
+  // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
+  if (sources.tagIds.length) arms.push({ field: 'tagIds', ids: sources.tagIds });
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
     arms.push({ field: 'collectionIds', ids: sources.collectionIds });
 
   return arms.length ? arms : null;
+}
+
+/**
+ * The hub's keep-out group: a creator, model or version whose content the owner
+ * said must not appear. ANDed as a `NOT` against everything else rather than ORed
+ * into the source group — an exclusion that joins the OR is not an exclusion, it is
+ * a fifth way to be included.
+ *
+ * Returns null for "this hub excludes nothing", which is the only safe reading of
+ * an empty set: unlike `hubFilterArms`, a null here must NOT empty the page.
+ *
+ * The three resource arms are emitted unconditionally, where the positive builder
+ * gates two of them on hideAutoResources / hideManualResources. Those gates say
+ * which attributions the viewer wants to be COLLECTED by; they do not say the
+ * viewer is willing to see a model the owner refused, arriving under a different
+ * attribution.
+ */
+function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
+  const { userIds, modelVersionIds, tagIds } = sources.excluded;
+  const arms: HubFilterArm[] = [];
+  if (userIds.length) arms.push({ field: 'userId', ids: userIds });
+  if (tagIds.length) arms.push({ field: 'tagIds', ids: tagIds });
+  if (modelVersionIds.length) {
+    arms.push({ field: 'postedToId', ids: modelVersionIds });
+    arms.push({ field: 'modelVersionIds', ids: modelVersionIds });
+    arms.push({ field: 'modelVersionIdsManual', ids: modelVersionIds });
+  }
+  if (!arms.length) return null;
+
+  // Verified against the prod metrics index rather than assumed: a document whose
+  // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
+  // returns the whole set. So a NOT arm removes matches only — it does not also
+  // drop documents that lack the field.
+  return `NOT (${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
 }
 
 function buildHubFilter(
@@ -3611,6 +3739,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // Pushed as its own AND term, and only when there is something to exclude: an
+    // empty keep-out set must leave the feed alone, not empty it.
+    const hubExclusionFilter = buildHubExclusionFilter(sources);
+    if (hubExclusionFilter) filters.push(hubExclusionFilter);
 
     // The hub's own content cap, applied before the browsing-level block below
     // reads `browsingLevel`. An empty intersection is served as an empty page, not
@@ -4245,6 +4378,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // Pushed as its own AND term, and only when there is something to exclude: an
+    // empty keep-out set must leave the feed alone, not empty it.
+    const hubExclusionFilter = buildHubExclusionFilter(sources);
+    if (hubExclusionFilter) filters.push(hubExclusionFilter);
 
     // The hub's own content cap, applied before the browsing-level block below
     // reads `browsingLevel`. An empty intersection is served as an empty page, not

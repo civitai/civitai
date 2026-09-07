@@ -1158,18 +1158,22 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     if (!hasAdditionalPermissions) throw throwBadRequestError('No additional permissions');
 
     const licenseSlug = baseModelLicenses[version.baseModel as BaseModel]?.name ?? '';
-    const license = await getStaticContent({ slug: ['licenses', licenseSlug] });
-
-    license.content = addAdditionalLicensePermissions(license.content, {
-      modelId: version.model.id,
-      modelName: version.model.name,
-      versionId: version.id,
-      username: version.model.user.username,
-      allowCommercialUse: version.model.allowCommercialUse,
-      allowNoCredit: version.model.allowNoCredit,
-      allowDerivatives: version.model.allowDerivatives,
-      allowDifferentLicense: version.model.allowDifferentLicense,
-    });
+    // `getStaticContent` returns its cached object by reference — assigning to `.content`
+    // here would append Attachment B onto what the next request reads.
+    const staticLicense = await getStaticContent({ slug: ['licenses', licenseSlug] });
+    const license = {
+      ...staticLicense,
+      content: addAdditionalLicensePermissions(staticLicense.content, {
+        modelId: version.model.id,
+        modelName: version.model.name,
+        versionId: version.id,
+        username: version.model.user.username,
+        allowCommercialUse: version.model.allowCommercialUse,
+        allowNoCredit: version.model.allowNoCredit,
+        allowDerivatives: version.model.allowDerivatives,
+        allowDifferentLicense: version.model.allowDifferentLicense,
+      }),
+    };
 
     return { ...version, license };
   } catch (error) {

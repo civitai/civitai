@@ -1,7 +1,8 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
-import { INTERNAL_IP_RANGE, IP_PATTERN } from './clickhouse-filters';
+import { publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
+import { IP_PATTERN } from './clickhouse-filters';
 import { isInt4Id, usersByIds } from './users.service';
 import { strikeCountsByUserIds } from './moderation-memory.service';
 
@@ -59,26 +60,16 @@ const DELETE_TYPES = [
 const CREATES_ONLY = `type NOT IN (${DELETE_TYPES.map((t) => `'${t}'`).join(',')})`;
 
 /**
- * Private and carrier-internal space, which correlates everyone and therefore no one. `10.124.0.0/16`
- * is ours and already inside `10/8`; it stays named so the shared constant governs the rest.
+ * Private and carrier-internal space, which correlates everyone and therefore no one.
  *
- * 🔴 `ip != ''` is a guard, not a tidy-up. `isIPAddressInRange` RAISES on an empty string, and
- * `userActivities` holds a handful (3 in the last 30 days) — so whether this filter throws depends on
- * whether one lands in the range scanned. Order matters too: the guard has to be evaluated first.
+ * 🔴 THE LIST AND THE COMPOSITION MOVED TO `@civitai/shared/clickhouse-ip-filters` and this is now
+ * one call into it. The main Next app's bot-account detector reads the same `userActivities` rows
+ * for the same reason and cannot import from `apps/moderator`, so the alternative was a second
+ * hand-written copy — which is precisely the divergence `clickhouse-filters.ts` says fails silently.
+ * The emitted string is unchanged, including that `ip != ''` comes first: `isIPAddressInRange` RAISES
+ * on an empty string, and `userActivities` holds a handful.
  */
-const PUBLIC_IP_ONLY = [
-  `ip != ''`,
-  ...[
-    INTERNAL_IP_RANGE,
-    '10.0.0.0/8',
-    '172.16.0.0/12',
-    '192.168.0.0/16',
-    '127.0.0.0/8',
-    '169.254.0.0/16',
-    'fc00::/7',
-    '::1/128',
-  ].map((range) => `NOT isIPAddressInRange(ip, '${range}')`),
-].join(' AND ');
+const PUBLIC_IP_ONLY = publicIpOnlySql();
 
 const windowFilter = (days: number) => `time >= now() - INTERVAL ${Math.trunc(days)} DAY`;
 

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,8 +27,13 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
-const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
+
+// The daemon runs from the primary checkout, never from the worktree this console was launched in
+// — see resolveDaemonHome. The console spawns it too, so it has to agree with cli.mjs about where
+// the daemon lives, or the two put different daemons' pids in different pid files.
+const daemonHome = resolveDaemonHome(__dirname, projectRoot);
+const pidFile = resolve(daemonHome.skillDir, 'daemon.pid');
+const serverScript = resolve(daemonHome.skillDir, 'scripts/daemon.mjs');
 
 // The whole decision — port included — is made in scripts/daemon-port.mjs, the same module the
 // daemon reads, so this file does no arithmetic on a port and cannot drift from it.
@@ -88,7 +94,7 @@ async function isDaemonRunning() {
 async function startDaemon() {
   // No shell — see cli.mjs startDaemon.
   const child = spawn(process.execPath, [serverScript], {
-    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true,
+    detached: true, stdio: 'ignore', cwd: daemonHome.home, windowsHide: true,
   });
   child.unref();
   writeFileSync(pidFile, String(child.pid));

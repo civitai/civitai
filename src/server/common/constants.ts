@@ -1849,8 +1849,11 @@ export const EARLY_ACCESS_CONFIG: {
   buzzChargedPerDay: 100,
   timeframeValues: [3, 5, 7, 9, 12, 15, 30],
   scoreTimeFrameUnlock: [
-    // The maximum amount of days that can be set based off of score.
-    [40000, 3],
+    // The maximum amount of days that can be set based off of score. The entry rung is set to the
+    // same figure as MONETIZATION_MIN_CREATOR_SCORE, deliberately — but the two are separate
+    // constants that nothing keeps in step, and clearing this rung is not the same permission as
+    // clearing the pricing floor. Do not read the shared number as a shared rule.
+    [10000, 3],
     [65000, 5],
     [90000, 7],
     [125000, 9],
@@ -1859,8 +1862,9 @@ export const EARLY_ACCESS_CONFIG: {
     [({ features }: { features?: FeatureAccess }) => features?.thirtyDayEarlyAccess ?? false, 30],
   ],
   scoreQuantityUnlock: [
-    // How many items can be marked EA at the same time based off of score.
-    [40000, 1],
+    // How many items can be marked EA at the same time based off of score. Entry rung matches
+    // scoreTimeFrameUnlock's — see the note there.
+    [10000, 1],
     [65000, 2],
     [90000, 4],
     [125000, 6],

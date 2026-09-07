@@ -48,3 +48,43 @@ describe('domainVisibilityFilter', () => {
     }
   });
 });
+
+// The cases above exercise the pure function. These pin that `getLeaderboards` actually
+// CALLS it — the wiring, which nothing else covered. That matters more than it looks:
+// UserProfileEditModal's showcase picker deliberately carries no domain filter of its
+// own and relies entirely on this query being scoped, so if the `domain` key stops
+// reaching the `where`, .com starts listing mature boards in the picker and no other
+// test notices.
+describe('getLeaderboards applies the filter to the query', () => {
+  const whereOfLastCall = () => {
+    const calls = dbMock.dbRead.leaderboard.findMany.mock.calls;
+    if (!calls.length) throw new Error('getLeaderboards issued no findMany');
+    return (calls.at(-1)?.[0] as { where: Record<string, unknown> }).where;
+  };
+
+  it.each([
+    ['red host', DomainColor.red],
+    ['green host', DomainColor.green],
+    ['unresolved host', undefined],
+  ])('scopes the board list on a %s', async (_label, domain) => {
+    const { getLeaderboards, domainVisibilityFilter } = await import('../leaderboard.service');
+    dbMock.dbRead.leaderboard.findMany.mockResolvedValue([]);
+
+    await getLeaderboards({ domain, isModerator: false });
+
+    // Compared against the helper's own output rather than a literal, so the two
+    // cannot drift apart silently.
+    expect(whereOfLastCall().domain).toEqual(domainVisibilityFilter(domain));
+  });
+
+  it('still restricts non-moderators to public, active boards', async () => {
+    const { getLeaderboards } = await import('../leaderboard.service');
+    dbMock.dbRead.leaderboard.findMany.mockResolvedValue([]);
+
+    await getLeaderboards({ domain: DomainColor.red, isModerator: false });
+
+    const where = whereOfLastCall();
+    expect(where.public).toBe(true);
+    expect(where.active).toBe(true);
+  });
+});

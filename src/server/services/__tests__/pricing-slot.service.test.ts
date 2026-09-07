@@ -12,7 +12,7 @@ import { MONETIZATION_MIN_CREATOR_SCORE } from '@civitai/buzz';
 import {
   assertPricingAllowed,
   countPricingSlotsThisMonth,
-  creatorScoreFromMeta,
+  listPricingSlots,
   recordPricingSlot,
   releasePricingSlot,
 } from '~/server/services/pricing-slot.service';
@@ -283,21 +283,6 @@ describe('releasePricingSlot', () => {
   });
 });
 
-describe('creatorScoreFromMeta', () => {
-  it('reads the models score', () => {
-    expect(creatorScoreFromMeta({ scores: { models: 12345 } })).toBe(12345);
-  });
-
-  it('treats missing, null, or non-numeric meta as a score of 0', () => {
-    expect(creatorScoreFromMeta(undefined)).toBe(0);
-    expect(creatorScoreFromMeta(null)).toBe(0);
-    expect(creatorScoreFromMeta({})).toBe(0);
-    expect(creatorScoreFromMeta({ scores: {} })).toBe(0);
-    expect(creatorScoreFromMeta({ scores: { models: 'lots' } })).toBe(0);
-    expect(creatorScoreFromMeta({ scores: { models: Infinity } })).toBe(0);
-  });
-});
-
 describe('countPricingSlotsThisMonth', () => {
   // afterEach, not a trailing call: a failed assertion would otherwise leak frozen time into every
   // later test in the file and turn one legible failure into a cascade.
@@ -337,7 +322,7 @@ describe('recordPricingSlot', () => {
 });
 
 describe('assertPricingAllowed', () => {
-  const eligible = { scores: { models: MONETIZATION_MIN_CREATOR_SCORE } };
+  const eligible = { scores: { total: MONETIZATION_MIN_CREATOR_SCORE } };
 
   it('spends a slot for a newly priced version', async () => {
     await expect(
@@ -358,7 +343,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: true,
         willBePriced: true,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     expect(mockCount).not.toHaveBeenCalled();
@@ -371,7 +356,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
   });
@@ -385,7 +370,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: true,
         willBePriced: false,
         tier: 'free',
-        userMeta: { scores: { models: 0 } },
+        userMeta: { scores: { total: 0 } },
       })
     ).resolves.toEqual({ spendsSlot: false, releasesSlot: true });
     // Neither rule is consulted: a creator below the floor may always stop charging.
@@ -406,7 +391,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         tier: async () => 'gold',
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
   });
@@ -420,7 +405,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         tier: async () => null,
-        userMeta: { scores: { models: 50000 } },
+        userMeta: { scores: { total: 50000 } },
       })
     ).rejects.toThrow(/3 of 3/);
   });
@@ -435,7 +420,7 @@ describe('assertPricingAllowed', () => {
       wasPriced: true,
       willBePriced: true,
       tier,
-      userMeta: { scores: { models: 50000 } },
+      userMeta: { scores: { total: 50000 } },
     });
 
     expect(tier).not.toHaveBeenCalled();
@@ -448,7 +433,8 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         tier: 'gold',
-        userMeta: { scores: { models: MONETIZATION_MIN_CREATOR_SCORE - 1 } },
+        // Both keys, unequal — see the note on the same fixture in paid-access.service.test.ts.
+        userMeta: { scores: { total: MONETIZATION_MIN_CREATOR_SCORE - 1, models: 50_000 } },
       })
     ).rejects.toThrow(/creator score/);
 
@@ -501,11 +487,59 @@ describe('assertPricingAllowed', () => {
   });
 
   it('falls back to reading the score when the caller has no user meta', async () => {
-    mockFindUnique.mockResolvedValue({ meta: { scores: { models: 50000 } } } as never);
+    mockFindUnique.mockResolvedValue({ meta: { scores: { total: 50000 } } } as never);
 
     await expect(
       assertPricingAllowed({ userId: 1, wasPriced: false, willBePriced: true, tier: 'free' })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     expect(mockFindUnique).toHaveBeenCalledWith({ where: { id: 1 }, select: { meta: true } });
+  });
+});
+
+describe('listPricingSlots', () => {
+  const mockSlots = dbMock.dbRead.pricingSlot.findMany;
+  const mockVersions = dbMock.dbRead.modelVersion.findMany;
+  const mockGates = dbMock.dbRead.paidAccess.findMany;
+
+  const THIS_MONTH = new Date();
+  const LAST_MONTH = new Date(
+    Date.UTC(THIS_MONTH.getUTCFullYear(), THIS_MONTH.getUTCMonth() - 1, 15)
+  );
+
+  beforeEach(() => {
+    mockSlots.mockResolvedValue([
+      { entityType: 'ModelVersion', entityId: 1, createdAt: THIS_MONTH },
+      { entityType: 'ModelVersion', entityId: 2, createdAt: LAST_MONTH },
+    ] as never);
+    mockVersions.mockResolvedValue([
+      { id: 1, name: 'v1', licensingFee: 40, model: { id: 100, name: 'Model A' } },
+      { id: 2, name: 'v2', licensingFee: null, model: { id: 200, name: 'Model B' } },
+    ] as never);
+    mockGates.mockResolvedValue([] as never);
+  });
+
+  it('splits on the calendar month the allowance is counted over', async () => {
+    const slots = await listPricingSlots(OWNER);
+    expect(slots.map((s) => s.countsThisMonth)).toEqual([true, false]);
+    expect(slots[0]).toMatchObject({ modelName: 'Model A', versionName: 'v1', licensingFee: 40 });
+  });
+
+  it('reads a price off a permanent gate only, never a timed window', async () => {
+    mockGates.mockResolvedValue([
+      { entityId: 1, timeframeDays: null, terms: { download: { price: 5000 } } },
+      { entityId: 2, timeframeDays: 15, terms: { download: { price: 9000 } } },
+    ] as never);
+
+    const [current, older] = await listPricingSlots(OWNER);
+    expect(current.accessPrice).toBe(5000);
+    expect(older.accessPrice).toBeNull();
+  });
+
+  it('names a deleted version rather than dropping the slot that is still counted', async () => {
+    mockVersions.mockResolvedValue([] as never);
+
+    const slots = await listPricingSlots(OWNER);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]).toMatchObject({ modelId: null, modelName: null, licensingFee: null });
   });
 });

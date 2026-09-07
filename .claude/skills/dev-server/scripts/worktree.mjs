@@ -12,7 +12,7 @@
 
 import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync } from 'fs';
-import { samePath } from './paths.mjs';
+import { isInside, samePath } from './paths.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -189,6 +189,29 @@ async function fetchRunning(daemonRequest) {
   };
 }
 
+// The daemon reports where its own code lives; a daemon running out of this tree holds the
+// directory open and no delete can succeed while it lives.
+//
+// `checked` is separate from `holder` on purpose. A daemon that is down, unreachable, or older than
+// the `skillDir` field yields no holder AND no knowledge — and the failure path below must not then
+// tell the reader the daemon has been ruled out, which is the confidently-wrong message this
+// replaces.
+export async function daemonRunningFrom(target, daemonRequest) {
+  const res = await daemonRequest('/');
+  const skillDir = res.ok ? res.data?.skillDir : null;
+  if (!skillDir) return { holder: null, checked: false };
+  // Its script AND its working directory: either one alone keeps the directory open. A daemon
+  // started by hand from a worktree runs the primary's script and still pins the tree by cwd.
+  const held = [
+    ['its running script', skillDir],
+    ['its working directory', res.data.cwd],
+  ].find(([, p]) => p && isInside(p, target));
+  return {
+    holder: held ? { pid: res.data.pid, reason: `${held[0]}: ${held[1]}` } : null,
+    checked: true,
+  };
+}
+
 // Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
 // While apps were global singletons they were invisible here, so `wt rm` would delete a worktree
 // out from under a running moderator and report a clean removal.
@@ -284,6 +307,22 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
   const entry = trees.find((t) => samePath(t.path, target));
   if (!entry) fail(`not a registered worktree: ${target}\nrun: git worktree list`);
 
+  // Ahead of the session stops, not merely ahead of the delete. `--stop-server` stops OTHER agents'
+  // dev servers in this tree, which is irreversible and cannot be undone by the refusal that would
+  // otherwise follow it.
+  const daemonCheck = await daemonRunningFrom(target, daemonRequest);
+  if (daemonCheck.holder) {
+    fail(
+      `the dev-server daemon (pid ${daemonCheck.holder.pid}) is running from this worktree\n` +
+        `  ${daemonCheck.holder.reason}\n` +
+        `no delete can succeed while it lives — that path is inside the directory.\n` +
+        `a daemon started by a cli.mjs carrying this fix runs from the primary checkout and never\n` +
+        `blocks this; this one does not. it is SHARED — other agents' dev servers and queued test\n` +
+        `runs are on it — so check "cli.mjs test list" reports zero running and zero queued, and ask\n` +
+        `before restarting it.`
+    );
+  }
+
   const sessions = sessionsIn(target, await fetchRunning(daemonRequest));
   const live = sessions.filter((s) => s.status === 'running');
   if (live.length && !opts.stopServer) {
@@ -333,7 +372,12 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
       rmSync(target, { recursive: true, force: true });
     } catch (err) {
       fail(
-        `could not delete ${target}: ${err.message}\nsomething is holding it open (a shell cwd'd inside it?)`
+        `could not delete ${target}: ${err.message}\n` +
+          (daemonCheck.checked
+            ? `the dev-server daemon was asked and is running from elsewhere, so it is not the holder.\n` +
+              `look for a shell cwd'd inside, an editor, an unmanaged dev server, or a virus scan.`
+            : `the dev-server daemon could not be asked where it runs from (down, unreachable, or too\n` +
+              `old to report it), so it has NOT been ruled out — check it before hunting a stray shell.`)
       );
     }
     if (existsSync(target)) fail(`directory still present after delete: ${target}`);

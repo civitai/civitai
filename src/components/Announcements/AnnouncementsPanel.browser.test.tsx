@@ -84,6 +84,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   const stubbed: Record<string, unknown> = {
     user: { getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) } },
+    // `CreatorAnnouncement` records analytics through `useTrackEvent`, which mounts the
+    // trackShare mutation whether or not a share ever happens. Absent here the Proxy below
+    // throws during render and every assertion in the file reads an empty body.
+    track: { trackShare: { useMutation: () => ({ mutateAsync: async () => undefined }) } },
   };
   return {
     ...actual,

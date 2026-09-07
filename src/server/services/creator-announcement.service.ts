@@ -440,7 +440,7 @@ export async function upsertCreatorAnnouncement({
   const allowance = await getAnnouncementAllowance(userId);
   if (!allowance.eligible)
     throw throwAuthorizationError(
-      `Announcements require a creator score of ${allowance.minScore.toLocaleString()}.`
+      `Broadcasting an announcement requires a creator score of ${allowance.minScore.toLocaleString()}.`
     );
 
   return dbWrite.$transaction(async (tx) => {
@@ -473,10 +473,10 @@ export async function upsertCreatorAnnouncement({
     if (spent >= allowance.limit)
       throw throwBadRequestError(
         allowance.nextAvailableAt
-          ? `You have used your ${
+          ? `You have used all ${
               allowance.limit
-            } announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
-          : 'You have used your announcements for this period.'
+            } of your broadcasts for this period. Next one ${allowance.nextAvailableAt.toDateString()}.`
+          : 'You have used all your broadcasts for this period.'
       );
 
     const announcement = existing
@@ -523,17 +523,28 @@ export async function toggleAnnouncementMute({
 }) {
   if (userId === creatorId) throw throwBadRequestError('You cannot mute yourself');
 
+  // `changed` says whether this call moved the row, and the caller records an analytics
+  // event only when it did. Without it a client that re-sends the state it is already in
+  // — a double-tap, a retry, a stale toggle — writes a second mute event for one muter,
+  // and the creator's chart counts people who never changed their mind.
+  //
+  // `createMany` with `skipDuplicates` rather than a read-then-create: it reports whether
+  // a row appeared, and two concurrent mutes cannot both believe they were first.
+  let changed: boolean;
   if (muted) {
-    await dbWrite.userAnnouncementMute.upsert({
-      where: { userId_creatorId: { userId, creatorId } },
-      create: { userId, creatorId },
-      update: {},
+    const { count } = await dbWrite.userAnnouncementMute.createMany({
+      data: { userId, creatorId },
+      skipDuplicates: true,
     });
+    changed = count > 0;
   } else {
-    await dbWrite.userAnnouncementMute.deleteMany({ where: { userId, creatorId } });
+    const { count } = await dbWrite.userAnnouncementMute.deleteMany({
+      where: { userId, creatorId },
+    });
+    changed = count > 0;
   }
 
-  return { muted };
+  return { muted, changed };
 }
 
 export async function isAnnouncementCreatorMuted({

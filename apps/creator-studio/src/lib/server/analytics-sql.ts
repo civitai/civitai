@@ -32,3 +32,23 @@ export function ownerViewsDailySql(uid: number, from: string, to: string): strin
   const sealed = `assumeNotNull((SELECT max(createdDate) FROM image_views_daily_by_owner))`;
   return `SELECT createdDate AS date, sum(views) AS value FROM image_views_daily_by_owner WHERE ownerId = ${uid} AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY date ORDER BY date WITH FILL FROM toDate('${from}') TO least(toDate('${to}'), ${sealed}) + 1 STEP 1`;
 }
+
+// All-time impressions for a bounded list of entity ids, one row per id. `daily_impressions` is
+// keyed `(entityType, entityId, createdDate)`, so a literal id list is a prefix seek (measured:
+// 13 marks) — this is the read for a creator who holds a handful of entities, where the
+// owner-keyed rollup above has no arm and would not help anyway.
+//
+// `ids` is a pre-joined list of numbers from the caller's own rows. Nothing here quotes it.
+//
+// The date range is optional because the two callers ask different questions: the analytics tabs
+// compare periods, the announcements page shows a lifetime total.
+export function entityImpressionTotalsSql(
+  entityType: string,
+  ids: string,
+  range?: { from: string; to: string }
+): string {
+  const window = range
+    ? ` AND createdDate >= toDate('${range.from}') AND createdDate <= toDate('${range.to}')`
+    : '';
+  return `SELECT entityId AS id, sum(impressions) AS impressions FROM daily_impressions WHERE entityType = '${entityType}' AND entityId IN (${ids})${window} GROUP BY id`;
+}

@@ -252,7 +252,7 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
-export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection";
+export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export interface Account {
   id: number;
@@ -2911,6 +2911,7 @@ export interface Article {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  isOfficial: boolean;
   status: ArticleStatus;
   thread?: Thread | null;
   reactions?: ArticleReaction[];
@@ -5428,6 +5429,7 @@ export interface UserHubSource {
   targetId: number;
   alias: string | null;
   enabled: boolean;
+  exclude: boolean;
   index: number;
 }
 

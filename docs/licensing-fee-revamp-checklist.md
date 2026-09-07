@@ -51,7 +51,7 @@ Nothing from that branch is being carried forward except two notes worth keeping
 Added by Justin 2026-08-20, not in the article. Gates **any** monetization, so it sits in front of
 everything below: no licensing fee, no paid access, without the score.
 
-- [x] Read `User.meta.scores.models`, the same score the early-access ladder uses
+- [x] Read `User.meta.scores.total`, the same score the early-access ladder uses
       (`EARLY_ACCESS_CONFIG` in [common/constants.ts](../src/server/common/constants.ts)). Note EA
       already gates 4× higher — its first rung is 40,000 — so this floor binds on fees and paid
       access, not on EA.

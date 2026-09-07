@@ -23,8 +23,8 @@ it"* view (generations, downloads, per-model funnels) lives on [analytics.md](an
   total, each with the window's sum and a `badge` for delta vs. prior window.
 - **`table`** — earnings by source × period (or a breakdown table under the chart); `tabs` to switch window
   (7d / 30d / all) or granularity (daily / monthly).
-- **Time-series chart** — daily/stacked-by-source earnings. ⚠️ **No chart primitive in `@civitai/ui`** — the charting
-  lib is a shared decision with [analytics.md](analytics.md) (flag, don't pick here).
+- **Time-series chart** — daily/stacked-by-source earnings via the `@civitai/ui` `Chart` wrapper
+  (Chart.js, **C1**).
 - **CP cash panel** — pending + settled cash and a **Withdraw** button that **links out** to the existing CP flow
   (don't rebuild payout); see Shared.
 - **`skeleton`** for load; **`sonner`** only for the (rare) refresh/error toast.
@@ -115,4 +115,3 @@ see their own earnings normally.
 - **CP cash + withdrawal — inline or link-out?** Surface pending/settled + Withdraw here, or send fully to the existing
   CP flow?
 - **Time granularity + default window** — daily vs monthly; default 30d? Shared with [analytics.md](analytics.md).
-- **Charting lib** — none in `@civitai/ui`; pick jointly with [analytics.md](analytics.md).

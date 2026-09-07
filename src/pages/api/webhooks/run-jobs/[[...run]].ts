@@ -5,6 +5,7 @@ import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-str
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
+import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -82,6 +83,7 @@ import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subs
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
+import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -184,6 +186,7 @@ export const jobs: Job[] = [
   auditWildcardSetCategoriesJob,
   ...metricReconciliationJobs,
   ...clickhouseRefreshJobs,
+  userActivityRollupJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -192,6 +195,7 @@ export const jobs: Job[] = [
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
   confirmMutes,
+  botAccountDetection,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,

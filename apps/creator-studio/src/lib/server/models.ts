@@ -76,6 +76,8 @@ export type CreatorModel = {
   // Drive the "view on Civitai" link to civitai.red vs civitai.com (see $lib/model-url).
   nsfw: boolean;
   nsfwLevel: number;
+  /** Flagged as depicting a real person — a new price on it is refused (licensingFeeBlockedFor). */
+  poi: boolean;
   versions: CreatorModelVersion[];
 };
 
@@ -288,7 +290,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel'])
+      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi'])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -380,6 +382,9 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     .execute();
 
   // Select-all set: every version matching the filter across ALL pages (bulk mode only — it can be large).
+  // POI models stay IN even though a fee on one is refused: only SETTING a price is blocked, and a POI
+  // version can already carry a fee, so excluding them would make "select all → clear fees" silently
+  // skip exactly the versions most likely to need clearing (868m15nnc).
   let matchingVersionIds: number[] = [];
   if (query.withMatchingVersionIds) {
     const idRows = await dbRead
@@ -441,6 +446,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       status: m.status,
       nsfw: !!m.nsfw,
       nsfwLevel: Number(m.nsfwLevel ?? 0),
+      poi: !!m.poi,
       versions: byModel.get(m.id) ?? [],
     })),
     total,

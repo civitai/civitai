@@ -104,9 +104,10 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
+import { recordShadowComparison, runHubParse } from './form-graph/shadow-parse';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
-import { resolveSourceImageIds, signProvenance } from './remix-provenance';
+import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -147,6 +148,13 @@ export type GenerationContext = {
       }>;
     }
   >;
+  /**
+   * Provenance tokens minted by `orchestrator.mintRemixProvenance` for the source
+   * images this submission started from. Verified here, never trusted: a token is
+   * sealed with a server key and bound to the submitting user, so it is a
+   * credential rather than a claim. See `remix-provenance.ts`.
+   */
+  sourceProvenance?: string[];
   remixOfId?: number;
   // Forwarded to orchestrator workflow-create as `externalId`; makes the submit
   // idempotent on retry and lets the funnel dashboard join Generator_Submit to
@@ -584,7 +592,17 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  * (computed values like `triggerWords` are derived, not user input).
  */
 function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
-  const result = generationGraph.safeParse(normalizeInput(input), externalCtx);
+  const normalized = normalizeInput(input);
+  const result = generationGraph.safeParse(normalized, externalCtx);
+
+  // form-graph cutover: every parse runs both engines and records the
+  // comparison; the hub result is served for users with the cutover flag on.
+  // The v1 parse above always runs — it feeds the substitution metrics and
+  // the reverse comparison. Flag, comparison, and the whole shadow-parse
+  // module go away in the delete-data-graph change.
+  const serveHub = externalCtx.flags?.formGraphGenerator === true;
+  const hubResult = runHubParse(normalized, externalCtx);
+  recordShadowComparison(result, hubResult, String(normalized.workflow ?? 'unknown'));
 
   // Issue #3520 — count silent checkpoint substitutions. This is the single
   // choke point every SERVER-side graph validation passes through (submit,
@@ -597,6 +615,19 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
   // path and never rejects (see its module note). It is deliberately NOT
   // awaited: this function is synchronous and on the submit path.
   void emitModelSubstitutions(externalCtx.modelSubstitutions);
+
+  if (serveHub && hubResult.ok !== null) {
+    if (!hubResult.ok) {
+      const errorMessages = Object.entries(hubResult.errors)
+        .map(([key, error]) => `${key}: ${error.message}`)
+        .join(', ');
+      throw throwBadRequestError(`Validation failed: ${errorMessages}`);
+    }
+    return {
+      data: hubResult.data as GenerationGraphOutput,
+      computedKeys: new Set(hubResult.computedKeys),
+    };
+  }
 
   if (!result.success) {
     const errorMessages = Object.entries(result.errors)
@@ -1516,6 +1547,7 @@ export async function generateFromGraph({
   tags: customTags = [],
   sourceMetadata,
   sourceMetadataMap,
+  sourceProvenance,
   remixOfId,
   track,
   externalId,
@@ -1524,7 +1556,16 @@ export async function generateFromGraph({
   const { data, computedKeys } = validateInput(input, externalCtx);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
-  const sourceImageIds = await resolveSourceImageIds(inputImages);
+  // Both routes, because neither covers the other — see `unionSourceImageIds`.
+  // The short version: the form re-uploads a remix's on-site source as an
+  // orchestrator blob before submit, so the URL route alone reports nothing for
+  // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
+  // 2,526 on the engine that button picks).
+  const sourceImageIds = unionSourceImageIds({
+    urlSourceImageIds: await resolveSourceImageIds(inputImages),
+    tokens: sourceProvenance,
+    userId,
+  });
 
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {

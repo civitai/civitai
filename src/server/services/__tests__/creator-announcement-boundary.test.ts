@@ -202,8 +202,10 @@ describe('the allowance gates a notifying announcement and not a profile-only on
     // concurrent creates cannot both pass on the same stale count.
     tx.announcementSpend.count.mockResolvedValue(1);
 
+    // Matches the date half of the refusal, which is the part the test is about — the creator is
+    // told WHEN it comes back, not merely that it is gone.
     await expect(upsertCreatorAnnouncement({ ...validInput, userId: AUTHOR })).rejects.toThrow(
-      /Next available/
+      /Next one/
     );
     expect(dbMock.dbWrite.announcement.create).not.toHaveBeenCalled();
   });

@@ -1,4 +1,4 @@
-import { Button, Divider, ScrollArea, Stack } from '@mantine/core';
+import { Button, Divider, ScrollArea, Stack, Text } from '@mantine/core';
 import { IconCopy } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
@@ -32,6 +32,8 @@ export type HubPanelHub = {
   availability: Availability;
   isOwner: boolean;
   sources: HubSourceValue[];
+  /** How many things this hub keeps out. A count only — see `toHubDetail`. */
+  excludedCount: number;
 };
 
 function MaybeScrollArea({
@@ -108,7 +110,7 @@ export function HubSourcePanel({
           value={current}
           hideAdd={hideAdd}
           disabled={upsert.isPending}
-          emptyMessage="Nothing here yet. Add a creator, a model or a public collection."
+          emptyMessage="Nothing here yet. Add a creator, a model or a tag to start filling it."
           onChange={(next) => {
             setPending(next);
             upsert.mutate({ id: hub.id, sources: next.map((s, index) => ({ ...s, index })) });
@@ -122,7 +124,11 @@ export function HubSourcePanel({
 
   // Only what the owner has switched on: a source they switched off contributes
   // nothing, so listing it would offer a toggle that cannot change the feed.
-  const ownerEnabled = hub.sources.filter((source) => source.enabled);
+  //
+  // The owner's EXCLUSIONS are left out as well, and not because they are secret —
+  // `resolveHubSources` deliberately ignores session toggles on negative sources, so
+  // listing one here would render a switch that cannot move the feed.
+  const ownerEnabled = hub.sources.filter((source) => source.enabled && !source.exclude);
   const excludedKeys = new Set(excluded.map(hubSourceKey));
   const view = ownerEnabled.map((source) => ({
     ...source,
@@ -174,6 +180,13 @@ export function HubSourcePanel({
             setSessionLevel(hub.id, Flags.intersection(level, viewerAllowedLevel))
           }
         />
+      )}
+
+      {hub.excludedCount > 0 && (
+        <Text size="xs" c="dimmed">
+          {hub.excludedCount === 1 ? '1 thing is' : `${hub.excludedCount} things are`} kept out of
+          this hub. Duplicating it does not copy them.
+        </Text>
       )}
 
       <MaybeScrollArea maxHeight={listMaxHeight}>

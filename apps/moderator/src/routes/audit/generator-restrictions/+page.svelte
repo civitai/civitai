@@ -8,6 +8,7 @@
   import RestrictionDetail from './RestrictionDetail.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import Pager from '$lib/components/Pager.svelte';
+  import { RESTRICTION_TYPE, RESTRICTION_TYPE_LABELS } from '$lib/restriction-types';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -35,15 +36,27 @@
 
 <header class="page-header">
   <h1>Generator Restrictions</h1>
-  <p>Generation restrictions raised by the prompt-auditing system, and the rulings on them.</p>
+  {#if data.type === RESTRICTION_TYPE}
+    <p>Generation restrictions raised by the prompt-auditing system, and the rulings on them.</p>
+  {:else}
+    <!-- Named rather than described: the verdict path still sends generation-specific notices, so the
+         resolve and ban actions refuse these rows server-side. Saying so here is what stops a
+         moderator reading that refusal as a bug. -->
+    <p>
+      {RESTRICTION_TYPE_LABELS[data.type]} restrictions. Review only — rulings are not yet wired for this
+      type.
+    </p>
+  {/if}
 </header>
 
-<RestrictionFilters q={data.q} status={data.status} />
+<RestrictionFilters q={data.q} status={data.status} type={data.type} />
 
 <div class="flex items-start gap-6">
   <div class="flex w-104 shrink-0 flex-col">
     {#if data.items.length === 0}
-      <p class="text-sm text-dark-2">No generation restrictions match these filters.</p>
+      <p class="text-sm text-dark-2">
+        No {RESTRICTION_TYPE_LABELS[data.type].toLowerCase()} restrictions match these filters.
+      </p>
     {:else}
       <ul class="max-h-[70vh] overflow-auto rounded-xl border border-dark-4">
         {#each data.items as item (item.id)}

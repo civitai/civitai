@@ -18,7 +18,15 @@ export const VIEW_ENTITY = {
 export const IMPRESSION_ENTITY = {
   image: 'Image',
   model: 'Model',
+  announcement: 'Announcement',
 } as const;
+
+// The arms of `impressions_daily_by_owner`. NOT every impression entity: that table is populated by an MV
+// with one arm per ownership source in ClickHouse, and only Image and Model have one. Announcement
+// impressions exist per-entity in `daily_impressions` and are read by id from the announcements page —
+// summing them here would add a column the MV never writes, so a creator-wide total would silently
+// under-report by however much it claimed to include.
+export const OWNER_IMPRESSION_ARMS = [IMPRESSION_ENTITY.image, IMPRESSION_ENTITY.model] as const;
 
 export type ViewEntity = (typeof VIEW_ENTITY)[keyof typeof VIEW_ENTITY];
 export type ImpressionEntity = (typeof IMPRESSION_ENTITY)[keyof typeof IMPRESSION_ENTITY];

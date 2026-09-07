@@ -1,5 +1,12 @@
 import { ActionIcon, Group, Paper, Stack, Switch, Text, Tooltip } from '@mantine/core';
-import { IconBox, IconFolder, IconStack2, IconTrash, IconUserCircle } from '@tabler/icons-react';
+import {
+  IconBox,
+  IconFolder,
+  IconStack2,
+  IconTag,
+  IconTrash,
+  IconUserCircle,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
@@ -9,6 +16,7 @@ export type HubSourceCardProps = {
     targetId: number;
     alias?: string | null;
     enabled: boolean;
+    exclude?: boolean;
     index: number;
   };
   disabled?: boolean;
@@ -26,6 +34,7 @@ const sourceMeta: Record<
   [UserHubSourceType.Model]: { label: 'Model', color: 'violet', Icon: IconBox },
   [UserHubSourceType.ModelVersion]: { label: 'Version', color: 'teal', Icon: IconStack2 },
   [UserHubSourceType.Collection]: { label: 'Collection', color: 'orange', Icon: IconFolder },
+  [UserHubSourceType.Tag]: { label: 'Tag', color: 'grape', Icon: IconTag },
 };
 
 export function HubSourceCard({
@@ -35,9 +44,13 @@ export function HubSourceCard({
   onToggle,
   onRemove,
 }: HubSourceCardProps) {
-  const { label, color, Icon } = sourceMeta[source.type];
+  const { label, color: includeColor, Icon } = sourceMeta[source.type];
   const name = source.alias ?? `#${source.targetId}`;
   const on = source.enabled;
+  // One red for every excluded kind, rather than the type's own colour: what the
+  // row DOES is the thing to read at a glance, and a red creator chip beside a blue
+  // one says it faster than the word does.
+  const color = source.exclude ? 'red' : includeColor;
 
   return (
     <Paper
@@ -73,7 +86,7 @@ export function HubSourceCard({
             c={on ? color : 'dimmed'}
             className="tracking-wide"
           >
-            {label}
+            {source.exclude ? `${label} · kept out` : label}
           </Text>
           <Text size="sm" fw={500} lh={1.3} lineClamp={1} c={on ? undefined : 'dimmed'}>
             {name}
@@ -82,7 +95,17 @@ export function HubSourceCard({
       </Group>
 
       <Group gap={4} wrap="nowrap" className="shrink-0 self-center">
-        <Tooltip label={on ? 'Showing in this hub' : 'Hidden from this hub'}>
+        <Tooltip
+          label={
+            source.exclude
+              ? on
+                ? 'Kept out of this hub'
+                : 'Exclusion switched off'
+              : on
+              ? 'Showing in this hub'
+              : 'Hidden from this hub'
+          }
+        >
           <Switch
             size="xs"
             checked={on}

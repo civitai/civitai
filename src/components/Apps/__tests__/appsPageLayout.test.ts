@@ -126,8 +126,14 @@ describe('AppsPageLayout takes NO per-page container width', () => {
     // The state, not a keyword: the Container's `size` is THE shared constant.
     expect(src).toMatch(/<Container\s+size=\{APPS_PAGE_CONTAINER_WIDTH\}/);
     // …and it is the real import, not a same-named local.
+    //
+    // 🔴 THE BRACE LIST IS NOT PINNED, DELIBERATELY. This used to require
+    // `{ APPS_PAGE_CONTAINER_WIDTH }` as the WHOLE import clause, so adding a second
+    // symbol from the SAME module turned it red on a file that had not changed the
+    // claim at all. The claim is "that identifier comes from that module"; anything
+    // stricter is pinning the import's formatting.
     expect(src).toMatch(
-      /import\s*\{\s*APPS_PAGE_CONTAINER_WIDTH\s*\}\s*from\s*'~\/components\/Apps\/appsPageWidths'/
+      /import\s*\{[^}]*\bAPPS_PAGE_CONTAINER_WIDTH\b[^}]*\}\s*from\s*'~\/components\/Apps\/appsPageWidths'/s
     );
   });
 
@@ -170,7 +176,10 @@ describe('AppsPageLayout takes NO per-page container width', () => {
     const src = layoutSrc();
     expect(src.length).toBeGreaterThan(1000);
     expect(src).toMatch(/export function AppsPageLayout/);
-    expect(src).toMatch(/measure\?:\s*number/);
+    // `AppsMeasure` since the band pass — a number OR a `{min,max,grow}` band. The prop
+    // still exists and is still the only width the caller controls, which is what this
+    // guard-the-guard is for.
+    expect(src).toMatch(/measure\?:\s*AppsMeasure/);
   });
 });
 

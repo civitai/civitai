@@ -110,5 +110,25 @@ export const announcementRouter = router({
   toggleAnnouncementMute: protectedProcedure
     .use(isFlagProtected('creatorAnnouncements'))
     .input(z.object({ creatorId: z.number(), muted: z.boolean() }))
-    .mutation(({ ctx, input }) => toggleAnnouncementMute({ ...input, userId: ctx.user.id })),
+    .mutation(async ({ ctx, input }) => {
+      const result = await toggleAnnouncementMute({ ...input, userId: ctx.user.id });
+      // Recorded here rather than in the service because the tracker lives on the request
+      // context. Server-side on purpose: unlike the impression beacon, which authenticates
+      // nothing, this count cannot be inflated by anything but a real signed-in mutation.
+      if (result.changed)
+        ctx.track
+          .action(
+            {
+              type: result.muted ? 'Announcement_Mute' : 'Announcement_Unmute',
+              details: { creatorId: input.creatorId },
+            },
+            // No `ip`/`userAgent`. Unmuting removes the Postgres row, but `actions` has no
+            // TTL, so without this a reversible, private control leaves a permanent
+            // IP-stamped record of who muted whom. The chart needs a count per day; it does
+            // not need an actor.
+            { skipActorMeta: true }
+          )
+          .catch(() => undefined);
+      return result;
+    }),
 });

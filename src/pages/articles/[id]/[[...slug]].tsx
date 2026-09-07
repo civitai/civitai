@@ -44,6 +44,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openArticleRatingReviewModal } from '~/components/Dialog/triggers/article-rating-review';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -386,6 +387,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </Text>
                 </Tooltip>
               )}
+            {article.isOfficial && (
+              <>
+                <Divider orientation="vertical" />
+                <OfficialArticleBadge />
+              </>
+            )}
             {category && (
               <>
                 <Divider orientation="vertical" />

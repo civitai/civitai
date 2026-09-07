@@ -17,6 +17,7 @@ import type {
   ArticleMetadata,
   CreateArticleRatingReviewInput,
   GetInfiniteArticlesSchema,
+  SetArticleOfficialInput,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
@@ -105,6 +106,7 @@ type ArticleRaw = {
   availability: Availability;
   userId: number | null;
   status: ArticleStatus;
+  isOfficial: boolean;
   tags: {
     tag: {
       id: number;
@@ -159,6 +161,7 @@ export const getArticles = async ({
   cursor,
   query,
   tags,
+  isOfficial,
   period,
   periodMode,
   sort,
@@ -211,6 +214,11 @@ export const getArticles = async ({
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
+    // Only `true` narrows. An explicit `false` is treated as no filter, matching the
+    // schema comment: nobody browses FOR community articles, and a `false` that filtered
+    // would let a stale url hide every official article from a feed.
+    if (isOfficial) AND.push(Prisma.sql`a."isOfficial" = true`);
+
     if (!!tags?.length) {
       AND.push(
         Prisma.sql`EXISTS (
@@ -448,6 +456,7 @@ export const getArticles = async ({
         a."availability",
         a."userId",
         a.status,
+        a."isOfficial",
         (
           SELECT COALESCE(
             jsonb_agg(
@@ -2919,3 +2928,39 @@ export async function getArticleRatingReviewForOwner({
 // NOTE(moderator-migration): the moderator resolution path (formerly resolveArticleRatingReview) now
 // lives in the spoke app (apps/moderator, Kysely). The owner-facing create + auto-resolve paths above
 // stay here.
+
+/**
+ * Mark an article as published by Civitai, or take that mark off.
+ *
+ * Mirrors `setModelOfficial` (model.service.ts) deliberately, down to the moderator check:
+ * this is a provenance claim, so the authority has to be a permission the user cannot give
+ * themselves. The earlier design put it on an `adminOnly` TAG, which a review killed —
+ * article tags attach by NAME through `connectOrCreate`, so the marker was a string any
+ * user could type, and the row it creates defaults to not-adminOnly.
+ *
+ * 🔴 The `isModerator` argument is passed by the caller, so it is only as true as the
+ * caller. The router mounts this on `moderatorProcedure`; keep it there. Do not add a
+ * second caller that computes this flag from anything a request body carries.
+ */
+export const setArticleOfficial = async ({
+  id,
+  isOfficial,
+  isModerator,
+}: SetArticleOfficialInput & { isModerator: boolean }) => {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const article = await dbRead.article.findUnique({ where: { id }, select: { id: true } });
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  const updated = await dbWrite.article.update({
+    where: { id },
+    data: { isOfficial },
+    select: { id: true, isOfficial: true },
+  });
+
+  // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
+  // a stale document would keep serving the old provenance to search.
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return updated;
+};

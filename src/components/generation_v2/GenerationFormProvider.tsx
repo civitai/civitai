@@ -950,7 +950,7 @@ export function GenerationFormProvider({
 /** Convert GenerationResource to ResourceData (matching data-graph resourceSchema).
  * Resources arriving from the cross-domain handoff or storage may be partially
  * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
-function toResourceData(r: GenerationResource): ResourceData {
+export function toResourceData(r: GenerationResource): ResourceData {
   if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
   return {
     id: r.id,

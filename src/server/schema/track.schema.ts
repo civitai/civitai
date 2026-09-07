@@ -565,10 +565,11 @@ const generatorSubmitSchema = z.object({
     // opened from the remix entry point. See the doc-block above: the meaning
     // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
-    // 'new' (generation_v2/FormFooter) is emitted by the current form.
-    // 'legacy'/'video' are retained for backward-compatibility with
-    // historical events from the removed legacy generation form.
-    formVersion: z.enum(['legacy', 'new', 'video']).optional(),
+    // 'new' (generation_v2/FormFooter) is emitted by the current form;
+    // 'form-graph' by the form-graph lane's footer. 'legacy'/'video' are
+    // retained for backward-compatibility with historical events from the
+    // removed legacy generation form.
+    formVersion: z.enum(['legacy', 'new', 'video', 'form-graph']).optional(),
     // False when the submit attempt failed validation (react-hook-form
     // onError path or graph.validate() early return). The data team can
     // split valid-vs-invalid attempts to spot UX traps where users click
@@ -645,6 +646,54 @@ const feedTagBarClickSchema = z.object({
   }),
 });
 
+// Creator announcement analytics — the click half. The impression half rides the feed
+// impression pipeline (`entityType: 'Announcement'`) and writes no `actions` row.
+//
+// `creatorId` is carried even though it is derivable from `announcementId` in Postgres:
+// the Creator Studio read is a ClickHouse query and would otherwise need a join it has no
+// table for. Both are ids, so neither can carry user text into the `details` column.
+const announcementClickSchema = z.object({
+  type: z.literal('Announcement_Click'),
+  details: z.object({
+    announcementId: z.number().int().positive(),
+    creatorId: z.number().int().positive(),
+  }),
+});
+
+// Mute and unmute of a creator's announcements. Two types rather than one carrying a
+// boolean: the chart is `countIf(type = ...)` per day with no JSON parsing of `details`,
+// and a net line is the difference of the two.
+//
+// 🔴 DELIBERATELY ABSENT FROM `trackActionSchema`. That schema is what `/api/track/batch`
+// accepts from a browser, so an arm here would let anyone post mute events for any creator
+// — which is the opposite of the property these two types exist to have. They are emitted
+// only from the tRPC mutation that performs the mute. `BuzzLimit_Set` is the existing
+// precedent for a server-only action type with no client arm.
+//
+// 🔴 THESE ARE THE ONLY RECORD OF A MUTE OVER TIME. `UserAnnouncementMute` is the live
+// truth for "how many people have me muted right now", but an unmute DELETES the row, so
+// a chart built from its `createdAt` shows only mutes that are still in force — a past
+// day's bar shrinks as people unmute, and a mute-then-unmute never happened at all. These
+// events are what make the series honest, so they must be emitted on BOTH edges.
+//
+// Emitted SERVER-SIDE from the tRPC mutation, not from the browser: unlike the impression
+// beacon this number cannot be inflated by a script posting to /api/track/batch.
+
+// App store play count — the `App_Open` half. (Blank line above is load-bearing: without
+// it this block reads as a continuation of the mute pair's rationale directly overhead,
+// and the play-count reasoning attaches to the wrong schemas.)
+//
+// 🔴 DELIBERATELY ABSENT FROM `trackActionSchema`, for the same reason as the mute pair
+// above and `BuzzLimit_Set` before it: this schema is what `/api/track/batch` accepts from
+// a browser, so an arm here would let anyone inflate ANY app's play count by POSTing —
+// and unlike a chart in an admin page, that number is printed on a public marketplace card
+// next to the review count. It is emitted SERVER-SIDE only, from the `/apps/run/<slug>`
+// SSR resolver (`recordAppListingOpen`), i.e. from a request this server actually served
+// after the flag gate, the approved-app resolution and the host rating check all passed.
+//
+// The containment direction in `action-type-enum-drift.test.ts` is what keeps this true in
+// one direction (every arm here must be an `ActionType`); the reverse is deliberately not
+// asserted, which is exactly what lets a server-only type exist.
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -669,6 +718,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   imageRemixClickSchema,
   generatorSubmitSchema,
   feedTagBarClickSchema,
+  announcementClickSchema,
 ]);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to
@@ -695,6 +745,10 @@ export const IMPRESSION_ENTITY_TYPES = [
   'Bounty',
   'BountyEntry',
   'User',
+  // Creator announcements only. The sitewide rows render through the same card but are
+  // not instrumented — nobody reads a reach number for those, and they would sit in the
+  // same rollup a creator's page sums.
+  'Announcement',
 ] as const;
 export type ImpressionEntityType = (typeof IMPRESSION_ENTITY_TYPES)[number];
 

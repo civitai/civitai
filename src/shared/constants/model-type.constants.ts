@@ -2,7 +2,6 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
 export const modelTypeGroups = [
-  { group: 'Fine-tunes', types: [ModelType.Checkpoint] },
   { group: 'Adapters', types: [ModelType.LORA, ModelType.LoCon, ModelType.DoRA] },
   {
     group: 'Component replacements',
@@ -14,12 +13,21 @@ export const modelTypeGroups = [
   },
 ] as const satisfies readonly { group: string; types: readonly ModelType[] }[];
 
-/** Offered after the groups, under no heading — a group of one repeats its own name as a header. */
-export const ungroupedModelTypes = [ModelType.Other] as const satisfies readonly ModelType[];
+/**
+ * Offered under no heading — a group of one repeats its own name as a header. Two lists because
+ * Checkpoint leads the picker and Other trails it, either side of the groups.
+ */
+export const leadingUngroupedModelTypes = [
+  ModelType.Checkpoint,
+] as const satisfies readonly ModelType[];
+export const trailingUngroupedModelTypes = [
+  ModelType.Other,
+] as const satisfies readonly ModelType[];
 
 export const selectableModelTypes = [
+  ...leadingUngroupedModelTypes,
   ...modelTypeGroups.flatMap(({ types }) => types),
-  ...ungroupedModelTypes,
+  ...trailingUngroupedModelTypes,
 ] as ModelType[];
 
 /**
@@ -41,8 +49,9 @@ export const retiredModelTypes = [
 ] as const satisfies readonly ModelType[];
 
 type SelectableModelType =
+  | (typeof leadingUngroupedModelTypes)[number]
   | (typeof modelTypeGroups)[number]['types'][number]
-  | (typeof ungroupedModelTypes)[number];
+  | (typeof trailingUngroupedModelTypes)[number];
 type UncategorisedModelType = Exclude<
   ModelType,
   SelectableModelType | (typeof retiredModelTypes)[number]
@@ -57,7 +66,7 @@ type UncategorisedModelType = Exclude<
 const _everyModelTypeIsCategorised: [UncategorisedModelType] extends [never]
   ? true
   : {
-      error: 'Add it to modelTypeGroups, ungroupedModelTypes or retiredModelTypes';
+      error: 'Add it to modelTypeGroups, one of the ungrouped lists, or retiredModelTypes';
       missing: UncategorisedModelType;
     } = true;
 void _everyModelTypeIsCategorised;
@@ -86,8 +95,9 @@ export function getModelTypeSelectData(
   currentType?: ModelType | string | null
 ): ModelTypeSelectItem[] {
   const offered = [
+    ...leadingUngroupedModelTypes.map((type) => toItem(type)),
     ...modelTypeGroups.flatMap(({ group, types }) => types.map((type) => toItem(type, group))),
-    ...ungroupedModelTypes.map((type) => toItem(type)),
+    ...trailingUngroupedModelTypes.map((type) => toItem(type)),
   ];
 
   if (!currentType || selectableModelTypeSet.has(currentType)) return offered;
