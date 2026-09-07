@@ -313,62 +313,117 @@ export async function processImageScanWorkflow({
   }
 
   const { wdTags, mediaRating, mediaHash } = parsed;
-  const pHash = computePerceptualHash(mediaHash?.hashes?.perceptual);
 
-  // Log (don't act on) perceptual-hash matches against known-blocked content.
-  if (!mediaRating.isBlocked && pHash) await logPerceptualHashMatch({ imageId, pHash });
+  // Scope stops at the outcome write: markImageScanError is unconditional, so
+  // widening this catch past it would overwrite a verdict that already landed.
+  let image: ScanImage;
+  let outcome: Awaited<ReturnType<typeof resolveScanOutcome>>;
+  try {
+    const pHash = computePerceptualHash(mediaHash?.hashes?.perceptual);
 
-  // The orchestrator content rating can hard-block the image outright.
-  if (mediaRating.isBlocked) {
-    await blockImageFromRating({ imageId, pHash, blockedReason: mediaRating.blockedReason });
+    // Log (don't act on) perceptual-hash matches against known-blocked content.
+    if (!mediaRating.isBlocked && pHash) await logPerceptualHashMatch({ imageId, pHash });
+
+    // The orchestrator content rating can hard-block the image outright.
+    if (mediaRating.isBlocked) {
+      await blockImageFromRating({ imageId, pHash, blockedReason: mediaRating.blockedReason });
+    }
+
+    image = await loadImageForScan(imageId);
+    const { prompt, negativePrompt } = (image.meta ?? {}) as {
+      prompt?: string;
+      negativePrompt?: string;
+    };
+
+    await buildAndInsertScanTags({
+      imageId: image.id,
+      wdTags,
+      ratingLevel: mediaRating.nsfwLevel,
+      prompt,
+    });
+
+    outcome = await resolveScanOutcome({
+      image,
+      mediaRating,
+      pHash,
+      workflowId,
+      prompt,
+      negativePrompt,
+    });
+  } catch (error) {
+    // Deleted between submit and callback — no row to mark. The handler ACKs it 200.
+    if (error instanceof Error && error.message.startsWith('image not found')) throw error;
+
+    const reason = error instanceof Error ? error.message : 'Unknown error';
+    const { retryCount, mediaType, failureClass } = await markImageScanError({
+      workflowId,
+      imageId,
+      status,
+      failureType: 'processing-failed',
+      failedSteps: extractFailedSteps(steps),
+      reason,
+    });
+    logToAxiom(
+      {
+        name: 'image-scan-result',
+        type: 'error',
+        message: 'failed to process a succeeded workflow',
+        source: 'image-scan-result.service',
+        stack: error instanceof Error ? error.stack : undefined,
+        failureType: 'processing-failed',
+        reason,
+        failureClass,
+        imageId,
+        mediaType,
+        workflowId,
+        status,
+        retryCount,
+      },
+      'webhooks'
+    ).catch(() => null);
+    if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
+    return;
   }
 
-  const image = await loadImageForScan(imageId);
-  const { prompt, negativePrompt } = (image.meta ?? {}) as {
-    prompt?: string;
-    negativePrompt?: string;
-  };
+  // The verdict is persisted; throwing here would 400 a finished webhook and have
+  // the orchestrator re-run it. Log and fall through to the signal send.
+  try {
+    // Terminal outcome reached (resolveScanOutcome only ever returns Scanned or
+    // Blocked) — drop the ImageScan JobQueue row so it doesn't linger as a stale
+    // entry until the ingest-images cron happens to prune it. Error scans take the
+    // early-return branches above and stay queued for retry.
+    await removeImageScanJobQueue([image.id]);
 
-  await buildAndInsertScanTags({
-    imageId: image.id,
-    wdTags,
-    ratingLevel: mediaRating.nsfwLevel,
-    prompt,
-  });
+    await recordImageScan({
+      workflowId,
+      imageId: image.id,
+      mediaRating,
+      startedAt,
+      completedAt,
+    });
 
-  const outcome = await resolveScanOutcome({
-    image,
-    mediaRating,
-    pHash,
-    workflowId,
-    prompt,
-    negativePrompt,
-  });
+    // Fan out to articles for every terminal state (Scanned and Blocked).
+    // Article ingestion must advance on Blocked too, otherwise articles whose last
+    // image blocks stay stuck in Pending/Rescan.
+    if (articleImageScanning) await fanOutArticleImageUpdates(image.id);
 
-  // Terminal outcome reached (resolveScanOutcome only ever returns Scanned or
-  // Blocked) — drop the ImageScan JobQueue row so it doesn't linger as a stale
-  // entry until the ingest-images cron happens to prune it. Error scans take the
-  // early-return branch above and stay queued for retry.
-  await removeImageScanJobQueue([image.id]);
-
-  // --- side effects (run after the image row reflects the resolved outcome) ---
-
-  // Audit-log to scanner_label_results. Fire-and-forget — failures log but
-  // can't block ingestion. Runs for every successful mediaRating output.
-  await recordImageScan({
-    workflowId,
-    imageId: image.id,
-    mediaRating,
-    startedAt,
-    completedAt,
-  });
-
-  // Fan out to articles for every terminal state (Scanned and Blocked).
-  // Article ingestion must advance on Blocked too, otherwise articles whose last
-  // image blocks stay stuck in Pending/Rescan.
-  if (articleImageScanning) await fanOutArticleImageUpdates(image.id);
-
-  await applyIngestionSideEffects({ image, outcome });
+    await applyIngestionSideEffects({ image, outcome });
+  } catch (error) {
+    logToAxiom(
+      {
+        name: 'image-scan-result',
+        type: 'error',
+        message: 'side effects failed after the scan verdict was persisted',
+        source: 'image-scan-result.service',
+        stack: error instanceof Error ? error.stack : undefined,
+        reason: error instanceof Error ? error.message : 'Unknown error',
+        imageId: image.id,
+        workflowId,
+        ingestion: outcome.ingestion,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook
   // and make the orchestrator re-run it.
@@ -815,8 +870,8 @@ async function processTags({
   if (tagsToCreate.length > 0) {
     const tagsToInsert = deduped.filter((x) => tagsToCreate.includes(x.name));
 
-    // `updatedAt` and `target` are NOT NULL with no database default -- Prisma stamps
-    // them client-side, which raw SQL bypasses, so omitting them raises 23502.
+    // Raw SQL bypasses Prisma's @updatedAt stamp, and neither column has a DB
+    // default — both are NOT NULL, so omitting either raises 23502.
     const now = new Date();
     const values = tagsToInsert.map(
       (tag) => Prisma.sql`(${tag.name}, ${now}, ARRAY['Image']::"TagTarget"[])`
