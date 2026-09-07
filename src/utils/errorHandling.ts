@@ -35,20 +35,19 @@ export function withRetries<T>(
   });
 }
 
-const jsonParseFailure = /is not valid JSON|Unexpected token|JSON\.parse|Unexpected end of/i;
-
 /**
  * tRPC drops the `Response` when `res.json()` throws, so an HTML body — an edge
- * rate-limit page, a gateway error — reaches the client as a bare `SyntaxError`
- * with no status to branch on.
+ * rate-limit page, a gateway error — arrives with no `data.httpStatus` to branch
+ * on, carrying the raw `SyntaxError` as its cause.
  */
 export function getQueryErrorMessage(error: {
   message: string;
+  cause?: unknown;
   data?: { httpStatus?: number } | null;
 }) {
   if (error.data?.httpStatus === 429)
     return 'Too many requests. Please wait a moment and try again.';
-  if (jsonParseFailure.test(error.message))
+  if (error.cause instanceof SyntaxError)
     return "Couldn't reach the server — it may be busy. Please try again in a moment.";
 
   return error.message;

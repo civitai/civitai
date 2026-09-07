@@ -60,9 +60,7 @@ beforeEach(() => {
 
 describe('CollectionShowcase auto-loading', () => {
   test('below the page cap it keeps the in-view loader', async () => {
-    useModelShowcaseCollection.mockReturnValue(
-      showcaseState({ items: [item(1)], pageCount: 4 })
-    );
+    useModelShowcaseCollection.mockReturnValue(showcaseState({ items: [item(1)], pageCount: 4 }));
     render();
 
     await expect.element(page.getByText('Model 1')).toBeInTheDocument();

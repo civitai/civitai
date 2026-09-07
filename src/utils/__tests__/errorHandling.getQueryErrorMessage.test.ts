@@ -2,17 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { getQueryErrorMessage } from '~/utils/errorHandling';
 
 describe('getQueryErrorMessage', () => {
-  // Verbatim messages from a non-JSON body reaching `res.json()`.
-  it.each([
-    `Unexpected token '<', "<!doctype "... is not valid JSON`,
-    'JSON.parse: unexpected character at line 1 column 1 of the JSON data',
-    'Unexpected end of JSON input',
-  ])('replaces the raw parse failure %#', (message) => {
-    const result = getQueryErrorMessage({ message });
+  it('replaces the raw parse failure a non-JSON body produces', () => {
+    // What `TRPCClientError.from` builds when `res.json()` rejects: the SyntaxError's own
+    // text as the message, the SyntaxError itself as the cause, and no `data`.
+    const cause = new SyntaxError(
+      `Failed to execute 'json' on 'Response': Unexpected token '<', "<!doctype "... is not valid JSON`
+    );
 
-    expect(result).not.toContain('doctype');
-    expect(result).not.toContain('JSON');
-    expect(result).toBe("Couldn't reach the server — it may be busy. Please try again in a moment.");
+    const result = getQueryErrorMessage({ message: cause.message, cause });
+
+    expect(result).toBe(
+      "Couldn't reach the server — it may be busy. Please try again in a moment."
+    );
   });
 
   it('names the limit when the server was able to report one', () => {
@@ -22,8 +23,16 @@ describe('getQueryErrorMessage', () => {
   });
 
   it('passes a real server message through untouched', () => {
-    expect(
-      getQueryErrorMessage({ message: 'No Model with id 1', data: { httpStatus: 404 } })
-    ).toBe('No Model with id 1');
+    expect(getQueryErrorMessage({ message: 'No Model with id 1', data: { httpStatus: 404 } })).toBe(
+      'No Model with id 1'
+    );
+  });
+
+  it('does not fire on a server message that merely reads like a parse failure', () => {
+    const message = 'Unexpected token in your prompt template';
+
+    expect(getQueryErrorMessage({ message, cause: new Error('upstream'), data: null })).toBe(
+      message
+    );
   });
 });
