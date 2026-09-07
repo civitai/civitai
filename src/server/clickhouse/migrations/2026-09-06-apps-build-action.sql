@@ -27,6 +27,15 @@
 -- later is a zod change with NO DDL — which is the reason this is one enum value and not
 -- four. `Feed_TagBar_Click` (= 22) is the existing precedent for a type whose `details`
 -- carries the discriminator.
+--
+-- 🔴 THE ORDERING RULE ABOVE IS NECESSARY AND INSUFFICIENT — APPLYING THE DDL FIRST DOES NOT
+-- MAKE THIS WORK. `civitai-clickhouse-tracker` builds its column serializers from the schema
+-- its pods read AT CONNECT TIME and never re-reads them, so a value added after those pods
+-- booted is rejected CLIENT-SIDE, inside the tracker, before ClickHouse is asked. The DDL
+-- verifies perfectly and the type still collects ZERO rows. Measured twice: `Announcement_Click`
+-- collected nothing for ~2.5 days, `App_Open` until it was caught by hand. See ./README.md.
+--
+-- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.
 
 ALTER TABLE default.actions
   MODIFY COLUMN `type` Enum16(
@@ -64,7 +73,8 @@ ALTER TABLE default.actions
 --   SHOW CREATE TABLE default.actions;
 --     -- must show 'AppsBuild_Action' = 27, and every value 1..26 unchanged.
 --
--- Positive control once the app is deployed — load /apps/build, then:
+-- Positive control once the tracker has been RESTARTED and the app deployed — load
+-- /apps/build, then:
 --
 --   SELECT details, count() FROM default.actions
 --    WHERE type = 'AppsBuild_Action' AND time > now() - INTERVAL 1 HOUR
