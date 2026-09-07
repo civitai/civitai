@@ -764,6 +764,65 @@ async function applyCollectionAutoTag(
   }
 }
 
+type SubmissionNotifyCollection = { id: number; name: string; userId: number };
+
+// Callers have already committed the item write, so nothing here may throw: an error for a submit
+// that succeeded gets retried, and double-submits.
+async function notifyCollectionSubmissionReceived({
+  collections,
+  submitterId,
+}: {
+  collections: SubmissionNotifyCollection[];
+  submitterId: number;
+}) {
+  if (collections.length === 0) return;
+  const collectionIds = collections.map((c) => c.id);
+
+  try {
+    const [managers, judges] = await Promise.all([
+      dbRead.collectionContributor.findMany({
+        where: {
+          collectionId: { in: collectionIds },
+          permissions: { has: CollectionContributorPermission.MANAGE },
+        },
+        select: { collectionId: true, userId: true },
+      }),
+      // Every challenge entry collection is owned by a judge's user account
+      // (resolveChallengeCollectionOwnerId), so without this each entry notifies the judge.
+      dbRead.challengeJudge.findMany({ select: { userId: true } }),
+    ]);
+    const judgeUserIds = new Set(judges.map((j) => j.userId));
+
+    await Promise.all(
+      collections.map((collection) => {
+        const recipients = uniq([
+          collection.userId,
+          ...managers.filter((m) => m.collectionId === collection.id).map((m) => m.userId),
+        ]).filter((id) => id !== submitterId && !judgeUserIds.has(id));
+        if (recipients.length === 0) return;
+
+        return createNotification({
+          userIds: recipients,
+          type: 'collection-submission-received',
+          category: NotificationCategory.Update,
+          key: `collection-submission-received:${collection.id}:${uuid()}`,
+          details: { collectionId: collection.id, collectionName: collection.name },
+        });
+      })
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'collection-submission-notify-failed',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      collectionIds,
+    }).catch(() => {
+      // swallow — best-effort logging must never break the submit it is observing
+    });
+  }
+}
+
 export const saveItemInCollections = async ({
   input: {
     collections: upsertCollectionItems,
@@ -992,7 +1051,7 @@ export const saveItemInCollections = async ({
       })
       .filter(isDefined);
 
-    // The "Save to collection" modal is the other door into removal, and a delete through it
+    // The "Add to Collection" modal is the other door into removal, and a delete through it
     // would let the job re-add the image the removal was meant to stop.
     const autoFeatureUserId = await getAutoFeatureUserId();
     const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
@@ -1062,54 +1121,17 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // Excluding `unwrittenCollectionIds` keeps a no-op re-save from reading as a second submission.
   const reviewCollectionIds = uniq(
-    data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
+    data
+      .filter((d) => d.status === CollectionItemStatus.REVIEW)
+      .map((d) => d.collectionId)
+      .filter((id) => !unwrittenCollectionIds.has(id))
   );
-  if (reviewCollectionIds.length > 0) {
-    try {
-      const managers = await dbRead.collectionContributor.findMany({
-        where: {
-          collectionId: { in: reviewCollectionIds },
-          permissions: { has: CollectionContributorPermission.MANAGE },
-        },
-        select: { collectionId: true, userId: true },
-      });
-
-      await Promise.all(
-        reviewCollectionIds.map((collectionId) => {
-          const collection = collections.find((c) => c.id === collectionId);
-          if (!collection) return;
-
-          const recipients = uniq([
-            collection.userId,
-            ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
-          ]).filter((id) => id !== userId);
-          if (recipients.length === 0) return;
-
-          return createNotification({
-            userIds: recipients,
-            type: 'collection-submission-received',
-            category: NotificationCategory.Update,
-            key: `collection-submission-received:${collectionId}:${uuid()}`,
-            details: { collectionId, collectionName: collection.name },
-          });
-        })
-      );
-    } catch (error) {
-      // The item write above already committed — a failure resolving recipients or notifying
-      // them must not fail the submit itself, or the caller sees an error for an action that
-      // actually succeeded and is likely to retry and double-submit.
-      logToAxiom({
-        type: 'error',
-        name: 'collection-submission-notify-failed',
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        collectionIds: reviewCollectionIds,
-      }).catch(() => {
-        // swallow — best-effort logging must never break the submit it is observing
-      });
-    }
-  }
+  await notifyCollectionSubmissionReceived({
+    collections: collections.filter((c) => reviewCollectionIds.includes(c.id)),
+    submitterId: userId,
+  });
 
   // The feed index carries collection membership for hubs, and nothing about a
   // CollectionItem write reaches it on its own. Covers both directions: the
@@ -3334,6 +3356,14 @@ export const bulkSaveItems = async ({
 
   // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
   await applyCollectionAutoTag(metadata, savedImageIds);
+
+  // After the entry-fee block, so an entry rolled back for non-payment is never announced.
+  if (count > 0 && status === CollectionItemStatus.REVIEW) {
+    await notifyCollectionSubmissionReceived({
+      collections: [collection],
+      submitterId: userId,
+    });
+  }
 
   // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
