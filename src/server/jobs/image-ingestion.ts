@@ -491,8 +491,9 @@ const CSAM_HOLD_MAX_DAYS = 30;
  * `entityType: 'image'`, the complete vocabulary is:
  *   'review'        — `handleAcceptImages` and `handleBlockImages` (image.service),
  *                     `setTosViolationHandler` (image.controller), `acceptImage` and `blockImage`
- *                     (moderator app), `/api/mod/unblock-images`. Every one of them is a moderator
- *                     deciding about ONE named image. Three of the six are the un-block direction,
+ *                     (moderator app), `/api/mod/unblock-images`. Every one of them writes one row
+ *                     per NAMED image id — several of them take a list, but none of them stands in
+ *                     for a set it was never handed. Three of the six are the un-block direction,
  *                     which is why the timestamp comparison at the call site is load-bearing and
  *                     not decoration: an accept or unblock leaves the row not-Blocked, so it
  *                     cannot be in this batch at all unless something re-blocked it afterwards,
@@ -501,9 +502,10 @@ const CSAM_HOLD_MAX_DAYS = 30;
  *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
  *                     NO per-image row, by its own design; that is what keeps a library-wide block
  *                     out of this set.
- * DELIBERATELY EXCLUDED, all of them moderator-written but none of them a takedown of the bytes:
- *   'bulkRestore', 'resolveAppeal', 'setNsfwLevel', 'setNsfwLevelKono', 'poi:<bool>',
- *   'minor:<bool>', and the tag activities.
+ * DELIBERATELY EXCLUDED — the rest of that enumeration, every one of them moderator-written and
+ * none of them a decision to destroy the bytes: 'bulkRestore', 'resolveAppeal', 'setNsfwLevel',
+ * 'setNsfwLevelKono' and 'moderateTag', plus the flag activities the moderator app spells
+ * dynamically as `poi:<bool>` / `minor:<bool>`.
  *
  * Adding a value here widens a cross-account destructive capability. Say why, in the same commit.
  */

@@ -234,9 +234,10 @@ export const setTosViolationHandler = async ({
     await clearAccountDeletionImageMarkers({ ids: [id] });
 
     // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
-    // action — took this one image down. Every sibling single-image block already writes it
-    // (`handleBlockImages`, and `blockImage` in the moderator app); this handler did not, so this
-    // takedown left no row in the mod audit log at all.
+    // action — took this one image down. The other moderator-driven single-image blocks write it
+    // already (`handleBlockImages` when it is given an id list and a `moderatorId`, and
+    // `blockImage` in the moderator app); this handler, which is `moderatorProcedure`-gated and
+    // acts on exactly one image, did not, so this takedown left no row in the mod audit log at all.
     //
     // It is also load-bearing now: `remove-blocked-images` retracts the SHARED, content-addressed
     // stored object only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
