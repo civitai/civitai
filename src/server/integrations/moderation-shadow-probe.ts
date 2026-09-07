@@ -75,7 +75,7 @@ export type ShadowComparableVerdict = { flagged: boolean };
  *
  * `hasOwnProperty` rather than `in`, because `in` walks the prototype chain: with a map key of
  * `toString` or `constructor` — operator-controlled, so not untrusted, but free to get right — `in`
- * would report the vocabulary covered on a response that carries nothing of the sort. Same failure
+ * would report a mapped key PRESENT on a response that carries nothing of the sort. Same failure
  * shape this codebase has already been bitten by elsewhere.
  */
 export function candidateVerdictIsDeterminate(
@@ -183,23 +183,37 @@ export function classifyShadowOutcome(
  * do not restate it, and do not reach for a replacement justification for the same shape.**
  *
  * ⚠️ SO WHAT THIS GUARD ACTUALLY RESTS ON, STATED WITHOUT DRESSING IT UP: two signals that are
- * TRUE OF PREVIEWS TODAY, neither of which this module owns, and neither of which any test or gate
- * in either repo pins to this use. Canonical namespace values, from `cache-key-prefix.ts`:
- * `''`/unset = production, `'preview'` = the ephemeral per-PR deployments, `'next'` = the standing
- * non-production one. The known way this goes stale is a per-preview keyspace
- * (`CACHE_KEY_NAMESPACE=preview-<PR>`), which is a natural evolution and would silently un-refuse
- * every preview — which is why `NEXT_PUBLIC_IS_PR_PREVIEW` is checked ALONGSIDE rather than
- * instead: it is preview-only, is already used for this exact discrimination elsewhere in this repo
- * (`contest-score.service.ts`), and does not vary with a keyspace scheme.
+ * TRUE OF PREVIEWS TODAY and that this module does not own. The tests below pin how this module
+ * READS them; nothing on the INFRA side is pinned to keep SUPPLYING them, and that is the exposure.
+ * Canonical namespace values, from `cache-key-prefix.ts`: `''`/unset = production, `'preview'` =
+ * the ephemeral per-PR deployments, `'next'` = the standing non-production one. The known way this
+ * goes stale is a per-preview keyspace (`CACHE_KEY_NAMESPACE=preview-<PR>`), a natural evolution
+ * that would silently un-refuse every preview — which is why `NEXT_PUBLIC_IS_PR_PREVIEW` is checked
+ * ALONGSIDE rather than instead: measured across the infra repo it is set ONLY by the preview
+ * pipeline (as a build arg) and the preview deploy task (in the ConfigMap), is absent from
+ * production, `civitai-next` and `civitai-next-stage`, and does not vary with a keyspace scheme.
+ *
+ * ⚠️ NO PRECEDENT IS CLAIMED FOR THAT CHOICE, deliberately. A previous revision cited
+ * `contest-score.service.ts` as "already used for this exact discrimination"; it is not — that
+ * file reads the variable as an explicitly LEGACY fallback for a DATABASE-class question, gated on
+ * `!isDatabaseEnvironmentConfigured()` and documented as de-authorised once `DATABASE_ENVIRONMENT`
+ * is set. It is a counter-example, and it points at a code path scheduled to die. This module's
+ * read is INDEPENDENT of that one and must survive its deletion. The justification is the measured
+ * fact above and nothing else.
  *
  * 🔴 THE STRUCTURALLY CORRECT FIX IS A DEDICATED VARIABLE — what both precedents above actually
- * did — and it is NOT TAKEN HERE, deliberately: a new variable is absent from the preview deploy
- * task's strip filter until an infra change lands, so until then it would FAIL OPEN, which is worse
- * than a coupling that currently holds. If you are extending this, that is the change to make, in
- * both repos, together.
+ * did — and it is NOT TAKEN HERE, deliberately: a preview would not RECEIVE a brand-new variable at
+ * all, so a probe refusing unless it is set would refuse everywhere, and one refusing only when it
+ * IS set would FAIL OPEN in every preview. 🔴 The change that fixes that is a new `.data.<VAR>`
+ * write in the preview deploy task's **jq override chain** — NOT an entry in its strip filter,
+ * which only removes inherited explicit `env:` entries and is a no-op for a variable that does not
+ * exist yet. A previous revision named the strip filter, and following it would have produced
+ * exactly the fail-open this paragraph warns about. If you are extending this, that is the change
+ * to make, in both repos, together.
  *
  * ⚠️ The `IS_PREVIEW` fallback below is NOT the old guard surviving. It covers ONLY the transitional
- * state `cache-key-prefix.ts:66-75` itself warns about — a deployment carrying `IS_PREVIEW=true`
+ * state `cache-key-prefix.ts` itself warns about (its own transitional-state note) — a deployment
+ * carrying `IS_PREVIEW=true`
  * whose `CACHE_KEY_NAMESPACE` has not been configured yet — where an unset namespace would
  * otherwise fail OPEN and arm a preview. It cannot catch `civitai-next`, whose namespace is `next`,
  * i.e. non-empty.
@@ -296,7 +310,7 @@ async function runShadowComparison(
       recordExternalModerationShadow(metricSource, 'error');
       return;
     }
-    // 🔴 Vocabulary gate BEFORE the comparison, never after. Reducing an unreadable response would
+    // 🔴 Determinacy gate BEFORE the comparison, never after. Reducing an undecidable response would
     // silently produce `flagged:false` and book it as a real disagreement. See the function's own
     // header for why that specific wrong answer is the dangerous one.
     if (!candidateVerdictIsDeterminate(results[0], env.EXTERNAL_MODERATION_CATEGORIES)) {

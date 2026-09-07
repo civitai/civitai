@@ -350,8 +350,9 @@ const shadowCounter = registerCounterWithLabels({
     'incomparable rate INVALIDATES the permissive/strict split for that candidate; pick a candidate ' +
     "that shares the incumbent's category names, do not reason around it. 🔴 The converse does NOT " +
     'hold: incomparable=0 means every counted comparison was decidable, NOT that the vocabularies ' +
-    'agree — the policy ORs across categories, so one shared category can settle a verdict while ' +
-    'others are absent. 🔴 Every counted ' +
+    'agree IN FULL — the policy ORs across categories, so one shared category can settle a verdict ' +
+    'while others are absent. Under a SINGLE-key policy (production today) the two do coincide. ' +
+    '🔴 Every counted ' +
     'comparison is a SECOND billable classifier request; the sample rate is the spend control, and ' +
     'disarming takes a POD ROLLOUT because env is parsed once at process start.',
   labelNames: ['source', 'outcome'] as const,

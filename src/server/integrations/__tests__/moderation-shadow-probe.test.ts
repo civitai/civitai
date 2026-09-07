@@ -200,7 +200,7 @@ describe('shadow probe — what it compares', () => {
   });
 });
 
-describe('shadow probe — vocabulary gate (audit round 1, F1)', () => {
+describe('shadow probe — determinacy gate (audit round 1 F1, round 2 F2)', () => {
   // 🔴 PRODUCTION'S REAL CONFIGURATION. Read live from the dp-prod ConfigMap 2026-09-07:
   // EXTERNAL_MODERATION_CATEGORIES = 'sexual/minors:inappropriate minor content'. A SINGLE key, so
   // the app's verdict is exactly `Boolean(result.categories['sexual/minors'])`.
