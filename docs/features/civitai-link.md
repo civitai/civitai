@@ -52,9 +52,10 @@ full-length key and `activated: true` in one step.
 >
 > - The `civitai-link-desktop` client row is applied by hand — migrations here are never auto-run —
 >   and only after the hub deploy that ships `LinkConnect`, or the requested scope is rejected. The
->   node pack's client is registered out of band and needs `LinkConnect` in its `allowedScopes` the
->   same way; no file in this repo creates or widens it, and until it does the pack gets
->   `invalid_scope` and falls back to a code.
+>   node pack's client (`Civitai ComfyNodes`, owned by CivitaiOfficial) is registered out of band and
+>   needs `LinkConnect` in its `allowedScopes` the same way; no file in this repo creates or widens
+>   it. Both are in place on production and dev — a client missing the bit gets `invalid_scope` and
+>   falls back to a code.
 > - A **confidential** `link-service` OAuth client is registered out of band. Its secret cannot live
 >   in a migration, so no file in this repo creates it.
 > - That client's id is added to the hub's `OAUTH_INTROSPECTION_CLIENT_IDS`. The allowlist fails
