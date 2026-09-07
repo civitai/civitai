@@ -1221,6 +1221,8 @@ describe('referral grant delivers membership cosmetics inline', () => {
 
     const updateOrder = (mockDbWrite.customerSubscription.update as any).mock.invocationCallOrder;
     const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(updateOrder).toHaveLength(1);
+    expect(insertOrder).toHaveLength(1);
     expect(updateOrder[0]).toBeLessThan(insertOrder[0]);
   });
 
@@ -1273,11 +1275,42 @@ describe('referral grant delivers membership cosmetics inline', () => {
     );
     wireSuccessfulRedemption();
 
-    await redeemTokens({ userId: 42, offerIndex: 0 });
+    const pending = redeemTokens({ userId: 42, offerIndex: 0 });
+    await Promise.resolve();
+    await Promise.resolve();
+    // Negative control: if this is ever true, something between the commit and the return
+    // has started crossing a macrotask and the assertion below has stopped discriminating.
+    expect(settled).toBe(false);
+
+    await pending;
 
     // Resolves on a macrotask, and everything redeemTokens does after the transaction is
     // microtask-only — so this is false unless the delivery was actually awaited.
     expect(settled).toBe(true);
+  });
+
+  it('delivers on the transaction client on the update branch too', async () => {
+    // The update branch carries the least test weight, which is why the client-identity
+    // property went uncovered here while it was pinned on the other two sites. Dropping
+    // `tx` HERE alone is the same silent regression: the reactivating redeemer — everyone
+    // redeeming a second time — gets nothing.
+    const txExecuteRaw = withDistinctTxClient();
+    wireSuccessfulRedemption();
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      id: 'referral:42:1',
+      status: 'canceled',
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+      metadata: {},
+      productId: 'prod_bronze',
+      product: { metadata: { tier: 'bronze' } },
+    });
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(mockDbWrite.customerSubscription.update).toHaveBeenCalledTimes(1);
+    expect(insertsOn(txExecuteRaw)).toHaveLength(1);
+    expect(membershipCosmeticInserts()).toHaveLength(0);
   });
 
   it('lets a failed delivery roll the redemption back rather than swallowing it', async () => {
