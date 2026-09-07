@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
+  createCollectionLookupBudget,
   resolveCollectionFollowRequest,
   resolveCollectionIdentity,
 } from './collectionFollowGate';
@@ -400,5 +401,97 @@ describe('buildCollectionFollowConsentCopy', () => {
     expect(copy.message).not.toContain('‮');
     expect(copy.message).not.toContain('\n');
     expect(copy.message).toContain('EvilApp Name');
+  });
+});
+
+/**
+ * 🔴 THE PER-INSTANCE LOOKUP BUDGET — the bound on the authenticated visibility
+ * oracle the identity lookup opened.
+ *
+ * Because the host resolves the collection BEFORE opening the dialog, a block
+ * learns "can this viewer see id N?" with no click and no viewer involvement, at
+ * the transport's 30 messages/second. A sandboxed cross-origin block cannot make
+ * that authed read itself, so the host was lending it one. These pin the bound:
+ * DISTINCT ids, repeats free forever, and a refusal that carries no fact about
+ * the collection.
+ *
+ * The behavioural cases run at `limit: 3` — deliberately NOT the production 20,
+ * so a mutant that hardcodes the constant cannot survive by matching the fixture
+ * — and the production default is pinned separately, with literal counts.
+ */
+describe('createCollectionLookupBudget', () => {
+  it('admits exactly `limit` DISTINCT ids and refuses the next new one', () => {
+    const budget = createCollectionLookupBudget(3);
+    expect(budget.admit(101)).toBe(true);
+    expect(budget.admit(202)).toBe(true);
+    expect(budget.admit(303)).toBe(true);
+    // The 4th distinct id is where enumeration would live.
+    expect(budget.admit(404)).toBe(false);
+    expect(budget.admit(505)).toBe(false);
+  });
+
+  it('🔴 a REPEAT of an admitted id is free FOREVER — re-following never stops working', () => {
+    const budget = createCollectionLookupBudget(3);
+    budget.admit(101);
+    budget.admit(202);
+    budget.admit(303);
+    expect(budget.admit(404)).toBe(false); // budget is exhausted…
+    // …and yet every id the viewer has already been asked about still resolves,
+    // any number of times. A block that legitimately follows, unfollows and
+    // re-follows one collection must not be cut off.
+    for (let i = 0; i < 50; i++) {
+      expect(budget.admit(101)).toBe(true);
+      expect(budget.admit(202)).toBe(true);
+      expect(budget.admit(303)).toBe(true);
+    }
+  });
+
+  it('counts DISTINCT ids, not calls — a repeat spends one unit, not two', () => {
+    const budget = createCollectionLookupBudget(3);
+    for (let i = 0; i < 10; i++) expect(budget.admit(101)).toBe(true);
+    // If repeats were charged, the budget would already be gone here.
+    expect(budget.admit(202)).toBe(true);
+    expect(budget.admit(303)).toBe(true);
+    expect(budget.admit(404)).toBe(false);
+  });
+
+  it('🔴 a REFUSED id is not silently admitted by asking again', () => {
+    // Otherwise the cap would be a speed bump: probe, get refused, probe again.
+    const budget = createCollectionLookupBudget(3);
+    budget.admit(101);
+    budget.admit(202);
+    budget.admit(303);
+    for (let i = 0; i < 10; i++) expect(budget.admit(404)).toBe(false);
+    // And a refusal must not have evicted anything that was already admitted.
+    expect(budget.admit(101)).toBe(true);
+  });
+
+  it('🔴 two budgets are INDEPENDENT — no module-scope ledger to share or drain', () => {
+    // The hosts hold one of these per block instance in a ref. If the ledger were
+    // module scope, two blocks on a page would drain each other and a remount
+    // would inherit an exhausted budget.
+    const a = createCollectionLookupBudget(3);
+    const b = createCollectionLookupBudget(3);
+    expect(a.admit(101)).toBe(true);
+    expect(a.admit(202)).toBe(true);
+    expect(a.admit(303)).toBe(true);
+    expect(a.admit(404)).toBe(false);
+    // b has spent nothing, including on the ids a spent.
+    expect(b.admit(404)).toBe(true);
+    expect(b.admit(505)).toBe(true);
+    expect(b.admit(606)).toBe(true);
+    expect(b.admit(707)).toBe(false);
+    // …and a is unchanged by any of it.
+    expect(a.admit(101)).toBe(true);
+    expect(a.admit(808)).toBe(false);
+  });
+
+  it('the PRODUCTION default admits 20 distinct ids and refuses the 21st', () => {
+    // Literal counts, not the exported constant: this is the pin that notices if
+    // the cap is quietly widened to a number enumeration could live inside.
+    const budget = createCollectionLookupBudget();
+    for (let i = 1; i <= 20; i++) expect(budget.admit(9000 + i)).toBe(true);
+    expect(budget.admit(9021)).toBe(false);
+    expect(budget.admit(9001)).toBe(true); // repeat, still free
   });
 });

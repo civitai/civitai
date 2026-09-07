@@ -35,8 +35,10 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
+  createCollectionLookupBudget,
   resolveCollectionFollowRequest,
   resolveCollectionIdentity,
+  type CollectionLookupBudget,
 } from './collectionFollowGate';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
@@ -1879,6 +1881,13 @@ export function PageBlockHost({
   // that a block needs no `collections:write:self` scope.
   const followCollectionMutation = trpc.collection.follow.useMutation();
   const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
+  // 🔴 This block instance's DISTINCT-collection-id lookup budget. A ref, not
+  // module scope and not state: per-instance (two blocks on a page cannot drain
+  // each other), reset on remount, and read synchronously inside the message
+  // handler. Lazily constructed so a render never allocates a Set it throws away.
+  // The reasoning — and the authenticated visibility oracle it closes — lives on
+  // `createCollectionLookupBudget`.
+  const collectionLookupBudgetRef = useRef<CollectionLookupBudget | null>(null);
   // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
   // so incrementing/decrementing never re-renders and the count is read
   // synchronously in the message handler (JS is single-threaded, so the
@@ -3817,6 +3826,20 @@ export function PageBlockHost({
         requestId,
         emit: (payload) => send('COLLECTION_FOLLOW_RESULT', payload),
       });
+      // 🔴 BOUND THE PROBE, BEFORE SPENDING AN AUTHENTICATED READ. The identity
+      // lookup below runs in the VIEWER'S session and completes before any
+      // dialog, so without a bound it is a per-id "can this viewer see it?"
+      // oracle the block can drive at the transport's 30 msg/s. DISTINCT ids,
+      // not calls — a repeat is free forever, so re-following a collection the
+      // viewer has already been asked about keeps working past the cap. The
+      // refusal deliberately reuses `collection-unavailable`; a distinct code
+      // would hand back the bit the cap withholds. Full reasoning (incl. why a
+      // distinct-id cap rather than a time window) on the factory.
+      const lookupBudget = (collectionLookupBudgetRef.current ??= createCollectionLookupBudget());
+      if (!lookupBudget.admit(collectionId)) {
+        settlement.reply({ error: 'collection-unavailable' });
+        return;
+      }
       void (async () => {
         // Resolve WHO/WHAT the viewer is being asked about, server-side, from the
         // same id we are about to act on. A failed lookup refuses WITH a reply —

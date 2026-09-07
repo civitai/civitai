@@ -1,5 +1,8 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+// Explicit mid-test unmount, for the "the budget is per block INSTANCE" pin. The
+// harness's own `afterEach` uses the same helper.
+import { cleanup } from 'vitest-browser-react';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -524,4 +527,235 @@ describe('IframeHost SET_COLLECTION_FOLLOW — pre-handshake gate', () => {
     expect(followMutate).not.toHaveBeenCalled();
     replies.stop();
   });
+});
+
+/**
+ * 🔴 F4 REGRESSION (model slot) — THE BOUND ON THE VISIBILITY ORACLE.
+ *
+ * F1 moved the `collection.getById` lookup BEFORE the dialog so the confirm can
+ * name its object. That is right, and it handed the block a capability: it now
+ * learns `collection-unavailable` vs. dialog-shown with no click at all, i.e. per
+ * id, "can this viewer see it?" — an AUTHENTICATED read a sandboxed cross-origin
+ * block cannot perform itself, driven at the transport's 30 messages/second.
+ *
+ * The bound is a per-block-instance cap on DISTINCT collection ids, held in a ref
+ * by EACH host separately. The page host's copy is invisible to this suite and
+ * vice versa, so both are pinned.
+ */
+
+const OVER_BUDGET_FIRST_ID = 500_001;
+
+function replyFor(replies: ReturnType<typeof listenForReply>, requestId: string) {
+  return replies
+    .of('COLLECTION_FOLLOW_RESULT')
+    .map((m) => m.payload as Record<string, unknown>)
+    .find((p) => p?.requestId === requestId);
+}
+
+async function awaitReply(replies: ReturnType<typeof listenForReply>, requestId: string) {
+  let found: Record<string, unknown> | undefined;
+  await vi.waitFor(() => {
+    found = replyFor(replies, requestId);
+    if (!found) throw new Error(`no reply for ${requestId} yet`);
+  });
+  return found as Record<string, unknown>;
+}
+
+/**
+ * The transport drops inbound messages past 30 per rolling second
+ * (`RATE_LIMIT_MAX_MESSAGES`, usePostMessage.ts) and a dropped message never
+ * replies — which would look exactly like the budget refusing. These suites post
+ * 20+ messages, so they pace themselves well under that ceiling. Without this the
+ * tests below would be measuring the transport, not the budget.
+ */
+let paceMarks: number[] = [];
+async function pacedPost(type: string, payload: unknown) {
+  const now = Date.now();
+  paceMarks = paceMarks.filter((t) => now - t < 1200);
+  if (paceMarks.length >= 18) {
+    await new Promise((r) => setTimeout(r, Math.max(0, 1200 - (now - paceMarks[0]))));
+    paceMarks = [];
+  }
+  postFromBlock(type, payload);
+  paceMarks.push(Date.now());
+}
+
+async function mountReadyAndSettled() {
+  const replies = await mountAndReady();
+  // The handshake's own posts count against the same 30/s inbound budget. Drain
+  // the window before the burst.
+  await new Promise((r) => setTimeout(r, 1200));
+  paceMarks = [];
+  return replies;
+}
+
+/** Spend the whole budget on 20 DISTINCT ids the viewer cannot see. */
+async function spendBudgetOnUnseeableIds(replies: ReturnType<typeof listenForReply>) {
+  for (let i = 1; i <= 20; i++) {
+    const requestId = `rq_budget_${i}`;
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId,
+      collectionId: OVER_BUDGET_FIRST_ID + i - 1,
+      follow: true,
+    });
+    await awaitReply(replies, requestId);
+  }
+}
+
+describe('IframeHost SET_COLLECTION_FOLLOW — per-instance distinct-id lookup budget', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    followMutate.mockReset();
+    unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(UNAVAILABLE_COLLECTION);
+    currentUser.value = { id: 42 };
+    paceMarks = [];
+  });
+
+  test('🔴 past the cap the host STOPS LOOKING UP — the 21st distinct id costs no authed read', async () => {
+    const replies = await mountReadyAndSettled();
+
+    await spendBudgetOnUnseeableIds(replies);
+    // Positive control: those 20 were genuinely resolved, so the unchanged count
+    // below is a measurement and not a handler that was never wired.
+    expect(getByIdFetch).toHaveBeenCalledTimes(20);
+
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_budget_21',
+      collectionId: OVER_BUDGET_FIRST_ID + 20,
+      follow: true,
+    });
+    const over = await awaitReply(replies, 'rq_budget_21');
+
+    // 🔴 THE BOUND: the reply came back, and NO lookup was spent producing it.
+    expect(getByIdFetch).toHaveBeenCalledTimes(20);
+    expect(over).toEqual({ requestId: 'rq_budget_21', error: 'collection-unavailable' });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(followMutate).not.toHaveBeenCalled();
+    replies.stop();
+  }, 30_000);
+
+  // ⚠️ SHAPE GUARD, NOT A REGRESSION TEST — labelled rather than counted. It is
+  // GREEN at `25efb688b2` (measured), and necessarily so: with no budget there is
+  // no second refusal path to be distinguishable from. What it guards is the
+  // FUTURE — a maintainer adding a `lookup-budget-exhausted` code, a `retryAfter`,
+  // or any other field that would tell "I am capped" from "you cannot see it".
+  // Mutation-checked in that direction rather than against the base.
+  test('🔴 the over-budget refusal is INDISTINGUISHABLE from "you cannot see it"', async () => {
+    const replies = await mountReadyAndSettled();
+
+    await spendBudgetOnUnseeableIds(replies);
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_budget_21',
+      collectionId: OVER_BUDGET_FIRST_ID + 20,
+      follow: true,
+    });
+
+    // `rq_budget_1` was a REAL lookup that came back not-visible; `rq_budget_21`
+    // was refused unlooked. A block must not be able to tell them apart, or the
+    // cap hands back the very bit it exists to withhold.
+    const notVisible = await awaitReply(replies, 'rq_budget_1');
+    const overBudget = await awaitReply(replies, 'rq_budget_21');
+    const withoutId = (p: Record<string, unknown>) => {
+      const { requestId: _drop, ...rest } = p;
+      return rest;
+    };
+    expect(withoutId(overBudget)).toEqual(withoutId(notVisible));
+    expect(overBudget).toEqual({ requestId: 'rq_budget_21', error: 'collection-unavailable' });
+    replies.stop();
+  }, 30_000);
+
+  test('🔴 an ALREADY-RESOLVED id still works past the cap — re-following never breaks', async () => {
+    getByIdFetch.mockImplementation((input: { id: number }) =>
+      Promise.resolve(input.id === 77 ? VISIBLE_COLLECTION : UNAVAILABLE_COLLECTION)
+    );
+    followMutate.mockResolvedValue(undefined);
+    const replies = await mountReadyAndSettled();
+
+    // 1 of 20: a collection the viewer really can see, followed for real.
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_keep_1',
+      collectionId: 77,
+      follow: true,
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await (lastDialog().props as ConfirmProps).onConfirm();
+    await awaitReply(replies, 'rq_keep_1');
+    useDialogStore.getState().closeAll();
+
+    // 19 more distinct ids exhaust the rest of the budget.
+    for (let i = 1; i <= 19; i++) {
+      const requestId = `rq_fill_${i}`;
+      await pacedPost('SET_COLLECTION_FOLLOW', {
+        requestId,
+        collectionId: OVER_BUDGET_FIRST_ID + i,
+        follow: true,
+      });
+      await awaitReply(replies, requestId);
+    }
+    const spent = getByIdFetch.mock.calls.length;
+    expect(spent).toBe(20);
+
+    // A NEW id is now refused unlooked…
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_new_after_cap',
+      collectionId: 999_777,
+      follow: true,
+    });
+    expect(await awaitReply(replies, 'rq_new_after_cap')).toEqual({
+      requestId: 'rq_new_after_cap',
+      error: 'collection-unavailable',
+    });
+    expect(getByIdFetch).toHaveBeenCalledTimes(spent);
+
+    // …while the collection the viewer already consented about resolves, opens a
+    // named dialog and writes, exactly as before. This is the half a naive
+    // per-call rate limit would have broken.
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_keep_2',
+      collectionId: 77,
+      follow: false,
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(getByIdFetch).toHaveBeenCalledTimes(spent + 1);
+    const props = lastDialog().props as ConfirmProps;
+    // 🔴 F1 is NOT regressed by the budget: the dialog still names the object.
+    expect(props.message).toContain('“Cute Cats” by alice');
+    unfollowMutate.mockResolvedValue(undefined);
+    await props.onConfirm();
+    expect(unfollowMutate).toHaveBeenCalledWith({ collectionId: 77 });
+    expect(await awaitReply(replies, 'rq_keep_2')).toEqual({
+      requestId: 'rq_keep_2',
+      result: { collectionId: 77, followed: false },
+    });
+    replies.stop();
+  }, 30_000);
+
+  test('🔴 the budget is PER BLOCK INSTANCE — a remount starts fresh', async () => {
+    const first = await mountReadyAndSettled();
+    await spendBudgetOnUnseeableIds(first);
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_budget_21',
+      collectionId: OVER_BUDGET_FIRST_ID + 20,
+      follow: true,
+    });
+    await awaitReply(first, 'rq_budget_21');
+    expect(getByIdFetch).toHaveBeenCalledTimes(20);
+    first.stop();
+
+    // A module-scope ledger would survive this; a ref does not.
+    await cleanup();
+    const second = await mountReadyAndSettled();
+
+    await pacedPost('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_remount',
+      collectionId: OVER_BUDGET_FIRST_ID + 20,
+      follow: true,
+    });
+    await awaitReply(second, 'rq_remount');
+    // The fresh instance looked it up — 21 total across the two mounts.
+    expect(getByIdFetch).toHaveBeenCalledTimes(21);
+    second.stop();
+  }, 30_000);
 });

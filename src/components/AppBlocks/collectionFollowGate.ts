@@ -118,16 +118,11 @@ export type CollectionFollowRefusal =
    *  private collection ids by asking the host to name them. Existence-leak
    *  parity with the read path, which 404s a private collection to a non-owner.
    *
-   *  ⚠️ KNOWN, ACCEPTED SECOND-ORDER CONSEQUENCE, recorded rather than left to be
-   *  rediscovered: because the lookup now happens BEFORE the dialog, a block can
-   *  tell `collection-unavailable` from a dialog-shown outcome WITHOUT the viewer
-   *  clicking anything — i.e. it can probe, per id, "can this viewer see it?".
-   *  Previously that same bit came back only after a confirm, as a FORBIDDEN from
-   *  the mutation. The bit is coarse (visible / not), the read it rides is
-   *  `collection.getById`, and the alternative — showing a consent dialog for a
-   *  collection the host could not name — is a worse failure. If this ever needs
-   *  closing, close it with a RATE LIMIT on the host-side lookup, not by
-   *  splitting the refusal code. */
+   *  ALSO the code for a lookup the host REFUSED TO PERFORM because the block
+   *  exhausted its per-instance lookup budget (`createCollectionLookupBudget`).
+   *  🔴 THAT SHARING IS THE POINT, not an economy: a distinct "rate limited" code
+   *  would hand back exactly the bit the budget exists to withhold. See the
+   *  budget's own comment for the oracle it closes. */
   | 'collection-unavailable';
 
 export type CollectionFollowGateResult =
@@ -280,6 +275,98 @@ export function resolveCollectionIdentity(raw: unknown): CollectionIdentityResul
       ? sanitizeAppChromeName((user as { username: string }).username)
       : null;
   return { kind: 'ok', identity: { name, ownerUsername: username } };
+}
+
+/**
+ * How many DISTINCT `collectionId`s one block instance may ask the host to
+ * resolve. Small on purpose — see the reasoning on
+ * `createCollectionLookupBudget`.
+ */
+export const COLLECTION_LOOKUP_BUDGET = 20;
+
+/**
+ * Per-block-instance ledger bounding how many distinct collection ids a block
+ * may make the host look up.
+ *
+ * ── THE ORACLE THIS CLOSES ──────────────────────────────────────────────────
+ *
+ * `resolveCollectionIdentity` above is what makes the consent dialog name its
+ * object, and it costs one authenticated `collection.getById` performed BY THE
+ * HOST, IN THE VIEWER'S SESSION, BEFORE any dialog opens. So the block learns
+ * `collection-unavailable` vs. dialog-shown with no click and no viewer
+ * involvement at all — i.e. per id, "can this viewer see it?".
+ *
+ * That matters because a sandboxed cross-origin block cannot make authenticated
+ * requests to civitai.com itself. Everything it can reach on its own is the
+ * anonymous view. The host doing an authed read on its behalf therefore grants a
+ * capability the block does not otherwise have, and the transport is fast: the
+ * postMessage bridge admits 30 messages/second (`RATE_LIMIT_MAX_MESSAGES` in
+ * `usePostMessage.ts`), ~1800 probes/minute. Most collections are public, so
+ * most of those answers reveal nothing; the answer that does is *which private
+ * collections this viewer can see*.
+ *
+ * 🔴 WHY A DISTINCT-ID CAP AND NOT A TIME WINDOW. A time-based rate limit slows
+ * enumeration; it does not stop it — an attacker with a background tab has all
+ * the time there is, and a window also gives them a clean "wait and retry"
+ * signal. Enumeration needs hundreds to millions of ids; legitimate use is the
+ * handful of collections the viewer is actually looking at in this block. A cap
+ * on DISTINCT ids therefore separates the two by their defining property rather
+ * than by their speed, and it cannot be waited out.
+ *
+ * 🔴 WHY THE REFUSAL SHARES `collection-unavailable`. A separate "rate limited"
+ * code would let the block tell "I am capped" from "you cannot see it" — the
+ * exact bit the cap withholds — and in a time-window design it would also tell
+ * an attacker precisely when to back off. What the shared code guarantees is
+ * that a refusal past the cap carries NO FACT ABOUT THE COLLECTION. (It does not
+ * try to hide the cap itself, which would be futile: the cap is deterministic,
+ * so a block counting its own distinct ids can infer where it is. That is
+ * information about the block's own behaviour, not about the viewer's account.)
+ *
+ * ── THE LEDGER ─────────────────────────────────────────────────────────────
+ *
+ * `admit` counts DISTINCT ids, not calls, and remembers every id it admitted:
+ *  - a REPEAT of an already-admitted id is always allowed, forever, even long
+ *    past the cap. Re-following (or unfollowing, or re-following again) a
+ *    collection the viewer has already been asked about must never stop working,
+ *    and a repeat teaches the block nothing it was not already told.
+ *  - a NEW id is admitted only while fewer than `limit` distinct ids have been.
+ *  - admission is charged at ATTEMPT, not at success. Charging only successful
+ *    lookups would leave probing for invisible ids free, which is the entire
+ *    attack.
+ *
+ * 🔴 THE LEDGER MUST BE PER BLOCK INSTANCE — a `useRef` in each host, never
+ * module scope. Module scope would let two blocks (or two hosts) on one page
+ * share and drain each other's budget, and would survive a remount. Per-instance
+ * means the budget resets when the viewer navigates away and back, which is
+ * correct: that is a new block session with fresh viewer intent.
+ *
+ * 🔴 IT DOES NOT — AND MUST NOT — SKIP THE LOOKUP AND SHOW AN OBJECT-LESS
+ * DIALOG. "Over budget ⇒ ask the viewer anyway, without naming the collection"
+ * would resurrect the defect the naming fix closed: a dialog that asserts
+ * nothing about the object cannot contradict whatever card the block drew. Over
+ * budget REFUSES; it never degrades the consent screen.
+ */
+export type CollectionLookupBudget = {
+  /**
+   * May the host resolve this id? `true` also RECORDS the id (idempotently), so
+   * calling it twice for the same id spends one unit, not two.
+   */
+  admit: (collectionId: number) => boolean;
+};
+
+export function createCollectionLookupBudget(
+  limit: number = COLLECTION_LOOKUP_BUDGET
+): CollectionLookupBudget {
+  const admitted = new Set<number>();
+  return {
+    admit: (collectionId: number) => {
+      // Repeat of an id this instance already spent budget on — free, forever.
+      if (admitted.has(collectionId)) return true;
+      if (admitted.size >= limit) return false;
+      admitted.add(collectionId);
+      return true;
+    },
+  };
 }
 
 /**
