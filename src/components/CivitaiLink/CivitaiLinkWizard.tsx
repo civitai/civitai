@@ -35,6 +35,7 @@ import type { PairingStatus } from '~/workers/civitai-link-worker-types';
 import {
   CIVITAI_LINK_COMFYUI_DOWNLOAD,
   CIVITAI_LINK_DESKTOP_RELEASES,
+  CIVITAI_LINK_NODE_PACK_MIN_VERSION,
   CIVITAI_LINK_NODE_PACK_NAME,
   CIVITAI_LINK_NODE_PACK_REPO,
 } from '~/components/CivitaiLink/civitai-link-paths';
@@ -242,10 +243,16 @@ export default function CivitaiLinkWizardModal() {
 
   const [active, setActive] = useState(0);
   const [path, setPath] = useState<CivitaiLinkConnectPath>('nodepack');
-  const [release, setRelease] = useState({
+  const [release, setRelease] = useState<{
+    os: string;
+    tagName: string;
+    href: string;
+    downloads: Partial<Record<string, string>>;
+  }>({
     os: 'Unknown',
     tagName: '',
     href: CIVITAI_LINK_DESKTOP_RELEASES,
+    downloads: {},
   });
   const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -266,19 +273,35 @@ export default function CivitaiLinkWizardModal() {
   // back to the spinner it never leaves.
   const pairedIdRef = useRef<number | null>(null);
   const [sawPaired, setSawPaired] = useState(false);
+  // Fallback: the PKCE callback is a loopback URI, so it can't reach a ComfyUI on another
+  // machine — nor a pack below CIVITAI_LINK_NODE_PACK_MIN_VERSION, which has no sign-in.
+  const [useCode, setUseCode] = useState(false);
   const isNodePack = path === 'nodepack';
 
   const handleAdvance = () => {
     nextStep();
     setSawPaired(false);
-    if (isNodePack) createInstance();
-    else awaitPairing();
+    setUseCode(false);
+    awaitPairing();
   };
 
   const handleRetryPairing = () => {
     pairedIdRef.current = null;
     setSawPaired(false);
     awaitPairing();
+  };
+
+  const handleUseCode = async () => {
+    setUseCode(true);
+    // Before minting, not after: an armed poll reads the instance this creates as
+    // a pairing and joins it as though the app had connected.
+    await cancelAwaitPairing();
+    createInstance();
+  };
+
+  const handleUseSignIn = () => {
+    setUseCode(false);
+    handleRetryPairing();
   };
 
   const commitName = () => {
@@ -291,32 +314,45 @@ export default function CivitaiLinkWizardModal() {
   }, [connected]);
 
   useEffect(() => {
-    if (active !== 2 || isNodePack) return;
+    if (active !== 2 || useCode) return;
     return () => {
       pairedIdRef.current = null;
       cancelAwaitPairing();
     };
-  }, [active, isNodePack]); // eslint-disable-line
+  }, [active, useCode]); // eslint-disable-line
 
   useEffect(() => {
-    if (active !== 2 || isNodePack || pairingStatus !== 'paired') return;
+    if (active !== 2 || useCode || pairingStatus !== 'paired') return;
     setSawPaired(true);
     if (pairedIdRef.current === null && instance?.id != null) pairedIdRef.current = instance.id;
     if (instance?.id === pairedIdRef.current) commitName();
-  }, [active, isNodePack, pairingStatus, instance?.id]); // eslint-disable-line
+  }, [active, useCode, pairingStatus, instance?.id]); // eslint-disable-line
 
   useEffect(() => {
     if (path !== 'desktop') return;
 
     const fetchReleases = async () => {
       const data = await fetchLinkReleases(navigator.userAgent);
-      setRelease({ os: data.os, tagName: data.tag_name, href: data.href });
+      setRelease({
+        os: data.os,
+        tagName: data.tag_name,
+        href: data.href,
+        downloads: data.downloads,
+      });
     };
 
     fetchReleases();
   }, [path]);
 
-  const otherOses = downloadableOses.filter((os) => os !== release.os);
+  const releaseLinks = [
+    ...downloadableOses
+      .filter((os) => os !== release.os)
+      .map((os) => ({
+        label: osLabels[os],
+        href: release.downloads[os] ?? CIVITAI_LINK_DESKTOP_RELEASES,
+      })),
+    { label: 'All releases', href: CIVITAI_LINK_DESKTOP_RELEASES },
+  ];
 
   return (
     <Modal
@@ -395,14 +431,14 @@ export default function CivitaiLinkWizardModal() {
                 <NumberedStep index={1}>
                   Open <b>ComfyUI Manager</b>, then <b>Custom Nodes Manager</b>.
                 </NumberedStep>
-                <NumberedStep index={2} caption="Takes a few seconds.">
+                <NumberedStep
+                  index={2}
+                  caption={`Takes a few seconds. Already have it? Update it to ${CIVITAI_LINK_NODE_PACK_MIN_VERSION} or newer.`}
+                >
                   Search for <b>{CIVITAI_LINK_NODE_PACK_NAME}</b> and install it.
                 </NumberedStep>
                 <NumberedStep index={3}>Restart ComfyUI.</NumberedStep>
-                <NumberedStep
-                  index={4}
-                  caption="You'll paste a pairing code there in the next step."
-                >
+                <NumberedStep index={4} caption="You'll sign in from there in the next step.">
                   Open the <b>Civitai</b> panel in the ComfyUI sidebar.
                 </NumberedStep>
               </Stack>
@@ -450,19 +486,14 @@ export default function CivitaiLinkWizardModal() {
                   </Stack>
                 </Button>
                 <Group gap="xs">
-                  {[...otherOses.map((os) => osLabels[os]), 'All releases'].map((label, index) => (
+                  {releaseLinks.map(({ label, href }, index) => (
                     <Group key={label} gap="xs">
                       {index > 0 && (
                         <Text size="xs" c="dimmed">
                           ·
                         </Text>
                       )}
-                      <Anchor
-                        size="xs"
-                        href={CIVITAI_LINK_DESKTOP_RELEASES}
-                        target="_blank"
-                        rel="nofollow noreferrer"
-                      >
+                      <Anchor size="xs" href={href} target="_blank" rel="nofollow noreferrer">
                         {label}
                       </Anchor>
                     </Group>
@@ -472,10 +503,7 @@ export default function CivitaiLinkWizardModal() {
               <Stack gap={16} pt={4}>
                 <NumberedStep index={1}>Run the installer and open the Link app.</NumberedStep>
                 <NumberedStep index={2}>Choose the folder your models live in.</NumberedStep>
-                <NumberedStep
-                  index={3}
-                  caption="You'll paste a pairing code there in the next step."
-                >
+                <NumberedStep index={3} caption="You'll sign in from there in the next step.">
                   {`Open the app's `}
                   <b>Civitai Link</b>
                   {` panel.`}
@@ -535,7 +563,7 @@ export default function CivitaiLinkWizardModal() {
                 </Center>
               </Center>
             </>
-          ) : isNodePack ? (
+          ) : useCode ? (
             <>
               <Stack gap={4}>
                 <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
@@ -588,33 +616,61 @@ export default function CivitaiLinkWizardModal() {
                 <Text size="sm" c="dimmed" ta="center" maw={420}>
                   {`In ComfyUI, open the Civitai panel and paste the code. We'll pick it up here automatically.`}
                 </Text>
+                <Anchor component="button" type="button" fz="xs" onClick={handleUseSignIn}>
+                  Sign in from ComfyUI instead
+                </Anchor>
               </Stack>
             </>
           ) : (
             <>
               <Stack gap={4}>
                 <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
-                  Sign in from the app
+                  {isNodePack ? 'Sign in from ComfyUI' : 'Sign in from the app'}
                 </Text>
                 <Text fz="sm" c="dimmed" lh={1.55}>
                   No code to copy. Approve the sign-in in your browser and this page picks it up.
                 </Text>
               </Stack>
               <Stack gap={16} pt={4}>
-                <NumberedStep index={1}>
-                  Open <b>Civitai Link</b> on that machine.
-                </NumberedStep>
-                <NumberedStep index={2}>
-                  Click <b>Sign in with Civitai</b>.
-                </NumberedStep>
-                <NumberedStep index={3} caption="It opens in your default browser.">
-                  Approve the request in the browser tab that opens.
-                </NumberedStep>
+                {isNodePack ? (
+                  <>
+                    <NumberedStep index={1}>
+                      Open the <b>Civitai</b> panel in the ComfyUI sidebar.
+                    </NumberedStep>
+                    <NumberedStep index={2}>
+                      Click <b>Connect with Civitai</b> — or <b>Pair this ComfyUI</b> if you already
+                      signed in there.
+                    </NumberedStep>
+                    <NumberedStep index={3} caption="It opens in your default browser.">
+                      Approve the request in the browser tab that opens.
+                    </NumberedStep>
+                  </>
+                ) : (
+                  <>
+                    <NumberedStep index={1}>
+                      Open <b>Civitai Link</b> on that machine.
+                    </NumberedStep>
+                    <NumberedStep index={2}>
+                      Click <b>Sign in with Civitai</b>.
+                    </NumberedStep>
+                    <NumberedStep index={3} caption="It opens in your default browser.">
+                      Approve the request in the browser tab that opens.
+                    </NumberedStep>
+                  </>
+                )}
               </Stack>
               <PairingState
                 status={sawPaired ? 'paired' : pairingStatus}
                 onRetry={handleRetryPairing}
               />
+              {isNodePack && (
+                <Text fz="xs" c="dimmed" ta="center">
+                  {`ComfyUI on another machine, or on an older node pack? `}
+                  <Anchor inherit component="button" type="button" onClick={handleUseCode}>
+                    Use a pairing code
+                  </Anchor>
+                </Text>
+              )}
             </>
           )}
           <TextInput
@@ -636,9 +692,11 @@ export default function CivitaiLinkWizardModal() {
                 <IconAlertTriangle size={15} className={clsx('mt-0.5 shrink-0', classes.dimIcon)} />
               }
             >
-              {isNodePack
+              {!isNodePack
+                ? `Nothing after a minute? Make sure the Link app is running on that machine.`
+                : useCode
                 ? `Nothing after a minute? Make sure ComfyUI is running, then reload this page.`
-                : `Nothing after a minute? Make sure the Link app is running on that machine.`}
+                : `Nothing after a minute? Make sure ComfyUI is running and the node pack is up to date.`}
             </NoteStrip>
           )}
           <WizardFooter

@@ -11,8 +11,8 @@ import { getClientIp } from '$lib/server/auth/request';
 //
 // Access tokens are opaque (`civitai_` + 36 random chars, only the salted hash stored), so a
 // first-party service that receives one cannot verify it offline. link-service is the caller:
-// it introspects the Civitai Link desktop app's token and requires the LinkConnect bit before
-// minting an instance key.
+// it introspects a Civitai Link client's token — the desktop app or the ComfyUI node pack — and
+// requires the LinkConnect bit before minting an instance key.
 //
 // NOT a public endpoint. The caller must be a CONFIDENTIAL client AND on the
 // OAUTH_INTROSPECTION_CLIENT_IDS allowlist; every other outcome is 401 invalid_client. Any token

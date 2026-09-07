@@ -245,8 +245,8 @@ be checked offline — so a service that is handed one has no alternative.
 
 **Not open to third-party apps.** The caller must be a **confidential** OAuth client *and* its
 client id must be on the hub's `OAUTH_INTROSPECTION_CLIENT_IDS` allowlist. Everything else gets
-`401 {"error":"invalid_client"}`. Today the only caller is `link-service`, which validates the
-Civitai Link desktop app's token before minting an instance key. Ask us if you have a service that
+`401 {"error":"invalid_client"}`. Today the only caller is `link-service`, which validates a Civitai Link client's token — the desktop
+app or the ComfyUI node pack — before minting an instance key. Ask us if you have a service that
 needs it.
 
 ```
