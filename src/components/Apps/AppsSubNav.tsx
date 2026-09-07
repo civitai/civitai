@@ -457,15 +457,16 @@ export function AppsSubNav() {
   const summary = isClient ? data ?? EMPTY_SUMMARY : EMPTY_SUMMARY;
 
   // 🔴 NOT gated on `useIsClient()` — deliberately, and verified against the
-  // incident above rather than assumed. Both inputs are SSR-seeded and FROZEN,
+  // incident above rather than assumed. All THREE inputs are SSR-seeded and FROZEN,
   // so this value is byte-identical on the server render and the first client
   // render, which is the whole condition for hydration safety:
-  //   • `features.appBlocksAuthor` is resolved server-side in `_app`'s
+  //   • `features.appBlocksAuthor` and `features.appBlocksGetStarted` are both
+  //     resolved server-side in `_app`'s
   //     `getInitialProps` (`getFeatureFlagsAsync({ user: session.user, … })`,
   //     Flipt included), serialized into `pageProps.flags`, and frozen by
-  //     `useState(initialFlags)` in `FeatureFlagsProvider`. It is NOT a
+  //     `useState(initialFlags)` in `FeatureFlagsProvider`. NEITHER is a
   //     `toggleable: true` flag, so `computeUserFeatureFlagsOverlay` never emits
-  //     it and the client `user.getFeatureFlags` overlay cannot move it.
+  //     them and the client `user.getFeatureFlags` overlay cannot move them.
   //   • `currentUser.isModerator` rides `SessionProvider`'s `useState(initial)`,
   //     seeded from the same SSR `pageProps.session`. When that seed is
   //     `undefined` (auth cookie present, session unresolved) the SERVER also
