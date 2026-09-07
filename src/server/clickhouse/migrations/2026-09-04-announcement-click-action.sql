@@ -18,6 +18,15 @@
 -- put a MODIFY QUERY obligation on every future widening of this column, and the read this
 -- feeds does not need it. `actions` is 92.8M rows all-time / 590,896 in the last day, ordered
 -- (time, type), and the per-creator read filters on `type` over ~100 announcements site-wide.
+--
+-- 🔴 THE ORDERING RULE ABOVE IS NECESSARY AND INSUFFICIENT — APPLYING THE DDL FIRST DOES NOT
+-- MAKE THIS WORK. `civitai-clickhouse-tracker` builds its column serializers from the schema
+-- its pods read AT CONNECT TIME and never re-reads them, so a value added after those pods
+-- booted is rejected CLIENT-SIDE, inside the tracker, before ClickHouse is asked. The DDL
+-- verifies perfectly and the type still collects ZERO rows. Measured twice: `Announcement_Click`
+-- collected nothing for ~2.5 days, `App_Open` until it was caught by hand. See ./README.md.
+--
+-- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.
 
 ALTER TABLE default.actions
   MODIFY COLUMN `type` Enum16(
