@@ -2,18 +2,25 @@ import type { AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 
 /**
- * Pure visibility logic for the two App Blocks nav entries in the user menu.
+ * Pure visibility logic for the SINGLE App Blocks "Apps" entry in the user menu.
  *
  * Extracted out of `useGetMenuItems` (which is a heavy hook — router, session,
- * theme, tRPC) so the gating invariant is unit-testable in isolation:
+ * theme, tRPC) so the gating invariant is unit-testable in isolation. It returns
+ * TWO booleans because the one menu entry makes two decisions from them:
  *
- *  - the PUBLIC "Build apps" → `/apps/get-started` entry is visible whenever the
- *    public `appBlocksGetStarted` flag is on (everyone by default; Flipt kill
- *    switch);
- *  - the "Apps" → `/apps` entry is visible exactly when the STORE is visible —
- *    {@link hasAppsStoreAccess}, i.e. `appListings || appBlocks ||
- *    appListingsPublicExternal`. Its visibility is INDEPENDENT of the
+ *  - `getStarted` — the PUBLIC `/apps/get-started` landing page is reachable,
+ *    i.e. the public `appBlocksGetStarted` flag is on (Flipt kill switch);
+ *  - `marketplace` — the STORE is visible: {@link hasAppsStoreAccess}, i.e.
+ *    `appListings || appBlocks || appListingsPublicExternal`. INDEPENDENT of the
  *    get-started flag.
+ *
+ * 🔴 BOTH ARE STILL LOAD-BEARING AFTER THE CONSOLIDATION. The menu used to carry
+ * one entry per boolean ("Build apps" → `/apps/get-started` and "Apps" →
+ * `/apps`); "Build apps" moved into the `/apps/*` sub-nav, so there is now one
+ * entry whose VISIBILITY is `marketplace || getStarted` and whose HREF is `/apps`
+ * when `marketplace` and `/apps/get-started` otherwise. Deleting `getStarted`
+ * here would send the get-started-only cohort at `/apps`, which their flags
+ * cannot load (`resolveAppsPageAccess` → `notFound`).
  *
  * 🔴 THE MARKETPLACE ENTRY USED TO READ `appBlocks` ALONE, and that is what
  * issue #3907 was. Until the W13 decoupling, `appBlocks` WAS store visibility,

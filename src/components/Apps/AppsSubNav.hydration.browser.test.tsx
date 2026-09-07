@@ -153,7 +153,7 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     mocks.isClient = true; // after mount / hydration has matched
     await renderSubNav();
 
-    for (const name of ['Marketplace', 'Create', ...CONDITIONAL]) {
+    for (const name of ['Build apps', 'Marketplace', 'Create', ...CONDITIONAL]) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
   });
@@ -197,13 +197,20 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.user = { id: 7, username: 'author', isModerator: false };
   };
 
-  test('NON-AUTHOR, server render (no query data) → no bar at all', async () => {
+  // 🔴 THIS PAIR USED TO ASSERT AN EMPTY BAR. `/apps/get-started` ("Build apps") is an
+  // unconditional tab, so the always-on set is two and a non-author no longer collapses
+  // below the floor. The hydration invariant the pair exists for is UNCHANGED and is
+  // still what is being measured: the same literal on both sides, and the four
+  // conditional tabs absent from both even though the summary is fully populated in the
+  // second. The pinned set is now non-empty on BOTH sides, which is strictly stronger —
+  // the old `[] === []` could have been satisfied by a render that produced nothing at all.
+  test('NON-AUTHOR, server render (no query data) → Build apps + Marketplace', async () => {
     NON_AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = undefined;
     await renderSubNav();
-    expect(renderedTabs()).toEqual([]);
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
   });
 
   test('NON-AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
@@ -211,17 +218,17 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.isClient = false;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // the prod condition that broke hydration
     await renderSubNav();
-    expect(renderedTabs()).toEqual([]);
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
   });
 
-  test('AUTHOR, server render (no query data) → Marketplace + Create', async () => {
+  test('AUTHOR, server render (no query data) → Build apps + Marketplace + Create', async () => {
     AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = undefined;
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace', 'Create']);
   });
 
   test('AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
@@ -233,7 +240,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     // Non-empty on BOTH sides of the pair: the author gate applied on the first
     // paint (Create is here pre-mount) while the summary gate did NOT (none of the
     // four conditional tabs leaked in).
-    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace', 'Create']);
   });
 
   test('POSITIVE CONTROL: the same reader DOES see the conditional tabs post-mount', async () => {
@@ -244,12 +251,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
     await renderSubNav();
     await expect.element(tab('Installed')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual([
-      'Marketplace',
-      'Installed',
-      'Revenue',
-      'Review',
-    ]);
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace', 'Installed', 'Revenue', 'Review']);
     // Create is the one tab the author gate removes.
     expect(renderedTabs()).not.toContain('Create');
   });
@@ -302,15 +304,24 @@ describe('AppsSubNav container — the Create tab keys off isAppDeveloper', () =
     mocks.user = null;
     mocks.navSummary = undefined; // the summary query is protected — no data for anon
     await renderSubNav();
-    // Marketplace alone ⇒ the whole bar is hidden.
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    // The bar now renders on the two unconditional tabs (it used to collapse on
+    // Marketplace alone). What this test is about is unchanged: Create is absent,
+    // because `NO_CAPABILITIES` is what a logged-out viewer resolves to.
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
     expect(tab('Create').elements()).toHaveLength(0);
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
   });
 });
 
-/** The <2-tab collapse, driven through the container. */
-describe('AppsSubNav container — hides entirely below two tabs', () => {
-  test('a non-author with an empty summary renders no nav at all', async () => {
+/**
+ * 🔴 WAS: "the <2-tab collapse, driven through the container". It cannot be driven
+ * through the container any more — `Build apps` and `Marketplace` are both
+ * unconditional, so every viewer the container's gate admits clears the floor. These
+ * now pin the CONSEQUENCE (a two-tab bar where there used to be none) and the fact
+ * that summary flags still ADD to it.
+ */
+describe('AppsSubNav container — the two unconditional tabs are the floor', () => {
+  test('a non-author with an empty summary now renders the two-tab bar', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
@@ -321,11 +332,13 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
       isReviewer: false,
     };
     await renderSubNav();
-    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
   });
 
-  test('one install is enough to bring the bar back', async () => {
+  test('one install adds a third tab', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
@@ -336,7 +349,9 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
       isReviewer: false,
     };
     await renderSubNav();
-    await expect.element(page.getByRole('navigation', { name: 'App sections' })).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace', 'Installed']);
   });
 });

@@ -307,6 +307,60 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     }
   });
 
+  /**
+   * 🔴 THE EXCLUSION LEDGER — the half this guard could not previously express.
+   *
+   * The rule above is ONE-DIRECTIONAL: every chrome destination must exist in the
+   * subnav, never the reverse. That is correct — the chrome is deliberately a strict
+   * SUBSET (Create / Invites / Revenue have always been subnav-only) — but it means a
+   * new `SUB_NAV_LINKS` row is scored identically whether its absence from the chrome
+   * was a decision or an oversight. Both readings pass, silently, which is the exact
+   * shape of an unpinned decision.
+   *
+   * `/apps/get-started` ("Build apps") is the row that made this worth writing. It was
+   * EXCLUDED from the chrome on purpose, for two reasons:
+   *
+   *   1. AUDIENCE. This menu opens over a RUNNING app — the viewer is consuming an app,
+   *      not looking for a developer-onboarding page. The four shared destinations are
+   *      the store's consumption + ownership surfaces; a "start building" call to action
+   *      is a store-front concern.
+   *   2. GATING. The chrome's platform nav has no feature-flag plumbing at all (its only
+   *      condition is `isModerator`), while `/apps/get-started` is governed by the
+   *      `appBlocksGetStarted` KILL SWITCH. Mirroring the entry here would render it
+   *      unconditionally and defeat the switch — the chrome would keep offering a page
+   *      that has been turned off.
+   *
+   * So this asserts the excluded SET, and fails when it GROWS (a new subnav row nobody
+   * decided about) or SHRINKS (an entry added to the chrome without updating the note).
+   * It is the deliberate alternative to loosening the guard.
+   */
+  it('🔴 the subnav rows deliberately ABSENT from the chrome are exactly these', () => {
+    const subnav = parseSubNav(code(read(SUBNAV)));
+    const nav = parsePlatformNav(code(read(CHROME)));
+    const inChrome = new Set(nav.map((e) => e.href));
+
+    // Positive control: the sets were really read. A zero on either side would make
+    // the difference below trivially "everything" or "nothing".
+    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(8);
+    expect(inChrome.size, 'parsed no items out of the chrome platform nav').toBe(4);
+
+    expect(
+      subnav.map((e) => e.href).filter((h) => !inChrome.has(h)),
+      'a store subnav destination is missing from the app-block chrome. If that is ' +
+        'deliberate, add it here WITH the reason; if it is not, add it to the chrome ' +
+        '(the subnav is the source of truth, so the chrome follows).'
+    ).toEqual([
+      // Developer onboarding — a store-front concern, and flag-gated by a kill switch
+      // the chrome cannot honour. See the block comment above.
+      '/apps/get-started',
+      // Authoring + owner-management surfaces. Pre-existing exclusions: the chrome is
+      // navigation for someone RUNNING an app, not managing one.
+      '/apps/submit',
+      '/apps/invites',
+      '/apps/revenue',
+    ]);
+  });
+
   it('the four shared destinations are the expected ones, drawn with the expected glyphs', () => {
     // The relationship test above is the real guard; this one names the resolved
     // values so a failure reads as a diff rather than sending you to two files.

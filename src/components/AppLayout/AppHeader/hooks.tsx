@@ -9,7 +9,6 @@ import {
   IconBrush,
   IconChartHistogram,
   IconCloudLock,
-  IconCode,
   IconCube,
   IconCrown,
   IconGift,
@@ -219,29 +218,30 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-07-20'),
         },
         {
-          // PUBLIC "App builders" get-started landing page (Scope A soft launch).
-          // Gated on the separate public `appBlocksGetStarted` flag (kill switch),
-          // NOT the mod-only `appBlocks` gate — this is the only `/apps/*` surface
-          // visible to non-mods. Distinct label ("Build apps") from the mod-only
-          // marketplace entry below so a moderator never sees two identical labels.
-          // Visibility comes from the pure `appsNavVisibility` helper (unit-tested).
-          href: '/apps/get-started',
-          visible: appsNav.getStarted,
-          icon: IconCode,
-          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Build apps',
-          newUntil: new Date('2026-08-01'),
-        },
-        {
-          // App store + in-page AppsSubNav hub (installed, submit,
-          // my-submissions, revenue, review). Visible exactly when the STORE is
-          // — `hasAppsStoreAccess`, via `appsNavVisibility` (#3907): this is the
-          // only in-product route to `/apps`, so gating it on `appBlocks` alone
-          // hid the store from the catalog-only and external-only cohorts. The
-          // sub-nav entries behind it keep their own gates. Labeled "Apps" so it
-          // reads distinctly from the public "Build apps" entry above.
-          href: '/apps',
-          visible: appsNav.marketplace,
+          // 🔴 ONE `/apps*` DROPDOWN ENTRY, TWO DESTINATIONS. This used to be two
+          // adjacent entries — "Build apps" → `/apps/get-started` and "Apps" →
+          // `/apps` — which meant a moderator (who holds both flags) saw two
+          // near-identical rows for one product. "Build apps" now lives in the
+          // shared `/apps/*` sub-nav (`SUB_NAV_LINKS` in `~/components/Apps/
+          // AppsSubNav`) instead, so the dropdown carries a single door.
+          //
+          // WHICH door depends on what the viewer is entitled to, and the fallback
+          // is NOT cosmetic:
+          //   • store access (`appsNav.marketplace` = `hasAppsStoreAccess`) → `/apps`.
+          //     The marketplace is the richer landing, and "Build apps" is one click
+          //     away in the sub-nav.
+          //   • get-started ONLY (`appsNav.getStarted`) → `/apps/get-started`.
+          //     Such a viewer CANNOT load `/apps` at all: its `getServerSideProps`
+          //     gates on `resolveAppsPageAccess`, which returns `notFound` without a
+          //     store flag. Sending them to `/apps` would be a menu entry into a 404,
+          //     so they land directly on the one page they are entitled to.
+          //
+          // Both booleans still come from the pure `appsNavVisibility` helper
+          // (unit-tested), and `marketplace` still routes through the shared
+          // `hasAppsStoreAccess` predicate (#3907) — gating it on `appBlocks` alone
+          // hid the store from the catalog-only and external-only cohorts.
+          href: appsNav.marketplace ? '/apps' : '/apps/get-started',
+          visible: appsNav.marketplace || appsNav.getStarted,
           icon: IconPlugConnected,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Apps',

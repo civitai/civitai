@@ -74,6 +74,15 @@ function measure() {
   const band = nav.parentElement as HTMLElement;
   const container = band.parentElement?.parentElement as HTMLElement;
   const firstTab = document.querySelector('[role="tab"]') as HTMLElement;
+  // 🔴 THE WIDTH PIN MUST FOLLOW THE *MARKETPLACE* TAB, NOT "whichever tab is first".
+  // 133.27px is a measurement of the string "Marketplace" plus its icon and inline
+  // padding; it says nothing about any other label. `/apps/get-started` ("Build apps")
+  // was added to `SUB_NAV_LINKS` ahead of Marketplace, so `[role="tab"]` first-match
+  // silently became a DIFFERENT tab (122.39px) and the assertion would have had to be
+  // re-baselined to a number nobody had a reason for. Selecting by href keeps the pin
+  // on the box it was measured from, so it still fails for the reason it was written:
+  // a `padding` shorthand instead of `paddingBlock` narrowing the inline axis.
+  const marketplaceTab = document.querySelector('[role="tab"][href="/apps"]') as HTMLElement;
   const title = document.querySelector('h2') as HTMLElement | null;
   const body = document.querySelector('[data-testid="body"]') as HTMLElement;
 
@@ -92,6 +101,7 @@ function measure() {
     tabPadBlock: [pad(firstTab, 'Top'), pad(firstTab, 'Bottom')] as const,
     tabPadInline: [pad(firstTab, 'Left'), pad(firstTab, 'Right')] as const,
     tabWidth: Math.round(tabRect.width * 100) / 100,
+    marketplaceTabWidth: Math.round(marketplaceTab.getBoundingClientRect().width * 100) / 100,
     containerPadInline: [pad(container, 'Left'), pad(container, 'Right')] as const,
     containerPadTop: pad(container, 'Top'),
     containerPadBottom: pad(container, 'Bottom'),
@@ -192,7 +202,9 @@ describe('/apps chrome vertical geometry', () => {
     expect(g.styleSheetLoaded).toBe(true);
 
     expect(g.tabPadInline).toEqual([16, 16]);
-    expect(g.tabWidth).toBeCloseTo(133.27, 1);
+    // Measured on the MARKETPLACE tab specifically — see `measure()` for why the
+    // first-tab lookup stopped being the right box.
+    expect(g.marketplaceTabWidth).toBeCloseTo(133.27, 1);
     expect(g.containerPadInline).toEqual([16, 16]);
     // …while the block axis DID move.
     expect(g.tabPadBlock).toEqual([6, 6]);

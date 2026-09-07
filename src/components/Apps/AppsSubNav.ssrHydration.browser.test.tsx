@@ -191,15 +191,22 @@ describe('AppsSubNav — real SSR → hydrate', () => {
     expect(hydrationConsoleErrors().length).toBeGreaterThan(0);
   });
 
-  test('NON-AUTHOR (app-listings tester): no bar in the server HTML, and hydration is clean', async () => {
+  test('NON-AUTHOR (app-listings tester): the two unconditional tabs are server-rendered, and hydration is clean', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
 
     // SERVER: the protected summary query has not resolved.
     mocks.navSummary = undefined;
     const html = renderToString(subNav());
-    // A non-author with no summary qualifies for Marketplace alone ⇒ nothing renders.
-    expect(html).not.toContain('role="tab"');
+    // 🔴 WAS `not.toContain('role="tab"')` — a non-author with no summary qualified for
+    // Marketplace alone and the `< 2` collapse dropped the bar. `Build apps` is
+    // unconditional, so the server now emits both always-on tabs. The invariant this
+    // test exists for is untouched and is asserted below: the SUMMARY-driven tabs must
+    // still be absent from the server HTML while the client has a full summary in cache.
+    expect(html).toContain('/apps/get-started');
+    expect(html).toContain('/apps"'); // the Marketplace anchor
+    expect(html).not.toContain('/apps/installed');
+    expect(html).not.toContain('/apps/review');
 
     // CLIENT: the query data IS in the cache on the very first render — the exact
     // condition that bailed hydration before the `useIsClient` gate existed.
@@ -247,13 +254,21 @@ describe('AppsSubNav — real SSR → hydrate', () => {
     expect(hydrationConsoleErrors()).toEqual([]);
   });
 
-  test('logged-out: the server renders no bar, and hydration is clean', async () => {
+  test('logged-out: no CAPABILITY tabs in the server HTML, and hydration is clean', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: true };
     mocks.user = null;
     mocks.navSummary = undefined;
 
     const html = renderToString(subNav());
-    expect(html).not.toContain('role="tab"');
+    // 🔴 WAS `not.toContain('role="tab"')`: an anon viewer resolved to Marketplace alone
+    // and the collapse hid the bar. With `Build apps` unconditional the bar is rendered,
+    // so what is asserted is the thing that actually depends on the session — an anon
+    // viewer resolves to `NO_CAPABILITIES`, so Create is absent even though the flag reads
+    // true. That is a strictly sharper assertion than the old one, which would have passed
+    // for a component that rendered nothing for any reason at all.
+    expect(html).toContain('/apps/get-started');
+    expect(html).not.toContain('/apps/submit');
+    expect(html).not.toContain('Create');
 
     await hydrateInto(html, subNav());
 

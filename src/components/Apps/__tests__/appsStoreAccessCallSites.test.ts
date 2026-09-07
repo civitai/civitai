@@ -37,10 +37,20 @@ import { describe, it, expect } from 'vitest';
  * `appsNavVisibility.ts` — has behavioural cover in the same unit project
  * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
  * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
- * checked. What no test covers, there or here: that `useGetMenuItems` hands it
- * the real `useFeatureFlags()` object and wires `appsNav.marketplace` to the
- * right menu item. That seam is untested for BOTH nav entries and predates this
- * ledger — do not read the behavioural cover as reaching it.
+ * checked.
+ *
+ * ⚠️ THE SEAM THIS PARAGRAPH USED TO CALL UNTESTED IS NOW HALF-COVERED, and the
+ * remaining half is named rather than implied. It said: "that `useGetMenuItems`
+ * hands it the real `useFeatureFlags()` object and wires `appsNav.marketplace` to
+ * the right menu item" was untested for both nav entries. The two entries are now
+ * ONE (`/apps` with store access, `/apps/get-started` without), and
+ * `AppHeader/appsMenuEntry.test.ts` — also in this blocking unit project — extracts
+ * that row's `href` / `visible` expressions from the real `hooks.tsx` source and
+ * EVALUATES them across every combination of the two booleans. So the WIRING half is
+ * covered. What is still not: that the object `useGetMenuItems` passes into
+ * `appsNavVisibility(...)` is the real `useFeatureFlags()` result rather than some
+ * other object — a source scan cannot see that, and no render-level test mounts this
+ * hook.
  *
  * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
