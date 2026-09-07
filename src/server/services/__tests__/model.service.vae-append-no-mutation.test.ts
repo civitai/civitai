@@ -75,6 +75,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(),
   getPublicPaidAccessForModelVersions: vi.fn().mockResolvedValue({}),
+  getModelPaidAccessGates: vi.fn().mockResolvedValue(new Map()),
   bustPaidAccessCache: vi.fn(),
   bustModelSaleCache: vi.fn(),
 }));
@@ -183,7 +184,7 @@ function primeOneModelWithALinkedVae() {
     },
   } as never);
 
-  mockDbRead.$queryRaw.mockResolvedValue([]); // getModelEarlyAccessDeadlines
+  mockDbRead.$queryRaw.mockResolvedValue([]); // getModelPaidAccessGates
   mockDbRead.modelMetric.findMany.mockResolvedValue([]);
   mockDbRead.modelVersionMetric.findMany.mockResolvedValue([]);
   mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);

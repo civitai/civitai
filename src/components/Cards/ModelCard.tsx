@@ -72,10 +72,10 @@ function ModelCardContent({ data }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isEarlyAccess = data.earlyAccessDeadline && data.earlyAccessDeadline > new Date();
-  // A permanent gate has no deadline to compare against, so it can only come from the server as a
-  // flag. Deliberately not folded into `isEarlyAccess`: an early-access window ends and the model
-  // becomes free, a permanent gate never does, so the two cannot share a word.
-  const isPaidAccess = !!data.hasPermanentPaidAccess;
+  // Any live gate. `isEarlyAccess` stays a client-side deadline check because a search document can
+  // be 15 minutes stale; this flag covers the gates with no deadline to check — permanent ones, and
+  // timed ones whose end date was never materialized.
+  const isPaidAccess = !!data.hasActivePaidAccess;
   const isArchived = data.mode === ModelModifier.Archived;
 
   const isPOI = data.poi;

@@ -16,7 +16,7 @@ import type { RecommendedSettingsSchema } from '~/server/schema/model-version.sc
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
-import { getModelPaidAccessGates } from '~/server/services/model-paid-access';
+import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -99,7 +99,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'publishedAt',
     'locked',
     'earlyAccessDeadline',
-    'hasPermanentPaidAccess',
+    'hasActivePaidAccess',
     'mode',
     'checkpointType',
     'availability',
@@ -281,7 +281,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       return {
         ...model,
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
-        hasPermanentPaidAccess: paidAccessGates.get(model.id)?.permanent ?? false,
+        hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,

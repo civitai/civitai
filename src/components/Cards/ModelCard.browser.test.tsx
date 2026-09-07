@@ -205,7 +205,7 @@ describe('ModelCard review indicator (batched membership)', () => {
 
 // =============================================================================
 // Paid-gate badge. A permanent gate carries NO deadline (`endsAt IS NULL` by
-// definition), so before `hasPermanentPaidAccess` the card had nothing to read
+// definition), so before `hasActivePaidAccess` the card had nothing to read
 // and 2,916 published paid models rendered no marker at all.
 //
 // The two words are deliberately not interchangeable and this block is what
@@ -219,13 +219,15 @@ describe('ModelCard review indicator (batched membership)', () => {
 // status badge, so the card threw "Cannot read properties of undefined (reading '5')" the first time
 // one did. Supplying the scale here keeps the fix local to the tests that need it; widening the
 // shared harness theme would change layout under every component test in the repo.
+// Distinct hexes on purpose: success and teal sharing one value would make a success->teal
+// regression in statusBadgeStyle invisible to the colour assertion below.
 const scale = (hex: string) =>
   Array.from({ length: 10 }, () => hex) as unknown as MantineColorsTuple;
 function WithPalette({ children }: { children: React.ReactNode }) {
   return (
     <MantineProvider
       theme={{
-        colors: { success: scale('#12b886'), teal: scale('#12b886'), blue: scale('#228be6') },
+        colors: { success: scale('#12b886'), teal: scale('#0ca678'), blue: scale('#228be6') },
       }}
     >
       {children}
@@ -249,9 +251,7 @@ describe('ModelCard paid-gate badge', () => {
   test('renders "Paid" for a permanent gate, which has no deadline to read', async () => {
     renderWithProviders(
       <WithPalette>
-        <ModelCard
-          data={{ ...makeData(), hasPermanentPaidAccess: true, earlyAccessDeadline: null }}
-        />
+        <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
       </WithPalette>
     );
     expect(await statusBadgeText()).toBe('Paid');
@@ -262,7 +262,7 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard
-          data={{ ...makeData(), earlyAccessDeadline: deadline, hasPermanentPaidAccess: false }}
+          data={{ ...makeData(), earlyAccessDeadline: deadline, hasActivePaidAccess: false }}
         />
       </WithPalette>
     );
@@ -274,7 +274,7 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard
-          data={{ ...makeData(), earlyAccessDeadline: deadline, hasPermanentPaidAccess: true }}
+          data={{ ...makeData(), earlyAccessDeadline: deadline, hasActivePaidAccess: true }}
         />
       </WithPalette>
     );
@@ -286,7 +286,7 @@ describe('ModelCard paid-gate badge', () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard
-          data={{ ...makeData(), earlyAccessDeadline: past, hasPermanentPaidAccess: false }}
+          data={{ ...makeData(), earlyAccessDeadline: past, hasActivePaidAccess: false }}
         />
       </WithPalette>
     );
@@ -297,11 +297,33 @@ describe('ModelCard paid-gate badge', () => {
     expect(document.querySelector('[data-status-badge]')).toBeNull();
   });
 
+  test('a gate with no deadline still reads "Paid" — an unmaterialized timed window is paywalled', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
+      </WithPalette>
+    );
+    expect(await statusBadgeText()).toBe('Paid');
+  });
+
+  test('the Paid badge uses the Early Access colour, not the New/Updated one', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
+      </WithPalette>
+    );
+    await statusBadgeText();
+    const el = document.querySelector('[data-status-badge]') as HTMLElement;
+    // Reusing the Early Access treatment is the community ask this PR answers, and it lives in an
+    // inline style rather than a class, so it survives the harness having no stylesheet.
+    expect(el.style.backgroundColor).toBe('rgb(18, 184, 134)');
+  });
+
   test('an ungated model renders no status badge at all', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard
-          data={{ ...makeData(), earlyAccessDeadline: null, hasPermanentPaidAccess: false }}
+          data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: false }}
         />
       </WithPalette>
     );

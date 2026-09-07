@@ -779,3 +779,43 @@ export async function materializePaidAccessEndsAt(
   });
   await bustPaidAccessCache('ModelVersion', [versionId]);
 }
+
+export type ModelPaidAccessGate = {
+  /** End of a live timed window. Null for a gate with no end date. */
+  earlyAccessDeadline: Date | null;
+  /** Any live gate, timed or permanent — the model costs money right now. */
+  gated: boolean;
+};
+
+/**
+ * Model-level gate state for the card badge. The feed and the search-index build both call this, so
+ * the two surfaces cannot answer the question differently — they each held their own copy of this
+ * query until 868m1r2u7, which is how a badge ends up right in one place and missing in the other.
+ *
+ * The row predicate is `isPaidAccessActive` expressed in SQL: a gate is live when it has no end date
+ * or its end date is still ahead. Keying off `timeframeDays` instead would drop a timed gate whose
+ * `endsAt` was never materialized — 36 published versions on prod are in exactly that state, and
+ * they are paywalled.
+ */
+export async function getModelPaidAccessGates(
+  modelIds: number[]
+): Promise<Map<number, ModelPaidAccessGate>> {
+  if (!modelIds.length) return new Map();
+
+  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date | null }[]>`
+    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion'
+      AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
+      AND mv.status = 'Published'::"ModelStatus"
+      AND mv."modelId" IN (${Prisma.join(modelIds)})
+    GROUP BY mv."modelId"
+  `;
+
+  // A row reaching here is live by the predicate, so its presence IS the gate. `deadline` stays
+  // separate because only a timed window has a clock to show.
+  return new Map(
+    rows.map((r) => [Number(r.modelId), { earlyAccessDeadline: r.deadline ?? null, gated: true }])
+  );
+}

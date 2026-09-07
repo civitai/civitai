@@ -107,7 +107,6 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { getModelPaidAccessGates } from '~/server/services/model-paid-access';
 import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import {
   expandBlurbs,
@@ -187,6 +186,7 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
+  getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -243,7 +243,7 @@ type ModelRaw = {
   publishedAt: Date | null;
   locked: boolean;
   earlyAccessDeadline: Date | null;
-  hasPermanentPaidAccess: boolean;
+  hasActivePaidAccess: boolean;
   mode: string;
   rank: {
     downloadCount: number;
@@ -1097,7 +1097,7 @@ export const getModelsRaw = async ({
   for (const model of models) {
     const gate = paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
-    model.hasPermanentPaidAccess = gate?.permanent ?? false;
+    model.hasActivePaidAccess = gate?.gated ?? false;
   }
 
   let nextCursor: string | bigint | undefined;
