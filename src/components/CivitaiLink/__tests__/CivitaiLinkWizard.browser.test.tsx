@@ -26,11 +26,17 @@ vi.mock('~/components/CivitaiLink/CivitaiLinkProvider', async (importOriginal) =
 }));
 
 vi.mock('~/utils/fetch-link-releases', () => ({
-  fetchLinkReleases: async () => ({ os: 'Windows', tag_name: 'v1.21.0', href: 'https://example' }),
+  fetchLinkReleases: async () => ({
+    os: 'Windows',
+    tag_name: 'v1.21.0',
+    href: 'https://example/setup.exe',
+    downloads: { Windows: 'https://example/setup.exe', Mac: 'https://example/app.dmg' },
+  }),
 }));
 
 import { renderWithProviders } from '../../../../test/component-setup';
 import CivitaiLinkWizardModal from '~/components/CivitaiLink/CivitaiLinkWizard';
+import { CIVITAI_LINK_DESKTOP_RELEASES } from '~/components/CivitaiLink/civitai-link-paths';
 
 const record = (name: string) => () => {
   mocks.calls.push(name);
@@ -87,6 +93,26 @@ describe('CivitaiLinkWizard — pairing mechanism per path', () => {
     const created = mocks.calls.indexOf('createInstance');
     expect(created).toBeGreaterThan(-1);
     expect(mocks.calls.lastIndexOf('cancelAwaitPairing')).toBeLessThan(created);
+  });
+
+  // The other-OS links used to point at the releases page while only the primary button
+  // carried a direct URL. `Linux` is the control: the mocked release has no `.deb`, so
+  // that one still falls back.
+  test('each other-OS link goes straight to that build, falling back when absent', async () => {
+    renderWithProviders(<CivitaiLinkWizardModal />);
+
+    await page.getByRole('button', { name: /Link desktop app/ }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    await expect
+      .element(page.getByRole('link', { name: 'macOS' }))
+      .toHaveAttribute('href', 'https://example/app.dmg');
+    await expect
+      .element(page.getByRole('link', { name: 'Linux' }))
+      .toHaveAttribute('href', CIVITAI_LINK_DESKTOP_RELEASES);
+    await expect
+      .element(page.getByRole('link', { name: 'All releases' }))
+      .toHaveAttribute('href', CIVITAI_LINK_DESKTOP_RELEASES);
   });
 
   // Without this the suite doesn't discriminate on `path`: a wizard that ignored it

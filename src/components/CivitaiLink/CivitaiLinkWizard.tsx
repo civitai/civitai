@@ -243,10 +243,16 @@ export default function CivitaiLinkWizardModal() {
 
   const [active, setActive] = useState(0);
   const [path, setPath] = useState<CivitaiLinkConnectPath>('nodepack');
-  const [release, setRelease] = useState({
+  const [release, setRelease] = useState<{
+    os: string;
+    tagName: string;
+    href: string;
+    downloads: Partial<Record<string, string>>;
+  }>({
     os: 'Unknown',
     tagName: '',
     href: CIVITAI_LINK_DESKTOP_RELEASES,
+    downloads: {},
   });
   const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -327,13 +333,26 @@ export default function CivitaiLinkWizardModal() {
 
     const fetchReleases = async () => {
       const data = await fetchLinkReleases(navigator.userAgent);
-      setRelease({ os: data.os, tagName: data.tag_name, href: data.href });
+      setRelease({
+        os: data.os,
+        tagName: data.tag_name,
+        href: data.href,
+        downloads: data.downloads,
+      });
     };
 
     fetchReleases();
   }, [path]);
 
-  const otherOses = downloadableOses.filter((os) => os !== release.os);
+  const releaseLinks = [
+    ...downloadableOses
+      .filter((os) => os !== release.os)
+      .map((os) => ({
+        label: osLabels[os],
+        href: release.downloads[os] ?? CIVITAI_LINK_DESKTOP_RELEASES,
+      })),
+    { label: 'All releases', href: CIVITAI_LINK_DESKTOP_RELEASES },
+  ];
 
   return (
     <Modal
@@ -467,19 +486,14 @@ export default function CivitaiLinkWizardModal() {
                   </Stack>
                 </Button>
                 <Group gap="xs">
-                  {[...otherOses.map((os) => osLabels[os]), 'All releases'].map((label, index) => (
+                  {releaseLinks.map(({ label, href }, index) => (
                     <Group key={label} gap="xs">
                       {index > 0 && (
                         <Text size="xs" c="dimmed">
                           ·
                         </Text>
                       )}
-                      <Anchor
-                        size="xs"
-                        href={CIVITAI_LINK_DESKTOP_RELEASES}
-                        target="_blank"
-                        rel="nofollow noreferrer"
-                      >
+                      <Anchor size="xs" href={href} target="_blank" rel="nofollow noreferrer">
                         {label}
                       </Anchor>
                     </Group>
