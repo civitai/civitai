@@ -959,6 +959,16 @@ export function collapseTierQueue(items: ReferralQueueEntry[]): ReferralQueueEnt
   return collapsed;
 }
 
+// Every other path that creates a Civitai membership subscription delivers its
+// cosmetics in the same transaction (redeemableCode.service, unlockPrepaidTokensForDate);
+// without this the referral member waits for the next 01:00 UTC cron run.
+// Deliberately unguarded: a failed insert aborts the surrounding transaction anyway,
+// and rolling the redemption back leaves the tokens unspent and retryable.
+async function deliverReferralMembershipCosmetics(tx: Prisma.TransactionClient, userId: number) {
+  const { deliverMonthlyCosmetics } = await import('~/server/services/subscriptions.service');
+  await deliverMonthlyCosmetics({ userIds: [userId], tx });
+}
+
 async function grantReferralSubscription(
   tx: Prisma.TransactionClient,
   userId: number,
@@ -1067,6 +1077,7 @@ async function grantReferralSubscription(
         metadata: nextMetadata as Prisma.InputJsonValue,
       },
     });
+    await deliverReferralMembershipCosmetics(tx, userId);
     return { created: true, activeTier: active.tier, queuedCount: queue.length };
   }
 
@@ -1082,6 +1093,7 @@ async function grantReferralSubscription(
       metadata: nextMetadata as Prisma.InputJsonValue,
     },
   });
+  await deliverReferralMembershipCosmetics(tx, userId);
   return { updated: true, activeTier: active.tier, queuedCount: queue.length };
 }
 
@@ -1163,6 +1175,7 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
           } as Prisma.InputJsonValue,
         },
       });
+      await deliverReferralMembershipCosmetics(tx, sub.userId);
       return 'advanced' as const;
     });
 

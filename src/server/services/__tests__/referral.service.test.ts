@@ -997,3 +997,124 @@ describe('redeemTokens — creator-membership cache invalidation', () => {
     expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 });
+
+// -----------------------------------------------------------------------------
+// Membership cosmetics are delivered by the referral grant ITSELF, in the grant's
+// own transaction. Do not remove these calls on the grounds that the 01:00 UTC
+// `unlock-prepaid-tokens` cron delivers the same rows — it does, up to ~25h later,
+// and that lag is the bug these tests pin (ClickUp 868m27t6f).
+// -----------------------------------------------------------------------------
+
+// deliverMonthlyCosmetics is the only $executeRaw on either path, but match on the
+// statement rather than the count so a future raw write here fails loudly instead of
+// silently satisfying the assertion.
+const membershipCosmeticInserts = () =>
+  ((mockDbWrite.$executeRaw as any).mock.calls as any[][]).filter((call) =>
+    String(call[0]).includes('INSERT INTO "UserCosmetic"')
+  );
+
+// The userId filter is nested as Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`.
+const insertedForUserIds = (call: any[]) =>
+  call.slice(1).flatMap((value: any) => (Array.isArray(value?.values) ? value.values : []));
+
+describe('referral grant delivers membership cosmetics inline', () => {
+  const wireSuccessfulRedemption = () => {
+    (mockDbWrite.$queryRaw as any)
+      .mockResolvedValueOnce([{ id: 1, tokenAmount: 1 }])
+      .mockResolvedValueOnce([{ id: 'referral:42:1' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+    mockDbWrite.customerSubscription.create.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_bronze',
+        defaultPriceId: 'price_bronze',
+        metadata: { tier: 'bronze', referralGrantable: true },
+      },
+    ]);
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralRedemption.create.mockResolvedValue({
+      id: 99,
+      createdAt: new Date(),
+      tokensSpent: 1,
+      rewardType: 'MembershipPerks',
+      metadata: {},
+    });
+  };
+
+  it('inserts the membership cosmetics for the redeeming user during redeemTokens', async () => {
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([42]);
+  });
+
+  it('runs the insert inside the redemption transaction, before the redemption row is written', async () => {
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    // Ordering is the only in-process evidence that the write shares the grant's
+    // transaction: the delivery must precede the redemption row, which is the last
+    // statement inside the same tx callback. A delivery moved after the commit —
+    // or dropped in favour of the cron — fails here.
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    const redemptionOrder = (mockDbWrite.referralRedemption.create as any).mock.invocationCallOrder;
+    // Named before the comparison so a delivery that never ran reads as a missing
+    // call rather than a TypeError on undefined.
+    expect(insertOrder).toHaveLength(1);
+    expect(redemptionOrder).toHaveLength(1);
+    expect(insertOrder[0]).toBeLessThan(redemptionOrder[0]);
+  });
+
+  it('inserts the membership cosmetics when advanceReferralSubscriptions promotes a queued chunk', async () => {
+    const queueMeta = { referralQueue: [{ tier: 'silver', durationDays: 7 }] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_silver',
+        defaultPriceId: 'price_silver',
+        metadata: { tier: 'silver', referralGrantable: true },
+      },
+    ]);
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 1, canceled: 0 });
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([7]);
+  });
+
+  it('delivers nothing when the sub is canceled with an empty queue', async () => {
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: { referralQueue: [] } },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: { referralQueue: [] },
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 0, canceled: 1 });
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+});
