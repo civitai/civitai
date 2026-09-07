@@ -310,8 +310,15 @@ export function recordExternalModerationSkipped(source: ExternalModerationSource
  * candidate that is 2% more permissive and 2% stricter becomes indistinguishable from one that
  * agrees perfectly. `error` is the shadow request itself failing and says nothing about either model.
  *
- * 🔴 `incomparable` IS NOT A KIND OF ERROR AND MUST NOT BE FOLDED INTO ONE. It means the two models
- * answered in DIFFERENT VOCABULARIES, so no verdict comparison was attempted. When
+ * 🔴 `incomparable` IS NOT A KIND OF ERROR AND MUST NOT BE FOLDED INTO ONE. It means the candidate's
+ * verdict was NOT DECIDABLE under the configured policy, so no comparison was attempted.
+ *
+ * ⚠️ THAT IS NARROWER THAN "THE TWO MODELS ANSWERED IN DIFFERENT VOCABULARIES", which is what this
+ * paragraph said for one commit and is no longer the test. A PARTIALLY shared vocabulary is often
+ * decidable — the policy ORs across mapped categories, so one shared category the candidate marked
+ * true settles the verdict whatever the missing ones would have said, and that comparison IS
+ * counted. **So `incomparable == 0` does NOT mean the vocabularies agree**; it means every counted
+ * comparison was decidable. Only the converse below is safe to act on. When
  * `EXTERNAL_MODERATION_CATEGORIES` is configured the app's verdict is `any mapped category the
  * classifier marked true` — production maps a single key — so a candidate whose response simply
  * does not carry that key yields `false` on EVERY call and reads as flagging NOTHING. Without this
@@ -338,10 +345,13 @@ const shadowCounter = registerCounterWithLabels({
     'candidate_strict is the reverse and is a false-positive/UX cost. Do NOT sum the two into one ' +
     'divergence rate — they cancel, and that is the one reading this metric exists to prevent. ' +
     'outcome=error is the shadow request failing and is evidence about neither model. 🔴 ' +
-    'outcome=incomparable means the candidate did not answer in the vocabulary the configured ' +
-    'EXTERNAL_MODERATION_CATEGORIES map reads, so no comparison was attempted — a NON-ZERO ' +
+    'outcome=incomparable means the candidate verdict was not DECIDABLE under the configured ' +
+    'EXTERNAL_MODERATION_CATEGORIES policy, so no comparison was attempted — a NON-ZERO ' +
     'incomparable rate INVALIDATES the permissive/strict split for that candidate; pick a candidate ' +
-    'that shares the incumbent`s category names, do not reason around it. 🔴 Every counted ' +
+    "that shares the incumbent's category names, do not reason around it. 🔴 The converse does NOT " +
+    'hold: incomparable=0 means every counted comparison was decidable, NOT that the vocabularies ' +
+    'agree — the policy ORs across categories, so one shared category can settle a verdict while ' +
+    'others are absent. 🔴 Every counted ' +
     'comparison is a SECOND billable classifier request; the sample rate is the spend control, and ' +
     'disarming takes a POD ROLLOUT because env is parsed once at process start.',
   labelNames: ['source', 'outcome'] as const,

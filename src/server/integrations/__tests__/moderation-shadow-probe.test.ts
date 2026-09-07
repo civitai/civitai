@@ -48,7 +48,7 @@ vi.mock('~/env/server', () => ({ env }));
 import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
 import {
-  candidateVocabularyCovers,
+  candidateVerdictIsDeterminate,
   classifyShadowOutcome,
 } from '~/server/integrations/moderation-shadow-probe';
 
@@ -130,6 +130,7 @@ beforeEach(() => {
   // entries, so a case that sets one would otherwise leak into every later case in this file.
   process.env.CACHE_KEY_NAMESPACE = '';
   delete process.env.IS_PREVIEW;
+  delete process.env.NEXT_PUBLIC_IS_PR_PREVIEW;
 });
 
 afterEach(() => {
@@ -296,18 +297,18 @@ describe('shadow probe — vocabulary gate (audit round 1, F1)', () => {
   it('coverage is by OWN property, so a prototype key cannot fake it', () => {
     // `in` walks the prototype chain, so `'toString' in {}` is true and the vocabulary would read
     // as covered on a response carrying nothing of the sort.
-    expect(candidateVocabularyCovers({ categories: {} }, { toString: 'x' })).toBe(false);
-    expect(candidateVocabularyCovers({ categories: { toString: true } }, { toString: 'x' })).toBe(
-      true
-    );
+    expect(candidateVerdictIsDeterminate({ categories: {} }, { toString: 'x' })).toBe(false);
+    expect(
+      candidateVerdictIsDeterminate({ categories: { toString: true } }, { toString: 'x' })
+    ).toBe(true);
   });
 
   it('treats a missing or non-object categories field as not covered', () => {
-    expect(candidateVocabularyCovers({}, PROD_MAP)).toBe(false);
-    expect(candidateVocabularyCovers({ categories: null }, PROD_MAP)).toBe(false);
-    expect(candidateVocabularyCovers({ categories: 'nope' }, PROD_MAP)).toBe(false);
+    expect(candidateVerdictIsDeterminate({}, PROD_MAP)).toBe(false);
+    expect(candidateVerdictIsDeterminate({ categories: null }, PROD_MAP)).toBe(false);
+    expect(candidateVerdictIsDeterminate({ categories: 'nope' }, PROD_MAP)).toBe(false);
     // Threshold mode: no map, nothing to cover.
-    expect(candidateVocabularyCovers({}, undefined)).toBe(true);
+    expect(candidateVerdictIsDeterminate({}, undefined)).toBe(true);
   });
 
   it('is DETERMINACY, not coverage: a present TRUE key settles the verdict despite a missing one', () => {
@@ -316,7 +317,7 @@ describe('shadow probe — vocabulary gate (audit round 1, F1)', () => {
     // makeable and must not be thrown away as `incomparable`. Unreachable on production's
     // single-key map; reachable the moment a second category is configured, which needs no code.
     const twoKeys = { 'sexual/minors': 'a', violence: 'b' };
-    expect(candidateVocabularyCovers({ categories: { 'sexual/minors': true } }, twoKeys)).toBe(
+    expect(candidateVerdictIsDeterminate({ categories: { 'sexual/minors': true } }, twoKeys)).toBe(
       true
     );
   });
@@ -324,12 +325,12 @@ describe('shadow probe — vocabulary gate (audit round 1, F1)', () => {
   it('is INDETERMINATE when nothing present is true and a mapped key is missing', () => {
     // Here the verdict really is unknowable: the absent key might have been the one that flagged.
     const twoKeys = { 'sexual/minors': 'a', violence: 'b' };
-    expect(candidateVocabularyCovers({ categories: { 'sexual/minors': false } }, twoKeys)).toBe(
+    expect(candidateVerdictIsDeterminate({ categories: { 'sexual/minors': false } }, twoKeys)).toBe(
       false
     );
     // All keys present and all false — determinate `flagged: false`, so comparable.
     expect(
-      candidateVocabularyCovers(
+      candidateVerdictIsDeterminate(
         { categories: { 'sexual/minors': false, violence: false } },
         twoKeys
       )
@@ -369,6 +370,40 @@ describe('shadow probe — arming', () => {
     await extModeration.moderatePrompt('a staging rehearsal', 'generate');
     await untilShadowTotal(1);
     expect(await shadowCount('match')).toBe(1);
+  });
+
+  it('refuses when the namespace is whitespace-padded (round 3, F3)', async () => {
+    // 🔴 The `.trim()` was implemented but UNGUARDED — a mutant deleting it passed the whole file.
+    // It is not cosmetic: with a YAML quoting slip like `CACHE_KEY_NAMESPACE=" preview"` and no
+    // trim, the value is neither `'preview'` nor empty, so NEITHER clause fires and the probe arms
+    // in a PR preview — the exact outcome this guard exists to prevent.
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a warmup prompt', 'generate');
+    await untilShadowTotal(1);
+
+    process.env.CACHE_KEY_NAMESPACE = '  preview  ';
+    const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('an entirely different prompt', 'generate');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await shadowTotal()).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses on NEXT_PUBLIC_IS_PR_PREVIEW even if the keyspace scheme changes (round 3, F1)', async () => {
+    // 🔴 The namespace clause alone is coupled to a string chosen in another repo. A per-preview
+    // keyspace (`preview-<PR>`) is a natural evolution and would match NEITHER `'preview'` nor
+    // empty, silently un-refusing every preview. This second signal does not vary with that scheme.
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a warmup prompt', 'generate');
+    await untilShadowTotal(1);
+
+    process.env.CACHE_KEY_NAMESPACE = 'preview-4680';
+    process.env.NEXT_PUBLIC_IS_PR_PREVIEW = 'true';
+    const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('an entirely different prompt', 'generate');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await shadowTotal()).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('arms in production, where the namespace is empty and IS_PREVIEW is unset', async () => {

@@ -51,7 +51,13 @@ import {
 export type ShadowComparableVerdict = { flagged: boolean };
 
 /**
- * Can the candidate's response even be REDUCED by the incumbent's policy?
+ * Is the candidate's verdict DETERMINATE under the incumbent's policy?
+ *
+ * ⚠️ RENAMED FROM `candidateVocabularyCovers`, because the earlier name described the earlier test
+ * and stopped being true when the test changed. It does NOT answer "does the candidate share our
+ * vocabulary" — a partially-shared vocabulary is often determinate, and it returns `true` there.
+ * `incomparable == 0` therefore does NOT imply full vocabulary agreement; it implies every counted
+ * comparison was decidable. Read the outcome's doc in `external-moderation.metrics.ts` with this.
  *
  * 🔴 THIS IS THE DIFFERENCE BETWEEN A MEASUREMENT AND A PLAUSIBLE FICTION, and without it the
  * probe's headline number is unrelated to the candidate's quality. When
@@ -72,7 +78,7 @@ export type ShadowComparableVerdict = { flagged: boolean };
  * would report the vocabulary covered on a response that carries nothing of the sort. Same failure
  * shape this codebase has already been bitten by elsewhere.
  */
-export function candidateVocabularyCovers(
+export function candidateVerdictIsDeterminate(
   result: { categories?: unknown },
   categoryMap: Record<string, string> | undefined
 ): boolean {
@@ -148,7 +154,7 @@ export function classifyShadowOutcome(
  * earlier revision of this comment stopped at "guarding it would be ceremony", which primed the
  * reader to treat a zero `error` rate as proof the candidate was working. It is not: a perfectly
  * valid model that answers in a different CATEGORY VOCABULARY produces 200s, zero errors, and a
- * completely fictional agreement rate. That hole is closed by `candidateVocabularyCovers` and the
+ * completely fictional agreement rate. That hole is closed by `candidateVerdictIsDeterminate` and the
  * `incomparable` outcome above, NOT by anything about the model name — read them together.
  *
  * 🔴 AND IT REFUSES TO ARM IN A PR PREVIEW, which is a CONFIG-INHERITANCE guard, not a model guard.
@@ -166,12 +172,31 @@ export function classifyShadowOutcome(
  * rehearsal it promised to protect and left production as the practical arming target, which is
  * backwards for a probe whose whole design is "arm low, read, disarm".
  *
- * This is the exact conflation `@civitai/redis`'s `cache-key-prefix.ts` and `~/env/database-target`
- * were both written to resolve — `IS_PREVIEW` is overloaded across at least two deployment classes
- * — and both resolved it the same way, with an explicit namespace. Following that precedent rather
- * than inventing a third signal. Canonical values, from `cache-key-prefix.ts`: `''`/unset =
- * production, `'preview'` = the ephemeral per-PR deployments, `'next'` = the standing
- * non-production one. Only `'preview'` is refused.
+ * 🔴 RETRACTED CLAIM, KEPT SO NOBODY DERIVES IT AGAIN. A previous revision said this "follows the
+ * precedent" of `cache-key-prefix.ts` and `~/env/database-target`, which resolved the same
+ * `IS_PREVIEW` overload. Those modules DIAGNOSE the overload — accurately, and that half stands —
+ * but each resolved it by introducing ITS OWN DEDICATED VARIABLE, and each says so in terms
+ * (`"the cache namespace gets its own variable"`; `"this describes the DATABASE, and nothing else …
+ * must not become one"`). Reusing one of those variables is the opposite of what they did. The
+ * sibling probe on this very path considered exactly this reuse and rejected it
+ * (`server-schema.ts`, "WHY NOT REUSE CACHE_KEY_NAMESPACE"). **The precedent argument was wrong;
+ * do not restate it, and do not reach for a replacement justification for the same shape.**
+ *
+ * ⚠️ SO WHAT THIS GUARD ACTUALLY RESTS ON, STATED WITHOUT DRESSING IT UP: two signals that are
+ * TRUE OF PREVIEWS TODAY, neither of which this module owns, and neither of which any test or gate
+ * in either repo pins to this use. Canonical namespace values, from `cache-key-prefix.ts`:
+ * `''`/unset = production, `'preview'` = the ephemeral per-PR deployments, `'next'` = the standing
+ * non-production one. The known way this goes stale is a per-preview keyspace
+ * (`CACHE_KEY_NAMESPACE=preview-<PR>`), which is a natural evolution and would silently un-refuse
+ * every preview — which is why `NEXT_PUBLIC_IS_PR_PREVIEW` is checked ALONGSIDE rather than
+ * instead: it is preview-only, is already used for this exact discrimination elsewhere in this repo
+ * (`contest-score.service.ts`), and does not vary with a keyspace scheme.
+ *
+ * 🔴 THE STRUCTURALLY CORRECT FIX IS A DEDICATED VARIABLE — what both precedents above actually
+ * did — and it is NOT TAKEN HERE, deliberately: a new variable is absent from the preview deploy
+ * task's strip filter until an infra change lands, so until then it would FAIL OPEN, which is worse
+ * than a coupling that currently holds. If you are extending this, that is the change to make, in
+ * both repos, together.
  *
  * ⚠️ The `IS_PREVIEW` fallback below is NOT the old guard surviving. It covers ONLY the transitional
  * state `cache-key-prefix.ts:66-75` itself warns about — a deployment carrying `IS_PREVIEW=true`
@@ -187,6 +212,7 @@ export function classifyShadowOutcome(
  * string directly: the parse is total and cannot throw.
  */
 function shadowConfig(): { model: string; sample: number } | null {
+  if (process.env.NEXT_PUBLIC_IS_PR_PREVIEW === 'true') return null;
   const namespace = process.env.CACHE_KEY_NAMESPACE?.trim() ?? '';
   if (namespace === 'preview') return null;
   if (!namespace && process.env.IS_PREVIEW === 'true') return null;
@@ -273,7 +299,7 @@ async function runShadowComparison(
     // 🔴 Vocabulary gate BEFORE the comparison, never after. Reducing an unreadable response would
     // silently produce `flagged:false` and book it as a real disagreement. See the function's own
     // header for why that specific wrong answer is the dangerous one.
-    if (!candidateVocabularyCovers(results[0], env.EXTERNAL_MODERATION_CATEGORIES)) {
+    if (!candidateVerdictIsDeterminate(results[0], env.EXTERNAL_MODERATION_CATEGORIES)) {
       recordExternalModerationShadow(metricSource, 'incomparable');
       return;
     }
