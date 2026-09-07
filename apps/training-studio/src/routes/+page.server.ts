@@ -6,7 +6,7 @@ import { SAMPLE_ROWS, type TrainingRow } from '$lib/data/trainingRows';
 export const load: PageServerLoad = async ({ locals }) => {
   // The dev-login stub isn't a real user: show the sample list so the UI is previewable.
   if (locals.devPreview) {
-    return { username: locals.user.username, rows: SAMPLE_ROWS };
+    return { username: locals.user.username, image: locals.user.image, rows: SAMPLE_ROWS };
   }
 
   // The list is where a user goes to find out what happened, so a blip degrades it to an empty list rather
@@ -25,5 +25,5 @@ export const load: PageServerLoad = async ({ locals }) => {
       })
     : [];
 
-  return { username: locals.user.username, rows };
+  return { username: locals.user.username, image: locals.user.image, rows };
 };

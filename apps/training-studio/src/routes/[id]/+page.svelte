@@ -156,7 +156,7 @@
   });
 </script>
 
-<AppHeader username={data.username} />
+<AppHeader username={data.username} image={data.image} />
 
 <section class="flex flex-col gap-6">
   <a href="/" class="font-mono text-xs text-dark-2 transition-colors hover:text-white">

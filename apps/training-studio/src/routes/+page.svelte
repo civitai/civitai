@@ -7,5 +7,5 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<AppHeader username={data.username} />
+<AppHeader username={data.username} image={data.image} />
 <MyTrainings rows={data.rows} onNew={() => goto('/new')} />

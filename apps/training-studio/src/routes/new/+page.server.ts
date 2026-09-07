@@ -10,5 +10,5 @@ export const load: PageServerLoad = async ({ locals }) => {
   // Streamed (returned unawaited): the flow renders immediately and the per-model "from" quotes fill
   // in when the sweep resolves. `getFromPrices` never rejects.
   const fromPrices: Promise<FromPrices> = token ? getFromPrices(token) : Promise.resolve(NO_PRICES);
-  return { username: locals.user.username, fromPrices };
+  return { username: locals.user.username, image: locals.user.image, fromPrices };
 };
