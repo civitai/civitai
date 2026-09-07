@@ -245,7 +245,7 @@ export async function processImageScanWorkflow({
     const failureType =
       status === 'expired' ? 'expired' : status === 'canceled' ? 'canceled' : 'workflow-failed';
     const reason = await readJobFailureReason(workflowId);
-    const { retryCount, mediaType, failureClass } = await markImageScanError({
+    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
       workflowId,
       imageId,
       status,
@@ -271,6 +271,7 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     ).catch(() => null);
+    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -284,7 +285,7 @@ export async function processImageScanWorkflow({
     parsed = parseScanSteps({ steps, workflowId });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown error';
-    const { retryCount, mediaType, failureClass } = await markImageScanError({
+    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
       workflowId,
       imageId,
       status,
@@ -308,6 +309,7 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     ).catch(() => null);
+    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -380,7 +382,7 @@ export async function processImageScanWorkflow({
       return;
     }
 
-    const { retryCount, mediaType, failureClass } = await markImageScanError({
+    const { retryCount, mediaType, userId, failureClass } = await markImageScanError({
       workflowId,
       imageId,
       status,
@@ -406,6 +408,7 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     ).catch(() => null);
+    await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -452,11 +455,37 @@ export async function processImageScanWorkflow({
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook
   // and make the orchestrator re-run it.
+  await sendIngestionSignal({
+    imageId: image.id,
+    userId: image.userId,
+    ingestion: outcome.ingestion,
+    blockedFor: outcome.blockedFor,
+  });
+}
+
+/**
+ * Push the resolved ingestion state to the uploader's open editor. The editor renders
+ * Pending as an in-progress spinner, so any state that LEAVES Pending has to send —
+ * Error included, retryable though it is — or the card goes on claiming to analyze
+ * until the page is reloaded.
+ */
+async function sendIngestionSignal({
+  imageId,
+  userId,
+  ingestion,
+  blockedFor,
+}: {
+  imageId: number;
+  userId: number | null;
+  ingestion: ImageIngestionStatus;
+  blockedFor?: string | null;
+}) {
+  if (!userId) return;
   await signalClient
     .send({
       target: SignalMessages.ImageIngestionStatus,
-      data: { imageId: image.id, ingestion: outcome.ingestion, blockedFor: outcome.blockedFor },
-      userId: image.userId,
+      data: { imageId, ingestion, blockedFor },
+      userId,
     })
     .catch((error) =>
       logToAxiom(
@@ -466,7 +495,7 @@ export async function processImageScanWorkflow({
           message: `signal send failed: ${
             error instanceof Error ? error.message : 'Unknown error'
           }`,
-          imageId: image.id,
+          imageId,
           source: 'image-scan-result.service',
         },
         'webhooks'
@@ -705,6 +734,7 @@ async function markImageScanError({
 }): Promise<{
   retryCount: number | null;
   mediaType: string | null;
+  userId: number | null;
   failureClass: string;
 }> {
   const failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
@@ -719,7 +749,9 @@ async function markImageScanError({
     failureClass,
     at: new Date().toISOString(),
   });
-  const rows = await dbWrite.$queryRaw<{ retryCount: number | null; mediaType: string | null }[]>`
+  const rows = await dbWrite.$queryRaw<
+    { retryCount: number | null; mediaType: string | null; userId: number | null }[]
+  >`
     UPDATE "Image"
     SET
       "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
@@ -737,11 +769,13 @@ async function markImageScanError({
         ${errorJson}::jsonb
       )
     WHERE id = ${imageId}
-    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType"
+    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
+      "userId"
   `;
   return {
     retryCount: rows[0]?.retryCount ?? null,
     mediaType: rows[0]?.mediaType ?? null,
+    userId: rows[0]?.userId ?? null,
     failureClass,
   };
 }

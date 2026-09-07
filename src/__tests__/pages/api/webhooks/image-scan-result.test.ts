@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import handler from '~/pages/api/webhooks/image-scan-result';
 import { processImageScanWorkflow } from '~/server/services/image-scan-result.service';
+import { signalClient } from '~/utils/signal-client';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
@@ -611,7 +612,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
         if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
         if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'")) {
           markedError = renderSql(strings, values);
-          return [{ retryCount: 1, mediaType: 'image' }];
+          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
         }
         return passthrough(query, ...values);
       });
@@ -675,6 +676,33 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return strings.join('').includes("'{retryCount}'");
       });
       expect(errorFlips).toHaveLength(0);
+    });
+
+    it('signals the Error state so the editor stops showing "Analyzing image"', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        const text = strings.join('');
+        if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
+        if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'"))
+          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
+        return passthrough(query, ...values);
+      });
+
+      await processImageScanWorkflow({
+        workflowId: 'workflow-whose-processing-fails',
+        status: 'succeeded',
+        imageId: 14,
+        steps: scanSteps('another tag that cannot be created'),
+      });
+
+      // Without this the editor keeps rendering Pending until the page is reloaded.
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 55,
+          data: expect.objectContaining({ imageId: 14, ingestion: ImageIngestionStatus.Error }),
+        })
+      );
     });
 
     it('still surfaces a deleted image so the webhook can ACK it as skipped', async () => {

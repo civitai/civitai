@@ -105,6 +105,8 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
+  isScanFailed: boolean;
+  isScanNotFound: boolean;
   canAdd: boolean;
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
@@ -203,6 +205,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
+  const isScanFailed = ingestion === ImageIngestionStatus.Error;
+  const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
   const canAdd = canAddFunc(type, meta);
@@ -297,6 +301,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
+        isScanFailed,
+        isScanNotFound,
         canAdd,
         otherImages,
         allowedResources,
@@ -609,6 +615,8 @@ function EditDetail() {
     isBlocked,
     isPending,
     isScanned,
+    isScanFailed,
+    isScanNotFound,
     onEditMetaClick,
     isDeleting,
     isUpdating,
@@ -1143,6 +1151,35 @@ function EditDetail() {
             <Text align="center">
               Analyzing image. Image will not be visible to other people while analysis is in
               progress.
+            </Text>
+          </Alert>
+        )}
+        {isScanFailed && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t finish analyzing this image, so it won&apos;t be visible to others.
+              We&apos;ll keep retrying for a while — if this message is still here later, remove the
+              image and upload it again, or contact support.
+            </Text>
+          </Alert>
+        )}
+        {isScanNotFound && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t load this image to analyze it, so it won&apos;t be visible to others.
+              Remove it and upload it again.
             </Text>
           </Alert>
         )}
