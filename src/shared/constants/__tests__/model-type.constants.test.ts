@@ -15,6 +15,9 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
 describe('model type picker data', () => {
+  const groupOf = (type: ModelType) =>
+    modelTypeGroups.find(({ types }) => types.includes(type))?.group;
+
   it('covers every ModelType exactly once, as selectable or retired', () => {
     const all = [...selectableModelTypes, ...retiredModelTypes].sort();
 
@@ -22,12 +25,14 @@ describe('model type picker data', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it('offers only the types the 2026-08-31 cleanup kept', () => {
+  // The list is what the 2026-08-31 cleanup kept, plus Embedding, restored 2026-09-07.
+  it('offers exactly the post-cleanup picker list, in order', () => {
     expect(selectableModelTypes).toStrictEqual([
       ModelType.Checkpoint,
       ModelType.LORA,
       ModelType.LoCon,
       ModelType.DoRA,
+      ModelType.TextualInversion,
       ModelType.VAE,
       ModelType.TextEncoder,
       ModelType.UNet,
@@ -40,11 +45,19 @@ describe('model type picker data', () => {
   });
 
   it('groups Controlnet with the workflow additives, not the adapters', () => {
-    const groupOf = (type: ModelType) =>
-      modelTypeGroups.find(({ types }) => types.includes(type))?.group;
-
     expect(groupOf(ModelType.Controlnet)).toBe('Workflow additives');
     expect(groupOf(ModelType.LORA)).toBe('Adapters');
+  });
+
+  // Deliberate, and the reason is not visible from the value: an embedding is not a weight-delta
+  // adapter. It sits under Adapters because the alternative is a group of one whose heading repeats
+  // its only option -- the thing the ungrouped lists exist to avoid. Moving it to its own group is a
+  // product call, not a tidy-up.
+  it('groups Embedding with the adapters rather than in a group of its own', () => {
+    expect(groupOf(ModelType.TextualInversion)).toBe('Adapters');
+    expect(
+      modelTypeGroups.filter(({ types }) => types.length < 2).map(({ group }) => group)
+    ).toStrictEqual([]);
   });
 
   it('keeps a retired type selectable while it is the current value', () => {
@@ -80,7 +93,6 @@ describe('model type picker data', () => {
     // retiredModelTypes is written out rather than derived as the complement of the selectable set.
     // Derived, a ModelType added later would land in it and this file would stay green.
     expect([...retiredModelTypes]).toStrictEqual([
-      ModelType.TextualInversion,
       ModelType.Hypernetwork,
       ModelType.AestheticGradient,
       ModelType.MotionModule,
@@ -125,26 +137,26 @@ describe('model type picker data', () => {
 
   it('grandfathers a saved model, and offers a template only what is still offered', () => {
     // A saved model keeps a retired type and the picker re-offers it.
-    const saved = resolveModelTypeDefaults({ id: 7, type: ModelType.TextualInversion });
+    const saved = resolveModelTypeDefaults({ id: 7, type: ModelType.Hypernetwork });
     expect(saved).toStrictEqual({
-      grandfatheredType: ModelType.TextualInversion,
-      initialType: ModelType.TextualInversion,
+      grandfatheredType: ModelType.Hypernetwork,
+      initialType: ModelType.Hypernetwork,
       replacedType: null,
     });
     expect(getModelTypeSelectData(saved.grandfatheredType).map(({ value }) => value)).toContain(
-      ModelType.TextualInversion
+      ModelType.Hypernetwork
     );
 
     // A template seeds `type` with no `id`, so it is a NEW model. Dropping the option alone is not
     // enough: the form would still hold the retired value behind a blank required field, and the
     // submit would create a model on it.
     // Falling back to Checkpoint would file it as a fine-tune; Other claims nothing.
-    const fromTemplate = resolveModelTypeDefaults({ type: ModelType.TextualInversion });
+    const fromTemplate = resolveModelTypeDefaults({ type: ModelType.Hypernetwork });
     expect(fromTemplate).toStrictEqual({
       grandfatheredType: null,
       initialType: ModelType.Other,
       // Named so the form can say what it dropped instead of substituting silently.
-      replacedType: ModelType.TextualInversion,
+      replacedType: ModelType.Hypernetwork,
     });
 
     // A template on a type that is still offered is untouched.
@@ -198,6 +210,12 @@ describe('model type picker data', () => {
     expect(source).toMatch(/The type has been set to Other/);
     expect(source).not.toContain('getModelTypeSelectData(type)');
     expect(source).not.toContain('resolveModelTypeDefaults(model)');
+  });
+
+  // Retiring the type left this label reachable only on already-saved models; it is now on the
+  // default path for every new model, and getDisplayName is the only thing producing it.
+  it('labels TextualInversion as Embedding, the word the picker actually offers', () => {
+    expect(getDisplayName(ModelType.TextualInversion)).toBe('Embedding');
   });
 
   // Reverted from "Fine-tune" (#4521) after tester complaints that it replaced a term people

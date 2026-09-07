@@ -2,7 +2,10 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
 export const modelTypeGroups = [
-  { group: 'Adapters', types: [ModelType.LORA, ModelType.LoCon, ModelType.DoRA] },
+  {
+    group: 'Adapters',
+    types: [ModelType.LORA, ModelType.LoCon, ModelType.DoRA, ModelType.TextualInversion],
+  },
   {
     group: 'Component replacements',
     types: [ModelType.VAE, ModelType.TextEncoder, ModelType.UNet, ModelType.Upscaler],
@@ -35,7 +38,6 @@ export const selectableModelTypes = [
  * to one keeps the value and keeps displaying it.
  */
 export const retiredModelTypes = [
-  ModelType.TextualInversion,
   ModelType.Hypernetwork,
   ModelType.AestheticGradient,
   ModelType.MotionModule,
