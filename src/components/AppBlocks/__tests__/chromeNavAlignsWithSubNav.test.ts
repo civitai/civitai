@@ -579,9 +579,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // header before trusting the sentence below.
     //
     // That is not bookkeeping. `/apps/get-started` is governed by the `appBlocksGetStarted`
-    // kill switch, and EVERY literal-href item in this chrome is rendered
-    // unconditionally except the moderator-gated `/apps/review` — no flag decides whether
-    // a LINK here is offered. The DELIBERATE SUBSET note above the platform nav in
+    // kill switch, and NO literal-href item in this chrome is gated by a FEATURE FLAG
+    // except the moderator-gated `/apps/review` — no flag decides whether a LINK here is
+    // offered. (Two ARE conditional, on LAYOUT rather than a flag: the compact back
+    // chevron renders only under `compact`, the breadcrumb crumb only under `isPage`.
+    // Neither can be switched off in Flipt, which is what this argument turns on — so
+    // say "gated by no flag", never "rendered unconditionally". Four earlier drafts of
+    // this sentence overstated it in exactly that way.)
+    // The DELIBERATE SUBSET note above the platform nav in
     // `IframeHost.tsx` is the argument that a surface which does not honour a kill switch
     // must not advertise the route it switches off, and the overflow is the same surface,
     // so the same argument governs it; only the enumeration stopped short.
@@ -602,8 +607,8 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     expect(
       links.map((l) => l.href).sort(),
       'the set of routes the app-block chrome links to has changed. Adding one is a ' +
-        'product decision rather than a detail: every literal-href item in this chrome is ' +
-        'rendered UNCONDITIONALLY except the moderator-gated `/apps/review`, so a ' +
+        'product decision rather than a detail: NO literal-href item in this chrome is ' +
+        'gated by a FEATURE FLAG except the moderator-gated `/apps/review`, so a ' +
         'flag-gated destination added here as a plain link keeps being offered after its ' +
         'flag goes down (that is why `/apps/get-started` is excluded; see the DELIBERATE ' +
         'SUBSET note in `IframeHost.tsx`). The surface CAN read flags — ' +
