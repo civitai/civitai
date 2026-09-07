@@ -11,13 +11,14 @@ import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image
  * makes this worth a guard: self-delete with the 7-day grace option marks every image, a report
  * lands on day 3, a moderator blocks, the account is later restored.
  *
- * Every moderation block therefore strips both keys. The main app's three sites do it through
- * `clearAccountDeletionImageMarkers`, and `src/server/jobs/__tests__/blob-retraction-writer-reachability.test.ts`
- * drives each of them and asserts the breadcrumb is gone afterwards: `handleBlockImages`
- * (image.service), `setTosViolationHandler` (image.controller) and `softDeleteUser`
- * (user.service). The same file pins the SCOPE of the fourth main-app case, `toggleBan`'s
- * remove-all-media branch, in both directions — the rows its UPDATE blocked lose the breadcrumb,
- * the rows the grace pass had already blocked keep it.
+ * Every moderation block therefore strips both keys. The main app's four call sites do it through
+ * `clearAccountDeletionImageMarkers`, and
+ * `src/server/jobs/__tests__/blob-retraction-writer-reachability.test.ts` drives all four. Three
+ * are asserted as "the breadcrumb is gone afterwards": `handleBlockImages` (image.service),
+ * `setTosViolationHandler` (image.controller) and `softDeleteUser` (user.service). The fourth,
+ * `toggleBan`'s remove-all-media branch, is asserted on SCOPE in both directions — the rows its
+ * own UPDATE blocked lose the breadcrumb, the rows the grace pass had already blocked keep it —
+ * because there an over-wide clear is the defect, not a missing one.
  *
  * 🔴 This file exists for the site that CANNOT share that helper: `apps/moderator` is a separate
  * SvelteKit app that does not import the main app's `src/`, so it re-declares the two key strings

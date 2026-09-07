@@ -504,10 +504,14 @@ const CSAM_HOLD_MAX_DAYS = 30;
  *                     un-block direction is the writers dropping the queue row —
  *                     `handleUnblockImages` and `/api/mod/unblock-images` both call
  *                     `dropBlockedImageDeleteQueue`, leaving nothing to compare against. The
- *                     moderator app's `acceptImage` does not, so accept followed by an automated
- *                     re-block inside one hourly run is a real (bounded) window in which an
- *                     un-block licenses retraction. Listed as accepted imprecision in the
- *                     ── WHERE THIS IS DELIBERATELY IMPRECISE ── note at the split below.
+ *                     moderator app's `acceptImage` does not — so an accept followed by an
+ *                     automated re-block, BOTH landing between two consecutive runs of this
+ *                     hourly job, is a real window in which an un-block licenses retraction. It
+ *                     is bounded to that gap and no wider: any run in between evicts the queue
+ *                     row as stale (`staleIds` takes everything no longer `ingestion = 'Blocked'`,
+ *                     and the delete at the end of the job removes it), and the re-block then
+ *                     writes a fresh row that post-dates the accept. Listed as accepted
+ *                     imprecision in the ── WHERE THIS IS DELIBERATELY IMPRECISE ── note below.
  *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
  *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
  *                     NO per-image row, by its own design; that is what keeps a library-wide block

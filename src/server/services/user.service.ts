@@ -2004,10 +2004,11 @@ export const toggleBan = async ({
         // `blockedFor = 'moderated'`.
         //
         // 🔴 NOT `clearAccountDeletionImageMarkers({ userId: id })`, and do not "simplify" it back
-        // to that. `remove-deleted-user-images` writes the breadcrumb in the same statement that
-        // sets `ingestion = 'Blocked'`, and the UPDATE below only touches rows that are NOT
-        // Blocked — so for every row the grace pass blocked, an account-wide clear here strips a
-        // breadcrumb off a row this ban provably did not touch. Lift the ban, restore the
+        // to that. Both of `remove-deleted-user-images`'s statements write the breadcrumb only on
+        // a row they leave `ingestion = 'Blocked'` — one sets it in the same UPDATE, the other
+        // requires it — and the UPDATE below only touches rows that are NOT Blocked. So for every
+        // row the grace pass marked, an account-wide clear here strips a breadcrumb off a row
+        // this ban provably did not touch. Lift the ban, restore the
         // account, and `countPendingAccountDeletionImageRestores` (which keys on the breadcrumb)
         // reads 0: `restoreUser` never queues the account, `restore-user-images` never runs, and
         // the library stays Blocked with the recorded prior `ingestion` values gone — silent in
