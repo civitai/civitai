@@ -52,11 +52,23 @@ const SCAN_ROOTS = ['src', 'apps', 'packages', 'scripts', 'test', 'tests'];
  * workspace file is a different source of truth — it says where this repo keeps first-party code —
  * so dropping `apps` or `packages` from the walk fails against it.
  */
-function workspaceRoots(): string[] {
-  const yaml = readFileSync(path.join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8');
-  const globs = [...yaml.matchAll(/^\s*-\s*['"]?([^'"\s]+)['"]?\s*$/gm)].map((m) => m[1]);
+function parseWorkspaceRoots(yaml: string): string[] {
+  // 🔴 Only the `packages:` block, NOT every `- item` in the file. pnpm 10 writes its own
+  // top-level sequences into this same file — `onlyBuiltDependencies:` is the one `pnpm
+  // approve-builds` adds, and this repo is on pnpm 10 — so a whole-file scan would read
+  // `esbuild` and `sharp` as workspace roots, find that the walk contributed no files under
+  // them, and fail the retraction guard on a PR that only approved a build script.
+  //
+  // Anchored on a top-level key (column 0) and ended by the next one, so the block's own
+  // indented items are the only thing read.
+  const block = /^packages:[^\S\n]*\n((?:[^\S\n]+\S.*\n|[^\S\n]*\n)*)/m.exec(yaml)?.[1] ?? '';
+  const globs = [...block.matchAll(/^\s*-\s*['"]?([^'"\s]+)['"]?\s*$/gm)].map((m) => m[1]);
   // `.` is the root package, whose own code is `src`; the rest are `<root>/*` globs.
   return uniq(globs.filter((g) => g !== '.').map((g) => g.split('/')[0]));
+}
+
+function workspaceRoots(): string[] {
+  return parseWorkspaceRoots(readFileSync(path.join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8'));
 }
 const EXTENSIONS = 'ts,tsx,mts,cts,js,mjs,cjs,jsx,svelte';
 /** Dependency trees and build output: not authored here, and each workspace package has its own. */
@@ -74,10 +86,11 @@ const LEDGER_MENTIONS = [
 
 /**
  * 🔴 The narrow claim, and the one that matters: every place that turns retraction ON, and how
- * many times each does it. `remove-blocked-images` deletes media that a moderator blocked, that is
- * still blocked, that is not awaiting AI re-verification, that did not arrive from a user's own
- * account deletion, and that has sat out the retention window. It is the only one, and it asks
- * once.
+ * many times each does it. `remove-blocked-images` is the only one, and it asks once — for the
+ * subset of the images it is deleting that carries an affirmative record of a human moderator
+ * taking THAT image down (a `ModActivity` row of one of `MODERATOR_TAKEDOWN_ACTIVITIES`, dated at
+ * or after the block). Everything else in the same batch is deleted with the shared stored object
+ * left alone.
  */
 const LEDGER_SETTERS = ['src/server/jobs/image-ingestion.ts ×1'];
 
@@ -160,6 +173,31 @@ describe('no-unmoderated-blob-retraction', () => {
       'these workspace roots contributed no files — the walk cannot see a retracting call ' +
         'placed there'
     ).toEqual([]);
+  });
+
+  // The breadth control above reads `pnpm-workspace.yaml`, and pnpm 10 writes ITS OWN top-level
+  // sequences into that file — `onlyBuiltDependencies`, added by `pnpm approve-builds`. Read
+  // whole-file, those items parse as workspace roots, contribute no files to the walk, and take
+  // this guard red on a PR that has nothing to do with retraction. A permanently-red gate is worse
+  // than no gate, so the parser is pinned here against the exact shape pnpm produces.
+  it('reads workspace roots from the packages block only, not from pnpm 10 build approvals', () => {
+    const roots = parseWorkspaceRoots(
+      [
+        'onlyBuiltDependencies:',
+        '  - esbuild',
+        '  - sharp',
+        '',
+        'packages:',
+        "  - '.'",
+        "  - 'packages/*'",
+        "  - 'apps/*'",
+        '',
+        'ignoredBuiltDependencies:',
+        '  - core-js',
+        '',
+      ].join('\n')
+    );
+    expect(roots).toEqual(['packages', 'apps']);
   });
 
   // Third positive control, on the PATTERN rather than the walk. A rename of the option would
