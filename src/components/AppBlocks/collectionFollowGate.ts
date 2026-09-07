@@ -340,6 +340,13 @@ export const COLLECTION_LOOKUP_BUDGET = 20;
  * means the budget resets when the viewer navigates away and back, which is
  * correct: that is a new block session with fresh viewer intent.
  *
+ * 🔴 A BLOCK CANNOT RESET IT BY RELOADING ITSELF. The ref lives on the HOST
+ * component; `PageBlockHost`'s retry path remounts the IFRAME (`key={reloadNonce}`
+ * on the element), not the host, so a block that crashes or reloads in a loop
+ * keeps the same ledger. Only the host component unmounting — viewer navigation —
+ * clears it, and a block cannot cause that. Do not move this ref onto anything
+ * keyed by `reloadNonce`.
+ *
  * 🔴 IT DOES NOT — AND MUST NOT — SKIP THE LOOKUP AND SHOW AN OBJECT-LESS
  * DIALOG. "Over budget ⇒ ask the viewer anyway, without naming the collection"
  * would resurrect the defect the naming fix closed: a dialog that asserts
