@@ -369,8 +369,12 @@ describe('who can reach blob retraction, driven through the real block writers',
     const written = store.modActivity.filter((a) => a.entityType === 'image' && a.entityId === 1);
     expect(written.length, 'the moderator block recorded no per-image activity').toBeGreaterThan(0);
     expect(
-      written.some((a) => (MODERATOR_TAKEDOWN_ACTIVITIES as readonly string[]).includes(a.activity)),
-      `the block writes ${written.map((a) => a.activity).join(',')}, which the job does not look for`
+      written.some((a) =>
+        (MODERATOR_TAKEDOWN_ACTIVITIES as readonly string[]).includes(a.activity)
+      ),
+      `the block writes ${written
+        .map((a) => a.activity)
+        .join(',')}, which the job does not look for`
     ).toBe(true);
   });
 
@@ -378,7 +382,10 @@ describe('who can reach blob retraction, driven through the real block writers',
     store.images.push(image(1, TAKEDOWN_USER));
 
     await handleBlockImages({ ids: [1], moderatorId: MOD_ID });
-    expect(store.queue.map((q) => q.entityId), 'the trigger did not queue the block').toEqual([1]);
+    expect(
+      store.queue.map((q) => q.entityId),
+      'the trigger did not queue the block'
+    ).toEqual([1]);
     ageQueuePastRetention();
     await removeBlockedImages.run(ctx).result;
 
