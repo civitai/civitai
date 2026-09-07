@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
+import type {
+  SearchIndexContext,
+  SearchIndexPullBatch,
+} from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import type {
   CollectionMode,
@@ -147,13 +151,19 @@ type CollectionPullData = {
   itemImages: CollectionImageRaw[];
   tags: { imageId: number; tagId: number }[];
   profilePictures: ProfileImage[];
+  /**
+   * Requested ids the index filter no longer matches. Empty for range batches — they
+   * enumerate no ids, so absence from one is not evidence of anything.
+   */
+  disqualifiedIds: number[];
 };
 
-const transformData = async ({
+export const transformData = async ({
   collections,
   itemImages,
   tags,
   profilePictures,
+  disqualifiedIds,
 }: CollectionPullData) => {
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
@@ -189,10 +199,255 @@ const transformData = async ({
     })
     .filter(isDefined);
 
-  return records;
+  return { records, disqualifiedIds };
 };
 
-export type CollectionSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
+export type CollectionSearchIndexRecord = Awaited<
+  ReturnType<typeof transformData>
+>['records'][number];
+
+export const pullData = async (
+  { db, logger }: SearchIndexContext,
+  batch: SearchIndexPullBatch
+): Promise<CollectionPullData> => {
+  logger(`PullData :: Pulling data for batch: ${batch}`);
+  const where = [
+    ...WHERE,
+    batch.type === 'update' ? Prisma.sql`c.id IN (${Prisma.join(batch.ids)})` : undefined,
+    batch.type === 'new'
+      ? Prisma.sql`c.id >= ${batch.startId} AND c.id <= ${batch.endId}`
+      : undefined,
+  ].filter(isDefined);
+
+  const requestedIds = batch.type === 'update' ? batch.ids : [];
+
+  const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
+  WITH target AS MATERIALIZED (
+    SELECT
+    c.id,
+    c.name,
+    c."imageId",
+    c."createdAt",
+    c."updatedAt",
+    c."userId",
+    c."type",
+    c."read",
+    c."write",
+    c."mode",
+    c."nsfwLevel"
+    FROM "Collection" c
+    WHERE ${Prisma.join(where, ' AND ')}
+  ), users AS MATERIALIZED (
+    SELECT
+      u.id,
+      jsonb_build_object(
+        'id', u.id,
+        'username', u.username,
+        'deletedAt', u."deletedAt",
+        'image', u.image,
+        'profilePictureId', u."profilePictureId"
+      ) user
+    FROM "User" u
+    WHERE u.id IN (SELECT "userId" FROM target)
+    GROUP BY u.id
+  ), cosmetics AS MATERIALIZED (
+    SELECT
+      uc."userId",
+      jsonb_agg(
+        jsonb_build_object(
+          'data', uc.data,
+          'cosmetic', jsonb_build_object(
+            'id', c.id,
+            'data', c.data,
+            'type', c.type,
+            'source', c.source,
+            'name', c.name,
+            'leaderboardId', c."leaderboardId",
+            'leaderboardPosition', c."leaderboardPosition"
+          )
+        )
+      )  cosmetics
+    FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    AND "equippedAt" IS NOT NULL
+    WHERE uc."userId" IN (SELECT "userId" FROM target) AND uc."equippedToId" IS NULL
+    GROUP BY uc."userId"
+  ), images AS MATERIALIZED (
+    SELECT
+      i.id,
+      ${collectionIndexImageSql}
+    FROM "Image" i
+    WHERE i.id IN (SELECT "imageId" FROM target)
+      AND i."ingestion" = 'Scanned'
+      AND i."needsReview" IS NULL
+    GROUP BY i.id
+  ), metrics as MATERIALIZED (
+    SELECT
+      cm."collectionId",
+      jsonb_build_object(
+        'followerCount', cm."followerCount",
+        'itemCount', cm."itemCount",
+        'contributorCount', cm."contributorCount"
+      ) metrics
+    FROM "CollectionMetric" cm
+    WHERE cm.timeframe = 'AllTime'
+      AND cm."collectionId" IN (SELECT id FROM target)
+  )
+  SELECT
+    t.*,
+    (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
+    (SELECT "image" FROM images i WHERE i.id = t."imageId"),
+    (SELECT "user" FROM users u WHERE u.id = t."userId"),
+    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
+  FROM target t
+  `;
+
+  logger(`PullData :: collections data pulled`);
+  if (collections.length === 0) {
+    logger(`PullData :: no collections found in batch`);
+    return {
+      collections: [],
+      itemImages: [],
+      tags: [],
+      profilePictures: [],
+      disqualifiedIds: requestedIds,
+    };
+  }
+
+  const collectionsNeedingImages = collections.filter((c) => !c.image).map((c) => c.id);
+  let itemImages: CollectionImageRaw[] = [];
+
+  if (collectionsNeedingImages.length > 0) {
+    itemImages = await db.$queryRaw<CollectionImageRaw[]>`
+    WITH target AS MATERIALIZED (
+      SELECT *
+      FROM (
+        SELECT *,
+        ROW_NUMBER() OVER (
+            PARTITION BY ci."collectionId"
+            ORDER BY ci.id
+          ) AS idx
+        FROM "CollectionItem" ci
+        WHERE ci.status = 'ACCEPTED'
+          AND ci."collectionId" IN (${Prisma.join(collectionsNeedingImages)})
+      ) t
+      WHERE idx <= 10
+    ), imageItemImage AS MATERIALIZED (
+      SELECT
+        i.id,
+        ${collectionIndexImageSql}
+      FROM "Image" i
+      WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
+        AND i."ingestion" = 'Scanned'
+        AND i."needsReview" IS NULL
+    ), postItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            i."postId" id,
+            ${collectionIndexImageSql},
+            ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
+          FROM "Image" i
+          WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+      ) t
+      WHERE t.rn = 1
+    ), modelItemImage AS MATERIALIZED (
+      SELECT * FROM (
+          SELECT
+            m.id,
+            ${collectionIndexImageSql},
+            ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
+          FROM "Image" i
+          JOIN "Post" p ON p.id = i."postId"
+          JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
+          WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+      ) t
+      WHERE t.rn = 1
+    ), articleItemImage AS MATERIALIZED (
+        SELECT a.id, ${collectionIndexImageSql}
+        FROM "Article" a
+        JOIN "Image" i ON i.id = a."coverId"
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+    ), articleItemSrc AS MATERIALIZED (
+        SELECT a.id, a.cover src FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+    ), model3dItemImage AS MATERIALIZED (
+        SELECT m3.id, ${collectionIndexImageSql}
+        FROM "Model3D" m3
+        JOIN "Image" i ON i.id = m3."thumbnailImageId"
+        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+    )
+    SELECT
+        target."collectionId" id,
+        COALESCE(
+          (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
+          (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
+          (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
+          NULL
+        ) image,
+        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
+    FROM target
+  `;
+  }
+
+  const collectionImages = collections.map((c) => c.image?.id).filter(isDefined);
+  const imageIds = [
+    ...collectionImages,
+    ...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined)),
+  ];
+
+  logger(`PullData :: Pulled collection images.`);
+
+  // Use Redis cache for tag lookups (much faster than direct DB query)
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+  const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
+    cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
+  );
+
+  const profilePictures = await db.image.findMany({
+    where: { id: { in: collections.map((c) => c.user.profilePictureId).filter(isDefined) } },
+    select: profileImageSelect,
+  });
+
+  logger(`PullData :: Pulled tags & profile pics.`);
+
+  const matched = new Set(collections.map((c) => c.id));
+
+  return {
+    collections,
+    itemImages,
+    tags,
+    profilePictures,
+    disqualifiedIds: requestedIds.filter((id) => !matched.has(id)),
+  };
+};
+
+export const pushData = async (
+  { indexName }: SearchIndexContext,
+  { records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>
+): Promise<void> => {
+  await updateDocs({
+    indexName,
+    documents: records as any[],
+    batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+  });
+
+  // `updateDocs` upserts, so a collection that stopped matching the index filter keeps
+  // its stale document unless deleted here.
+  if (disqualifiedIds.length > 0) {
+    await onSearchIndexDocumentsCleanup({ indexName, ids: disqualifiedIds });
+  }
+};
 
 export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
@@ -220,227 +475,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch, step): Promise<CollectionPullData> => {
-    logger(`PullData :: Pulling data for batch: ${batch}`);
-    const where = [
-      ...WHERE,
-      batch.type === 'update' ? Prisma.sql`c.id IN (${Prisma.join(batch.ids)})` : undefined,
-      batch.type === 'new'
-        ? Prisma.sql`c.id >= ${batch.startId} AND c.id <= ${batch.endId}`
-        : undefined,
-    ].filter(isDefined);
-
-    // When metrics are ready use this one :D
-    const collections = await db.$queryRaw<CollectionForSearchIndex[]>`
-    WITH target AS MATERIALIZED (
-      SELECT
-      c.id,
-      c.name,
-      c."imageId",
-      c."createdAt",
-      c."updatedAt",
-      c."userId",
-      c."type",
-      c."read",
-      c."write",
-      c."mode",
-      c."nsfwLevel"
-      FROM "Collection" c
-      WHERE ${Prisma.join(where, ' AND ')}
-    ), users AS MATERIALIZED (
-      SELECT
-        u.id,
-        jsonb_build_object(
-          'id', u.id,
-          'username', u.username,
-          'deletedAt', u."deletedAt",
-          'image', u.image,
-          'profilePictureId', u."profilePictureId"
-        ) user
-      FROM "User" u
-      WHERE u.id IN (SELECT "userId" FROM target)
-      GROUP BY u.id
-    ), cosmetics AS MATERIALIZED (
-      SELECT
-        uc."userId",
-        jsonb_agg(
-          jsonb_build_object(
-            'data', uc.data,
-            'cosmetic', jsonb_build_object(
-              'id', c.id,
-              'data', c.data,
-              'type', c.type,
-              'source', c.source,
-              'name', c.name,
-              'leaderboardId', c."leaderboardId",
-              'leaderboardPosition', c."leaderboardPosition"
-            )
-          )
-        )  cosmetics
-      FROM "UserCosmetic" uc
-      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-      AND "equippedAt" IS NOT NULL
-      WHERE uc."userId" IN (SELECT "userId" FROM target) AND uc."equippedToId" IS NULL
-      GROUP BY uc."userId"
-    ), images AS MATERIALIZED (
-      SELECT
-        i.id,
-        ${collectionIndexImageSql}
-      FROM "Image" i
-      WHERE i.id IN (SELECT "imageId" FROM target)
-        AND i."ingestion" = 'Scanned'
-        AND i."needsReview" IS NULL
-      GROUP BY i.id
-    ), metrics as MATERIALIZED (
-      SELECT
-        cm."collectionId",
-        jsonb_build_object(
-          'followerCount', cm."followerCount",
-          'itemCount', cm."itemCount",
-          'contributorCount', cm."contributorCount"
-        ) metrics
-      FROM "CollectionMetric" cm
-      WHERE cm.timeframe = 'AllTime'
-        AND cm."collectionId" IN (SELECT id FROM target)
-    )
-    SELECT
-      t.*,
-      (SELECT metrics FROM metrics m WHERE m."collectionId" = t.id),
-      (SELECT "image" FROM images i WHERE i.id = t."imageId"),
-      (SELECT "user" FROM users u WHERE u.id = t."userId"),
-      (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
-    FROM target t
-    `;
-
-    logger(`PullData :: collections data pulled`);
-    // Avoids hitting the DB without data.
-    if (collections.length === 0) {
-      logger(`PullData :: no collections found in batch`);
-      return { collections: [], itemImages: [], tags: [], profilePictures: [] };
-    }
-
-    const collectionsNeedingImages = collections.filter((c) => !c.image).map((c) => c.id);
-    let itemImages: CollectionImageRaw[] = [];
-
-    if (collectionsNeedingImages.length > 0) {
-      itemImages = await db.$queryRaw<CollectionImageRaw[]>`
-      WITH target AS MATERIALIZED (
-        SELECT *
-        FROM (
-          SELECT *,
-          ROW_NUMBER() OVER (
-              PARTITION BY ci."collectionId"
-              ORDER BY ci.id
-            ) AS idx
-          FROM "CollectionItem" ci
-          WHERE ci.status = 'ACCEPTED'
-            AND ci."collectionId" IN (${Prisma.join(collectionsNeedingImages)})
-        ) t
-        WHERE idx <= 10
-      ), imageItemImage AS MATERIALIZED (
-        SELECT
-          i.id,
-          ${collectionIndexImageSql}
-        FROM "Image" i
-        WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-      ), postItemImage AS MATERIALIZED (
-        SELECT * FROM (
-            SELECT
-              i."postId" id,
-              ${collectionIndexImageSql},
-              ROW_NUMBER() OVER (PARTITION BY i."postId" ORDER BY i.index) rn
-            FROM "Image" i
-            WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
-              AND i."ingestion" = 'Scanned'
-              AND i."needsReview" IS NULL
-        ) t
-        WHERE t.rn = 1
-      ), modelItemImage AS MATERIALIZED (
-        SELECT * FROM (
-            SELECT
-              m.id,
-              ${collectionIndexImageSql},
-              ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
-            FROM "Image" i
-            JOIN "Post" p ON p.id = i."postId"
-            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-            JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
-            WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
-                AND i."ingestion" = 'Scanned'
-                AND i."needsReview" IS NULL
-        ) t
-        WHERE t.rn = 1
-      ), articleItemImage AS MATERIALIZED (
-          SELECT a.id, ${collectionIndexImageSql}
-          FROM "Article" a
-          JOIN "Image" i ON i.id = a."coverId"
-          WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-            AND i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-      ), articleItemSrc AS MATERIALIZED (
-          SELECT a.id, a.cover src FROM "Article" a
-          WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-      ), model3dItemImage AS MATERIALIZED (
-          SELECT m3.id, ${collectionIndexImageSql}
-          FROM "Model3D" m3
-          JOIN "Image" i ON i.id = m3."thumbnailImageId"
-          WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
-            AND i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-      )
-      SELECT
-          target."collectionId" id,
-          COALESCE(
-            (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
-            (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
-            (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
-            (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
-            (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
-            NULL
-          ) image,
-          (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
-      FROM target
-    `;
-    }
-
-    const collectionImages = collections.map((c) => c.image?.id).filter(isDefined);
-    const imageIds = [
-      ...collectionImages,
-      ...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined)),
-    ];
-
-    logger(`PullData :: Pulled collection images.`);
-
-    // Use Redis cache for tag lookups (much faster than direct DB query)
-    const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
-    const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
-      cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
-    );
-
-    const profilePictures = await db.image.findMany({
-      where: { id: { in: collections.map((c) => c.user.profilePictureId).filter(isDefined) } },
-      select: profileImageSelect,
-    });
-
-    logger(`PullData :: Pulled tags & profile pics.`);
-
-    return {
-      collections,
-      itemImages,
-      tags,
-      profilePictures,
-    };
-  },
+  pullData,
   transformData,
-  pushData: async ({ indexName, jobContext }, records) => {
-    await updateDocs({
-      indexName,
-      documents: records as any[],
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    return;
-  },
+  pushData,
 });
