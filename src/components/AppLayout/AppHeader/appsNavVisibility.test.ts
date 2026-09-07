@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 
-// Scope-A invariant: the PUBLIC "Build apps" → /apps/get-started nav entry is
-// visible whenever the public `appBlocksGetStarted` flag is on, INDEPENDENTLY of
-// the store flags.
+// Scope-A invariant: `getStarted` is true whenever the public `appBlocksGetStarted`
+// flag is on, INDEPENDENTLY of the store flags.
 //
-// #3907 invariant: the "Apps" → /apps entry is visible exactly when the STORE is
-// visible (`hasAppsStoreAccess` = appListings || appBlocks ||
-// appListingsPublicExternal). It is the ONLY in-product route to `/apps`, so a
-// cohort that can load the store but not see this entry has a store it cannot
-// find. It used to read `appBlocks` alone.
+// #3907 invariant: `marketplace` is true exactly when the STORE is visible
+// (`hasAppsStoreAccess` = appListings || appBlocks || appListingsPublicExternal).
+// It used to read `appBlocks` alone, which hid the store from cohorts that could
+// load it.
+//
+// 🔴 WHAT CONSUMES THEM CHANGED; WHAT THEY MEAN DID NOT. The user menu used to carry
+// one row per boolean ("Build apps" → /apps/get-started and "Apps" → /apps).
+// "Build apps" moved into the /apps/* sub-nav, so there is now ONE row whose
+// VISIBILITY is `marketplace || getStarted` and whose HREF is /apps when
+// `marketplace` and /apps/get-started otherwise — which is why `getStarted` is still
+// asserted here rather than deleted with the row it used to drive. That wiring is
+// pinned separately, against the real `hooks.tsx` source, in `appsMenuEntry.test.ts`;
+// this file remains the behavioural cover for the PREDICATE.
 describe('appsNavVisibility — public get-started vs store-gated marketplace', () => {
   it('shows the public get-started entry when appBlocksGetStarted is on', () => {
     const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: false });
@@ -24,7 +31,7 @@ describe('appsNavVisibility — public get-started vs store-gated marketplace', 
     expect(nav.marketplace).toBe(false);
   });
 
-  it('shows BOTH entries for a moderator (both flags on) — distinct labels, no collision', () => {
+  it('resolves BOTH true for a moderator (both flags on)', () => {
     const nav = appsNavVisibility({ appBlocksGetStarted: true, appBlocks: true });
     expect(nav.getStarted).toBe(true);
     expect(nav.marketplace).toBe(true);

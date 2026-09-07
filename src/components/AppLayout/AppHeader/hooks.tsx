@@ -9,7 +9,6 @@ import {
   IconBrush,
   IconChartHistogram,
   IconCloudLock,
-  IconCode,
   IconCube,
   IconCrown,
   IconGift,
@@ -219,29 +218,71 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-07-20'),
         },
         {
-          // PUBLIC "App builders" get-started landing page (Scope A soft launch).
-          // Gated on the separate public `appBlocksGetStarted` flag (kill switch),
-          // NOT the mod-only `appBlocks` gate — this is the only `/apps/*` surface
-          // visible to non-mods. Distinct label ("Build apps") from the mod-only
-          // marketplace entry below so a moderator never sees two identical labels.
-          // Visibility comes from the pure `appsNavVisibility` helper (unit-tested).
-          href: '/apps/get-started',
-          visible: appsNav.getStarted,
-          icon: IconCode,
-          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Build apps',
-          newUntil: new Date('2026-08-01'),
-        },
-        {
-          // App store + in-page AppsSubNav hub (installed, submit,
-          // my-submissions, revenue, review). Visible exactly when the STORE is
-          // — `hasAppsStoreAccess`, via `appsNavVisibility` (#3907): this is the
-          // only in-product route to `/apps`, so gating it on `appBlocks` alone
-          // hid the store from the catalog-only and external-only cohorts. The
-          // sub-nav entries behind it keep their own gates. Labeled "Apps" so it
-          // reads distinctly from the public "Build apps" entry above.
-          href: '/apps',
-          visible: appsNav.marketplace,
+          // 🔴 ONE `/apps*` DROPDOWN ENTRY, TWO DESTINATIONS. This used to be two
+          // adjacent entries — "Build apps" → `/apps/get-started` and "Apps" →
+          // `/apps` — which meant a moderator (who holds both flags) saw two
+          // near-identical rows for one product. "Build apps" now lives in the
+          // shared `/apps/*` sub-nav (`SUB_NAV_LINKS` in `~/components/Apps/
+          // AppsSubNav`) instead, so the dropdown carries a single door.
+          //
+          // WHICH door depends on what the viewer is entitled to, and the fallback
+          // is NOT cosmetic:
+          //   • store access (`appsNav.marketplace` = `hasAppsStoreAccess`) → `/apps`.
+          //     The marketplace is the richer landing, and "Build apps" is one click
+          //     away in the sub-nav.
+          //   • get-started ONLY (`appsNav.getStarted`) → `/apps/get-started`.
+          //     Such a viewer CANNOT load `/apps` at all: its `getServerSideProps`
+          //     gates on `resolveAppsPageAccess`, which returns `notFound` without a
+          //     store flag. Sending them to `/apps` would be a menu entry into a 404,
+          //     so they land directly on the one page they are entitled to.
+          //
+          // Both booleans still come from the pure `appsNavVisibility` helper
+          // (unit-tested), and `marketplace` still routes through the shared
+          // `hasAppsStoreAccess` predicate (#3907) — gating it on `appBlocks` alone
+          // hid the store from the catalog-only and external-only cohorts.
+          //
+          // 🔴 THE LABEL AND ICON DO *NOT* FOLLOW THE HREF, AND THAT IS A DECISION,
+          // NOT AN OVERSIGHT. On the get-started-only branch this row reads "Apps"
+          // with a plug glyph while navigating to developer onboarding. Accepted,
+          // for three reasons: (1) "Apps" names the PRODUCT AREA, which both
+          // destinations are inside — the row is a door into `/apps*`, not a
+          // description of the landing page; (2) branching the label AND the icon
+          // (`IconPlugConnected` vs the sub-nav's `IconCode`) re-splits one row into
+          // two presentations, which is the duplication this consolidation removed;
+          // (3) we believe the cohort is EMPTY today — but note what that rests on,
+          // because it is NOT something this repo can settle. `appBlocksGetStarted`
+          // declares `availability: ['mod']`, and for a flag whose availability carries
+          // ROLE terms only, `availability` is the Flipt-DOWN fallback: `getFeatureFlags`
+          // returns Flipt's answer BEFORE it evaluates roles ("Flipt overrides role
+          // checks (both enable AND disable)", `~/server/services/feature-flags.service.ts`).
+          // 🔴 That is scoped on purpose — `availability` ALSO carries env / region /
+          // server-colour terms, and those run BEFORE Flipt and Flipt cannot override
+          // them ("Server/domain restrictions always apply", same file). `['mod']`
+          // carries no such term, so for THIS flag the role reading is the operative one;
+          // do not generalise the sentence to a flag that names a colour domain.
+          // So who actually holds get-started, and who actually holds the store flags, is
+          // observable only in LIVE FLIPT. What the code DOES establish is that all four
+          // App-Blocks flags are Flipt-backed runtime toggles, so this branch becomes
+          // reachable with no PR and no deploy.
+          //
+          // 🔴 RE-DECIDE IT when a real viewer can take this branch, which happens from
+          // BOTH directions — the condition is `!marketplace && getStarted`, so either
+          // side moving is enough:
+          //   • get-started WIDENS — `app-blocks-get-started` rolled out past
+          //     moderators in Flipt, or `availability` changed in
+          //     `feature-flags.service.ts`; or
+          //   • the STORE flags NARROW — `marketplace` is `hasAppsStoreAccess`, which is
+          //     an OR over THREE flags (`app-listings` ‖ `app-blocks-enabled` ‖
+          //     `app-listings-public-external`; see `~/shared/utils/app-blocks-access`),
+          //     so it takes ALL THREE going off in Flipt, while get-started stays on, to
+          //     reach this branch. 🔴 Name all three: a moderator still holding any ONE of
+          //     them — the external-only tester cohort holds
+          //     `app-listings-public-external` alone — keeps `marketplace === true` and
+          //     does NOT take this branch. Whoever is left sees a row labelled "Apps" with
+          //     `IconPlugConnected` navigating to developer onboarding.
+          // Until then a conditional label would be untestable-in-production copy.
+          href: appsNav.marketplace ? '/apps' : '/apps/get-started',
+          visible: appsNav.marketplace || appsNav.getStarted,
           icon: IconPlugConnected,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Apps',

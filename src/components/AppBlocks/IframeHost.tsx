@@ -568,6 +568,18 @@ export function AppBlockChrome({
           which reads BOTH tables and fails when they drift — including when the
           subnav changes and this menu does not.
 
+          🔴 THIS SECTION IS A DELIBERATE SUBSET, NOT A MIRROR. The subnav also
+          carries `/apps/get-started` ("Build apps"), `/apps/submit`,
+          `/apps/invites` and `/apps/revenue`, and none of them belong in a menu
+          that opens over a RUNNING app. `/apps/get-started` additionally sits
+          behind the `appBlocksGetStarted` kill switch, which this section has no
+          way to read — every item here is unconditional except Review. (The SUBNAV
+          does read it: its row is `visible: (_s, c) => c.canGetStarted`. That is the
+          difference, and it is the whole argument — a surface that cannot honour a
+          kill switch must not advertise the route it switches off.) That excluded
+          SET is itself asserted by the same guard, so adding a subnav row fails
+          there until someone decides which side it lands on.
+
           The LABELS are deliberately NOT all identical: the subnav's tabs sit under
           an "Apps" heading and can afford one-word labels ("Installed", "Review"),
           whereas these items stand alone over a running app and need the noun

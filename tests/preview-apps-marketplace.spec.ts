@@ -48,9 +48,14 @@ import { trpcQuery } from './preview-trpc';
  *    redirects to `/apps/store-preview/<slug>` (or `notFound` when the app has no
  *    approved listing). It no longer renders, so this spec asserts the REDIRECT
  *    rather than a heading on it.
- *  - Marketplace page (`/apps/index.tsx`) renders the `AppsSubNav` tabs bar — its
- *    first tab is `{ href: '/apps', label: 'Marketplace' }` (AppsSubNav.tsx:55) —
- *    plus a search `TextInput` (placeholder "Search by name or block id"). It no
+ *  - Marketplace page (`/apps/index.tsx`) renders the `AppsSubNav` tabs bar, whose
+ *    rows come from `SUB_NAV_LINKS` in `~/components/Apps/AppsSubNav`. The row this
+ *    spec keys on is `{ href: '/apps', label: 'Marketplace' }` — the only
+ *    UNCONDITIONAL one. It is NOT necessarily the first tab: `/apps/get-started`
+ *    ("Build apps") precedes it for any viewer holding `appBlocksGetStarted`, which a
+ *    mod does, so the assertion below selects the tab BY NAME and the order is
+ *    irrelevant to it. Plus a search `TextInput` (placeholder "Search by name or block
+ *    id"). It no
  *    longer renders a `<Title>Civitai App Blocks</Title>`: the app-blocks nav
  *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title
  *    on the marketplace surface ("omit for a header with just the tabs, e.g. the

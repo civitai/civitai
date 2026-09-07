@@ -191,15 +191,31 @@ describe('AppsSubNav — real SSR → hydrate', () => {
     expect(hydrationConsoleErrors().length).toBeGreaterThan(0);
   });
 
-  test('NON-AUTHOR (app-listings tester): no bar in the server HTML, and hydration is clean', async () => {
-    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+  test('NON-AUTHOR with appBlocksGetStarted: Build apps IS server-rendered (the gate applies pre-hydration) and hydration is clean', async () => {
+    // 🔴 THE GET-STARTED HALF OF THE SAME OBSERVATION THE AUTHOR TEST BELOW MAKES.
+    // `context.canGetStarted` is applied OUTSIDE the `useIsClient` deferral, which is
+    // only correct because `appBlocksGetStarted` is SSR-seeded and frozen (not
+    // `toggleable`). That claim is checkable exactly here: the tab must be present in
+    // the SERVER HTML, and hydrating a client whose summary cache is already full must
+    // still produce no mismatch.
+    //
+    // The flag also keeps this cohort's pinned set non-empty: without it a non-author
+    // with no summary qualifies for Marketplace alone and the `< 2` collapse empties
+    // the HTML, which is a much weaker thing to assert (see the storeGate suite for the
+    // no-flag cohort).
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
 
     // SERVER: the protected summary query has not resolved.
     mocks.navSummary = undefined;
     const html = renderToString(subNav());
-    // A non-author with no summary qualifies for Marketplace alone ⇒ nothing renders.
-    expect(html).not.toContain('role="tab"');
+    expect(html).toContain('/apps/get-started');
+    expect(html).toContain('/apps"'); // the Marketplace anchor
+    // …while the SUMMARY-driven tabs are absent even though the client cache below is
+    // full, and Create is absent because this viewer is not an author.
+    expect(html).not.toContain('/apps/submit');
+    expect(html).not.toContain('/apps/installed');
+    expect(html).not.toContain('/apps/review');
 
     // CLIENT: the query data IS in the cache on the very first render — the exact
     // condition that bailed hydration before the `useIsClient` gate existed.
@@ -247,13 +263,22 @@ describe('AppsSubNav — real SSR → hydrate', () => {
     expect(hydrationConsoleErrors()).toEqual([]);
   });
 
-  test('logged-out: the server renders no bar, and hydration is clean', async () => {
-    mocks.flags = { appBlocks: true, appBlocksAuthor: true };
+  test('logged-out: no SESSION-scoped tab in the server HTML, and hydration is clean', async () => {
+    mocks.flags = { appBlocks: true, appBlocksAuthor: true, appBlocksGetStarted: true };
     mocks.user = null;
     mocks.navSummary = undefined;
 
     const html = renderToString(subNav());
-    expect(html).not.toContain('role="tab"');
+    // 🔴 THE ASYMMETRY BETWEEN THE TWO CONTEXT FIELDS, ASSERTED. `isAuthor` is a
+    // capability OF A USER, so an anon viewer resolves it to false and Create is absent
+    // even though `appBlocksAuthor` reads true. `canGetStarted` mirrors
+    // `resolveGetStartedAccess`, which consults no user at all, so Build apps IS
+    // rendered — and it doubles as this test's positive control: without it the HTML
+    // would be empty and `not.toContain('Create')` would pass on a component that
+    // rendered nothing for any reason at all.
+    expect(html).toContain('/apps/get-started');
+    expect(html).not.toContain('/apps/submit');
+    expect(html).not.toContain('Create');
 
     await hydrateInto(html, subNav());
 
