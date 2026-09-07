@@ -42,12 +42,14 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 
-// 🔴 The viewer MUST be one the sub-nav renders for. `AppsSubNav` now hides itself
-// entirely below two qualifying tabs, and the summary query is stubbed empty here, so
-// an anonymous / non-author viewer would render NO `<nav>` at all and `measure()` would
-// throw on a null lookup instead of measuring. An author (`appBlocksAuthor`) yields
-// Marketplace + Create — the same two-tab bar every number in the table above was
-// measured against, so the pixels are unchanged.
+// 🔴 The viewer MUST be one the sub-nav renders for. `AppsSubNav` hides itself entirely
+// below two qualifying tabs, and the summary query is stubbed empty here, so an
+// anonymous / non-author viewer would render NO `<nav>` at all and `measure()` would
+// fail its lookup guard instead of measuring. Only Marketplace is unconditional; the
+// author capability (`appBlocksAuthor`) adds Create, so this viewer yields exactly the
+// two-tab bar every number in the table above was measured against. `appBlocksGetStarted`
+// is deliberately NOT set — "Build apps" is gated on it, so leaving it off keeps the
+// rendered bar identical to the one those numbers came from.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true }),
 }));
@@ -69,22 +71,44 @@ const pad = (el: Element, side: 'Top' | 'Bottom' | 'Left' | 'Right') =>
 
 type Geometry = ReturnType<typeof measure>;
 
+/**
+ * Resolve an element this file's numbers are measured FROM, or fail with the reason.
+ *
+ * A bare `document.querySelector(...) as HTMLElement` hands `null` on to
+ * `getBoundingClientRect()` / `getComputedStyle()`, which throws an anonymous
+ * `TypeError` naming neither the selector nor the likely cause. Every lookup here can
+ * legitimately go missing when the sub-nav's flag mocks stop admitting the viewer, so
+ * that is the diagnosis worth printing.
+ */
+function required(selector: string): HTMLElement {
+  const el = document.querySelector(selector) as HTMLElement | null;
+  expect(
+    el,
+    `\`${selector}\` is not in the document. The geometry here is measured off the ` +
+      '`/apps` sub-nav, which renders only for a viewer with ≥2 qualifying tabs — check ' +
+      'the `useFeatureFlags` / `useCurrentUser` mocks above before re-baselining a number.'
+  ).not.toBeNull();
+  return el as HTMLElement;
+}
+
 function measure() {
-  const nav = document.querySelector('nav[aria-label="App sections"]') as HTMLElement;
+  const nav = required('nav[aria-label="App sections"]');
   const band = nav.parentElement as HTMLElement;
   const container = band.parentElement?.parentElement as HTMLElement;
-  const firstTab = document.querySelector('[role="tab"]') as HTMLElement;
+  const firstTab = required('[role="tab"]');
   // 🔴 THE WIDTH PIN MUST FOLLOW THE *MARKETPLACE* TAB, NOT "whichever tab is first".
   // 133.27px is a measurement of the string "Marketplace" plus its icon and inline
   // padding; it says nothing about any other label. `/apps/get-started` ("Build apps")
-  // was added to `SUB_NAV_LINKS` ahead of Marketplace, so `[role="tab"]` first-match
-  // silently became a DIFFERENT tab (122.39px) and the assertion would have had to be
-  // re-baselined to a number nobody had a reason for. Selecting by href keeps the pin
-  // on the box it was measured from, so it still fails for the reason it was written:
-  // a `padding` shorthand instead of `paddingBlock` narrowing the inline axis.
-  const marketplaceTab = document.querySelector('[role="tab"][href="/apps"]') as HTMLElement;
+  // sits AHEAD of Marketplace in `SUB_NAV_LINKS`, so for any viewer holding
+  // `appBlocksGetStarted` the `[role="tab"]` first-match is a DIFFERENT tab (122.39px)
+  // and the assertion would have to be re-baselined to a number nobody had a reason
+  // for. This file's mocks do not set that flag, so the two happen to coincide today —
+  // selecting by href is what keeps that a coincidence rather than a dependency, and
+  // keeps the pin failing for the reason it was written: a `padding` shorthand instead
+  // of `paddingBlock` narrowing the inline axis.
+  const marketplaceTab = required('[role="tab"][href="/apps"]');
   const title = document.querySelector('h2') as HTMLElement | null;
-  const body = document.querySelector('[data-testid="body"]') as HTMLElement;
+  const body = required('[data-testid="body"]');
 
   const tabRect = firstTab.getBoundingClientRect();
   const containerTop = container.getBoundingClientRect().top;
@@ -100,7 +124,10 @@ function measure() {
     tabHeight: Math.round(tabRect.height * 100) / 100,
     tabPadBlock: [pad(firstTab, 'Top'), pad(firstTab, 'Bottom')] as const,
     tabPadInline: [pad(firstTab, 'Left'), pad(firstTab, 'Right')] as const,
-    tabWidth: Math.round(tabRect.width * 100) / 100,
+    // NOTE: there is deliberately no `tabWidth` (the FIRST tab's width) here. It was
+    // computed and never asserted, which reads as a pin that is not one. The inline-axis
+    // regression this file is about is pinned on `marketplaceTabWidth` below, measured
+    // off the tab the 133.27px baseline actually came from.
     marketplaceTabWidth: Math.round(marketplaceTab.getBoundingClientRect().width * 100) / 100,
     containerPadInline: [pad(container, 'Left'), pad(container, 'Right')] as const,
     containerPadTop: pad(container, 'Top'),

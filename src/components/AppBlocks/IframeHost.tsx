@@ -564,9 +564,12 @@ export function AppBlockChrome({
           `/apps/invites` and `/apps/revenue`, and none of them belong in a menu
           that opens over a RUNNING app. `/apps/get-started` additionally sits
           behind the `appBlocksGetStarted` kill switch, which this section has no
-          way to read — every item here is unconditional except Review. That
-          excluded SET is itself asserted by the same guard, so adding a subnav row
-          fails there until someone decides which side it lands on.
+          way to read — every item here is unconditional except Review. (The SUBNAV
+          does read it: its row is `visible: (_s, c) => c.canGetStarted`. That is the
+          difference, and it is the whole argument — a surface that cannot honour a
+          kill switch must not advertise the route it switches off.) That excluded
+          SET is itself asserted by the same guard, so adding a subnav row fails
+          there until someone decides which side it lands on.
 
           The LABELS are deliberately NOT all identical: the subnav's tabs sit under
           an "Apps" heading and can afford one-word labels ("Installed", "Review"),

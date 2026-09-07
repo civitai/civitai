@@ -53,15 +53,22 @@ export default function AppsGetStartedPage() {
         deIndex
       />
       {/*
-        THE GATE MISMATCH THIS NOTE USED TO DESCRIBE IS CLOSED. `AppsSubNav`'s
-        whole-bar gate is now `hasAppsStoreAccess(features) || features.appBlocksGetStarted`
-        — the union of the two pages' own gates — and the bar carries a "Build apps" tab
-        pointing here. So a viewer admitted to THIS page is admitted to the bar by
-        construction, and the two always-on tabs (Build apps + Marketplace) clear the
-        `< 2` collapse without depending on `appBlocksAuthor` or any summary flag. The
-        empty-band case that the old TODO(launch) asked someone to resolve before a Flipt
-        widening no longer exists for this page, and the widening no longer needs a
-        paired code change.
+        THE GATE MISMATCH THIS NOTE USED TO DESCRIBE IS CLOSED *FOR THIS PAGE*.
+        `AppsSubNav`'s whole-bar gate is now
+        `hasAppsStoreAccess(features) || features.appBlocksGetStarted` — the union of the
+        two pages' own gates — and the bar carries a "Build apps" tab pointing here,
+        gated on that same flag (`context.canGetStarted`). So a viewer admitted to THIS
+        page is admitted to the bar AND to the tab by construction, and that tab plus the
+        unconditional Marketplace clear the `< 2` collapse without depending on
+        `appBlocksAuthor` or any summary flag. The empty-band case the old TODO(launch)
+        asked someone to resolve before a Flipt widening no longer exists here, and the
+        widening no longer needs a paired code change.
+
+        🔴 IT IS NOT CLOSED FOR THE OTHER `/apps/*` PAGES, and the same tab gate is why:
+        a viewer holding a STORE flag without `appBlocksGetStarted` gets no "Build apps"
+        tab, so a non-author with no installs is still back to Marketplace alone and an
+        empty band on `/apps/[appBlockId]/edit` etc. That is `main`'s behaviour, unchanged
+        — see the notes on those two pages, which point back here.
 
         🔴 WHAT IS STILL TRUE, AND IS THE REASON THIS COMMENT SURVIVES AT ALL: the
         Marketplace tab in that bar is unconditional, and `/apps` gates on

@@ -284,10 +284,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const subnav = parseSubNav(code(read(SUBNAV)));
     const nav = parsePlatformNav(code(read(CHROME)));
 
-    // Both tables were actually read. A zero here is indistinguishable from a
-    // parser wired to nothing, so it must never be the thing that makes this pass.
-    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(7);
-    expect(nav.length, 'parsed no items out of the chrome platform nav').toBe(4);
+    // 🔴 PARSE CONTROLS ONLY — deliberately far below the live counts. A zero is
+    // indistinguishable from a parser wired to nothing, so it must never be the thing
+    // that makes this pass; but a control pinned ON the live count STEALS the failure
+    // from the rule below, reporting a parse problem for what is really a nav change.
+    // The exact chrome set is owned by the `expected glyphs` test; the exact excluded
+    // set by the ledger.
+    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(1);
+    expect(nav.length, 'parsed no items out of the chrome platform nav').toBeGreaterThanOrEqual(1);
 
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
@@ -328,7 +332,9 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
    *      condition is `isModerator`), while `/apps/get-started` is governed by the
    *      `appBlocksGetStarted` KILL SWITCH. Mirroring the entry here would render it
    *      unconditionally and defeat the switch — the chrome would keep offering a page
-   *      that has been turned off.
+   *      that has been turned off. The subnav's own row IS gated on that flag
+   *      (`visible: (_s, c) => c.canGetStarted`), which is what makes this a difference
+   *      between the two surfaces rather than an inconsistency.
    *
    * So this asserts the excluded SET, and fails when it GROWS (a new subnav row nobody
    * decided about) or SHRINKS (an entry added to the chrome without updating the note).
@@ -339,10 +345,18 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const nav = parsePlatformNav(code(read(CHROME)));
     const inChrome = new Set(nav.map((e) => e.href));
 
-    // Positive control: the sets were really read. A zero on either side would make
-    // the difference below trivially "everything" or "nothing".
-    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(8);
-    expect(inChrome.size, 'parsed no items out of the chrome platform nav').toBe(4);
+    // 🔴 PARSE CONTROLS, NOT LEDGERS — and the floors are deliberately far below the
+    // live counts (8 and 4). Pinned ON those counts they MASK the ledger they were
+    // meant to protect: adding a chrome item made `toBe(4)` fail first, with the
+    // message "parsed no items out of the chrome platform nav: expected 5 to be 4" —
+    // which states the opposite of what happened — and the `toEqual` below never ran,
+    // leaving the ledger's SHRINK direction unproven. A zero on either side would make
+    // the difference below trivially "everything" or "nothing", and that is all these
+    // two are here to rule out; the SET is the `toEqual`'s to own, in both directions.
+    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(1);
+    expect(inChrome.size, 'parsed no items out of the chrome platform nav').toBeGreaterThanOrEqual(
+      1
+    );
 
     expect(
       subnav.map((e) => e.href).filter((h) => !inChrome.has(h)),
@@ -411,7 +425,12 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const links = parseAllChromeLinks(chromeBody());
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
-    expect(links.length, 'parsed no literal-href items out of the chrome').toBe(5);
+    // Parse control, not a ledger — same reasoning as the two above: a floor pinned on
+    // the live count (5) would take the failure away from the (a)/(b) rules below the
+    // moment the chrome gains an item, and report it as a parse error.
+    expect(links.length, 'parsed no literal-href items out of the chrome').toBeGreaterThanOrEqual(
+      1
+    );
 
     // (a) Every route the chrome links to is a route the store actually has.
     for (const link of links) {

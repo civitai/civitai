@@ -171,8 +171,9 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
     // With `appBlocks` on, the summary query is enabled, so the conditional tabs
     // resolve too — the full bar today's testers actually see.
     await expect.element(tab('Review')).toBeInTheDocument();
+    // No `appBlocksGetStarted` in this flag set, so "Build apps" is gated out —
+    // this IS today's live moderator/tester cohort.
     expect(renderedTabs()).toEqual([
-      'Build apps',
       'Marketplace',
       'Create',
       'Installed',
@@ -208,44 +209,63 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace', 'Create']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(1);
   });
 });
 
 /**
- * 🔴 THE <2-TAB COLLAPSE NO LONGER HIDES THE BAR FOR ANYONE THE GATE ADMITS, AND THAT
- * IS THE 1→2 VISIBILITY CHANGE THIS PR SHIPS.
+ * 🔴 THE <2-TAB COLLAPSE, DRIVEN THROUGH THE CONTAINER — UNCHANGED FROM `main` FOR
+ * EVERY COHORT THAT DOES NOT HOLD `appBlocksGetStarted`.
  *
- * These two tests used to assert an absent bar: an `appListings`-only non-author (and a
- * logged-out viewer) qualified for Marketplace ALONE and the collapse dropped the whole
- * bar. `/apps/get-started` ("Build apps") is unconditional, so the always-on set is two
- * and both cohorts now get chrome on all 13 `/apps/*` routes. Intended, not incidental —
- * pinned here so the change is visible in a diff rather than discovered on staging.
+ * An `appListings`-only non-author (and a logged-out viewer) qualifies for Marketplace
+ * ALONE and the collapse drops the whole bar. "Build apps" is gated on
+ * `context.canGetStarted`, so it does NOT lift these cohorts over the floor — which is
+ * the point: they cannot load `/apps/get-started`, so a tab into it would be a tab into
+ * a 404. Pinned here so a later widening of that predicate is visible in a diff rather
+ * than discovered on staging.
  */
-describe('AppsSubNav — the two unconditional tabs now clear the collapse floor', () => {
-  test('🔴 appListings-only NON-author → a two-tab bar (was: no bar at all)', async () => {
+describe('AppsSubNav — the collapse still hides the bar for a one-tab viewer', () => {
+  test('🔴 appListings-only NON-author, no get-started → no bar at all', async () => {
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: false };
     mocks.user = { id: 8, username: 'tester', isModerator: false };
-    await renderSubNav();
+    await renderSubNav(); // barrier awaited inside — absence below is a real observation
 
-    await expect.element(tab('Build apps')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
-    // …and the SAME viewer WITH the author capability still gains Create, which is what
-    // proves the set above came from the predicates and not from a stuck render.
+    expect(renderedTabs()).toEqual([]);
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+    // …and the SAME viewer WITH the author capability DOES get a bar, which is what
+    // proves the absence above came from the predicates and not from a stuck render.
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
     await renderSubNav();
     await expect.element(tab('Create')).toBeInTheDocument();
   });
 
-  test('a logged-out viewer with the store flag lit gets the bar, but no Create', async () => {
-    mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
-    mocks.user = null;
+  test('🔴 …and the get-started capability is what lifts that same viewer over the floor', async () => {
+    // Identical to the first arm above except for ONE flag. Making "Build apps"
+    // unconditional makes the first arm fail; removing the tab makes this one fail.
+    mocks.flags = {
+      appListings: true,
+      appBlocks: false,
+      appBlocksAuthor: false,
+      appBlocksGetStarted: true,
+    };
+    mocks.user = { id: 8, username: 'tester', isModerator: false };
     await renderSubNav();
 
     await expect.element(tab('Build apps')).toBeInTheDocument();
     expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
+  });
+
+  test('a logged-out viewer with the store flag lit gets no bar (Marketplace alone)', async () => {
+    mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
+    mocks.user = null;
+    await renderSubNav();
+
+    // A logged-out viewer resolves to `NO_CAPABILITIES.isAuthor`, so Create is gone and
+    // Marketplace is all that qualifies — the collapse then removes the bar.
+    expect(renderedTabs()).toEqual([]);
     expect(tab('Create').elements()).toHaveLength(0);
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
   });
 });
 
@@ -259,6 +279,13 @@ describe('AppsSubNav — the two unconditional tabs now clear the collapse floor
  * gate the container returns `null` for exactly the cohort the tab was added for, so
  * the tab would be invisible to them on the one page they can load. Reverting the gate
  * to `if (!hasAppsStoreAccess(features)) return null` fails the first test below.
+ *
+ * 🔴 THE GATE AND THE TAB READ THE SAME FLAG, and both halves are pinned below. The
+ * gate is an OR, so it admits viewers who hold the STORE flags without
+ * `appBlocksGetStarted`; the "Build apps" tab is `visible: (_s, c) => c.canGetStarted`,
+ * so those viewers are admitted to the bar and NOT offered the tab. An unconditional
+ * tab would hand that cohort — `app-dev-testers` today, every moderator after the kill
+ * switch is thrown — a tab whose page answers `notFound`.
  *
  * The `enabled:` predicate on `getNavSummary` is deliberately NOT widened with it (see
  * the block at the end of this file) — for a get-started-only viewer it stays false,
@@ -279,16 +306,37 @@ describe('AppsSubNav — the bar gate admits the get-started cohort', () => {
     expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
   });
 
-  test('store access but NO appBlocksGetStarted → the bar still renders (no regression)', async () => {
-    // The pre-existing cohort. The gate is an OR, so removing the store term (or
-    // turning it into an AND) fails here rather than only in the case above.
-    mocks.flags = { appListings: true, appBlocks: false, appBlocksGetStarted: false };
+  test('🔴 store access but NO appBlocksGetStarted → a bar with NO Build apps tab', async () => {
+    // The pre-existing cohort, and the one the tab predicate exists for: they hold
+    // `appBlocks`/`appListings` (so the OR gate admits them — removing the store term,
+    // or turning the OR into an AND, fails here rather than only in the case above) but
+    // `/apps/get-started` answers `notFound` for them, so the tab must be absent.
+    // An AUTHOR, so the bar clears the `< 2` floor on Marketplace + Create and this is
+    // an assertion about the TAB rather than about the bar.
+    mocks.flags = {
+      appListings: true,
+      appBlocks: false,
+      appBlocksAuthor: true,
+      appBlocksGetStarted: false,
+    };
     mocks.user = { id: 8, username: 'tester', isModerator: false };
     await renderSubNav();
 
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
+    expect(tab('Build apps').elements()).toHaveLength(0);
+  });
+
+  test('BOTH the store flags and appBlocksGetStarted → Build apps AND Marketplace', async () => {
+    // The cohort a Flipt widening produces, and the positive control for the pair
+    // above: the same reader that saw no "Build apps" there does see one here.
+    mocks.flags = { appListings: true, appBlocks: false, appBlocksGetStarted: true };
+    mocks.user = { id: 8, username: 'tester', isModerator: false };
+    await renderSubNav();
+
+    await expect.element(tab('Build apps')).toBeInTheDocument();
     expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
   });
 

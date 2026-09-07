@@ -20,7 +20,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 //   - `summary`  — the `blocks.getNavSummary` booleans (client-only, revealed
 //                  post-mount).
 //   - `context`  — viewer CAPABILITIES resolved from SSR-seeded values
-//                  (`isAuthor`), safe on the first paint.
+//                  (`isAuthor`, `canGetStarted`), safe on the first paint.
 //
 // The sub-nav uses the Mantine **Tabs** LOOK but is wrapped in a real
 // `<nav aria-label="App sections">` so it's exposed as a navigation LANDMARK
@@ -57,10 +57,20 @@ const ALL: AppsNavSummary = {
   hasPendingInvites: true,
 };
 
-/** May author apps (mod, or a non-mod holding `appBlocksAuthor`). */
-const AUTHOR: AppsNavContext = { isAuthor: true };
+/**
+ * May author apps (mod, or a non-mod holding `appBlocksAuthor`), and does NOT hold
+ * `appBlocksGetStarted` — the live moderator/`app-dev-testers` shape today.
+ */
+const AUTHOR: AppsNavContext = { isAuthor: true, canGetStarted: false };
 /** The widened store-visibility tester cohort: sees the store, cannot author. */
-const NOT_AUTHOR: AppsNavContext = { isAuthor: false };
+const NOT_AUTHOR: AppsNavContext = { isAuthor: false, canGetStarted: false };
+/**
+ * Holds `appBlocksGetStarted` (so `/apps/get-started` loads for them) but cannot
+ * author — the cohort the "Build apps" tab exists for.
+ */
+const BUILDER: AppsNavContext = { isAuthor: false, canGetStarted: true };
+/** Both capabilities — the fullest tab set any viewer can resolve to. */
+const AUTHOR_BUILDER: AppsNavContext = { isAuthor: true, canGetStarted: true };
 
 function tab(name: string) {
   return page.getByRole('tab', { name });
@@ -204,8 +214,10 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     expect(tab('Revenue').elements()).toHaveLength(0);
   });
 
-  test('an all-true summary + author shows every tab', async () => {
-    renderWithProviders(<AppsSubNavView summary={ALL} context={AUTHOR} currentPath="/apps" />);
+  test('an all-true summary + author + get-started shows every tab', async () => {
+    renderWithProviders(
+      <AppsSubNavView summary={ALL} context={AUTHOR_BUILDER} currentPath="/apps" />
+    );
     for (const name of [
       'Build apps',
       'Marketplace',
@@ -301,29 +313,44 @@ describe('AppsSubNavView (Create is gated on the author capability)', () => {
 });
 
 /**
- * 🔴 THE <2-TAB COLLAPSE IS NO LONGER REACHABLE THROUGH THIS COMPONENT'S INPUTS,
- * AND THESE TESTS SAY SO RATHER THAN PRETENDING OTHERWISE.
+ * 🔴 THE <2-TAB COLLAPSE, AND THE GET-STARTED GATE THAT KEEPS IT REACHABLE.
  *
- * It used to be: with `Create` conditional, a store-visible non-author with no
- * installs / submissions / approved apps and no reviewer bit qualified for
- * Marketplace ALONE, and the bar dropped itself. Adding the unconditional
- * `/apps/get-started` "Build apps" tab makes the always-on set TWO, so no
- * `(summary, context)` pair can produce fewer than two qualifying links and the
- * `links.length < 2` branch cannot be entered from here.
+ * Marketplace is the ONLY unconditional row in `SUB_NAV_LINKS`. "Build apps" is
+ * `visible: (_s, c) => c.canGetStarted`, mirroring the gate `resolveGetStartedAccess`
+ * puts on `/apps/get-started`, so a store-visible non-author with an empty summary and
+ * no `appBlocksGetStarted` still qualifies for Marketplace ALONE and the bar still
+ * drops itself. These tests therefore cover a LIVE cohort, not merely a property of the
+ * exported view.
  *
- * The `if (links.length < 2) return null` line is deliberately KEPT — it is a
- * property of the VIEW, which is exported and could be handed a filtered set —
- * but it is now a guard nothing exercises, so counting these tests as coverage of
- * it would be false. What they pin instead is the deliberate CONSEQUENCE: this
- * viewer, who used to get no chrome at all, now gets a two-tab bar on every
- * `/apps/*` route. That is the visibility change this PR is responsible for, and
- * it is what a reviewer needs to be able to see fail.
+ * Both directions are asserted for the new row — absent without the capability, present
+ * with it — because asserting only one of them passes on a tab that renders for nobody,
+ * and asserting only the other passes on a tab that renders for everybody. The second
+ * shape is the defect this block exists to catch: an unconditional "Build apps" offers
+ * the `app-dev-testers` cohort (`appBlocks` yes, `appBlocksGetStarted` no) a tab whose
+ * page answers `notFound`, and defeats the `app-blocks-get-started` kill switch for
+ * every moderator.
  */
-describe('AppsSubNavView (the two unconditional tabs are the floor)', () => {
-  test('🔴 a non-author with an EMPTY summary now gets a two-tab bar (was: nothing)', async () => {
-    // The exact input that used to render `null`. Reverting `/apps/get-started`
-    // out of `SUB_NAV_LINKS` fails HERE, on the landmark and on the count.
-    renderWithProviders(<AppsSubNavView summary={NONE} context={NOT_AUTHOR} currentPath="/apps" />);
+describe('AppsSubNavView (the collapse, and the get-started gate that keeps it live)', () => {
+  test('🔴 a non-author with an EMPTY summary and no get-started renders NOTHING', async () => {
+    // The `< 2` collapse: Marketplace alone. Making "Build apps" unconditional fails
+    // HERE, on all three readers.
+    renderWithProviders(
+      <>
+        <RenderBarrier />
+        <AppsSubNavView summary={NONE} context={NOT_AUTHOR} currentPath="/apps" />
+      </>
+    );
+    await awaitCommit(); // without this the assertions below cannot fail — see RENDER_BARRIER
+    expect(tab('Marketplace').elements()).toHaveLength(0);
+    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+  });
+
+  test('🔴 canGetStarted is what brings the bar back for that same viewer', async () => {
+    // Identical summary and identical `isAuthor` — ONLY `canGetStarted` moves. That is
+    // what makes the pair attribute the bar to the get-started capability rather than
+    // to some other difference between two fixtures.
+    renderWithProviders(<AppsSubNavView summary={NONE} context={BUILDER} currentPath="/apps" />);
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
@@ -332,14 +359,25 @@ describe('AppsSubNavView (the two unconditional tabs are the floor)', () => {
     expect(page.getByRole('tab').elements()).toHaveLength(2);
   });
 
+  test('🔴 Build apps is ABSENT for a store-visible viewer WITHOUT the flag', async () => {
+    // The cohort the defect would have 404'd. An author, so the bar clears the floor on
+    // Marketplace + Create and this is an assertion about the TAB, not about the bar.
+    renderWithProviders(<AppsSubNavView summary={NONE} context={AUTHOR} currentPath="/apps" />);
+    await expect.element(tab('Marketplace')).toBeInTheDocument(); // positive control
+    await expect.element(tab('Create')).toBeInTheDocument();
+    expect(tab('Build apps').elements()).toHaveLength(0);
+  });
+
   test('the Build apps tab points at /apps/get-started', async () => {
-    renderWithProviders(<AppsSubNavView summary={NONE} context={NOT_AUTHOR} currentPath="/apps" />);
+    renderWithProviders(<AppsSubNavView summary={NONE} context={BUILDER} currentPath="/apps" />);
     await expect.element(tab('Build apps')).toBeInTheDocument();
     expect(tab('Build apps').element().getAttribute('href')).toBe('/apps/get-started');
   });
 
-  test('it leads the bar — Build apps is the FIRST tab', async () => {
-    renderWithProviders(<AppsSubNavView summary={ALL} context={AUTHOR} currentPath="/apps" />);
+  test('it leads the bar — Build apps is the FIRST tab when it renders', async () => {
+    renderWithProviders(
+      <AppsSubNavView summary={ALL} context={AUTHOR_BUILDER} currentPath="/apps" />
+    );
     await expect.element(tab('Build apps')).toBeInTheDocument();
     expect(
       page
@@ -349,7 +387,7 @@ describe('AppsSubNavView (the two unconditional tabs are the floor)', () => {
     ).toBe('Build apps');
   });
 
-  test('a summary flag adds a THIRD tab (one install)', async () => {
+  test('a summary flag alone brings the bar back (one install, no get-started)', async () => {
     renderWithProviders(
       <AppsSubNavView
         summary={{ ...NONE, hasInstalls: true }}
@@ -361,15 +399,15 @@ describe('AppsSubNavView (the two unconditional tabs are the floor)', () => {
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
     await expect.element(tab('Installed')).toBeInTheDocument();
-    expect(page.getByRole('tab').elements()).toHaveLength(3);
+    expect(page.getByRole('tab').elements()).toHaveLength(2);
   });
 
-  test('the author capability adds Create as a third tab', async () => {
+  test('the author capability alone brings it back too (Create is the second tab)', async () => {
     renderWithProviders(<AppsSubNavView summary={NONE} context={AUTHOR} currentPath="/apps" />);
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(page.getByRole('tab').elements()).toHaveLength(3);
+    expect(page.getByRole('tab').elements()).toHaveLength(2);
   });
 
   // 🔴 NEGATIVE CONTROL for the counts above. Every assertion in this block is
@@ -378,7 +416,7 @@ describe('AppsSubNavView (the two unconditional tabs are the floor)', () => {
   // for a conditional tab would satisfy all of them too. This one fails in that
   // case: a non-author must still NOT get Create / My apps / Invites.
   test('NEGATIVE CONTROL: the conditional tabs are still conditional', async () => {
-    renderWithProviders(<AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps" />);
+    renderWithProviders(<AppsSubNavView summary={ALL} context={BUILDER} currentPath="/apps" />);
     await expect.element(tab('Build apps')).toBeInTheDocument();
     expect(tab('Create').elements()).toHaveLength(0);
     expect(tab('My apps').elements()).toHaveLength(0);
@@ -492,7 +530,9 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
   // click follows. Asserting the href is the deterministic equivalent of "a
   // click navigates to the right route" for a link-based tab.
   test('every visible tab points its href at the matching /apps route', async () => {
-    renderWithProviders(<AppsSubNavView summary={ALL} context={AUTHOR} currentPath="/apps" />);
+    renderWithProviders(
+      <AppsSubNavView summary={ALL} context={AUTHOR_BUILDER} currentPath="/apps" />
+    );
     const cases: Array<[string, string]> = [
       ['Build apps', '/apps/get-started'],
       ['Marketplace', '/apps'],
@@ -641,11 +681,11 @@ describe('AppsSubNavView (collaborator tabs are gated on the author capability)'
     });
   }
 
-  test('a NON-author invitee gets the two unconditional tabs and NO Invites', async () => {
-    // 🔴 THIS USED TO ASSERT "no sub-nav at all": Marketplace alone survived the
-    // author gate and the `< 2` collapse then hid the whole bar. "Build apps" is
-    // unconditional, so the bar now renders — what the author gate still removes is
-    // the Invites tab itself, which is the invariant this test was really about.
+  test('a NON-author invitee gets no sub-nav at all (1 qualifying tab ⇒ hidden)', async () => {
+    // Marketplace alone survives the author gate and the `< 2` collapse then hides the
+    // bar — so the two changes compose to the right end state rather than merely not
+    // crashing. (This viewer holds no `appBlocksGetStarted`, so "Build apps" is gated
+    // out too; the same fixture WITH that capability is covered in the collapse block.)
     renderWithProviders(
       <>
         <RenderBarrier />
@@ -658,12 +698,7 @@ describe('AppsSubNavView (collaborator tabs are gated on the author capability)'
     );
     await awaitCommit();
     expect(tab('Invites').elements()).toHaveLength(0);
-    expect(
-      page
-        .getByRole('tab')
-        .elements()
-        .map((el) => (el.textContent ?? '').trim())
-    ).toEqual(['Build apps', 'Marketplace']);
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
   });
 
   test('an AUTHOR invitee DOES get the bar: Marketplace + Create + Invites', async () => {

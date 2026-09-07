@@ -240,6 +240,21 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           // (unit-tested), and `marketplace` still routes through the shared
           // `hasAppsStoreAccess` predicate (#3907) — gating it on `appBlocks` alone
           // hid the store from the catalog-only and external-only cohorts.
+          //
+          // 🔴 THE LABEL AND ICON DO *NOT* FOLLOW THE HREF, AND THAT IS A DECISION,
+          // NOT AN OVERSIGHT. On the get-started-only branch this row reads "Apps"
+          // with a plug glyph while navigating to developer onboarding. Accepted,
+          // for three reasons: (1) "Apps" names the PRODUCT AREA, which both
+          // destinations are inside — the row is a door into `/apps*`, not a
+          // description of the landing page; (2) branching the label AND the icon
+          // (`IconPlugConnected` vs the sub-nav's `IconCode`) re-splits one row into
+          // two presentations, which is the duplication this consolidation removed;
+          // (3) the cohort is EMPTY today — `appBlocksGetStarted` is
+          // `availability: ['mod']` and every moderator holds a store flag, so no
+          // real viewer takes this branch. RE-DECIDE IT when that stops being true:
+          // the trigger is `app-blocks-get-started` being widened past `['mod']`
+          // (in Flipt, or in `feature-flags.service.ts`). Until then a conditional
+          // label would be untestable-in-production copy.
           href: appsNav.marketplace ? '/apps' : '/apps/get-started',
           visible: appsNav.marketplace || appsNav.getStarted,
           icon: IconPlugConnected,

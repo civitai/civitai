@@ -77,10 +77,18 @@ export type AppsNavContext = {
    * `appBlocksAuthor` capability widens it to the curated non-mod cohort.
    */
   isAuthor: boolean;
+  /**
+   * May load `/apps/get-started` → show "Build apps". This is the page's OWN gate
+   * turned into a viewer fact: `resolveGetStartedAccess` grants on
+   * `features.appBlocksGetStarted` and consults nothing else, so this is
+   * `!!features.appBlocksGetStarted` and is NOT session-scoped (contrast
+   * {@link isAuthor}, which needs a `currentUser`).
+   */
+  canGetStarted: boolean;
 };
 
-/** No capabilities — the shape a logged-out / non-author viewer resolves to. */
-const NO_CAPABILITIES: AppsNavContext = { isAuthor: false };
+/** No capabilities — the shape a viewer with neither flag resolves to. */
+const NO_CAPABILITIES: AppsNavContext = { isAuthor: false, canGetStarted: false };
 
 type SubNavLink = {
   href: string;
@@ -93,7 +101,7 @@ type SubNavLink = {
 /**
  * Tab order = discovery → author → manage → revenue → moderate.
  *
- * **Build apps** and **Marketplace** are unconditional. "Create" links at `/apps/submit`,
+ * **Marketplace** is the only unconditional entry. "Create" links at `/apps/submit`,
  * whose `getServerSideProps` gates on `features.appBlocksAuthor` +
  * `isAppDeveloper` and otherwise returns `notFound` — so a store-visible
  * NON-author (the widened `app-listings` tester cohort: `app-listings=true`,
@@ -114,12 +122,11 @@ type SubNavLink = {
  * requires the block runtime is a product decision. See #3906.
  *
  * {@link AppsSubNavView} still hides itself entirely below two tabs — a one-tab
- * "navigation" is chrome that navigates nowhere. 🔴 With TWO unconditional entries
- * that floor is no longer reachable for any viewer the container's gate admits: the
- * rule survives as a guard on the VIEW (which is rendered directly by tests and could
- * be reused with a filtered set), not as something production still exercises. It was
- * reachable before "Build apps" existed — an `appListings`-only non-author qualified
- * for Marketplace alone — so the tests covering it are pinning the view, not a cohort.
+ * "navigation" is chrome that navigates nowhere. 🔴 That floor IS reachable through
+ * the container, and by a live cohort: a store-visible non-author with no installs,
+ * no `appBlocksGetStarted` and an empty summary qualifies for Marketplace ALONE and
+ * gets no bar. So the collapse tests below are covering a real viewer, not merely
+ * pinning a property of the exported view.
  */
 const SUB_NAV_LINKS: SubNavLink[] = [
   /**
@@ -127,34 +134,45 @@ const SUB_NAV_LINKS: SubNavLink[] = [
    * discovery → author → manage → revenue → moderate and this is the front door for
    * someone who has not built anything yet.
    *
-   * 🔴 `visible: () => true` IS DELIBERATE, NOT AN OVERSIGHT — the `appBlocksGetStarted`
-   * decision lives in the WHOLE-BAR gate on the container below, not here. Every
-   * predicate in this table asks about the VIEWER'S STATE as already resolved into
-   * `AppsNavSummary` / `AppsNavContext` (do they author? have installs? invites?
-   * approved apps?). A flag reaches the table only after the container has turned it
-   * into such a fact — `c.isAuthor` is `isAppDeveloper(user, {appBlocksAuthor})`, a
-   * capability, not a raw flag read. `appBlocksGetStarted` has no such per-viewer
-   * shape: it is a kill switch on the DESTINATION, so it belongs to the gate that
-   * decides whether the bar exists, not to a per-tab predicate.
+   * 🔴 GATED ON `c.canGetStarted`, WHICH IS THIS PAGE'S OWN GATE, for the same reason
+   * "Create" below is gated on `c.isAuthor`. `/apps/get-started`'s
+   * `getServerSideProps` runs `resolveGetStartedAccess`, which returns `notFound`
+   * unless `features.appBlocksGetStarted` is set (and the page's client body renders
+   * `<NotFound/>` on the same condition). The whole-bar gate on the container is an
+   * OR, so a viewer with store access but WITHOUT that flag passes it — an unconditional
+   * predicate here would offer them a tab into a 404. `app-dev-testers` is exactly that
+   * shape today: `appBlocks` yes, `appBlocksGetStarted` no.
    *
-   * The consequence is real and intended: for any viewer the bar renders for at all,
-   * this tab is present. See the container's gate for why that viewer set is exactly
-   * `hasAppsStoreAccess || appBlocksGetStarted`.
+   * The second reason is the kill switch. `app-blocks-get-started` exists to drop this
+   * page without a deploy; every moderator holds `appBlocks`, so an unconditional tab
+   * would keep offering the page after the switch was thrown. That is precisely the
+   * argument §4 of `~/components/AppBlocks/IframeHost` makes for keeping this route OUT
+   * of the app-block chrome nav — a bar that cannot read the flag must not advertise
+   * the route. This bar CAN read it, so it does.
    *
-   * 🔴 AND THE COROLLARY, STATED RATHER THAN DISCOVERED LATER: because Marketplace
-   * below is `() => true` as well, a viewer admitted by the get-started term ALONE
-   * gets a Marketplace tab pointing at `/apps`, which `resolveAppsPageAccess` answers
-   * with `notFound` for them. That is the shape the "Create" note below calls a tab
-   * into a 404, and it is NOT reachable today (`appBlocksGetStarted` is staged
-   * mod-only and a moderator holds the store flags too). It becomes reachable the
-   * moment `app-blocks-get-started` is flipped public in Flipt WITHOUT `app-listings`
-   * — a runtime toggle, no deploy. Fixing it by gating Marketplace on
-   * `hasAppsStoreAccess` would drop that viewer to ONE tab and the `< 2` collapse
-   * would hide the bar again, i.e. it would delete this tab for the only cohort it
-   * exists for. The two cannot both be satisfied by a predicate change here; the real
-   * fix is a get-started-aware `/apps` landing, and that is a product decision.
+   * The flag reaches the table the way every other one does: as a resolved viewer fact
+   * on {@link AppsNavContext}, not as a raw flag read inside the predicate. It is
+   * hydration-safe for the same reason `isAuthor` is — `appBlocksGetStarted` is
+   * SSR-seeded into `pageProps.flags` and is not `toggleable`, so it is frozen and
+   * identical on the server render and the first client paint (see the container).
+   *
+   * 🔴 AND THE COROLLARY, WHICH THIS GATE DOES NOT CLOSE: Marketplace below is
+   * `() => true`, so a viewer admitted by the get-started term ALONE gets a Marketplace
+   * tab pointing at `/apps`, which `resolveAppsPageAccess` answers with `notFound` for
+   * them. NOT reachable today (`appBlocksGetStarted` is staged mod-only and a moderator
+   * holds the store flags too); it becomes reachable the moment `app-blocks-get-started`
+   * is flipped public in Flipt WITHOUT `app-listings` — a runtime toggle, no deploy.
+   * Gating Marketplace on `hasAppsStoreAccess` is NOT the fix: it would drop that viewer
+   * to this tab alone and the `< 2` collapse would hide the bar, deleting the tab for the
+   * only cohort it exists for. The real fix is a get-started-aware `/apps` landing, and
+   * that is a product decision.
    */
-  { href: '/apps/get-started', label: 'Build apps', icon: IconCode, visible: () => true },
+  {
+    href: '/apps/get-started',
+    label: 'Build apps',
+    icon: IconCode,
+    visible: (_s, c) => c.canGetStarted,
+  },
   { href: '/apps', label: 'Marketplace', icon: IconBuildingStore, visible: () => true },
   {
     href: '/apps/submit',
@@ -362,14 +380,11 @@ export function AppsSubNavView({
  * the bar must exist for everyone either of the two pages admits. See the gate
  * itself for the hydration argument and the residual Marketplace-404 exposure.
  *
- * 🔴 THE `<2` COLLAPSE NO LONGER HIDES THE BAR FOR A NON-AUTHOR WITH NO INSTALLS.
- * "Build apps" is unconditional, so the always-on set is TWO tabs (Build apps +
- * Marketplace) rather than one, and the bar therefore appears on all 13 `/apps/*`
- * routes for viewers who previously got no chrome at all. That is the intended
- * consequence of surfacing the page as a tab, not a regression — but it means the
- * collapse rule is now load-bearing only for a viewer the gate admits and for whom
- * one of those two tabs is somehow absent, i.e. effectively never. Do not read a
- * green collapse test as evidence the rule still fires in production.
+ * 🔴 THE `<2` COLLAPSE STILL FIRES, AND FOR THE SAME COHORT AS BEFORE THIS TAB
+ * EXISTED. "Build apps" is gated on `appBlocksGetStarted`, so a store-visible
+ * non-author with no installs and without that flag still qualifies for Marketplace
+ * ALONE and still gets no chrome — unchanged behaviour, not a new regression. The
+ * tab set only GROWS, and only for someone the destination would actually serve.
  *
  * 🔴 THIS GATE USED TO READ `features.appBlocks` ALONE while the page it sits on
  * granted access on `appListings || appBlocks`. The two could therefore disagree:
@@ -420,6 +435,8 @@ export function AppsSubNav() {
   // `hasAppsStoreAccess`-only gate the container returns `null` for that viewer, so
   // the tab would be invisible to the only people it was added for — the page would
   // render its chrome band empty, exactly as `pages/apps/get-started.tsx` describes.
+  // The SAME flag also drives `context.canGetStarted` below, so the gate and the tab
+  // cannot disagree: this term admits nobody the tab then refuses.
   //
   // 🔴 SAFE ON THE FIRST PAINT, and for the SAME reason already written out for
   // `appBlocksAuthor` below — stated here rather than left implied. `appBlocksGetStarted`
@@ -456,9 +473,21 @@ export function AppsSubNav() {
   //     session only arrives in a LATER render, post-hydration.
   // Contrast `getNavSummary` above, which really is client-only and therefore
   // really does need the `isClient` deferral.
-  const context: AppsNavContext = currentUser
-    ? { isAuthor: isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor }) }
-    : NO_CAPABILITIES;
+  //
+  // 🔴 `canGetStarted` is NOT session-scoped, and that asymmetry is deliberate.
+  // `isAuthor` is a capability OF A USER (`isAppDeveloper` reads `isModerator`), so
+  // it collapses to `false` without a session. `resolveGetStartedAccess` — the gate
+  // on the page this tab points at — reads the flag and NOTHING else, so mirroring it
+  // means reading the flag and nothing else. Folding it into the `currentUser` branch
+  // would hide the tab from a logged-out viewer the PAGE would happily serve if
+  // `app-blocks-get-started` were flipped public, and (Marketplace being their only
+  // other tab) the `< 2` collapse would then hide the whole bar from them.
+  const context: AppsNavContext = {
+    isAuthor: currentUser
+      ? isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor })
+      : NO_CAPABILITIES.isAuthor,
+    canGetStarted: !!features.appBlocksGetStarted,
+  };
 
   return <AppsSubNavView summary={summary} context={context} currentPath={router.pathname} />;
 }
