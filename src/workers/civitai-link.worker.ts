@@ -17,10 +17,13 @@ import {
   getLinkInstances,
   updateLinkInstance,
 } from '~/components/CivitaiLink/civitai-link-api';
+import type { PairingSnapshot } from '~/components/CivitaiLink/pairing-detect';
+import { detectPairing } from '~/components/CivitaiLink/pairing-detect';
 import type {
   WorkerIncomingMessage,
   Instance,
   WorkerOutgoingMessage,
+  PairingStatus,
 } from '~/workers/civitai-link-worker-types';
 import { get, set, del } from 'idb-keyval';
 
@@ -76,6 +79,7 @@ const sharedCallbacks = {
   instances: [] as (() => void)[],
   error: [] as ((msg: string) => void)[],
   message: [] as ((msg: string) => void)[],
+  pairing: [] as ((status: PairingStatus) => void)[],
   completion: [] as ((response: Response) => void)[],
   socketConnection: [] as ((connected: boolean) => void)[],
 };
@@ -138,6 +142,14 @@ const onMessage = (cb: (msg: string) => void) => {
 const emitMessage = (msg: string) => {
   console.log('emitMessage', { msg });
   sharedCallbacks.message.forEach((cb) => cb(msg));
+};
+
+const onPairing = (cb: (status: PairingStatus) => void) => {
+  sharedCallbacks.pairing.push(cb);
+};
+const emitPairing = (status: PairingStatus) => {
+  console.log('emitPairing', { status });
+  sharedCallbacks.pairing.forEach((cb) => cb(status));
 };
 
 // Storage
@@ -245,8 +257,8 @@ socket.on('roomPresence', ({ client, sd }) => {
 // --------------------------------
 // Handle Incoming Messages
 // --------------------------------
-const handleJoin = (id: number) => {
-  if (instance.id === id && instance.connected) return;
+const handleJoin = (id: number, force = false) => {
+  if (!force && instance.id === id && instance.connected) return;
 
   const targetInstance = instances?.find((i) => i.id === id);
   if (!targetInstance) {
@@ -326,6 +338,111 @@ const handleCreate = async (id?: number) => {
   }
 };
 
+const PAIRING_POLL_MS = 3000;
+const PAIRING_TIMEOUT_MS = 15 * 60 * 1000;
+let pairingTimer: ReturnType<typeof setInterval> | null = null;
+let pairingSnapshot: PairingSnapshot | null = null;
+let pairingDeadline = 0;
+let pairingGeneration = 0;
+let pairingSeeded = false;
+let pairingArmed = false;
+let pairingInFlight = false;
+
+// One poll is shared by every tab, so a cancel from one strands the rest on
+// 'waiting' unless they are told. Callers that re-arm, or that emit their own
+// terminal status next, pass `null`.
+const stopPairingPoll = (status: PairingStatus | null = 'timeout') => {
+  const wasArmed = pairingArmed;
+  pairingArmed = false;
+  pairingGeneration += 1;
+  if (pairingTimer !== null) clearInterval(pairingTimer);
+  pairingTimer = null;
+  pairingSnapshot = null;
+  pairingSeeded = false;
+  pairingInFlight = false;
+  if (wasArmed && status) emitPairing(status);
+};
+
+const mergeSnapshot = (base: PairingSnapshot, list: CivitaiLinkInstance[]): PairingSnapshot => {
+  const ids = new Set(base.ids);
+  const keys = { ...base.keys };
+  for (const item of list) {
+    ids.add(item.id);
+    keys[item.id] = item.key;
+  }
+  return { ids: [...ids], keys };
+};
+
+const pollPairing = async () => {
+  const snapshot = pairingSnapshot;
+  if (!snapshot) return;
+  if (Date.now() >= pairingDeadline) {
+    stopPairingPoll();
+    return;
+  }
+
+  // setInterval fires on a fixed period, so a list request slower than the
+  // period would otherwise start a second poll against the same snapshot and
+  // both would detect — and re-join — the same pairing.
+  if (pairingInFlight) return;
+
+  let result: CivitaiLinkInstance[];
+  pairingInFlight = true;
+  try {
+    result = await getLinkInstances();
+  } catch {
+    return;
+  } finally {
+    pairingInFlight = false;
+  }
+  // Cancelled or resolved while the request was in flight.
+  if (pairingSnapshot !== snapshot) return;
+
+  // The arming fetch failed and left us no baseline, so this first list is the
+  // baseline, not a pairing — detectPairing matches every row of it otherwise.
+  if (!pairingSeeded && snapshot.ids.length === 0) {
+    pairingSnapshot = mergeSnapshot(snapshot, result);
+    pairingSeeded = true;
+    updateSharedValue({ type: 'instances', value: result });
+    return;
+  }
+
+  const paired = detectPairing(snapshot, result);
+  if (!paired) return;
+
+  stopPairingPoll(null);
+  updateSharedValue({ type: 'instances', value: result });
+  handleJoin(paired.id, true);
+  emitPairing('paired');
+};
+
+const handleAwaitPairing = async (knownIds: number[], knownKeys: Record<number, string>) => {
+  stopPairingPoll(null);
+  const generation = pairingGeneration;
+  pairingDeadline = Date.now() + PAIRING_TIMEOUT_MS;
+  pairingArmed = true;
+  emitPairing('waiting');
+
+  let current: CivitaiLinkInstance[] | null = null;
+  try {
+    current = await getLinkInstances();
+  } catch {
+    // Fall back to the tab's list; the first poll establishes the baseline.
+  }
+  // Cancelled while the arming request was in flight.
+  if (pairingGeneration !== generation) return;
+
+  let snapshot: PairingSnapshot = { ids: knownIds, keys: knownKeys };
+  if (current) {
+    snapshot = mergeSnapshot(snapshot, current);
+    pairingSeeded = true;
+    updateSharedValue({ type: 'instances', value: current });
+  }
+
+  pairingSnapshot = snapshot;
+  pairingTimer = setInterval(pollPairing, PAIRING_POLL_MS);
+};
+
 const handleInitialization = () => {
   if (!instance.id || initialized === instance.id) return;
 
@@ -346,6 +463,7 @@ const start = async (port: MessagePort) => {
 
   onError((msg) => portReq({ type: 'error', msg }));
   onMessage((msg) => portReq({ type: 'message', msg }));
+  onPairing((status) => portReq({ type: 'pairing', status }));
   onCompletion((payload) => portReq({ type: 'commandComplete', payload }));
   portReq({ type: 'instance', payload: instance });
   onUpdate('instance', () => {
@@ -374,6 +492,8 @@ const start = async (port: MessagePort) => {
     else if (data.type === 'delete') handleDelete(data.id);
     else if (data.type === 'rename') handleRename(data.id, data.name);
     else if (data.type === 'leave') handleLeave();
+    else if (data.type === 'awaitPairing') handleAwaitPairing(data.knownIds, data.knownKeys);
+    else if (data.type === 'cancelAwaitPairing') stopPairingPoll();
     else if (data.type === 'command') handleCommand(data.payload);
   };
 
