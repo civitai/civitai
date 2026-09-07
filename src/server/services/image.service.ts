@@ -146,6 +146,10 @@ import {
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
 } from '~/server/services/collection.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForImages,
+} from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
@@ -611,6 +615,17 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
+    // Resolved BEFORE the delete: `CollectionItem.imageId` is `onDelete: Cascade`, so
+    // once the row is gone there is no way left to learn which collections were
+    // showing this image. Their documents denormalize it and the collections index
+    // only sweeps newly created collections, so without this they keep rendering a
+    // thumbnail for an image that no longer exists. The resolver is non-throwing, so
+    // a failure here costs the reindex rather than cancelling the delete.
+    const collectionsToRebuild = await getCollectionIdsForImages({
+      imageIds: [id],
+      source: 'image-delete',
+    });
+
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
@@ -635,6 +650,7 @@ export const deleteImageById = async ({
       invalidateExistence,
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
+      enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
     ]);
 
     return image;
@@ -722,6 +738,14 @@ export async function deleteImages(
   { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
 ) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
+    // Resolved before the DELETE for the same reason as deleteImageById: the
+    // membership rows cascade away with the images, taking with them the only record
+    // of which collection documents now hold a dead thumbnail.
+    const collectionsToRebuild = await getCollectionIdsForImages({
+      imageIds: ids,
+      source: 'image-delete-bulk',
+    });
+
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`
@@ -745,6 +769,7 @@ export async function deleteImages(
       invalidateExistence,
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
+      enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
