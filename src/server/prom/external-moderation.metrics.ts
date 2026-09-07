@@ -298,3 +298,51 @@ export function recordExternalModerationSkipped(source: ExternalModerationSource
     // Observability must never break the moderation path. Swallow any prom-client error.
   }
 }
+
+/**
+ * How a shadow comparison against a CANDIDATE classifier model settled.
+ *
+ * 🔴 THE TWO DISAGREEMENT DIRECTIONS ARE SEPARATE OUTCOMES ON PURPOSE — they are not two spellings
+ * of "diverged". `candidate_permissive` means the incumbent flagged and the candidate did not, i.e.
+ * the candidate would have let a prompt through a FAIL-CLOSED gate: that is the trust-and-safety
+ * number the model decision turns on. `candidate_strict` is the reverse — a user blocked who is not
+ * blocked today, a UX cost rather than a safety one. Folded into one label they CANCEL, and a
+ * candidate that is 2% more permissive and 2% stricter becomes indistinguishable from one that
+ * agrees perfectly. `error` is the shadow request itself failing and says nothing about either model.
+ */
+export type ModerationShadowOutcome =
+  | 'match'
+  | 'candidate_permissive'
+  | 'candidate_strict'
+  | 'error';
+
+const shadowCounter = registerCounterWithLabels({
+  name: 'external_moderation_shadow_total',
+  help:
+    'Shadow comparisons between the production prompt classifier and a candidate model, by outcome ' +
+    'and source. DARK AND OFF BY DEFAULT: it requires BOTH EXTERNAL_MODERATION_SHADOW_MODEL and a ' +
+    'positive EXTERNAL_MODERATION_SHADOW_SAMPLE, so NO SERIES AT ALL means "not armed" — never "the ' +
+    'models agree". The verdict of record is always the incumbent`s; nothing reads a shadow result ' +
+    'back. outcome=candidate_permissive is the safety-relevant direction (the incumbent flagged and ' +
+    'the candidate did not, i.e. the candidate would have let it through a fail-closed gate); ' +
+    'candidate_strict is the reverse and is a false-positive/UX cost. Do NOT sum the two into one ' +
+    'divergence rate — they cancel, and that is the one reading this metric exists to prevent. ' +
+    'outcome=error is the shadow request failing and is evidence about neither model. 🔴 Every ' +
+    'counted comparison is a SECOND billable classifier request; the sample rate is the spend control.',
+  labelNames: ['source', 'outcome'] as const,
+});
+
+/**
+ * Record ONE shadow comparison. Cheap + TOTAL (never throws) — it runs on the generation hot path
+ * behind a fire-and-forget call, so a metrics-layer hiccup must not be able to fail a generation.
+ */
+export function recordExternalModerationShadow(
+  source: ExternalModerationSource,
+  outcome: ModerationShadowOutcome
+): void {
+  try {
+    shadowCounter.inc({ source: clampExternalModerationSource(source), outcome });
+  } catch {
+    // Observability must never break the moderation path. Swallow any prom-client error.
+  }
+}
