@@ -174,13 +174,9 @@ export const useQueryModels = (
       // cast: v5 InfiniteData pageParams typing (bigint vs string|number) is stricter here.
       (oldData) => oldData ?? (data as typeof oldData)
     );
-    const message = getQueryErrorMessage(error);
     showErrorNotification({
-      // Keyed by message, not by the query: a retry storm repeats one message and collapses,
-      // while a second feed failing differently still gets its own toast.
-      id: `model-get-all-error:${message}`,
       title: 'Failed to fetch data',
-      error: new Error(message),
+      error: new Error(getQueryErrorMessage(error)),
     });
   }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
