@@ -184,7 +184,7 @@ function primeOneModelWithALinkedVae() {
     },
   } as never);
 
-  mockDbRead.$queryRaw.mockResolvedValue([]); // getModelPaidAccessGates
+  mockDbRead.$queryRaw.mockResolvedValue([]);
   mockDbRead.modelMetric.findMany.mockResolvedValue([]);
   mockDbRead.modelVersionMetric.findMany.mockResolvedValue([]);
   mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);

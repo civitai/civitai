@@ -8,7 +8,11 @@ import { describe, expect, it } from 'vitest';
  * one and not the other: the badge is right in the feed, missing in search, both look correct alone,
  * and nothing fails.
  *
- * WHAT THIS COVERS: the badge derivation, and its delivery to the search surface.
+ * HALF OF THIS FILE IS EXISTENCE CHECKS, ON PURPOSE. An earlier version was prohibitions only — no
+ * second copy, no unimported deriver — and every one of those passes vacuously once the feature is
+ * gone. Deleting the derivation from both surfaces left the whole guard green, because a rule about
+ * what must not appear says nothing about what must. The `produces` block below is the other half.
+ *
  * WHAT THIS DOES NOT COVER, deliberately: the feed's paid-access FILTER —
  * `getActiveEarlyAccessModelIds` and `getPermanentPaidAccessModelIds` in `model.service.ts`, and the
  * inline EXISTS clauses in `getModelsRaw`. Those answer a different question (which models to return,
@@ -20,6 +24,15 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = path.resolve(__dirname, '../../../..');
 const HELPER = 'src/server/services/paid-access.service.ts';
 const INDEX = 'src/server/search-index/models.search-index.ts';
+const FEED = 'src/server/services/model.service.ts';
+const CARD = 'src/components/Cards/ModelCard.tsx';
+const TRANSFORM = 'src/shared/search/models-transform.ts';
+const CONTRACT = 'packages/civitai-buzz/src/paid-access.ts';
+
+const MODEL_JOIN = 'JOIN "ModelVersion" mv ON mv.id = pa."entityId"';
+// The two pre-existing feed-filter copies. Counted rather than excused by filename: excluding the
+// whole file would excuse a third copy added to the one file the badge derivation used to live in.
+const FEED_JOIN_COUNT = 2;
 
 function walk(dir: string, out: string[] = []) {
   for (const entry of readdirSync(dir)) {
@@ -31,6 +44,8 @@ function walk(dir: string, out: string[] = []) {
   return out;
 }
 
+const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
+
 const sourceFiles = walk(path.join(repoRoot, 'src'))
   .map((full) => ({
     rel: path.relative(repoRoot, full).split(path.sep).join('/'),
@@ -40,18 +55,39 @@ const sourceFiles = walk(path.join(repoRoot, 'src'))
   // first run.
   .filter((f) => !/(^|\/)__tests__(\/|$)/.test(f.rel) && !/\.(browser\.)?test\.tsx?$/.test(f.rel));
 
-const helperText = readFileSync(path.join(repoRoot, HELPER), 'utf8');
+const helperText = read(HELPER);
+
+describe('the paid-gate badge is actually produced', () => {
+  it('the search index emits hasActivePaidAccess on every document', () => {
+    expect(
+      read(INDEX),
+      'models.search-index must set hasActivePaidAccess on the indexed document — allowlisting the ' +
+        'key while emitting nothing leaves search cards unbadged with every prohibition here green.'
+    ).toMatch(/hasActivePaidAccess:\s*paidAccessGates/);
+  });
+
+  it('the feed sets hasActivePaidAccess from the gate map', () => {
+    expect(
+      read(FEED),
+      'getModelsRaw must assign hasActivePaidAccess from the gate map. A constant, or dropping the ' +
+        'assignment, unbadges every feed card and no prohibition in this file can see it.'
+    ).toMatch(/model\.hasActivePaidAccess\s*=\s*gate\?\.gated/);
+  });
+
+  it('the card reads the flag', () => {
+    expect(
+      read(CARD),
+      'ModelCard must read data.hasActivePaidAccess — without it the server work is inert.'
+    ).toMatch(/data\.hasActivePaidAccess/);
+  });
+});
 
 describe('paid-gate badge derivation lives in exactly one place', () => {
   it('no other module derives model-level gate state from PaidAccess', () => {
     const offenders = sourceFiles
-      .filter((f) => f.rel !== HELPER)
-      // The join that turns PaidAccess rows into a per-MODEL answer. The two filter helpers named in
-      // the header also match it, so model.service.ts is excluded BY NAME — a pattern narrow enough
-      // to miss them would also miss a new copy.
-      .filter((f) => /JOIN "ModelVersion" mv ON mv\.id = pa\."entityId"/.test(f.text))
-      .map((f) => f.rel)
-      .filter((rel) => rel !== 'src/server/services/model.service.ts');
+      .filter((f) => f.rel !== HELPER && f.rel !== FEED)
+      .filter((f) => f.text.includes(MODEL_JOIN))
+      .map((f) => f.rel);
 
     expect(
       offenders,
@@ -61,72 +97,100 @@ describe('paid-gate badge derivation lives in exactly one place', () => {
     ).toEqual([]);
   });
 
-  it('every file that sets hasActivePaidAccess imports the helper', () => {
+  it('model.service.ts still carries exactly the two filter copies, and no more', () => {
+    const count = read(FEED).split(MODEL_JOIN).length - 1;
+
+    expect(
+      count,
+      `model.service.ts holds ${FEED_JOIN_COUNT} known PaidAccess->ModelVersion joins, both for the ` +
+        `feed FILTER (getActiveEarlyAccessModelIds, getPermanentPaidAccessModelIds). A third is a new ` +
+        `copy of the badge rule in the file it used to live in. If you legitimately added or removed ` +
+        `a filter, update FEED_JOIN_COUNT and say so.`
+    ).toBe(FEED_JOIN_COUNT);
+  });
+
+  it('every file that sets hasActivePaidAccess imports the helper from the owning module', () => {
     // Matches the object-literal key, a plain assignment, and shorthand — the three ways to write it.
-    // A guard keyed only on `hasActivePaidAccess:` let the other two walk past.
     const setsField = /hasActivePaidAccess\s*[:=]|\{\s*hasActivePaidAccess\s*[,}]/;
+    // The module path matters: importing a same-named function from a local copy is the divergence
+    // this guard exists to stop, and a name-only check waves it through.
+    const importsHelper =
+      /import \{[^}]*getModelPaidAccessGates[^}]*\} from '~\/server\/services\/paid-access\.service'/s;
 
     const offenders = sourceFiles
-      .filter((f) => f.rel !== HELPER)
+      .filter((f) => f.rel !== HELPER && f.rel !== CARD)
       .filter((f) => setsField.test(f.text))
-      .filter((f) => !/import \{[^}]*getModelPaidAccessGates/s.test(f.text))
+      .filter((f) => !importsHelper.test(f.text))
       .map((f) => f.rel);
 
     expect(
       offenders,
-      `These files build a hasActivePaidAccess value without importing getModelPaidAccessGates().`
+      `These files build a hasActivePaidAccess value without importing getModelPaidAccessGates from ` +
+        `~/server/services/paid-access.service.`
     ).toEqual([]);
   });
+});
 
-  it('the row predicate is isPaidAccessActive, not a timeframeDays test', () => {
-    // Pinned by spelling, the same trade as no-lint-rules-script-drift: a reword goes red for a
-    // non-defect, which is cheaper than what it replaces.
-    //
-    // This clause IS the definition of "paid right now", and every plausible rewrite of it is a
-    // user-visible bug nothing else here can see. `endsAt > NOW()` alone drops every permanent gate.
-    // Keying on `timeframeDays` drops the 36 published versions on prod whose timed gate was never
-    // materialized — paywalled, endsAt NULL, timeframeDays set — and in the other direction admits
-    // expired tombstones, which are never deleted.
+describe('the derivation says what it means', () => {
+  it('the row predicate is exactly isPaidAccessActive, with nothing narrowing it', () => {
+    // Anchored WHERE..GROUP BY rather than `toContain`, because `toContain` is satisfied while an
+    // EXTRA conjunct narrows the result. `AND timeframeDays IS NULL` re-introduces the exact bug this
+    // guard's own history is about — the 36 published versions whose timed gate was never
+    // materialized, paywalled and unbadged — and a substring check cannot see it.
+    const where = helperText.match(/WHERE pa\."entityType"[\s\S]*?GROUP BY/);
+
     expect(
-      helperText,
-      'getModelPaidAccessGates must admit a row on (endsAt IS NULL OR endsAt > NOW()) — that is ' +
-        'isPaidAccessActive in SQL, and anything else mislabels a real gate.'
-    ).toContain('(pa."endsAt" IS NULL OR pa."endsAt" > NOW())');
+      where?.[0],
+      'getModelPaidAccessGates has no recognisable WHERE..GROUP BY block'
+    ).toBeTruthy();
+    expect(
+      where?.[0],
+      'The predicate must be entityType + isPaidAccessActive + Published + the id list, and nothing ' +
+        'else. An added conjunct silently narrows which gates get a badge.'
+    ).toBe(
+      `WHERE pa."entityType" = 'ModelVersion'\n` +
+        `      AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())\n` +
+        `      AND mv.status = 'Published'::"ModelStatus"\n` +
+        `      AND mv."modelId" IN (\${Prisma.join(modelIds)})\n` +
+        `    GROUP BY`
+    );
   });
 
-  it('an unpublished version cannot gate the card', () => {
+  it('the SQL predicate still matches the TypeScript contract it claims to translate', () => {
+    // `isPaidAccessActive` lives in packages/, which this guard's walk() cannot reach — so the same
+    // rule is stated on both sides of a package boundary with nothing holding them together. Change
+    // the TS and the SQL diverges silently.
     expect(
-      helperText,
-      'getModelPaidAccessGates must still filter on mv.status = Published.'
-    ).toContain(`mv.status = 'Published'::"ModelStatus"`);
+      read(CONTRACT),
+      'isPaidAccessActive changed shape. The SQL in getModelPaidAccessGates is a hand translation of ' +
+        'it — re-check `(endsAt IS NULL OR endsAt > NOW())` against the new definition, then update ' +
+        'this assertion.'
+    ).toMatch(/isPaidAccessActive[\s\S]{0,200}row\.endsAt == null \|\| row\.endsAt > now/);
   });
 });
 
 describe('the badge reaches the search surface', () => {
-  it('hasActivePaidAccess is served by the models index', () => {
-    const indexText = readFileSync(path.join(repoRoot, INDEX), 'utf8');
+  it('hasActivePaidAccess is inside the models index displayedAttributes array', () => {
+    const indexText = read(INDEX);
+    // Slice the array literal rather than matching across the file: an unbounded `[\s\S]*` is
+    // satisfied by the key appearing in any LATER array (filterableAttributes is built in the same
+    // function), which would pass while Meilisearch strips the field.
+    const block = indexText.match(/const displayedAttributes = \[([\s\S]*?)\];/);
 
-    // Meili returns only what displayedAttributes allowlists. Drop the key and the derivation stays
-    // perfectly unified while the search-served card reads `undefined` — the original bug restored,
-    // with every other check in this file still green.
+    expect(block?.[1], 'displayedAttributes is no longer a literal array here').toBeTruthy();
     expect(
-      indexText,
-      `'hasActivePaidAccess' must be in the models index displayedAttributes, or Meilisearch strips it and ` +
-        `the badge silently disappears from search while remaining correct in the feed.`
-    ).toMatch(/displayedAttributes[\s\S]*'hasActivePaidAccess'[\s\S]*\]/);
+      block?.[1],
+      `'hasActivePaidAccess' must be in displayedAttributes, or Meilisearch strips it and the badge ` +
+        `silently disappears from search while remaining correct in the feed.`
+    ).toContain("'hasActivePaidAccess'");
   });
 
   it('earlyAccessDeadline is coerced to a Date on the search path', () => {
-    const transform = readFileSync(
-      path.join(repoRoot, 'src/shared/search/models-transform.ts'),
-      'utf8'
-    );
-
     // Meili returns dates as ISO strings. The type says Date, so nothing else catches this: the card
     // compares `deadline > new Date()`, and string > Date is NaN — false forever, so the Early Access
     // badge simply never renders on /search/models.
     expect(
-      transform,
+      read(TRANSFORM),
       'transformModelHits must coerce earlyAccessDeadline — the type claims Date while Meili returns ' +
         'a string, and the card silently stops showing Early Access in search.'
     ).toMatch(/earlyAccessDeadline:[\s\S]{0,120}new Date\(item\.earlyAccessDeadline\)/);

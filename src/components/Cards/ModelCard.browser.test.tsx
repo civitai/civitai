@@ -204,14 +204,15 @@ describe('ModelCard review indicator (batched membership)', () => {
 });
 
 // =============================================================================
-// Paid-gate badge. A permanent gate carries NO deadline (`endsAt IS NULL` by
-// definition), so before `hasActivePaidAccess` the card had nothing to read
-// and 2,916 published paid models rendered no marker at all.
+// Paid-gate badge. `hasActivePaidAccess` is ANY live gate — permanent, or timed
+// with an end date that was never materialized. Both reach the card as
+// `deadline: null`, which is why the card cannot tell them apart and why the
+// distinction is pinned in the SQL guard rather than here.
 //
-// The two words are deliberately not interchangeable and this block is what
-// stops them being merged back together: an Early Access window ENDS and the
-// model becomes free (`process-ending-early-access` does it), a permanent gate
-// never does. If you are here to collapse these into one label, that is why.
+// The two WORDS are deliberately not interchangeable: an Early Access window
+// ENDS and the model becomes free (`process-ending-early-access` does it), a
+// gate with no end date never does. If you are here to collapse these into one
+// label, that is why.
 // =============================================================================
 
 // The harness mounts a bare `MantineProvider`, whose default palette has no `success` scale — and
@@ -295,15 +296,6 @@ describe('ModelCard paid-gate badge', () => {
       expect(document.querySelector('[data-reviewed]')).toBeTruthy();
     });
     expect(document.querySelector('[data-status-badge]')).toBeNull();
-  });
-
-  test('a gate with no deadline still reads "Paid" — an unmaterialized timed window is paywalled', async () => {
-    renderWithProviders(
-      <WithPalette>
-        <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
-      </WithPalette>
-    );
-    expect(await statusBadgeText()).toBe('Paid');
   });
 
   test('the Paid badge uses the Early Access colour, not the New/Updated one', async () => {
