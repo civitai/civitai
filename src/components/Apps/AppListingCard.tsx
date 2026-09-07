@@ -96,16 +96,24 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * gets a `⋮` still has no geometry consequence beyond the trigger's own 36px, so
  * the card still does not compute that predicate.
  *
- * 🔴 THE PLAY COUNT SITS BESIDE THE ROLLUP, AND `openCount === null` RENDERS
- * NOTHING AT ALL — NOT A `0`. That is an OPERATOR OVERRIDE recorded as a decision,
- * not a formatting derivation: an off-site listing's CTA is a third-party
- * `target="_blank"` anchor, so no on-platform request follows the click and the
- * number is STRUCTURALLY ABSENT. A `0` would read as "nobody has ever used this
- * app" about an app we cannot measure. The mirror is equally deliberate — an
- * ON-SITE listing with a genuine `0` DOES render "0 plays", because there the
- * zero is a measurement. The DTO makes the same distinction at
- * `app-listing-read.schema.ts`'s `openCount` and at `app-listing.service.ts`'s
- * `cardOpenCount`; this component is the renderer those two comments promise.
+ * 🔴 THE PLAY COUNT SITS BESIDE THE ROLLUP, AND IT RENDERS ONLY FOR A COUNT OF ONE
+ * OR MORE. Both `openCount === null` and `openCount === 0` render NOTHING AT ALL.
+ * That is an OPERATOR OVERRIDE recorded as a decision, not a formatting derivation
+ * — and the two inputs reach the same pixels for DIFFERENT reasons:
+ *   · `null` is STRUCTURALLY UNMEASURABLE (an off-site CTA is a third-party
+ *     `target="_blank"` anchor; nothing on-platform observes the click);
+ *   · `0` is MEASURED AND EMPTY (an on-site app nobody has opened yet).
+ * The DTO keeps those apart deliberately — see `app-listing-read.schema.ts`'s
+ * `openCount` and `app-listing.service.ts`'s `cardOpenCount`, whose "do not
+ * over-null" paragraph must keep holding — and this card is where the operator's
+ * choice to render them IDENTICALLY lives. The rule itself is in
+ * `getPlayCountLabel`, not here.
+ *
+ * ⚠️ THE ZERO HALF REVERSES THE FIRST ROUND OF THIS PR, which rendered "0 plays"
+ * and argued that it must. Operator, 2026-09-06: "dont show 0 plays (just show
+ * nothing)". Flagged rather than quietly rewritten, because the earlier argument
+ * (a zero is a measurement, not an absence) is still right about the DATA and was
+ * only ever wrong about the SCREEN.
  *
  * 🔴 THERE IS NO KIND BADGE ON THIS CARD. This line used to claim "a kind badge
  * (App / Connect app / Off-site)" — doubly wrong: two of those labels no longer
@@ -787,15 +795,20 @@ export function AppListingCard({
               {recommendLabel}
             </Text>
           </Group>
-          {/* 🔴 RENDERED ONLY WHEN THE COUNT IS MEASURABLE. `playCountLabel` is
-              `null` exactly when `card.openCount` is `null`, i.e. off-site — the
-              rule and its OPERATOR OVERRIDE live in `getPlayCountLabel`, not here.
-              An on-site `0` yields "0 plays" and must keep rendering.
+          {/* 🔴 RENDERED ONLY FOR A COUNT OF ONE OR MORE. `playCountLabel` is
+              `null` for BOTH `card.openCount === null` (off-site, unmeasurable)
+              and `card.openCount === 0` (on-site, measured and empty) — two
+              different facts the operator chose to render identically. The rule and
+              its OPERATOR OVERRIDE live in `getPlayCountLabel`, not here; this
+              component only omits a `null`.
 
               🔴 `!= null`, NOT `{playCountLabel && …}`. The label is a string, and
               the empty string is falsy — so a truthiness test would silently
               suppress a legitimately empty label if the copy ever changed shape.
-              The type is `string | null`; test for the `null`. */}
+              The type is `string | null`; test for the `null`. (Note the asymmetry
+              on purpose: a truthiness test is refused HERE, on the label, and used
+              — spelled out as `=== 0` — THERE, on the count. Different values,
+              different reasons.) */}
           {playCountLabel != null && (
             <Group
               gap={4}

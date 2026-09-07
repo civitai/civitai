@@ -144,22 +144,34 @@ describe('getRecommendLabel', () => {
 });
 
 /**
- * 🔴 THE PLAY COUNT'S NULL-VS-ZERO RULE — AND THIS IS THE TIER THAT OWNS IT.
+ * 🔴 THE PLAY COUNT'S ABSENCE RULE — AND THIS IS THE TIER THAT OWNS IT.
  *
- * The rule is an OPERATOR OVERRIDE (2026-09-06), not a formatting derivation:
- * `openCount === null` means the number is STRUCTURALLY UNMEASURABLE (an off-site
- * listing's CTA is a third-party `target="_blank"` anchor, so nothing on-platform
- * observes the click), and such a card renders NO play stat at all — a `0` there
- * would read as "nobody has ever used this app" about an app we cannot measure.
- * The mirror is equally deliberate: an ON-SITE listing with a genuine `0` renders
- * "0 plays", because there the zero IS the measurement.
+ * The rule is an OPERATOR OVERRIDE (2026-09-06), not a formatting derivation. TWO
+ * DIFFERENT INPUTS RENDER NOTHING, FOR TWO DIFFERENT REASONS:
+ *   · `null` — STRUCTURALLY UNMEASURABLE. An off-site listing's CTA is a
+ *     third-party `target="_blank"` anchor, so nothing on-platform observes the
+ *     click. There is no number and there never will be one.
+ *   · `0` — MEASURED AND EMPTY. An on-site app nobody has opened yet. The number
+ *     exists and is trustworthy.
+ * The operator chose the SAME rendering for both: "dont show 0 plays (just show
+ * nothing)". Each has its own named case below precisely because they are not the
+ * same fact — a single "falsy → null" test would let a future reader conclude the
+ * zero case is an accident of truthiness.
+ *
+ * ⚠️ THE ZERO CASE IS A REVERSAL, AND THE OLD ASSERTION IS RECORDED RATHER THAN
+ * DELETED. Round 1 of this PR asserted `getPlayCountLabel(0) === '0 plays'` under
+ * the heading "a genuine ZERO is a measurement, not an absence", with the reasoning
+ * that only `null` may be over-nulled. That reasoning is still correct about the
+ * DTO — `cardOpenCount`'s "do not over-null" rule is untouched and must stay — and
+ * was only ever a claim about the DATA, not about what a browsing grid should
+ * print. The inverted assertion below is what the operator asked for.
  *
  * 🔴 IT IS TESTED HERE RATHER THAN ONLY IN THE BROWSER TIER BECAUSE OF WHICH TIER
  * GOES RED. `AppListingCard.browser.test.tsx` renders the real card and asserts the
  * omission end-to-end, but the browser `component` project never blocks anything;
  * the node `unit` project at least reddens a `main` push. Expressing the rule as a
  * pure function is what makes it visible to this tier at all — as JSX
- * (`card.openCount != null && …`) it would be invisible here. (Neither tier gates a
+ * (`card.openCount ? … : null`) it would be invisible here. (Neither tier gates a
  * PR: `lint.yml` marks both `continue-on-error` for `pull_request`. Canonical
  * statement: `appListingCardGeometry.ts`'s header.)
  *
@@ -171,20 +183,46 @@ describe('getRecommendLabel', () => {
  * neither.
  */
 describe('getPlayCountLabel', () => {
-  it('🔴 null → null, so the caller has no number to print', () => {
+  it('🔴 null (UNMEASURABLE — off-site) → null, so the caller prints nothing', () => {
     expect(getPlayCountLabel(null)).toBeNull();
   });
 
-  it('🔴 a genuine ZERO is a measurement, not an absence → "0 plays"', () => {
-    // The mutation this refuses is `if (!openCount) return null`, which collapses
-    // the unmeasurable case and the measured-as-none case into one.
-    expect(getPlayCountLabel(0)).toBe('0 plays');
+  it('🔴 0 (MEASURED AND EMPTY — on-site, never opened) → null: no "0 plays" chip', () => {
+    // ⚠️ THE INVERTED ASSERTION. Round 1 required `'0 plays'` here. Operator
+    // override 2026-09-06: "dont show 0 plays (just show nothing)". The mutant this
+    // refuses is a restoration of that — `if (openCount == null) return null` alone,
+    // which puts the chip back on every on-site app with no plays yet.
+    expect(getPlayCountLabel(0)).toBeNull();
   });
 
-  it('singular at exactly 1, plural either side of it', () => {
+  /**
+   * 🔴 THE BOUNDARY, AND THE REASON IT NEEDS ITS OWN CASE. The absence rule stops
+   * at 0 and nowhere else: 1 is the smallest count that renders. A mutant widening
+   * the guard (`openCount <= 1`, `openCount < 2`) is invisible to the two cases
+   * above and to every large-count fixture below — this is the only fixture that
+   * sits on it.
+   */
+  it('🔴 1 is the smallest count that RENDERS — the absence stops at 0', () => {
+    expect(getPlayCountLabel(1)).toBe('1 play');
+  });
+
+  /**
+   * ⚠️ THE OFF-BY-ONE PLURALISER IS NO LONGER OBSERVABLE, AND THAT IS RECORDED HERE
+   * SO IT IS NOT RE-DERIVED AS A COVERAGE HOLE. Round 1 of this PR killed the mutant
+   * `openCount > 1 ? 'plays' : 'play'` — via `getPlayCountLabel(0) === '0 plays'`,
+   * since `=== 1` and `> 1`-inverted differ ONLY below 1. With the zero case now
+   * returning `null` before the plural is reached, that mutant is EQUIVALENT on the
+   * reachable domain (`openCount >= 1`) and survives a green suite. Re-measured after
+   * the reversal, not assumed.
+   *
+   * No fixture can fix that — an equivalent mutant has no killing input — so the
+   * honest statement is that the `=== 1` spelling is now a readability choice on this
+   * line rather than a behaviour the suite pins. What IS pinned, and what actually
+   * matters, is the BOUNDARY above: 1 renders and 0 does not.
+   */
+  it('singular at exactly 1, plural above it', () => {
     expect(getPlayCountLabel(1)).toBe('1 play');
     expect(getPlayCountLabel(2)).toBe('2 plays');
-    expect(getPlayCountLabel(0)).toBe('0 plays');
   });
 
   it('abbreviates a large count rather than printing separators', () => {

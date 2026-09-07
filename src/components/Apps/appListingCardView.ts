@@ -90,34 +90,56 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
 }
 
 /**
- * Play count → display label (`0 plays` / `1 play` / `12.4k plays`), or `null` when
- * there is no honest number to print.
+ * Play count → display label (`1 play` / `12.4k plays`), or `null` when the card
+ * should print no play stat at all.
  *
- * 🔴 `null` IN, `null` OUT — AND THAT IS AN OPERATOR OVERRIDE RECORDED AS A
- * DECISION, NOT A FORMATTING DERIVATION. `ListingCard.openCount` is `null` exactly
- * when the count is STRUCTURALLY UNMEASURABLE: an off-site listing's CTA is a
- * third-party `target="_blank"` anchor, so no on-platform request follows the click
- * and nothing observes it. The operator's call (2026-09-06) is that such a card
- * renders NO play stat at all — a `0` there would read as "nobody has ever used
- * this app" about an app we simply cannot measure. The DTO says the same thing in
- * two places (`app-listing-read.schema.ts`'s `openCount`, and
- * `app-listing.service.ts`'s `cardOpenCount`, whose own comment promises "the
- * renderer omits the stat row"); this function is where that promise becomes code.
+ * 🔴 TWO DIFFERENT REASONS FOR ABSENCE, ONE SHARED RENDERING — AND THE SHARING IS
+ * AN OPERATOR OVERRIDE, NOT A DERIVATION. Read this before "fixing" either case.
+ *
+ *   · `null` — STRUCTURALLY UNMEASURABLE. An off-site listing's CTA is a
+ *     third-party `target="_blank"` anchor, so no on-platform request follows the
+ *     click and nothing observes it. There is no number, and there never will be
+ *     one for that listing.
+ *   · `0` — MEASURED, AND EMPTY. An on-site listing nobody has opened yet is a
+ *     genuine zero (the COALESCE-to-0 reading `app-listing.service.ts`'s
+ *     `cardOpenCount` documents). The number exists, is trustworthy, and is zero.
+ *
+ * These are NOT the same fact. The DTO keeps them apart deliberately and must keep
+ * doing so — `cardOpenCount`'s "do not over-null" paragraph exists to stop an
+ * on-site row being reported as unmeasurable. What the operator decided
+ * (2026-09-06) is only what the CARD DOES WITH THEM: **both render nothing**.
+ * "dont show 0 plays (just show nothing)" — a `0 plays` chip is noise on a browsing
+ * grid and reads as a verdict on the app rather than as an empty measurement.
+ *
+ * ⚠️ THIS REVERSES THE FIRST ROUND OF THIS PR, WHICH RENDERED "0 plays" FOR AN
+ * ON-SITE ZERO AND ARGUED AT LENGTH THAT IT MUST. That argument was about TRUTH —
+ * a zero is a measurement, not an absence — and it is still correct about the data
+ * model; it was simply not the call to make about the pixels. Recorded here rather
+ * than deleted, because the next reader will otherwise meet the zero case, think it
+ * is a truthiness accident, and "restore" it.
+ *
+ * 🔴 SO THE ZERO CASE IS SPELLED EXPLICITLY (`openCount === 0`) RATHER THAN LEFT TO
+ * `if (!openCount)`. The two are behaviourally identical here and that is exactly
+ * the problem: a bare falsy check reads as an oversight and carries none of the
+ * decision above. The explicit form is a signpost — anyone changing it has to
+ * notice they are changing something someone chose.
+ *
+ * ⚠️ AND BECAUSE IT IS A SIGNPOST, NO TEST CAN DEFEND IT — SAID PLAINLY RATHER THAN
+ * IMPLIED. `if (!openCount) return null` was MEASURED to survive the whole node
+ * suite (it is an equivalent mutant over `number | null`), so the spelling here is
+ * legibility, not a guarded invariant. Do not read the test file as pinning it. What
+ * the tests DO pin is the boundary either spelling produces: `null` → nothing, `0` →
+ * nothing, `1` → "1 play".
  *
  * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
  * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
  * only covered by the browser `component` project, which is REPORT-ONLY; the node
- * `unit` project is the one that reddens a `main` push. A null-vs-zero rule
- * expressed as JSX (`card.openCount != null && …`) would be invisible to the only
- * tier that ever goes red on its own. Expressed as this function's return type it
- * is pinned in `__tests__/appListingCardView.test.ts`, and the component is left
- * with a branch that has nothing to get wrong.
- *
- * 🔴 AND `0` IS A REAL ANSWER — the mirror half, equally load-bearing. An ON-SITE
- * listing nobody has opened yet is a genuine zero (the COALESCE-to-0 reading
- * `cardOpenCount` documents), so this returns "0 plays" rather than treating a
- * falsy value as absence. A truthiness test here (`if (!openCount) return null`)
- * would collapse the two cases and is exactly what the guard below refuses.
+ * `unit` project is the one that reddens a `main` push. A rule expressed as JSX
+ * (`card.openCount ? … : null`) would be invisible to the only tier that ever goes
+ * red on its own. Expressed as this function's return type it is pinned in
+ * `__tests__/appListingCardView.test.ts` — with `null`, `0` and `>0` as three
+ * separately-named cases — and the component is left with a branch that has nothing
+ * to get wrong.
  *
  * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
  * `getRecommendLabel` above rather than an inconsistency. A review count is an
@@ -128,11 +150,14 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  * not a second formatter.
  *
  * Pluralisation reads the RAW value, not the abbreviated string: exactly 1 is
- * "1 play"; everything else — including 0, and including 1000 (which abbreviates to
- * "1k") — is "plays".
+ * "1 play"; everything else — including 1000, which abbreviates to "1k" — is
+ * "plays". (0 no longer reaches the plural at all, but the branch is written for
+ * the value rather than for the reachable set, so it stays correct if the zero
+ * decision is ever reversed back.)
  */
 export function getPlayCountLabel(openCount: number | null): string | null {
-  if (openCount == null) return null;
+  // Both arms are absence-on-screen; they are NOT the same fact. See above.
+  if (openCount == null || openCount === 0) return null;
   return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
 }
 

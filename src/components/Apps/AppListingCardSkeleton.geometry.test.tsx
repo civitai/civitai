@@ -59,8 +59,10 @@
  *     either direction. Pinned as an equality by the retargeted "a card with NO
  *     CREATOR is EXACTLY its skeleton" test below.
  *   · THE KIND. The stats line carries a PLAY COUNT that an off-site listing omits
- *     (`openCount === null` — nothing on-platform observes a third-party CTA). That
- *     omission shares the rollup's flex line, so it costs WIDTH and not height —
+ *     (`openCount === null`, unmeasurable — nothing on-platform observes a
+ *     third-party CTA — and `openCount === 0`, measured and empty; the operator
+ *     renders both as nothing). That omission shares the rollup's flex line, so it
+ *     costs WIDTH and not height —
  *     which is what lets the skeleton reserve one line without knowing a kind it
  *     structurally cannot know. Pinned by "an OFF-SITE card (no play count) is
  *     EXACTLY its skeleton too" below, because "it costs no height" is a
@@ -87,8 +89,17 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * accidentally uniform in a way that could hide a width bug, and no field spells
  * 2, 10, 36, 40, 46, 16 or 9 — a fixture that can only ever produce a constant's
  * own value cannot see a mutant that hardcodes the literal.
+ *
+ * 🔴 `openCount` IS NON-ZERO, AND THAT IS LOAD-BEARING RATHER THAN INCIDENTAL. It
+ * was `0` for every card in this pool, which was fine while an on-site zero
+ * rendered "0 plays". It no longer does — the operator's 2026-09-06 override omits
+ * the chip for `0` as well as for `null` — so a pool of zeroes would render NO play
+ * count on ANY arm, and the off-site parity test below would be comparing two cards
+ * that both omit it. Its positive control (the on-site arm must actually show a
+ * play count) is what catches that, and a non-zero pool is what satisfies it.
+ * Derived per card so the values stay pairwise distinct.
  */
-function makeCard(id: string, name: string, creator: string): ListingCard {
+function makeCard(id: string, name: string, creator: string, openCount: number): ListingCard {
   return {
     id,
     slug: `slug-${id}`,
@@ -105,7 +116,7 @@ function makeCard(id: string, name: string, creator: string): ListingCard {
     creator: { id: 7331, username: creator, image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
-    openCount: 0,
+    openCount,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
@@ -115,20 +126,29 @@ function makeCard(id: string, name: string, creator: string): ListingCard {
   };
 }
 
-/** Enough distinct listings to fill two rows at the widest count measured here. */
+/**
+ * Enough distinct listings to fill two rows at the widest count measured here.
+ *
+ * 🔴 EVERY `openCount` IS ≥ 1 AND ALL TWELVE ARE DISTINCT. ≥ 1 because that is the
+ * only band that RENDERS a play count (see `makeCard`'s note); distinct so no
+ * assertion can be green by two cards happening to print the same string. They also
+ * span three magnitude bands — three-digit, four-digit ("k") and seven-digit ("m") —
+ * so the row is not uniform in rendered WIDTH either, which is what a parity test
+ * comparing boxes should be exercised against.
+ */
 const POOL: ListingCard[] = [
-  makeCard('u1', 'Prompt Vault', 'ashling'),
-  makeCard('u2', 'Gen Matrix Studio', 'bertrand'),
-  makeCard('u3', 'Palette', 'cyd'),
-  makeCard('u4', 'Frame Weaver Pro', 'delphine'),
-  makeCard('u5', 'Nudge', 'esben'),
-  makeCard('u6', 'Contour Lab', 'fitzgerald'),
-  makeCard('u7', 'Stipple', 'greta'),
-  makeCard('u8', 'Rehearsal Room', 'hollis'),
-  makeCard('u9', 'Kerf', 'imogen'),
-  makeCard('u10', 'Sable Notebook', 'jarrah'),
-  makeCard('u11', 'Tessellate', 'kestrel'),
-  makeCard('u12', 'Overtone Bench', 'linnea'),
+  makeCard('u1', 'Prompt Vault', 'ashling', 317),
+  makeCard('u2', 'Gen Matrix Studio', 'bertrand', 4821),
+  makeCard('u3', 'Palette', 'cyd', 59),
+  makeCard('u4', 'Frame Weaver Pro', 'delphine', 1_234_567),
+  makeCard('u5', 'Nudge', 'esben', 7),
+  makeCard('u6', 'Contour Lab', 'fitzgerald', 88_402),
+  makeCard('u7', 'Stipple', 'greta', 1),
+  makeCard('u8', 'Rehearsal Room', 'hollis', 2_603),
+  makeCard('u9', 'Kerf', 'imogen', 143),
+  makeCard('u10', 'Sable Notebook', 'jarrah', 970_311),
+  makeCard('u11', 'Tessellate', 'kestrel', 26),
+  makeCard('u12', 'Overtone Bench', 'linnea', 55_118),
 ];
 
 const mocks = vi.hoisted(() => ({
@@ -673,11 +693,20 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
    * 🔴 THE PLAY COUNT'S OMISSION COSTS NO HEIGHT — MEASURED, BECAUSE THE SKELETON'S
    * LICENCE TO IGNORE THE LISTING'S KIND RESTS ON IT.
    *
-   * The card's stats line renders the recommend rollup always and the play count only
-   * when `openCount != null`. `null` means the number is structurally unmeasurable —
-   * an off-site listing's CTA is a third-party `target="_blank"` anchor, so nothing
-   * on-platform observes the click — and the operator's call (2026-09-06) is to omit
-   * the stat entirely rather than print a `0` about an app we cannot measure.
+   * The card's stats line renders the recommend rollup always, and the play count only
+   * for a count of ONE OR MORE. Two inputs omit it, for different reasons the operator
+   * chose to render identically (2026-09-06): `null` — structurally unmeasurable, an
+   * off-site CTA is a third-party `target="_blank"` anchor nothing on-platform
+   * observes — and `0` — measured and empty. This test uses the `null` arm; what it is
+   * really measuring is "the play count's box is absent", which is the same geometry
+   * either way.
+   *
+   * ⚠️ THE POOL'S `openCount` HAD TO MOVE OFF ZERO FOR THIS TEST TO STILL MEAN
+   * ANYTHING. Every fixture was `openCount: 0`, which rendered "0 plays" when this
+   * test was written and renders nothing now. The on-site arm would have omitted the
+   * chip too, so both arms would agree trivially and the positive control below —
+   * "the ON-SITE arm rendered no play count" — is exactly what fires on that. The pool
+   * now carries distinct non-zero counts; see its note.
    *
    * A loading state cannot know whether the card it is reserving for is on-site or
    * off-site, so the skeleton reserves ONE stats line for both. That is only correct

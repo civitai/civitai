@@ -1784,15 +1784,32 @@ describe('AppListingCard', () => {
     });
 
     /**
-     * 🔴 THE PLAY COUNT — RENDERED FOR A MEASURABLE LISTING, OMITTED ENTIRELY WHEN
-     * `openCount === null`. NEVER a `0` for the null case.
+     * 🔴 THE PLAY COUNT — RENDERED ONLY FOR A COUNT OF ONE OR MORE. BOTH
+     * `openCount === null` AND `openCount === 0` RENDER NOTHING.
      *
-     * 🔴 THAT OMISSION IS AN OPERATOR OVERRIDE, NOT A DERIVATION. An off-site
-     * listing's CTA is a third-party `target="_blank"` anchor, so nothing
-     * on-platform observes the click and the number is STRUCTURALLY ABSENT; a `0`
-     * would read as "nobody has ever used this app" about an app we cannot measure.
-     * The mirror is equally load-bearing and is asserted below: an ON-SITE listing
-     * with a genuine `0` DOES render "0 plays".
+     * 🔴 THAT IS AN OPERATOR OVERRIDE, NOT A DERIVATION — and the two inputs reach
+     * the same pixels for DIFFERENT reasons, which is why they get separate tests
+     * with separate names rather than one "falsy is absent" case:
+     *   · `null` is STRUCTURALLY UNMEASURABLE (an off-site listing's CTA is a
+     *     third-party `target="_blank"` anchor; nothing on-platform observes it);
+     *   · `0` is MEASURED AND EMPTY (an on-site app nobody has opened yet).
+     * Operator, 2026-09-06: "dont show 0 plays (just show nothing)".
+     *
+     * ⚠️ THE ZERO CASE IS INVERTED FROM ROUND 1 OF THIS PR, which asserted here that
+     * an on-site `0` DOES render "0 plays" because a zero is a measurement rather
+     * than an absence. That is still true of the DATA — `cardOpenCount`'s "do not
+     * over-null" rule is untouched — and was only ever wrong about the SCREEN. Said
+     * out loud so the next reader does not read the inversion as a regression.
+     *
+     * 🔴 EVERY ABSENCE TEST BELOW CARRIES ITS OWN POSITIVE CONTROL **ON THE SAME
+     * SELECTOR, IN THE SAME RENDER**, and that is a change forced by this reversal
+     * rather than a stylistic choice. With TWO of the three inputs now rendering
+     * nothing, `document.querySelector(PLAY_COUNT_SELECTOR) === null` is what a
+     * BROKEN SELECTOR looks like as well as what correct behaviour looks like — and
+     * the previous version leaned on a sibling test having shown the selector works,
+     * which is not a control at all once most fixtures produce nothing. So each
+     * absence test renders a `>0` card ALONGSIDE the absent one and proves the
+     * selector matches the former before believing the `null` from the latter.
      *
      * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND DISTINCT FROM EVERY CONSTANT THESE
      * ASSERTIONS NAME. 4821 is not 0, not 1, not a row/control/gap px value, and
@@ -1801,13 +1818,28 @@ describe('AppListingCard', () => {
      * geometry literal, cannot produce it.
      */
     describe('🔴 the play count', () => {
-      test('an on-site listing renders it beside the rollup', async () => {
-        renderWithProviders(<Sized width={314} card={base({ openCount: 4821 })} />);
+      /** A card with real plays — the positive arm of every pairing below. */
+      const BUSY = { name: 'Busy App', slug: 'busy-app', openCount: 4821 };
+
+      /**
+       * The one card in `document` whose subtree matches `sel`, or `null`. Used for
+       * BOTH presence and absence, so an absence is always read the same way a
+       * presence is.
+       */
+      function cardNamed(title: string): HTMLElement {
+        const heading = page.getByText(title, { exact: true }).element() as HTMLElement;
+        const card = heading.closest('[class*="Card-root"]') as HTMLElement | null;
+        expect(card, `no card root around the title "${title}"`).not.toBeNull();
+        return card!;
+      }
+
+      test('an on-site listing with plays renders the count beside the rollup', async () => {
+        renderWithProviders(<Sized width={314} card={base(BUSY)} />);
         await expect
           .element(page.getByRole('link', { name: 'Open', exact: true }))
           .toBeInTheDocument();
         const play = document.querySelector(PLAY_COUNT_SELECTOR) as HTMLElement | null;
-        expect(play, 'the play count did not render for a measurable listing').not.toBeNull();
+        expect(play, 'the play count did not render for a listing with plays').not.toBeNull();
         expect(play!.textContent).toContain('4.8k plays');
         // BESIDE the rollup, i.e. on the SAME line — not a second line, which would
         // make the card taller than the skeleton reserves.
@@ -1825,60 +1857,107 @@ describe('AppListingCard', () => {
         );
       });
 
-      test('🔴 a genuine ZERO renders — "0 plays" is a measurement, not an absence', async () => {
-        renderWithProviders(<Sized width={314} card={base({ openCount: 0 })} />);
-        await expect
-          .element(page.getByRole('link', { name: 'Open', exact: true }))
-          .toBeInTheDocument();
-        const play = document.querySelector(PLAY_COUNT_SELECTOR) as HTMLElement | null;
-        expect(
-          play,
-          'an ON-SITE listing with openCount 0 rendered no play count. 0 is a real ' +
-            'measurement ("no plays recorded yet") — only `null` is unmeasurable. A ' +
-            'truthiness test (`card.openCount && …`) instead of `!= null` is the likely cause.'
-        ).not.toBeNull();
-        expect(play!.textContent).toContain('0 plays');
-      });
-
-      test('🔴 openCount === null renders NO play count node — never a 0', async () => {
+      test('🔴 openCount 0 (MEASURED AND EMPTY) renders NO play count — no "0 plays" chip', async () => {
+        // Two cards in ONE render: the control and the case. `Sized` takes a single
+        // card, so they are laid out side by side here.
         renderWithProviders(
-          <Sized
-            width={314}
-            card={base({
-              kind: 'offsite',
-              openCount: null,
-              kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
-            })}
-          />
+          <div style={{ display: 'flex', width: 640, alignItems: 'flex-start' }}>
+            <div style={{ width: 314 }}>
+              <AppListingCard card={base(BUSY)} canOpenPage />
+            </div>
+            <div style={{ width: 314 }}>
+              <AppListingCard
+                card={base({ name: 'Quiet App', slug: 'quiet-app', openCount: 0 })}
+                canOpenPage
+              />
+            </div>
+          </div>
         );
-        await expect
-          .element(page.getByRole('link', { name: 'Visit', exact: true }))
-          .toBeInTheDocument();
+        await expect.element(page.getByText('Busy App', { exact: true })).toBeInTheDocument();
+        await expect.element(page.getByText('Quiet App', { exact: true })).toBeInTheDocument();
 
-        // 🔴 POSITIVE CONTROL ON THE SELECTOR ITSELF, in this same test. The two
-        // tests above already show `PLAY_COUNT_SELECTOR` CAN match — but a bare
-        // "not found" here would still be worthless if this render produced no card
-        // at all, so the rollup (which always renders) is read with the identical
-        // `querySelector` call shape before the absence is believed.
-        const rollup = document.querySelector(ROLLUP_SELECTOR) as HTMLElement | null;
+        // 🔴 POSITIVE CONTROL, SAME SELECTOR, SAME RENDER, FIRST.
+        const busy = cardNamed('Busy App');
+        const quiet = cardNamed('Quiet App');
+        expect(busy).not.toBe(quiet); // two distinct cards, not one matched twice
         expect(
-          rollup,
-          'the stats line did not render at all — the absence below is vacuous'
+          busy.querySelector(PLAY_COUNT_SELECTOR),
+          'PLAY_COUNT_SELECTOR matched nothing even on a card WITH plays — the absence ' +
+            'assertion below would be a fact about the selector, not about openCount 0'
         ).not.toBeNull();
 
+        // THE CLAIM.
         expect(
-          document.querySelector(PLAY_COUNT_SELECTOR),
-          'an off-site listing rendered a play count. `openCount === null` means the number ' +
-            'is STRUCTURALLY ABSENT (no on-platform request follows a third-party CTA), and ' +
-            'the operator\'s call is to omit the stat entirely — a "0" here is a false claim ' +
-            'about an app we cannot measure.'
+          quiet.querySelector(PLAY_COUNT_SELECTOR),
+          'an on-site listing with openCount 0 rendered a play count. Operator override ' +
+            '2026-09-06: "dont show 0 plays (just show nothing)". The likely cause is ' +
+            '`getPlayCountLabel` guarding on `openCount == null` alone again.'
         ).toBeNull();
         // …and not as bare text either, which a node stripped of its testid would be.
-        const card = document.querySelector('[class*="Card-root"]') as HTMLElement;
-        expect(card.textContent, 'the card prints a play count without its testid').not.toContain(
-          'plays'
+        expect(
+          quiet.textContent,
+          'the zero card prints a play count without its testid'
+        ).not.toContain('play');
+        // Exactly one in the document: the control's. Not zero (which would satisfy
+        // the absence vacuously) and not two.
+        expect(document.querySelectorAll(PLAY_COUNT_SELECTOR)).toHaveLength(1);
+      });
+
+      test('🔴 openCount null (UNMEASURABLE — off-site) renders NO play count either', async () => {
+        renderWithProviders(
+          <div style={{ display: 'flex', width: 640, alignItems: 'flex-start' }}>
+            <div style={{ width: 314 }}>
+              <AppListingCard card={base(BUSY)} canOpenPage />
+            </div>
+            <div style={{ width: 314 }}>
+              <AppListingCard
+                card={base({
+                  name: 'Away App',
+                  slug: 'away-app',
+                  kind: 'offsite',
+                  openCount: null,
+                  kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
+                })}
+              />
+            </div>
+          </div>
         );
-        expect(card.textContent).not.toContain('0 play');
+        await expect.element(page.getByText('Busy App', { exact: true })).toBeInTheDocument();
+        await expect.element(page.getByText('Away App', { exact: true })).toBeInTheDocument();
+
+        // 🔴 POSITIVE CONTROL, SAME SELECTOR, SAME RENDER, FIRST.
+        const busy = cardNamed('Busy App');
+        const away = cardNamed('Away App');
+        expect(busy).not.toBe(away);
+        expect(
+          busy.querySelector(PLAY_COUNT_SELECTOR),
+          'PLAY_COUNT_SELECTOR matched nothing even on a card WITH plays — the absence ' +
+            'assertion below would be a fact about the selector, not about openCount null'
+        ).not.toBeNull();
+
+        // THE CLAIM.
+        expect(
+          away.querySelector(PLAY_COUNT_SELECTOR),
+          'an off-site listing rendered a play count. `openCount === null` means the number ' +
+            'is STRUCTURALLY UNMEASURABLE (no on-platform request follows a third-party CTA), ' +
+            'so there is nothing honest to print — this is a DIFFERENT reason from the zero ' +
+            'case, with the same rendering.'
+        ).toBeNull();
+        expect(
+          away.textContent,
+          'the off-site card prints a play count without its testid'
+        ).not.toContain('play');
+        expect(document.querySelectorAll(PLAY_COUNT_SELECTOR)).toHaveLength(1);
+
+        // 🔴 AND THE STATS LINE ITSELF IS STILL THERE on the absent card — the rollup
+        // half is unconditional. Without this, "no play count" would also be
+        // satisfied by a card that rendered no stats line at all, which would be a
+        // height regression against the skeleton rather than the behaviour under test.
+        expect(
+          away.querySelector(ROLLUP_SELECTOR),
+          'the off-site card rendered no stats line at all — that is shorter than its ' +
+            'skeleton reserves, not "the play count is omitted"'
+        ).not.toBeNull();
       });
     });
 
