@@ -513,13 +513,16 @@ function GetReconnected() {
       {oauthPaired ? (
         <Stack px="xs" py="sm" gap={8}>
           <Text size="sm" fw={500}>
-            Open Civitai Link and sign in again
+            Sign in again from that machine
           </Text>
           <List type="unordered" size="xs" spacing={6} c="dimmed">
-            <List.Item>Open the Civitai Link app on that machine.</List.Item>
             <List.Item>
-              Click <b>Sign in with Civitai</b> and approve it in your browser.
+              Desktop app: open <b>Civitai Link</b> and click <b>Sign in with Civitai</b>.
             </List.Item>
+            <List.Item>
+              ComfyUI: open the <b>Civitai</b> sidebar panel and click <b>Pair this ComfyUI</b>.
+            </List.Item>
+            <List.Item>Approve the request in the browser tab that opens.</List.Item>
           </List>
           <Group gap={8} pt={2}>
             {pairingStatus !== 'timeout' && <Loader size="xs" />}
@@ -563,7 +566,7 @@ function GetReconnected() {
               <List.Item>{`Still stuck? Reconnect for a fresh code, then paste it into the app.`}</List.Item>
             </List>
             <Text fz={11} c="dimmed">
-              Using the desktop app? Sign in from the app instead.
+              Desktop app or ComfyUI node pack? Sign in from there instead of pairing with a code.
             </Text>
           </Stack>
           <Button

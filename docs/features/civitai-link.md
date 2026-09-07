@@ -29,11 +29,12 @@ An **instance** is one paired client. link-service owns the row; the site sees i
 | `key` | the shared secret **and** the socket room name |
 | `name` | user-editable label |
 | `activated` | whether the key has been upgraded to its long form |
+| `oauthPaired` | paired by sign-in — decides whether a stalled instance is told to sign in again or to re-key with a code |
 | `origin`, `createdAt` | provenance |
 
-The OAuth pairing path will add one more column on the link-service side, not surfaced in the site's
-type: `installId`, the desktop app's per-install uuid. `(userId, installId)` is unique, so
-re-pairing the same install re-keys it instead of adding a row.
+One more column lives on the link-service side and is not surfaced: `installId`, the client's
+per-install uuid. `(userId, installId)` is unique, so re-pairing the same install re-keys it instead
+of adding a row.
 
 **The key length is load-bearing.** The socket layer uses it to distinguish a not-yet-upgraded
 pairing code from an activated instance, which is why the OAuth path creates instances with a
@@ -43,15 +44,17 @@ full-length key and `activated: true` in one step.
 
 ## Pairing: the desktop app (OAuth device grant)
 
-> **Status.** The hub half is in place: the `LinkConnect` scope, the introspection endpoint, and the
-> registered `civitai-link-desktop` client. The link-service half — `POST /api/link/self`, the Bearer
-> path, and the `installId` column — ships in that repo's own PR. The flow below is the design, not
-> something you can call today.
+> **Shipped.** Desktop `v1.21.0` (2026-09-07) pairs this way. The node pack pairs through the
+> account too from `v0.6.0` (2026-09-05), but by authorization code — see
+> [the node-pack section](#pairing-the-comfyui-node-pack-oauth-authorization-code).
 >
-> **Three things have to happen per environment before it can work**, none of them automatic:
+> **Three things have to happen per environment**, none of them automatic:
 >
 > - The `civitai-link-desktop` client row is applied by hand — migrations here are never auto-run —
->   and only after the hub deploy that ships `LinkConnect`, or the requested scope is rejected.
+>   and only after the hub deploy that ships `LinkConnect`, or the requested scope is rejected. The
+>   node pack's client is registered out of band and needs `LinkConnect` in its `allowedScopes` the
+>   same way; no file in this repo creates or widens it, and until it does the pack gets
+>   `invalid_scope` and falls back to a code.
 > - A **confidential** `link-service` OAuth client is registered out of band. Its secret cannot live
 >   in a migration, so no file in this repo creates it.
 > - That client's id is added to the hub's `OAUTH_INTROSPECTION_CLIENT_IDS`. The allowlist fails
@@ -97,13 +100,38 @@ chars, only a salted SHA-512 hash stored), so link-service cannot verify it loca
 is opt-in: excluded from `Full`, from every preset, and from the personal-API-key permissions grid,
 so no existing key carries it.
 
-## Pairing: the ComfyUI node pack (six-character code)
+## Pairing: the ComfyUI node pack (OAuth authorization code)
 
-Unchanged, and staying. The node pack cannot run a device grant, so the wizard's node-pack path
-still calls `POST /api/link` to mint a short code, shows it, and the user pastes it into the ComfyUI
-panel. The code is upgraded to a full-length key when the two sockets meet.
+From node pack `0.6.0` the pack pairs through the user's account too
+([civitai-comfy-nodes#19](https://github.com/civitai/civitai-comfy-nodes/pull/19)). It runs a
+loopback PKCE flow against the hub rather than a device grant — the sign-in that authenticates the
+pack's own API calls requests `LinkConnect` as well, and `/civitai/auth/login` pairs Link right
+after, so one sign-in covers both. An already-signed-in pack offers **Pair this ComfyUI** instead.
 
-Already-paired desktop apps from before 1.21.0 keep working: the socket inspects nothing but the
+From there it is the desktop flow verbatim: `POST {link}/api/link/self` with the access token,
+`installId` from `~/.civitai/comfy-install-id`, and link-service introspects at the hub. A pack that
+was already paired with a code sends that key as `legacyKey`, so link-service adopts the existing
+row rather than adding a second one.
+
+`LINK_SCOPE` is only requested when the pack runs under the official client id — the hub answers
+`invalid_scope` to a request wider than a client's `allowedScopes`, so a self-registered
+`CIVITAI_OAUTH_CLIENT_ID` (the app-settings UI caps at `Full`) can only pair with a code.
+
+### The six-character code, and why it stays
+
+Both clients now sign in, so the wizard leads with the wait for both. The code is the fallback the
+wizard offers behind a link on the node-pack path only, for the two cases account pairing cannot
+reach:
+
+- **ComfyUI on another machine.** The PKCE callback is a loopback URI, so the browser approving the
+  sign-in resolves `localhost` to the user's own machine, not the ComfyUI host.
+- **A node pack older than `CIVITAI_LINK_NODE_PACK_MIN_VERSION`** (`0.6.0`, in
+  [`civitai-link-paths.ts`](../../src/components/CivitaiLink/civitai-link-paths.ts)), which has no
+  account pairing at all.
+
+(The pack also keeps it for API-key connections, which carry no OAuth token to introspect.)
+
+Already-paired clients from before either release keep working: the socket inspects nothing but the
 key.
 
 ## The site's polling contract
@@ -111,7 +139,8 @@ key.
 The site never learns about a pairing from a push. It polls:
 
 - `GET /api/link` → the user's instances (`getLinkInstances`).
-- `POST /api/link` → mint an instance/code (`createLinkInstance`). Node-pack path only.
+- `POST /api/link` → mint an instance/code (`createLinkInstance`). Code pairings only: the wizard's
+  fallback link, and the popover's **Reconnect** re-key for a code-paired instance.
 - `PUT /api/link` → rename (`updateLinkInstance`).
 - `DELETE /api/link?id=` → remove (`deleteLinkInstance`).
 
@@ -123,10 +152,6 @@ arrive; callers disable the feature rather than fire a request that always 401s.
 
 Once an instance is selected the shared worker joins its room by key and the connection is a
 socket, not polling.
-
-> The "sign in from the app" wizard step, the worker's await-pairing message, and the popover's
-> reconnect copy for OAuth-paired instances land in a **second PR here**, after the desktop release,
-> so the copy matches a shipped app.
 
 ## Design record
 
