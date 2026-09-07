@@ -103,6 +103,10 @@ interface IframeHostProps {
    *  values mirrored from the token mint — the host forwards, never derives. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  /** The domain ceiling intersected with the VIEWER's own browsing level (see
+   *  `projectBlockInitMaturity`). Absent → the block falls back to
+   *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel?: number;
   /** Re-mint the block token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
   onConsentGranted?: () => void;
@@ -1103,6 +1107,7 @@ export function IframeHost({
   missingScopes,
   domain,
   maxBrowsingLevel,
+  effectiveBrowsingLevel,
   onConsentGranted,
 }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
@@ -1496,7 +1501,7 @@ export function IframeHost({
     theme: activeTheme,
     renderMode: install.renderMode,
     // Advisory maturity signal — server-authoritative values from the mint.
-    ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
+    ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
   });
 
   // Keep the controller's interval posting the freshest payload. buildInitPayload
