@@ -1483,7 +1483,12 @@ export const setModelMinorHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    return await setModelMinor({ ...input, userId: ctx.user.id });
+    return await setModelMinor({
+      ...input,
+      userId: ctx.user.id,
+      tracker: ctx.track,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1498,7 +1503,12 @@ export const setModelSfwOnlyHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    return await setModelSfwOnly({ ...input, userId: ctx.user.id });
+    return await setModelSfwOnly({
+      ...input,
+      userId: ctx.user.id,
+      tracker: ctx.track,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

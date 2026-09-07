@@ -2323,10 +2323,18 @@ export async function setModelMinor({
   minor,
   userId,
   activity,
-}: SetModelMinorInput & { userId: number; activity?: ModelMinorActivity }) {
+  tracker,
+  isModerator,
+}: SetModelMinorInput & {
+  userId: number;
+  activity?: ModelMinorActivity;
+  tracker?: Tracker;
+  isModerator?: boolean;
+}) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
+      userId: true,
       poi: true,
       minor: true,
       sfwOnly: true,
@@ -2349,23 +2357,25 @@ export async function setModelMinor({
 
   const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
 
+  // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
+  // have been legitimately SFW-only before it was flagged, and guessing wrong would
+  // silently re-open NSFW generation nobody asked to re-open.
+  const data = minor
+    ? {
+        minor: true,
+        nsfw: false,
+        sfwOnly: true,
+        gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+        lockedProperties,
+      }
+    : {
+        minor: false,
+        lockedProperties,
+      };
+
   const result = await dbWrite.model.update({
     where: { id },
-    // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
-    // have been legitimately SFW-only before it was flagged, and guessing wrong would
-    // silently re-open NSFW generation nobody asked to re-open.
-    data: minor
-      ? {
-          minor: true,
-          nsfw: false,
-          sfwOnly: true,
-          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
-          lockedProperties,
-        }
-      : {
-          minor: false,
-          lockedProperties,
-        },
+    data,
     select: {
       id: true,
       name: true,
@@ -2380,13 +2390,14 @@ export async function setModelMinor({
   });
 
   await preventReplicationLag('model', id);
-  // Audit before the fan-out: the flag write has already committed, so a fan-out
-  // failure must not cost us the record of who flipped it. The audit write itself
-  // must not block the fan-out either, so failures are logged, not thrown.
+  const modActivity = activity ?? (minor ? 'setMinor' : 'unsetMinor');
+  // Audit before the fan-out: the flag write has already committed, so a fan-out failure
+  // must not cost the record of who flipped it — and neither audit write may block the
+  // fan-out, so both swallow their own errors.
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: activity ?? (minor ? 'setMinor' : 'unsetMinor'),
+    activity: modActivity,
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2395,6 +2406,25 @@ export async function setModelMinor({
       error,
     })
   );
+  if (tracker) {
+    tracker
+      .entityChanges(
+        diffEntityChanges({
+          entityType: 'Model',
+          entityId: id,
+          ownerId: before.userId,
+          before,
+          after: data as Record<string, unknown>,
+          actorRole: resolveActorRole({
+            actorUserId: userId,
+            ownerId: before.userId,
+            isModerator,
+          }),
+          reason: modActivity,
+        })
+      )
+      .catch(() => null);
+  }
   await applyModelFlagSideEffects({ before, after: result });
 
   return result;
@@ -2408,10 +2438,13 @@ export async function setModelSfwOnly({
   id,
   sfwOnly,
   userId,
-}: SetModelSfwOnlyInput & { userId: number }) {
+  tracker,
+  isModerator,
+}: SetModelSfwOnlyInput & { userId: number; tracker?: Tracker; isModerator?: boolean }) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
+      userId: true,
       poi: true,
       minor: true,
       sfwOnly: true,
@@ -2439,22 +2472,24 @@ export async function setModelSfwOnly({
 
   const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
 
+  // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
+  // legitimately SFW before it was flagged, and guessing wrong would silently re-open
+  // NSFW generation nobody asked to re-open.
+  const data = sfwOnly
+    ? {
+        sfwOnly: true,
+        nsfw: false,
+        gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+        lockedProperties,
+      }
+    : {
+        sfwOnly: false,
+        lockedProperties,
+      };
+
   const result = await dbWrite.model.update({
     where: { id },
-    // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
-    // legitimately SFW before it was flagged, and guessing wrong would silently re-open
-    // NSFW generation nobody asked to re-open.
-    data: sfwOnly
-      ? {
-          sfwOnly: true,
-          nsfw: false,
-          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
-          lockedProperties,
-        }
-      : {
-          sfwOnly: false,
-          lockedProperties,
-        },
+    data,
     select: {
       id: true,
       name: true,
@@ -2469,10 +2504,11 @@ export async function setModelSfwOnly({
   });
 
   await preventReplicationLag('model', id);
+  const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly',
+    activity: modActivity,
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2481,6 +2517,25 @@ export async function setModelSfwOnly({
       error,
     })
   );
+  if (tracker) {
+    tracker
+      .entityChanges(
+        diffEntityChanges({
+          entityType: 'Model',
+          entityId: id,
+          ownerId: before.userId,
+          before,
+          after: data as Record<string, unknown>,
+          actorRole: resolveActorRole({
+            actorUserId: userId,
+            ownerId: before.userId,
+            isModerator,
+          }),
+          reason: modActivity,
+        })
+      )
+      .catch(() => null);
+  }
   await applyModelFlagSideEffects({ before, after: result });
 
   return result;
