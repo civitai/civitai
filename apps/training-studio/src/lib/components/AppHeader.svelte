@@ -1,5 +1,13 @@
 <script lang="ts">
-  let { username, image }: { username?: string; image?: string } = $props();
+  import { getEdgeUrl } from '$lib/edge-url';
+
+  let {
+    username,
+    image,
+    logoutUrl,
+  }: { username?: string; image?: string; logoutUrl?: string | null } = $props();
+
+  const avatarUrl = $derived(getEdgeUrl(image));
 </script>
 
 <header class="mb-6 flex items-center justify-between gap-3">
@@ -16,25 +24,42 @@
   </a>
 
   <div class="flex items-center gap-4">
-    <a
-      href="/"
-      class="font-mono text-sm text-dark-2 transition-colors hover:text-white"
-    >
+    <a href="/" class="font-mono text-sm text-dark-2 transition-colors hover:text-white">
       My trainings
     </a>
     {#if username}
-      <div class="flex items-center gap-2" title={username}>
-        {#if image}
-          <img src={image} alt="" class="h-7 w-7 rounded-full object-cover" />
-        {:else}
-          <span
-            class="grid h-7 w-7 place-items-center rounded-full bg-dark-5 text-xs font-semibold text-dark-0"
-          >
-            {username.slice(0, 1).toUpperCase()}
-          </span>
-        {/if}
-        <span class="hidden font-mono text-sm text-dark-0 sm:inline">{username}</span>
-      </div>
+      <details class="relative">
+        <summary
+          class="flex cursor-pointer list-none items-center gap-2 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-dark-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden"
+        >
+          {#if avatarUrl}
+            <img src={avatarUrl} alt="" class="h-8 w-8 rounded-full object-cover" />
+          {:else}
+            <span
+              class="grid h-8 w-8 place-items-center rounded-full bg-dark-5 text-xs font-semibold text-dark-0"
+            >
+              {username.slice(0, 1).toUpperCase()}
+            </span>
+          {/if}
+          <span class="hidden text-sm text-dark-0 sm:inline">{username}</span>
+          <span aria-hidden="true" class="text-[10px] text-dark-2">▾</span>
+        </summary>
+        <div
+          class="absolute right-0 z-20 mt-2 min-w-[180px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
+        >
+          <div class="px-3 py-2 text-xs text-dark-2">
+            Signed in as <span class="text-dark-0">{username}</span>
+          </div>
+          {#if logoutUrl}
+            <a
+              href={logoutUrl}
+              class="block rounded px-3 py-2 text-sm text-dark-1 transition-colors hover:bg-dark-5 hover:text-white"
+            >
+              Sign out
+            </a>
+          {/if}
+        </div>
+      </details>
     {/if}
   </div>
 </header>

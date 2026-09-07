@@ -7,7 +7,7 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<AppHeader username={data.username} image={data.image} />
+<AppHeader username={data.username} image={data.image} logoutUrl={data.logoutUrl} />
 
 <!-- Usually resolved before the user reaches here (warm cache); the await gates only on a cold cache, and
   never rejects. -->
