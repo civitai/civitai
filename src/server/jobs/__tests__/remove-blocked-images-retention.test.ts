@@ -37,6 +37,14 @@ const QUEUE = [
   { entityId: 5, createdAt: EXPIRED }, // live hold -> excluded from the batch
   { entityId: 6, createdAt: EXPIRED }, // hold past the ceiling -> purged + alerted
 ];
+// Every image here is a MODERATOR TAKEDOWN, so each carries the `ModActivity` row the job now
+// requires before it will ask for blob retraction — dated after its own block, as a real one
+// would be. This file is about the retention CLOCK; which images qualify for retraction, and what
+// happens to the ones that do not, is `blob-retraction-writer-reachability.test.ts`.
+const MOD_ACTIVITY = QUEUE.map((q) => ({
+  entityId: q.entityId,
+  lastActedAt: new Date(q.createdAt.getTime() + 1000),
+}));
 // The Image SELECT only ever returns still-Blocked rows; id 4 is absent by construction.
 const IMAGES = [
   { id: 1, userId: PLAIN_USER, blockedFor: 'CSAM' },
@@ -72,6 +80,12 @@ const {
     const sql = strings.join('?');
     sqlLog.push(sql);
     if (sql.includes('FROM "CsamReport"')) return heldUsers;
+    // The moderator-activity lookup that gates blob retraction. Routed before the catch-all
+    // below, which would otherwise answer it with Image rows.
+    if (sql.includes('FROM "ModActivity"')) {
+      const ids = (values[0] as number[]) ?? [];
+      return MOD_ACTIVITY.filter((m) => ids.includes(m.entityId));
+    }
     // Blocked images belonging to the still-held users.
     if (sql.includes('"userId" = ANY')) {
       const ids = (values.find(Array.isArray) as number[]) ?? [];

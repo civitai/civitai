@@ -6,7 +6,6 @@ import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
-import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
@@ -482,6 +481,34 @@ const BLOCKED_IMAGE_RETENTION_DAYS = 7;
 // would silently shrink each report's budget by however old the block already was.
 const CSAM_HOLD_MAX_DAYS = 30;
 
+/**
+ * 🔴 The POSITIVE signal that a human moderator took THIS ONE IMAGE down. It is the only thing
+ * that unlocks blob retraction in `remove-blocked-images` — see the long note at the split for why
+ * the discriminator has to be positive rather than an opt-out.
+ *
+ * Both values are `ModActivity.activity` rows written against `entityType = 'image'`. Enumerated
+ * over every `trackModActivity`/`recordModActivity` call in `src` and `apps` that carries
+ * `entityType: 'image'`, the complete vocabulary is:
+ *   'review'        — `handleAcceptImages` and `handleBlockImages` (image.service),
+ *                     `setTosViolationHandler` (image.controller), `acceptImage` and `blockImage`
+ *                     (moderator app), `/api/mod/unblock-images`. Every one of them is a moderator
+ *                     deciding about ONE named image. Three of the six are the un-block direction,
+ *                     which is why the timestamp comparison at the call site is load-bearing and
+ *                     not decoration: an accept or unblock leaves the row not-Blocked, so it
+ *                     cannot be in this batch at all unless something re-blocked it afterwards,
+ *                     and then the activity predates that re-block.
+ *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
+ *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
+ *                     NO per-image row, by its own design; that is what keeps a library-wide block
+ *                     out of this set.
+ * DELIBERATELY EXCLUDED, all of them moderator-written but none of them a takedown of the bytes:
+ *   'bulkRestore', 'resolveAppeal', 'setNsfwLevel', 'setNsfwLevelKono', 'poi:<bool>',
+ *   'minor:<bool>', and the tag activities.
+ *
+ * Adding a value here widens a cross-account destructive capability. Say why, in the same commit.
+ */
+export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
+
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
@@ -537,14 +564,10 @@ export const removeBlockedImages = createJob(
     // upload, making anything blocked more than a week after upload deletable on the next run.
     const blockedAt = new Map(jobQueue.map((j) => [j.entityId, j.createdAt]));
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
-    // `fromAccountDeletion` separates the two populations that arrive here wearing the same
-    // `blockedFor`. See the retraction split below for why that matters; `PRIOR_INGESTION_KEY`
-    // is written by `remove-deleted-user-images` and by nothing else.
     const images = await dbRead.$queryRaw<
-      { id: number; userId: number; blockedFor: string | null; fromAccountDeletion: boolean }[]
+      { id: number; userId: number; blockedFor: string | null }[]
     >`
-    SELECT id, "userId", "blockedFor",
-           ("metadata" -> ${PRIOR_INGESTION_KEY}) IS NOT NULL AS "fromAccountDeletion"
+    SELECT id, "userId", "blockedFor"
     FROM "Image"
     WHERE id = ANY(${imageIds})
       AND ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -612,28 +635,6 @@ export const removeBlockedImages = createJob(
     // the image-cache service to destroy the shared stored object, not just this image's derived
     // variants: the full-resolution original stops existing.
     //
-    // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not by
-    // this job's own callers. `trg_blocked_image_delete_queue` enqueues every row that ends up
-    // `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified', whatever put it
-    // there. Enumerated over every write of that column in `src`, `apps` and `packages`, those
-    // writers are:
-    //   MODERATION — `handleBlockImages` and the block in `image.controller`; the moderator app's
-    //     own `blockImage`; the CSAM branch of `report.service`; `softDeleteUser` and the
-    //     "remove all media" branch of `toggleBan` in `user.service`; and the scan webhook's block
-    //     outcome (`image-scan-result.service` and `api/webhooks/image-scan-result`).
-    //   NOT MODERATION, and there is exactly one — `remove-deleted-user-images`, which hides the
-    //     images of a user who deleted their OWN account and chose the 7-day grace option, and
-    //     enqueues them here explicitly via `queueBlockedImagesForDelete` as well.
-    // The grace pass writes `blockedFor = 'moderated'`, exactly what a moderator block writes, so
-    // `blockedFor` cannot tell the two apart — that is stated at `PRIOR_INGESTION_KEY`. Nothing is
-    // moderated in that case and it must not reach another owner's bytes, so the split below keys
-    // on the metadata marker the grace pass writes and no other writer does. Both populations are
-    // still hard-deleted here; only the retraction differs.
-    //
-    // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
-    // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
-    // the moderator bulk endpoint all keep today's variant-only invalidation.
-    //
     // 🔴 KNOWN AND ACCEPTED COLLATERAL, documented here because it is not discoverable later.
     // The stored object is content-addressed, so it is shared by every BYTE-IDENTICAL image of
     // EVERY owner. Retracting it removes their original too, while their database rows survive
@@ -645,26 +646,114 @@ export const removeBlockedImages = createJob(
     // all. Building that fan-out is separate work; do not infer from this comment that it exists.
     // The `image-blob-retraction-requested` log line in `deleteImageFromS3` is the only trail.
     //
-    // The marker is read as "did NOT come from a takedown", so a row whose marker is missing —
-    // including one this query could not classify — falls into the retracting set, which is the
-    // pre-existing behaviour rather than a silent loss of the capability.
+    // ── WHY THE DISCRIMINATOR IS POSITIVE ────────────────────────────────────────────────────
+    // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not
+    // by this job's own callers. `trg_blocked_image_delete_queue` enqueues EVERY row that ends up
+    // `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified', whatever put it
+    // there — including an INSERT that arrives already Blocked. That writer set is open: it grows
+    // whenever anyone adds a block path, and it already contains automated scanners.
     //
-    // Known one-way inaccuracy, and it errs toward keeping the bytes: an image already carrying
-    // the marker that a moderator then blocks keeps it, because no block path clears the marker,
-    // so that takedown gets no retraction and behaves exactly as it did before this option
-    // existed. `unblockAccountDeletionImages` (the restore path) is the only writer that removes
-    // it. The opposite mistake — a takedown misread as an account deletion — needs the marker to
-    // be written onto a moderated image, and `remove-deleted-user-images` is its only writer:
-    // both of its branches are gated on the owner's `deletedAt` being set.
-    const takedowns = imagesToDelete.filter((img) => !img.fromAccountDeletion).map((x) => x.id);
-    const accountDeletions = imagesToDelete
-      .filter((img) => img.fromAccountDeletion)
-      .map((x) => x.id);
+    // So the split must not be "retract unless X", which opts every new and every automated
+    // writer in by default and silently. It is "retract only where a human takedown decision on
+    // THIS SPECIFIC IMAGE is affirmatively on record", and the record is `ModActivity`.
+    //
+    // `ModActivity` has three writers, all server-side and none reachable from a request body:
+    // `trackModActivity` here, `recordModActivity` in the moderator app, and the auth hub's own
+    // copy, which only ever writes `entityType: 'impersonate'`. Nothing a client submits reaches
+    // it — which is the second reason it is used here rather than an `Image.metadata` marker:
+    // `Image.metadata` is a `z.record(z.string(), z.any())` that `createImage` spreads verbatim
+    // into the row, so a marker stored there is writable by the image's own uploader, in EITHER
+    // polarity. Under a positive discriminator the forgeable direction would be worse than the
+    // one this replaces: it would let an uploader destroy the shared object behind any
+    // byte-identical image by getting their own copy blocked.
+    //
+    // The activity kinds counted are `MODERATOR_TAKEDOWN_ACTIVITIES`, and the row must be dated
+    // at or after the queue row (i.e. at or after the block). Both halves matter — see the
+    // constant for the enumeration behind each.
+    //
+    // ── WHAT EACH BLOCKED-IMAGE WRITER GETS, ENUMERATED OVER EVERY WRITE OF `ingestion` IN
+    //    `src`, `apps` AND `packages` ─────────────────────────────────────────────────────────
+    // RETRACTS — a moderator acted on one named image, and a per-image `review`/`bulkRemove` row
+    //   is written in the same request:
+    //     • `handleBlockImages` (image.service) WHEN CALLED WITH AN ID LIST — the `/api/mod/
+    //       remove-images` bulk removal and the moderator app's own bulk remove, which also
+    //       writes its own `bulkRemove` row per image.
+    //     • `blockImage` in the moderator app (`apps/moderator/.../image-moderation.service.ts`).
+    //     • `setTosViolationHandler` (image.controller) — the main app's single-image TOS
+    //       takedown. Its `trackModActivity` call was added alongside this split; it is a
+    //       moderator-gated per-image decision that previously left no row in the mod audit log
+    //       at all.
+    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only the shared
+    //   object is left alone:
+    //     • the scan pipeline's three block outcomes — the orchestrator content rating
+    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine — in
+    //       BOTH copies of that pipeline: `image-scan-result.service` and the legacy bodies in
+    //       `api/webhooks/image-scan-result`. Automated, no moderator, no `ModActivity`.
+    //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
+    //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
+    //       and not by a moderator reviewing one. This is the writer that would be most dangerous
+    //       to opt in by default: it is the only queue writer a stranger can aim at your image.
+    //     • the Knights of New Order game (`new-order.service`), which calls `handleBlockImages`
+    //       with an id but NO `moderatorId`, so no activity row is written. A community rating
+    //       consensus is not a staff takedown decision.
+    //     • `handleBlockImages` CALLED WITH A `userId` AND NO ID LIST, and `toggleBan`'s
+    //       "remove all media" branch, and `softDeleteUser` — each blocks a whole library in one
+    //       statement. The moderator decided about an ACCOUNT, not about each image's bytes, and
+    //       the ids never reach a per-image record; `removeAllImagesForUser` says so in its own
+    //       docstring. Consistent with `api/mod/delete-user-images`, which never retracted.
+    //     • `remove-deleted-user-images` — a user deleting their OWN account with the 7-day grace
+    //       option. Nothing was moderated; it must not reach another owner's bytes.
+    //     • anything else that lands in the queue, now or later, including a writer added after
+    //       this comment was written. That is the property being bought.
+    //
+    // ── WHERE THIS IS DELIBERATELY IMPRECISE, BOTH DIRECTIONS ────────────────────────────────
+    // Toward KEEPING the bytes (a takedown that does not retract):
+    //   • `recordModActivity` in the moderator app is best-effort and swallows its own failures,
+    //     and `trackModActivity` is `ON CONFLICT DO NOTHING`. A block whose activity row failed
+    //     to land is deleted without retraction.
+    //   • Rows queued before this shipped keep their old queue `createdAt`. For anything the
+    //     2026-08-06 completeness migration backfilled, that timestamp is the migration's own and
+    //     is therefore later than any moderator activity on those images, so none of them retract.
+    // Toward RETRACTING (a non-takedown that does): an image blocked by automation, unblocked by
+    //   a moderator (a `review` row), then re-blocked by automation, all inside one retention
+    //   window — the surviving queue row still carries the FIRST block's timestamp, so the
+    //   moderator's unblock dates after it and reads as a takedown. Closing that needs `review`
+    //   split into distinct block/unblock activities, which is a change to the mod audit
+    //   vocabulary the account-history panel buckets on; not done here.
+    //
+    // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
+    // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
+    // the moderator bulk endpoint all keep today's variant-only invalidation.
+    const takedownCandidateIds = imagesToDelete.map((x) => x.id);
+    // MAX rather than an EXISTS correlated per row: one grouped read for the whole batch, and the
+    // comparison against each image's own block time then happens in memory.
+    const moderatorActivity = takedownCandidateIds.length
+      ? await dbRead.$queryRaw<{ entityId: number; lastActedAt: Date }[]>`
+      SELECT "entityId", MAX("createdAt") AS "lastActedAt"
+      FROM "ModActivity"
+      WHERE "entityId" = ANY(${takedownCandidateIds})
+        AND "entityType" = 'image'
+        AND activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
+      GROUP BY "entityId"
+    `
+      : [];
+    const lastActedAt = new Map(moderatorActivity.map((r) => [r.entityId, r.lastActedAt]));
+
+    // A moderator acted on this image at or after it was blocked. `queuedAt` is non-null for
+    // everything in `imagesToDelete` — that is what put it there — but it is re-read rather than
+    // asserted, so a future change to that filter degrades to NOT retracting.
+    const isTakedown = (id: number) => {
+      const queuedAt = blockedAt.get(id);
+      const actedAt = lastActedAt.get(id);
+      return !!queuedAt && !!actedAt && actedAt.getTime() >= queuedAt.getTime();
+    };
+    const takedowns = takedownCandidateIds.filter(isTakedown);
+    const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
     if (takedowns.length > 0) {
       await deleteImages(takedowns, true, { retractPublicBlobs: true });
     }
-    if (accountDeletions.length > 0) {
-      await deleteImages(accountDeletions, true);
+    if (deletedWithoutRetraction.length > 0) {
+      await deleteImages(deletedWithoutRetraction, true);
     }
 
     // Remove processed and stale entries from queue
@@ -681,9 +770,11 @@ export const removeBlockedImages = createJob(
     return {
       deleted: imagesToDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
-      // second number is deletions that deliberately left the shared stored object alone.
+      // second number is deletions that deliberately left the shared stored object alone. It is
+      // NOT "account deletions" — it is everything with no moderator takedown on record, which is
+      // account deletions plus every automated block plus every whole-library block.
       retracted: takedowns.length,
-      accountDeletionDeleted: accountDeletions.length,
+      deletedWithoutRetraction: deletedWithoutRetraction.length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,

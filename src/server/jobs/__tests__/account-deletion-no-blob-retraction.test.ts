@@ -19,13 +19,22 @@ import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
  * queue's writers is not a moderation flow at all: a user who deletes their OWN account and picks
  * "delete my images after 7 days" has every one of their images set to `ingestion = 'Blocked'`,
  * `blockedFor = 'moderated'` by `remove-deleted-user-images`, and then enqueued as
- * `BlockedImageDelete`. Nothing was moderated, and `blockedFor` cannot tell the two cases apart —
- * that is stated at `PRIOR_INGESTION_KEY`, which is the marker the job now splits the batch on.
+ * `BlockedImageDelete`. Nothing was moderated, and `blockedFor` cannot tell the two cases apart.
  *
  * So this test drives the whole path — self-service account deletion → grace block → job queue →
  * retention purge — and asserts that the purge does NOT request retraction for those images. A
  * test that only checked the filter's return value would have passed against the defect, because
  * the defect was that nothing on this path was ever consulted.
+ *
+ * 🔴 WHAT THE JOB ACTUALLY SPLITS ON, because the first version of this file pinned the wrong
+ * thing. It does not ask "did this arrive from an account deletion" — that is an OPT-OUT, and it
+ * silently opts in every automated writer and every writer added later. It asks the positive
+ * question: is there a `ModActivity` row of a takedown kind against this image, dated at or after
+ * the block? So the grace images below are not excluded by any marker they carry; they are
+ * excluded because `remove-deleted-user-images` is not a moderator and records nothing.
+ * The full writer-by-writer story, driven through the real block writers, is
+ * `blob-retraction-writer-reachability.test.ts`. This file's job is the ACCOUNT-DELETION half of
+ * it, end to end across the two jobs that hand off to each other.
  *
  * The contrast case in the same run is what stops the trivial "fix" of never retracting at all:
  * a genuinely moderator-blocked image, in the same batch, MUST still be retracted.
@@ -53,11 +62,17 @@ type ImageRow = {
 type UserRow = { id: number; deletedAt: Date | null; imageRemoval: string | null };
 
 type QueueRow = { entityId: number; createdAt: Date };
+type ModActivityRow = { entityId: number; activity: string; createdAt: Date };
 
 const store = {
   images: [] as ImageRow[],
   users: [] as UserRow[],
   queue: [] as QueueRow[],
+  /**
+   * The audit rows a moderator action writes. The grace pass writes NONE — that absence is the
+   * whole reason its images do not retract, so an empty list here is load-bearing, not incidental.
+   */
+  modActivity: [] as ModActivityRow[],
 };
 
 const { mockDeleteImages } = vi.hoisted(() => ({
@@ -170,10 +185,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-deleted-user-images: the hide branch. Bindings, in order: the blocked nsfwLevel, the
   // blockedFor reason, the metadata key, the id list, userId, userId.
   //
-  // 🔴 The metadata key is taken from the BINDING, never from the constant imported at the top of
-  // this file. That is what makes the marker a real seam between the two jobs: if the writer here
-  // and the reader in remove-blocked-images stop spelling it the same way, the lookup misses and
-  // this test goes red.
+  // The metadata key is taken from the BINDING, never from the constant imported at the top of
+  // this file, so what the grace pass writes is what the restore path is later asserted against.
+  //
+  // 🔴 It is NOT the retraction seam. `remove-blocked-images` no longer reads this key at all —
+  // the marker is an OPT-OUT, and an opt-out silently opts in every automated writer. What the
+  // job splits on is the positive `ModActivity` lookup routed below. Left in place because the key
+  // is still the restore path's own breadcrumb; do not re-read it as the retraction discriminator.
   if (sql.includes('UPDATE "Image"') && sql.includes("SET ingestion = 'Blocked'")) {
     const [, blockedFor, priorIngestionKey] = values as [number, string, string];
     const ids = joinedIds(values);
@@ -213,22 +231,30 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return candidates((d) => d >= freshMark, 'asc');
   }
 
-  // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.
+  // remove-blocked-images: the moderator-activity lookup that gates blob retraction.
   //
-  // 🔴 `fromAccountDeletion` is computed from the key the JOB binds, for the same reason as the
-  // writer above. Before the fix the job binds no key at all, so the column is `undefined` — which
-  // is exactly the state the defect consisted of, and the assertions below then fail.
+  // 🔴 The activity vocabulary is taken from the BINDING, never from a constant restated here: if
+  // the job stops binding a value the writers produce, the lookup misses and the moderated image
+  // below stops retracting, exactly as it would in Postgres. Routed above the Image fetch because
+  // both statements carry an id array.
+  if (sql.includes('FROM "ModActivity"')) {
+    const ids = (values[0] as number[]) ?? [];
+    const activities = (values[1] as string[]) ?? [];
+    const out = new Map<number, Date>();
+    for (const row of store.modActivity) {
+      if (!ids.includes(row.entityId) || !activities.includes(row.activity)) continue;
+      const current = out.get(row.entityId);
+      if (!current || row.createdAt > current) out.set(row.entityId, row.createdAt);
+    }
+    return [...out].map(([entityId, lastActedAt]) => ({ entityId, lastActedAt }));
+  }
+
+  // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.
   if (sql.includes('FROM "Image"') && sql.includes('id = ANY')) {
-    const boundKey = values.find((v) => typeof v === 'string') as string | undefined;
     const ids = (values.find(Array.isArray) as number[] | undefined) ?? [];
     return store.images
       .filter((i) => ids.includes(i.id) && i.ingestion === 'Blocked')
-      .map((i) => ({
-        id: i.id,
-        userId: i.userId,
-        blockedFor: i.blockedFor,
-        fromAccountDeletion: boundKey ? i.metadata[boundKey] != null : undefined,
-      }));
+      .map((i) => ({ id: i.id, userId: i.userId, blockedFor: i.blockedFor }));
   }
 
   throw new Error(`unrouted query in fixture: ${sql.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
@@ -308,6 +334,16 @@ beforeEach(() => {
   ];
   // The moderator's block is already past the retention window.
   store.queue = [{ entityId: MODERATED_IMAGE, createdAt: new Date(Date.now() - 8 * DAY) }];
+  // …and it was a real moderator pressing the button, so it left the audit row every moderator
+  // block writes, a moment AFTER the block. Nothing equivalent exists for the grace image: the
+  // grace pass has no moderator and writes none.
+  store.modActivity = [
+    {
+      entityId: MODERATED_IMAGE,
+      activity: 'review',
+      createdAt: new Date(Date.now() - 8 * DAY + 1000),
+    },
+  ];
 
   // An operator-set purge budget; the drain is inert at the compiled-in default of 0.
   redisMock.sysRedis.get.mockResolvedValue('100');

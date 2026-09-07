@@ -34,6 +34,7 @@ import {
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -227,6 +228,25 @@ export const setTosViolationHandler = async ({
       },
     });
     await invalidateManyImageExistence([id]);
+
+    // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
+    // would let a later account restore un-block what was just moderated.
+    await clearAccountDeletionImageMarkers({ ids: [id] });
+
+    // 🔴 The audit record that a MODERATOR — not automation, not a reporter, not a bulk account
+    // action — took this one image down. Every sibling single-image block already writes it
+    // (`handleBlockImages`, and `blockImage` in the moderator app); this handler did not, so this
+    // takedown left no row in the mod audit log at all.
+    //
+    // It is also load-bearing now: `remove-blocked-images` retracts the SHARED, content-addressed
+    // stored object only for images carrying one of `MODERATOR_TAKEDOWN_ACTIVITIES` dated at or
+    // after the block. Without this call a TOS takedown from the main app is hard-deleted with the
+    // bytes left in place — which is the safe direction, but not the intended one.
+    await trackModActivity(user.id, {
+      entityType: 'image',
+      entityId: id,
+      activity: 'review',
+    });
 
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
