@@ -32,6 +32,14 @@ import {
   toHostGateStatus,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  buildCollectionFollowConsentCopy,
+  createCollectionFollowSettlement,
+  createCollectionLookupBudget,
+  resolveCollectionFollowRequest,
+  resolveCollectionIdentity,
+  type CollectionLookupBudget,
+} from './collectionFollowGate';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -1864,6 +1872,22 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
+  // (protectedProcedure), like resolveWildcardPack above and for the same reason:
+  // these are the SAME procedures the site's own follow button calls, so the
+  // handler self-binds to `ctx.user.id` server-side and reuses
+  // `addContributorToCollection` / `removeContributorFromCollection` verbatim.
+  // The block token is deliberately NOT involved — the point of this bridge is
+  // that a block needs no `collections:write:self` scope.
+  const followCollectionMutation = trpc.collection.follow.useMutation();
+  const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
+  // 🔴 This block instance's DISTINCT-collection-id lookup budget. A ref, not
+  // module scope and not state: per-instance (two blocks on a page cannot drain
+  // each other), reset on remount, and read synchronously inside the message
+  // handler. Lazily constructed so a render never allocates a Set it throws away.
+  // The reasoning — and the authenticated visibility oracle it closes — lives on
+  // `createCollectionLookupBudget`.
+  const collectionLookupBudgetRef = useRef<CollectionLookupBudget | null>(null);
   // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
   // so incrementing/decrementing never re-renders and the count is read
   // synchronously in the message handler (JS is single-threaded, so the
@@ -3755,6 +3779,142 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
+
+  // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
+  //
+  // A block asks the host to follow / unfollow a collection for the viewer. The
+  // decision layer is SHARED with IframeHost (`collectionFollowGate.ts`) and
+  // carries the full rationale; the two things this host contributes are its own
+  // `viewer` prop (the signed-in signal) and `reviewNack`.
+  //
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK, AND IT IS THE ONLY CONSENT THIS
+  // PATH HAS EVER HAD. The HTTP endpoint's `collections:write:self` scope is
+  // CONSENT-EXEMPT server-side, so it never prompted anyone — see the retracted
+  // claim recorded in `collectionFollowGate.ts`. This bridge therefore TIGHTENS a
+  // zero-prompt path into one prompt per action. Do not "simplify" it by calling
+  // the mutation directly, and do not delete the confirm as redundant with a
+  // scope grant that does not exist.
+  //
+  // 🔴 THE DIALOG MUST NAME THE COLLECTION, and the name must be the one the HOST
+  // resolved from `collectionId` — never one the block supplied. A block can
+  // render its own "Follow ⭐ Cute Cats" card and post a different id; host chrome
+  // that asserts nothing about the object cannot contradict it.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / lookup failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs to its SDK
+  // timeout; `createCollectionFollowSettlement` owns that latch AND the consent
+  // latch that keeps `declined` meaning "no write occurred". Only a payload with
+  // no usable requestId is dropped — there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
+      const gate = resolveCollectionFollowRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        // `viewer` is non-null ONLY for a signed-in viewer (the page route
+        // renders for logged-out viewers too, with viewer: null).
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('COLLECTION_FOLLOW_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, collectionId, follow } = gate.request;
+      const settlement = createCollectionFollowSettlement({
+        requestId,
+        emit: (payload) => send('COLLECTION_FOLLOW_RESULT', payload),
+      });
+      // 🔴 BOUND THE PROBE, BEFORE SPENDING AN AUTHENTICATED READ. The identity
+      // lookup below runs in the VIEWER'S session and completes before any
+      // dialog, so without a bound it is a per-id "can this viewer see it?"
+      // oracle the block can drive at the transport's 30 msg/s. DISTINCT ids,
+      // not calls — a repeat is free forever, so re-following a collection the
+      // viewer has already been asked about keeps working past the cap. The
+      // refusal deliberately reuses `collection-unavailable`; a distinct code
+      // would hand back the bit the cap withholds. Full reasoning (incl. why a
+      // distinct-id cap rather than a time window) on the factory.
+      const lookupBudget = (collectionLookupBudgetRef.current ??= createCollectionLookupBudget());
+      if (!lookupBudget.admit(collectionId)) {
+        settlement.reply({ error: 'collection-unavailable' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHO/WHAT the viewer is being asked about, server-side, from the
+        // same id we are about to act on. A failed lookup refuses WITH a reply —
+        // never a hang, and never a dialog missing the name it promised.
+        let identity;
+        try {
+          identity = resolveCollectionIdentity(
+            await trpcUtils.collection.getById.fetch({ id: collectionId }, { staleTime: 0 })
+          );
+        } catch {
+          // Not found / not visible / feature-flagged / network — all one
+          // outcome, so the reply cannot be used to probe for existence.
+          identity = { kind: 'unavailable' } as const;
+        }
+        if (identity.kind !== 'ok') {
+          settlement.reply({ error: 'collection-unavailable' });
+          return;
+        }
+        const copy = buildCollectionFollowConsentCopy({
+          follow,
+          appName,
+          collectionId,
+          collection: identity.identity,
+        });
+        dialogStore.trigger({
+          // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
+          // not reproducible, since rendering a Mantine modal costs >1 ms.)
+          id: `block-collection-follow-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: copy.message,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a write that is under way.
+              settlement.markConsented();
+              try {
+                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+                // actor and target, so `collectionId` is the ONLY thing the block
+                // influences.
+                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+                else await unfollowCollectionMutation.mutateAsync({ collectionId });
+                settlement.reply({ result: { collectionId, followed: follow } });
+              } catch (err) {
+                // FORBIDDEN from the collection services (e.g. a private
+                // collection this viewer may not follow) lands here as a message,
+                // never as a hang.
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    followCollectionMutation,
+    unfollowCollectionMutation,
+  ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from

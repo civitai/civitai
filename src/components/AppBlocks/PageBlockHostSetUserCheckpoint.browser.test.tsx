@@ -44,6 +44,13 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     // PageBlockHost wires the workflow + storage bridges at render; stub so it

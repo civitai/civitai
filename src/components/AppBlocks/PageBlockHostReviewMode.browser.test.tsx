@@ -63,6 +63,13 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: mocks.wildcard }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: mocks.submit }) },

@@ -77,6 +77,13 @@ vi.mock('~/utils/trpc', () => ({
   // wholesale module mock MUST re-declare it or the ESM link fails.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       getEffectiveCheckpoint: {
         useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
