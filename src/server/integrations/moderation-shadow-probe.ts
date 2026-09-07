@@ -77,11 +77,23 @@ export function candidateVocabularyCovers(
   categoryMap: Record<string, string> | undefined
 ): boolean {
   if (!categoryMap) return true;
-  const categories = result?.categories;
+  const categories = result?.categories as Record<string, unknown> | null | undefined;
   if (!categories || typeof categories !== 'object') return false;
-  return Object.keys(categoryMap).every((key) =>
-    Object.prototype.hasOwnProperty.call(categories, key)
-  );
+
+  const keys = Object.keys(categoryMap);
+  const present = (key: string) => Object.prototype.hasOwnProperty.call(categories, key);
+
+  // 🔴 DETERMINACY, NOT COVERAGE — and the difference only shows on a MULTI-KEY map.
+  // `deriveModerationVerdict` ORs across the mapped keys, so ONE present key that is `true` already
+  // fixes the verdict at `flagged: true` no matter what the missing keys would have said. Requiring
+  // every key there would book a comparison we can actually make as `incomparable` and throw it
+  // away. Production is single-key today, where this is identical to requiring all of them, so the
+  // case is currently unreachable — it is written this way so that ADDING a second category, which
+  // needs no code change, does not silently start discarding valid comparisons.
+  if (keys.some((key) => present(key) && Boolean(categories[key]))) return true;
+
+  // Nothing present is true, so the verdict is `false` ONLY if no missing key could have been true.
+  return keys.every(present);
 }
 
 /**
@@ -144,13 +156,40 @@ export function classifyShadowOutcome(
  * list that cannot include fields that did not exist when it was written — so an operator doing the
  * cautious thing and arming on STAGING first would silently arm every open PR preview at its next
  * deploy, each issuing a second billable request per moderation call against the production
- * credential, unattributed and with nobody reading preview metrics. `IS_PREVIEW` is the same signal
- * `~/env/database-target` falls back to. Deliberately NOT `isNonProductionDatabase()`, which is
- * wider: that would also refuse a DELIBERATE staging arm, which is a legitimate operator choice and
- * the exact workflow this guard is meant to keep safe rather than block.
+ * credential, unattributed and with nobody reading preview metrics.
+ *
+ * 🔴 THE DISCRIMINATOR IS `CACHE_KEY_NAMESPACE`, NOT `IS_PREVIEW`, AND THAT IS A CORRECTION.
+ * An earlier revision gated on `IS_PREVIEW === 'true'` and claimed it preserved a deliberate
+ * staging arm. **It did not: `civitai-next` — the standing non-production deployment, and the very
+ * config source the paragraph above names — sets `IS_PREVIEW=true` itself** (a Deployment env
+ * entry, which beats `envFrom`; measured on the live cluster). So that guard refused the one
+ * rehearsal it promised to protect and left production as the practical arming target, which is
+ * backwards for a probe whose whole design is "arm low, read, disarm".
+ *
+ * This is the exact conflation `@civitai/redis`'s `cache-key-prefix.ts` and `~/env/database-target`
+ * were both written to resolve — `IS_PREVIEW` is overloaded across at least two deployment classes
+ * — and both resolved it the same way, with an explicit namespace. Following that precedent rather
+ * than inventing a third signal. Canonical values, from `cache-key-prefix.ts`: `''`/unset =
+ * production, `'preview'` = the ephemeral per-PR deployments, `'next'` = the standing
+ * non-production one. Only `'preview'` is refused.
+ *
+ * ⚠️ The `IS_PREVIEW` fallback below is NOT the old guard surviving. It covers ONLY the transitional
+ * state `cache-key-prefix.ts:66-75` itself warns about — a deployment carrying `IS_PREVIEW=true`
+ * whose `CACHE_KEY_NAMESPACE` has not been configured yet — where an unset namespace would
+ * otherwise fail OPEN and arm a preview. It cannot catch `civitai-next`, whose namespace is `next`,
+ * i.e. non-empty.
+ *
+ * ⚠️ Read from `process.env` rather than importing `CACHE_KEY_NAMESPACE` from `@civitai/redis`, and
+ * the `?.trim() ?? ''` deliberately MIRRORS that module's own normalisation so the two agree. The
+ * exported constant is evaluated at MODULE-EVAL time, which is right for a key table built once but
+ * wrong for a per-call guard, and importing it would also give this deliberately-light module a new
+ * package dependency. Same reasoning `~/env/database-target` records for reading one optional
+ * string directly: the parse is total and cannot throw.
  */
 function shadowConfig(): { model: string; sample: number } | null {
-  if (process.env.IS_PREVIEW === 'true') return null;
+  const namespace = process.env.CACHE_KEY_NAMESPACE?.trim() ?? '';
+  if (namespace === 'preview') return null;
+  if (!namespace && process.env.IS_PREVIEW === 'true') return null;
   const model = env.EXTERNAL_MODERATION_SHADOW_MODEL?.trim();
   const sample = env.EXTERNAL_MODERATION_SHADOW_SAMPLE;
   if (!model) return null;

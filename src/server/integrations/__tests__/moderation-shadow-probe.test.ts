@@ -126,6 +126,10 @@ beforeEach(() => {
   env.EXTERNAL_MODERATION_SHADOW_SAMPLE = 1;
   env.EXTERNAL_MODERATION_CATEGORIES = undefined;
   env.EXTERNAL_MODERATION_ENDPOINT = 'https://moderation.example/v1/moderations';
+  // Deployment-identity knobs the arming guard reads. Reset per test: they are real process.env
+  // entries, so a case that sets one would otherwise leak into every later case in this file.
+  process.env.CACHE_KEY_NAMESPACE = '';
+  delete process.env.IS_PREVIEW;
 });
 
 afterEach(() => {
@@ -306,40 +310,89 @@ describe('shadow probe — vocabulary gate (audit round 1, F1)', () => {
     expect(candidateVocabularyCovers({}, undefined)).toBe(true);
   });
 
-  it('requires EVERY mapped key, not merely one of them', () => {
+  it('is DETERMINACY, not coverage: a present TRUE key settles the verdict despite a missing one', () => {
+    // 🔴 ROUND 2, F2. `deriveModerationVerdict` ORs across mapped keys, so one present `true` fixes
+    // the verdict at `flagged: true` whatever the missing key would have said — that comparison is
+    // makeable and must not be thrown away as `incomparable`. Unreachable on production's
+    // single-key map; reachable the moment a second category is configured, which needs no code.
     const twoKeys = { 'sexual/minors': 'a', violence: 'b' };
     expect(candidateVocabularyCovers({ categories: { 'sexual/minors': true } }, twoKeys)).toBe(
+      true
+    );
+  });
+
+  it('is INDETERMINATE when nothing present is true and a mapped key is missing', () => {
+    // Here the verdict really is unknowable: the absent key might have been the one that flagged.
+    const twoKeys = { 'sexual/minors': 'a', violence: 'b' };
+    expect(candidateVocabularyCovers({ categories: { 'sexual/minors': false } }, twoKeys)).toBe(
       false
     );
+    // All keys present and all false — determinate `flagged: false`, so comparable.
     expect(
-      candidateVocabularyCovers({ categories: { 'sexual/minors': true, violence: false } }, twoKeys)
+      candidateVocabularyCovers(
+        { categories: { 'sexual/minors': false, violence: false } },
+        twoKeys
+      )
     ).toBe(true);
   });
 });
 
 describe('shadow probe — arming', () => {
-  it('REFUSES to arm in a PR preview, however the config was inherited (audit round 1, F2)', async () => {
-    // The preview deploy task copies civitai-cfg from civitai-next and rewrites an enumerated key
-    // list, which cannot name fields that did not exist when it was written. So arming on STAGING
-    // would otherwise arm every open preview at its next deploy, each spending the production
-    // classifier credential unattributed. Differential: prove observations land first.
+  it('REFUSES to arm in a PR preview (CACHE_KEY_NAMESPACE=preview)', async () => {
+    // Round 1 F2: the preview deploy task copies civitai-cfg from staging and rewrites an
+    // enumerated key list that cannot name fields which did not exist when it was written, so
+    // arming on staging would otherwise arm every open preview, each spending the production
+    // credential unattributed. Differential: prove observations land in this budget first.
     stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilShadowTotal(1);
 
-    const prev = process.env.IS_PREVIEW;
+    process.env.CACHE_KEY_NAMESPACE = 'preview';
+    const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('an entirely different prompt', 'generate');
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(await shadowTotal()).toBe(1);
+    // Refusing to arm must also mean refusing to SPEND: one request, the live one.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 STILL ARMS on the standing non-production deployment (round 2, F1)', async () => {
+    // 🔴 THE ROUND-2 REGRESSION, PINNED. The first version of this guard used IS_PREVIEW, and
+    // `civitai-next` — the standing non-production deployment, and the config SOURCE the previews
+    // copy from — sets IS_PREVIEW=true itself. So the guard refused the one staging rehearsal it
+    // claimed to protect and left production as the practical arming target. Its namespace is
+    // `next`, so gating on the namespace permits it, which is the whole point of the correction.
+    process.env.CACHE_KEY_NAMESPACE = 'next';
+    process.env.IS_PREVIEW = 'true'; // exactly what that deployment carries
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a staging rehearsal', 'generate');
+    await untilShadowTotal(1);
+    expect(await shadowCount('match')).toBe(1);
+  });
+
+  it('arms in production, where the namespace is empty and IS_PREVIEW is unset', async () => {
+    process.env.CACHE_KEY_NAMESPACE = '';
+    delete process.env.IS_PREVIEW;
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a production call', 'generate');
+    await untilShadowTotal(1);
+    expect(await shadowCount('match')).toBe(1);
+  });
+
+  it('refuses on the TRANSITIONAL preview: namespace unset but IS_PREVIEW=true', async () => {
+    // cache-key-prefix.ts:66-75 warns this state exists. An unset namespace must not fail OPEN.
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a warmup prompt', 'generate');
+    await untilShadowTotal(1);
+
+    process.env.CACHE_KEY_NAMESPACE = '';
     process.env.IS_PREVIEW = 'true';
-    try {
-      const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
-      await extModeration.moderatePrompt('an entirely different prompt', 'generate');
-      await new Promise((r) => setTimeout(r, 200));
-      expect(await shadowTotal()).toBe(1);
-      // Refusing to arm must also mean refusing to SPEND: one request, the live one.
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      if (prev === undefined) delete process.env.IS_PREVIEW;
-      else process.env.IS_PREVIEW = prev;
-    }
+    const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('an entirely different prompt', 'generate');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await shadowTotal()).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('is OFF when the model is unset, even with a positive sample', async () => {
