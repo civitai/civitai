@@ -1450,9 +1450,21 @@ function extractResourceInputFromMeta(metadata: Record<string, unknown>) {
 }
 
 /**
+ * Mirrors `NULLIF(LOWER(x), '')` and the empty-content-hash exclusion in the SQL, in one place so
+ * the three stages cannot drift apart. Takes `unknown` because they never had the string the casts
+ * in extractResourceInputFromMeta claim: the procedure is public and its schema is
+ * `z.record(z.string(), z.unknown())`, so a value here is whatever the caller wrote.
+ */
+const normalizeHash = (raw: unknown): string | undefined => {
+  if (typeof raw !== 'string') return undefined;
+  const hash = raw.toLowerCase();
+  return hash && hash !== EMPTY_HASH ? hash : undefined;
+};
+
+/**
  * Extract hash candidates from metadata (mirrors get_image_resources.sql stages 1-3).
  */
-function extractHashCandidates(
+export function extractHashCandidates(
   input: ReturnType<typeof extractResourceInputFromMeta>
 ): HashCandidate[] {
   const candidates: HashCandidate[] = [];
@@ -1460,10 +1472,10 @@ function extractHashCandidates(
   // Stage 1: meta.resources[] — resources with hashes
   if (input.resources) {
     for (const r of input.resources) {
-      if (!r.hash || r.name === 'vae') continue;
+      if (r.name === 'vae') continue;
       if (!isResourceRole(r.type?.toLowerCase())) continue;
-      const hash = r.hash.toLowerCase();
-      if (hash === EMPTY_HASH) continue;
+      const hash = normalizeHash(r.hash);
+      if (!hash) continue;
       candidates.push({
         hash,
         name: r.name ?? r.type ?? 'unknown',
@@ -1477,18 +1489,16 @@ function extractHashCandidates(
     for (const [key, value] of Object.entries(input.hashes)) {
       if (key === 'vae') continue;
       if (!isResourceRole(roleFromHashKey(key))) continue;
-      const hash = value.toLowerCase();
-      if (hash === EMPTY_HASH) continue;
+      const hash = normalizeHash(value);
+      if (!hash) continue;
       candidates.push({ hash, name: key, strength: null });
     }
   }
 
   // Stage 3: Legacy 'Model hash' field (only if no hashes object)
-  if (input.modelHash && !input.hashes) {
-    const hash = input.modelHash.toLowerCase();
-    if (hash !== EMPTY_HASH) {
-      candidates.push({ hash, name: input.modelName ?? 'model', strength: null });
-    }
+  if (!input.hashes) {
+    const hash = normalizeHash(input.modelHash);
+    if (hash) candidates.push({ hash, name: input.modelName ?? 'model', strength: null });
   }
 
   return candidates;
