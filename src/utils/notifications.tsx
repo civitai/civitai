@@ -15,11 +15,15 @@ export function showErrorNotification({
   reason,
   title,
   autoClose = 3000,
+  id,
 }: {
   error: Error | { message: string } | { message: string }[];
   reason?: string;
   title?: string;
   autoClose?: number | false;
+  /** Mantine ignores a `show` whose id is already showing or queued — pass one where the
+   * same failure can repeat, or the user gets a toast per attempt. */
+  id?: string;
 }) {
   const message = Array.isArray(error) ? (
     <ul>
@@ -32,6 +36,7 @@ export function showErrorNotification({
   );
 
   showNotification({
+    id,
     icon: <IconX size={18} />,
     color: 'red',
     message,
