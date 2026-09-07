@@ -309,11 +309,21 @@ export function recordExternalModerationSkipped(source: ExternalModerationSource
  * blocked today, a UX cost rather than a safety one. Folded into one label they CANCEL, and a
  * candidate that is 2% more permissive and 2% stricter becomes indistinguishable from one that
  * agrees perfectly. `error` is the shadow request itself failing and says nothing about either model.
+ *
+ * 🔴 `incomparable` IS NOT A KIND OF ERROR AND MUST NOT BE FOLDED INTO ONE. It means the two models
+ * answered in DIFFERENT VOCABULARIES, so no verdict comparison was attempted. When
+ * `EXTERNAL_MODERATION_CATEGORIES` is configured the app's verdict is `any mapped category the
+ * classifier marked true` — production maps a single key — so a candidate whose response simply
+ * does not carry that key yields `false` on EVERY call and reads as flagging NOTHING. Without this
+ * outcome a candidate in PERFECT agreement is indistinguishable from one that is completely blind:
+ * both report `candidate_permissive` on every incumbent flag, with zero errors. On a fail-closed
+ * gate that is the most dangerous shape a measurement can have, because the number looks fine.
  */
 export type ModerationShadowOutcome =
   | 'match'
   | 'candidate_permissive'
   | 'candidate_strict'
+  | 'incomparable'
   | 'error';
 
 const shadowCounter = registerCounterWithLabels({
@@ -327,8 +337,13 @@ const shadowCounter = registerCounterWithLabels({
     'the candidate did not, i.e. the candidate would have let it through a fail-closed gate); ' +
     'candidate_strict is the reverse and is a false-positive/UX cost. Do NOT sum the two into one ' +
     'divergence rate — they cancel, and that is the one reading this metric exists to prevent. ' +
-    'outcome=error is the shadow request failing and is evidence about neither model. 🔴 Every ' +
-    'counted comparison is a SECOND billable classifier request; the sample rate is the spend control.',
+    'outcome=error is the shadow request failing and is evidence about neither model. 🔴 ' +
+    'outcome=incomparable means the candidate did not answer in the vocabulary the configured ' +
+    'EXTERNAL_MODERATION_CATEGORIES map reads, so no comparison was attempted — a NON-ZERO ' +
+    'incomparable rate INVALIDATES the permissive/strict split for that candidate; pick a candidate ' +
+    'that shares the incumbent`s category names, do not reason around it. 🔴 Every counted ' +
+    'comparison is a SECOND billable classifier request; the sample rate is the spend control, and ' +
+    'disarming takes a POD ROLLOUT because env is parsed once at process start.',
   labelNames: ['source', 'outcome'] as const,
 });
 

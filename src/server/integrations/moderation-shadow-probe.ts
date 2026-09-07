@@ -18,6 +18,20 @@
 // caller, and no code path reads a shadow result back. Switching the gate to a different model is a
 // moderation-policy decision and must be its own change with its own review.
 //
+// ⚠️ "CANNOT ALTER A VERDICT" IS A STATEMENT ABOUT THIS CODE, NOT ABOUT THE VENDOR. There is one
+// indirect path, named here rather than left for someone to rediscover: the probe DOUBLES the
+// request rate against a shared per-organisation quota. Measured on production 2026-09-07 the live
+// call runs ~4.3 req/s, so `SAMPLE=1.0` adds ~4.3 req/s (~371k requests/day). If that were ever
+// enough to provoke vendor 429s they would land on the LIVE calls too — and the live call is
+// FAIL-SOFT, so a rate-limited moderation request proceeds as `flagged:false` and silently drops
+// the external layer. At the measured volume the margin is wide, so this is a mechanism note and
+// not a prediction. It is still the reason to arm at a LOW sample rate rather than at 1.0.
+//
+// 🔴 THERE IS NO IN-PROCESS KILL SWITCH. `env` is parsed once at process start, so disarming needs a
+// POD ROLLOUT — editing the ConfigMap alone changes nothing on already-running pods. Budget for
+// that before arming, not during an incident. (Inherited from the sibling probes on this path,
+// not introduced here.)
+//
 // 🔴 NO PROMPT IS EVER STORED OR LOGGED. The prompt is passed to the candidate classifier in the
 // request body — exactly as the live call already does, to the same vendor — and is then dropped.
 // Only a bounded outcome label reaches the metric. This is deliberate: the surrounding moderation
@@ -35,6 +49,40 @@ import {
 
 /** The verdict shape both models are reduced to before comparison. */
 export type ShadowComparableVerdict = { flagged: boolean };
+
+/**
+ * Can the candidate's response even be REDUCED by the incumbent's policy?
+ *
+ * 🔴 THIS IS THE DIFFERENCE BETWEEN A MEASUREMENT AND A PLAUSIBLE FICTION, and without it the
+ * probe's headline number is unrelated to the candidate's quality. When
+ * `EXTERNAL_MODERATION_CATEGORIES` is configured, `deriveModerationVerdict` computes
+ * `flagged = any MAPPED category the classifier marked true` — and production configures a SINGLE
+ * key (`sexual/minors`). A candidate model that classifies the same content under a different
+ * category name returns a response with no such key, so `Boolean(undefined)` makes its verdict
+ * `false` on EVERY call. It then reads as `candidate_permissive` on every prompt the incumbent
+ * flagged, at zero errors — i.e. a candidate in PERFECT agreement and one that is completely blind
+ * produce the IDENTICAL, entirely reasonable-looking metric, on a decision about a fail-closed gate.
+ *
+ * ⚠️ Threshold mode needs no such check and deliberately returns true: there the verdict is the
+ * classifier's OWN `flagged` boolean, which is model-native and therefore comparable across
+ * vocabularies. The hazard is specific to category-map mode.
+ *
+ * `hasOwnProperty` rather than `in`, because `in` walks the prototype chain: with a map key of
+ * `toString` or `constructor` — operator-controlled, so not untrusted, but free to get right — `in`
+ * would report the vocabulary covered on a response that carries nothing of the sort. Same failure
+ * shape this codebase has already been bitten by elsewhere.
+ */
+export function candidateVocabularyCovers(
+  result: { categories?: unknown },
+  categoryMap: Record<string, string> | undefined
+): boolean {
+  if (!categoryMap) return true;
+  const categories = result?.categories;
+  if (!categories || typeof categories !== 'object') return false;
+  return Object.keys(categoryMap).every((key) =>
+    Object.prototype.hasOwnProperty.call(categories, key)
+  );
+}
 
 /**
  * Decide the comparison outcome from the two verdicts.
@@ -80,14 +128,29 @@ export function classifyShadowOutcome(
  * sampled call is a SECOND billable classifier request against the production credential. At 1.0
  * this doubles the moderation bill for as long as it is armed. Arm it low, read the rate, disarm.
  *
- * ⚠️ NO ALLOWLIST ON THE MODEL NAME, and that is a considered choice rather than an oversight. The
- * sibling cache probe's namespace IS a closed allowlist, because there a wrong-but-plausible value
- * silently opens a second keyspace and measures a FICTION that looks like a real reading. This field
- * has no such failure mode: a model name the vendor does not recognise makes every sampled request
- * fail, which surfaces as ~100% `error` and zero `match` — a shape no reader can mistake for a
- * result. The sample rate bounds the wasted spend meanwhile. Guarding it would be ceremony.
+ * ⚠️ NO ALLOWLIST ON THE MODEL NAME. A name the vendor does not recognise makes every sampled
+ * request fail, surfacing as ~100% `error` and zero `match` — a shape no reader mistakes for a
+ * result — and the sample rate bounds the wasted spend meanwhile.
+ *
+ * 🔴 THAT REASONING IS ABOUT AN UNRECOGNISED NAME AND DOES NOT EXTEND TO A RECOGNISED ONE. An
+ * earlier revision of this comment stopped at "guarding it would be ceremony", which primed the
+ * reader to treat a zero `error` rate as proof the candidate was working. It is not: a perfectly
+ * valid model that answers in a different CATEGORY VOCABULARY produces 200s, zero errors, and a
+ * completely fictional agreement rate. That hole is closed by `candidateVocabularyCovers` and the
+ * `incomparable` outcome above, NOT by anything about the model name — read them together.
+ *
+ * 🔴 AND IT REFUSES TO ARM IN A PR PREVIEW, which is a CONFIG-INHERITANCE guard, not a model guard.
+ * The preview deploy task copies `civitai-cfg` out of `civitai-next` and rewrites an enumerated key
+ * list that cannot include fields that did not exist when it was written — so an operator doing the
+ * cautious thing and arming on STAGING first would silently arm every open PR preview at its next
+ * deploy, each issuing a second billable request per moderation call against the production
+ * credential, unattributed and with nobody reading preview metrics. `IS_PREVIEW` is the same signal
+ * `~/env/database-target` falls back to. Deliberately NOT `isNonProductionDatabase()`, which is
+ * wider: that would also refuse a DELIBERATE staging arm, which is a legitimate operator choice and
+ * the exact workflow this guard is meant to keep safe rather than block.
  */
 function shadowConfig(): { model: string; sample: number } | null {
+  if (process.env.IS_PREVIEW === 'true') return null;
   const model = env.EXTERNAL_MODERATION_SHADOW_MODEL?.trim();
   const sample = env.EXTERNAL_MODERATION_SHADOW_SAMPLE;
   if (!model) return null;
@@ -115,6 +178,12 @@ export function probeShadowModel(
   preparedPrompt: string,
   live: ShadowComparableVerdict
 ): void {
+  // ⚠️ This clamp NARROWS THE TYPE at the boundary (`unknown` in, closed set out) and is
+  // BEHAVIOURALLY REDUNDANT: `recordExternalModerationShadow` clamps again, so replacing this call
+  // with a bare cast leaves the whole suite green — no mutant kills it on its own, and the
+  // "clamps an out-of-set source" test below is satisfied by the metrics-layer clamp, not by this
+  // line. Stated rather than quietly counted as covered. It stays because the parameter is
+  // `unknown` and something must narrow it, not because it is the guard that holds the property.
   const metricSource: ExternalModerationSource = clampExternalModerationSource(source);
   try {
     const config = shadowConfig();
@@ -160,6 +229,13 @@ async function runShadowComparison(
     const { results } = await res.json();
     if (!results?.[0]) {
       recordExternalModerationShadow(metricSource, 'error');
+      return;
+    }
+    // 🔴 Vocabulary gate BEFORE the comparison, never after. Reducing an unreadable response would
+    // silently produce `flagged:false` and book it as a real disagreement. See the function's own
+    // header for why that specific wrong answer is the dangerous one.
+    if (!candidateVocabularyCovers(results[0], env.EXTERNAL_MODERATION_CATEGORIES)) {
+      recordExternalModerationShadow(metricSource, 'incomparable');
       return;
     }
     // 🔴 The candidate's raw response is reduced by the SAME policy derivation the live verdict went

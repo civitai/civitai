@@ -47,7 +47,10 @@ vi.mock('~/env/server', () => ({ env }));
 
 import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
-import { classifyShadowOutcome } from '~/server/integrations/moderation-shadow-probe';
+import {
+  candidateVocabularyCovers,
+  classifyShadowOutcome,
+} from '~/server/integrations/moderation-shadow-probe';
 
 const SHADOW = 'civitai_app_external_moderation_shadow_total';
 const HIST = 'civitai_app_external_moderation_duration_seconds';
@@ -192,7 +195,153 @@ describe('shadow probe — what it compares', () => {
   });
 });
 
+describe('shadow probe — vocabulary gate (audit round 1, F1)', () => {
+  // 🔴 PRODUCTION'S REAL CONFIGURATION. Read live from the dp-prod ConfigMap 2026-09-07:
+  // EXTERNAL_MODERATION_CATEGORIES = 'sexual/minors:inappropriate minor content'. A SINGLE key, so
+  // the app's verdict is exactly `Boolean(result.categories['sexual/minors'])`.
+  const PROD_MAP = { 'sexual/minors': 'inappropriate minor content' };
+
+  /** A response in a DIFFERENT vocabulary: same meaning, different category names. */
+  function bodyForeignVocab(flagged: boolean) {
+    return {
+      results: [
+        {
+          flagged,
+          categories: { csam: flagged, adult: false },
+          category_scores: { csam: flagged ? 0.95 : 0.02, adult: 0.1 },
+        },
+      ],
+    };
+  }
+
+  it('records `incomparable` — NOT a false disagreement — when the candidate lacks the mapped key', async () => {
+    // 🔴 THE FINDING THIS TEST EXISTS FOR. Without the gate, a candidate in PERFECT agreement that
+    // simply names the category differently yields Boolean(undefined) === false on every call, so
+    // every incumbent flag books as `candidate_permissive` at ZERO errors. A blind candidate reads
+    // IDENTICALLY. That is a fully plausible number, unrelated to quality, on a fail-closed gate.
+    env.EXTERNAL_MODERATION_CATEGORIES = PROD_MAP;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const parsed = JSON.parse(init.body) as SentBody;
+        if (parsed.model === INCUMBENT) {
+          // The incumbent DOES flag, in its own vocabulary.
+          return {
+            ok: true,
+            json: async () => ({
+              results: [
+                {
+                  flagged: true,
+                  categories: { 'sexual/minors': true },
+                  category_scores: { 'sexual/minors': 0.95 },
+                },
+              ],
+            }),
+          };
+        }
+        return { ok: true, json: async () => bodyForeignVocab(true) };
+      })
+    );
+
+    const verdict = await extModeration.moderatePrompt('a prompt the incumbent flags', 'generate');
+    await untilShadowTotal(1);
+
+    expect(verdict.flagged).toBe(true); // the gate itself is untouched
+    expect(await shadowCount('incomparable')).toBe(1);
+    // The whole point: it must NOT be booked as the candidate being permissive.
+    expect(await shadowCount('candidate_permissive')).toBe(0);
+    expect(await shadowCount('match')).toBe(0);
+  });
+
+  it('still compares normally when the candidate DOES share the mapped vocabulary', async () => {
+    // The gate must not simply switch the probe off under a category map — that would trade a
+    // wrong number for no number, and production always runs a map.
+    env.EXTERNAL_MODERATION_CATEGORIES = PROD_MAP;
+    const shared = (flagged: boolean) => ({
+      results: [
+        {
+          flagged,
+          categories: { 'sexual/minors': flagged },
+          category_scores: { 'sexual/minors': flagged ? 0.95 : 0.01 },
+        },
+      ],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const parsed = JSON.parse(init.body) as SentBody;
+        return { ok: true, json: async () => shared(parsed.model === INCUMBENT) };
+      })
+    );
+
+    await extModeration.moderatePrompt('incumbent flags, candidate does not', 'generate');
+    await untilShadowTotal(1);
+    expect(await shadowCount('candidate_permissive')).toBe(1);
+    expect(await shadowCount('incomparable')).toBe(0);
+  });
+
+  it('does not gate in THRESHOLD mode, where the vendor`s own flagged is comparable', async () => {
+    env.EXTERNAL_MODERATION_CATEGORIES = undefined;
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a serene landscape', 'generate');
+    await untilShadowTotal(1);
+    expect(await shadowCount('match')).toBe(1);
+    expect(await shadowCount('incomparable')).toBe(0);
+  });
+
+  it('coverage is by OWN property, so a prototype key cannot fake it', () => {
+    // `in` walks the prototype chain, so `'toString' in {}` is true and the vocabulary would read
+    // as covered on a response carrying nothing of the sort.
+    expect(candidateVocabularyCovers({ categories: {} }, { toString: 'x' })).toBe(false);
+    expect(candidateVocabularyCovers({ categories: { toString: true } }, { toString: 'x' })).toBe(
+      true
+    );
+  });
+
+  it('treats a missing or non-object categories field as not covered', () => {
+    expect(candidateVocabularyCovers({}, PROD_MAP)).toBe(false);
+    expect(candidateVocabularyCovers({ categories: null }, PROD_MAP)).toBe(false);
+    expect(candidateVocabularyCovers({ categories: 'nope' }, PROD_MAP)).toBe(false);
+    // Threshold mode: no map, nothing to cover.
+    expect(candidateVocabularyCovers({}, undefined)).toBe(true);
+  });
+
+  it('requires EVERY mapped key, not merely one of them', () => {
+    const twoKeys = { 'sexual/minors': 'a', violence: 'b' };
+    expect(candidateVocabularyCovers({ categories: { 'sexual/minors': true } }, twoKeys)).toBe(
+      false
+    );
+    expect(
+      candidateVocabularyCovers({ categories: { 'sexual/minors': true, violence: false } }, twoKeys)
+    ).toBe(true);
+  });
+});
+
 describe('shadow probe — arming', () => {
+  it('REFUSES to arm in a PR preview, however the config was inherited (audit round 1, F2)', async () => {
+    // The preview deploy task copies civitai-cfg from civitai-next and rewrites an enumerated key
+    // list, which cannot name fields that did not exist when it was written. So arming on STAGING
+    // would otherwise arm every open preview at its next deploy, each spending the production
+    // classifier credential unattributed. Differential: prove observations land first.
+    stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+    await extModeration.moderatePrompt('a warmup prompt', 'generate');
+    await untilShadowTotal(1);
+
+    const prev = process.env.IS_PREVIEW;
+    process.env.IS_PREVIEW = 'true';
+    try {
+      const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
+      await extModeration.moderatePrompt('an entirely different prompt', 'generate');
+      await new Promise((r) => setTimeout(r, 200));
+      expect(await shadowTotal()).toBe(1);
+      // Refusing to arm must also mean refusing to SPEND: one request, the live one.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      if (prev === undefined) delete process.env.IS_PREVIEW;
+      else process.env.IS_PREVIEW = prev;
+    }
+  });
+
   it('is OFF when the model is unset, even with a positive sample', async () => {
     // Differential: prove observations land in this budget first, so the absence is evidence.
     stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
