@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import handler from '~/pages/api/webhooks/image-scan-result';
+import { processImageScanWorkflow } from '~/server/services/image-scan-result.service';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
@@ -551,6 +552,46 @@ describe('image-scan-result webhook - pipeline tests', () => {
     const updateForImage7 = dbUpdates.find((call: any) => call[0].where.id === 7);
     expect(updateForImage7).toBeDefined();
     expect(updateForImage7[0].data.nsfwLevel).toBeUndefined(); // locked, so undefined (not updated)
+  });
+
+  it('creates a never-before-seen tag with the columns the Tag table requires', async () => {
+    const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+    let tagInsert: { text: string; params: any[] } | undefined;
+
+    mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (!strings.join('').includes('INSERT INTO "Tag"')) return passthrough(query, ...values);
+
+      tagInsert = renderSql(strings, values);
+      // `Tag.updatedAt` and `Tag.target` are NOT NULL with no database default, so an
+      // insert omitting either raises 23502 instead of returning a row.
+      for (const column of ['"updatedAt"', 'target']) {
+        if (!tagInsert.text.includes(column))
+          throw new Error(`Raw query failed. Code: \`23502\`. "Tag" insert omits ${column}`);
+      }
+      return [{ id: 999, name: 'never seen tag', nsfwLevel: 1, type: 'UserGenerated' }];
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-with-an-unseen-tag',
+      status: 'succeeded',
+      imageId: 9,
+      steps: [
+        {
+          $type: 'wdTagging',
+          output: { tags: { 'never seen tag': 0.9 }, rating: { general: 0.9 } },
+        },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        { $type: 'mediaHash', output: { hashes: { perceptual: '6F51B11C49611E0E' } } },
+      ] as any,
+    });
+
+    expect(tagInsert?.text).toContain('"updatedAt"');
+    expect(tagInsert?.text).toContain('target');
+    expect(tagInsert?.params.some((param) => param instanceof Date)).toBe(true);
+
+    const written = mockInsertTagsOnImageNew.mock.calls.flatMap((call) => call[0]);
+    expect(written.some((tag: any) => tag.imageId === 9 && tag.tagId === 999)).toBe(true);
   });
 
   describe('webhook body strings never reach SQL text', () => {

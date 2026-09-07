@@ -815,10 +815,15 @@ async function processTags({
   if (tagsToCreate.length > 0) {
     const tagsToInsert = deduped.filter((x) => tagsToCreate.includes(x.name));
 
-    const values = tagsToInsert.map((tag) => Prisma.sql`(${tag.name})`);
+    // `updatedAt` and `target` are NOT NULL with no database default -- Prisma stamps
+    // them client-side, which raw SQL bypasses, so omitting them raises 23502.
+    const now = new Date();
+    const values = tagsToInsert.map(
+      (tag) => Prisma.sql`(${tag.name}, ${now}, ARRAY['Image']::"TagTarget"[])`
+    );
 
     createdTags = await dbWrite.$queryRaw<TagWithId[]>`
-      INSERT INTO "Tag" (name)
+      INSERT INTO "Tag" (name, "updatedAt", target)
       VALUES ${Prisma.join(values)}
       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
       RETURNING id, name, "nsfwLevel", type
