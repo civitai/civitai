@@ -251,14 +251,19 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           // two presentations, which is the duplication this consolidation removed;
           // (3) we believe the cohort is EMPTY today — but note what that rests on,
           // because it is NOT something this repo can settle. `appBlocksGetStarted`
-          // declares `availability: ['mod']`, and `availability` is only the
-          // Flipt-DOWN FALLBACK: `getFeatureFlags` returns Flipt's answer BEFORE it
-          // evaluates roles ("Flipt overrides role checks (both enable AND disable)",
-          // `~/server/services/feature-flags.service.ts`). So who actually holds
-          // get-started, and who actually holds the store flags, is observable only in
-          // LIVE FLIPT. What the code DOES establish is that all four App-Blocks flags
-          // are Flipt-backed runtime toggles, so this branch becomes reachable with no
-          // PR and no deploy.
+          // declares `availability: ['mod']`, and for a flag whose availability carries
+          // ROLE terms only, `availability` is the Flipt-DOWN fallback: `getFeatureFlags`
+          // returns Flipt's answer BEFORE it evaluates roles ("Flipt overrides role
+          // checks (both enable AND disable)", `~/server/services/feature-flags.service.ts`).
+          // 🔴 That is scoped on purpose — `availability` ALSO carries env / region /
+          // server-colour terms, and those run BEFORE Flipt and Flipt cannot override
+          // them ("Server/domain restrictions always apply", same file). `['mod']`
+          // carries no such term, so for THIS flag the role reading is the operative one;
+          // do not generalise the sentence to a flag that names a colour domain.
+          // So who actually holds get-started, and who actually holds the store flags, is
+          // observable only in LIVE FLIPT. What the code DOES establish is that all four
+          // App-Blocks flags are Flipt-backed runtime toggles, so this branch becomes
+          // reachable with no PR and no deploy.
           //
           // 🔴 RE-DECIDE IT when a real viewer can take this branch, which happens from
           // BOTH directions — the condition is `!marketplace && getStarted`, so either
@@ -266,10 +271,15 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           //   • get-started WIDENS — `app-blocks-get-started` rolled out past
           //     moderators in Flipt, or `availability` changed in
           //     `feature-flags.service.ts`; or
-          //   • the STORE flags NARROW — `app-blocks-enabled` / `app-listings` turned
-          //     off in Flipt while get-started stays on. Then EVERY moderator takes
-          //     this branch and sees a row labelled "Apps" with `IconPlugConnected`
-          //     navigating to developer onboarding.
+          //   • the STORE flags NARROW — `marketplace` is `hasAppsStoreAccess`, which is
+          //     an OR over THREE flags (`app-listings` ‖ `app-blocks-enabled` ‖
+          //     `app-listings-public-external`; see `~/shared/utils/app-blocks-access`),
+          //     so it takes ALL THREE going off in Flipt, while get-started stays on, to
+          //     reach this branch. 🔴 Name all three: a moderator still holding any ONE of
+          //     them — the external-only tester cohort holds
+          //     `app-listings-public-external` alone — keeps `marketplace === true` and
+          //     does NOT take this branch. Whoever is left sees a row labelled "Apps" with
+          //     `IconPlugConnected` navigating to developer onboarding.
           // Until then a conditional label would be untestable-in-production copy.
           href: appsNav.marketplace ? '/apps' : '/apps/get-started',
           visible: appsNav.marketplace || appsNav.getStarted,
