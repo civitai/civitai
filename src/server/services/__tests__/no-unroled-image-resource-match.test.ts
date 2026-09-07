@@ -75,4 +75,14 @@ describe('resolveImageMeta (the TypeScript mirror)', () => {
       /mf\.type NOT IN \(\$\{Prisma\.join\(NON_RESOURCE_FILE_TYPES\)\}\)/
     );
   });
+
+  it('reads every hash through the one normalizer, as the SQL does with NULLIF', () => {
+    // The SQL cannot be handed a non-string -- jsonb_each_text yields NULL and LOWER(NULL) is NULL.
+    // Here the metadata is unvalidated, so a stage that lowercases a raw value throws on
+    // {"hashes":{"model":null}}. Counted, not merely present: a fourth stage added without it is
+    // the way this returns. Behaviour is pinned in generation/__tests__/extract-hash-candidates.
+    expect(mirror, 'no normalizeHash helper').toMatch(/const normalizeHash\s*=/);
+    const normalized = mirror.match(/normalizeHash\(/g) ?? [];
+    expect(normalized.length, 'a hash stage does not go through normalizeHash').toBe(3);
+  });
 });
