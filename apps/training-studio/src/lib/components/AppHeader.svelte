@@ -5,9 +5,16 @@
     username,
     image,
     logoutUrl,
-  }: { username?: string; image?: string; logoutUrl?: string | null } = $props();
+    buzz,
+  }: {
+    username?: string;
+    image?: string;
+    logoutUrl?: string | null;
+    buzz?: { total: number; yellow: number; blue: number } | null;
+  } = $props();
 
   const avatarUrl = $derived(getEdgeUrl(image));
+  const buzzTotal = $derived(buzz ? buzz.total : null);
 </script>
 
 <header class="mb-6 flex items-center justify-between gap-3">
@@ -27,6 +34,14 @@
     <a href="/" class="font-mono text-sm text-dark-2 transition-colors hover:text-white">
       My trainings
     </a>
+    {#if buzzTotal !== null}
+      <span
+        class="inline-flex items-center gap-1 rounded-full bg-[#f59f00]/15 px-2.5 py-1 font-mono text-sm font-semibold text-[#f59f00]"
+        title="Purchased ⚡{buzz?.yellow.toLocaleString()} · Generation ⚡{buzz?.blue.toLocaleString()}"
+      >
+        ⚡ {buzzTotal.toLocaleString()}
+      </span>
+    {/if}
     {#if username}
       <details class="relative">
         <summary
