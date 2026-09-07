@@ -52,6 +52,10 @@ import {
   enqueueImageIngestion,
   resolveIngestionError,
 } from '~/server/services/image.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForArticle,
+} from '~/server/services/collection-media-index';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
@@ -1479,6 +1483,9 @@ export const deleteArticleById = async ({
       select: { imageId: true },
     });
 
+    // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
+    const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
+
     const deleted = await dbWrite.$transaction(async (tx) => {
       const article = await tx.article.delete({
         where: { id },
@@ -1493,8 +1500,20 @@ export const deleteArticleById = async ({
       return article;
     });
 
-    // Delete cover image (DB + S3 + cache)
-    if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
+    // Immediately after the commit: the steps below can reject, and the article row is
+    // already gone, so the pre-delete snapshot is the only record left.
+    await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
+
+    // Delete cover image (DB + S3 + cache). Guarded like the content-image loop below:
+    // unguarded, a rejection here skips the articles-index `Delete` at the end of this
+    // function and the deleted article stays in that index indefinitely.
+    if (deleted.coverId)
+      await deleteImageById({ id: deleted.coverId }).catch((error) => {
+        handleLogError(error, 'article-cover-image-cleanup', {
+          articleId: id,
+          imageId: deleted.coverId,
+        });
+      });
 
     // Delete content images (DB + S3 + cache), excluding cover (already handled above)
     // Only delete images that have no remaining connections to ANY entity

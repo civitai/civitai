@@ -62,20 +62,32 @@ const POST_ID = 500;
 const OWNER_IMAGE = { id: 1, url: 'owner-url', deletable: true };
 const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', deletable: false };
 
-// $queryRaw runs select-images, then delete-images (only when something is deletable), then
-// delete-post. Branching on that is what lets the all-foreign case be tested at all.
+// Dispatched on SQL text, not call order: the number of $queryRaw calls ahead of the
+// delete is not stable.
+const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
+
 function primeQueries(images: { id: number; url: string; deletable: boolean }[]) {
   const deletable = images.filter((i) => i.deletable);
-  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(images);
-  if (deletable.length)
-    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(deletable.map(({ id, url }) => ({ id, url })));
-  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: POST_ID, nsfwLevel: 1 }]);
+  dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = sqlTextOf(strings);
+    if (sql.includes('pg_class')) return [{ present: false }];
+    if (sql.includes('"collectionId"')) return [];
+    if (sql.includes('DELETE FROM "Image"')) return deletable.map(({ id, url }) => ({ id, url }));
+    if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
+    if (sql.includes('AS deletable')) return images;
+    return [];
+  });
 }
+
+const callContaining = (needle: string) =>
+  dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
+    sqlTextOf(strings).includes(needle)
+  ) as [string[], ...unknown[]];
 
 // The scoping predicate is a `Prisma.raw` VALUE in the template, so joining `strings` alone
 // renders it as `?` — the one token these assertions are about. Interleave to recover it.
 const selectImagesSql = () => {
-  const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+  const [strings, ...values] = callContaining('AS deletable');
   return strings
     .map((chunk, i) => {
       if (i === 0) return chunk;
@@ -136,7 +148,7 @@ describe('deletePost orphan de-indexing', () => {
     await deletePost({ id: POST_ID });
 
     // The ids arrive as a `Prisma.join` fragment, so they have to be read out of its own `values`.
-    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[1] as [string[], ...unknown[]];
+    const [strings, ...values] = callContaining('DELETE FROM "Image"');
     const bound = values.flatMap((v) => (v as { values?: unknown[] })?.values ?? [v]);
     expect(strings.join('?')).toContain('DELETE FROM "Image"');
     expect(bound).toContain(OWNER_IMAGE.id);
