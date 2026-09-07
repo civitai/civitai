@@ -1,15 +1,28 @@
 import { trace } from '@opentelemetry/api';
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { registerCounterWithLabels } from '~/server/prom/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
 export const FEED_REQUEST_CAPTURE_TABLE = 'feedRequests';
 const CONFIG_TTL_MS = 15_000;
 const FLUSH_INTERVAL_MS = 2_000;
 const FLUSH_AT_ROWS = 200;
-const MAX_BUFFERED_ROWS = 5_000;
+/** Rows held while an insert is in flight; beyond this they are shed, never queued. */
+export const MAX_BUFFERED_ROWS = 2_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
+
+const batchCounter = registerCounterWithLabels({
+  name: 'feed_request_capture_batches_total',
+  help: 'Feed request capture ClickHouse inserts by outcome',
+  labelNames: ['outcome'] as const,
+});
+const rowCounter = registerCounterWithLabels({
+  name: 'feed_request_capture_rows_total',
+  help: 'Feed request capture rows sampled (buffered) or shed while an insert was in flight (dropped)',
+  labelNames: ['outcome'] as const,
+});
 
 export type FeedCaptureConfig = {
   /** 0..1; 0 disables capture. */
@@ -17,6 +30,8 @@ export type FeedCaptureConfig = {
   /** Epoch ms after which capture stops regardless of sampleRate. */
   until: number;
 };
+
+const CAPTURE_OFF: FeedCaptureConfig = { sampleRate: 0, until: 0 };
 
 export function parseCaptureConfig(
   raw: Record<string, string> | null | undefined
@@ -49,15 +64,46 @@ const FLAG_FIELDS = [
   'includeBaseModel',
 ] as const;
 
-// Session, transport and presentation fields: not part of the query shape, and `user` is
-// the whole session user (see redactSearchInputForLog).
-const OMITTED_INPUT_KEYS = new Set([
-  'user',
-  'signal',
-  'headers',
-  'actor',
-  'include',
-  'resolvedHub',
+// Allowlist, not a denylist: a field added to the search input later is not captured
+// until someone decides it should be (see redactSearchInputForLog for why).
+export const CAPTURED_INPUT_KEYS = new Set<string>([
+  ...FLAG_FIELDS,
+  'currentUserId',
+  'isModerator',
+  'sort',
+  'period',
+  'periodMode',
+  'browsingLevel',
+  'useCombinedNsfwLevel',
+  'domain',
+  'limit',
+  'cursor',
+  'offset',
+  'tags',
+  'excludedTagIds',
+  'excludedUserIds',
+  'modelId',
+  'modelVersionId',
+  'model3dId',
+  'userId',
+  'userIds',
+  'postId',
+  'postIds',
+  'collectionId',
+  'collectionTagId',
+  'hubId',
+  'hubExcludedSources',
+  'reviewId',
+  'imageId',
+  'ids',
+  'types',
+  'baseModels',
+  'tools',
+  'techniques',
+  'generation',
+  'reactions',
+  'prioritizedUserIds',
+  'blockedFor',
 ]);
 
 export type CapturableSearchInput = {
@@ -83,10 +129,15 @@ export type CapturableSearchInput = {
   baseModels?: string[];
   tools?: number[];
   techniques?: number[];
+  headers?: Record<string, string>;
 } & Record<string, unknown>;
 
+export type FeedRequestSource = 'getImagesFromSearch' | 'getAllImages';
+
 export type FeedRequestOutcome = {
-  source: string;
+  source: FeedRequestSource;
+  /** Meili path only: which feed-fetch-filter variant answered ('none' = no search client). */
+  filterMode?: 'pre' | 'post' | 'none';
   error?: boolean;
   elapsedMs: number;
   resultIds: number[];
@@ -98,6 +149,9 @@ export type FeedRequestRow = {
   traceId: string;
   userId: number;
   isModerator: number;
+  source: string;
+  callSite: string;
+  filterMode: string;
   sort: string;
   period: string;
   periodMode: string;
@@ -120,7 +174,6 @@ export type FeedRequestRow = {
   techniques: number[];
   flags: string[];
   input: string;
-  source: string;
   error: number;
   elapsedMs: number;
   resultCount: number;
@@ -129,8 +182,12 @@ export type FeedRequestRow = {
 };
 
 const uint = (n: unknown) => (typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : 0);
+const uint16 = (n: unknown) => Math.min(uint(n), 65_535);
+const uint32 = (n: unknown) => Math.min(uint(n), 4_294_967_295);
 const uintArray = (a: unknown) =>
-  Array.isArray(a) ? a.filter((n): n is number => Number.isInteger(n) && n >= 0) : [];
+  Array.isArray(a)
+    ? a.filter((n): n is number => Number.isInteger(n) && n >= 0 && n <= 4_294_967_295)
+    : [];
 const stringArray = (a: unknown) => (Array.isArray(a) ? a.map(String) : []);
 const str = (v: unknown) => (v == null ? '' : String(v));
 
@@ -144,13 +201,14 @@ export function buildFeedRequestRow(
   at: number,
   traceId: string
 ): FeedRequestRow {
-  const rest: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (!OMITTED_INPUT_KEYS.has(key) && value !== undefined && value !== null) rest[key] = value;
+  const captured: Record<string, unknown> = {};
+  for (const key of CAPTURED_INPUT_KEYS) {
+    const value = input[key];
+    if (value !== undefined && value !== null) captured[key] = value;
   }
   let inputJson = '';
   try {
-    inputJson = JSON.stringify(rest);
+    inputJson = JSON.stringify(captured);
   } catch {
     inputJson = '';
   }
@@ -158,34 +216,36 @@ export function buildFeedRequestRow(
   return {
     time: formatClickhouseDateTime64(at),
     traceId,
-    userId: uint(input.currentUserId),
+    userId: uint32(input.currentUserId),
     isModerator: input.isModerator ? 1 : 0,
+    source: outcome.source,
+    callSite: str(input.headers?.src),
+    filterMode: outcome.filterMode ?? '',
     sort: str(input.sort),
     period: str(input.period),
     periodMode: str(input.periodMode),
-    browsingLevel: uint(input.browsingLevel),
+    browsingLevel: uint16(input.browsingLevel),
     useCombinedNsfwLevel: input.useCombinedNsfwLevel ? 1 : 0,
-    limit: uint(input.limit),
+    limit: uint16(input.limit),
     cursor: str(input.cursor),
     tags: uintArray(input.tags),
     excludedTagIds: uintArray(input.excludedTagIds),
     excludedUserIds: uintArray(input.excludedUserIds),
-    modelId: uint(input.modelId),
-    modelVersionId: uint(input.modelVersionId),
-    filterUserId: uint(input.userId),
-    postId: uint(input.postId),
-    collectionId: uint(input.collectionId),
-    hubId: uint(input.hubId),
+    modelId: uint32(input.modelId),
+    modelVersionId: uint32(input.modelVersionId),
+    filterUserId: uint32(input.userId),
+    postId: uint32(input.postId),
+    collectionId: uint32(input.collectionId),
+    hubId: uint32(input.hubId),
     types: stringArray(input.types),
     baseModels: stringArray(input.baseModels),
     tools: uintArray(input.tools),
     techniques: uintArray(input.techniques),
     flags: FLAG_FIELDS.filter((field) => input[field] === true),
     input: inputJson,
-    source: outcome.source,
     error: outcome.error ? 1 : 0,
-    elapsedMs: Math.max(0, Math.round(outcome.elapsedMs)),
-    resultCount: outcome.resultIds.length,
+    elapsedMs: uint32(Math.round(outcome.elapsedMs)),
+    resultCount: uint16(outcome.resultIds.length),
     resultIds: uintArray(outcome.resultIds),
     nextCursor: str(outcome.nextCursor),
   };
@@ -213,37 +273,48 @@ export function createFeedRequestCapture(deps: CaptureDeps): FeedRequestCapture 
   const random = deps.random ?? Math.random;
   const flushIntervalMs = deps.flushIntervalMs ?? FLUSH_INTERVAL_MS;
   let buffer: FeedRequestRow[] = [];
+  let inflight: Promise<void> | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let dropped = 0;
   let lastErrorAt = 0;
 
+  function reportFailure(e: Error, rows: number) {
+    batchCounter.inc({ outcome: 'failed' });
+    if (deps.onError) return deps.onError(e, rows);
+    if (now() - lastErrorAt <= ERROR_LOG_INTERVAL_MS) return;
+    lastErrorAt = now();
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'feedRequests capture flush failed',
+        details: { rows },
+        message: e.message,
+      },
+      'clickhouse'
+    ).catch(() => undefined);
+  }
+
+  // One insert at a time: a slow ClickHouse holds one batch plus the bounded buffer,
+  // not an unbounded set of in-flight requests.
   async function flush() {
     if (timer) {
       clearTimeout(timer);
       timer = null;
     }
-    if (buffer.length === 0) return;
+    if (inflight || buffer.length === 0) return;
     const rows = buffer;
     buffer = [];
-    try {
-      await deps.insert(rows);
-    } catch (e) {
-      // Sampled telemetry: a failed batch is dropped, not retried, so a ClickHouse outage
-      // cannot pile up memory on the feed path.
-      if (deps.onError) deps.onError(e as Error, rows.length);
-      else if (now() - lastErrorAt > ERROR_LOG_INTERVAL_MS) {
-        lastErrorAt = now();
-        logToAxiom(
-          {
-            type: 'error',
-            name: 'feedRequests capture flush failed',
-            details: { rows: rows.length },
-            message: (e as Error).message,
-          },
-          'clickhouse'
-        ).catch(() => undefined);
-      }
-    }
+    inflight = deps
+      .insert(rows)
+      .then(
+        () => batchCounter.inc({ outcome: 'ok' }),
+        (e) => reportFailure(e as Error, rows.length)
+      )
+      .finally(() => {
+        inflight = null;
+        if (buffer.length) scheduleFlush();
+      });
+    await inflight;
   }
 
   function scheduleFlush() {
@@ -264,10 +335,12 @@ export function createFeedRequestCapture(deps: CaptureDeps): FeedRequestCapture 
       if (random() >= config.sampleRate) return;
       if (buffer.length >= MAX_BUFFERED_ROWS) {
         dropped++;
+        rowCounter.inc({ outcome: 'dropped' });
         return;
       }
       buffer.push(buildFeedRequestRow(input, outcome, at, traceId));
-      if (buffer.length >= FLUSH_AT_ROWS) await flush();
+      rowCounter.inc({ outcome: 'buffered' });
+      if (buffer.length >= FLUSH_AT_ROWS) void flush();
       else scheduleFlush();
     } catch {
       // Capture must never surface on the feed path.
@@ -300,13 +373,18 @@ export function feedRequestCapture(): FeedRequestCapture {
   const client = clickhouse;
   if (!client) return (instance = disabledCapture);
   return (instance = createFeedRequestCapture({
-    getConfig: createTtlMemo(
-      async () =>
-        parseCaptureConfig(
-          await sysRedis.hGetAll<string>(REDIS_SYS_KEYS.SYSTEM.FEED_REQUEST_CAPTURE)
-        ),
-      CONFIG_TTL_MS
-    ),
+    // A failed or slow read memoizes "off" for one TTL instead of re-reading per request.
+    getConfig: createTtlMemo(async () => {
+      try {
+        return parseCaptureConfig(
+          await withSysReadDeadline(
+            sysRedis.hGetAll<string>(REDIS_SYS_KEYS.SYSTEM.FEED_REQUEST_CAPTURE)
+          )
+        );
+      } catch {
+        return CAPTURE_OFF;
+      }
+    }, CONFIG_TTL_MS),
     insert: async (rows) => {
       await client.insert({
         table: FEED_REQUEST_CAPTURE_TABLE,

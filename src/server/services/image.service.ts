@@ -1614,7 +1614,7 @@ function applyHideChallengesExclusion(input: {
   ];
 }
 
-export const getAllImages = async (
+const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
   }
@@ -2641,6 +2641,28 @@ export const getAllImages = async (
   };
 };
 
+export const getAllImages = async (input: Parameters<typeof getAllImagesUncaptured>[0]) => {
+  const started = Date.now();
+  try {
+    const result = await getAllImagesUncaptured(input);
+    void feedRequestCapture().record(input, {
+      source: 'getAllImages',
+      elapsedMs: Date.now() - started,
+      resultIds: result.items.map((i) => i.id),
+      nextCursor: result.nextCursor,
+    });
+    return result;
+  } catch (err) {
+    void feedRequestCapture().record(input, {
+      source: 'getAllImages',
+      error: true,
+      elapsedMs: Date.now() - started,
+      resultIds: [],
+    });
+    throw err;
+  }
+};
+
 // TODO split this into image-index.service because this file is a giant
 
 const getMetaForImages = async (imageIds: number[]) => {
@@ -3093,7 +3115,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   try {
     const result = await searchImages(input);
     void feedRequestCapture().record(input, {
-      source: result.source,
+      source: 'getImagesFromSearch',
+      filterMode: result.filterMode,
       elapsedMs: Date.now() - started,
       resultIds: result.data.map((i: { id: number }) => i.id),
       nextCursor: result.nextCursor,
@@ -3101,7 +3124,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     return result;
   } catch (err) {
     void feedRequestCapture().record(input, {
-      source: 'meili',
+      source: 'getImagesFromSearch',
       error: true,
       elapsedMs: Date.now() - started,
       resultIds: [],
@@ -3111,7 +3134,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 async function searchImages(input: ImageSearchInput) {
+  if (!metricsSearchClient)
+    return {
+      data: [],
+      nextCursor: undefined,
+      source: 'meili' as const,
+      filterMode: 'none' as const,
+    };
   let searchFn = getImagesFromSearchPreFilter;
+  let filterMode: 'pre' | 'post' = 'pre';
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
   // flag fetch is contributing to the parent span's latency. Routes through
   // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
@@ -3122,13 +3153,16 @@ async function searchImages(input: ImageSearchInput) {
   input = await withSpan('image:flipt:eval', async () => {
     const entityId = input.currentUserId?.toString() || 'anonymous';
     const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
-    if (postFilter) searchFn = getImagesFromSearchPostFilter;
+    if (postFilter) {
+      searchFn = getImagesFromSearchPostFilter;
+      filterMode = 'post';
+    }
     return input;
   });
 
   const result = await searchFn(input);
 
-  return { ...result, source: 'meili' as const };
+  return { ...result, source: 'meili' as const, filterMode };
 }
 
 // No applyHideChallengesExclusion here: `hideChallenges` cannot reach this function. Its only
