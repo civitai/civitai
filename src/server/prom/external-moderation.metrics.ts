@@ -298,3 +298,77 @@ export function recordExternalModerationSkipped(source: ExternalModerationSource
     // Observability must never break the moderation path. Swallow any prom-client error.
   }
 }
+
+/**
+ * How a shadow comparison against a CANDIDATE classifier model settled.
+ *
+ * 🔴 THE TWO DISAGREEMENT DIRECTIONS ARE SEPARATE OUTCOMES ON PURPOSE — they are not two spellings
+ * of "diverged". `candidate_permissive` means the incumbent flagged and the candidate did not, i.e.
+ * the candidate would have let a prompt through a FAIL-CLOSED gate: that is the trust-and-safety
+ * number the model decision turns on. `candidate_strict` is the reverse — a user blocked who is not
+ * blocked today, a UX cost rather than a safety one. Folded into one label they CANCEL, and a
+ * candidate that is 2% more permissive and 2% stricter becomes indistinguishable from one that
+ * agrees perfectly. `error` is the shadow request itself failing and says nothing about either model.
+ *
+ * 🔴 `incomparable` IS NOT A KIND OF ERROR AND MUST NOT BE FOLDED INTO ONE. It means the candidate's
+ * verdict was NOT DECIDABLE under the configured policy, so no comparison was attempted.
+ *
+ * ⚠️ THAT IS NARROWER THAN "THE TWO MODELS ANSWERED IN DIFFERENT VOCABULARIES", which is what this
+ * paragraph said for one commit and is no longer the test. A PARTIALLY shared vocabulary is often
+ * decidable — the policy ORs across mapped categories, so one shared category the candidate marked
+ * true settles the verdict whatever the missing ones would have said, and that comparison IS
+ * counted. **So `incomparable == 0` does NOT mean the vocabularies agree**; it means every counted
+ * comparison was decidable. Only the converse below is safe to act on. When
+ * `EXTERNAL_MODERATION_CATEGORIES` is configured the app's verdict is `any mapped category the
+ * classifier marked true` — production maps a single key — so a candidate whose response simply
+ * does not carry that key yields `false` on EVERY call and reads as flagging NOTHING. Without this
+ * outcome a candidate in PERFECT agreement is indistinguishable from one that is completely blind:
+ * both report `candidate_permissive` on every incumbent flag, with zero errors. On a fail-closed
+ * gate that is the most dangerous shape a measurement can have, because the number looks fine.
+ */
+export type ModerationShadowOutcome =
+  | 'match'
+  | 'candidate_permissive'
+  | 'candidate_strict'
+  | 'incomparable'
+  | 'error';
+
+const shadowCounter = registerCounterWithLabels({
+  name: 'external_moderation_shadow_total',
+  help:
+    'Shadow comparisons between the production prompt classifier and a candidate model, by outcome ' +
+    'and source. DARK AND OFF BY DEFAULT: it requires BOTH EXTERNAL_MODERATION_SHADOW_MODEL and a ' +
+    'positive EXTERNAL_MODERATION_SHADOW_SAMPLE, so NO SERIES AT ALL means "not armed" — never "the ' +
+    'models agree". The verdict of record is always the incumbent`s; nothing reads a shadow result ' +
+    'back. outcome=candidate_permissive is the safety-relevant direction (the incumbent flagged and ' +
+    'the candidate did not, i.e. the candidate would have let it through a fail-closed gate); ' +
+    'candidate_strict is the reverse and is a false-positive/UX cost. Do NOT sum the two into one ' +
+    'divergence rate — they cancel, and that is the one reading this metric exists to prevent. ' +
+    'outcome=error is the shadow request failing and is evidence about neither model. 🔴 ' +
+    'outcome=incomparable means the candidate verdict was not DECIDABLE under the configured ' +
+    'EXTERNAL_MODERATION_CATEGORIES policy, so no comparison was attempted — a NON-ZERO ' +
+    'incomparable rate INVALIDATES the permissive/strict split for that candidate; pick a candidate ' +
+    "that shares the incumbent's category names, do not reason around it. 🔴 The converse does NOT " +
+    'hold: incomparable=0 means every counted comparison was decidable, NOT that the vocabularies ' +
+    'agree IN FULL — the policy ORs across categories, so one shared category can settle a verdict ' +
+    'while others are absent. Under a SINGLE-key policy (production today) the two do coincide. ' +
+    '🔴 Every counted ' +
+    'comparison is a SECOND billable classifier request; the sample rate is the spend control, and ' +
+    'disarming takes a POD ROLLOUT because env is parsed once at process start.',
+  labelNames: ['source', 'outcome'] as const,
+});
+
+/**
+ * Record ONE shadow comparison. Cheap + TOTAL (never throws) — it runs on the generation hot path
+ * behind a fire-and-forget call, so a metrics-layer hiccup must not be able to fail a generation.
+ */
+export function recordExternalModerationShadow(
+  source: ExternalModerationSource,
+  outcome: ModerationShadowOutcome
+): void {
+  try {
+    shadowCounter.inc({ source: clampExternalModerationSource(source), outcome });
+  } catch {
+    // Observability must never break the moderation path. Swallow any prom-client error.
+  }
+}

@@ -685,6 +685,23 @@ export const serverSchema = z
     // to end. `.catch(0)` degrades an unparseable value to OFF, which is the safe direction for a
     // cache in front of a moderation gate.
     EXTERNAL_MODERATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(3600).catch(0),
+
+    // DARK SHADOW PROBE — compare a CANDIDATE classifier model against the incumbent on a sampled
+    // share of calls, to produce the disagreement rate the "cheaper model?" decision needs. Both
+    // fields are required to arm and neither defaults on; see
+    // src/server/integrations/moderation-shadow-probe.ts.
+    //
+    // 🔴 SAMPLE IS THE SPEND CONTROL, NOT A CONVENIENCE. Every sampled call issues a SECOND billable
+    // classifier request against the production credential, so 1.0 doubles the moderation bill for
+    // as long as it is armed. It is a fraction in [0,1], not a percentage.
+    //
+    // Both use `.catch(...)` rather than `.default(...)`, the same rule the TTL above carries:
+    // `src/env/server.ts` THROWS on an invalid field and env is parsed only at container start, so a
+    // typo would do nothing visible now and CrashLoop the fleet at the next rollout. Degrading to
+    // OFF is the safe direction for a probe that spends money. A non-numeric SAMPLE coerces to NaN,
+    // fails `.min(0)` and lands on 0 = off.
+    EXTERNAL_MODERATION_SHADOW_MODEL: z.string().default('').catch(''),
+    EXTERNAL_MODERATION_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).catch(0),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
