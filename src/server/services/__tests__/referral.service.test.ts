@@ -1007,7 +1007,11 @@ describe('redeemTokens — creator-membership cache invalidation', () => {
 
 // deliverMonthlyCosmetics is the only $executeRaw on either path, but match on the
 // statement rather than the count so a future raw write here fails loudly instead of
-// silently satisfying the assertion.
+// silently satisfying the assertion. This pins the SQL text in
+// subscriptions.service.ts (`INSERT INTO "UserCosmetic"`): if a refactor there renames
+// the statement, these fail with an empty match rather than anything referral-shaped.
+// That module is loaded FOR REAL here, not mocked — mocking it would move the assertion
+// off the row being written and onto the fact that a function was called.
 const membershipCosmeticInserts = () =>
   ((mockDbWrite.$executeRaw as any).mock.calls as any[][]).filter((call) =>
     String(call[0]).includes('INSERT INTO "UserCosmetic"')
@@ -1057,10 +1061,9 @@ describe('referral grant delivers membership cosmetics inline', () => {
 
     await redeemTokens({ userId: 42, offerIndex: 0 });
 
-    // Ordering is the only in-process evidence that the write shares the grant's
-    // transaction: the delivery must precede the redemption row, which is the last
-    // statement inside the same tx callback. A delivery moved after the commit —
-    // or dropped in favour of the cron — fails here.
+    // This proves ORDER, not transaction membership — the client-identity tests below
+    // are what pin the `tx`. What it uniquely catches is a delivery hoisted out of the
+    // $transaction callback entirely, which would land after the redemption row.
     const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
     const redemptionOrder = (mockDbWrite.referralRedemption.create as any).mock.invocationCallOrder;
     // Named before the comparison so a delivery that never ran reads as a missing
@@ -1116,5 +1119,120 @@ describe('referral grant delivers membership cosmetics inline', () => {
 
     expect(result).toEqual({ advanced: 0, canceled: 1 });
     expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  // The canonical $transaction mock hands the callback dbWrite ITSELF, so `tx` and the
+  // module client are the same object and no assertion can tell them apart. These two
+  // tests substitute a distinct client for the callback so the difference is observable.
+  // Without them, deleting `tx` from the delivery call is green here and a total
+  // regression in production: the subscription row is still uncommitted, so a delivery
+  // on a pooled connection reads no active sub and inserts nothing.
+  const withDistinctTxClient = () => {
+    const txExecuteRaw = vi.fn().mockResolvedValue(1);
+    const txClient = new Proxy(mockDbWrite as any, {
+      get: (target, prop) => (prop === '$executeRaw' ? txExecuteRaw : (target as any)[prop]),
+    });
+    (mockDbWrite.$transaction as any).mockImplementation(async (arg: any) =>
+      typeof arg === 'function' ? arg(txClient) : arg
+    );
+    return txExecuteRaw;
+  };
+
+  const insertsOn = (spy: ReturnType<typeof vi.fn>) =>
+    (spy.mock.calls as any[][]).filter((call) =>
+      String(call[0]).includes('INSERT INTO "UserCosmetic"')
+    );
+
+  it('delivers on the transaction client, not the module client, during redeemTokens', async () => {
+    const txExecuteRaw = withDistinctTxClient();
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(insertsOn(txExecuteRaw)).toHaveLength(1);
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  it('delivers on the transaction client when advanceReferralSubscriptions promotes a chunk', async () => {
+    const queueMeta = { referralQueue: [{ tier: 'silver', durationDays: 7 }] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    const txExecuteRaw = withDistinctTxClient();
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_silver',
+        defaultPriceId: 'price_silver',
+        metadata: { tier: 'silver', referralGrantable: true },
+      },
+    ]);
+
+    await advanceReferralSubscriptions();
+
+    expect(insertsOn(txExecuteRaw)).toHaveLength(1);
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  it('delivers on the update branch too, when the user already has a referral subscription', async () => {
+    // findUnique returning a row is what selects the update branch — the repeat or
+    // reactivating redeemer, whose tier can change and who therefore may be owed a
+    // cosmetic they do not hold yet.
+    wireSuccessfulRedemption();
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      id: 'referral:42:1',
+      status: 'canceled',
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+      metadata: {},
+      productId: 'prod_bronze',
+      product: { metadata: { tier: 'bronze' } },
+    });
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(mockDbWrite.customerSubscription.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.customerSubscription.create).not.toHaveBeenCalled();
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([42]);
+  });
+
+  it('delivers only for the promoted sub when a batch also contains one being canceled', async () => {
+    const promoted = { referralQueue: [{ tier: 'silver', durationDays: 7 }] };
+    const exhausted = { referralQueue: [] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: promoted },
+      { id: 'referral:8:1', userId: 8, metadata: exhausted },
+    ]);
+    (mockDbWrite.$queryRaw as any)
+      .mockResolvedValueOnce([
+        { id: 'referral:7:1', metadata: promoted, currentPeriodEnd: new Date(Date.now() - 1000) },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'referral:8:1', metadata: exhausted, currentPeriodEnd: new Date(Date.now() - 1000) },
+      ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_silver',
+        defaultPriceId: 'price_silver',
+        metadata: { tier: 'silver', referralGrantable: true },
+      },
+    ]);
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 1, canceled: 1 });
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([7]);
   });
 });
