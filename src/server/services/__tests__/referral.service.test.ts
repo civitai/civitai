@@ -1012,10 +1012,10 @@ describe('redeemTokens — creator-membership cache invalidation', () => {
 // the statement, these fail with an empty match rather than anything referral-shaped.
 // That module is loaded FOR REAL here, not mocked — mocking it would move the assertion
 // off the row being written and onto the fact that a function was called.
+const isCosmeticInsert = (call: any[]) => String(call[0]).includes('INSERT INTO "UserCosmetic"');
+
 const membershipCosmeticInserts = () =>
-  ((mockDbWrite.$executeRaw as any).mock.calls as any[][]).filter((call) =>
-    String(call[0]).includes('INSERT INTO "UserCosmetic"')
-  );
+  ((mockDbWrite.$executeRaw as any).mock.calls as any[][]).filter(isCosmeticInsert);
 
 // The userId filter is nested as Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`.
 const insertedForUserIds = (call: any[]) =>
@@ -1054,6 +1054,15 @@ describe('referral grant delivers membership cosmetics inline', () => {
     const inserts = membershipCosmeticInserts();
     expect(inserts).toHaveLength(1);
     expect(insertedForUserIds(inserts[0])).toEqual([42]);
+
+    // The delivery reads CustomerSubscription for an ACTIVE row, so it has to run after the
+    // row is written. Delivering first is not a weaker fix — the CTE matches nothing and the
+    // insert writes nothing, exactly as if `tx` had been dropped.
+    const subOrder = (mockDbWrite.customerSubscription.create as any).mock.invocationCallOrder;
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(subOrder).toHaveLength(1);
+    expect(insertOrder).toHaveLength(1);
+    expect(subOrder[0]).toBeLessThan(insertOrder[0]);
   });
 
   it('runs the insert inside the redemption transaction, before the redemption row is written', async () => {
@@ -1100,6 +1109,14 @@ describe('referral grant delivers membership cosmetics inline', () => {
     const inserts = membershipCosmeticInserts();
     expect(inserts).toHaveLength(1);
     expect(insertedForUserIds(inserts[0])).toEqual([7]);
+
+    // Before the promoting update the row still carries the EXPIRED currentPeriodEnd, so a
+    // delivery hoisted above it matches nothing at all — not merely the older tier.
+    const updateOrder = (mockDbWrite.customerSubscription.update as any).mock.invocationCallOrder;
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(updateOrder).toHaveLength(1);
+    expect(insertOrder).toHaveLength(1);
+    expect(updateOrder[0]).toBeLessThan(insertOrder[0]);
   });
 
   it('delivers nothing when the sub is canceled with an empty queue', async () => {
@@ -1139,9 +1156,7 @@ describe('referral grant delivers membership cosmetics inline', () => {
   };
 
   const insertsOn = (spy: ReturnType<typeof vi.fn>) =>
-    (spy.mock.calls as any[][]).filter((call) =>
-      String(call[0]).includes('INSERT INTO "UserCosmetic"')
-    );
+    (spy.mock.calls as any[][]).filter(isCosmeticInsert);
 
   it('delivers on the transaction client, not the module client, during redeemTokens', async () => {
     const txExecuteRaw = withDistinctTxClient();
@@ -1203,6 +1218,10 @@ describe('referral grant delivers membership cosmetics inline', () => {
     const inserts = membershipCosmeticInserts();
     expect(inserts).toHaveLength(1);
     expect(insertedForUserIds(inserts[0])).toEqual([42]);
+
+    const updateOrder = (mockDbWrite.customerSubscription.update as any).mock.invocationCallOrder;
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(updateOrder[0]).toBeLessThan(insertOrder[0]);
   });
 
   it('delivers only for the promoted sub when a batch also contains one being canceled', async () => {
@@ -1234,5 +1253,41 @@ describe('referral grant delivers membership cosmetics inline', () => {
     const inserts = membershipCosmeticInserts();
     expect(inserts).toHaveLength(1);
     expect(insertedForUserIds(inserts[0])).toEqual([7]);
+  });
+
+  it('awaits the delivery before the transaction callback returns', async () => {
+    // A missing `await` is invisible to every other test here: deliverMonthlyCosmetics runs
+    // synchronously up to its own `await client.$executeRaw`, so the call is RECORDED either
+    // way. Only completion tells them apart. In production the un-awaited form lets Prisma
+    // commit and release the connection with the insert still in flight.
+    let settled = false;
+    const txExecuteRaw = withDistinctTxClient();
+    txExecuteRaw.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            settled = true;
+            resolve(1);
+          }, 0)
+        )
+    );
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    // Resolves on a macrotask, and everything redeemTokens does after the transaction is
+    // microtask-only — so this is false unless the delivery was actually awaited.
+    expect(settled).toBe(true);
+  });
+
+  it('lets a failed delivery roll the redemption back rather than swallowing it', async () => {
+    // Pins the "deliberately unguarded" decision at the call sites: wrapping any of them in
+    // try/catch passes every other test in this file. Tokens stay unspent and retryable.
+    wireSuccessfulRedemption();
+    (mockDbWrite.$executeRaw as any).mockRejectedValue(new Error('delivery exploded'));
+
+    await expect(redeemTokens({ userId: 42, offerIndex: 0 })).rejects.toThrow(/delivery exploded/);
+    expect(mockDbWrite.referralRedemption.create).not.toHaveBeenCalled();
+    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,8 @@ import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+// Eager, and shared by every importer of this module: subscriptions.service statically
+// pulls clickhouse, redis and freshdesk, so anything added to its graph is added to theirs.
 import { deliverMonthlyCosmetics } from '~/server/services/subscriptions.service';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
