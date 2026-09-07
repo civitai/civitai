@@ -24,6 +24,7 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
+import { getQueryErrorMessage } from '~/utils/errorHandling';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -175,7 +176,7 @@ export const useQueryModels = (
     );
     showErrorNotification({
       title: 'Failed to fetch data',
-      error: new Error(`Something went wrong: ${error.message}`),
+      error: new Error(getQueryErrorMessage(error)),
     });
   }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -226,6 +227,13 @@ export const useToggleCheckpointCoverageMutation = () => {
   return { ...toggleMutation, toggle: handleToggle };
 };
 
+/**
+ * `model.getAll` is rate limited at the edge, and the 300px list shows under four rows —
+ * a page of 10 ran out in a couple of flicks and spent a request on each one. The feed
+ * itself runs at the handler default of 100.
+ */
+const SHOWCASE_PAGE_SIZE = 50;
+
 export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
   const queryUtils = trpc.useUtils();
 
@@ -243,7 +251,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
       sort: ModelSort.Newest,
       period: MetricTimeframe.AllTime,
       periodMode: 'published',
-      limit: 10,
+      limit: SHOWCASE_PAGE_SIZE,
     },
     { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );
@@ -267,6 +275,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
     ...rest,
     collection: showcase,
     items: models,
+    pageCount: data?.pages.length ?? 0,
     isLoading: loadingCollection || loadingModels,
     setShowcaseCollection: handleSetShowcaseCollection,
     settingShowcase: setShowcaseMutation.isPending,

@@ -1,6 +1,6 @@
 import {
-  ActionIcon,
   Badge,
+  Button,
   Group,
   Loader,
   LoadingOverlay,
@@ -31,15 +31,27 @@ import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { getModelUrl } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
+/**
+ * `InViewLoader` re-arms 500ms after each load for as long as it stays on screen, and a
+ * list this short keeps it there — so uncapped it walks the whole collection, thousands
+ * of models on the largest showcases, one rate-limited request at a time.
+ */
+const MAX_AUTO_LOADED_PAGES = 5;
+
 export function CollectionShowcase({ modelId, loading }: Props) {
   const {
     items = [],
     isLoading,
+    isError,
     hasNextPage,
     fetchNextPage,
     isFetching,
     isRefetching,
+    pageCount,
+    refetch,
   } = useModelShowcaseCollection({ modelId });
+
+  const autoLoad = !isError && pageCount < MAX_AUTO_LOADED_PAGES;
 
   return (
     <div className="relative">
@@ -54,18 +66,37 @@ export function CollectionShowcase({ modelId, loading }: Props) {
             {items.map((model) => (
               <ShowcaseItem key={model.id} {...model} />
             ))}
-            {hasNextPage && (
-              <InViewLoader
-                loadFn={fetchNextPage}
-                loadCondition={!isFetching}
-                style={{ gridColumn: '1/-1' }}
-              >
+            {hasNextPage &&
+              (autoLoad ? (
+                <InViewLoader
+                  loadFn={fetchNextPage}
+                  loadCondition={!isFetching}
+                  style={{ gridColumn: '1/-1' }}
+                >
+                  <div className="flex items-center justify-center px-4 py-2">
+                    <Loader type="bars" size="sm" />
+                  </div>
+                </InViewLoader>
+              ) : (
                 <div className="flex items-center justify-center px-4 py-2">
-                  <Loader type="bars" size="sm" />
+                  <Button
+                    variant="subtle"
+                    size="compact-sm"
+                    loading={isFetching}
+                    onClick={() => fetchNextPage()}
+                  >
+                    Load more
+                  </Button>
                 </div>
-              </InViewLoader>
-            )}
+              ))}
           </>
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center gap-2 p-2">
+            <Text c="dimmed">Couldn&rsquo;t load this collection</Text>
+            <Button variant="light" size="compact-sm" onClick={() => refetch()}>
+              Try again
+            </Button>
+          </div>
         ) : (
           <div className="flex items-center justify-center p-2">
             <Text c="dimmed">There are no items for this collection</Text>
