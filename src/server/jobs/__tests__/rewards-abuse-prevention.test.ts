@@ -6,14 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // config read fails — a sysRedis DOWN (hGet throws) or SLOW/half-open (withSysReadDeadline
 // rejects) must return early WITHOUT touching clickhouse/dbWrite.
 
-const { hGet, withSysReadDeadline, chQuery, createNotification, refresh } =
-  vi.hoisted(() => ({
-    hGet: vi.fn(),
-    withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-    chQuery: vi.fn(),
-    createNotification: vi.fn(() => Promise.resolve(undefined)),
-    refresh: vi.fn(() => Promise.resolve(undefined)),
-  }));
+const { hGet, withSysReadDeadline, chQuery, createNotification, refresh } = vi.hoisted(() => ({
+  hGet: vi.fn(),
+  withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  chQuery: vi.fn(),
+  createNotification: vi.fn(() => Promise.resolve(undefined)),
+  refresh: vi.fn(() => Promise.resolve(undefined)),
+}));
 
 vi.mock('~/server/redis/client', () => ({
   sysRedis: { hGet },
@@ -74,9 +73,7 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
   });
 
   it('treats a Buffer config reply (sentinel mode) as valid JSON', async () => {
-    hGet.mockResolvedValue(
-      Buffer.from(JSON.stringify({ awarded: 5000, user_count: 5 }), 'utf8')
-    );
+    hGet.mockResolvedValue(Buffer.from(JSON.stringify({ awarded: 5000, user_count: 5 }), 'utf8'));
 
     const result = await rewardsAbusePrevention.run().result;
 
@@ -102,5 +99,97 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
     expect(result).toEqual({ usersDisabled: 0, skipped: 'sysRedis-config-read-failed' });
     expect(chQuery).not.toHaveBeenCalled();
     expect(dbQueryRawUnsafe).not.toHaveBeenCalled();
+  });
+});
+
+const sqlOf = () => (chQuery.mock.calls[0]?.[0] as string) ?? '';
+const runWith = (config: Record<string, unknown>) => {
+  hGet.mockResolvedValue(JSON.stringify(config));
+  return rewardsAbusePrevention.run().result;
+};
+
+describe('rewards-abuse-prevention — detection shape', () => {
+  it('adds none of the new clauses when the new options are absent', async () => {
+    await runWith({ award_types: ['dailyBoost'] });
+
+    const sql = sqlOf();
+    expect(sql).toContain("AND be.type IN ('dailyBoost')");
+    expect(sql).not.toContain('uniqIf');
+    expect(sql).not.toContain('ip_user_count = user_count');
+    expect(sql).not.toContain('startsWith');
+    expect(sql).not.toContain('user_count <=');
+  });
+
+  it('matches a whole award family by prefix', async () => {
+    await runWith({ award_types: [], award_type_prefixes: ['encouragement:'] });
+
+    expect(sqlOf()).toContain("startsWith(be.type, 'encouragement:')");
+  });
+
+  it('matches nothing rather than everything when both type lists are empty', async () => {
+    await runWith({ award_types: [], award_type_prefixes: [] });
+
+    expect(sqlOf()).toContain('1 = 0');
+  });
+
+  it('requires the IP to carry no other earning users when exclusivity is on', async () => {
+    await runWith({
+      require_exclusive_ip: true,
+      award_types: [],
+      award_type_prefixes: ['encouragement:'],
+    });
+
+    const sql = sqlOf();
+    expect(sql).toContain('ip_user_count = user_count');
+    expect(sql).toContain("uniqIf(be.toUserId, startsWith(be.type, 'encouragement:'))");
+    // The type filter has to leave the WHERE, or the users it hides are the ones
+    // exclusivity exists to count.
+    expect(sql).not.toContain('AND startsWith');
+  });
+
+  it('caps cluster size when max_user_count is set', async () => {
+    await runWith({ max_user_count: 5 });
+
+    expect(sqlOf()).toContain('AND user_count <= 5');
+  });
+
+  it('rejects a config value that would break out of the SQL string', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ award_types: ["dailyBoost') OR 1=1 --"] }));
+
+    await expect(rewardsAbusePrevention.run().result).rejects.toThrow();
+    expect(chQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('rewards-abuse-prevention — report mode', () => {
+  const abusers = [
+    { ip: '203.0.113.7', user_count: 3, ip_user_count: 3, awarded: 300, user_ids: [1, 2, 3] },
+  ];
+
+  it('reports what it would disable without touching a single account', async () => {
+    chQuery.mockResolvedValue(abusers);
+
+    const result = await runWith({ mode: 'report', require_exclusive_ip: true });
+
+    expect(chQuery).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      mode: 'report',
+      usersDisabled: 0,
+      wouldDisable: 3,
+      ipsFlagged: 1,
+    });
+    expect(dbQueryRawUnsafe).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same finding in enforce mode does disable them', async () => {
+    chQuery.mockResolvedValue(abusers);
+    dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    const result = await runWith({ require_exclusive_ip: true });
+
+    expect(dbQueryRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ usersDisabled: 3 });
   });
 });
