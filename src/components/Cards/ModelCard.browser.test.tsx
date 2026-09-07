@@ -109,6 +109,8 @@ vi.mock('~/components/IntersectionObserver/ElementInView', () => ({
 }));
 vi.mock('~/components/Cards/model-card.utils', () => ({ getCardBaseModels: () => [] }));
 
+import { MantineProvider } from '@mantine/core';
+import type { MantineColorsTuple } from '@mantine/core';
 import { renderWithProviders } from '../../../test/component-setup';
 import { ModelCard } from '~/components/Cards/ModelCard';
 // Value import, deliberately — this resolves to the MOCKED module (vi.mock is hoisted), and
@@ -198,5 +200,128 @@ describe('ModelCard review indicator (batched membership)', () => {
     renderWithProviders(<ModelCard data={makeData()} />);
     expect(await reviewedAttr()).toBe('false');
     expect(mocks.getEngagedModelsUseQuery).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Paid-gate badge. `hasActivePaidAccess` is ANY live gate — permanent, or timed
+// with an end date that was never materialized. Both reach the card as
+// `deadline: null`, which is why the card cannot tell them apart and why the
+// distinction is pinned in the SQL guard rather than here.
+//
+// The two WORDS are deliberately not interchangeable: an Early Access window
+// ENDS and the model becomes free (`process-ending-early-access` does it), a
+// gate with no end date never does. If you are here to collapse these into one
+// label, that is why.
+// =============================================================================
+
+// The harness mounts a bare `MantineProvider`, whose default palette has no `success` scale — and
+// `statusBadgeStyle` indexes `theme.colors.success[5]`. No existing test in this file renders the
+// status badge, so the card threw "Cannot read properties of undefined (reading '5')" the first time
+// one did. Supplying the scale here keeps the fix local to the tests that need it; widening the
+// shared harness theme would change layout under every component test in the repo.
+// Distinct hexes on purpose: success and teal sharing one value would make a success->teal
+// regression in statusBadgeStyle invisible to the colour assertion below.
+const scale = (hex: string) =>
+  Array.from({ length: 10 }, () => hex) as unknown as MantineColorsTuple;
+function WithPalette({ children }: { children: React.ReactNode }) {
+  return (
+    <MantineProvider
+      theme={{
+        colors: { success: scale('#12b886'), teal: scale('#0ca678'), blue: scale('#228be6') },
+      }}
+    >
+      {children}
+    </MantineProvider>
+  );
+}
+
+async function statusBadgeText(): Promise<string | null> {
+  let el: Element | null = null;
+  await vi.waitFor(() => {
+    el = document.querySelector('[data-status-badge]');
+    expect(
+      el,
+      'no status badge rendered — the card decided this model carries no New/Updated/Early Access/Paid state'
+    ).toBeTruthy();
+  });
+  return (el as unknown as Element).textContent;
+}
+
+describe('ModelCard paid-gate badge', () => {
+  test('renders "Paid" for a permanent gate, which has no deadline to read', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
+      </WithPalette>
+    );
+    expect(await statusBadgeText()).toBe('Paid');
+  });
+
+  test('renders "Early Access" for an active timed window, not "Paid"', async () => {
+    const deadline = new Date(Date.now() + 60 * 60 * 1000);
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{ ...makeData(), earlyAccessDeadline: deadline, hasActivePaidAccess: false }}
+        />
+      </WithPalette>
+    );
+    expect(await statusBadgeText()).toBe('Early Access');
+  });
+
+  test('a model carrying BOTH gates reads "Early Access" — the window is the fact with a clock on it', async () => {
+    const deadline = new Date(Date.now() + 60 * 60 * 1000);
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{ ...makeData(), earlyAccessDeadline: deadline, hasActivePaidAccess: true }}
+        />
+      </WithPalette>
+    );
+    expect(await statusBadgeText()).toBe('Early Access');
+  });
+
+  test('an EXPIRED timed window renders no paid marker — the client re-checks the deadline against now', async () => {
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{ ...makeData(), earlyAccessDeadline: past, hasActivePaidAccess: false }}
+        />
+      </WithPalette>
+    );
+    // Nothing else in the fixture sets New/Updated, so the badge must be absent entirely.
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-reviewed]')).toBeTruthy();
+    });
+    expect(document.querySelector('[data-status-badge]')).toBeNull();
+  });
+
+  test('the Paid badge uses the Early Access colour, not the New/Updated one', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
+      </WithPalette>
+    );
+    await statusBadgeText();
+    const el = document.querySelector('[data-status-badge]') as HTMLElement;
+    // Reusing the Early Access treatment is the community ask this PR answers, and it lives in an
+    // inline style rather than a class, so it survives the harness having no stylesheet.
+    expect(el.style.backgroundColor).toBe('rgb(18, 184, 134)');
+  });
+
+  test('an ungated model renders no status badge at all', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: false }}
+        />
+      </WithPalette>
+    );
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-reviewed]')).toBeTruthy();
+    });
+    expect(document.querySelector('[data-status-badge]')).toBeNull();
   });
 });

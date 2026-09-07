@@ -186,6 +186,7 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
+  getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -242,6 +243,7 @@ type ModelRaw = {
   publishedAt: Date | null;
   locked: boolean;
   earlyAccessDeadline: Date | null;
+  hasActivePaidAccess: boolean;
   mode: string;
   rank: {
     downloadCount: number;
@@ -285,20 +287,6 @@ type ModelRaw = {
  * Test endpoint: GET /api/internal/test-model-feed-filters?token=<JOB_TOKEN>
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
-
-export async function getModelEarlyAccessDeadlines(modelIds: number[]): Promise<Map<number, Date>> {
-  if (!modelIds.length) return new Map();
-  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
-    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
-    FROM "PaidAccess" pa
-    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
-    WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
-      AND mv.status = 'Published'::"ModelStatus"
-      AND mv."modelId" IN (${Prisma.join(modelIds)})
-    GROUP BY mv."modelId"
-  `;
-  return new Map(rows.map((r) => [Number(r.modelId), r.deadline]));
-}
 
 export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
   const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
@@ -1093,27 +1081,23 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [
-    userBasicData,
-    profilePictures,
-    userCosmetics,
-    modelData,
-    cosmetics,
-    earlyAccessDeadlines,
-  ] = await withSpan('model:getAll:parallelFetch', () =>
-    Promise.all([
-      userBasicCache.fetch(userIds),
-      getProfilePicturesForUsers(userIds),
-      getCosmeticsForUsers(userIds),
-      dataForModelsCache.fetch(modelIds),
-      includeCosmetics
-        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-      getModelEarlyAccessDeadlines(modelIds),
-    ])
-  );
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, paidAccessGates] =
+    await withSpan('model:getAll:parallelFetch', () =>
+      Promise.all([
+        userBasicCache.fetch(userIds),
+        getProfilePicturesForUsers(userIds),
+        getCosmeticsForUsers(userIds),
+        dataForModelsCache.fetch(modelIds),
+        includeCosmetics
+          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+        getModelPaidAccessGates(modelIds),
+      ])
+    );
   for (const model of models) {
-    model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
+    const gate = paidAccessGates.get(model.id);
+    model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
+    model.hasActivePaidAccess = gate?.gated ?? false;
   }
 
   let nextCursor: string | bigint | undefined;

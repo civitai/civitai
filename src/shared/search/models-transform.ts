@@ -16,10 +16,13 @@ export function transformModelHits<T extends ModelSearchIndexRecord>(items: T[])
     ...item,
     nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
     // Meilisearch returns these as ISO strings while the DB path yields real
-    // Dates; normalize so date math (the New/Updated badges) works on both. The
+    // Dates; normalize so date math (the New/Updated/Early Access badges) works on both. The
     // type already claims Date, and `new Date(date)` just clones an existing Date.
     publishedAt: item.publishedAt ? new Date(item.publishedAt) : item.publishedAt,
     lastVersionAt: item.lastVersionAt ? new Date(item.lastVersionAt) : item.lastVersionAt,
+    earlyAccessDeadline: item.earlyAccessDeadline
+      ? new Date(item.earlyAccessDeadline)
+      : item.earlyAccessDeadline,
     tags: item.tags.map((t) => t.id),
     images:
       item.images?.map((image) => ({

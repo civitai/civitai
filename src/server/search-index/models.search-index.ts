@@ -16,6 +16,7 @@ import type { RecommendedSettingsSchema } from '~/server/schema/model-version.sc
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -98,6 +99,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'publishedAt',
     'locked',
     'earlyAccessDeadline',
+    'hasActivePaidAccess',
     'mode',
     'checkpointType',
     'availability',
@@ -235,20 +237,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
 
   const modelIds = models.map((m) => m.id);
-  const earlyAccessRows = modelIds.length
-    ? await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
-        SELECT mv."modelId", MAX(pa."endsAt") AS deadline
-        FROM "PaidAccess" pa
-        JOIN "ModelVersion" mv ON mv.id = pa."entityId"
-        WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
-          AND mv.status = 'Published'::"ModelStatus"
-          AND mv."modelId" IN (${Prisma.join(modelIds)})
-        GROUP BY mv."modelId"
-      `
-    : [];
-  const earlyAccessDeadlineMap = new Map<number, Date>(
-    earlyAccessRows.map((r) => [Number(r.modelId), r.deadline])
-  );
+  const paidAccessGates = await getModelPaidAccessGates(modelIds);
 
   const indexReadyRecords = models
     .map((modelRecord) => {
@@ -291,7 +280,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
-        earlyAccessDeadline: earlyAccessDeadlineMap.get(model.id) ?? null,
+        earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
+        hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
@@ -403,8 +393,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const modelImages = coveredVersionIds.flatMap((versionId) =>
         images.filter(
           (image) =>
-            image.modelVersionId === versionId &&
-            image.availability !== Availability.Unsearchable
+            image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
         )
       );
 
