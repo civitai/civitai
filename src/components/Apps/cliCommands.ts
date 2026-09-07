@@ -11,6 +11,29 @@
  */
 
 // --- Ecosystem links ---
+/**
+ * Where the `/apps/build` pitch's "Request access" CTA points.
+ *
+ * 🔴 THIS IS THE COMMUNITY DISCORD, NOT A REQUEST-ACCESS ENDPOINT, AND THE DIFFERENCE
+ * IS DELIBERATELY NOT PAPERED OVER. `appBlocksAuthor` is a Flipt flag with no self-serve
+ * path: there is no DB row, no invite mechanism, no form, and no queue. The flag's own
+ * comment in `feature-flags.service.ts` says the get-started widen is blocked on "the
+ * real Request-access link" — a destination that has never existed. So rather than
+ * fabricate a URL nothing serves, this points at the one channel the repo ALREADY treats
+ * as the place a person asks a human for something: `/discord`.
+ *
+ * `/discord` rather than a raw `discord.gg` URL because it is a real, permanent redirect
+ * defined in `next.config.mjs` and asserted to exist by
+ * `src/__tests__/pages/apps-my-submissions-redirect.test.ts`, and it is already the
+ * community-help CTA in `~/components/Support/SupportContent`. That makes it the
+ * canonical in-repo spelling, and it survives the invite link being rotated.
+ *
+ * 🔴 REPOINT THIS when a real access flow lands — that is the whole reason it is a named
+ * constant with this note rather than an inline `href`. The CTA's copy is deliberately
+ * "Ask about access" rather than "Request access", so the button does not promise a
+ * mechanism that is not behind it.
+ */
+export const APPS_REQUEST_ACCESS_HREF = '/discord';
 export const CIVITAI_CLI_GITHUB_URL = 'https://github.com/civitai/cli';
 export const BLOCKS_REACT_NPM_URL = 'https://www.npmjs.com/package/@civitai/blocks-react';
 export const APP_SDK_NPM_URL = 'https://www.npmjs.com/package/@civitai/app-sdk';

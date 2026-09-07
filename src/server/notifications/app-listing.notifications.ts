@@ -35,16 +35,32 @@ export type AppListingModerationNotificationDetails = {
  * Every owner-facing app-listing notification points the owner at their submissions/history view.
  *
  * Exported because `new-app-listing-comment` (in `comment.notifications.ts`) is another such
- * notification and must land on the same page for the same reason: `/apps/mine` gates on
- * `appBlocksAuthor`, the developer cohort a listing owner is in by construction, whereas the
- * public detail page gates on `hasAppsStoreAccess` and 404s for owners outside it. One constant,
- * so a route rename moves every one of them.
+ * notification and must land on the same page for the same reason: it is an AUTHOR surface,
+ * whereas the public detail page gates on `hasAppsStoreAccess` alone and 404s for owners
+ * outside it. One constant, so a route rename moves every one of them — which is exactly what
+ * just happened.
+ *
+ * 🔴 REPOINTED `/apps/mine` → `/apps/build` (state C is the same table), AND THAT SLIGHTLY
+ * NARROWS WHO CAN OPEN THESE NOTIFICATIONS. Stated rather than left to be discovered, because
+ * the old `/apps/mine` header made the OPPOSITE promise explicitly: it gated on
+ * `appBlocksAuthor` ONLY, "deliberately NOT on `appBlocks`", so that narrowing STORE access
+ * would not hide an author's own apps from them. `/apps/build`'s gate
+ * (`canAccessAppsBuild`) requires store access as well as authorship, so an author holding
+ * `app-blocks-author` while ALL THREE store flags are off would now get a `notFound` from
+ * their own approval notification.
+ *
+ * NOT reachable today — every App-Blocks flag is staged mod-only and a moderator holds all of
+ * them — but it is one Flipt toggle away, and it is the sharpest residual of the `/apps/build`
+ * consolidation. The store term is required because `/apps/build` renders INSIDE the apps-store
+ * IA (the `AppsSubNav` chrome, links into `/apps/listing/<id>/edit`), so a viewer with no store
+ * has a page whose every onward link 404s; the trade was taken knowingly. If that cohort ever
+ * becomes real, the fix is to widen `canAccessAppsBuild`, in ONE place — not to fork this URL.
  *
  * (Deliberately count-free: this comment said "the fifth" and "all five" until
  * `app-listing-purged` made it six, which is the doc-rot a stated total always eventually
  * becomes. The set is enumerable from the object below; the number is not worth maintaining.)
  */
-export const OWNER_SUBMISSIONS_URL = '/apps/mine';
+export const OWNER_SUBMISSIONS_URL = '/apps/build';
 
 function appLabel(details: AppListingModerationNotificationDetails): string {
   return details.name ? `"${details.name}"` : 'Your app';

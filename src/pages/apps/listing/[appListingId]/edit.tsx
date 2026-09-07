@@ -212,7 +212,7 @@ export default function AppListingEditPage() {
             component="button"
             type="button"
             size="sm"
-            onClick={() => goBackOrFallback(router, '/apps/mine')}
+            onClick={() => goBackOrFallback(router, '/apps/build')}
             data-testid="apps-edit-back"
           >
             <Group gap={4}>

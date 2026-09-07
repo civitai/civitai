@@ -253,7 +253,7 @@ describe('the measure box, on the rendered tree', () => {
     const entries = Object.entries(APPS_PAGE_MEASURES) as [string, AppsMeasure][];
     // Guard-the-guard: an empty map would make the loop pass vacuously. Seven since
     // `/apps/review` gave up its cap and joined the full-container list.
-    expect(entries.length).toBeGreaterThanOrEqual(7);
+    expect(entries.length).toBeGreaterThanOrEqual(6);
     const rendered = new Set<string>();
     for (const [route, measure] of entries) {
       const t = renderLayout(measure);

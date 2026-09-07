@@ -1,11 +1,9 @@
 import {
   Anchor,
   Badge,
-  Box,
   Button,
   Code,
   Collapse,
-  CopyButton,
   Divider,
   Group,
   Image,
@@ -18,9 +16,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
-  IconCheck,
   IconChevronDown,
-  IconClipboard,
   IconDatabase,
   IconPalette,
   IconPhoto,
@@ -37,7 +33,7 @@ import {
   CLI_INSTALL_GO,
   CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 
 /**
  * "App builders" get-started body — the Scope-A soft-launch funnel.
@@ -60,35 +56,14 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 // CLI commands + ecosystem links are single-sourced in `./cliCommands`. The
 // quickstart uses the with-sample-name create form (`CLI_CREATE_SAMPLE_COMMAND`).
 
-function CopyableCommand({ command }: { command: string }) {
-  return (
-    <CopyButton value={command}>
-      {({ copied, copy }) => (
-        <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-          <Code
-            block
-            color={copied ? 'green' : undefined}
-            style={{ wordBreak: 'break-all', paddingRight: 36 }}
-          >
-            {copied ? 'Copied' : `$ ${command}`}
-          </Code>
-          <LegacyActionIcon
-            className="absolute right-2 top-1/2 -translate-y-1/2"
-            right={8}
-            variant="transparent"
-            color="gray"
-            aria-label={`Copy command: ${command}`}
-            onClick={copy}
-          >
-            {copied ? <IconCheck size={16} /> : <IconClipboard size={16} />}
-          </LegacyActionIcon>
-        </Box>
-      )}
-    </CopyButton>
-  );
-}
-
-export function GetStartedBody() {
+/**
+ * `onCopyCommand` is OPTIONAL and threads the `/apps/build` funnel's `cli_copy` step
+ * out to whoever mounted this. It is a CALLBACK rather than a `useTrackEvent()` call
+ * in here on purpose: the header above promises this component is props-only with no
+ * network, and its `*.browser.test.tsx` suite mounts it with no providers — importing
+ * the tracker would break both. See `AppsBuildBody`, the one call site that passes it.
+ */
+export function GetStartedBody({ onCopyCommand }: { onCopyCommand?: (c: string) => void } = {}) {
   const [opened, { toggle }] = useDisclosure(false);
 
   return (
@@ -244,12 +219,12 @@ export function GetStartedBody() {
         </Button>
         <Collapse in={opened} data-testid="quickstart-commands">
           <Stack gap="sm">
-            <CopyableCommand command={CLI_INSTALL_BREW} />
+            <CopyableCommand command={CLI_INSTALL_BREW} onCopy={onCopyCommand} />
             <Text size="xs" c="dimmed">
               or: <Code>{CLI_INSTALL_GO}</Code>
             </Text>
-            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
-            <CopyableCommand command={CLI_RUN_COMMAND} />
+            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
+            <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
           </Stack>
         </Collapse>
       </Stack>

@@ -54,6 +54,96 @@ export function isAppDeveloper(
 }
 
 /**
+ * The flag shape {@link canAccessAppsBuild} needs: the three STORE flags (inherited
+ * from {@link AppsStoreFeatureFlags}, so they stay derived from `FeatureAccess`) plus
+ * the two App-Blocks CAPABILITY flags. Optional + nullable throughout for the same
+ * reason the store type is — a Flipt-down flag and an absent `features` object both
+ * flow in without a cast, and the predicate fails CLOSED on both.
+ */
+export type AppsBuildFeatureFlags =
+  | (NonNullable<AppsStoreFeatureFlags> &
+      Partial<Pick<FeatureAccess, 'appBlocksAuthor' | 'appBlocksGetStarted'>>)
+  | null
+  | undefined;
+
+/**
+ * App Blocks — the `/apps/build` (BUILD) surface gate.
+ *
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach the build surface", and it
+ * is consumed by exactly TWO callers that MUST agree: the `Build` row in
+ * `SUB_NAV_LINKS` (`~/components/Apps/AppsSubNav`) and the page's own SSR gate
+ * (`~/components/Apps/resolveBuildPageAccess`, called from `pages/apps/build.tsx`).
+ *
+ * ## Why one predicate, in one place
+ *
+ * 🔴 THIS EXISTS BECAUSE THE SPLIT VERSION SHIPPED A LIVE 404, TWICE, AND WAS CAUGHT
+ * ONCE. `/apps/submit` and `/apps/mine` both `getServerSideProps`-gate on
+ * `features.appBlocksAuthor` + {@link isAppDeveloper} and otherwise return `notFound`,
+ * while the sub-nav rows pointing at them were gated on store visibility — so a
+ * store-visible NON-author was offered a tab straight into a 404. That exact
+ * tab/page mismatch was a deploy-blocking finding on PR #4668 (a tab shown to a
+ * cohort its page refused), and before that it is what #3899 was filed for. The
+ * fix each time was to re-derive the tab's predicate from the page's; the fix that
+ * makes it not come back is for there to be only ONE predicate to derive.
+ *
+ * So: do NOT re-inline this, and do NOT "simplify" either caller to a subset of it.
+ * A row whose visibility rule is spelled out at the row is how this defect is
+ * reintroduced. Pinned by `components/Apps/__tests__/appsBuildAccess.test.ts` (the
+ * truth table) and `components/Apps/__tests__/appsBuildGateCallSites.test.ts` (the
+ * call-site ledger, which fails if either caller stops routing through here).
+ *
+ * ## The rule
+ *
+ * `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
+ *
+ * - The STORE term is a hard precondition. `/apps/build` is a surface INSIDE the apps
+ *   store IA — it renders under the same `AppsSubNav` chrome, its workbench state links
+ *   into `/apps/listing/<id>/edit`, and its Marketplace sibling tab is store-gated. A
+ *   viewer with no store access has no `/apps` at all, so admitting them here would put
+ *   them on a page whose every onward link 404s.
+ * - The AUTHOR term is what opens states B/C (first-app + workbench). It routes through
+ *   {@link isAppDeveloper}, so moderators stay a hard floor.
+ * - The `appBlocksGetStarted` term keeps its KILL-SWITCH meaning exactly: it governs
+ *   whether a store-visible NON-author is shown the recruiting pitch (state A). Flip
+ *   `app-blocks-get-started` off in Flipt and the pitch — and the tab offering it —
+ *   disappear for non-authors, with no deploy. It cannot switch an AUTHOR out of their
+ *   own workbench, which is correct: the kill switch is on the funnel, not on authoring.
+ *
+ * 🔴 HYDRATION-SAFE, AND MEASURED RATHER THAN ASSUMED. All of the inputs are SSR-seeded
+ * and FROZEN, so this predicate computes the same boolean on the server render and on
+ * the first client paint, and its callers must NOT defer it behind `useIsClient()`:
+ *   • `appBlocksAuthor` and `appBlocksGetStarted` are resolved server-side in `_app`'s
+ *     `getInitialProps`, serialized into `pageProps.flags`, and frozen by
+ *     `useState(initialFlags)` in `FeatureFlagsProvider`. NEITHER declares
+ *     `toggleable: true` in `feature-flags.service.ts` (verified at this ref:
+ *     `appBlocksGetStarted` and `appBlocksAuthor` are bare
+ *     `{ availability: ['mod'], fliptKey: … }` entries), so
+ *     `computeUserFeatureFlagsOverlay` never emits them and the client
+ *     `user.getFeatureFlags` overlay cannot move them.
+ *   • the three store flags are frozen the same way, via {@link hasAppsStoreAccess}.
+ *   • `user.isModerator` rides `SessionProvider`'s `useState(initial)`, seeded from the
+ *     same SSR `pageProps.session`; when that seed is `undefined` the SERVER also
+ *     rendered without a user, so the first client paint still matches.
+ * What is NOT frozen — and therefore IS deferred by its consumer — is
+ * `blocks.getNavSummary`, which decides state B vs state C. See `AppsBuildBody`.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ *
+ * Pure (no server/client-only imports) so it is usable from both the
+ * `getServerSideProps` resolver and the client-side nav container.
+ */
+export function canAccessAppsBuild(
+  user: { isModerator?: boolean | null } | null | undefined,
+  features: AppsBuildFeatureFlags
+): boolean {
+  if (!hasAppsStoreAccess(features)) return false;
+  return (
+    isAppDeveloper(user, { appBlocksAuthor: features?.appBlocksAuthor }) ||
+    !!features?.appBlocksGetStarted
+  );
+}
+
+/**
  * The store-visibility flag pair, in the shape every caller already has in hand
  * (`ctx.features` on the SSR side, `useFeatureFlags()` on the client). Optional
  * + nullable so a Flipt-down / not-yet-created flag and an absent `features`

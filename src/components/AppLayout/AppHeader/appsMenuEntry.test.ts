@@ -4,22 +4,30 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
- * 🔒 THE USER-MENU `/apps` ENTRY — ONE ROW, TWO DESTINATIONS.
+ * 🔒 THE USER-MENU `/apps` ENTRY — ONE ROW, ONE DESTINATION.
  *
- * WHAT CHANGED. `useGetMenuItems` used to carry TWO adjacent App-Blocks rows:
- * "Build apps" → `/apps/get-started` (gated on `appsNav.getStarted`) and "Apps" →
- * `/apps` (gated on `appsNav.marketplace`). A moderator holds both flags, so they
- * saw two near-identical rows for one product. "Build apps" moved into the shared
- * `/apps/*` sub-nav (`SUB_NAV_LINKS` in `~/components/Apps/AppsSubNav`), leaving
- * ONE dropdown row whose href is chosen from the same two booleans:
+ * WHAT CHANGED, IN TWO STEPS. `useGetMenuItems` first carried TWO adjacent App-Blocks
+ * rows: "Build apps" → `/apps/get-started` and "Apps" → `/apps`. A moderator holds both
+ * flags, so they saw two near-identical rows for one product; "Build apps" moved into the
+ * `/apps/*` sub-nav, leaving ONE row with a CONDITIONAL href —
+ * `marketplace ? '/apps' : '/apps/get-started'` — because a viewer holding
+ * `appBlocksGetStarted` without a store flag cannot load `/apps` at all
+ * (`resolveAppsPageAccess` → `notFound`), and pointing them there would be a menu entry
+ * into a 404.
  *
- *   visible = marketplace || getStarted
- *   href    = marketplace ? '/apps' : '/apps/get-started'
+ * 🔴 THE FALLBACK IS NOW GONE, AND NOT BECAUSE THE 404 ARGUMENT WAS WRONG — BECAUSE ITS
+ * DESTINATION WAS DELETED AND THE REPLACEMENT WOULD 404 FOR THE SAME COHORT.
+ * `/apps/get-started` was consolidated into `/apps/build`, whose gate
+ * (`canAccessAppsBuild`) requires store access as a hard AND. Repointing the fallback
+ * would have recreated the exact defect the fallback existed to prevent, on the same
+ * line. A get-started-only viewer has NO `/apps/*` surface now, so the honest menu for
+ * them is no row:
  *
- * The fallback is not cosmetic. A viewer holding `appBlocksGetStarted` WITHOUT a
- * store flag cannot load `/apps` at all — its `getServerSideProps` runs
- * `resolveAppsPageAccess`, which returns `notFound`. Sending them at `/apps` would
- * be a menu entry into a 404.
+ *   visible = marketplace
+ *   href    = '/apps'
+ *
+ * That is what the cases below assert, and the `getStarted` axis is retained in them
+ * precisely so a re-introduced dependency on it FAILS rather than passing unobserved.
  *
  * 🔴 WHY A SOURCE SCAN RATHER THAN A RENDER. `useGetMenuItems` is a heavy hook —
  * router, session, Mantine theme, tRPC — and the menu table is a 40-entry literal
@@ -133,7 +141,7 @@ describe('the extractor (validate the instrument before reading its verdict)', (
         { href: '/user/vault', visible: features.vault, icon: IconCloudLock, label: 'My Vault' },
         {
           // a comment mentioning href: '/apps/decoy' which must not be parsed
-          href: appsNav.marketplace ? '/apps' : '/apps/get-started',
+          href: appsNav.marketplace ? '/apps' : '/apps/invites',
           visible: appsNav.marketplace || appsNav.getStarted,
           icon: IconPlugConnected,
           label: 'Apps',
@@ -148,13 +156,18 @@ describe('the extractor (validate the instrument before reading its verdict)', (
   });
 
   it('🔴 NEGATIVE CONTROL: it reports TWO when the table carries two /apps rows', () => {
-    // The pre-change shape. Without this, "exactly one" could be satisfied by a
-    // parser that only ever finds one thing.
+    // The pre-change shape. Without this, "exactly one" could be satisfied by a parser
+    // that only ever finds one thing.
+    //
+    // The second fixture route is `/apps/invites` rather than the historical
+    // `/apps/get-started`: that route is a 301 source now, and the repo-wide retired-link
+    // sweep in `__tests__/pages/apps-build-redirects` scans EVERY `.ts`/`.tsx` file,
+    // fixtures included. What this control pins is the COUNT, so the route is arbitrary.
     const entries = appsEntries(
       parseMenuEntries(
         `
         const items = [
-          { href: '/apps/get-started', visible: appsNav.getStarted, label: 'Build apps' },
+          { href: '/apps/invites', visible: appsNav.getStarted, label: 'Invites' },
           { href: '/apps', visible: appsNav.marketplace, label: 'Apps' },
         ];
       `,
@@ -162,7 +175,7 @@ describe('the extractor (validate the instrument before reading its verdict)', (
       )
     );
     expect(entries).toHaveLength(2);
-    expect(entries.map((e) => e.label)).toEqual([`'Build apps'`, `'Apps'`]);
+    expect(entries.map((e) => e.label)).toEqual([`'Invites'`, `'Apps'`]);
   });
 
   it('does NOT read a lookalike route as an /apps route', () => {
@@ -179,17 +192,17 @@ describe('the extractor (validate the instrument before reading its verdict)', (
 
   it('the evaluator really evaluates (it is not returning the source text)', () => {
     expect(
-      evaluate(`appsNav.marketplace ? '/apps' : '/apps/get-started'`, {
+      evaluate(`appsNav.marketplace ? '/apps' : '/apps/invites'`, {
         marketplace: true,
         getStarted: false,
       })
     ).toBe('/apps');
     expect(
-      evaluate(`appsNav.marketplace ? '/apps' : '/apps/get-started'`, {
+      evaluate(`appsNav.marketplace ? '/apps' : '/apps/invites'`, {
         marketplace: false,
         getStarted: true,
       })
-    ).toBe('/apps/get-started');
+    ).toBe('/apps/invites');
     expect(
       evaluate(`appsNav.marketplace || appsNav.getStarted`, {
         marketplace: false,
@@ -222,21 +235,23 @@ describe('🔒 the user menu offers exactly ONE /apps entry', () => {
     expect(entries[0].label).toBe(`'Apps'`);
   });
 
-  it('🔴 href: /apps WITH store access, /apps/get-started WITHOUT', () => {
+  it('🔴 href: always /apps, on every combination of the two booleans', () => {
     const href = (nav: (typeof CASES)[number]) => evaluate(entries[0].href, nav);
-
-    // Store access wins regardless of the get-started flag — the marketplace is the
-    // richer landing and "Build apps" is one click away in the sub-nav.
-    expect(href({ marketplace: true, getStarted: true })).toBe('/apps');
-    expect(href({ marketplace: true, getStarted: false })).toBe('/apps');
-
-    // 🔴 THE CASE THE FALLBACK EXISTS FOR. This viewer cannot load `/apps`:
-    // `resolveAppsPageAccess` returns `notFound` without a store flag. A ternary
-    // written the other way round, or a plain `'/apps'`, fails here.
-    expect(href({ marketplace: false, getStarted: true })).toBe('/apps/get-started');
+    // Asserted across the WHOLE case set, `getStarted` axis included, so a
+    // re-introduced conditional fallback fails here — not just on the one cohort
+    // someone happened to think to test.
+    for (const nav of CASES) {
+      expect(
+        href(nav),
+        `href for marketplace=${nav.marketplace} getStarted=${nav.getStarted}: the row must ` +
+          'point at `/apps` unconditionally. A get-started fallback would send a viewer ' +
+          'with no store flag at `/apps/build`, which `canAccessAppsBuild` refuses them — ' +
+          'the same menu-entry-into-a-404 the old fallback existed to prevent.'
+      ).toBe('/apps');
+    }
   });
 
-  it('🔴 visible: whenever EITHER destination is reachable, and never otherwise', () => {
+  it('🔴 visible: exactly when the STORE is reachable, and never otherwise', () => {
     const visible = entries[0].visible;
     expect(
       visible,
@@ -247,7 +262,7 @@ describe('🔒 the user menu offers exactly ONE /apps entry', () => {
       expect(
         evaluate(visible as string, nav),
         `visible for marketplace=${nav.marketplace} getStarted=${nav.getStarted}`
-      ).toBe(nav.marketplace || nav.getStarted);
+      ).toBe(nav.marketplace);
     }
   });
 
@@ -256,14 +271,22 @@ describe('🔒 the user menu offers exactly ONE /apps entry', () => {
     // which the row is shown, the destination must be one the viewer's flags permit.
     // This is what a pair of independently-correct-looking expressions can still get
     // wrong — visible on `||`, href hardcoded to `/apps`.
+    let shown = 0;
     for (const nav of CASES) {
       if (!evaluate(entries[0].visible as string, nav)) continue;
+      shown += 1;
       const href = evaluate(entries[0].href, nav);
-      const admitted = href === '/apps' ? nav.marketplace : nav.getStarted;
+      // `/apps` is admitted by `marketplace`; `/apps/build` by store access AND the
+      // build predicate, which this stub cannot evaluate — so a row pointing there
+      // fails, which is the intended outcome (see the href case above).
+      const admitted = href === '/apps' && nav.marketplace;
       expect(admitted, `the row links to ${String(href)} for a viewer who cannot load it`).toBe(
         true
       );
     }
+    // 🔴 Guard the guard: a `visible` that never fires would make the loop vacuous and
+    // this relationship unproven. At least one case must actually show the row.
+    expect(shown).toBeGreaterThan(0);
   });
 
   it('the expired `newUntil` badge from the retired "Build apps" row is gone', () => {

@@ -469,17 +469,20 @@ describe('APPS_PAGE_MEASURES — the decided CONTENT measure per route', () => {
     expect((1700 * 8) / 12).toBeGreaterThan(APPS_READABLE_MEASURE.min);
   });
 
-  test('the readable band is 1068 → 1368, and these six form/prose routes take it', () => {
+  test('the readable band is 1068 → 1368, and these five form/prose routes take it', () => {
     expect(APPS_READABLE_MEASURE).toEqual({ min: 1068, max: 1368, grow: 55 });
     const takers = Object.entries(APPS_PAGE_MEASURES)
       .filter(([, m]) => m === APPS_READABLE_MEASURE)
       .map(([r]) => r)
       .sort();
     // The SET, not a spot-check: this fails when a route joins or leaves.
+    // 🔴 SIX UNTIL `/apps/get-started` WAS CONSOLIDATED INTO `/apps/build`. That route is
+    // gone (301), and its successor is NOT here — it takes the full container, because its
+    // workbench state renders the submissions table. See the note on `/apps/build` in
+    // `APPS_FULL_MEASURE_PAGES` for why the widest state wins a route-keyed registry.
     expect(takers).toEqual([
       '/apps/[appBlockId]/edit',
       '/apps/[appBlockId]/revenue',
-      '/apps/get-started',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
       '/apps/submit',
@@ -525,7 +528,7 @@ describe('🔴 a BAND grows only where the container grew', () => {
   test('the sweep found bands to check (guards a vacuous loop)', () => {
     // Every measure is a band today, and if that ever stops being true this loop would
     // pass by checking nothing.
-    expect(bands.length).toBeGreaterThanOrEqual(7);
+    expect(bands.length).toBeGreaterThanOrEqual(6);
     expect(new Set(bands.map(([, b]) => b)).size).toBe(2);
   });
 
@@ -698,7 +701,7 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
   });
 });
 
-describe('🔴 /apps/mine is wide enough for its table, as a RELATIONSHIP', () => {
+describe('🔴 /apps/build is wide enough for its table, as a RELATIONSHIP', () => {
   /**
    * This replaces the deleted `MY_APPS_CONTAINER_SIZE` alias and its `> 1100` pin.
    * The alias could not have noticed the container dropping to 1400; the relationship
@@ -709,12 +712,16 @@ describe('🔴 /apps/mine is wide enough for its table, as a RELATIONSHIP', () =
     expect(contentWidth).toBeGreaterThan(SUBMISSIONS_TABLE_MIN_WIDTH);
   });
 
-  test('…and it does so because /apps/mine takes no measure', () => {
+  test('…and it does so because /apps/build takes no measure', () => {
     // If it ever took the readable measure, the floor would NOT be cleared — which
     // is exactly the clip the wide width was introduced to fix. Asserted as the
     // counterfactual so the previous test cannot pass for the wrong reason.
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/build');
+    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps/build');
+    // …and the route it inherited this from is GONE, not merely reclassified — so a
+    // future reader cannot conclude the table lives on two routes.
     expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/mine');
-    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps/mine');
+    expect(APPS_FULL_MEASURE_PAGES).not.toContain('/apps/mine');
     // The readable band's CEILING is used, not its floor: the counterfactual has to be
     // "even at its widest, that class would still clip this table", or a band that grew
     // past the floor would make this pass for a reason that is no longer true.
@@ -797,10 +804,10 @@ describe('every /apps page on disk is classified', () => {
     // that makes an fs-backed guard worthless. Pin a floor AND known members from
     // every list, so a walk that finds only the shallow files still fails.
     const routes = appsRoutes();
-    expect(routes.length).toBeGreaterThanOrEqual(20);
+    expect(routes.length).toBeGreaterThanOrEqual(19);
     expect(routes).toContain('/apps');
     expect(routes).toContain('/apps/review');
-    expect(routes).toContain('/apps/get-started');
+    expect(routes).toContain('/apps/build');
     expect(routes).toContain('/apps/[appBlockId]/edit');
     expect(routes).toContain('/apps/listing/[appListingId]/edit');
     expect(routes).toContain('/apps/run/[slug]/[[...path]]');
@@ -886,11 +893,14 @@ describe('every /apps page on disk is classified', () => {
         '/apps',
         '/apps/[appBlockId]/edit',
         '/apps/[appBlockId]/revenue',
-        '/apps/get-started',
+        // 🔴 ONE ROUTE WHERE THERE WERE THREE. `/apps/get-started` and `/apps/mine` were
+        // consolidated into this (301s), and `/apps/submit` KEEPS its route but lost its
+        // sub-nav row. So the set SHRANK by two — which is exactly the direction this
+        // ledger exists to make visible, and the reason it is a `toEqual` and not a floor.
+        '/apps/build',
         '/apps/installed',
         '/apps/invites',
         '/apps/listing/[appListingId]/edit',
-        '/apps/mine',
         // 🔴 'revenue' sorts BEFORE 'review' — they diverge at index 9, 'e' < 'i'.
         '/apps/revenue',
         '/apps/review',
@@ -898,7 +908,7 @@ describe('every /apps page on disk is classified', () => {
         '/apps/store-preview/[slug]',
         '/apps/submit',
       ]);
-      expect(RENDERING_ROUTES).toHaveLength(13);
+      expect(RENDERING_ROUTES).toHaveLength(12);
     });
 
     test('every RETURN of every page renders the layout (AST, not text)', () => {

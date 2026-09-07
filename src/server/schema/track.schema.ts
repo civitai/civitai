@@ -694,6 +694,45 @@ const announcementClickSchema = z.object({
 // The containment direction in `action-type-enum-drift.test.ts` is what keeps this true in
 // one direction (every arm here must be an `ActionType`); the reverse is deliberately not
 // asserted, which is exactly what lets a server-only type exist.
+// The consolidated `/apps/build` developer funnel. `/apps/get-started`, `/apps/submit`
+// and `/apps/mine` carried ZERO instrumentation between them, so nothing could answer
+// the only question the funnel exists to answer: of the people shown the pitch, how many
+// reach the CLI, and how many go on to start an app.
+//
+// 🔴 CLIENT-POSTABLE ON PURPOSE, UNLIKE THE THREE SERVER-ONLY TYPES ABOVE, and the
+// difference is what the number is FOR. `App_Open` and the mute pair are absent from this
+// schema because each drives a figure someone benefits from inflating — a public play
+// count, a creator-facing mute chart. These four steps drive an internal funnel ratio that
+// nobody is paid by, and the `view` step happens in the browser on a page render with no
+// server round-trip of its own, so a server-side emitter would have to invent one. A
+// script posting these skews an internal conversion chart and nothing else.
+//
+// 🔴 EVERY FIELD IS A CLOSED ENUM — NO FREE STRING. `details` is a `String` column at
+// storage (`tracker.action` JSON-stringifies whatever it is handed), so the only thing
+// standing between a browser POST and arbitrary text in that column is this schema. Both
+// fields are `z.enum`, so a tampered client can post a WRONG combination but cannot post
+// user text, an unbounded string, or a value the funnel query does not already know.
+//
+// `state` is carried on every step, `view` included, because the funnel question is
+// per-state: a `create_entry` from the pitch (a non-author clicking through) and one from
+// the workbench (an author adding their fifth app) are different events that would
+// otherwise be indistinguishable in the rollup.
+const appsBuildActionSchema = z.object({
+  type: z.literal('AppsBuild_Action'),
+  details: z.object({
+    /** Which funnel step fired. Ordered as the funnel runs. */
+    action: z.enum(['view', 'request_access', 'cli_copy', 'create_entry']),
+    /**
+     * Which of the page's three states the viewer was in. Mirrors `AppsBuildState` in
+     * `~/components/Apps/appsBuildState`; the two are pinned together by
+     * `components/Apps/__tests__/appsBuildState.test.ts` so a renamed state cannot
+     * silently start posting a value this enum rejects (a rejected POST is dropped with
+     * a 200, so the loss would be invisible).
+     */
+    state: z.enum(['pitch', 'first-app', 'workbench']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -719,6 +758,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   generatorSubmitSchema,
   feedTagBarClickSchema,
   announcementClickSchema,
+  appsBuildActionSchema,
 ]);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to

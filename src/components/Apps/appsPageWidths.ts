@@ -350,8 +350,6 @@ export const APPS_PAGE_MEASURES = {
   '/apps/listing/[appListingId]/edit': APPS_READABLE_MEASURE,
   /** Per-app revenue detail. */
   '/apps/[appBlockId]/revenue': APPS_READABLE_MEASURE,
-  /** The developer get-started explainer — prose. */
-  '/apps/get-started': APPS_READABLE_MEASURE,
 } as const satisfies Record<string, AppsMeasure>;
 
 export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
@@ -361,13 +359,26 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
  * render a grid or a wide table and are actively hurt by an artificial cap on a large
  * monitor. They pass no `measure` to `AppsPageLayout` at all.
  *
- * 🔴 `/apps/mine` is here, not in {@link APPS_PAGE_MEASURES}, and the reason is the
- * content rather than the route: it absorbed `/apps/my-submissions` (which now 301s
- * here and has no page file) and is a table carrying an icon, a cover, three badges
- * and a date per row, with a measured `SUBMISSIONS_TABLE_MIN_WIDTH` scroll floor of
- * 1424px. Giving it the readable measure would re-create the exact clip the wide
- * width was introduced to fix; `__tests__/appsPageWidths.test.ts` pins the container
- * against that floor.
+ * 🔴 `/apps/build` IS HERE, AND IT IS THE ROUTE WHOSE CLASSIFICATION IS A REAL
+ * TRADE-OFF RATHER THAN A READING OF ITS CONTENT — so read this before "fixing" it.
+ * It is STATE-AWARE: state A (the recruiting pitch) is prose and genuinely wants the
+ * readable measure, while state C (the workbench) renders `MyAppsBody`'s table with a
+ * measured `SUBMISSIONS_TABLE_MIN_WIDTH` scroll floor of 1424px. This registry is keyed
+ * by ROUTE and can hold exactly ONE measure, so one of the two states has to lose.
+ *
+ * The table wins, because the two failures are not the same size. `APPS_READABLE_MEASURE`
+ * tops out at 1368, which is BELOW that 1424 floor — so the readable class would
+ * re-create the exact horizontal clip the wide width was introduced to fix on
+ * `/apps/mine` (this entry is that entry, inherited: `/apps/mine` 301s to `/apps/build`
+ * and has no page file). A clipped table is broken; prose on a wide measure is merely
+ * ugly. `__tests__/appsPageWidths.test.ts` pins the container against that floor and
+ * asserts the counterfactual, so the choice cannot be silently reverted.
+ *
+ * 🔴 THE RESIDUAL, STATED RATHER THAN LEFT TO BE DISCOVERED: state A's prose runs to the
+ * full container on a wide monitor. Fixing it properly means a per-STATE measure, which
+ * this module cannot express and `AppsPageLayout` would have to be taught — and hand-
+ * rolling a second width mechanism inside the page is the per-page-container pattern
+ * this module exists to have deleted. Not worth reintroducing for one state of one route.
  *
  * 🔴 `/apps/review` JOINED THIS LIST when its 1368 cap was deleted — see the note on
  * {@link APPS_PAGE_CONTAINER_WIDTH}. Taking the full container is only correct for it
@@ -376,8 +387,8 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
  */
 export const APPS_FULL_MEASURE_PAGES = [
   '/apps',
+  '/apps/build',
   '/apps/installed',
-  '/apps/mine',
   '/apps/revenue',
   '/apps/review',
   '/apps/review/[publishRequestId]',

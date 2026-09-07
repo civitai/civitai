@@ -228,10 +228,10 @@ function stripAttrExpressions(attrs: string): string {
  * dropped anything without BOTH a literal href AND a `leftSection={<IconX`. Two ordinary
  * shapes walked straight through it, both measured surviving as mutants:
  *
- *   • `<ActionIcon component={Link} href="/apps/get-started" …>` in the ⋮ overflow — and
+ *   • `<ActionIcon component={Link} href="/apps/invites" …>` in the ⋮ overflow — and
  *     that is not an exotic shape, it is the one the chrome ALREADY uses for its `/apps`
  *     back-link (the compact-mode chevron);
- *   • `<ChromeSurfaceItem href="/apps/get-started">Build apps</ChromeSurfaceItem>` with no
+ *   • `<ChromeSurfaceItem href="/apps/invites">Invites</ChromeSurfaceItem>` with no
  *     `leftSection` — which compiles, because `ChromeSurface.tsx` types that prop
  *     `leftSection?: ReactNode`, and which is the very element (d) claims to enumerate.
  *
@@ -399,25 +399,32 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
    *
    * The rule above is ONE-DIRECTIONAL: every chrome destination must exist in the
    * subnav, never the reverse. That is correct — the chrome is deliberately a strict
-   * SUBSET (Create / Invites / Revenue have always been subnav-only) — but it means a
-   * new `SUB_NAV_LINKS` row is scored identically whether its absence from the chrome
-   * was a decision or an oversight. Both readings pass, silently, which is the exact
-   * shape of an unpinned decision.
+   * SUBSET (Invites / Revenue have always been subnav-only) — but it means a new
+   * `SUB_NAV_LINKS` row is scored identically whether its absence from the chrome was a
+   * decision or an oversight. Both readings pass, silently, which is the exact shape of
+   * an unpinned decision.
    *
-   * `/apps/get-started` ("Build apps") is the row that made this worth writing. It was
-   * EXCLUDED from the chrome on purpose, for two reasons:
+   * 🔴 THE SET SHRANK FROM FOUR TO TWO, AND NOT BY ADDING ANYTHING TO THE CHROME. The
+   * store consolidated three subnav rows — "Build apps" (`/apps/get-started`), "Create"
+   * (`/apps/submit`) and "My apps" (`/apps/mine`) — into ONE state-aware `/apps/build`.
+   * Two of the three excluded routes therefore stopped being subnav rows at all, and the
+   * chrome's `/apps/mine` item was REPOINTED to `/apps/build` rather than deleted (the
+   * ledger's own message argues against deleting a door out of a running app, and
+   * `/apps/mine` 301s there anyway, so leaving it would have made every press a redirect
+   * hop). What survives is the pre-existing pair: authoring/owner-management surfaces
+   * that do not belong in a menu opening over a RUNNING app.
    *
-   *   1. AUDIENCE. This menu opens over a RUNNING app — the viewer is consuming an app,
-   *      not looking for a developer-onboarding page. The four shared destinations are
-   *      the store's consumption + ownership surfaces; a "start building" call to action
-   *      is a store-front concern.
-   *   2. GATING. The chrome's platform nav has no feature-flag plumbing at all (its only
-   *      condition is `isModerator`), while `/apps/get-started` is governed by the
-   *      `appBlocksGetStarted` KILL SWITCH. Mirroring the entry here would render it
-   *      unconditionally and defeat the switch — the chrome would keep offering a page
-   *      that has been turned off. The subnav's own row IS gated on that flag
-   *      (`visible: (_s, c) => c.canGetStarted`), which is what makes this a difference
-   *      between the two surfaces rather than an inconsistency.
+   * ⚠️ THE OLD RATIONALE'S SECOND LIMB IS RETIRED, AND IT IS WORTH SAYING WHY RATHER THAN
+   * DELETING IT SILENTLY. It ran: `/apps/get-started` sits behind the
+   * `appBlocksGetStarted` KILL SWITCH, this section reads no flags, so mirroring the entry
+   * would keep offering a page that has been switched off. That argument was about a route
+   * the chrome did not carry. Its successor `/apps/build` IS carried — but the chrome
+   * already carried `/apps/mine`, which was itself flag-gated (`appBlocksAuthor` +
+   * `isAppDeveloper`, a hard `notFound`), so an ungated link to a gated destination is the
+   * STATUS QUO here and not something the repoint introduced. The behaviour change is
+   * strictly in the harmless direction: a non-author pressing that item used to get a 404
+   * and, if they hold `appBlocksGetStarted`, now gets a public pitch with no private data
+   * on it. The PAGE decides, not the link.
    *
    * So this asserts the excluded SET, and fails when it GROWS (a new subnav row nobody
    * decided about) or SHRINKS (an entry added to the chrome without updating the note).
@@ -447,12 +454,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'deliberate, add it here WITH the reason; if it is not, add it to the chrome ' +
         '(the subnav is the source of truth, so the chrome follows).'
     ).toEqual([
-      // Developer onboarding — a store-front concern, and flag-gated by a kill switch
-      // the chrome cannot honour. See the block comment above.
-      '/apps/get-started',
-      // Authoring + owner-management surfaces. Pre-existing exclusions: the chrome is
-      // navigation for someone RUNNING an app, not managing one.
-      '/apps/submit',
+      // Owner-management surfaces. Pre-existing exclusions: the chrome is navigation for
+      // someone RUNNING an app, not managing one.
+      //
+      // 🔴 `/apps/invites` AND `/apps/submit` LEFT THIS LIST BY BEING DELETED FROM THE
+      // SUBNAV, NOT BY BEING ADDED TO THE CHROME. Both routes were consolidated into
+      // `/apps/build`, which the chrome DOES carry (repointed from `/apps/mine`) — so the
+      // set shrank from four to two because `SUB_NAV_LINKS` shrank, which is exactly the
+      // direction this ledger is meant to make visible.
       '/apps/invites',
       '/apps/revenue',
     ]);
@@ -467,7 +476,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     expect(nav).toEqual([
       { href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' },
       { href: '/apps/installed', label: 'Installed apps', icon: 'IconPlugConnected' },
-      { href: '/apps/mine', label: 'My apps', icon: 'IconApps' },
+      { href: '/apps/build', label: 'My apps', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
     ]);
   });
@@ -492,7 +501,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // stand alone in a dropdown over a running app and need the noun. Asserting
     // equality here would force a wrong "fix" in one file or the other.
     expect(navByHref.get('/apps/installed')?.label).toBe('Installed apps');
-    expect(navByHref.get('/apps/mine')?.label).toBe('My apps');
+    expect(navByHref.get('/apps/build')?.label).toBe('My apps');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
     expect(subByHref.get('/apps/installed')?.label).toBe('Installed');
   });
@@ -567,8 +576,8 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // the gap — the `expected glyphs` test enumerates the PLATFORM-NAV slice only, and (c)
     // enumerates the two `/apps/installed` LABELS only. So an item added to the ⋮ overflow
     // was invisible to every assertion in this file. Measured on the PRE-(d) tree: adding
-    // `<ChromeSurfaceItem href="/apps/get-started" leftSection={<IconCode …/>}>Build
-    // apps</ChromeSurfaceItem>` to the overflow passed all 8 tests. (d) kills that one now.
+    // `<ChromeSurfaceItem href="/apps/invites" leftSection={<IconMail …/>}>Invites
+    // </ChromeSurfaceItem>` to the overflow passed all 8 tests. (d) kills that one now.
     //
     // 🔴 AND (d) ALONE WAS STILL NOT ENOUGH, WHICH IS WHY THIS COMMENT IS NOT THE END OF
     // THE STORY. Round 4 measured two FURTHER shapes surviving with (d) in place, because
@@ -576,20 +585,29 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // `<ActionIcon component={Link} href>` and a `leftSection`-less `<ChromeSurfaceItem>`.
     // Both are ordinary; the first is the shape the chrome already uses for its `/apps`
     // back-link. The ledger is only ever as wide as `parseAllChromeLinks` — read its
-    // header before trusting the sentence below.
+    // header before trusting the sentence below. (The fixture route in those two controls
+    // is `/apps/invites`; it was `/apps/get-started` until that route was consolidated
+    // away. The shapes are what the controls pin — the route is arbitrary, and must simply
+    // be one the repo-wide retired-link sweep in `__tests__/pages/apps-build-redirects`
+    // does not report.)
     //
-    // That is not bookkeeping. `/apps/get-started` is governed by the `appBlocksGetStarted`
-    // kill switch, and NO literal-href item in this chrome is gated by a FEATURE FLAG
-    // except the moderator-gated `/apps/review` — no flag decides whether a LINK here is
-    // offered. (Two ARE conditional, on LAYOUT rather than a flag: the compact back
-    // chevron renders only under `compact`, the breadcrumb crumb only under `isPage`.
-    // Neither can be switched off in Flipt, which is what this argument turns on — so
-    // say "gated by no flag", never "rendered unconditionally". Four earlier drafts of
-    // this sentence overstated it in exactly that way.)
-    // The DELIBERATE SUBSET note above the platform nav in
-    // `IframeHost.tsx` is the argument that a surface which does not honour a kill switch
-    // must not advertise the route it switches off, and the overflow is the same surface,
-    // so the same argument governs it; only the enumeration stopped short.
+    // That is not bookkeeping. `/apps/invites` is gated on `appBlocksAuthor`, and NO
+    // literal-href item in this chrome is gated by a FEATURE FLAG except the
+    // moderator-gated `/apps/review` — no flag decides whether a LINK here is offered.
+    // (Two ARE conditional, on LAYOUT rather than a flag: the compact back chevron renders
+    // only under `compact`, the breadcrumb crumb only under `isPage`. Neither can be
+    // switched off in Flipt, which is what this argument turns on — so say "gated by no
+    // flag", never "rendered unconditionally". Four earlier drafts of this sentence
+    // overstated it in exactly that way.)
+    //
+    // 🔴 `/apps/build` IS IN THIS SET AND IS ITSELF FLAG-GATED (`canAccessAppsBuild`), SO
+    // READ THE SENTENCE ABOVE PRECISELY: it is about whether a flag decides the LINK, not
+    // the destination. That has been true here since before the consolidation — the item
+    // this one replaced pointed at `/apps/mine`, gated on `appBlocksAuthor` — so the
+    // repoint changed the route, not the property. The DELIBERATE SUBSET note above the
+    // platform nav in `IframeHost.tsx` carries the full argument, including why the
+    // repoint is a strict improvement (a refused viewer now gets a public pitch instead
+    // of a 404) rather than a widening.
     //
     // 🔴 THAT IS NOT "THIS SURFACE CANNOT READ FLAGS" — it can, and the repo demonstrates
     // it a few lines away. `<ChromeReviewMenuItem>` (`IframeHost.tsx`) calls
@@ -610,7 +628,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'product decision rather than a detail: NO literal-href item in this chrome is ' +
         'gated by a FEATURE FLAG except the moderator-gated `/apps/review`, so a ' +
         'flag-gated destination added here as a plain link keeps being offered after its ' +
-        'flag goes down (that is why `/apps/get-started` is excluded; see the DELIBERATE ' +
+        'flag goes down (that is why `/apps/invites` is excluded; see the DELIBERATE ' +
         'SUBSET note in `IframeHost.tsx`). The surface CAN read flags — ' +
         '`ChromeReviewMenuItem` gates itself on `hasAppsStoreAccess(useOptionalFeatureFlags())` ' +
         '— so "add it GATED, the way that item is" is a real third option alongside ' +
@@ -620,9 +638,12 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       '/apps', // Marketplace — platform nav
       '/apps', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
       '/apps', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
+      // 🔴 REPOINTED FROM `/apps/mine`, which 301s here. Sorts BEFORE `/apps/installed`
+      // now ('b' < 'i'), where `/apps/mine` sorted after it — the list is `.sort()`ed, so
+      // the POSITION moving is not a second change to review.
+      '/apps/build', // My apps — platform nav; the store calls this row "Build"
       '/apps/installed', // Installed apps — platform nav
       '/apps/installed', // Manage apps — ⋮ overflow; the pair (c) governs their labels
-      '/apps/mine', // My apps — platform nav
       '/apps/review', // Review — platform nav, moderator-gated
     ]);
   });
@@ -647,7 +668,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     ).toHaveLength(0);
 
     // 🔴 THE TWO SHAPES ROUND 4 ADDED, AS FIXTURES. Both were measured SURVIVING as
-    // mutants against the pre-round-4 parser (8 passed, `/apps/get-started` invisible to
+    // mutants against the pre-round-4 parser (8 passed, the fixture route invisible to
     // every assertion in this file). A widened parser that silently stopped matching them
     // again would restore that hole while looking exactly like this — so the shapes are
     // pinned here, not merely described in the comment above.
@@ -657,27 +678,23 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // from `aria-label` and the icon is null.
     expect(
       parseAllChromeLinks(
-        '<ActionIcon component={Link} href="/apps/get-started" aria-label="Build apps">' +
+        '<ActionIcon component={Link} href="/apps/invites" aria-label="Invites">' +
           '<IconCode size={16} stroke={1.5} /></ActionIcon>'
       )
-    ).toEqual([{ tag: 'ActionIcon', href: '/apps/get-started', label: 'Build apps', icon: null }]);
+    ).toEqual([{ tag: 'ActionIcon', href: '/apps/invites', label: 'Invites', icon: null }]);
 
     // P2: a `ChromeSurfaceItem` with NO `leftSection` — legal, because the primitive types
     // it `leftSection?: ReactNode`. The old parser required the glyph for INCLUSION.
     expect(
-      parseAllChromeLinks(
-        '<ChromeSurfaceItem href="/apps/get-started">Build apps</ChromeSurfaceItem>'
-      )
-    ).toEqual([
-      { tag: 'ChromeSurfaceItem', href: '/apps/get-started', label: 'Build apps', icon: null },
-    ]);
+      parseAllChromeLinks('<ChromeSurfaceItem href="/apps/invites">Invites</ChromeSurfaceItem>')
+    ).toEqual([{ tag: 'ChromeSurfaceItem', href: '/apps/invites', label: 'Invites', icon: null }]);
 
     // …and the negative control for `stripAttrExpressions`: an href nested inside ANOTHER
     // element in the attribute region is that element's, not this one's. Without the
-    // strip, the outer tag would be reported as linking to `/apps/get-started`.
+    // strip, the outer tag would be reported as linking to `/apps/invites`.
     expect(
       parseAllChromeLinks(
-        '<ChromeSurfaceItem leftSection={<Foo href="/apps/get-started" />}>x</ChromeSurfaceItem>'
+        '<ChromeSurfaceItem leftSection={<Foo href="/apps/invites" />}>x</ChromeSurfaceItem>'
       )
     ).toEqual([]);
   });

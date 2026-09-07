@@ -782,7 +782,7 @@ describe('ExternalSubmitForm — auto-trigger, status, re-pull, data-URI icon', 
 /**
  * 🔴 CANCEL USED TO DISCARD EVERYTHING SILENTLY.
  *
- * `Cancel` was a plain `<Button component={Link} href="/apps/mine">`: one click and
+ * `Cancel` was a plain `<Button component={Link} href="/apps/build">`: one click and
  * every field entered — URL, name, description, scope justifications — was gone, with
  * no warning and no undo. It now confirms first.
  *
@@ -799,7 +799,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await cancel.click();
 
     // It navigated…
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/mine'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
     // …and the modal was never raised. Asserted AFTER the navigation settled, so this
     // is a real absence in a mounted tree rather than a first-empty-observation pass.
     await expect.element(page.getByTestId('apps-offsite-discard-confirm')).not.toBeInTheDocument();
@@ -842,7 +842,7 @@ describe('ExternalSubmitForm — Cancel confirms before discarding', () => {
     await page.getByTestId('apps-offsite-wizard-cancel').click();
     await page.getByTestId('apps-offsite-discard-confirm').click();
 
-    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/mine'));
+    await vi.waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/apps/build'));
   });
 
   /**

@@ -116,6 +116,6 @@ describe('prepareMessage', () => {
     // 404s for owners outside it. Pinned against the shared constant so a route rename
     // moves this with its five siblings rather than stranding it.
     expect(msg(DETAILS)!.url).toBe(OWNER_SUBMISSIONS_URL);
-    expect(OWNER_SUBMISSIONS_URL).toBe('/apps/mine');
+    expect(OWNER_SUBMISSIONS_URL).toBe('/apps/build');
   });
 });

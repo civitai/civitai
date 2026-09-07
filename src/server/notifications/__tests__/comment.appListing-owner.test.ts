@@ -89,7 +89,7 @@ const message = (over: Record<string, unknown> = {}) =>
 
 describe('new-app-listing-comment — the owner finally gets notified', () => {
   it('links to the owner submissions view (WHOLE url)', () => {
-    expect(message()?.url).toBe('/apps/mine');
+    expect(message()?.url).toBe('/apps/build');
   });
 
   it('names the listing in the copy the owner reads', () => {
@@ -103,19 +103,19 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
     // notified. Asserted as a NEGATIVE because the failure mode is "someone helpfully makes the
     // link more specific" — which reads as an improvement in review.
     expect(message()?.url).not.toContain('/apps/store-preview');
-    expect(message({ appListingSlug: 'anything' })?.url).toBe('/apps/mine');
+    expect(message({ appListingSlug: 'anything' })?.url).toBe('/apps/build');
   });
 
   it('shares the destination constant with the other owner-facing listing notifications', () => {
     // A RELATIONSHIP: a route rename must move all five together, so this compares against a
-    // sibling processor's RENDERED url rather than against the string '/apps/mine'.
+    // sibling processor's RENDERED url rather than against the string '/apps/build'.
     //
     // 🔴 ON ITS OWN THIS ASSERTION IS TAUTOLOGICAL, and saying so is the point. Both sides read
     // the same `OWNER_SUBMISSIONS_URL`, so changing that constant to '/apps/other' drifts them
     // together and this test still passes (verified). What it proves is only "these two agree" —
     // never "they agree on the RIGHT value".
     //
-    // The three literal `toBe('/apps/mine')` assertions above are what pin the value; this pins
+    // The three literal `toBe('/apps/build')` assertions above are what pin the value; this pins
     // that the sharing is real and not a coincidence of two matching literals. The PAIR is the
     // guard. Do not "simplify" either half away: drop the literals and a wrong route passes; drop
     // this and a duplicated literal drifts silently.
@@ -127,14 +127,14 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
     });
     expect(message()?.url).toBe(sibling?.url);
     // Anchors the shared value, so this test cannot pass while both sides drift.
-    expect(sibling?.url).toBe('/apps/mine');
+    expect(sibling?.url).toBe('/apps/build');
   });
 
   it('the url is independent of the slug entirely (no slug-shaped failure modes left)', () => {
     // With a static destination there is no `/apps/store-preview/undefined` to render, so the
     // whole class of missing-slug broken links is gone rather than merely guarded.
     for (const appListingSlug of [undefined, null, '', 'a b/c']) {
-      expect(message({ appListingSlug })?.url).toBe('/apps/mine');
+      expect(message({ appListingSlug })?.url).toBe('/apps/build');
     }
   });
 });

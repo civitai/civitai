@@ -180,19 +180,22 @@ async function renderAndMeasure(measurePx: AppsMeasure | undefined) {
 }
 
 describe('the /apps route set that renders the shared chrome', () => {
-  test('🔴 is exactly these 13 routes (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these 12 routes (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. The alignment assertions below loop over this set, so a
     // set that silently shrank — or emptied — would make them pass while checking
     // nothing. Adding an apps page is meant to fail here and be added deliberately.
+    // 🔴 THIRTEEN UNTIL THE `/apps/build` CONSOLIDATION, AND THE SET SHRANK BY ONE RATHER
+    // THAN STAYING PUT: `/apps/get-started` and `/apps/mine` were merged into `/apps/build`
+    // (both 301 there, both page files deleted), so two routes left and one arrived.
+    // `/apps/submit` is still here — it kept its route and only lost its sub-nav row.
     expect(ROUTES.map((r) => r.route)).toEqual([
       '/apps',
       '/apps/[appBlockId]/edit',
       '/apps/[appBlockId]/revenue',
-      '/apps/get-started',
+      '/apps/build',
       '/apps/installed',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
-      '/apps/mine',
       '/apps/revenue',
       '/apps/review',
       '/apps/review/[publishRequestId]',
@@ -201,16 +204,20 @@ describe('the /apps route set that renders the shared chrome', () => {
     ]);
     // Both classes are represented, so the loops below exercise the measured AND the
     // measure-free branch of the layout rather than one of them 13 times. 6/7 since
-    // `/apps/review` gave up its 1368 cap and joined the full-container list.
+    // `/apps/review` gave up its 1368 cap and joined the full-container list. `/apps/build`
+    // joins it too — its workbench state renders the submissions table, whose 1424px scroll
+    // floor the readable band's 1368 ceiling cannot clear — while `/apps/get-started`, which
+    // WAS measured, left with the merge. Net: the full-container half holds at 6 (one in,
+    // one out) and the measured half drops from 7 to 6.
     expect(ROUTES.filter((r) => r.measure === undefined)).toHaveLength(6);
-    expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(7);
+    expect(ROUTES.filter((r) => r.measure !== undefined)).toHaveLength(6);
   });
 });
 
 describe.each(VIEWPORTS)(
   'the sub-nav is identically placed on every /apps route @$width',
   ({ width, height, navLeft, navWidth }) => {
-    test('nav left AND width are the same on all 13 routes', async () => {
+    test('nav left AND width are the same on all 12 routes', async () => {
       await page.viewport(width, height);
       const seen: Record<string, [number, number]> = {};
       for (const { route, measure: m } of ROUTES) {
