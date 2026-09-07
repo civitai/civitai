@@ -49,11 +49,28 @@ export type AppListingModerationNotificationDetails = {
  * `app-blocks-author` while ALL THREE store flags are off would now get a `notFound` from
  * their own approval notification.
  *
- * NOT reachable today — every App-Blocks flag is staged mod-only and a moderator holds all of
- * them — but it is one Flipt toggle away, and it is the sharpest residual of the `/apps/build`
- * consolidation. The store term is required because `/apps/build` renders INSIDE the apps-store
- * IA (the `AppsSubNav` chrome, links into `/apps/listing/<id>/edit`), so a viewer with no store
- * has a page whose every onward link 404s; the trade was taken knowingly. If that cohort ever
+ * 🔴 THAT COHORT IS EMPTY TODAY, AND THE REASON IS A SEGMENT COINCIDENCE RATHER THAN
+ * ANYTHING STRUCTURAL — so it is recorded here with the fact that would end it. An earlier
+ * draft justified it as "every App-Blocks flag is staged mod-only and a moderator holds all of
+ * them"; that is both weaker than the truth and, for the store flags, no longer true.
+ *
+ * Measured in Flipt v2, environment `civitai-app` (git-backed by `civitai/flipt-state`,
+ * `civitai-app/default/features.yaml`): `app-blocks-author`, `app-listings` and
+ * `app-blocks-enabled` are ALL base `enabled: false`, widened only by rollout, and all three
+ * name the SAME two segments — `moderators` and `app-dev-testers`. So holding
+ * `app-blocks-author` implies holding `app-listings`, which is one of the three disjuncts of
+ * `hasAppsStoreAccess`. `{isAuthor, no store access}` therefore has no members: an author
+ * always clears the store term, and the narrowing above cannot strand anyone.
+ *
+ * 🔴 WHAT WOULD BREAK IT: widening `app-blocks-author`'s segment set without widening a store
+ * flag's — adding a segment there, or dropping one from `app-listings`/`app-blocks-enabled`.
+ * The implication is a property of that YAML, not of this code, and nothing in this repo
+ * enforces it. It is not hypothetical: `app-listings-public-external` already rolls out to a
+ * DIFFERENT segment (`testers`), which is the live proof that these flags can and do diverge.
+ *
+ * The store term is required because `/apps/build` renders INSIDE the apps-store IA (the
+ * `AppsSubNav` chrome, links into `/apps/listing/<id>/edit`), so a viewer with no store has a
+ * page whose every onward link 404s; the trade was taken knowingly. If that cohort ever
  * becomes real, the fix is to widen `canAccessAppsBuild`, in ONE place — not to fork this URL.
  *
  * (Deliberately count-free: this comment said "the fifth" and "all five" until

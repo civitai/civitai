@@ -1,12 +1,27 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import { canAccessAppsBuild, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
 
 /**
- * 🔒 EVERY SUB-NAV ROW'S `visible` PREDICATE, EVALUATED AGAINST THE GATE ON THE PAGE IT
- * POINTS AT.
+ * 🔒 THE FLAG-GATED SUB-NAV ROWS' `visible` PREDICATES, EACH EVALUATED AGAINST THE REAL
+ * GATE ON THE PAGE IT POINTS AT — plus a structural check that binds the whole table.
+ *
+ * 🔴 SCOPE, STATED EXACTLY, BECAUSE AN EARLIER REVISION OF THIS HEADER CLAIMED "EVERY
+ * SUB-NAV ROW" AND MEANT ONE. Two rows are compared to their page's resolver:
+ *   • Marketplace → `/apps`       vs `resolveAppsPageAccess`
+ *   • Build       → `/apps/build` vs `resolveBuildPageAccess`
+ * Those are the two whose visibility is a FLAG decision, and therefore the two that can
+ * drift from a page gate. The remaining four (Installed / Invites / Revenue / Review) key
+ * off `getNavSummary` DATA — `s.hasInstalls`, `s.isReviewer`, … — which is a server answer
+ * about this user, not a rule restated at the row, so there is no second copy to disagree
+ * with. They are covered by the `no row is unconditionally visible` check below, which is
+ * a property of the TABLE and does bind all six.
+ *
+ * Reading as coverage while providing none is worse than none, so: if a fifth row ever
+ * gains a flag term, it belongs in the loop set above and this list must grow with it.
  *
  * THE DEFECT CLASS. A tab offered to a cohort whose destination answers `notFound`. It
  * has shipped here twice — #3899 ("Create" was store-gated while `/apps/submit` is
@@ -240,6 +255,76 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
     // Guards the loop above against BOTH sides having become constant.
     expect(hasAppsStoreAccess({ appListings: false })).toBe(false);
     expect(hasAppsStoreAccess({ appListings: true })).toBe(true);
+  });
+
+  /**
+   * 🔴 THE BUILD ROW, WHICH THIS FILE'S HEADER PROMISED AND THE FIRST REVISION DID NOT
+   * DELIVER. The docstring says EVERY row is evaluated against the gate on the page it
+   * points at; only Marketplace was, so `/apps/build` — the row this whole PR adds — was
+   * compared to nothing.
+   *
+   * Measured on the pre-fix tree, both of these mutants on the Build row SURVIVED the
+   * entire blocking node tier:
+   *   • `visible: (_s, c) => c.isAuthor`     — 80 files / 1688 tests green
+   *   • `visible: (_s, c) => c.canSeeStore`  — 76 files / 1658 tests green
+   * The second is PR #4668 reintroduced verbatim: a store-visible non-author without
+   * `appBlocksGetStarted` offered a Build tab that `/apps/build` answers `notFound` for.
+   * Both died only in the report-only browser tier, on a repo where `main` requires no
+   * status check — i.e. nothing that blocks would have caught either.
+   *
+   * `resolveBuildPageAccess` is pure and node-importable (that is why it exists as its own
+   * module), so the page's REAL gate can be called here rather than restated.
+   */
+  it('Build is visible exactly when /apps/build admits the viewer', () => {
+    const row = rows.find((r) => r.href === '/apps/build');
+    expect(row, 'the Build row is missing from SUB_NAV_LINKS').toBeDefined();
+
+    for (const summary of [NO_SUMMARY, ALL_SUMMARY])
+      for (const store of [false, true])
+        for (const author of [false, true])
+          for (const getStarted of [false, true]) {
+            const tabVisible = evaluate(
+              row!.visible,
+              summary,
+              context({ store, author, getStarted })
+            );
+            // The page's real gate. `appListings` carries the store term (one of the three
+            // disjuncts of `hasAppsStoreAccess`); the author term is threaded as the
+            // `appBlocksAuthor` flag rather than `isModerator`, so a moderator floor cannot
+            // mask a wrong flag rule. `user: null` — the page admits a logged-out viewer on
+            // the get-started term, and the row must too.
+            const pageAdmits =
+              'props' in
+              resolveBuildPageAccess({
+                user: null,
+                features: {
+                  appListings: store,
+                  appBlocksAuthor: author,
+                  appBlocksGetStarted: getStarted,
+                },
+              });
+            expect(
+              pageAdmits,
+              `store=${store} author=${author} getStarted=${getStarted}: the Build TAB is ` +
+                `${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps/build\` ` +
+                `${pageAdmits ? 'admits' : 'answers notFound for'} this viewer. A tab into a ` +
+                `404 is the #3899 / #4668 defect class; an unreachable page with no tab is ` +
+                `its mirror. The row must route through \`canAccessAppsBuild\`, the same ` +
+                `predicate \`resolveBuildPageAccess\` calls — do not re-derive it at the row.`
+            ).toBe(tabVisible);
+          }
+  });
+
+  it('positive control: the build gate really does refuse someone, on EACH term', () => {
+    // Guards the loop above against both sides having collapsed to a constant, and does it
+    // per-term so a gate that ignored one input still reds here.
+    expect(canAccessAppsBuild(null, { appListings: true, appBlocksAuthor: true })).toBe(true);
+    // store term alone missing
+    expect(canAccessAppsBuild(null, { appListings: false, appBlocksAuthor: true })).toBe(false);
+    // author/get-started terms both missing
+    expect(canAccessAppsBuild(null, { appListings: true })).toBe(false);
+    // the get-started disjunct opens it for a non-author
+    expect(canAccessAppsBuild(null, { appListings: true, appBlocksGetStarted: true })).toBe(true);
   });
 
   /**

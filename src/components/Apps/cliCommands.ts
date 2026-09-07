@@ -24,7 +24,8 @@
  *
  * `/discord` rather than a raw `discord.gg` URL because it is a real, permanent redirect
  * defined in `next.config.mjs` and asserted to exist by
- * `src/__tests__/pages/apps-my-submissions-redirect.test.ts`, and it is already the
+ * `src/__tests__/pages/apps-build-redirects.test.ts` (which absorbed the retired
+ * `apps-my-submissions-redirect.test.ts` this note used to cite), and it is already the
  * community-help CTA in `~/components/Support/SupportContent`. That makes it the
  * canonical in-repo spelling, and it survives the invite link being rotated.
  *

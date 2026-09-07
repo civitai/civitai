@@ -386,10 +386,13 @@ export function AppsSubNavView({
  * 🔴 THIS GATE USED TO READ `features.appBlocks` ALONE while the page it sits on
  * granted access on `appListings || appBlocks`. The two could therefore disagree:
  * a cohort holding `app-listings` WITHOUT `app-blocks-enabled` would load `/apps`
- * successfully and get NO sub-navigation. That is not reachable today (both flags
- * resolve true for the current mods + `app-dev-testers` cohort), but `app-listings`
- * exists precisely so the catalog can widen INDEPENDENTLY of the block runtime, so
- * the disagreement is one flag flip away. Both gates now call one predicate.
+ * successfully and get NO sub-navigation. That is not reachable today — in Flipt
+ * `app-listings` and `app-blocks-enabled` roll out to the SAME two segments,
+ * `moderators` and `app-dev-testers` (the same coincidence written up in full, with
+ * what would end it, at `OWNER_SUBMISSIONS_URL` in
+ * `~/server/notifications/app-listing.notifications`) — but `app-listings` exists
+ * precisely so the catalog can widen INDEPENDENTLY of the block runtime, so the
+ * disagreement is one segment edit away. Both gates now call one predicate.
  */
 export function AppsSubNav() {
   const router = useRouter();

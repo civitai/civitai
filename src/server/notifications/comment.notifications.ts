@@ -748,25 +748,43 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your app listing: "${details.listingName}"`,
-      // 🔴 THE OWNER'S SUBMISSIONS VIEW, **NOT** the public listing detail page — and this is a
-      // deliberate reversal of the issue's suggestion, for a measured reason.
+      // 🔴 THE OWNER'S SUBMISSIONS VIEW, **NOT** the public listing detail page — a deliberate
+      // reversal of the issue's suggestion.
       //
-      // `/apps/store-preview/<slug>` gates on `hasAppsStoreAccess`, which rolls out to
-      // `moderators` OR `app-dev-testers` only. Measured against prod: of the 4 current listing
-      // owners, one is in NEITHER cohort — so a deep link 404s for the very person being
-      // notified. #4160's three types escaped this because their recipient had already commented
-      // in the thread and had therefore already proven they could open the page; this is the
-      // first app-listing notification pushed to an owner UNCONDITIONALLY, so it cannot borrow
-      // that assumption.
+      // Kept for the record, because it is a real measurement and it is what the issue's
+      // suggestion was rejected on at the time: `/apps/store-preview/<slug>` gates on
+      // `hasAppsStoreAccess`, which rolls out to `moderators` OR `app-dev-testers` only, and of
+      // the 4 listing owners on prod at 2026-08-20 one was in NEITHER cohort — so a deep link
+      // 404s for the very person being notified. #4160's three types escaped this because their
+      // recipient had already commented in the thread and had therefore already proven they
+      // could open the page; this is the first app-listing notification pushed to an owner
+      // UNCONDITIONALLY, so it cannot borrow that assumption.
       //
-      // `/apps/mine` gates on `isAppDeveloper` = `isModerator || opts.appBlocksAuthor`
-      // (`app-blocks-access.ts:52`). 🔴 That is a FLIPT COHORT FLAG, not a structural property of
-      // owning a listing: an owner outside the cohort gets `notFound` here too. This is therefore
-      // the BETTER destination, not a guaranteed one — it is where all four existing owner-facing
-      // app-listing notifications already point, so this type is not inventing a reachability
-      // assumption of its own, and the cohort it needs is the developer one rather than the
-      // narrower store-access one. Shared constant rather than a second literal, so a route
-      // rename moves all five.
+      // ⚠️ THAT MEASUREMENT NO LONGER SEPARATES THE TWO DESTINATIONS — see below. It rules the
+      // public page out for that owner; it rules the chosen one out for them as well.
+      //
+      // 🔴 THE COHORT ARGUMENT THAT USED TO SIT HERE IS VOID, AND IS NOT REPLACED BY ANOTHER
+      // ONE. It ran: `/apps/mine` gates on `isAppDeveloper` alone, so it needs "the developer
+      // cohort rather than the narrower store-access one", making it the better destination
+      // than a store-gated page. `/apps/mine` no longer exists — the consolidation moved this
+      // constant to `/apps/build`, whose gate is `canAccessAppsBuild` =
+      // `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
+      // (`shared/utils/app-blocks-access.ts`). Store access is now a hard AND, so the
+      // destination is a SUPERSET of the store term the paragraph above rejects, not an
+      // alternative to it: on the cohort axis `/apps/build` is strictly NARROWER than
+      // `/apps/store-preview/<slug>`, the opposite of what the old reason claimed.
+      //
+      // What still picks it is CONTENT, not reachability. This notification is about the
+      // owner's own submission, and state C of `/apps/build` is that submissions table — the
+      // moderation state, the reason a mod supplied, the edit link. The public detail page
+      // renders the listing as a visitor sees it and carries none of that. It is also where
+      // every other owner-facing app-listing notification lands, via this same shared
+      // constant, so a route rename moves all of them at once.
+      //
+      // On whether the narrowing can strand the recipient: it cannot, under the live Flipt
+      // config, and the proof is recorded once at `OWNER_SUBMISSIONS_URL` rather than restated
+      // here. The short form is that `app-blocks-author` and the store flags roll out to the
+      // SAME segments, so an author always clears the store term.
       url: OWNER_SUBMISSIONS_URL,
     }),
     prepareQuery: ({ lastSent }) => `

@@ -25,7 +25,17 @@ export function CopyableCommand({
   onCopy,
 }: {
   command: string;
-  /** Fired on a successful copy — the funnel's `cli_copy` step. */
+  /**
+   * Fired on an ATTEMPTED copy — the funnel's `cli_copy` step.
+   *
+   * 🔴 NOT "on a successful copy", which is what this said and what the code cannot
+   * deliver. `handleCopy` calls Mantine's `copy()` and then `onCopy?.()`
+   * unconditionally; `copy()` returns `void` and `CopyButton` surfaces no success
+   * signal, so there is nothing to branch on. A denied clipboard permission or a
+   * non-secure context still emits the event. The DOC is what was corrected rather
+   * than the code: the funnel wants intent-to-copy, and gating the step on a signal
+   * Mantine does not expose would mean reimplementing the copy itself.
+   */
   onCopy?: (command: string) => void;
 }) {
   return (

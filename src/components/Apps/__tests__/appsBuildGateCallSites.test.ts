@@ -41,8 +41,31 @@ const BUILD_GATE_SITES = [
 /** The ONE module allowed to spell the rule out — it defines it. */
 const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
 
-/** Directories scanned for a re-inlined gate. The definition lives outside them. */
-const SCAN_ROOTS = ['components/Apps', 'pages/apps'];
+/**
+ * Directories scanned for a re-inlined gate, and for the importer set that makes the
+ * ledger EXACT. The definition lives outside them (`shared/utils`).
+ *
+ * 🔴 THESE ROOTS ARE THE LEDGER'S BLAST RADIUS, NOT A CONVENIENCE — a third gate outside
+ * them is invisible, and "fails when the set GROWS" in the header is a claim about
+ * exactly this list. The first revision of this file copied `['components/Apps',
+ * 'pages/apps']`, which was the sibling store-gate ledger's PRE-FIX value; that sibling
+ * had already widened to include `components/AppLayout/AppHeader` for #3907 and records
+ * why at its own `SCAN_ROOTS`. Measured on this branch before the widening: a third
+ * module importing and calling `canAccessAppsBuild` at `components/Apps/auditThirdGate.ts`
+ * failed the ledger, while the IDENTICAL file at
+ * `components/AppLayout/AppHeader/auditThirdGate.ts` passed the whole node tier.
+ *
+ * The two likeliest homes for a third decider were both in the blind spot:
+ *   • `components/AppLayout/AppHeader` — the user-menu route into `/apps`, and where this
+ *     PR DELETED a `/apps/build`-adjacent routing decision from `appsNavVisibility.ts`;
+ *   • `components/AppBlocks` — `IframeHost.tsx`'s sibling guard explicitly offers "add it
+ *     GATED" as a sanctioned next step.
+ *
+ * Scanning whole `components` + `pages` rather than allowlisting those two: a gate can be
+ * added anywhere, and the cost of the wider walk is a few hundred more files read once.
+ * The floor assertion below is what keeps the walk itself honest.
+ */
+const SCAN_ROOTS = ['components', 'pages'];
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(SRC, rel), 'utf8');
@@ -164,10 +187,33 @@ describe('the masker and the pattern (validate the instrument before reading its
 
   it('the walk reached a plausible number of modules, and both ledger sites', () => {
     // A zero is indistinguishable from a walk wired to nothing. Floor well below the live
-    // count so retiring a file does not red the guard.
-    expect(SCANNED.length).toBeGreaterThanOrEqual(40);
+    // count (2,361 at this ref) so retiring a file does not red the guard.
+    //
+    // 🔴 THE FLOOR IS ALSO WHAT PINS THE WIDENED ROOTS. The previous value, 40, was
+    // satisfied by `['components/Apps', 'pages/apps']` alone (154 files), so narrowing
+    // `SCAN_ROOTS` back would have passed it silently and re-opened the blind spot the
+    // header describes. 1,200 cannot be reached without walking `components` and `pages`
+    // whole.
+    expect(
+      SCANNED.length,
+      'the re-inline scan is walking far fewer modules than `SCAN_ROOTS` should reach. ' +
+        'If `SCAN_ROOTS` was narrowed, a third gate outside the surviving roots is now ' +
+        'invisible to the exactness assertion below — see this file’s `SCAN_ROOTS` note.'
+    ).toBeGreaterThanOrEqual(1200);
     const seen = new Set(SCANNED.map((f) => f.rel));
     expect(BUILD_GATE_SITES.filter((s) => !seen.has(s))).toEqual([]);
+  });
+
+  it('🔴 the walk reaches the two directories a third gate would most plausibly land in', () => {
+    // Named rather than left to the count, because these are the specific blind spots the
+    // widening was for: the user-menu route into `/apps` (this PR deleted a
+    // `/apps/build`-adjacent decision from `appsNavVisibility.ts`) and the block host,
+    // whose sibling guard sanctions "add it GATED".
+    const dirs = new Set(SCANNED.map((f) => f.rel.replace(/\/[^/]+$/, '')));
+    for (const dir of ['components/AppLayout/AppHeader', 'components/AppBlocks'])
+      expect(dirs.has(dir), `${dir} is not being walked — a gate added there is invisible`).toBe(
+        true
+      );
   });
 });
 
