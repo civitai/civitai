@@ -34,6 +34,11 @@ import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
  *   F3  a whole-library ban block does not retract: the real `toggleBan`'s remove-all-media branch.
  *   +   a real moderator takedown DOES retract, so the guard cannot be satisfied by a change that
  *       simply stops retracting.
+ *
+ * It also carries the account-deletion breadcrumb claims, because they are made by the same
+ * writers and are only observable by driving them: every moderation block strips the breadcrumb
+ * off the rows it hid (`handleBlockImages`, `setTosViolationHandler`, `softDeleteUser`), and
+ * `toggleBan` strips it off the rows its own UPDATE blocked and NO others.
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -42,6 +47,7 @@ const MOD_ID = 900;
 const TAKEDOWN_USER = 901;
 const SCANNED_USER = 902;
 const BANNED_USER = 903;
+const CSAM_USER = 904;
 
 type ImageRow = {
   id: number;
@@ -137,7 +143,10 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 const { createImage, handleBlockImages } = await import('~/server/services/image.service');
 const { trackModActivity } = await import('~/server/services/moderator.service');
 const { setTosViolationHandler } = await import('~/server/controllers/image.controller');
-const { toggleBan } = await import('~/server/services/user.service');
+const { toggleBan, softDeleteUser } = await import('~/server/services/user.service');
+const { countPendingAccountDeletionImageRestores } = await import(
+  '~/server/services/account-deletion-images'
+);
 const { processImageScanWorkflow } = await import('~/server/services/image-scan-result.service');
 const { removeBlockedImages, MODERATOR_TAKEDOWN_ACTIVITIES } = await import(
   '~/server/jobs/image-ingestion'
@@ -184,10 +193,62 @@ function matches(row: ImageRow, where: any): boolean {
   return true;
 }
 
+/**
+ * 🔴 Builds the metadata presence predicate a statement ACTUALLY wrote, by reading which arrow it
+ * used. Postgres divides these two, and the whole breadcrumb design turns on the division:
+ *
+ *   `("metadata" -> key) IS NOT NULL`  — a breadcrumb spelled JSON `null` returns the jsonb null,
+ *                                        which is NOT SQL NULL, so the row MATCHES.
+ *   `"metadata" ->> key IS NOT NULL`   — the same breadcrumb returns SQL NULL, so the row is
+ *                                        SKIPPED, exactly as an absent key would be.
+ *
+ * Modelling either one as "the key is present" makes the fixture blind to the other being
+ * substituted, and the JSON-null forgery is the cheapest one an uploader can write. Throws rather
+ * than guessing on a shape it does not recognise: a silently-defaulted predicate is how the
+ * fixture would go on passing while modelling a statement nobody wrote.
+ */
+function presenceTest(sql: string, key: string) {
+  const doubleArrow = /"metadata"\s*->>\s*\?::text\s*\)?\s+IS NOT NULL/.test(sql);
+  const singleArrow = /"metadata"\s*->\s*\?::text\s*\)?\s+IS NOT NULL/.test(sql);
+  if (!doubleArrow && !singleArrow)
+    throw new Error(`no recognised metadata presence test in statement: ${sql}`);
+  return (metadata: Record<string, unknown>) =>
+    doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
+}
+
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   const sql = strings.join('?');
 
   if (sql.includes('FROM "CsamReport"')) return [];
+
+  // `toggleBan`'s pre-block read: the rows its remove-all-media UPDATE is about to block that
+  // still carry a grace breadcrumb. Narrowly scoped on purpose — see the note at that call site.
+  if (sql.includes('SELECT id FROM "Image"') && sql.includes('ingestion <> ')) {
+    const [userId, keyA] = values as [number, string];
+    const present = presenceTest(sql, keyA);
+    return store.images
+      .filter(
+        (i) =>
+          i.userId === userId && i.ingestion !== 'Blocked' && !!i.metadata && present(i.metadata)
+      )
+      .map((i) => ({ id: i.id }));
+  }
+
+  // `countPendingAccountDeletionImageRestores` — the read `restoreUser` gates the whole gallery
+  // restore on. Its `NOT IN (SELECT unnest(enum_range(...)))` sibling is the unreadable-breadcrumb
+  // audit inside `unblockAccountDeletionImages`, which is not driven here.
+  if (
+    sql.includes('SELECT COUNT(*)::int AS count') &&
+    sql.includes('FROM "Image"') &&
+    !sql.includes('NOT IN')
+  ) {
+    const [userId, keyA] = values as [number, string];
+    const present = presenceTest(sql, keyA);
+    const count = store.images.filter(
+      (i) => i.userId === userId && i.ingestion === 'Blocked' && !!i.metadata && present(i.metadata)
+    ).length;
+    return [{ count }];
+  }
 
   // remove-blocked-images: the batch fetch of everything still blocked.
   if (sql.includes('FROM "Image"') && sql.includes('id = ANY') && sql.includes('"blockedFor"')) {
@@ -231,20 +292,19 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   }
 
   // The account-deletion marker strip the moderation block sites now issue.
-  //
-  // `("metadata" -> key) IS NOT NULL` is modelled as "the key is PRESENT", not as
-  // `value != null`: for a JSON null, `->` returns the jsonb null, which is not SQL NULL, so
-  // Postgres says TRUE where a JS `!= null` says false. Modelling it the JS way is how a fixture
-  // stops being able to see the cheapest forgery shape.
   if (sql.includes('UPDATE "Image"') && sql.includes('- ?::text')) {
     // Bindings, in order: the two key names, then the scope (an id array or a userId), then the
     // first key again for the presence test.
     const [keyA, keyB, scope] = values as [string, string, number[] | number];
+    // 🔴 Which arrow the presence test uses is read out of the STATEMENT, never assumed. The
+    // strip's own docstring calls the difference load-bearing, so a fixture that hardcodes one of
+    // the two cannot see the other being introduced.
+    const present = presenceTest(sql, keyA);
     let n = 0;
     for (const row of store.images) {
       const scoped = Array.isArray(scope) ? scope.includes(row.id) : row.userId === scope;
       if (!scoped) continue;
-      if (!row.metadata || !(keyA in row.metadata)) continue;
+      if (!row.metadata || !present(row.metadata)) continue;
       const keys = [keyA, keyB];
       const next = { ...row.metadata };
       for (const k of keys) delete next[k];
@@ -272,10 +332,18 @@ beforeEach(async () => {
   store.modActivity = [];
   store.clock = Date.now() - 30 * DAY;
 
-  dbMock.dbRead.$queryRaw.mockImplementation(readQuery as never);
-  dbMock.dbWrite.$queryRaw.mockImplementation(readQuery as never);
-  dbMock.dbWrite.$executeRaw.mockImplementation(writeExec as never);
-  dbMock.dbRead.$executeRaw.mockImplementation(writeExec as never);
+  // Wrapped so each one returns a PROMISE, the way `$queryRaw`/`$executeRaw` do. Returning the
+  // bare value works under `await` and diverges the moment production code attaches `.catch` or
+  // `.then` to the statement — the fixture would throw `x.catch is not a function` at a call site
+  // that is correct against Prisma.
+  dbMock.dbRead.$queryRaw.mockImplementation((async (...args: Parameters<typeof readQuery>) =>
+    readQuery(...args)) as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (...args: Parameters<typeof readQuery>) =>
+    readQuery(...args)) as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (...args: Parameters<typeof writeExec>) =>
+    writeExec(...args)) as never);
+  dbMock.dbRead.$executeRaw.mockImplementation((async (...args: Parameters<typeof writeExec>) =>
+    writeExec(...args)) as never);
 
   dbMock.dbRead.image.findMany.mockImplementation(async ({ where }: any) =>
     store.images.filter((i) => matches(i, where))
@@ -637,6 +705,212 @@ describe('who can reach blob retraction, driven through the real block writers',
       expect(meta).toEqual({ keepMe: 1 });
     });
   }
+
+  // The same claim for the main app's single-image TOS takedown. The test above drives this
+  // handler for its retraction verdict and says nothing about the breadcrumb; the block sites are
+  // separate calls to the same helper, so each one has to be asserted where it is.
+  it('clears the account-deletion breadcrumb when the main-app TOS takedown handler blocks', async () => {
+    store.images.push(
+      // JSON `null`, the shape only `("metadata" -> key) IS NOT NULL` can see. A `->>` presence
+      // test walks past it and leaves the breadcrumb on a moderated row.
+      image(26, TAKEDOWN_USER, { postId: 55, metadata: { [PRIOR_INGESTION_KEY]: null, keepMe: 5 } })
+    );
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 1,
+      userId: TAKEDOWN_USER,
+      postId: 55,
+      pHash: null,
+      post: { title: 'a post' },
+    } as never);
+
+    await setTosViolationHandler({
+      input: { id: 26 },
+      ctx: {
+        user: { id: MOD_ID, isModerator: true },
+        ip: '127.0.0.1',
+        track: { images: vi.fn(async () => undefined) },
+      },
+    } as never);
+
+    expect(store.images.find((i) => i.id === 26)!.ingestion, 'the handler did not block').toBe(
+      'Blocked'
+    );
+    expect(
+      store.images.find((i) => i.id === 26)!.metadata,
+      'a later account restore would read this breadcrumb and un-block a TOS takedown'
+    ).toEqual({ keepMe: 5 });
+  });
+
+  // 🔴 F1. The ban's media block is `where: { userId, ingestion: { not: 'Blocked' } }`, and
+  // `remove-deleted-user-images` writes the breadcrumb in the SAME statement that sets
+  // `ingestion = 'Blocked'`. So for every row the grace pass blocked, the ban's UPDATE matches
+  // nothing — and an account-wide clear there strips the restore record off rows it provably did
+  // not block. The loss is silent twice: the row no longer remembers its prior `ingestion`, and
+  // the count `restoreUser` gates the whole gallery restore on reads 0.
+  it('leaves the grace breadcrumbs on the rows a ban did not block', async () => {
+    // The library as the grace pass leaves it: Blocked, Moderated, breadcrumbed.
+    store.images.push(
+      image(20, BANNED_USER, {
+        ingestion: 'Blocked',
+        blockedFor: BlockedReason.Moderated,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned' },
+      }),
+      image(21, BANNED_USER, {
+        ingestion: 'Blocked',
+        blockedFor: BlockedReason.Moderated,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Pending', keepMe: 2 },
+      })
+    );
+
+    // Positive control on the reader the second half of this test rests on: before the ban it
+    // sees both rows, so a 0 afterwards means the ban moved it and not that it was never wired.
+    expect(
+      await countPendingAccountDeletionImageRestores(BANNED_USER),
+      'the restore count could not see the fixture at all'
+    ).toBe(2);
+
+    await toggleBan({
+      id: BANNED_USER,
+      reasonCode: 'SexualMinor',
+      userId: MOD_ID,
+      isModerator: true,
+      force: true,
+      removeMedia: true,
+    } as never);
+
+    for (const id of [20, 21]) {
+      const meta = store.images.find((i) => i.id === id)!.metadata;
+      expect(
+        meta && PRIOR_INGESTION_KEY in meta,
+        `the ban stripped the restore breadcrumb off image ${id}, a row its own UPDATE cannot ` +
+          'have blocked — the recorded prior ingestion is gone and the library is unrecoverable ' +
+          'from the row'
+      ).toBe(true);
+    }
+    // Nothing else about the row moved either.
+    expect(store.images.find((i) => i.id === 21)!.metadata).toEqual({
+      [PRIOR_INGESTION_KEY]: 'Pending',
+      keepMe: 2,
+    });
+
+    // The half the row cannot show. `restoreUser` calls this and skips `recordPendingImageRestore`
+    // — so `restore-user-images` never runs — when it returns 0, and reports the same number to
+    // the moderator as `imagesPendingRestore`.
+    expect(
+      await countPendingAccountDeletionImageRestores(BANNED_USER),
+      'the restore path was told this library has nothing to bring back'
+    ).toBe(2);
+  });
+
+  // The other side of that scope, and the reason the call is narrowed rather than deleted: a row
+  // the ban DOES block still has to lose its breadcrumb. This is the one shape that gets there —
+  // breadcrumbed by the grace pass, then un-blocked by a moderator (`handleUnblockImages` sets
+  // `ingestion = 'Scanned'` and does not strip it), so the ban's UPDATE is what hides it.
+  //
+  // Both breadcrumb shapes, because TWO statements have to agree on the `->` reading for this to
+  // work: the pre-block read that collects the ids, and the strip itself. Narrowing either one to
+  // `->>` loses the JSON-null case alone, so a single-shape fixture cannot see it.
+  for (const [label, marker] of [
+    ['a plausible value', 'Scanned'],
+    ['JSON null', null],
+  ] as const) {
+    it(`strips the grace breadcrumb (${label}) off a row the ban does block`, async () => {
+      store.images.push(
+        image(22, BANNED_USER, {
+          ingestion: 'Scanned',
+          metadata: { [PRIOR_INGESTION_KEY]: marker, keepMe: 3 },
+        }),
+        image(23, BANNED_USER, {
+          ingestion: 'Blocked',
+          blockedFor: BlockedReason.Moderated,
+          metadata: { [PRIOR_INGESTION_KEY]: marker },
+        })
+      );
+
+      await toggleBan({
+        id: BANNED_USER,
+        reasonCode: 'SexualMinor',
+        userId: MOD_ID,
+        isModerator: true,
+        force: true,
+        removeMedia: true,
+      } as never);
+
+      // Positive control: the ban is what blocked this row.
+      expect(
+        store.images.find((i) => i.id === 22)!.ingestion,
+        'the ban did not block the un-blocked row, so this test cannot see the strip'
+      ).toBe('Blocked');
+      expect(
+        store.images.find((i) => i.id === 22)!.metadata,
+        'the ban blocked this row and left the breadcrumb that un-does the block'
+      ).toEqual({ keepMe: 3 });
+      // …and its neighbour, which the ban did not block, still has its own.
+      expect(
+        store.images.find((i) => i.id === 23)!.metadata,
+        'the ban stripped a breadcrumb off a row it did not block'
+      ).toEqual({ [PRIOR_INGESTION_KEY]: marker });
+    });
+  }
+
+  // The read that collects those ids is new, and it sits in front of the statement that hides a
+  // banned account's media. It must not be able to stop it.
+  it('still blocks the library when the pre-block breadcrumb scan fails', async () => {
+    store.images.push(image(27, BANNED_USER), image(28, BANNED_USER));
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (strings.join('?').includes('SELECT id FROM "Image"'))
+        return Promise.reject(new Error('scan failed'));
+      return Promise.resolve(readQuery(strings, ...values));
+    }) as never);
+
+    await toggleBan({
+      id: BANNED_USER,
+      reasonCode: 'SexualMinor',
+      userId: MOD_ID,
+      isModerator: true,
+      force: true,
+      removeMedia: true,
+    } as never);
+
+    for (const id of [27, 28]) {
+      expect(
+        store.images.find((i) => i.id === id)!.ingestion,
+        `image ${id} stayed up because the breadcrumb scan threw`
+      ).toBe('Blocked');
+    }
+  });
+
+  // `softDeleteUser`'s CSAM block carries NO `ingestion` predicate, so it hides every image the
+  // account owns — which is what makes an account-wide clear the correct scope there and the
+  // wrong one in `toggleBan`. Nothing in the repo named this site before.
+  it('clears the breadcrumbs account-wide when softDeleteUser blocks the library', async () => {
+    store.images.push(
+      image(24, CSAM_USER, {
+        ingestion: 'Blocked',
+        blockedFor: BlockedReason.Moderated,
+        metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', keepMe: 4 },
+      }),
+      // JSON `null` again — the forgery shape a `->>` presence test cannot see.
+      image(25, CSAM_USER, { ingestion: 'Scanned', metadata: { [PRIOR_INGESTION_KEY]: null } })
+    );
+
+    await softDeleteUser({ id: CSAM_USER, userId: MOD_ID });
+
+    for (const id of [24, 25]) {
+      const row = store.images.find((i) => i.id === id)!;
+      // Positive control per row: the CSAM block reached BOTH, including the one that was already
+      // Blocked. If it ever grows an `ingestion` predicate, the wide clear stops being correct.
+      expect(row.blockedFor, `image ${id} was not CSAM-blocked`).toBe(BlockedReason.CSAM);
+      expect(
+        row.metadata && PRIOR_INGESTION_KEY in row.metadata,
+        `a later account restore would un-block CSAM-blocked image ${id}`
+      ).toBe(false);
+    }
+    expect(store.images.find((i) => i.id === 24)!.metadata).toEqual({ keepMe: 4 });
+  });
 
   // Both populations in ONE batch, because the split is what is being tested and a per-case run
   // cannot tell "classified correctly" from "the job stopped retracting".
