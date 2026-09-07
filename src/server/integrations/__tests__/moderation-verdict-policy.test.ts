@@ -58,11 +58,9 @@ describe('category-map mode', () => {
   });
 
   it('falls back to the KEY when the mapped value is nullish', () => {
-    const verdict = deriveModerationVerdict(
-      result({ categories: { violence: true } }),
-      0.5,
-      { violence: undefined as never }
-    );
+    const verdict = deriveModerationVerdict(result({ categories: { violence: true } }), 0.5, {
+      violence: undefined as never,
+    });
     expect(verdict.categories).toEqual(['violence']);
   });
 
