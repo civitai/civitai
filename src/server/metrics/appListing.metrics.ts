@@ -111,13 +111,20 @@ type AffectedListing = { id: string; appBlockId: string | null };
 // AppBlock was deleted" would misfire on ordinary off-site rows. Full statement of
 // both populations is on `AFFECTED_APPROVED_LISTINGS_SQL`.
 //
-// 🔴 `open_count` HAS NO READER AT THIS REF — its consumer lands in STAGE 3. The
-// rule below ("populate with the PR that ships its consumer") is real and this
-// column is a deliberate, argued exception to it, not an oversight and not a
+// ✅ `open_count` NOW HAS ITS READER, END TO END — this paragraph is re-derived, and
+// it was ALREADY stale before the change that rewrote it. It said "`open_count` HAS
+// NO READER AT THIS REF — its consumer lands in STAGE 3", which stopped being true
+// when stage 3 (#4659) projected the column onto the public card DTO
+// (`cardOpenCount`), and stage 4 then made it VISIBLE: `AppListingCard` renders it
+// through `getPlayCountLabel` as the store card's play count.
+//
+// What survives unchanged is the reason the column was populated ahead of its reader
+// at all: the rule below ("populate with the PR that ships its consumer") is real and
+// this column was a deliberate, argued exception to it — not an oversight and not a
 // precedent. The argument in full — trusted server-side source + a derived,
 // idempotent value with no accumulating state and no backfill — is on the SCOPE
 // block in appListing.metrics.sql.ts. Read it before citing this file to populate
-// anything else.
+// anything else; the exception is now spent, not widened.
 //
 // NOT POPULATED (left at their schema default 0 — no reader today, and each maps
 // to a feature that isn't live): `connect_count` (off-site OAuth-connect grants —

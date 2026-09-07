@@ -104,9 +104,7 @@ export const listAllListingsForModerationSchema = z.object({
   cursor: z.string().min(1).max(64).optional(),
   limit: z.number().int().min(1).max(50).default(25),
 });
-export type ListAllListingsForModerationInput = z.infer<
-  typeof listAllListingsForModerationSchema
->;
+export type ListAllListingsForModerationInput = z.infer<typeof listAllListingsForModerationSchema>;
 
 /** Detail lookup by EXACTLY ONE of slug or id (approved listings only). */
 export const getAppListingDetailSchema = z
@@ -246,7 +244,7 @@ export type ListingCard = {
    * 🔴 `null` IS NOT `0`, AND THE DIFFERENCE IS A TRUTH CLAIM RATHER THAN A STYLE ONE.
    * An OFF-SITE listing's CTA is a plain `target="_blank"` anchor to a third party, so
    * no on-platform request follows the click and there is nothing trustworthy to count.
-   * Its play count is ABSENT, not zero — the renderer omits the stat row entirely for
+   * Its play count is ABSENT, not zero — the renderer omits the stat entirely for
    * `null`, whereas a `0` would render as "nobody has ever used this app", a false
    * statement about an app we simply cannot measure. `app_listing_metrics.open_count`
    * is `Int NOT NULL DEFAULT 0`, so an off-site row DOES carry a literal `0` in the
@@ -257,8 +255,20 @@ export type ListingCard = {
    * genuine `0` and must stay `0`. A missing metric row means "no plays recorded yet",
    * which is 0 — the same COALESCE-to-0 reading `installCount` documents.
    *
-   * Reads `0` for every on-site listing until the rollup that populates `open_count`
-   * ships and the events feeding it exist.
+   * ✅ THE RENDERER EXISTS AND THE ROLLUP FEEDS IT — a re-derivation, because the
+   * sentence that used to close this block ("Reads `0` for every on-site listing until
+   * the rollup that populates `open_count` ships and the events feeding it exist") was
+   * true when written and is now false in both halves. `6ff42aed42` records the
+   * App_Open events and `f9f81dcfb5` derives `open_count` from them; the store card
+   * (`AppListingCard` → `getPlayCountLabel`) is what turns the `null` above into an
+   * omitted stat and a number into "N plays". The `null`-vs-`0` distinction this block
+   * describes is therefore live behaviour, not a forward promise.
+   *
+   * ⚠️ Still NOT claimed: that the rollup has already covered any particular listing
+   * in any particular environment. That is a fact about a scheduled job. A listing the
+   * job has not yet reached reads a `0` that is correct by the rule above and stale in
+   * substance; the count is derived all-time on each run, so it self-corrects rather
+   * than needing a backfill.
    */
   openCount: number | null;
   kindData: ListingCardKindData;

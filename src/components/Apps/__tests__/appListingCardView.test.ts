@@ -8,6 +8,7 @@ import {
   getListingCta,
   getListingDetailHref,
   getOwnerEditHref,
+  getPlayCountLabel,
   getRecommendLabel,
   isEditableListingStatus,
   safeExternalHref,
@@ -139,6 +140,105 @@ describe('getRecommendLabel', () => {
   });
   it('formats large counts with locale separators', () => {
     expect(getRecommendLabel(roll(1200, 300, 0.8), 1500)).toBe('80% recommend (1,500)');
+  });
+});
+
+/**
+ * 🔴 THE PLAY COUNT'S ABSENCE RULE — AND THIS IS THE TIER THAT OWNS IT.
+ *
+ * The rule is an OPERATOR OVERRIDE (2026-09-06), not a formatting derivation. TWO
+ * DIFFERENT INPUTS RENDER NOTHING, FOR TWO DIFFERENT REASONS:
+ *   · `null` — STRUCTURALLY UNMEASURABLE. An off-site listing's CTA is a
+ *     third-party `target="_blank"` anchor, so nothing on-platform observes the
+ *     click. There is no number and there never will be one.
+ *   · `0` — MEASURED AND EMPTY. An on-site app nobody has opened yet. The number
+ *     exists and is trustworthy.
+ * The operator chose the SAME rendering for both: "dont show 0 plays (just show
+ * nothing)". Each has its own named case below precisely because they are not the
+ * same fact — a single "falsy → null" test would let a future reader conclude the
+ * zero case is an accident of truthiness.
+ *
+ * ⚠️ THE ZERO CASE IS A REVERSAL, AND THE OLD ASSERTION IS RECORDED RATHER THAN
+ * DELETED. Round 1 of this PR asserted `getPlayCountLabel(0) === '0 plays'` under
+ * the heading "a genuine ZERO is a measurement, not an absence", with the reasoning
+ * that only `null` may be over-nulled. That reasoning is still correct about the
+ * DTO — `cardOpenCount`'s "do not over-null" rule is untouched and must stay — and
+ * was only ever a claim about the DATA, not about what a browsing grid should
+ * print. The inverted assertion below is what the operator asked for.
+ *
+ * 🔴 IT IS TESTED HERE RATHER THAN ONLY IN THE BROWSER TIER BECAUSE OF WHICH TIER
+ * GOES RED. `AppListingCard.browser.test.tsx` renders the real card and asserts the
+ * omission end-to-end, but the browser `component` project never blocks anything;
+ * the node `unit` project at least reddens a `main` push. Expressing the rule as a
+ * pure function is what makes it visible to this tier at all — as JSX
+ * (`card.openCount ? … : null`) it would be invisible here. (Neither tier gates a
+ * PR: `lint.yml` marks both `continue-on-error` for `pull_request`. Canonical
+ * statement: `appListingCardGeometry.ts`'s header.)
+ *
+ * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND SHARE NOTHING WITH THE STRINGS
+ * ASSERTED. 4821 → "4.8k" and 1_234_567 → "1.2m" are values whose rendered form
+ * contains none of their own digits in order, so a mutant that dropped
+ * `abbreviateNumber` and printed the raw number cannot produce them; and the two
+ * counts differ in magnitude BAND, so a mutant that hardcoded one suffix survives
+ * neither.
+ */
+describe('getPlayCountLabel', () => {
+  it('🔴 null (UNMEASURABLE — off-site) → null, so the caller prints nothing', () => {
+    expect(getPlayCountLabel(null)).toBeNull();
+  });
+
+  it('🔴 0 (MEASURED AND EMPTY — on-site, never opened) → null: no "0 plays" chip', () => {
+    // ⚠️ THE INVERTED ASSERTION. Round 1 required `'0 plays'` here. Operator
+    // override 2026-09-06: "dont show 0 plays (just show nothing)". The mutant this
+    // refuses is a restoration of that — `if (openCount == null) return null` alone,
+    // which puts the chip back on every on-site app with no plays yet.
+    expect(getPlayCountLabel(0)).toBeNull();
+  });
+
+  /**
+   * 🔴 THE BOUNDARY, AND THE REASON IT NEEDS ITS OWN CASE. The absence rule stops
+   * at 0 and nowhere else: 1 is the smallest count that renders. A mutant widening
+   * the guard (`openCount <= 1`, `openCount < 2`) is invisible to the two cases
+   * above and to every large-count fixture below — this is the only fixture that
+   * sits on it.
+   */
+  it('🔴 1 is the smallest count that RENDERS — the absence stops at 0', () => {
+    expect(getPlayCountLabel(1)).toBe('1 play');
+  });
+
+  /**
+   * ⚠️ THE OFF-BY-ONE PLURALISER IS NO LONGER OBSERVABLE, AND THAT IS RECORDED HERE
+   * SO IT IS NOT RE-DERIVED AS A COVERAGE HOLE. Round 1 of this PR killed the mutant
+   * `openCount > 1 ? 'plays' : 'play'` — via `getPlayCountLabel(0) === '0 plays'`,
+   * since `=== 1` and `> 1`-inverted differ ONLY below 1. With the zero case now
+   * returning `null` before the plural is reached, that mutant is EQUIVALENT on the
+   * reachable domain (`openCount >= 1`) and survives a green suite. Re-measured after
+   * the reversal, not assumed.
+   *
+   * No fixture can fix that — an equivalent mutant has no killing input — so the
+   * honest statement is that the `=== 1` spelling is now a readability choice on this
+   * line rather than a behaviour the suite pins. What IS pinned, and what actually
+   * matters, is the BOUNDARY above: 1 renders and 0 does not.
+   */
+  it('singular at exactly 1, plural above it', () => {
+    expect(getPlayCountLabel(1)).toBe('1 play');
+    expect(getPlayCountLabel(2)).toBe('2 plays');
+  });
+
+  it('abbreviates a large count rather than printing separators', () => {
+    expect(getPlayCountLabel(4821)).toBe('4.8k plays');
+    expect(getPlayCountLabel(1_234_567)).toBe('1.2m plays');
+  });
+
+  /**
+   * 🔴 THE PLURAL READS THE RAW VALUE, NOT THE ABBREVIATED STRING. 1000
+   * abbreviates to "1k", so a pluraliser written against the rendered text
+   * (`label.startsWith('1') ? 'play' : 'plays'`, or anything derived from the
+   * abbreviation) says "1k play". The distinction is unobservable at every count
+   * below 1000, which is why it needs its own fixture.
+   */
+  it('🔴 1000 is "1k plays" — the plural is not derived from the abbreviation', () => {
+    expect(getPlayCountLabel(1000)).toBe('1k plays');
   });
 });
 
@@ -611,6 +711,120 @@ describe('the card geometry module', () => {
     // Positive control: the stripper leaves OTHER literals alone, so the six
     // absences above are about these constructs and not about an empty read.
     expect(code).toContain('line-clamp-3'); // the tagline's clamp, deliberately not geometry
+  });
+
+  /**
+   * 🔴 THE STATS LINE IS BELOW THE ACTION ROW, IN SOURCE ORDER — the node tier's
+   * half of the operator's ask ("move reviews + plays below the CTA").
+   *
+   * ⚠️ STRUCTURAL, AND SAY SO. This reads the SOURCE, so it proves the elements are
+   * written in that order, not that they RENDER in it — a `position: absolute` or an
+   * `order:` property would defeat it, and neither is used here. The RENDERED claim
+   * (the rollup's `top` is at or below the row's `bottom`, measured against the real
+   * cascade) lives in `AppListingCard.browser.test.tsx`. This exists because that
+   * tier never blocks anything, while this one at least reddens a `main` push, and
+   * because "the rollup went back into the meta block" is precisely the regression a
+   * source-order check CAN see.
+   *
+   * 🔴 THE ANCHOR IS `mt="auto"`, THE SAME DISCRIMINATOR the prop-ledger test above
+   * and the browser suite's `actionRow()` use — the only bottom-pinned element on
+   * the card. A positional index would have to be re-derived on every insertion.
+   */
+  it('🔴 the stats line (rollup + play count) is written BELOW the action row', () => {
+    const code = cardCode();
+    const row = code.indexOf('mt="auto"');
+    const stats = code.indexOf('data-testid="apps-listing-card-stats"');
+    const rollup = code.indexOf('data-testid="apps-listing-recommend-rollup"');
+    const play = code.indexOf('data-testid="apps-listing-play-count"');
+
+    // Positive controls FIRST — each element must actually be in the (stripped)
+    // source, or every ordering comparison below is between −1 and a real index and
+    // would read as a confident pass or a confusing fail.
+    expect(row, 'no bottom-pinned action row in AppListingCard.tsx').toBeGreaterThan(-1);
+    expect(stats, 'the card renders no stats line').toBeGreaterThan(-1);
+    expect(rollup, 'the card renders no recommend rollup').toBeGreaterThan(-1);
+    expect(play, 'the card renders no play count').toBeGreaterThan(-1);
+
+    expect(
+      stats,
+      'the stats line is written ABOVE the action row. The operator asked for reviews + ' +
+        'plays BELOW the CTA; above it is where the rollup used to live (in the meta block).'
+    ).toBeGreaterThan(row);
+    // …and both stats are INSIDE that line, not scattered.
+    expect(rollup, 'the recommend rollup is outside the stats line').toBeGreaterThan(stats);
+    expect(play, 'the play count is outside the stats line').toBeGreaterThan(stats);
+    // Reviews before plays — the order the operator named.
+    expect(rollup, 'the play count is written before the recommend rollup').toBeLessThan(play);
+
+    // 🔴 THE STATS LINE MUST NOT WRAP. Two stats on one `nowrap` line is what keeps
+    // an off-site card (which omits the play count) the same HEIGHT as an on-site
+    // one, which is the whole licence for `AppListingCardSkeleton` reserving a
+    // single line without knowing the listing's kind.
+    //
+    // 🔴 READ OFF THAT ELEMENT'S **OWN** OPENING TAG, delimited exactly the way the
+    // prop-ledger test above delimits the action row's — and the first version of
+    // this assertion was a 400-character WINDOW around the testid instead, which
+    // is why the delimiting is spelled out here. Measured: flipping this Group to
+    // `wrap="wrap"` left the window green, because the ROLLUP's own nested
+    // `wrap="nowrap"` sits ~60 characters later and satisfied a `toContain`. A
+    // guard that can be satisfied by a NEIGHBOUR's identical prop is reading the
+    // wrong element, not making a weak claim.
+    const open = code.lastIndexOf('<', stats);
+    const close = code.indexOf('>', stats);
+    expect(open, 'no opening tag found for the stats line').toBeGreaterThan(-1);
+    expect(close, 'unterminated opening tag on the stats line').toBeGreaterThan(stats);
+    const tag = code.slice(open, close + 1);
+    // The slice really is the stats line's own tag, not an enclosing element the
+    // index walk landed on — otherwise the assertion below is about something else.
+    expect(tag.startsWith('<Group')).toBe(true);
+    expect(tag).toContain('data-testid="apps-listing-card-stats"');
+    expect(
+      tag,
+      'the stats line is not `wrap="nowrap"`. A wrapped stats line is a SECOND line, ' +
+        'i.e. every card taller than its skeleton inside an h-full grid row.'
+    ).toContain('wrap="nowrap"');
+  });
+
+  /**
+   * 🔴 THE AUTHOR CHIP IS GONE FROM THE CARD'S CODE, not merely unrendered.
+   *
+   * The operator dropped the "by {creator}" line from the store card (2026-09-06).
+   * A `CreatorChip` left in the file but uncalled is the shape that gets wired back
+   * in by the next person who wants a byline, so the component was deleted; this
+   * asserts that rather than trusting it.
+   *
+   * 🔴 READ OFF THE **STRIPPED** SOURCE, and the distinction is load-bearing here
+   * more than anywhere else in this file: `AppListingCard.tsx` deliberately keeps a
+   * docblock NAMING the retired `CreatorChip` and explaining where attribution went.
+   * An unstripped scan would read that prose and report the component present.
+   */
+  it('🔴 the card declares no CreatorChip and links to no user profile', () => {
+    const code = cardCode();
+    const source = fs.readFileSync(path.resolve(__dirname, '../AppListingCard.tsx'), 'utf8');
+
+    // Positive control on the stripper, in BOTH directions: the prose that names the
+    // retired component is in the file and is NOT in the stripped code, so a green
+    // result below is about code rather than about a scan that ate everything.
+    expect(source, 'the tombstone explaining where the author chip went is gone').toContain(
+      'CreatorChip'
+    );
+    expect(code).not.toContain('CreatorChip');
+    expect(code, 'the stripper ate the component itself').toContain(
+      'export function AppListingCard'
+    );
+
+    // The chip's two other fingerprints — the profile href it built, and the
+    // CDN-avatar helper it was the only consumer of on this card.
+    expect(code, 'the card still builds a /user/<name> profile link').not.toContain('/user/');
+    expect(code, 'getEdgeUrl is still imported — it had no other consumer here').not.toContain(
+      'getEdgeUrl'
+    );
+    // `card.creator` itself is STILL read — for the owner test and the menu target —
+    // so this is a rendering change, not a DTO one. Asserted so the absences above
+    // cannot be satisfied by dropping the field entirely.
+    expect(code, 'the card stopped reading card.creator at all — isOwner is now dead').toContain(
+      'card.creator?.id'
+    );
   });
 });
 

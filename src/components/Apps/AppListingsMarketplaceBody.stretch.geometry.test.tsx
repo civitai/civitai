@@ -253,21 +253,44 @@ async function renderAtGridWidth(width: number) {
  * The parts of one rendered card this file measures.
  *
  * 🔴 RESOLVED STRUCTURALLY, AND THEN VALIDATED, because `AppListingCard` carries no
- * `data-testid` on its action row and this file must not add one: that component is owned
- * by a concurrent change, and the coupling under test is pre-existing on `main`. So the
- * resolver walks my own grid cell → the `Card` → the body `Stack` → its LAST child. Each
- * step is then checked against something only the real action row satisfies, and a failed
- * check THROWS with the offending `outerHTML` rather than returning a wrong element — a
- * silently mis-resolved element would make every assertion below compare the wrong boxes
- * and pass.
+ * `data-testid` on its action row and this file does not add one. So the resolver walks my
+ * own grid cell → the `Card` → the body `Stack` → the BOTTOM-PINNED child. Each step is
+ * then checked against something only the real action row satisfies, and a failed check
+ * THROWS with the offending `outerHTML` rather than returning a wrong element — a silently
+ * mis-resolved element would make every assertion below compare the wrong boxes and pass.
+ *
+ * 🔴 "BOTTOM-PINNED", NOT "LAST" — AND THIS RESOLVER REALLY DID BREAK. It used to take
+ * `stack.lastElementChild`, and VALIDATION 2 below used to REQUIRE
+ * `actionRow.nextElementSibling === null`. `AppListingCard` now renders a stats line
+ * (recommend rollup + play count) AFTER the action row, so the last child is that stats
+ * line: the walk would resolve to it, VALIDATION 1 would find no link or button inside it,
+ * and every test in this file would throw. Loud, which is what the validations are for —
+ * but it is a break, not a refactor, and the fix is not to relax the checks.
+ *
+ * `mt="auto"` is the discriminator instead: it is the only bottom-pinned element on the
+ * card, and it is what `AppListingCard.browser.test.tsx`'s `actionRow()`,
+ * `AppListingCardSkeleton.geometry.test.tsx`'s `ctaWidths()` and
+ * `__tests__/appListingCardView.test.ts`'s prop ledger all key on. A positional index would
+ * have to be re-derived on the next insertion; this does not.
  */
 function cardPartsOf(cell: HTMLElement) {
   const card = cell.firstElementChild as HTMLElement | null;
   if (!card) throw new Error(`grid cell has no card child: ${cell.outerHTML.slice(0, 200)}`);
   const stack = card.lastElementChild as HTMLElement | null;
   if (!stack) throw new Error(`card has no body stack: ${card.outerHTML.slice(0, 200)}`);
-  const actionRow = stack.lastElementChild as HTMLElement | null;
-  if (!actionRow) throw new Error(`card body has no last child: ${stack.outerHTML.slice(0, 200)}`);
+  const pinned = Array.from(stack.children).filter(
+    (el) => (el as HTMLElement).style.marginTop === 'auto'
+  ) as HTMLElement[];
+  // VALIDATION 0 — EXACTLY ONE bottom-pinned child. Two auto top margins in one column
+  // flex container SPLIT the free space between them, so "the action row is at the bottom"
+  // would silently stop being true while every element still resolved.
+  if (pinned.length !== 1) {
+    throw new Error(
+      `expected exactly ONE mt="auto" child in the card body, found ${pinned.length}: ` +
+        stack.outerHTML.slice(0, 300)
+    );
+  }
+  const actionRow = pinned[0];
   // VALIDATION 1 — the action row is the one holding the card's controls. The title block
   // above it holds a link too, so this does not identify it alone; it is what rules out
   // having resolved to a `<Text>` tagline.
@@ -277,10 +300,19 @@ function cardPartsOf(cell: HTMLElement) {
         actionRow.outerHTML.slice(0, 300)
     );
   }
-  // VALIDATION 2 — it really is the LAST thing in the card body, which is what makes "its
-  // top" a meaningful proxy for "where the pinned row sits".
-  if (actionRow.nextElementSibling !== null) {
-    throw new Error('resolved "action row" is not the last child of the card body');
+  // VALIDATION 2 — SOMETHING IS ABOVE IT. (This used to demand the action row be the LAST
+  // child of the card body; the stats line now follows it, so that check has no subject —
+  // see the note above. What replaces it is the property the measurements below actually
+  // need.) `contentBottom` is `previousElementSibling`'s bottom and is the NON-VACUITY
+  // CONTROL for the whole file; if the row were the first child that control would be
+  // `null` on every card and `new Set([null,null,…]).size` would be 1, which the control
+  // reports as "the fixtures do not differ" rather than as a broken walk.
+  if (actionRow.previousElementSibling === null) {
+    throw new Error(
+      'resolved "action row" is the card body\'s FIRST child, so there is no content above ' +
+        'it to measure: ' +
+        stack.outerHTML.slice(0, 300)
+    );
   }
   // Where the content ABOVE the action row ends. This is the NON-VACUITY CONTROL: the
   // fixtures must genuinely differ in natural content height, or "the heights are equal"

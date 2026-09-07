@@ -36,27 +36,35 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * "Zero layout shift" is therefore the wrong claim. "Zero per-card shift" is the
  * right one.
  *
- * 🔴 AND A THIRD: CONTENT VARIANCE, WHICH RUNS IN **BOTH** DIRECTIONS. The skeleton
- * reserves cover, icon, the two RESERVED title lines, a creator line, the always-
- * rendered recommend rollup line, and the 46px action row. Four axes move a real
- * card off that:
+ * 🔴 AND A THIRD: CONTENT VARIANCE — WHICH NOW RUNS IN ONE DIRECTION ONLY. The
+ * skeleton reserves cover, icon, the two RESERVED title lines, the 46px action row,
+ * and the always-rendered stats line BELOW that row. Three axes move a real card off
+ * that, all of them UPWARD:
  *   · a conditional tagline (`line-clamp-3`)      → card TALLER
  *   · an author-declared `Beta` badge             → card TALLER
  *   · an owner-only "Incomplete" badge            → card TALLER
- *   · NO CREATOR — `ListingCard.creator` is nullable and `CreatorChip` returns
- *     `null` for it — → card SHORTER, by the creator line plus the meta stack's gap.
- * ⚠️ THAT LAST ONE WAS MISSING FROM THIS LIST AND FROM THE PR BODY FOR A ROUND, both
- * of which said only "a listing carrying one is TALLER than its skeleton". It is not
- * hypothetical: measured at −22.29px (1376px grid / 4 columns) and −22.30px
- * (2450px / 5), and this PR's own `keepPreviousData` fixture uses `creator: null`.
- * It is pinned rather than merely described — see "a card with NO CREATOR is SHORTER"
- * in `AppListingCardSkeleton.geometry.test.tsx`, which derives the delta from the
- * rendered creator line rather than restating the number above.
  *
- * 🔴 SO "THE INVARIANT SHAPE" INCLUDES HAVING A CREATOR. The parity fixture is a
- * listing WITH a creator and WITHOUT a tagline or badges; that is the shape the
- * skeleton is exact for, and it is a choice (most listings have a creator, so
- * reserving the line is right more often than not), not a discovered invariant.
+ * 🔴 THE FOURTH AXIS — THE ONLY DOWNWARD ONE — IS GONE, AND THAT IS A REAL
+ * IMPROVEMENT RATHER THAN A LINE DELETED FROM A LIST. It read: "NO CREATOR —
+ * `ListingCard.creator` is nullable and `CreatorChip` returns `null` for it —
+ * → card SHORTER, by the creator line plus the meta stack's gap" (measured at
+ * −22.29px on a 1376px grid, −22.30px at 2450px). The store card no longer renders
+ * an author chip at all (2026-09-06, operator's call), so this skeleton reserves no
+ * creator line and a `creator: null` listing — which this suite's own
+ * `keepPreviousData` fixture is — is now EXACTLY its skeleton's height. The geometry
+ * suite pins that as an equality where it used to pin the delta.
+ *
+ * 🔴 SO "THE INVARIANT SHAPE" NO LONGER DEPENDS ON THE CREATOR FIELD. The parity
+ * fixture is a listing WITHOUT a tagline and WITHOUT badges; whether it carries a
+ * creator is now irrelevant to its height, which is one fewer choice the reservation
+ * has to be right about.
+ *
+ * 🔴 THE STATS LINE IS RESERVED UNCONDITIONALLY, AND THE PLAY COUNT COSTS NOTHING
+ * EXTRA. The card renders the recommend rollup and — when `openCount` is not `null`
+ * — the play count on ONE flex line (`wrap="nowrap"`), so an off-site listing that
+ * omits the play count is the same HEIGHT as an on-site one that shows it. That is
+ * what lets this file reserve the line without knowing the listing's kind, which a
+ * loading state structurally cannot.
  *
  * ── EVERY GEOMETRY NUMBER IS READ, NEVER SPELLED ────────────────────────────
  * 🔴 THIS FILE IMPORTS `appListingCardGeometry.ts` AND SO DOES `AppListingCard`.
@@ -67,14 +75,17 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * `Object.keys` and fails if this file stops reading any of them — the same guard
  * `appListingCardView.test.ts` already runs over the card.
  *
- * What is NOT single-sourced is the MARKUP the two files mirror (`gap={2}` on the
- * meta stack, `size="sm"`/`size="xs"` on the meta lines, `padding="md"` on the
- * Card) — plus one deliberate DIVERGENCE: this file adds `flexGrow: 1` to the meta
- * `Stack`, which the card does not have. The card's stack is sized by its real text;
- * this one's content is absolutely-positioned bars over a non-breaking space, so
- * without it the stack shrink-to-fits to almost nothing and the bars (sized in `%`)
- * render as slivers. It changes no height — the title box is `min-height`-pinned and
- * both meta lines are single-line — which is why the parity test stays exact.
+ * What is NOT single-sourced is the MARKUP the two files mirror (`gap="sm"` on the
+ * outer stack, `gap={2}` on the meta stack, `size="xs"` on the stats line,
+ * `padding="md"` on the Card) — plus one deliberate DIVERGENCE: this file adds
+ * `flexGrow: 1` to the meta `Stack`, which the card does not have. The card's stack
+ * is sized by its real text; this one's content is absolutely-positioned bars over a
+ * non-breaking space, so without it the stack shrink-to-fits to almost nothing and
+ * the bars (sized in `%`) render as slivers. It changes no height — the title box is
+ * `min-height`-pinned and the stats line is single-line — which is why the parity
+ * test stays exact. (This sentence used to say "both meta lines are single-line".
+ * There is one line now and it is not in the meta block: the creator line is gone
+ * and the rollup line moved below the action row.)
  * Those are not in the geometry module — the card spells them too — so the
  * thing that pins them is the MEASURED parity test
  * (`AppListingCardSkeleton.geometry.test.tsx`), which renders both grids and
@@ -87,8 +98,8 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  *
  * 🔴 THE `<Text>` IS NOT DECORATION — IT IS THE MEASUREMENT. Its content is a
  * non-breaking space, so the element's line box is exactly the line box the real
- * card's `<Text>` of the same `size`/`fw` produces, whatever Mantine's font-size
- * and line-height tokens happen to be. The visible bar is an ABSOLUTELY
+ * card's `<Text>` of the same `size` produces, whatever Mantine's font-size and
+ * line-height tokens happen to be. The visible bar is an ABSOLUTELY
  * positioned `Skeleton` over it, i.e. out of flow, so it contributes no height of
  * its own and cannot change the answer. A bar with a hand-picked pixel height
  * would be a second copy of Mantine's type scale, and would go wrong the day the
@@ -98,12 +109,22 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * IS VALID HTML. Mantine's `Text` renders a `<p>` and Mantine's `Skeleton` renders a
  * `<div>`, and `<div>` may not descend from `<p>`. An HTML parser auto-closes the
  * `<p>` at the `<div>`, so the parsed DOM is `<p></p><div></div>` while React's tree
- * is `<p><div/></p>` — a HYDRATION MISMATCH on every `/apps` load, EXACTLY 16 times:
- * 8 cells (`APP_LISTING_SKELETON_SSR_COLUMNS` x `APP_LISTING_SKELETON_ROWS`) x the two
- * meta lines each. An earlier draft said "16–20"; 20 would need 10 cells, which no
- * server render produces, and the mutation reproducing this observed `expected 16 to
- * be +0`.
- * It shipped in the first round of this PR and was invisible to the parity suite,
+ * is `<p><div/></p>` — a HYDRATION MISMATCH on every `/apps` load, once per rendered
+ * `MetaLineSkeleton`.
+ *
+ * ⚠️ THE COUNT IN THIS PARAGRAPH IS RE-DERIVED, NOT RE-MEASURED, AND IS FLAGGED
+ * RATHER THAN QUIETLY EDITED. It read "EXACTLY 16 times: 8 cells
+ * (`APP_LISTING_SKELETON_SSR_COLUMNS` x `APP_LISTING_SKELETON_ROWS`) x the two meta
+ * lines each", against a measurement of `expected 16 to be +0`. There is ONE
+ * `MetaLineSkeleton` per cell now (the creator line was deleted with the card's
+ * author chip and the rollup line moved below the action row), so the same
+ * arithmetic gives 8 x 1 = 8. Nobody has re-run the mutation to observe an
+ * `expected 8 to be +0` — the browser tiers do not run on the machine this change
+ * was made on — so treat 8 as arithmetic and 16 as the historical measurement.
+ * What is NOT derived and does not need re-measuring is the guard itself: the
+ * assertion is `toBe(0)`, which is independent of how many instances there are.
+ *
+ * It shipped in the first round of that PR and was invisible to the parity suite,
  * because the bar is `position: absolute` and therefore contributes no geometry for
  * a box comparison to see; the only signal was a `validateDOMNesting` warning on a
  * run that reported 7 passed. Both halves are now guarded —
@@ -119,19 +140,23 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * reproduce. `position: absolute` blockifies the span, so nothing about the bar
  * changes either.
  */
+// 🔴 `fw` IS GONE FROM THIS SIGNATURE, NOT LEFT UNUSED. It existed for the `sm`
+// creator line (`fw={500}`, mirroring the retired `CreatorChip`'s `TruncatedText`);
+// the one surviving caller passes no weight. An optional prop nothing supplies is
+// the same shape as the unread `@container` declaration this component family
+// already deleted — it reads as load-bearing to the next person. `size` is kept
+// general because it IS supplied.
 function MetaLineSkeleton({
   size,
-  fw,
   widthPct,
   'data-testid': testId,
 }: {
   size: 'sm' | 'xs';
-  fw?: number;
   widthPct: number;
   'data-testid'?: string;
 }) {
   return (
-    <Text size={size} fw={fw} c="dimmed" style={{ position: 'relative' }} data-testid={testId}>
+    <Text size={size} c="dimmed" style={{ position: 'relative' }} data-testid={testId}>
       {/* 🔴 A NON-BREAKING SPACE, NOT A PLAIN ONE. Whitespace-only text collapses under
           `white-space: normal`, which can leave the element with NO line box and therefore
           zero height — the reservation would then silently be nothing. `\u00A0` never
@@ -226,21 +251,25 @@ export function AppListingCardSkeleton() {
                 />
               ))}
             </Box>
-            {/* The creator chip's line. `size="sm"` / `fw={500}` mirror
-                `CreatorChip`'s `TruncatedText`; the chip's 20px avatar is shorter
-                than that line box, so the text is what sets the row height and the
-                skeleton does not need to reproduce the avatar to match it. */}
-            <MetaLineSkeleton
-              size="sm"
-              fw={500}
-              widthPct={44}
-              data-testid="apps-listing-skeleton-creator"
-            />
-            {/* The recommend rollup's line. It ALWAYS renders on a card — including
-                for a listing with no reviews — which is what makes it safe to
-                reserve unconditionally here. `size="xs"`, and the 13px thumb icon
-                is again shorter than the line box. */}
-            <MetaLineSkeleton size="xs" widthPct={62} data-testid="apps-listing-skeleton-rollup" />
+            {/* 🔴 NOTHING ELSE IS RESERVED IN THIS BLOCK, AND THAT IS THE CHANGE.
+                Two `MetaLineSkeleton`s used to sit here — a `size="sm"` creator
+                line (`apps-listing-skeleton-creator`) and a `size="xs"` recommend
+                rollup line (`apps-listing-skeleton-rollup`). The card dropped the
+                author chip and moved the rollup below the action row, so the
+                creator line is DELETED and the rollup line MOVED (it is rendered
+                after the action row below, keeping its testid). Reserving either
+                one here now would over-reserve the block by a whole line and
+                reflow the grid downward on every query resolve — the exact defect
+                this component exists to remove, in the direction that is easiest
+                to miss.
+
+                ⚠️ THE `gap={2}` ON THIS STACK IS THEREFORE INERT HERE, and it is
+                kept anyway — declared, not overlooked. It mirrors the CARD's meta
+                stack, where it is NOT inert: that stack still renders the title
+                plus up to two conditional badges (`Beta`, owner-only
+                `Incomplete`). Dropping it here would make the two files disagree
+                about a number for no gain, and would silently under-reserve the
+                day this block reserves a second row again. */}
           </Stack>
         </Group>
 
@@ -277,6 +306,28 @@ export function AppListingCardSkeleton() {
             radius="sm"
           />
         </Group>
+
+        {/* THE STATS LINE — the card's recommend rollup and (for a measurable
+            listing) its play count, on ONE `size="xs"` line BELOW the action row.
+
+            🔴 IT IS RESERVED UNCONDITIONALLY, AND BOTH HALVES OF THAT ARE SAFE FOR
+            DIFFERENT REASONS. The rollup half always renders on a card (a listing
+            with no reviews still gets "No reviews yet"), so the LINE always exists.
+            The play half is `openCount != null`-gated — off-site listings omit it —
+            but it shares the rollup's flex line rather than taking one of its own,
+            so its absence changes width and not height. A loading state cannot know
+            a listing's kind, and this is why it does not have to.
+
+            🔴 IT IS A SIBLING OF THE ACTION ROW, NOT A CHILD OF IT, mirroring the
+            card exactly: the row's `mt="auto"` absorbs the free space above it and
+            pushes BOTH to the bottom, and the outer `Stack`'s `gap="sm"` sets the
+            distance between them on both sides. A `pt` here instead would be a
+            second, hand-picked copy of that gap.
+
+            The 13px thumb/play icons are shorter than the `xs` line box, so — as
+            with the meta lines this replaces — the text is what sets the height and
+            the skeleton does not need to reproduce the icons to match it. */}
+        <MetaLineSkeleton size="xs" widthPct={62} data-testid="apps-listing-skeleton-rollup" />
       </Stack>
     </Card>
   );
