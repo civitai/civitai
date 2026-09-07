@@ -471,12 +471,13 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // (d) 🔴 THE LEDGER — the SET of routes the chrome links to, owned outright, so this
     // fails when it GROWS or SHRINKS.
     //
-    // (a) and (b) are PER-LINK and structurally cannot see an ADDITION: a new item
-    // pointing at a route `SUB_NAV_LINKS` already carries, wearing that row's own glyph,
-    // satisfies both. Nor does anything else here close the gap — the `expected glyphs`
-    // test enumerates the PLATFORM-NAV slice only, and (c) enumerates the two
-    // `/apps/installed` LABELS only. So an item added to the ⋮ overflow was invisible to
-    // every assertion in this file. Measured: adding `<ChromeSurfaceItem
+    // (a) and (b) are PER-LINK, so they catch an addition only when the added link is
+    // itself wrong — an invented route, or the store's route under the wrong glyph. A new
+    // item pointing at a route `SUB_NAV_LINKS` already carries, wearing that row's own
+    // glyph, satisfies both and is invisible to them. Nor does anything else here close
+    // the gap — the `expected glyphs` test enumerates the PLATFORM-NAV slice only, and (c)
+    // enumerates the two `/apps/installed` LABELS only. So an item added to the ⋮ overflow
+    // was invisible to every assertion in this file. Measured: adding `<ChromeSurfaceItem
     // href="/apps/get-started" leftSection={<IconCode …/>}>Build apps</ChromeSurfaceItem>`
     // to the overflow passed all 8 tests.
     //
