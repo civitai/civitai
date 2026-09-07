@@ -741,12 +741,13 @@ describe('who can reach blob retraction, driven through the real block writers',
     ).toEqual({ keepMe: 5 });
   });
 
-  // 🔴 F1. The ban's media block is `where: { userId, ingestion: { not: 'Blocked' } }`, and
-  // `remove-deleted-user-images` writes the breadcrumb in the SAME statement that sets
-  // `ingestion = 'Blocked'`. So for every row the grace pass blocked, the ban's UPDATE matches
-  // nothing — and an account-wide clear there strips the restore record off rows it provably did
-  // not block. The loss is silent twice: the row no longer remembers its prior `ingestion`, and
-  // the count `restoreUser` gates the whole gallery restore on reads 0.
+  // 🔴 F1. The ban's media block is `where: { userId, ingestion: { not: 'Blocked' } }`, and both
+  // of `remove-deleted-user-images`'s statements write the breadcrumb only on a row they leave
+  // `ingestion = 'Blocked'` — the first sets it in the same UPDATE, the second requires it. So
+  // for every row the grace pass marked, the ban's UPDATE matches nothing, and an account-wide
+  // clear there strips the restore record off rows it provably did not block. The loss is silent
+  // twice over: the row no longer remembers its prior `ingestion`, and the count `restoreUser`
+  // gates the whole gallery restore on reads 0.
   it('leaves the grace breadcrumbs on the rows a ban did not block', async () => {
     // The library as the grace pass leaves it: Blocked, Moderated, breadcrumbed.
     store.images.push(
