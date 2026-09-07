@@ -26,7 +26,7 @@ describe('model type picker data', () => {
   });
 
   // The list is what the 2026-08-31 cleanup kept, plus Embedding, restored 2026-09-07.
-  it('offers exactly the picker list, in order', () => {
+  it('offers exactly the post-cleanup picker list, in order', () => {
     expect(selectableModelTypes).toStrictEqual([
       ModelType.Checkpoint,
       ModelType.LORA,
