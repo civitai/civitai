@@ -72,6 +72,10 @@ function ModelCardContent({ data }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isEarlyAccess = data.earlyAccessDeadline && data.earlyAccessDeadline > new Date();
+  // A permanent gate has no deadline to compare against, so it can only come from the server as a
+  // flag. Deliberately not folded into `isEarlyAccess`: an early-access window ends and the model
+  // becomes free, a permanent gate never does, so the two cannot share a word.
+  const isPaidAccess = !!data.hasPermanentPaidAccess;
   const isArchived = data.mode === ModelModifier.Archived;
 
   const isPOI = data.poi;
@@ -89,13 +93,14 @@ function ModelCardContent({ data }: Props) {
 
   const statusBadgeStyle = useMemo(
     () => ({
-      backgroundColor: isEarlyAccess
-        ? theme.colors.success[5]
-        : isUpdated
-        ? theme.colors.teal[5]
-        : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
+      backgroundColor:
+        isEarlyAccess || isPaidAccess
+          ? theme.colors.success[5]
+          : isUpdated
+          ? theme.colors.teal[5]
+          : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
     }),
-    [isEarlyAccess, isUpdated, theme, colorScheme]
+    [isEarlyAccess, isPaidAccess, isUpdated, theme, colorScheme]
   );
 
   const { useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider } =
@@ -181,15 +186,22 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
 
-            {(isNew || isUpdated || isEarlyAccess) && (
+            {(isNew || isUpdated || isEarlyAccess || isPaidAccess) && (
               <Badge
                 className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
+                data-status-badge
                 style={statusBadgeStyle}
               >
                 <Text c="white" size="xs" tt="capitalize">
-                  {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
+                  {isEarlyAccess
+                    ? 'Early Access'
+                    : isPaidAccess
+                    ? 'Paid'
+                    : isUpdated
+                    ? 'Updated'
+                    : 'New'}
                 </Text>
               </Badge>
             )}
