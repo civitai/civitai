@@ -20,6 +20,7 @@
     prices,
     imageCount,
     labels,
+    trigger,
     onStart,
     onBack,
   }: {
@@ -28,11 +29,15 @@
     imageCount: number;
     /** The dataset's per-image labels (joined tags / captions) — the sample prompts seed from these. */
     labels: string[];
+    /** The chosen trigger word, if any — pre-fills the name field (the run is named after it by default). */
+    trigger: string;
     onStart: (launched: LaunchedRun[], prompts: string[], name: string) => Promise<void>;
     onBack: () => void;
   } = $props();
 
-  let name = $state('');
+  // Pre-fill the name with the trigger word (the run defaults to it anyway); the parent remounts this step
+  // via {#if}, so this one-time seed is correct. The user can still overwrite it.
+  let name = $state(untrack(() => trigger.trim()));
   let starting = $state(false);
   let startError = $state('');
 

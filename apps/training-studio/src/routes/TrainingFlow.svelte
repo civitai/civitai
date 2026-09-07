@@ -114,6 +114,7 @@
     <ReviewStep
       {selection}
       {prices}
+      {trigger}
       imageCount={trainableCount}
       labels={datasetLabels}
       onStart={start}

@@ -325,7 +325,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'XL',
     media: 'image',
     label: 'tag',
-    description: 'Fast, versatile, huge community. Pony & Illustrious live here.',
+    description: 'Fast, versatile, huge community.',
     versions: [
       {
         key: 'sdxl',
@@ -335,18 +335,38 @@ export const MODEL_CARDS: ModelCard[] = [
         baseModel: 'SDXL 1.0',
         ecosystem: 'sdxl',
       },
+    ],
+  },
+  // Illustrious & Pony are SDXL-derived but treated as their own base models on-site (creators look for
+  // them by name), so they're their own cards rather than SDXL versions.
+  {
+    type: 'illustrious',
+    name: 'Illustrious',
+    code: 'IL',
+    media: 'image',
+    label: 'tag',
+    description: 'SDXL-based, tuned for illustration / anime.',
+    versions: [
       {
         key: 'illustrious',
         label: 'Illustrious',
-        note: 'illustration / anime',
         air: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
         baseModel: 'Illustrious',
         ecosystem: 'sdxl',
       },
+    ],
+  },
+  {
+    type: 'pony',
+    name: 'Pony',
+    code: 'PN',
+    media: 'image',
+    label: 'tag',
+    description: 'SDXL-based, tuned for anthro / stylized.',
+    versions: [
       {
         key: 'pony',
         label: 'Pony',
-        note: 'anthro / stylized',
         air: 'urn:air:sdxl:checkpoint:civitai:257749@290640',
         baseModel: 'Pony',
         ecosystem: 'sdxl',
@@ -556,7 +576,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Character',
     icon: '🧍',
     medias: ['image', 'video'],
-    recommended: { image: 'flux', video: 'wan' },
+    recommended: { image: 'zimage', video: 'wan' },
     seen: 100,
     minImg: 10,
   },
@@ -565,7 +585,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Style',
     icon: '🎨',
     medias: ['image', 'video', 'audio'],
-    recommended: { image: 'flux', video: 'wan', audio: 'acestep' },
+    recommended: { image: 'zimage', video: 'wan', audio: 'acestep' },
     seen: 150,
     minImg: 15,
   },
@@ -574,7 +594,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Concept',
     icon: '💡',
     medias: ['image', 'video', 'audio'],
-    recommended: { image: 'flux', video: 'wan', audio: 'acestep' },
+    recommended: { image: 'zimage', video: 'wan', audio: 'acestep' },
     seen: 150,
     minImg: 15,
   },

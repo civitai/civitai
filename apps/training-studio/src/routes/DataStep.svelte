@@ -270,7 +270,18 @@
       </span>
     {/each}
     {#if tags.length > limit}
-      <span class="rounded px-1.5 py-0.5 font-mono text-[10px] text-dark-2">+{tags.length - limit}</span>
+      {@const triggerHidden =
+        triggerText &&
+        tagsHaveTrigger(trigger, tags) &&
+        !tags.slice(0, limit).some((t) => isTriggerTag(trigger, t))}
+      <span
+        class="rounded px-1.5 py-0.5 font-mono text-[10px] {triggerHidden
+          ? 'border border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
+          : 'text-dark-2'}"
+        title={triggerHidden ? `includes the trigger word "${triggerText}"` : undefined}
+      >
+        +{tags.length - limit}
+      </span>
     {/if}
   </div>
 {/snippet}
@@ -321,7 +332,22 @@
       class="rounded-md border-2 border-dashed p-9 text-center transition
         {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
     >
-      <div class="text-3xl">📁</div>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="mx-auto h-8 w-8 text-dark-2"
+        aria-hidden="true"
+      >
+        <path d="M12 13v8" />
+        <path d="m8 17 4-4 4 4" />
+        <path
+          d="M20 16.7A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"
+        />
+      </svg>
       <div class="mt-2 text-base font-semibold text-dark-0">
         Drop your {media} files here, or click to browse
       </div>

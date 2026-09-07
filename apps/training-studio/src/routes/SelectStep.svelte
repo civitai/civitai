@@ -30,8 +30,12 @@
   // The "from" price for a card: a real orchestrator quote when we have one, plus the flat custom-model
   // surcharge. Partial — a model the orchestrator couldn't quote is absent, and we return null rather than
   // inventing a number (the caller shows a muted em-dash).
+  // Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same
+  // cost, so fall back to the SDXL "from" quote when the orchestrator hasn't priced them directly.
+  const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' };
   function price(cardType: string, custom = false): number | null {
-    const base = prices[cardType];
+    const alias = PRICE_ALIAS[cardType];
+    const base = prices[cardType] ?? (alias ? prices[alias] : undefined);
     if (base == null) return null;
     return base + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
   }
@@ -50,15 +54,29 @@
   const selectedCard = $derived(runCard(focused));
   const recommendedType = $derived(type.recommended[media]);
   const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
-  // Flat, all models as equal peers — strength tiers downplayed the non-"top" models. Recommended first
-  // so the eye lands on the safe default; the rest keep catalog order.
-  const orderedCards = $derived.by(() => {
+  // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
+  // more" toggle so the list isn't a wall of ~20 models. Only image has enough models to warrant it —
+  // video/audio show everything. `featuredCards` keeps the FEATURED order (recommended is first in it).
+  const FEATURED: Partial<Record<Media, string[]>> = { image: ['zimage', 'anima', 'krea2'] };
+  const featuredCards = $derived.by(() => {
     const cards = cardsForMedia(media);
-    const recommended = cards.find((c) => c.type === recommendedType);
-    return recommended
-      ? [recommended, ...cards.filter((c) => c !== recommended)]
-      : cards;
+    const featured = FEATURED[media];
+    if (!featured) return cards;
+    return featured
+      .map((t) => cards.find((c) => c.type === t))
+      .filter((c): c is (typeof cards)[number] => c !== undefined);
   });
+  const otherCards = $derived.by(() => {
+    const featured = FEATURED[media];
+    if (!featured) return [];
+    const featuredSet = new Set(featured);
+    return cardsForMedia(media).filter((c) => !featuredSet.has(c.type));
+  });
+  let showAllModels = $state(false);
+  // Keep the tail open when the chosen model lives there, so the selection is never hidden.
+  const selectedInOthers = $derived(otherCards.some((c) => c.type === focused.cardType));
+  const modelsExpanded = $derived(showAllModels || selectedInOthers);
+  const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
   const labelMode = $derived(runCard(primary).label);
   const labelModeNoun = $derived(labelNoun(runCard(primary)));
   // Sum the quotes we have; if any selected run is unpriced the total is partial, so surface null and let
@@ -124,8 +142,8 @@
 
   function versionsFor(card: ModelCard) {
     return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label, note: v.note })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom…', note: `+⚡${CUSTOM_MODEL_SURCHARGE} · pick a model` },
+      ...card.versions.map((v) => ({ key: v.key, label: v.label, note: v.note, surcharge: 0 })),
+      { key: CUSTOM_VERSION_KEY, label: 'Custom…', note: 'pick a model', surcharge: CUSTOM_MODEL_SURCHARGE },
     ];
   }
 
@@ -257,7 +275,7 @@
         tabindex="-1"
         onkeydown={radioKeydown}
       >
-        {#each orderedCards as card (card.type)}
+        {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const disabled = multi && !selected && card.label !== labelMode}
           {@const isRecommended = card.type === recommendedType}
@@ -327,6 +345,21 @@
         {/each}
       </div>
 
+      {#if otherCards.length > 0}
+        <button
+          type="button"
+          onclick={() => (showAllModels = !showAllModels)}
+          class="mt-2 w-full rounded-md border border-dashed border-dark-4 py-2 font-mono text-[11px] text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
+        >
+          {modelsExpanded
+            ? '− Show fewer models'
+            : `+ Show ${otherCards.length} more models (${otherCards
+                .slice(0, 3)
+                .map((c) => c.name)
+                .join(', ')}…)`}
+        </button>
+      {/if}
+
       <!-- version choice for the single selected model, inline (no disclosure) -->
       {#if !multi}
         {@const card = selectedCard}
@@ -345,7 +378,7 @@
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {#if versionsFor(card).length > 1}
+          {#if card.versions.length > 1}
             <div class="mt-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
@@ -365,6 +398,13 @@
                     {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
                 >
                   <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
+                  {#if v.surcharge}
+                    <div
+                      class="mt-0.5 inline-flex rounded bg-[#f59f00]/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#f59f00]"
+                    >
+                      +⚡{v.surcharge.toLocaleString()}
+                    </div>
+                  {/if}
                   {#if v.note}
                     <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
                   {/if}
@@ -384,13 +424,13 @@
           onclick={openSweep}
           class="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition hover:bg-dark-6"
         >
-          <span class="text-sm font-semibold text-dark-1">+ Add another model to sweep</span>
-          <span class="font-mono text-[11px] text-dark-2">train several at once</span>
+          <span class="text-sm font-semibold text-dark-1">+ Train an additional model</span>
+          <span class="font-mono text-[11px] text-dark-2">same dataset · another model or settings</span>
         </button>
       {:else}
         <div class="flex flex-col gap-2.5 p-3.5">
           <div class="font-mono text-xs uppercase tracking-wider text-dark-2">
-            Sweep <span class="lowercase text-dark-2">· {runs.length} models · pick a tile above to change the highlighted run</span>
+            Training runs <span class="lowercase text-dark-2">· {runs.length} models · pick a tile above to change the highlighted run</span>
           </div>
           {#each runs as r, ri (r.id)}
             {@const card = runCard(r)}
@@ -444,6 +484,13 @@
                       {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
                   >
                     <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
+                    {#if v.surcharge}
+                      <div
+                        class="mt-0.5 inline-flex rounded bg-[#f59f00]/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#f59f00]"
+                      >
+                        +⚡{v.surcharge.toLocaleString()}
+                      </div>
+                    {/if}
                     {#if v.note}
                       <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
                     {/if}
@@ -493,8 +540,24 @@
       final price after your data &amp; settings
     </div>
     <Button class="mt-4 w-full" onclick={() => onContinue({ media, loraType, runs })}>Continue to Data →</Button>
-    <p class="mt-3 text-center font-mono text-[11px] text-dark-2">
-      🔒 Nothing is saved until you start training
+    <p
+      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-[11px] text-dark-2"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#f59f00"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="h-3.5 w-3.5 shrink-0"
+        aria-hidden="true"
+      >
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+      Nothing is saved until you start training
     </p>
   </aside>
 </div>

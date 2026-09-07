@@ -98,6 +98,32 @@ export type TraceSignal =
 const finite = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
 
+/** Human-readable text for one trace line in the raw log — a `log` event shows just its message (not the
+ *  raw JSON envelope), structured events render a compact summary, plain text passes through. Keeps the
+ *  log legible instead of a wall of `{"type":"log","message":…}`. */
+export function traceLineText(line: string): string {
+  const parsed = parseTraceLine(line);
+  if (parsed.kind === 'text') return parsed.text;
+  const e = parsed.event;
+  const message = e.message ?? e.msg ?? e.text ?? e.log;
+  if (typeof message === 'string') return message;
+  const step = finite(e.step);
+  const maxSteps = finite(e.maxSteps);
+  const epoch = finite(e.epoch);
+  switch (e.type) {
+    case 'step':
+      return step !== null ? `step ${step}${maxSteps !== null ? ` / ${maxSteps}` : ''}` : line;
+    case 'phase':
+      return typeof e.phase === 'string' ? `phase: ${e.phase}` : line;
+    case 'epoch':
+      return epoch !== null ? `epoch ${epoch} checkpoint saved` : line;
+    case 'attempt':
+      return epoch !== null ? `epoch ${epoch} starting` : 'epoch starting';
+    default:
+      return line;
+  }
+}
+
 /** Interpret one trace line into a structured status signal. The `step` event's own `epoch` field is the
  *  worker's internal dataset-epoch counter (44, 49, …), which differs from the checkpoint epoch the user
  *  sees (10); only `attempt`/`phase`/`epoch` events carry the checkpoint epoch, so step signals don't. */

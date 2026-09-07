@@ -70,13 +70,34 @@
     }
   }
 
-  const createdLabel = $derived(
-    new Date(d.createdAt).toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
-  );
+  // Copy the workflow id (handy for support / debugging). Shows a brief "Copied" acknowledgement.
+  let copied = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyWorkflowId() {
+    try {
+      await navigator.clipboard.writeText(d.workflowId);
+      copied = true;
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => (copied = false), 1500);
+    } catch {
+      // clipboard unavailable (insecure context) — no-op; the id is in the URL as a fallback.
+    }
+  }
+
+  // Relative "created" label: minutes/hours ago for a recent run, weekday-at-time within the last week,
+  // otherwise the date. Recomputed on each poll so "2 minutes ago" stays honest while training.
+  const createdLabel = $derived.by(() => {
+    const then = new Date(d.createdAt);
+    const diffMs = Date.now() - then.getTime();
+    const min = Math.round(diffMs / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+    if (diffMs < 7 * 86400000)
+      return then.toLocaleString(undefined, { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+    return then.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  });
 
   // Row labels for the samples: the fixed prompts, falling back to a positional label when a run carries
   // none. Length drives how many sample slots each epoch renders.
@@ -95,6 +116,21 @@
     if (newestFirst.length === 0) return null;
     return newestFirst.find((e) => e.modelUrl) ?? newestFirst[0];
   });
+
+  // Publish hands off to the main app for the highest checkpoint that actually has weights (a still-training
+  // run's newest epoch may have samples but no downloadable model yet). Null disables the button. (Generate
+  // is intentionally not here: creating a throwaway draft model just to generate was rejected — the real
+  // fix is teaching the on-site generator to accept a raw AIR/URL, done main-app-side.)
+  const publishTarget = $derived(newestFirst.find((e) => e.modelUrl) ?? null);
+
+  function openPublish() {
+    if (!publishTarget) return;
+    window.location.assign(
+      `${data.civitaiUrl}/models/train/from-orchestrator?workflowId=${encodeURIComponent(
+        d.workflowId
+      )}&epoch=${publishTarget.number}`
+    );
+  }
 
   // The user's chosen checkpoint drives the featured view. `null` follows the recommended one. Resolving
   // the id against the CURRENT run's epochs means a stale id carried across a /[id]→/[id] navigation just
@@ -155,9 +191,9 @@
               type="button"
               aria-label="Rename training"
               onclick={startRename}
-              class="shrink-0 rounded p-1 text-dark-2 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              class="shrink-0 rounded p-1 text-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              ✎
+              ✎ Rename
             </button>
           </div>
         {/if}
@@ -180,8 +216,20 @@
         <dd class="m-0 text-dark-0">{createdLabel}</dd>
       </div>
       <div class="flex items-center gap-1.5">
-        <dt class="text-dark-2">Base model</dt>
-        <dd class="m-0 text-dark-0">{d.base}</dd>
+        <dt class="text-dark-2">Workflow</dt>
+        <dd class="m-0 flex items-center gap-1.5 text-dark-0">
+          <span class="max-w-[12ch] truncate" title={d.workflowId}>{d.workflowId}</span>
+          <button
+            type="button"
+            onclick={copyWorkflowId}
+            class="rounded px-1 py-0.5 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary {copied
+              ? 'text-emerald-400'
+              : 'text-primary hover:text-primary/80 hover:underline'}"
+            title="Copy workflow ID"
+          >
+            {copied ? '✓ copied' : '⧉ copy'}
+          </button>
+        </dd>
       </div>
     </dl>
   </header>
@@ -273,10 +321,10 @@
                   selectedId = epoch.id;
                   mode = 'epoch';
                 }}
-                class="flex items-center justify-center gap-1 rounded px-1 py-1 text-[11px] font-semibold transition-colors {epoch ===
+                class="flex items-center justify-center gap-1 rounded border px-1.5 py-1 text-[11px] font-semibold transition-colors {epoch ===
                 recommended
-                  ? 'text-[#f59f00] hover:bg-[#f59f00]/10'
-                  : 'text-dark-0 hover:bg-dark-5'}"
+                  ? 'border-[#f59f00]/30 text-[#f59f00] hover:bg-[#f59f00]/10'
+                  : 'border-dark-4 text-dark-0 hover:border-dark-2 hover:bg-dark-5'}"
                 title="Open epoch {epoch.number}"
               >
                 {#if epoch === recommended}★{/if}Epoch {epoch.number}
@@ -406,13 +454,20 @@
       {/if}
     {/if}
 
-    <div
-      class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-dark-4 bg-dark-7 px-4 py-3 text-[11px] text-dark-2"
-    >
-      <span class="font-semibold text-dark-0">Coming next</span>
-      <span aria-hidden="true" class="h-3 w-px bg-dark-4"></span>
-      Generate with this LoRA, publish a public model page, and train further land in an upcoming slice.
-      Downloading weights is live now.
+    <div class="flex flex-wrap items-center gap-3 rounded-md border border-dark-4 bg-dark-7 px-4 py-3">
+      <div class="flex flex-wrap gap-2">
+        <Button size="sm" disabled={!publishTarget} onclick={openPublish}>
+          Publish a model page
+        </Button>
+      </div>
+      <p class="m-0 font-mono text-[11px] text-dark-2">
+        {#if publishTarget}
+          Uses the ★ recommended checkpoint (epoch {publishTarget.number}) — opens on Civitai to name it,
+          set visibility, and finish, where you can pick a different epoch.
+        {:else}
+          Available once a checkpoint with downloadable weights is ready.
+        {/if}
+      </p>
     </div>
   {/if}
 </section>

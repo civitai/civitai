@@ -255,7 +255,10 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
       const raw = e.samples ?? [];
       return {
         id: `${e.epochNumber ?? 'x'}-${idx}`,
-        number: e.epochNumber ?? 0,
+        // Match the main-app publish/generate bridge's `?? -1` fallback so a (pathological) numberless
+        // epoch resolves to the same key on both sides — otherwise the deep link's `epoch=0` misses the
+        // server's `-1` and it silently targets a different checkpoint.
+        number: e.epochNumber ?? -1,
         samples: Array.from({ length: slots }, (_, i) => {
           const s = raw[i];
           return s?.available && typeof s.url === 'string' ? s.url : null;

@@ -1,6 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { isAbort, interpretTraceLine, PHASE_LABEL, tailTrace, type TrainingPhase } from '$lib/trace';
+  import {
+    isAbort,
+    interpretTraceLine,
+    PHASE_LABEL,
+    tailTrace,
+    traceLineText,
+    type TrainingPhase,
+  } from '$lib/trace';
 
   let { traceUrl }: { traceUrl: string } = $props();
 
@@ -15,7 +22,7 @@
   let raw = $state<string[]>([]);
   let started = $state(false);
   let seq = 0;
-  let rawLines = $derived(raw.map((text, i) => ({ id: seq - raw.length + i, text })));
+  let rawLines = $derived(raw.map((text, i) => ({ id: seq - raw.length + i, text: traceLineText(text) })));
 
   function ingest(line: string) {
     started = true;

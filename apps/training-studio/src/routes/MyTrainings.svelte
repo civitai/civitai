@@ -78,7 +78,7 @@
               Open
             </Button>
             {#if r.state === 'ready' || r.state === 'published'}
-              <Button variant="outline" size="sm">🎨 Generate</Button>
+              <Button variant="outline" size="sm">Generate</Button>
             {/if}
             {#if r.state === 'ready'}
               <Button variant="outline" size="sm">Train further</Button>
