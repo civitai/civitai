@@ -46,6 +46,7 @@ const modelFilterSchema = z.object({
   status: z.enum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
+  hidePaid: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),

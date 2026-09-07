@@ -819,3 +819,23 @@ export async function getModelPaidAccessGates(
     rows.map((r) => [Number(r.modelId), { earlyAccessDeadline: r.deadline ?? null, gated: true }])
   );
 }
+
+/**
+ * Every model with a live gate, unbounded. The batched `getModelPaidAccessGates` cannot serve this —
+ * the feed filter needs the whole set before it knows which models it is choosing between.
+ *
+ * The predicate is deliberately identical to the badge's. A filter that hides "paid" models using a
+ * different rule from the one that labels them is the divergence 868m1r2u7 exists to close, one layer
+ * up: a card reading Paid that the hide filter leaves on screen.
+ */
+export async function getGatedModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion'
+      AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
+      AND mv.status = 'Published'::"ModelStatus"
+  `;
+  return rows.map((r) => Number(r.modelId));
+}

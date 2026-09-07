@@ -186,6 +186,7 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
+  getGatedModelIds,
   getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
@@ -383,6 +384,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     paidAccess,
+    hidePaid,
     onSale,
     supportsGeneration,
     fromPlatform,
@@ -766,6 +768,20 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
         WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
           AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL
+      )`
+    );
+  }
+  if (hidePaid) {
+    // Same predicate as the badge (`getModelPaidAccessGates`): a gate is live when it has no end
+    // date or its end date is ahead. NOT EXISTS rather than an id list — the set is ~3k models and
+    // growing, and this keeps the probe on PaidAccess_pkey.
+    AND.push(
+      Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
+          AND pamv.status = 'Published'::"ModelStatus"
+          AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
       )`
     );
   }
@@ -1253,6 +1269,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     needsReview,
     earlyAccess,
     paidAccess,
+    hidePaid,
     supportsGeneration,
     followed,
     collectionId,
@@ -1346,6 +1363,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
   if (paidAccess) {
     AND.push({ id: { in: await getPermanentPaidAccessModelIds() } });
+  }
+
+  if (hidePaid) {
+    AND.push({ id: { notIn: await getGatedModelIds() } });
   }
 
   if (supportsGeneration) {

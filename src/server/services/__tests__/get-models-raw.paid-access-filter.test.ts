@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // is a ~4800-line module whose cold transform would otherwise be charged to the first
 // test's timeout budget rather than to collection.
 import { getModelsRaw, getPermanentPaidAccessModelIds } from '~/server/services/model.service';
+import { getGatedModelIds } from '~/server/services/paid-access.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -108,3 +109,54 @@ describe('getPermanentPaidAccessModelIds', () => {
 // src/server/schema/__tests__/get-all-models.boolean-params.schema.test.ts, which derives
 // its field list from the schema instead of naming paidAccess. Same invariant, and it
 // also covers the next field someone declares on z.coerce.boolean().
+
+
+/**
+ * `hidePaid` is the only filter here whose polarity is load-bearing: every other clause in this file
+ * narrows the result to something, and this one removes. Swap NOT EXISTS for EXISTS and the feed
+ * shows ONLY paid models to a user who asked to see none — the exact opposite, with rows still
+ * returned and nothing to notice.
+ *
+ * It also has to use the SAME rule as the badge (`getModelPaidAccessGates`). A hide filter keyed on
+ * `timeframeDays` would leave a card reading "Paid" on screen for the 36 published versions whose
+ * timed gate was never materialized.
+ */
+describe('getModelsRaw — hidePaid filter', () => {
+  it('EXCLUDES gated models — the clause is negative, correlated, and published-only', async () => {
+    const sql = await sqlFor({ hidePaid: true });
+    expect(sql).toMatch(/NOT\s+EXISTS\s*\(\s*SELECT 1 FROM "PaidAccess"/);
+    // Without the correlation the subquery is uncorrelated: one gate anywhere hides every model.
+    expect(sql).toContain('AND pamv."modelId" = m.id');
+    expect(sql).toContain(`AND pamv.status = 'Published'::"ModelStatus"`);
+  });
+
+  it('uses the live-gate predicate, not the permanent discriminator', async () => {
+    const sql = await sqlFor({ hidePaid: true });
+    // Same translation of isPaidAccessActive the badge uses. `timeframeDays IS NULL` here would
+    // hide permanent gates only and leave live timed windows visible under a "hide paid" filter.
+    expect(sql).toContain('AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())');
+    expect(sql).not.toContain('"timeframeDays" IS NULL');
+  });
+
+  it('emits nothing when the flag is off', async () => {
+    const sql = await sqlFor({});
+    expect(sql).not.toMatch(/NOT\s+EXISTS\s*\(\s*SELECT 1 FROM "PaidAccess"/);
+  });
+});
+
+/**
+ * The unbounded half, used by the Prisma `getModels` path. Same rule as the batched badge helper —
+ * they are two queries answering one question, so a divergence here is invisible on the feed and
+ * visible only as a filter that disagrees with the label.
+ */
+describe('getGatedModelIds', () => {
+  it('selects every LIVE gate, timed or permanent, on published versions', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    await getGatedModelIds();
+
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls.at(-1)?.[0] as unknown as string[]).join('');
+    expect(sql).toContain('(pa."endsAt" IS NULL OR pa."endsAt" > NOW())');
+    expect(sql).not.toContain('"timeframeDays"');
+    expect(sql).toContain(`mv.status = 'Published'::"ModelStatus"`);
+  });
+});
