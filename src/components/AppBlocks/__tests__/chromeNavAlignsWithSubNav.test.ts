@@ -425,9 +425,15 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const links = parseAllChromeLinks(chromeBody());
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
-    // Parse control, not a ledger — same reasoning as the two above: a floor pinned on
-    // the live count (5) would take the failure away from the (a)/(b) rules below the
-    // moment the chrome gains an item, and report it as a parse error.
+    // 🔴 PARSE CONTROL ONLY — AND, UNLIKE THE OTHER TWO FLOORS IN THIS FILE, IT HAS NO
+    // SIBLING `toEqual` ELSEWHERE TO INHERIT ITS SET FROM. The floors in the two tests
+    // above are safe to relax because something else owns their sets outright (the exact
+    // 4-item platform nav; the exact excluded set). Nothing owned THIS parser's set, so
+    // relaxing this one alone deleted a live detection — see (d), which was added to
+    // restore it. A zero here is still indistinguishable from a regex wired to nothing,
+    // and ruling that out is all this floor does; pinned on the live count it would
+    // instead steal the failure from the rules below and report a nav change as a parse
+    // error.
     expect(links.length, 'parsed no literal-href items out of the chrome').toBeGreaterThanOrEqual(
       1
     );
@@ -461,6 +467,46 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'their icons, not about removing one of them (that would be a behaviour change).'
     ).toEqual(['Installed apps', 'Manage apps']);
     expect(new Set(installed.map((l) => l.icon)).size).toBe(1);
+
+    // (d) 🔴 THE LEDGER — the SET of routes the chrome links to, owned outright, so this
+    // fails when it GROWS or SHRINKS.
+    //
+    // (a) and (b) are PER-LINK and structurally cannot see an ADDITION: a new item
+    // pointing at a route `SUB_NAV_LINKS` already carries, wearing that row's own glyph,
+    // satisfies both. Nor does anything else here close the gap — the `expected glyphs`
+    // test enumerates the PLATFORM-NAV slice only, and (c) enumerates the two
+    // `/apps/installed` LABELS only. So an item added to the ⋮ overflow was invisible to
+    // every assertion in this file. Measured: adding `<ChromeSurfaceItem
+    // href="/apps/get-started" leftSection={<IconCode …/>}>Build apps</ChromeSurfaceItem>`
+    // to the overflow passed all 8 tests.
+    //
+    // That is not bookkeeping. `/apps/get-started` is governed by the `appBlocksGetStarted`
+    // kill switch, and this chrome has no flag plumbing at all — the DELIBERATE SUBSET note
+    // above the platform nav in `IframeHost.tsx` is the argument that a surface which
+    // cannot honour a kill switch must not advertise the route it switches off. The
+    // overflow is the same surface, so the same argument governs it; only the enumeration
+    // stopped short.
+    //
+    // SORTED, so a re-ORDER cannot report a route change that did not happen — this rule
+    // is about the SET, and the platform-nav slice's own `toEqual` is what governs order
+    // there. DUPLICATES KEPT: `/apps/installed` legitimately appears twice, and collapsing
+    // to a Set would hide a third item hung on an already-listed route.
+    expect(
+      links.map((l) => l.href).sort(),
+      'the set of routes the app-block chrome links to has changed. Adding one is a ' +
+        'product decision rather than a detail: this surface has no feature-flag plumbing ' +
+        'at all — the only condition anywhere on it is `isModerator` — so a flag-gated ' +
+        'destination added here keeps being offered after its flag goes down (that is why ' +
+        '`/apps/get-started` is excluded; see the DELIBERATE SUBSET note in ' +
+        '`IframeHost.tsx`). Removing one deletes a door out of a running app. Update this ' +
+        'list deliberately, WITH the reason.'
+    ).toEqual([
+      '/apps', // Marketplace — platform nav
+      '/apps/installed', // Installed apps — platform nav
+      '/apps/installed', // Manage apps — ⋮ overflow; the pair (c) governs their labels
+      '/apps/mine', // My apps — platform nav
+      '/apps/review', // Review — platform nav, moderator-gated
+    ]);
   });
 
   it('the whole-chrome parser sees BOTH sections — positive control', () => {

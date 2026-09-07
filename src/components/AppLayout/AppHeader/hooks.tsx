@@ -249,12 +249,28 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           // description of the landing page; (2) branching the label AND the icon
           // (`IconPlugConnected` vs the sub-nav's `IconCode`) re-splits one row into
           // two presentations, which is the duplication this consolidation removed;
-          // (3) the cohort is EMPTY today — `appBlocksGetStarted` is
-          // `availability: ['mod']` and every moderator holds a store flag, so no
-          // real viewer takes this branch. RE-DECIDE IT when that stops being true:
-          // the trigger is `app-blocks-get-started` being widened past `['mod']`
-          // (in Flipt, or in `feature-flags.service.ts`). Until then a conditional
-          // label would be untestable-in-production copy.
+          // (3) we believe the cohort is EMPTY today — but note what that rests on,
+          // because it is NOT something this repo can settle. `appBlocksGetStarted`
+          // declares `availability: ['mod']`, and `availability` is only the
+          // Flipt-DOWN FALLBACK: `getFeatureFlags` returns Flipt's answer BEFORE it
+          // evaluates roles ("Flipt overrides role checks (both enable AND disable)",
+          // `~/server/services/feature-flags.service.ts`). So who actually holds
+          // get-started, and who actually holds the store flags, is observable only in
+          // LIVE FLIPT. What the code DOES establish is that all four App-Blocks flags
+          // are Flipt-backed runtime toggles, so this branch becomes reachable with no
+          // PR and no deploy.
+          //
+          // 🔴 RE-DECIDE IT when a real viewer can take this branch, which happens from
+          // BOTH directions — the condition is `!marketplace && getStarted`, so either
+          // side moving is enough:
+          //   • get-started WIDENS — `app-blocks-get-started` rolled out past
+          //     moderators in Flipt, or `availability` changed in
+          //     `feature-flags.service.ts`; or
+          //   • the STORE flags NARROW — `app-blocks-enabled` / `app-listings` turned
+          //     off in Flipt while get-started stays on. Then EVERY moderator takes
+          //     this branch and sees a row labelled "Apps" with `IconPlugConnected`
+          //     navigating to developer onboarding.
+          // Until then a conditional label would be untestable-in-production copy.
           href: appsNav.marketplace ? '/apps' : '/apps/get-started',
           visible: appsNav.marketplace || appsNav.getStarted,
           icon: IconPlugConnected,
