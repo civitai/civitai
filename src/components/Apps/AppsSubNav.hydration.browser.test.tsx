@@ -266,8 +266,12 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
   // where the collapse fires — are pinned in the last describe of this file and in
   // `AppsSubNav.storeGate.browser.test.tsx`.)
   const NON_AUTHOR = () => {
-    // The widened store-visibility tester cohort, verified live: sees the store,
-    // cannot author, and reaches `/apps/build` on the get-started term alone.
+    // A store-visible non-author who reaches `/apps/build` on the get-started term alone.
+    // ⚠️ THIS IS A SHAPE, NOT A LIVE COHORT, and the "verified live" claim that used to sit
+    // here is withdrawn: `app-blocks-author` rolls out to the same segment as `app-listings`,
+    // so `{appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true}` on a non-mod
+    // is empty under the current Flipt state. The fixture is what the invariant needs; it is
+    // not evidence about who holds these flags today.
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
   };

@@ -110,11 +110,20 @@ describe('prepareMessage', () => {
     expect(Object.keys(DETAILS).sort()).toEqual(['body', 'listingId', 'slug', 'subject']);
   });
 
-  it('links to the owner submissions view, the one URL the recipient can always open', () => {
-    // `/apps/mine` gates on `appBlocksAuthor` — the cohort a listing owner is in by
-    // construction — whereas the public detail page gates on `hasAppsStoreAccess` and
-    // 404s for owners outside it. Pinned against the shared constant so a route rename
-    // moves this with its five siblings rather than stranding it.
+  it('links to the owner submissions view, NOT the public listing page', () => {
+    // 🔴 THIS DOES NOT ASSERT THE RECIPIENT CAN OPEN THE URL, and the test used to be
+    // named as though it did. The old reason ran: `/apps/mine` gates on `appBlocksAuthor`,
+    // the cohort a listing owner is in by construction, whereas the public page gates on
+    // `hasAppsStoreAccess`. Every clause of that is now void — `/apps/mine` is a 301, the
+    // destination gates on `canAccessAppsBuild`, which REQUIRES `hasAppsStoreAccess` and
+    // then more, and "author by construction" is a property of the Flipt segment sets, not
+    // of this code. THE COHORT ARGUMENT IS NOT REPLACED BY ANOTHER ONE; see
+    // `comment.notifications.ts`'s `new-app-listing-comment` note for what still picks
+    // this destination. What is pinned here is the destination, nothing about reachability.
+    //
+    // Pinned against the shared constant so a route rename moves this with the other
+    // importers of `OWNER_SUBMISSIONS_URL` rather than stranding it — count them from the
+    // constant's definition rather than trusting a total written here.
     expect(msg(DETAILS)!.url).toBe(OWNER_SUBMISSIONS_URL);
     expect(OWNER_SUBMISSIONS_URL).toBe('/apps/build');
   });

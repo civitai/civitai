@@ -67,6 +67,23 @@ const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
  */
 const SCAN_ROOTS = ['components', 'pages'];
 
+/**
+ * A floor PER ROOT, and the reason it is not a single total: the roots are wildly uneven.
+ * Measured at this ref — `components` 1,786 non-test modules, `pages` 575, total 2,361 —
+ * so ANY total at or below 1,786 is satisfied by `components` alone, i.e. by narrowing
+ * `SCAN_ROOTS` back to the pre-widening value. Nothing else in this file notices that
+ * narrowing either: both `BUILD_GATE_SITES` entries and both directories named in the
+ * blind-spot assertion below live under `components`. A per-root floor cannot be met by
+ * one root growing while another is dropped.
+ *
+ * The floors sit ~33% (components) and ~39% (pages) under the live counts, so ordinary
+ * churn — retiring files, moving a feature — cannot trip them. What CAN trip them is a
+ * root being narrowed away, or `pages/` being renamed wholesale (an app-router
+ * migration). Both are deliberate changes that should re-decide this ledger's blast
+ * radius rather than pass it silently, which is the whole point.
+ */
+const ROOT_FLOORS: Record<string, number> = { components: 1200, pages: 350 };
+
 function read(rel: string): string {
   return fs.readFileSync(path.join(SRC, rel), 'utf8');
 }
@@ -185,21 +202,28 @@ describe('the masker and the pattern (validate the instrument before reading its
     );
   });
 
-  it('the walk reached a plausible number of modules, and both ledger sites', () => {
-    // A zero is indistinguishable from a walk wired to nothing. Floor well below the live
-    // count (2,361 at this ref) so retiring a file does not red the guard.
-    //
-    // 🔴 THE FLOOR IS ALSO WHAT PINS THE WIDENED ROOTS. The previous value, 40, was
-    // satisfied by `['components/Apps', 'pages/apps']` alone (154 files), so narrowing
-    // `SCAN_ROOTS` back would have passed it silently and re-opened the blind spot the
-    // header describes. 1,200 cannot be reached without walking `components` and `pages`
-    // whole.
+  it('the walk reached a plausible number of modules in EVERY root, and both ledger sites', () => {
+    // A zero is indistinguishable from a walk wired to nothing — and a single TOTAL is
+    // indistinguishable from one root being dropped while another grows past the number.
+    // 🔴 THIS IS WHAT PINS THE WIDENED ROOTS, and it is per-root for a measured reason:
+    // the previous single floor of 1,200 was satisfied by `components` (1,786) alone, so
+    // narrowing `SCAN_ROOTS` back to the pre-widening value passed it silently. See
+    // `ROOT_FLOORS`.
     expect(
-      SCANNED.length,
-      'the re-inline scan is walking far fewer modules than `SCAN_ROOTS` should reach. ' +
-        'If `SCAN_ROOTS` was narrowed, a third gate outside the surviving roots is now ' +
-        'invisible to the exactness assertion below — see this file’s `SCAN_ROOTS` note.'
-    ).toBeGreaterThanOrEqual(1200);
+      [...SCAN_ROOTS].sort(),
+      '`SCAN_ROOTS` and `ROOT_FLOORS` no longer name the same roots. Every scanned root ' +
+        'needs its own floor, or a root can be narrowed away with no assertion here ' +
+        'noticing — see this file’s `SCAN_ROOTS` and `ROOT_FLOORS` notes.'
+    ).toEqual(Object.keys(ROOT_FLOORS).sort());
+    for (const [root, floor] of Object.entries(ROOT_FLOORS)) {
+      const walked = SCANNED.filter((f) => f.rel.startsWith(`${root}/`)).length;
+      expect(
+        walked,
+        `the re-inline scan walked ${walked} modules under \`${root}\`, under its floor ` +
+          `of ${floor}. If \`${root}\` was narrowed or dropped from \`SCAN_ROOTS\`, a ` +
+          `third gate under it is now invisible to the exactness assertion below.`
+      ).toBeGreaterThanOrEqual(floor);
+    }
     const seen = new Set(SCANNED.map((f) => f.rel));
     expect(BUILD_GATE_SITES.filter((s) => !seen.has(s))).toEqual([]);
   });

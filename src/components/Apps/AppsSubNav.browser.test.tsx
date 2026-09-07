@@ -318,13 +318,18 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
  *
  * THIS BLOCK CARRIES THE INTENT OF THE OLD "Create is gated on the author capability"
  * describe. That test existed because `/apps/submit` `notFound`s a non-author while the
- * tab was hardcoded `visible: () => true`, so the widened store-visibility cohort
- * (`app-listings=true`, `app-blocks-author=false` — verified live on a real tester
- * account) was offered a tab straight into a 404. "Create" is gone, but the rule it
- * pinned is not: the SINGLE authoring row left in this bar must be visible to exactly the
- * cohort its page admits. At this level that surfaces as `context.canBuild`; the
- * container derivation (and the moderator floor inside `isAppDeveloper`) is covered in
- * `AppsSubNav.hydration.browser.test.tsx`.
+ * tab was hardcoded `visible: () => true`, so a store-visible non-author
+ * (`app-listings=true`, `app-blocks-author=false`) was offered a tab straight into a 404.
+ * ⚠️ THE "verified live on a real tester account" CLAIM THAT USED TO SIT HERE IS
+ * WITHDRAWN, NOT REPLACED: `app-blocks-author` rolls out to the same segment as
+ * `app-listings`, so that pairing is empty under the current Flipt state. The shape is
+ * still reachable — `app-listings-public-external` rolls out to `testers` and does not
+ * imply authorship — and the shape is what this block is about.
+ *
+ * "Create" is gone, but the rule it pinned is not: the SINGLE authoring row left in this
+ * bar must be visible to exactly the cohort its page admits. At this level that surfaces
+ * as `context.canBuild`; the container derivation (and the moderator floor inside
+ * `isAppDeveloper`) is covered in `AppsSubNav.hydration.browser.test.tsx`.
  *
  * Both directions are asserted, because asserting only the absence passes on a tab that
  * renders for nobody and only the presence passes on a tab that renders for everybody.
@@ -438,7 +443,15 @@ describe('AppsSubNavView (Marketplace is gated on canSeeStore)', () => {
  *
  * Before this change that viewer had Marketplace because the row was unconditional; now
  * they have it because they genuinely hold store access. Either way it is one tab and the
- * bar hides itself. The cohort is real: `app-dev-testers` with the kill switch off.
+ * bar hides itself.
+ *
+ * ⚠️ THE SHAPE IS REAL; THE COHORT THIS USED TO NAME IS NOT. It said "`app-dev-testers`
+ * with the kill switch off", which the Flipt state refutes: `app-blocks-author` rolls out
+ * to `app-dev-testers`, so such a member IS an author and the kill switch cannot drop them
+ * to one tab. The shape is reachable through the store flags that do NOT imply authorship
+ * (`app-listings-public-external` rolls out to `testers`). No replacement cohort claim is
+ * made here — the segment sets live in `civitai/flipt-state`, not in this repo, and nothing
+ * here enforces them.
  *
  * The OTHER shape — no store access — does not reach this collapse at all: the CONTAINER
  * returns `null` before the view is rendered (see the storeGate suite).
@@ -826,10 +839,14 @@ describe('AppsSubNavView (Invites is gated on the author capability)', () => {
   });
 
   test('🔴 Invites is HIDDEN from a NON-author, even with hasPendingInvites true', async () => {
-    // The store-visible tester cohort (`app-listings=true`, `app-blocks-author=false`).
-    // `blocks.getNavSummary` is gated on the MARKETPLACE flag, not the author one, so
-    // this combination is reachable — an owner can invite any existing user, and an
-    // author who loses the capability keeps their listings.
+    // The store-visible non-author SHAPE (`app-listings=true`, `app-blocks-author=false`).
+    // ⚠️ Not a named live cohort — `app-blocks-author` rolls out to the same segment as
+    // `app-listings`, so that pairing is empty under the current Flipt state. The shape is
+    // reachable via a store flag that does not imply authorship
+    // (`app-listings-public-external` → `testers`), and via an author who loses the
+    // capability and keeps their listings. `blocks.getNavSummary` is gated on the
+    // MARKETPLACE flag, not the author one, so the summary still populates — an owner can
+    // invite any existing user.
     renderWithProviders(
       <>
         <RenderBarrier />

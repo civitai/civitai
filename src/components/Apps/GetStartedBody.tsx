@@ -38,10 +38,15 @@ import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 /**
  * "App builders" get-started body — the Scope-A soft-launch funnel.
  *
- * The page that renders this is gated on the `appBlocksGetStarted` flag, which
- * is STAGED MOD-ONLY today (deploys dark-to-public; mods review live on prod)
- * and widened to `['public']` in a one-line flag change at launch — see
- * get-started.tsx / feature-flags.service.ts.
+ * This is not a page and is not gated on its own. It is mounted by `AppsBuildBody`
+ * as state A of `/apps/build`, whose gate is `canAccessAppsBuild` =
+ * `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
+ * (`~/shared/utils/app-blocks-access`). `appBlocksGetStarted` is STAGED MOD-ONLY today,
+ * but it is one disjunct UNDER a store AND, not the gate — so widening it alone is NOT
+ * a one-line flag change and does not launch this: the widened cohort gets a `notFound`
+ * from `/apps/build`. See the flag's own comment in `feature-flags.service.ts` for what
+ * else has to move. (The earlier version of this note said "one-line flag change" and
+ * pointed at `/apps/get-started`, a page this consolidation deletes.)
  *
  * Copy is QUICKSTART-FIRST (devs scan + copy-paste; minimal prose). Honesty /
  * scope: this page points would-be developers at the LOCAL build tooling. The

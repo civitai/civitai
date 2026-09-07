@@ -16,11 +16,13 @@
  *
  * 🔴 THIS IS THE COMMUNITY DISCORD, NOT A REQUEST-ACCESS ENDPOINT, AND THE DIFFERENCE
  * IS DELIBERATELY NOT PAPERED OVER. `appBlocksAuthor` is a Flipt flag with no self-serve
- * path: there is no DB row, no invite mechanism, no form, and no queue. The flag's own
- * comment in `feature-flags.service.ts` says the get-started widen is blocked on "the
- * real Request-access link" — a destination that has never existed. So rather than
- * fabricate a URL nothing serves, this points at the one channel the repo ALREADY treats
- * as the place a person asks a human for something: `/discord`.
+ * path: there is no DB row, no invite mechanism, no form, and no queue. A "Request-access
+ * link" has never existed. This note used to cite the `appBlocksGetStarted` comment in
+ * `feature-flags.service.ts` as saying the get-started widen was blocked on one; `f5ad1d6deb`
+ * rewrote that comment for a different reason and the sentence is gone, so the claim now has
+ * NO citation anywhere in the repo — do not read one back in. So rather than fabricate a URL
+ * nothing serves, this points at the one channel the repo ALREADY treats as the place a
+ * person asks a human for something: `/discord`.
  *
  * `/discord` rather than a raw `discord.gg` URL because it is a real, permanent redirect
  * defined in `next.config.mjs` and asserted to exist by

@@ -203,8 +203,11 @@ export default function AppListingEditPage() {
         page. Recorded because the trigger is a RUNTIME Flipt toggle rather than a deploy:
         `appBlocks` is `{ availability: ['mod'], fliptKey: 'app-blocks-enabled' }` and
         `getFeatureFlags` returns the Flipt answer before it evaluates `availability`, so
-        this widens with no code change and no PR. See the fuller note in
-        `src/pages/apps/get-started.tsx`.
+        this widens with no code change and no PR.
+
+        The fuller note this used to point at lived on `/apps/get-started`, which the
+        `/apps/build` consolidation DELETES. It was not relocated, so there is no longer a
+        fuller note to read — this paragraph is now the whole of it.
       */}
       <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/listing/[appListingId]/edit']}>
         <Stack gap="lg">
