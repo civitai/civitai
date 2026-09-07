@@ -769,10 +769,11 @@ export const commentNotifications = createNotificationProcessor({
       // than a store-gated page. `/apps/mine` no longer exists — the consolidation moved this
       // constant to `/apps/build`, whose gate is `canAccessAppsBuild` =
       // `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
-      // (`shared/utils/app-blocks-access.ts`). Store access is now a hard AND, so the
-      // destination is a SUPERSET of the store term the paragraph above rejects, not an
-      // alternative to it: on the cohort axis `/apps/build` is strictly NARROWER than
-      // `/apps/store-preview/<slug>`, the opposite of what the old reason claimed.
+      // (`shared/utils/app-blocks-access.ts`). Store access is now a hard AND, so this
+      // destination REQUIRES the very term the paragraph above rejects, and then requires
+      // more on top of it. Its admitted cohort is therefore a strict SUBSET of
+      // `/apps/store-preview/<slug>`'s — narrower, not wider, which is the exact opposite
+      // of what the old reason claimed.
       //
       // What still picks it is CONTENT, not reachability. This notification is about the
       // owner's own submission, and state C of `/apps/build` is that submissions table — the
