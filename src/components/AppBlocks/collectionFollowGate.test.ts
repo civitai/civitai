@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildCollectionFollowConsentCopy,
+  createCollectionFollowSettlement,
   resolveCollectionFollowRequest,
+  resolveCollectionIdentity,
 } from './collectionFollowGate';
 
 /**
@@ -13,7 +15,7 @@ import {
  * `IframeHostCollectionFollow.browser.test.tsx`.
  */
 
-const ok = { signedIn: true, reviewNack: false };
+const ok = { ready: true, signedIn: true, reviewNack: false };
 
 describe('resolveCollectionFollowRequest', () => {
   it('accepts a well-formed follow request from a signed-in viewer', () => {
@@ -53,6 +55,7 @@ describe('resolveCollectionFollowRequest', () => {
     expect(
       resolveCollectionFollowRequest({
         raw: { requestId: 'rq3', collectionId: 9, follow: true },
+        ready: true,
         signedIn: false,
         reviewNack: false,
       })
@@ -66,6 +69,7 @@ describe('resolveCollectionFollowRequest', () => {
     expect(
       resolveCollectionFollowRequest({
         raw: { requestId: 'rq4', collectionId: 11, follow: true },
+        ready: true,
         signedIn: true,
         reviewNack: true,
       })
@@ -76,6 +80,7 @@ describe('resolveCollectionFollowRequest', () => {
     expect(
       resolveCollectionFollowRequest({
         raw: { requestId: 'rq5', collectionId: 11, follow: true },
+        ready: true,
         signedIn: false,
         reviewNack: true,
       })
@@ -141,11 +146,178 @@ describe('resolveCollectionFollowRequest', () => {
   });
 });
 
+/**
+ * 🔴 F2 REGRESSION. Before this branch the two handlers gated on nothing but the
+ * payload and the viewer, so a block that had never sent `BLOCK_READY` — i.e. a
+ * page the viewer had not interacted with at all — could pop a permission modal
+ * on load. Three sibling handlers already document the opposite posture; this is
+ * the only ungated one that performs an ACCOUNT WRITE.
+ */
+describe('resolveCollectionFollowRequest — pre-handshake gate', () => {
+  it('🔴 REFUSES a pre-handshake request with `not-ready`, WITH a reply (never a silent drop)', () => {
+    expect(
+      resolveCollectionFollowRequest({
+        raw: { requestId: 'rq_pre', collectionId: 77, follow: true },
+        ready: false,
+        signedIn: true,
+        reviewNack: false,
+      })
+    ).toEqual({ kind: 'refuse', requestId: 'rq_pre', error: 'not-ready' });
+  });
+
+  it('the pre-handshake refusal outranks BOTH the anonymous and the malformed refusals', () => {
+    // Otherwise a pre-handshake block learns whether the viewer is signed in.
+    expect(
+      resolveCollectionFollowRequest({
+        raw: { requestId: 'rq_pre2', collectionId: -1, follow: 'nope' },
+        ready: false,
+        signedIn: false,
+        reviewNack: false,
+      })
+    ).toEqual({ kind: 'refuse', requestId: 'rq_pre2', error: 'not-ready' });
+  });
+
+  it('the review NACK still outranks the pre-handshake refusal', () => {
+    expect(
+      resolveCollectionFollowRequest({
+        raw: { requestId: 'rq_pre3', collectionId: 3, follow: true },
+        ready: false,
+        signedIn: true,
+        reviewNack: true,
+      })
+    ).toEqual({ kind: 'refuse', requestId: 'rq_pre3', error: 'review-mode' });
+  });
+
+  it('positive control: the SAME request with ready:true reaches `confirm`', () => {
+    // Without this the block above could pass merely because everything refuses.
+    expect(
+      resolveCollectionFollowRequest({
+        raw: { requestId: 'rq_pre', collectionId: 77, follow: true },
+        ready: true,
+        signedIn: true,
+        reviewNack: false,
+      })
+    ).toEqual({
+      kind: 'confirm',
+      request: { requestId: 'rq_pre', collectionId: 77, follow: true },
+    });
+  });
+});
+
+/**
+ * 🔴 F1 REGRESSION, half one. The host must learn the collection's identity from
+ * the id it is about to act on — and a collection it cannot see must be
+ * indistinguishable from one that does not exist.
+ */
+describe('resolveCollectionIdentity', () => {
+  it('reads the name and owner from a `collection.getById` result', () => {
+    expect(
+      resolveCollectionIdentity({
+        collection: { id: 77, name: 'Cute Cats', user: { id: 3, username: 'alice' } },
+        permissions: { read: true },
+      })
+    ).toEqual({ kind: 'ok', identity: { name: 'Cute Cats', ownerUsername: 'alice' } });
+  });
+
+  it('🔴 a NONEXISTENT id and a PRIVATE collection resolve IDENTICALLY (no existence leak)', () => {
+    // `getCollectionByIdHandler` returns `{ collection: null }` for BOTH: a
+    // missing row and a viewer with no read permission. Anything that told them
+    // apart would let a block enumerate private collection ids by asking the host
+    // to name them.
+    const notFound = resolveCollectionIdentity({ collection: null, permissions: {} });
+    const forbidden = resolveCollectionIdentity({
+      collection: null,
+      permissions: { read: false, write: false, manage: false },
+    });
+    expect(notFound).toEqual({ kind: 'unavailable' });
+    expect(forbidden).toEqual(notFound);
+  });
+
+  it('treats any unexpected shape as unavailable rather than rendering undefined', () => {
+    for (const raw of [undefined, null, 'nope', 42, {}, { collection: 'yes' }, { collection: 7 }]) {
+      expect(resolveCollectionIdentity(raw), JSON.stringify(raw) ?? 'undefined').toEqual({
+        kind: 'unavailable',
+      });
+    }
+  });
+
+  it('🔴 SANITIZES the fetched name and owner — other users control these strings', () => {
+    const res = resolveCollectionIdentity({
+      collection: { name: 'Cute‮Cats\nHere', user: { username: 'ali\u0000ce' } },
+    });
+    expect(res).toEqual({
+      kind: 'ok',
+      identity: { name: 'CuteCats Here', ownerUsername: 'ali ce' },
+    });
+  });
+
+  it('nulls a name/owner that sanitizes away entirely, rather than rendering ""', () => {
+    expect(
+      resolveCollectionIdentity({ collection: { name: '​​', user: { username: '   ' } } })
+    ).toEqual({ kind: 'ok', identity: { name: null, ownerUsername: null } });
+  });
+});
+
+/**
+ * 🔴 F3 REGRESSION. `ConfirmDialog.handleConfirm` awaits `onConfirm()` BEFORE
+ * closing its Modal, and does not disable escape / overlay dismissal while it
+ * waits — so a dismissal mid-flight used to win the exactly-once latch with
+ * `declined` for a write that completed. `declined` MUST mean "no write occurred".
+ */
+describe('createCollectionFollowSettlement', () => {
+  it('replies exactly once and stamps the requestId', () => {
+    const emit = vi.fn();
+    const s = createCollectionFollowSettlement({ requestId: 'rq1', emit });
+    s.reply({ result: { collectionId: 7, followed: true } });
+    s.reply({ error: 'too late' });
+    s.decline();
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith({
+      requestId: 'rq1',
+      result: { collectionId: 7, followed: true },
+    });
+  });
+
+  it('a dismissal BEFORE consent replies `declined`', () => {
+    const emit = vi.fn();
+    const s = createCollectionFollowSettlement({ requestId: 'rq2', emit });
+    s.decline();
+    expect(emit).toHaveBeenCalledWith({ requestId: 'rq2', error: 'declined' });
+  });
+
+  it('🔴 a dismissal AFTER consent is a NO-OP — the in-flight write reports itself', () => {
+    const emit = vi.fn();
+    const s = createCollectionFollowSettlement({ requestId: 'rq3', emit });
+    s.markConsented(); // synchronous, at the top of onConfirm
+    s.decline(); // ESC / overlay click while the mutation is in flight
+    expect(emit).not.toHaveBeenCalled();
+    s.reply({ result: { collectionId: 9, followed: true } }); // mutation resolves
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith({
+      requestId: 'rq3',
+      result: { collectionId: 9, followed: true },
+    });
+  });
+
+  it('a dismissal after consent does not suppress a FAILED write either', () => {
+    const emit = vi.fn();
+    const s = createCollectionFollowSettlement({ requestId: 'rq4', emit });
+    s.markConsented();
+    s.decline();
+    s.reply({ error: 'FORBIDDEN' });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith({ requestId: 'rq4', error: 'FORBIDDEN' });
+  });
+});
+
 describe('buildCollectionFollowConsentCopy', () => {
+  const named = { collectionId: 77, collection: { name: 'Cute Cats', ownerUsername: 'alice' } };
+
   it('asks a FOLLOW question naming the app, with a Follow confirm label', () => {
     const copy = buildCollectionFollowConsentCopy({
       follow: true,
       appName: 'Playable Collections',
+      ...named,
     });
     expect(copy.title).toBe('Follow this collection?');
     expect(copy.confirmLabel).toBe('Follow');
@@ -153,10 +325,56 @@ describe('buildCollectionFollowConsentCopy', () => {
     expect(copy.message).toContain('follow');
   });
 
+  /**
+   * 🔴 F1 REGRESSION, half two. The whole sentence, pinned. A guard on WORDS is
+   * walkable by rewording, and the defect being fixed here WAS a wording: the
+   * message named no collection at all, so host chrome asserted nothing the
+   * block's own "Follow ⭐ Cute Cats" card could contradict. A cosmetic reword
+   * must fail this test.
+   */
+  it('🔴 NAMES THE COLLECTION the host resolved — id 900123 cannot hide behind "a collection"', () => {
+    expect(
+      buildCollectionFollowConsentCopy({ follow: true, appName: 'Evil App', ...named }).message
+    ).toBe(
+      'Evil App wants to follow “Cute Cats” by alice with your Civitai account. It will appear in your collections until you unfollow it.'
+    );
+    expect(
+      buildCollectionFollowConsentCopy({ follow: false, appName: 'Evil App', ...named }).message
+    ).toBe(
+      'Evil App wants to unfollow “Cute Cats” by alice with your Civitai account. It will be removed from your collections.'
+    );
+  });
+
+  it('names the collection without an owner when the owner is unknown', () => {
+    expect(
+      buildCollectionFollowConsentCopy({
+        follow: true,
+        appName: 'App',
+        collectionId: 900123,
+        collection: { name: 'Cute Cats', ownerUsername: null },
+      }).message
+    ).toBe(
+      'App wants to follow “Cute Cats” with your Civitai account. It will appear in your collections until you unfollow it.'
+    );
+  });
+
+  it('🔴 falls back to the numeric ID, never to an object-less sentence', () => {
+    const msg = buildCollectionFollowConsentCopy({
+      follow: true,
+      appName: 'App',
+      collectionId: 900123,
+      collection: { name: null, ownerUsername: null },
+    }).message;
+    expect(msg).toBe(
+      'App wants to follow collection #900123 with your Civitai account. It will appear in your collections until you unfollow it.'
+    );
+  });
+
   it('asks a distinct UNFOLLOW question — the two are not one string with a swapped verb', () => {
     const copy = buildCollectionFollowConsentCopy({
       follow: false,
       appName: 'Playable Collections',
+      ...named,
     });
     expect(copy.title).toBe('Unfollow this collection?');
     expect(copy.confirmLabel).toBe('Unfollow');
@@ -165,9 +383,9 @@ describe('buildCollectionFollowConsentCopy', () => {
 
   it('falls back to "This app" when the publisher name is missing or illegible', () => {
     for (const appName of [undefined, null, '', '   ', '​​']) {
-      expect(buildCollectionFollowConsentCopy({ follow: true, appName }).message).toContain(
-        'This app'
-      );
+      expect(
+        buildCollectionFollowConsentCopy({ follow: true, appName, ...named }).message
+      ).toContain('This app');
     }
   });
 
@@ -177,6 +395,7 @@ describe('buildCollectionFollowConsentCopy', () => {
     const copy = buildCollectionFollowConsentCopy({
       follow: true,
       appName: 'Evil‮App\nName',
+      ...named,
     });
     expect(copy.message).not.toContain('‮');
     expect(copy.message).not.toContain('\n');

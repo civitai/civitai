@@ -1,5 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -15,22 +16,34 @@ import type * as TrpcMod from '~/utils/trpc';
  * is REGISTERED. These are the behavioural pins for what it does, and in
  * particular for the property that made this bridge worth reviewing:
  *
- * 🔴 THE BRIDGE REMOVES A SCOPE GATE. Over HTTP a follow needed the block scope
- * `collections:write:self`, and the viewer's grant of that scope WAS the consent.
- * On the bridge the host acts as the signed-in session user, so the replacement
- * consent is a HOST-CHROME CONFIRM the sandboxed iframe cannot fake. Every test
- * below that reaches a mutation goes through that confirm first, and the two
- * "never calls the mutation" tests are the ones that would catch it being
- * dropped.
+ * 🔴 THE BRIDGE REMOVES A SCOPE DECLARATION, AND ADDS THE ONLY CONSENT THIS
+ * OPERATION HAS EVER HAD. ⚠️ An earlier version of this header said the viewer's
+ * grant of `collections:write:self` "WAS the consent" — RETRACTED, and false:
+ * that scope is in `CONSENT_EXEMPT_SCOPES`
+ * (`src/server/services/blocks/scope-grant.service.ts`), so it minted with no
+ * prompt and no grant row was ever recorded. What the bridge gives up is ex-ante
+ * REVIEWABILITY (the manifest `scopes` string a moderator reviews and the viewer
+ * inspects post-install); what it adds is a HOST-CHROME CONFIRM the sandboxed
+ * iframe cannot fake. Every test below that reaches a mutation goes through that
+ * confirm first, and the "never calls the mutation" tests are the ones that would
+ * catch it being dropped.
+ *
+ * 🔴 The confirm must also NAME the collection, resolved by the HOST from the id
+ * it is about to act on — a dialog that says only "a collection" asserts nothing
+ * a block's own "Follow ⭐ Cute Cats" card could contradict.
  *
  * Mirrored on the model-slot surface by `IframeHostCollectionFollow.browser.test.tsx`
  * — the two hosts share the DECISION module but have entirely separate bridges,
  * so neither suite can see the other's wiring.
  */
 
-const { followMutate, unfollowMutate } = vi.hoisted(() => ({
+const { followMutate, unfollowMutate, getByIdFetch } = vi.hoisted(() => ({
   followMutate: vi.fn(),
   unfollowMutate: vi.fn(),
+  // The HOST-SIDE collection lookup that makes the consent dialog name its
+  // object. Mocked per-test so a suite can exercise the found / not-visible /
+  // lookup-failed arms independently of any block-supplied string.
+  getByIdFetch: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -74,6 +87,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       },
     },
     useUtils: () => ({
+      collection: { getById: { fetch: getByIdFetch } },
       apps: {
         shared: {
           list: { fetch: vi.fn() },
@@ -124,6 +138,30 @@ function listenForReply() {
   };
 }
 
+/**
+ * What `collection.getById` returns for a collection this viewer CAN see. The
+ * host resolves the consent dialog's subject from this — never from anything the
+ * block sent.
+ */
+const VISIBLE_COLLECTION = {
+  collection: { id: 77, name: 'Cute Cats', user: { id: 3, username: 'alice' } },
+  permissions: { read: true, write: false, manage: false },
+  collaborators: [],
+  pendingReviewCount: 0,
+};
+
+/**
+ * What it returns for a collection that does NOT exist, and — identically — for
+ * one this viewer may not see. `getCollectionByIdHandler` produces this same
+ * shape for both, which is the existence-leak guarantee the host inherits.
+ */
+const UNAVAILABLE_COLLECTION = {
+  collection: null,
+  permissions: { read: false, write: false, manage: false },
+  collaborators: [],
+  pendingReviewCount: 0,
+};
+
 function lastDialog() {
   const dialogs = useDialogStore.getState().dialogs;
   if (dialogs.length === 0) throw new Error('no modal opened');
@@ -173,11 +211,28 @@ type ConfirmProps = {
   onCancel: () => void;
 };
 
+/**
+ * Mount and wait for the iframe, but DELIBERATELY never send `BLOCK_READY` — the
+ * pre-handshake state a block reaches on load, before the viewer has interacted
+ * with it at all.
+ */
+async function mountWithoutHandshake() {
+  renderWithProviders(<PageBlockHost {...baseProps} />);
+  await vi.waitFor(() => {
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (!el.contentWindow) throw new Error('not mounted yet');
+  });
+  const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+  expect(el.getAttribute('data-block-ready')).not.toBe('true');
+}
+
 describe('PageBlockHost SET_COLLECTION_FOLLOW (consent-gated follow)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     followMutate.mockReset();
     unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
   });
 
   test('opens a host-chrome consent confirm BEFORE any write; on CONFIRM calls collection.follow and replies followed:true', async () => {
@@ -355,6 +410,223 @@ describe('PageBlockHost SET_COLLECTION_FOLLOW (consent-gated follow)', () => {
       });
     });
     expect(replies.of('COLLECTION_FOLLOW_RESULT')).toHaveLength(1);
+    replies.stop();
+  });
+});
+
+/**
+ * 🔴 F1 REGRESSION (page host). The dialog previously named NO collection: a
+ * block could render "Follow ⭐ Cute Cats", post a different id, and host chrome
+ * would assert nothing that could contradict it.
+ */
+describe('PageBlockHost SET_COLLECTION_FOLLOW — the confirm names the HOST-RESOLVED collection', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    followMutate.mockReset();
+    unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
+  });
+
+  test('🔴 fetches the collection by the SAME id it will act on and names it in the dialog', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_named',
+      collectionId: 900123,
+      follow: true,
+      // A block-supplied name must NOT reach the dialog — the host has no field
+      // for it and must never grow one.
+      collectionName: 'Totally Safe Kittens',
+    });
+
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(getByIdFetch).toHaveBeenCalledWith({ id: 900123 }, { staleTime: 0 });
+    const msg = (lastDialog().props as ConfirmProps).message;
+    // The WHOLE sentence, so a cosmetic reword that drops the object fails here.
+    expect(msg).toBe(
+      'Playable Collections wants to follow “Cute Cats” by alice with your Civitai account. It will appear in your collections until you unfollow it.'
+    );
+    expect(msg).not.toContain('Totally Safe Kittens');
+    replies.stop();
+  });
+
+  test('🔴 a collection the viewer cannot see is REFUSED with a reply and NO dialog', async () => {
+    getByIdFetch.mockResolvedValue(UNAVAILABLE_COLLECTION);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_priv',
+      collectionId: 4242,
+      follow: true,
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_priv', error: 'collection-unavailable' });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(followMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('a FAILED lookup refuses with the same code — never a hang, never a nameless dialog', async () => {
+    getByIdFetch.mockRejectedValue(new Error('NOT_FOUND'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_boom',
+      collectionId: 4243,
+      follow: true,
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_boom', error: 'collection-unavailable' });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    replies.stop();
+  });
+});
+
+/**
+ * 🔴 F2 REGRESSION (page host). A pre-handshake block could pop a permission
+ * modal with zero user interaction. This is the only ungated REQUEST-style
+ * handler that performs an account WRITE.
+ */
+describe('PageBlockHost SET_COLLECTION_FOLLOW — pre-handshake gate', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    followMutate.mockReset();
+    unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
+  });
+
+  test('🔴 a block that never sent BLOCK_READY gets `not-ready` and NO dialog', async () => {
+    await mountWithoutHandshake();
+    const replies = listenForReply();
+
+    postFromBlock('SET_COLLECTION_FOLLOW', { requestId: 'rq_pre', collectionId: 77, follow: true });
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_pre', error: 'not-ready' });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(getByIdFetch).not.toHaveBeenCalled();
+    expect(followMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+});
+
+/**
+ * 🔴 F3 REGRESSION — driven through the REAL rendered Modal, not through
+ * `props.onCancel()`.
+ *
+ * `ConfirmDialog.handleConfirm` awaits `onConfirm()` BEFORE closing its Modal and
+ * leaves escape/overlay dismissal live during that await, so the dismissal used
+ * to win the exactly-once latch with `declined` for a follow that completed. The
+ * invariant these pin is `declined` ⇒ NO WRITE OCCURRED.
+ *
+ * `<DialogProvider />` is rendered alongside the host so the dialogStore entry
+ * becomes an actual Mantine Modal with real buttons and a real escape handler —
+ * the other suites read `props` off the store, which is exactly the "reasoned,
+ * not executed" gap this closes.
+ */
+describe('PageBlockHost SET_COLLECTION_FOLLOW — dismissal vs. an in-flight write (real Modal)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    followMutate.mockReset();
+    unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
+  });
+
+  test('🔴 ESC while the mutation is in flight does NOT report `declined` for a write that happens', async () => {
+    let release: () => void = () => undefined;
+    followMutate.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        })
+    );
+    renderWithProviders(
+      <>
+        <PageBlockHost {...baseProps} />
+        <DialogProvider />
+      </>
+    );
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_race',
+      collectionId: 77,
+      follow: true,
+    });
+
+    // Real chrome: a real button in a real Modal, clicked.
+    const confirmBtn = page.getByRole('button', { name: 'Follow' });
+    await vi.waitFor(async () => {
+      await expect.element(confirmBtn).toBeInTheDocument();
+    });
+    await confirmBtn.click();
+    await vi.waitFor(() => expect(followMutate).toHaveBeenCalledTimes(1));
+
+    // Real dismissal, mid-flight, through Mantine's own escape handling.
+    await userEvent.keyboard('{Escape}');
+    release();
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_race',
+        result: { collectionId: 77, followed: true },
+      });
+    });
+    // Exactly one reply, and it is NOT `declined`.
+    expect(replies.of('COLLECTION_FOLLOW_RESULT')).toHaveLength(1);
+    replies.stop();
+  });
+
+  test('positive control: ESC BEFORE confirming still declines, through the same real Modal', async () => {
+    // Without this the test above could pass because escape never reached the
+    // Modal at all — a dismissal path wired to nothing looks identical to a
+    // dismissal correctly ignored.
+    renderWithProviders(
+      <>
+        <PageBlockHost {...baseProps} />
+        <DialogProvider />
+      </>
+    );
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SET_COLLECTION_FOLLOW', { requestId: 'rq_esc', collectionId: 77, follow: true });
+    const confirmBtn = page.getByRole('button', { name: 'Follow' });
+    await vi.waitFor(async () => {
+      await expect.element(confirmBtn).toBeInTheDocument();
+    });
+
+    await userEvent.keyboard('{Escape}');
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_esc', error: 'declined' });
+    });
+    expect(followMutate).not.toHaveBeenCalled();
     replies.stop();
   });
 });

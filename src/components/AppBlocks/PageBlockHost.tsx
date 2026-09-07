@@ -34,7 +34,9 @@ import {
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
+  createCollectionFollowSettlement,
   resolveCollectionFollowRequest,
+  resolveCollectionIdentity,
 } from './collectionFollowGate';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
@@ -3776,22 +3778,30 @@ export function PageBlockHost({
   // carries the full rationale; the two things this host contributes are its own
   // `viewer` prop (the signed-in signal) and `reviewNack`.
   //
-  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK. This bridge exists so a block
-  // no longer needs the `collections:write:self` scope, which was the viewer's
-  // consent step on the HTTP path. The replacement is host chrome the sandboxed
-  // iframe cannot fake or restyle: NOTHING is written until the viewer clicks
-  // through `ConfirmDialog`, exactly as PUBLISH_GENERATION_OUTPUTS does. Do not
-  // "simplify" this by calling the mutation directly — that silently converts a
-  // consented action into an unconsented one.
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK, AND IT IS THE ONLY CONSENT THIS
+  // PATH HAS EVER HAD. The HTTP endpoint's `collections:write:self` scope is
+  // CONSENT-EXEMPT server-side, so it never prompted anyone — see the retracted
+  // claim recorded in `collectionFollowGate.ts`. This bridge therefore TIGHTENS a
+  // zero-prompt path into one prompt per action. Do not "simplify" it by calling
+  // the mutation directly, and do not delete the confirm as redundant with a
+  // scope grant that does not exist.
   //
-  // REQUEST-style ⇒ every terminal path (refusal / cancel / success / error)
-  // MUST reply exactly once or the block hangs to its SDK timeout; the `settled`
-  // latch guards a double-reply the way the publish handler's does. Only a
-  // payload with no usable requestId is dropped — there is nothing to reply to.
+  // 🔴 THE DIALOG MUST NAME THE COLLECTION, and the name must be the one the HOST
+  // resolved from `collectionId` — never one the block supplied. A block can
+  // render its own "Follow ⭐ Cute Cats" card and post a different id; host chrome
+  // that asserts nothing about the object cannot contradict it.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / lookup failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs to its SDK
+  // timeout; `createCollectionFollowSettlement` owns that latch AND the consent
+  // latch that keeps `declined` meaning "no write occurred". Only a payload with
+  // no usable requestId is dropped — there is nothing to reply to.
   useEffect(() => {
     const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
       const gate = resolveCollectionFollowRequest({
         raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
         // `viewer` is non-null ONLY for a signed-in viewer (the page route
         // renders for logged-out viewers too, with viewer: null).
         signedIn: viewer != null,
@@ -3803,48 +3813,82 @@ export function PageBlockHost({
         return;
       }
       const { requestId, collectionId, follow } = gate.request;
-      let settled = false;
-      const reply = (payload: Record<string, unknown>) => {
-        if (settled) return;
-        settled = true;
-        send('COLLECTION_FOLLOW_RESULT', { requestId, ...payload });
-      };
-      const copy = buildCollectionFollowConsentCopy({ follow, appName });
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: copy.title,
-          message: copy.message,
-          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-          confirmProps: { color: 'blue' },
-          onConfirm: async () => {
-            try {
-              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
-              // actor and target, so `collectionId` is the ONLY thing the block
-              // influences.
-              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
-              else await unfollowCollectionMutation.mutateAsync({ collectionId });
-              reply({ result: { collectionId, followed: follow } });
-            } catch (err) {
-              // FORBIDDEN from the collection services (e.g. a private
-              // collection this viewer may not follow) lands here as a message,
-              // never as a hang.
-              reply({ error: err instanceof Error ? err.message : 'unknown' });
-            }
-          },
-          // Dismiss (Cancel / X / escape) = consent DECLINED. Settle the block's
-          // promise explicitly rather than leaving it to time out.
-          onCancel: () => reply({ error: 'declined' }),
-        },
+      const settlement = createCollectionFollowSettlement({
+        requestId,
+        emit: (payload) => send('COLLECTION_FOLLOW_RESULT', payload),
       });
+      void (async () => {
+        // Resolve WHO/WHAT the viewer is being asked about, server-side, from the
+        // same id we are about to act on. A failed lookup refuses WITH a reply —
+        // never a hang, and never a dialog missing the name it promised.
+        let identity;
+        try {
+          identity = resolveCollectionIdentity(
+            await trpcUtils.collection.getById.fetch({ id: collectionId }, { staleTime: 0 })
+          );
+        } catch {
+          // Not found / not visible / feature-flagged / network — all one
+          // outcome, so the reply cannot be used to probe for existence.
+          identity = { kind: 'unavailable' } as const;
+        }
+        if (identity.kind !== 'ok') {
+          settlement.reply({ error: 'collection-unavailable' });
+          return;
+        }
+        const copy = buildCollectionFollowConsentCopy({
+          follow,
+          appName,
+          collectionId,
+          collection: identity.identity,
+        });
+        dialogStore.trigger({
+          // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
+          // not reproducible, since rendering a Mantine modal costs >1 ms.)
+          id: `block-collection-follow-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: copy.message,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a write that is under way.
+              settlement.markConsented();
+              try {
+                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+                // actor and target, so `collectionId` is the ONLY thing the block
+                // influences.
+                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+                else await unfollowCollectionMutation.mutateAsync({ collectionId });
+                settlement.reply({ result: { collectionId, followed: follow } });
+              } catch (err) {
+                // FORBIDDEN from the collection services (e.g. a private
+                // collection this viewer may not follow) lands here as a message,
+                // never as a hang.
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
     });
     return off;
   }, [
     onMessage,
     send,
+    readGateStatus,
     viewer,
     reviewNack,
     appName,
+    trpcUtils,
     followCollectionMutation,
     unfollowCollectionMutation,
   ]);

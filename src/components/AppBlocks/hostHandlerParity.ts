@@ -573,11 +573,18 @@ export const INVENTORY = {
   // call (which stays live — this bridge does NOT retire it), so an app no longer
   // needs the `collections:write:self` write scope for an on-site bookmark.
   //
-  // 🔴 That removal is a real loosening, so the host does NOT just do it: both
-  // hosts open a HOST-CHROME CONSENT CONFIRM first and write only on the viewer's
-  // explicit click — the same boundary PUBLISH_GENERATION_OUTPUTS uses. The full
-  // reasoning (which of the HTTP endpoint's guarantees carry across, and how) is
-  // in `collectionFollowGate.ts`, which both hosts share.
+  // 🔴 THIS IS A TIGHTENING, NOT A LOOSENING. ⚠️ An earlier copy of this comment
+  // said the dropped scope "was the viewer's consent step" — RETRACTED, it is
+  // false: `collections:write:self` is in `CONSENT_EXEMPT_SCOPES`
+  // (`src/server/services/blocks/scope-grant.service.ts`), so it mints without any
+  // prompt and no grant row is ever recorded. The HTTP path had ZERO prompts;
+  // both hosts now open a HOST-CHROME CONSENT CONFIRM and write only on the
+  // viewer's explicit click — the same boundary PUBLISH_GENERATION_OUTPUTS uses.
+  // What the bridge actually gives up is the manifest `scopes` DECLARATION, i.e.
+  // ex-ante reviewability (moderator review + the post-install permissions panel),
+  // traded for consent at the moment of action. Full reasoning, and why the
+  // confirm must not be "restored" into a scope gate, is in
+  // `collectionFollowGate.ts`, which both hosts share.
   //
   // BOTH real hosts: unlike the page-only affordances above, a collection follow
   // is a plain on-site bookmark with no page-sized surface behind it — a model-

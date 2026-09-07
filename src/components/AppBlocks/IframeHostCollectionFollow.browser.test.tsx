@@ -18,15 +18,25 @@ import type * as TrpcMod from '~/utils/trpc';
  * this file is the behavioural half for the model slot, mirrored by
  * `PageBlockHostCollectionFollow.browser.test.tsx`.
  *
- * The property under test is the CONSENT boundary: this bridge exists so a block
- * no longer needs the `collections:write:self` scope (whose grant used to BE the
- * viewer's consent), so nothing may be written until the viewer clicks through
- * host chrome the sandboxed iframe cannot fake.
+ * The property under test is the CONSENT boundary. ⚠️ An earlier version of this
+ * header said the dropped `collections:write:self` scope's grant "used to BE the
+ * viewer's consent" — RETRACTED, and false: that scope is in
+ * `CONSENT_EXEMPT_SCOPES` (`src/server/services/blocks/scope-grant.service.ts`),
+ * so it always minted WITHOUT a prompt and no grant row exists. The HTTP path had
+ * zero prompts; this confirm is the only consent this operation has ever had, so
+ * these tests are pinning a TIGHTENING, not policing a loosening. Nothing may be
+ * written until the viewer clicks through host chrome the sandboxed iframe cannot
+ * fake — and that chrome must NAME the collection the host itself resolved, or it
+ * asserts nothing the block's own UI could contradict.
  */
 
-const { followMutate, unfollowMutate, currentUser } = vi.hoisted(() => ({
+const { followMutate, unfollowMutate, getByIdFetch, currentUser } = vi.hoisted(() => ({
   followMutate: vi.fn(),
   unfollowMutate: vi.fn(),
+  // The HOST-SIDE collection lookup that makes the consent dialog name its
+  // object. Mocked per-test so a suite can exercise the found / not-visible /
+  // lookup-failed arms independently of any block-supplied string.
+  getByIdFetch: vi.fn(),
   // Mutable so one file can cover BOTH the signed-in and the anonymous viewer —
   // the anonymous refusal is a security property, not an edge case, so it must
   // be exercised against the real host rather than only in the gate's unit test.
@@ -78,6 +88,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       },
     },
     useUtils: () => ({
+      collection: { getById: { fetch: getByIdFetch } },
       apps: {
         shared: {
           list: { fetch: vi.fn() },
@@ -137,6 +148,30 @@ function listenForReply() {
     stop: () => cw.removeEventListener('message', handler),
   };
 }
+
+/**
+ * What `collection.getById` returns for a collection this viewer CAN see. The
+ * host resolves the consent dialog's subject from this — never from anything the
+ * block sent.
+ */
+const VISIBLE_COLLECTION = {
+  collection: { id: 77, name: 'Cute Cats', user: { id: 3, username: 'alice' } },
+  permissions: { read: true, write: false, manage: false },
+  collaborators: [],
+  pendingReviewCount: 0,
+};
+
+/**
+ * What it returns for a collection that does NOT exist, and — identically — for
+ * one this viewer may not see. `getCollectionByIdHandler` produces this same
+ * shape for both, which is the existence-leak guarantee the host inherits.
+ */
+const UNAVAILABLE_COLLECTION = {
+  collection: null,
+  permissions: { read: false, write: false, manage: false },
+  collaborators: [],
+  pendingReviewCount: 0,
+};
 
 function lastDialog() {
   const dialogs = useDialogStore.getState().dialogs;
@@ -215,11 +250,33 @@ type ConfirmProps = {
   onCancel: () => void;
 };
 
+/**
+ * Mount and take a listener, but DELIBERATELY never send `BLOCK_READY` — the
+ * pre-handshake state a block reaches on load, before the viewer has interacted
+ * with it at all.
+ */
+async function mountWithoutHandshake() {
+  renderWithProviders(<IframeHost {...baseProps} />);
+  await vi.waitFor(() => {
+    if (!iframeEl().contentWindow) throw new Error('not mounted yet');
+  });
+  const replies = listenForReply();
+  // Same positive control as `mountAndReady`: prove the channel is live before
+  // any assertion rests on what it does or does not carry.
+  await vi.waitFor(() => {
+    if (replies.of('BLOCK_INIT').length === 0) throw new Error('listener saw no BLOCK_INIT');
+  });
+  expect(iframeEl().getAttribute('data-block-ready')).not.toBe('true');
+  return replies;
+}
+
 describe('IframeHost SET_COLLECTION_FOLLOW (consent-gated follow, model slot)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     followMutate.mockReset();
     unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
     currentUser.value = { id: 42 };
   });
 
@@ -362,6 +419,109 @@ describe('IframeHost SET_COLLECTION_FOLLOW (consent-gated follow, model slot)', 
       });
     });
     expect(replies.of('COLLECTION_FOLLOW_RESULT')).toHaveLength(1);
+    replies.stop();
+  });
+});
+
+/**
+ * 🔴 F1 REGRESSION (model slot). The dialog previously named NO collection: a
+ * block could render "Follow ⭐ Cute Cats", post a different id, and host chrome
+ * would assert nothing that could contradict it.
+ */
+describe('IframeHost SET_COLLECTION_FOLLOW — the confirm names the HOST-RESOLVED collection', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    followMutate.mockReset();
+    unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
+    currentUser.value = { id: 42 };
+  });
+
+  test('🔴 fetches the collection by the SAME id it will act on and names it in the dialog', async () => {
+    const replies = await mountAndReady();
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_named',
+      collectionId: 900123,
+      follow: true,
+      // A block-supplied name must NOT reach the dialog — the host has no field
+      // for it and must never grow one.
+      collectionName: 'Totally Safe Kittens',
+    });
+
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(getByIdFetch).toHaveBeenCalledWith({ id: 900123 }, { staleTime: 0 });
+    const msg = (lastDialog().props as ConfirmProps).message;
+    expect(msg).toContain('“Cute Cats” by alice');
+    expect(msg).not.toContain('Totally Safe Kittens');
+    replies.stop();
+  });
+
+  test('🔴 a collection the viewer cannot see is REFUSED with a reply and NO dialog', async () => {
+    getByIdFetch.mockResolvedValue(UNAVAILABLE_COLLECTION);
+    const replies = await mountAndReady();
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_priv',
+      collectionId: 4242,
+      follow: true,
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_priv', error: 'collection-unavailable' });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(followMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('a FAILED lookup refuses with the same code — never a hang, never a nameless dialog', async () => {
+    getByIdFetch.mockRejectedValue(new Error('NOT_FOUND'));
+    const replies = await mountAndReady();
+    postFromBlock('SET_COLLECTION_FOLLOW', {
+      requestId: 'rq_boom',
+      collectionId: 4243,
+      follow: true,
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_boom', error: 'collection-unavailable' });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    replies.stop();
+  });
+});
+
+/**
+ * 🔴 F2 REGRESSION (model slot). A pre-handshake block could pop a permission
+ * modal with zero user interaction. This is the only ungated REQUEST-style
+ * handler that performs an account WRITE.
+ */
+describe('IframeHost SET_COLLECTION_FOLLOW — pre-handshake gate', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    followMutate.mockReset();
+    unfollowMutate.mockReset();
+    getByIdFetch.mockReset();
+    getByIdFetch.mockResolvedValue(VISIBLE_COLLECTION);
+    currentUser.value = { id: 42 };
+  });
+
+  test('🔴 a block that never sent BLOCK_READY gets `not-ready` and NO dialog', async () => {
+    const replies = await mountWithoutHandshake();
+    postFromBlock('SET_COLLECTION_FOLLOW', { requestId: 'rq_pre', collectionId: 77, follow: true });
+
+    await vi.waitFor(() => {
+      const r = replies.last('COLLECTION_FOLLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_pre', error: 'not-ready' });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(getByIdFetch).not.toHaveBeenCalled();
+    expect(followMutate).not.toHaveBeenCalled();
     replies.stop();
   });
 });
