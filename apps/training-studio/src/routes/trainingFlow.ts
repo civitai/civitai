@@ -246,8 +246,9 @@ export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
 }
 
-// Parse a Review-step numeric field, falling back to its default when blank/garbage: Number('') is NaN,
-// which JSON-serializes to null, and the orchestrator rejects a null `lr`. Fallbacks match the seeds.
+// Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
+// NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
+// (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
 function num(value: string, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;

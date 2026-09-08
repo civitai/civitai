@@ -640,6 +640,444 @@ export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
 /** Extra Buzz for training on top of a user-supplied custom model. */
 export const CUSTOM_MODEL_SURCHARGE = 500;
 
+// ---- Advanced training parameters (AI-Toolkit) ----
+// VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),
+// resolved for engine `ai-toolkit` the way the trainer does in getDefaultTrainingParams
+// (src/store/training.store.ts:287): `overrides[key].all.default ?? overrides[key]['ai-toolkit'].default ??
+// base.default`, keyed by ModelVersionInfo.key (== the main app's TrainingDetailsBaseModel override key).
+// Re-mirror by hand when the trainer's numbers change. Flux.2 (imageResourceTraining) takes NO
+// hyperparameters, so its version key is intentionally absent (the Review step hides the panel for it).
+
+/** AI-Toolkit epoch (= saved-checkpoint) bounds — flat for every model (TrainingParams.tsx `AI_TOOLKIT_EPOCHS`). */
+export const AI_TOOLKIT_EPOCHS = { min: 1, max: 20, step: 1 } as const;
+
+/** Per-run advanced defaults. `textEncoderLr: 0` means text-encoder training is off for that model
+ *  (the submit sets `trainTextEncoder = textEncoderLr > 0`). */
+export interface RunParamDefaults {
+  epochs: number;
+  unetLr: number;
+  textEncoderLr: number;
+  networkDim: number;
+  networkAlpha: number;
+  resolution: number;
+  batchSize: number;
+  lrScheduler: string;
+  optimizer: string;
+}
+
+// Modern caption models cluster on the same values; SD-family and a few others deviate. Every field below
+// is the ai-toolkit-resolved value from the source (batchSize already clamped to `aiToolkitBatchMax`, and
+// `lrScheduler` normalized off the invalid-for-ai-toolkit `cosine_with_restarts` to `cosine`).
+export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
+  // — SD 1.5 family (tags) —
+  sd_1_5: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 4,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  semi: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 4,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  realistic: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 2,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  anime: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 1e-4,
+    networkDim: 16,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 4,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  // — SDXL family (tags) —
+  sdxl: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 4,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  pony: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 4,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  illustrious: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 4,
+    lrScheduler: 'cosine',
+    optimizer: 'Adafactor',
+  },
+  // — Modern caption image models —
+  flux_dev: {
+    epochs: 5,
+    unetLr: 5e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  chroma: {
+    epochs: 5,
+    unetLr: 5e-4,
+    textEncoderLr: 0,
+    networkDim: 2,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  qwen_image: {
+    epochs: 5,
+    unetLr: 5e-4,
+    textEncoderLr: 0,
+    networkDim: 2,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  zimageturbo: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  zimagebase: {
+    epochs: 10,
+    unetLr: 1e-6,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    lrScheduler: 'cosine',
+    optimizer: 'Automagic',
+  },
+  flux2klein_9b: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  flux2klein_4b: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 2,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  hidream_o1: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  anima: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  boogu: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  krea2: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  mageflow: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  ideogram4: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // Ernie is newly added upstream with no param overrides — inherits the ai-toolkit base.
+  ernie: {
+    epochs: 10,
+    unetLr: 5e-4,
+    textEncoderLr: 5e-5,
+    networkDim: 32,
+    networkAlpha: 16,
+    resolution: 512,
+    batchSize: 2,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  // — Video (caption) — resolution is fixed per ecosystem upstream —
+  wan_2_2_t2v_a14b: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  wan_2_1_t2v_14b: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  hy_720_fp8: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  ltx25: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  ltx23: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'cosine',
+    optimizer: 'AdamW8Bit',
+  },
+  ltx2: {
+    epochs: 10,
+    unetLr: 2e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 1,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  minimaxh3: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 960,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // — Audio (caption) — no spatial resolution; kept at 512 to satisfy the schema —
+  acestep_15: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  acestep_15_xl_base: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  acestep_15_xl_sft: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+};
+
+// Fallback for a version key with no explicit entry (e.g. the "Custom…" version) — the modern-caption base.
+const PARAM_FALLBACK: RunParamDefaults = {
+  epochs: 10,
+  unetLr: 1e-4,
+  textEncoderLr: 0,
+  networkDim: 32,
+  networkAlpha: 32,
+  resolution: 1024,
+  batchSize: 1,
+  lrScheduler: 'constant',
+  optimizer: 'AdamW8Bit',
+};
+
+/** SDXL-family cards (tags) allow bigger nets and higher resolution than the base ai-toolkit bounds. */
+const SDXL_FAMILY = new Set(['sdxl', 'pony', 'illustrious']);
+
+/** AI-Toolkit batch-size ceiling per card family (TrainingParams.tsx `aiToolkitBatchMax`). */
+function batchMaxForCard(cardType: string): number {
+  if (cardType === 'sdxl' || cardType === 'sd15' || SDXL_FAMILY.has(cardType)) return 4;
+  if (cardType === 'zimage' || cardType === 'ernie' || cardType === 'flux2klein') return 2;
+  return 1;
+}
+
+/** The advanced-param defaults for a chosen version (falls back to the card's primary version, then the
+ *  modern-caption base — so a "Custom…" pick still gets sensible per-family values). */
+export function paramsForVersion(card: ModelCard, versionKey: string): RunParamDefaults {
+  return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
+}
+
+export interface ParamBound {
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
+ *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
+export function paramBounds(card: ModelCard): Record<string, ParamBound> {
+  const sdxl = SDXL_FAMILY.has(card.type);
+  const video = card.media === 'video';
+  const audio = card.media === 'audio';
+  const netMax = sdxl ? 256 : 128;
+  return {
+    epochs: { ...AI_TOOLKIT_EPOCHS },
+    unetLr: { min: 0, max: 1, step: 1e-5 },
+    textEncoderLr: { min: 0, max: 1, step: 1e-5 },
+    networkDim: { min: 1, max: netMax, step: 1 },
+    networkAlpha: { min: 1, max: netMax, step: 1 },
+    // Video/audio resolution is fixed upstream; images range per family.
+    resolution: video
+      ? { min: 960, max: 960, step: 1 }
+      : audio
+      ? { min: 512, max: 512, step: 1 }
+      : sdxl
+      ? { min: 1024, max: 2048, step: 64 }
+      : { min: 512, max: 1024, step: 64 },
+    batchSize: { min: 1, max: batchMaxForCard(card.type), step: 1 },
+  };
+}
+
 /** Per-card "from" price map keyed by `ModelCard.type`, quoted live from the orchestrator `whatif` (see
  * `$lib/server/pricing`). PARTIAL: a model the orchestrator can't price is simply absent — there is no
  * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */

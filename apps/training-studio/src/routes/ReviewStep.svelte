@@ -14,7 +14,14 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import { loraTypeById, typesForMedia, type FromPrices } from '$lib/data/trainingModels';
+  import {
+    loraTypeById,
+    paramBounds,
+    paramsForVersion,
+    typesForMedia,
+    type FromPrices,
+    type ParamBound,
+  } from '$lib/data/trainingModels';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import {
     SAMPLE_RATE,
@@ -25,6 +32,7 @@
     runCost,
     runVersionLabel,
     type LaunchedRun,
+    type Run,
     type RunParams,
     type Selection,
   } from './trainingFlow';
@@ -72,20 +80,25 @@
   // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
   // selection gets a fresh component. untrack documents the intentional one-time capture.
   let presetType = $state(untrack(() => selection.loraType));
+  // Seed each run's advanced params from the CHOSEN MODEL's defaults (mirrored per-model from the main app's
+  // trainer), not flat constants — a multi-run sweep can mix models, so seed per run.
   let params = $state<RunParams[]>(
     untrack(() =>
-      selection.runs.map(() => ({
-        steps: defaultSteps(selection.loraType),
-        epochs: 10,
-        unetLr: '0.0004',
-        textEncoderLr: '0.00005',
-        networkDim: '32',
-        networkAlpha: '16',
-        lrScheduler: 'cosine',
-        optimizer: 'AdamW8Bit',
-        resolution: '1024',
-        batchSize: '2',
-      })),
+      selection.runs.map((run) => {
+        const d = paramsForVersion(runCard(run), run.versionKey);
+        return {
+          steps: defaultSteps(selection.loraType),
+          epochs: d.epochs,
+          unetLr: String(d.unetLr),
+          textEncoderLr: String(d.textEncoderLr),
+          networkDim: String(d.networkDim),
+          networkAlpha: String(d.networkAlpha),
+          lrScheduler: d.lrScheduler,
+          optimizer: d.optimizer,
+          resolution: String(d.resolution),
+          batchSize: String(d.batchSize),
+        };
+      }),
     ),
   );
   let stepsEdited = $state<boolean[]>(untrack(() => selection.runs.map(() => false)));
@@ -144,6 +157,28 @@
   function setSteps(i: number, v: string) {
     params[i]!.steps = parseInt(v) || 0;
     stepsEdited[i] = true;
+  }
+
+  // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
+  const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
+  function runEngine(run: Run): string | undefined {
+    const card = runCard(run);
+    return (card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!).engine;
+  }
+  const noAdvancedParams = (run: Run) => runEngine(run) === 'flux2-dev';
+
+  type NumField = 'unetLr' | 'textEncoderLr' | 'networkDim' | 'networkAlpha' | 'resolution' | 'batchSize';
+  // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
+  function clampField(i: number, field: NumField, bound: ParamBound) {
+    const n = Number(params[i]![field]);
+    if (!Number.isFinite(n)) return;
+    const clamped = Math.min(bound.max, Math.max(bound.min, n));
+    if (String(clamped) !== params[i]![field]) params[i]![field] = String(clamped);
+  }
+  function setEpochs(i: number, v: string) {
+    const b = boundsFor(i).epochs;
+    const n = parseInt(v);
+    params[i]!.epochs = Number.isFinite(n) ? Math.min(b.max, Math.max(b.min, n)) : b.min;
   }
   function addPrompt() {
     if (prompts.length < 6) prompts = [...prompts, { id: promptSeq++, text: 'new scene' }];
@@ -220,20 +255,26 @@
                 {multi ? `Run ${i + 1} · ` : ''}{card.name}
                 {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}
               </div>
-              <button
-                type="button"
-                onclick={() => (openAdv = openAdv === i ? -1 : i)}
-                class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
+              {#if noAdvancedParams(run)}
+                <div class="mt-1 font-mono text-[11px] text-dark-2">
+                  No advanced settings for this model
+                </div>
+              {:else}
+                <button
+                  type="button"
+                  onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                  class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
                   {openAdv === i
-                  ? 'border-primary/50 bg-primary/10 text-primary'
-                  : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
-              >
-                <IconSettings size={13} stroke={2} />Advanced settings
-                {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
-                    size={12}
-                    stroke={2}
-                  />{/if}
-              </button>
+                    ? 'border-primary/50 bg-primary/10 text-primary'
+                    : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
+                >
+                  <IconSettings size={13} stroke={2} />Advanced settings
+                  {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                      size={12}
+                      stroke={2}
+                    />{/if}
+                </button>
+              {/if}
             </div>
             <div class="ml-auto flex flex-col">
               <span class="font-mono text-[10px] uppercase tracking-wider text-dark-2">Steps</span>
@@ -258,7 +299,8 @@
               : `good for a ${presetType}`})
           </div>
 
-          {#if openAdv === i}
+          {#if openAdv === i && !noAdvancedParams(run)}
+            {@const b = boundsFor(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
               <div class="mb-2 flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider text-primary">
                 <IconSettings size={12} stroke={2} />Advanced training settings
@@ -266,31 +308,31 @@
               <div class="grid gap-x-6 sm:grid-cols-2">
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Checkpoints (epochs)</span>
-                  <Input value={String(params[i]!.epochs)} oninput={(e) => (params[i]!.epochs = parseInt(e.currentTarget.value) || 0)} class="h-7 font-mono" />
+                  <Input type="number" min={b.epochs.min} max={b.epochs.max} step={b.epochs.step} value={String(params[i]!.epochs)} oninput={(e) => setEpochs(i, e.currentTarget.value)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Batch size</span>
-                  <Input bind:value={params[i]!.batchSize} class="h-7 font-mono" />
+                  <Input type="number" min={b.batchSize.min} max={b.batchSize.max} step={b.batchSize.step} bind:value={params[i]!.batchSize} onblur={() => clampField(i, 'batchSize', b.batchSize)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">UNet LR</span>
-                  <Input bind:value={params[i]!.unetLr} class="h-7 font-mono" />
+                  <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[i]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Text encoder LR</span>
-                  <Input bind:value={params[i]!.textEncoderLr} class="h-7 font-mono" />
+                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[i]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network dim</span>
-                  <Input bind:value={params[i]!.networkDim} class="h-7 font-mono" />
+                  <Input type="number" min={b.networkDim.min} max={b.networkDim.max} step={b.networkDim.step} bind:value={params[i]!.networkDim} onblur={() => clampField(i, 'networkDim', b.networkDim)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network alpha</span>
-                  <Input bind:value={params[i]!.networkAlpha} class="h-7 font-mono" />
+                  <Input type="number" min={b.networkAlpha.min} max={b.networkAlpha.max} step={b.networkAlpha.step} bind:value={params[i]!.networkAlpha} onblur={() => clampField(i, 'networkAlpha', b.networkAlpha)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Resolution</span>
-                  <Input bind:value={params[i]!.resolution} class="h-7 font-mono" />
+                  <Input type="number" min={b.resolution.min} max={b.resolution.max} step={b.resolution.step} bind:value={params[i]!.resolution} onblur={() => clampField(i, 'resolution', b.resolution)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">LR scheduler</span>
