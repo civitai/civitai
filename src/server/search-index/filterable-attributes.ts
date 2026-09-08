@@ -69,6 +69,7 @@ export const modelsFilterableAttributes = [
   'cannotPromote',
   'poi',
   'minor',
+  'hasActivePaidAccess',
 ];
 
 export const toolsFilterableAttributes = ['id', 'type', 'company'];

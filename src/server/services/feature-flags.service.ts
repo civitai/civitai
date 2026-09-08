@@ -183,6 +183,10 @@ const featureFlags = createFeatureFlags({
   // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
   // Until that flag exists, evaluation returns null and static evaluation keeps it on.
   feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
+  // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
+  // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
+  // and an index-settings change, not a deploy.
+  paidModelSearchFilter: { availability: [], fliptKey: 'paid-model-search-filter' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
