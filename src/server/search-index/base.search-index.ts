@@ -315,8 +315,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       }
 
       // Deletes FIRST, as `updateSync` already does. The two queues are disjoint sets with no
-      // timestamps, so an id in both records no order and the drain decides it. Pulling second
-      // lets `pullData`'s own WHERE arbitrate; pulling first rebuilt the doc then deleted it.
+      // timestamps, so an id queued in both carries no record of which action came last, and the
+      // drain order alone decides the outcome. Pulling second lets `pullData`'s own WHERE
+      // arbitrate; pulling first rebuilt the document and then deleted it.
       if (queuedDeletes.content.length > 0 && !partial) {
         await onSearchIndexDocumentsCleanup({
           indexName,
