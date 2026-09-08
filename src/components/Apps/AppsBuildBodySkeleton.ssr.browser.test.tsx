@@ -102,13 +102,23 @@ describe('AppsBuildBodySkeleton — the server render', () => {
    */
   test('🔴 the live region is announceable: role="status" present, aria-busy absent', () => {
     const html = serverHtml(<AppsBuildBodySkeleton />);
+
     // 🔴 ORDER IS DELIBERATE: the FIRST assertion is the positive control for the SECOND.
     // `not.toContain` passes for free against an empty string or a scanner wired to nothing,
     // so on its own it would prove that `aria-busy` is absent from a document this test never
     // read. `role="status"` is an ATTRIBUTE on the SAME element, found by the SAME matcher —
     // so a green first line is what makes the second line an observation.
     expect(html).toContain('role="status"');
-    expect(html).not.toContain('aria-busy');
+
+    // 🔴 SCOPED TO THE LIVE REGION'S OWN TAG, NOT THE WHOLE DOCUMENT — and that is a
+    // correction. A document-wide `expect(html).not.toContain('aria-busy')` makes a claim
+    // far wider than the one the component states: it would go red if a Mantine bump ever
+    // emitted `aria-busy` on a child `<Skeleton>`, which would not falsify "the live region
+    // is not marked busy" at all. An over-strict guard fails on a change that is not a
+    // defect, and gets deleted the first time it does.
+    const region = html.match(/<[^>]*role="status"[^>]*>/);
+    expect(region, 'no element carries role="status"').not.toBeNull();
+    expect(region?.[0]).not.toContain('aria-busy');
   });
 
   test('🔴 no <div> descends from a <p> — the hydration-mismatch shape', () => {

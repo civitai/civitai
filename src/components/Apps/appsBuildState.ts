@@ -49,13 +49,22 @@ export type AppsBuildState = (typeof APPS_BUILD_STATES)[number];
 /**
  * Is the `/apps/build` state SETTLED — i.e. may the caller render a state at all?
  *
- * 🔴 THIS LIVES HERE, BESIDE `resolveAppsBuildState`, BECAUSE THE TIER THAT CAN TEST IT IS
- * THE ONLY TIER ANYTHING BLOCKS ON. The rendered proof that an author no longer sees state B
- * mid-load is a `component`-project browser spec, and that project is UNGATED — no selector in
- * `.github/workflows/lint.yml` matches it (`unit*`, `@civitai/*`, `app:*`) and its only CI home
- * is the report-only `preview / component-tests`. So a guard that lived only there could not
- * fail a future PR. Keeping the predicate pure and out here puts its truth table in the
- * BLOCKING `unit` tier; the browser spec stays as the rendered evidence.
+ * 🔴 THIS LIVES HERE SO THE `unit` TIER CAN TEST IT — AND THE HONEST VERSION OF THAT SENTENCE
+ * IS WEAKER THAN THE ONE THAT WAS HERE FIRST, WHICH SAID "THE ONLY TIER ANYTHING BLOCKS ON".
+ * **NOTHING in this repo blocks a merge on a check.** `unit` is report-only on a pull request
+ * (`continue-on-error: ${{ github.event_name == 'pull_request' }}`,
+ * `.github/workflows/lint.yml:405`, with the deliberate "FLIP TO BLOCKING once…" note at
+ * `:357`), and `main` carries branch protection with **no required status checks** at all
+ * (`required_status_checks: null`, read live from the API, and stated at `lint.yml:600`).
+ *
+ * What the move DOES buy, and it is real: the `component` project is report-only
+ * EVERYWHERE — no selector in that workflow matches it (`unit*`, `@civitai/*`, `app:*`) and
+ * its only CI home is the preview pipeline's `preview / component-tests` — whereas `unit`
+ * runs on `push: [main]`, where `continue-on-error` evaluates FALSE. So a regression in this
+ * predicate reds the `main` build AFTER it lands, instead of being observed nowhere. That is
+ * catch-after-landing, not block-before-merge. Do not restate it as the latter.
+ *
+ * The browser spec stays as the rendered evidence that the SCREEN is right.
  *
  * 🔴 `summaryEnabled`, NOT `isAuthor` — AND THAT IS THE WHOLE REASON THIS TAKES THREE INPUTS.
  * `isFetched` never goes true for a query that never ran, so `!isAuthor || (isClient &&

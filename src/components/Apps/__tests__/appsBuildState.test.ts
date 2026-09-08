@@ -66,15 +66,22 @@ describe('🔴 the pre-settle default the CALLER no longer renders', () => {
    * server render and the first client paint BOTH summary booleans are false, and this
    * function answers `first-app` for an author.
    *
-   * 🔴 THAT IS NO LONGER WHAT THE SERVER HTML CONTAINS, AND THIS BLOCK USED TO SAY IT WAS.
-   * Its docstring read "What the function returns for that input is therefore what the
-   * server HTML contains", and its second case was named "an author renders first-app with
-   * no summary". Both were true when written and both are now FALSE at the call site:
-   * `AppsBuildBody` gates the render on `resolveAppsBuildSettled` and emits
-   * `AppsBuildBodySkeleton` for the whole unsettled window, so an author's server HTML is
-   * the skeleton. Corrected here rather than only in `appsBuildState.ts`, because THIS tier
-   * is the one CI blocks on — a maintainer who reads a green `unit` run reads this file, and
-   * the corrected prose in the module lives next to a browser spec no gate runs.
+   * 🔴 THAT IS NO LONGER WHAT THE SERVER HTML CONTAINS **FOR AN AUTHOR WHOSE SUMMARY QUERY IS
+   * ENABLED**, AND THIS BLOCK USED TO SAY IT WAS — WITHOUT THE QUALIFIER, WHICH WAS ALSO
+   * WRONG. Its docstring read "What the function returns for that input is therefore what the
+   * server HTML contains", and its second case was named "an author renders first-app with no
+   * summary"; the first correction then over-swung to a bare "an author's server HTML is the
+   * skeleton". Both absolutes are false, in opposite directions. `AppsBuildBody` gates the
+   * render on `resolveAppsBuildSettled`, which answers `true` — settled, render a state — the
+   * moment the query is not enabled. So an author WITHOUT `appBlocks` (admitted to the page by
+   * `appListings`) still has state B in their server HTML, permanently; only an author whose
+   * query actually runs gets the skeleton. The PR's own browser spec pins that cohort
+   * (`author whose summary query is DISABLED settles immediately — no permanent skeleton`).
+   *
+   * Corrected HERE and not only in `appsBuildState.ts` because a maintainer reading a green
+   * `unit` run reads this file, while the module's prose sits beside a browser spec no gate
+   * runs at all. ⚠️ That is a readership argument, not an enforcement one — see
+   * `resolveAppsBuildSettled` for why "the tier CI blocks on" was itself a false claim.
    *
    * What the cases below still pin is the ARITHMETIC, which is unchanged and correct: for a
    * NON-author it is also still the rendered answer, because a non-author is settled from
@@ -172,13 +179,21 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
 /**
  * `resolveAppsBuildSettled` — the WHOLE truth table, in the tier CI blocks on.
  *
- * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF CANNOT FAIL A BUILD. `/apps/build`'s
+ * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF IS OBSERVED NOWHERE. `/apps/build`'s
  * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which
  * `.github/workflows/lint.yml` states plainly is UNGATED: no selector there matches it
  * (`unit*`, `@civitai/*`, `app:*`) and its only CI home is the report-only
- * `preview / component-tests`. A guard that can only report is not a guard against the next
- * PR. The browser spec stays as the evidence that the SCREEN is right; these eight rows are
- * what actually blocks a regression in the predicate that decides it.
+ * `preview / component-tests`.
+ *
+ * ⚠️ THESE ROWS DO NOT "BLOCK" ANYTHING EITHER, AND SAYING THEY DID WAS THIS FILE'S OWN
+ * SECOND FALSE CLAIM. The sentence here read "these eight rows are what actually blocks a
+ * regression", two lines under the criterion "a guard that can only report is not a guard
+ * against the next PR" — which this suite then failed. `unit` is `continue-on-error` on a
+ * pull request (`lint.yml:405`) and `main` requires no status checks at all, so no check in
+ * this repository prevents a merge. What these rows buy is that `unit` DOES run on
+ * `push: [main]` without that flag, so the regression reds the `main` build after it lands
+ * rather than going unobserved. Weaker than blocking, stronger than the browser tier, and
+ * worth having on those terms — not on the ones first written here.
  *
  * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an
  * author whose `getNavSummary` is DISABLED (`appBlocks` off while the page gate,
@@ -239,7 +254,7 @@ describe('resolveAppsBuildSettled — the full input table', () => {
       isClient: false,
       isFetched: true,
       expected: false,
-      why: '🔴 pre-mount must NOT consult the query, or SSR and the first client paint diverge and hydration bails',
+      why: 'pre-mount with a fetched query — COMBINATORIAL, not reachable: isClient flips once app-wide, so isClient=false implies an empty tRPC cache',
     },
     {
       summaryEnabled: true,
