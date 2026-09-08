@@ -25,6 +25,8 @@ import { getTaskQueueWorker, TaskQueue } from '~/server/search-index/utils/taskQ
 import { createLogger } from '~/utils/logging';
 
 const DEFAULT_UPDATE_INTERVAL = 30 * 1000;
+/** Ids per `updateSync` batch when a processor does not set `updateSyncChunkSize`. */
+export const DEFAULT_UPDATE_SYNC_CHUNK_SIZE = 500;
 const logger = createLogger(`search-index-processor`);
 
 export type SearchIndexContext = {
@@ -65,6 +67,12 @@ type SearchIndexProcessor = {
   primaryKey?: string;
   updateInterval?: number;
   workerCount?: number;
+  /**
+   * Ids per batch for `updateSync`. Each batch becomes one `pullData` call, so this is the knob
+   * that decides whether that query fits inside the database statement timeout. Defaults to
+   * `DEFAULT_UPDATE_SYNC_CHUNK_SIZE`.
+   */
+  updateSyncChunkSize?: number;
   pullSteps?: number;
   client?: MeiliSearch | null;
   jobName?: string;
@@ -127,6 +135,7 @@ const processSearchIndexTask = async (
           type: 'transform',
           index: task.index,
           total: task.total,
+          idCount: task.idCount,
           data: pulledData,
         } as TransformTask;
       }
@@ -141,6 +150,7 @@ const processSearchIndexTask = async (
         type: 'push',
         index: task.index,
         total: task.total,
+        idCount: task.idCount,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
@@ -171,6 +181,17 @@ const processSearchIndexTask = async (
 
 export type SearchIndexTaskResult = Awaited<ReturnType<typeof processSearchIndexTask>>;
 
+/**
+ * Outcome of an `updateSync` run. `failedTasks > 0` means those batches were dropped after
+ * exhausting their retries and `failedIds` documents were never written to the index.
+ */
+export type SearchIndexUpdateSyncResult = {
+  indexName: string;
+  totalTasks: number;
+  failedTasks: number;
+  failedIds: number;
+};
+
 export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
   const {
     indexName,
@@ -183,10 +204,13 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     jobName,
     partial,
     queues,
+    updateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
   } = processor;
 
   return {
     indexName,
+    /** Exposed so callers/tests can see the batch size `updateSync` will actually use. */
+    updateSyncChunkSize,
     async getData(ids: number[]) {
       const ctx = {
         db: dbWrite,
@@ -405,9 +429,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
       jobContext?: JobContext
-    ) {
+    ): Promise<SearchIndexUpdateSyncResult> {
       if (!items.length) {
-        return;
+        return { indexName, totalTasks: 0, failedTasks: 0, failedIds: 0 };
       }
 
       // TODO index.update shouldnt run
@@ -417,7 +441,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`
       );
       const queue = new TaskQueue('pull', maxQueueSize);
-      const batches = chunk(items, 500);
+      const batches = chunk(items, updateSyncChunkSize);
+      let totalTasks = 0;
 
       for (const batch of batches) {
         const updateIds = batch
@@ -440,9 +465,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             type: 'pull',
             mode: 'targeted',
             ids: updateIds,
+            idCount: updateIds.length,
             steps: processor.pullSteps,
             currentStep: 0,
           });
+          totalTasks++;
         }
       }
 
@@ -460,6 +487,24 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
+
+      // A task that exhausted its retries wrote nothing to the index. Report that instead of
+      // resolving as though everything landed — the caller cannot otherwise tell a total failure
+      // from a total success.
+      const result: SearchIndexUpdateSyncResult = {
+        indexName,
+        totalTasks,
+        failedTasks: queue.failedTasks.length,
+        failedIds: queue.failedIdCount,
+      };
+
+      if (result.failedTasks > 0) {
+        console.error(
+          `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: ${result.failedTasks} of ${result.totalTasks} batches failed (${result.failedIds} ids not indexed)`
+        );
+      }
+
+      return result;
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
       await SearchIndexUpdate.queueUpdate({ indexName, items });

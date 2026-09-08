@@ -12,6 +12,12 @@ type BaseTask = {
   index?: number;
   total?: number;
   start?: number;
+  /**
+   * How many source ids this task is responsible for. Carried through the pull -> transform ->
+   * push chain (the derived tasks no longer hold the id list) so that a task which ends up
+   * failing can be attributed back to a number of documents that were never indexed.
+   */
+  idCount?: number;
 };
 
 export type PullTask = BaseTask &
@@ -54,6 +60,13 @@ export class TaskQueue {
   processing: Set<Task>;
   stats: Record<TaskStatus, number>;
   maxQueueSize: number;
+  /** Tasks that exhausted their retries. Kept so a caller can report what was NOT indexed. */
+  failedTasks: Task[];
+  /**
+   * Tasks that are between "failed" and "back on a queue" — see `failTask`. Counted by
+   * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
+   */
+  retrying: number;
 
   constructor(queueEntry: Task['type'] = 'pull', maxQueueSize = MAX_QUEUE_SIZE_DEFAULT) {
     this.queues = {
@@ -71,6 +84,8 @@ export class TaskQueue {
       failed: 0,
     };
     this.maxQueueSize = maxQueueSize;
+    this.failedTasks = [];
+    this.retrying = 0;
   }
 
   get data() {
@@ -79,6 +94,11 @@ export class TaskQueue {
       processing: this.processing,
       stats: this.stats,
     };
+  }
+
+  /** Number of source ids belonging to tasks that permanently failed. */
+  get failedIdCount(): number {
+    return this.failedTasks.reduce((acc, task) => acc + (task.idCount ?? 0), 0);
   }
 
   async waitForQueueCapacity(queue: Task[]): Promise<void> {
@@ -138,20 +158,29 @@ export class TaskQueue {
     task.retries = task.retries ?? 0;
 
     if (task.retries < task.maxRetries) {
-      // Requeue it:
-      await sleep(RETRY_TIMEOUT);
-      task.retries++;
-      this.addTask(task);
+      // Requeue it. The task is no longer processing and not yet queued, so it is invisible to
+      // isQueueEmpty() for the whole backoff — without `retrying` every worker can decide the
+      // queue is empty and resolve before the retry is ever added back.
+      this.stats.processing--;
+      this.retrying++;
+      try {
+        await sleep(RETRY_TIMEOUT);
+        task.retries++;
+        await this.addTask(task);
+      } finally {
+        this.retrying--;
+      }
       return;
     }
 
+    this.failedTasks.push(task);
     this.updateTaskStatus(task, 'failed');
   }
 
   isQueueEmpty(): boolean {
     const queueSize = Object.values(this.queues).reduce((acc, queue) => acc + queue.length, 0);
     const processingSize = this.processing.size;
-    const totalSize = queueSize + processingSize;
+    const totalSize = queueSize + processingSize + this.retrying;
     return totalSize === 0;
   }
 }
@@ -174,7 +203,9 @@ export const getTaskQueueWorker = (
       const result = await processor(task);
 
       if (result === 'error') {
-        queue.failTask(task);
+        // Awaited: failTask holds the task's retry slot open, and dropping the promise on the
+        // floor also drops any error it raises.
+        await queue.failTask(task);
       } else {
         queue.completeTask(task);
         if (result !== 'done') {
