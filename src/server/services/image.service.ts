@@ -254,6 +254,7 @@ import {
   sanitizeProvenance,
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
+import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 
 const {
   cacheHitRequestsTotal,
@@ -6114,6 +6115,64 @@ export async function createImage({
    */
   verifiedSourceImageIds?: number[] | null;
 }) {
+  /**
+   * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
+   *
+   * Every `Image` row in the app goes through here: `addPostImage`, the post-with-images
+   * handler, model-version and collection paths, comics, cover images, thumbnails. The
+   * check belongs at this one funnel and nowhere else — four copies of a predicate is a
+   * predicate that is wrong at three of them — and it cannot live in the zod schema
+   * because it needs IO.
+   *
+   * 🔴 OBSERVE-ONLY, BY CONSTRUCTION AND NOT BY A FLAG. The verdict is logged and then
+   * dropped; nothing below branches on it. Rejecting here would be a new failure mode on
+   * a working user-facing path, and the only honest way to size that is to let the
+   * `absent` rate accumulate against a real denominator first. Enforcement is a separate
+   * change gated on the measurement this emits — which is also why there is no env var to
+   * flip: an unused enforcement branch is an untested one.
+   */
+  const mediaVerdict = await probeCreatedImageMedia(image.url);
+
+  /**
+   * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
+   * one line per `createImage` call means the denominator is "image creations", which is
+   * the population the historical 10-in-a-sample figure was measured against. A log
+   * emitted only on the bad verdict counts a numerator against nothing.
+   *
+   * 🔴 THE POSITIVE CONTROL IS `present`, AND IT IS WHY THIS IS NOT A ONE-FIELD LOG. A
+   * probe that can never answer emits zero `absent` verdicts, and "zero absent" is exactly
+   * what a clean result looks like. `getImageUploadBackend()` throws without credentials
+   * and a rotated key answers 403 — both land on `unknown`, both look clean. Do not read
+   * the `absent` count until a NON-ZERO `present` count proves the probe reaches the store
+   * at all, and `unknown` is a small share of `present + absent + unknown`.
+   *
+   * `url` is logged only for a PROBED verdict, where `isProbeableMediaKey` has already
+   * accepted the value and it is therefore a 36-character uuid — not a filename and not
+   * PII. It is the field that makes an `absent` verdict actionable: settling "real defect
+   * or false verdict" means taking a key and HEADing the store by hand, and there is
+   * nothing else to look up (`postId` is null on most non-post paths, and `userId` alone
+   * selects thousands of rows). `not-applicable` is by definition the arbitrary
+   * caller-supplied strings that FAILED that predicate, so those are omitted rather than
+   * shipped to a log sink.
+   *
+   * There is deliberately no image id — the row does not exist yet, which is the whole
+   * reason the check sits here.
+   *
+   * 🔴 NOT AWAITED, AND CONTAINED. Telemetry must never be able to change this call's
+   * outcome, nor sit on a user-facing mutation's latency budget.
+   */
+  void logToAxiom({
+    type: 'info',
+    name: 'create-image-media-verify',
+    message: 'createImage media existence probe',
+    verdict: mediaVerdict,
+    url: mediaVerdict === 'not-applicable' ? null : image.url,
+    userId: image.userId,
+    postId: image.postId ?? null,
+  }).catch(() => {
+    // swallow — best-effort logging must never break the creation it is observing
+  });
+
   const meta = sanitizeProvenance(
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
