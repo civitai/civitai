@@ -15,11 +15,7 @@ import {
   assistantToggleableFeatures,
   normalizedToggleableFeatures,
 } from '~/components/Account/SettingsCard';
-import {
-  SettingRow,
-  SettingsColumns,
-  SettingsSection,
-} from '~/components/Account/SettingsLayout';
+import { SettingRow, SettingsSection, SettingsStack } from '~/components/Account/SettingsLayout';
 import { GenerationSettings } from '~/components/Generation/GenerationSettings';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -29,9 +25,7 @@ export function PreferencesPane() {
   const user = useCurrentUser();
 
   return (
-    <SettingsColumns
-      left={
-        <>
+    <SettingsStack>
           <SettingsSection title="Media playback">
             <SettingRow block>
               <AutoplayGifsToggle />
@@ -54,10 +48,6 @@ export function PreferencesPane() {
               <GenerationSettings />
             </SettingRow>
           </SettingsSection>
-        </>
-      }
-      right={
-        <>
           <SettingsSection
             title="Model files"
             description="Defaults for the download button. You can still pick per file."
@@ -105,8 +95,6 @@ export function PreferencesPane() {
               </SettingRow>
             )}
           </SettingsSection>
-        </>
-      }
-    />
+    </SettingsStack>
   );
 }

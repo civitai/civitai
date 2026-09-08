@@ -1,14 +1,24 @@
 import { Button, Card, Stack, Text, Title } from '@mantine/core';
-import { closeModal, openConfirmModal } from '@mantine/modals';
-import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
 
-export function RefreshSessionCard() {
-  const currentUser = useCurrentUser();
+export function RefreshSessionCard({ flat }: { flat?: boolean }) {
   const { refreshSession } = useRefreshSession();
+
+  if (flat)
+    return (
+      <SettingsSection title="Session">
+        <SettingRow
+          label="Refresh my session"
+          description="Reloads your account data. Safe to run any time — nothing changes."
+          control={
+            <Button variant="default" size="compact-sm" onClick={refreshSession}>
+              Refresh
+            </Button>
+          }
+        />
+      </SettingsSection>
+    );
 
   return (
     <Card withBorder>

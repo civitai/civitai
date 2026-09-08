@@ -21,7 +21,7 @@ function scrollIfHashed(hash: string) {
 const scrollToStrikes = scrollIfHashed('#strikes');
 const scrollToCreatorScore = scrollIfHashed('#creator-score');
 
-export function StrikesCard() {
+export function StrikesCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
   const scores = currentUser?.meta?.scores;
   const { data: summary, isLoading: summaryLoading } = trpc.strike.getMyStrikeSummary.useQuery();
@@ -31,7 +31,7 @@ export function StrikesCard() {
 
   if (summaryLoading) {
     return (
-      <Card withBorder>
+      <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? "transparent" : undefined}>
         <Stack>
           <Title order={2}>Account Standing</Title>
           <Loader size="sm" />
@@ -46,7 +46,7 @@ export function StrikesCard() {
   const strikes = strikesData?.strikes ?? [];
 
   return (
-    <Card withBorder id="strikes" ref={scrollToStrikes}>
+    <Card withBorder={!flat} id="strikes" ref={scrollToStrikes} p={flat ? 0 : undefined} bg={flat ? "transparent" : undefined}>
       <Stack gap="lg">
         {/* Header — the standing badge now lives beside the Strikes subheading below,
             since it's derived purely from strike points, not the Creator Score. Keeping

@@ -231,7 +231,7 @@ export function AccountLayout({
 
   if (isMobile) {
     return (
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col px-4 py-4">
+      <div className="mx-auto flex w-full max-w-[1020px] flex-col px-4 py-4">
         {isIndex ? (
           <>
             <Text component="h1" className="mb-4 text-xl font-bold">
@@ -258,8 +258,10 @@ export function AccountLayout({
     );
   }
 
+  // 260 rail + 40 gap + 720 content. Past ~720 a row's control drifts far enough from its label
+  // that the pair stops reading as one thing — the same problem that killed the two-column layout.
   return (
-    <div className="mx-auto flex w-full max-w-[1180px] gap-10 px-4 py-6 md:px-8">
+    <div className="mx-auto flex w-full max-w-[1020px] gap-10 px-4 py-6 md:px-8">
       <aside className="w-[260px] shrink-0">
         <div className="sticky" style={{ top: stickyTop }}>
           <AccountNav activeId={section.id} />

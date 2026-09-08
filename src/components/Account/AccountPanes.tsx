@@ -19,21 +19,12 @@ import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentCo
 import { AccountOverview } from '~/components/Account/AccountOverview';
 import { ContentPane } from '~/components/Account/ContentPane';
 import { PreferencesPane } from '~/components/Account/PreferencesPane';
+import { SettingsStack } from '~/components/Account/SettingsLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const NotificationsPane = dynamic(() =>
   import('~/components/Account/NotificationsPane').then((mod) => mod.NotificationsPane)
 );
-
-/** Two columns from `md` up, for the panes still composed of prod cards rather than flat sections. */
-function TwoColumn({ left, right }: { left: React.ReactNode; right: React.ReactNode }) {
-  return (
-    <div className="grid items-start gap-4 md:grid-cols-2">
-      <div className="flex flex-col gap-4">{left}</div>
-      <div className="flex flex-col gap-4">{right}</div>
-    </div>
-  );
-}
 
 export const accountPaneCopy: Record<string, { title: string }> = {
   overview: { title: 'Overview' },
@@ -55,21 +46,13 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
 
     case 'profile':
       return (
-        <TwoColumn
-          left={
-            <>
-              <ProfileCard />
-              <SocialProfileCard />
-              <RefreshSessionCard />
-            </>
-          }
-          right={
-            <>
-              {features.strikes && <StrikesCard />}
-              <DeleteCard />
-            </>
-          }
-        />
+        <SettingsStack>
+          <ProfileCard />
+          <SocialProfileCard />
+          {features.strikes && <StrikesCard flat />}
+          <RefreshSessionCard flat />
+          <DeleteCard flat />
+        </SettingsStack>
       );
 
     case 'preferences':
@@ -83,48 +66,32 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
 
     case 'creator':
       return (
-        <>
+        <SettingsStack>
           {(features.creatorControls || features.stickerPlacement || features.remixGallery) && (
             <CreatorControlsCard />
           )}
           <StickerInventoryCard />
-        </>
+        </SettingsStack>
       );
 
     case 'billing':
       return (
-        <TwoColumn
-          left={
-            <>
-              <SubscriptionCard />
-              <MembershipGiftsCard />
-            </>
-          }
-          right={
-            <>
-              <PaymentMethodsCard />
-              <UserPaymentConfigurationCard />
-            </>
-          }
-        />
+        <SettingsStack>
+          <SubscriptionCard />
+          <MembershipGiftsCard />
+          <PaymentMethodsCard />
+          <UserPaymentConfigurationCard />
+        </SettingsStack>
       );
 
     case 'security':
       return (
-        <TwoColumn
-          left={
-            <>
-              <AccountsCard />
-              {features.apiKeys && <ApiKeysCard />}
-            </>
-          }
-          right={
-            <>
-              {features.oauthApps && <OAuthAppsCard />}
-              {features.oauthApps && <ConnectedAppsCard />}
-            </>
-          }
-        />
+        <SettingsStack>
+          <AccountsCard />
+          {features.apiKeys && <ApiKeysCard />}
+          {features.oauthApps && <OAuthAppsCard />}
+          {features.oauthApps && <ConnectedAppsCard />}
+        </SettingsStack>
       );
 
     default:

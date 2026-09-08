@@ -15,11 +15,12 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function DeleteCard() {
+export function DeleteCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
   const { logout } = useAccountContext();
   const { data: subscriptions, isLoading: subscriptionsLoading } =
@@ -224,19 +225,32 @@ export function DeleteCard() {
         </Stack>
       </Modal>
 
-      {/* MAIN DELETE ACCOUNT BUTTON */}
-      <Card withBorder>
-        <Stack>
-          <Title order={2}>Delete account</Title>
-          <Text size="sm">
-            Once you delete your account, there is no going back. Please be certain when taking this
-            action.
-          </Text>
-          <Button variant="outline" color="red" onClick={handleDeleteClick}>
-            Delete your account
-          </Button>
-        </Stack>
-      </Card>
+      {flat ? (
+        <SettingsSection title="Delete account">
+          <SettingRow
+            label="Delete your account"
+            description="Once you delete your account, there is no going back. Please be certain when taking this action."
+            control={
+              <Button variant="outline" color="red" size="compact-sm" onClick={handleDeleteClick}>
+                Delete account
+              </Button>
+            }
+          />
+        </SettingsSection>
+      ) : (
+        <Card withBorder>
+          <Stack>
+            <Title order={2}>Delete account</Title>
+            <Text size="sm">
+              Once you delete your account, there is no going back. Please be certain when taking
+              this action.
+            </Text>
+            <Button variant="outline" color="red" onClick={handleDeleteClick}>
+              Delete your account
+            </Button>
+          </Stack>
+        </Card>
+      )}
     </>
   );
 }
