@@ -18,6 +18,11 @@ const m = vi.hoisted(() => ({
   grantsSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   buzzSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   scopeSpy: undefined as unknown as ReturnType<typeof vi.fn>,
+  // Store-visibility flags for `AppActivityPanel`'s `App` column. `null` (the default,
+  // and what this file rendered under before) is what `useOptionalFeatureFlags` returns
+  // outside a provider, which fails CLOSED — so a link test run at the default would be
+  // vacuous. The seam test below sets a store-ELIGIBLE viewer deliberately.
+  flags: null as null | Record<string, boolean>,
 }));
 
 // 🔴 `AppActivityPanel`'s `When` column renders `DaysFromNow`, which reads
@@ -29,6 +34,13 @@ vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => m.user,
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => m.flags ?? {},
+  useOptionalFeatureFlags: () => m.flags,
+  useFeatureFlagsReady: () => true,
+  FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
 }));
 
 vi.mock('~/utils/trpc', () => {
@@ -75,6 +87,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 beforeEach(() => {
   m.user = { id: 1, username: 'viewer', isModerator: false };
+  m.flags = null;
   m.grants = [];
   m.buzz = [];
   m.scopes = [];
@@ -201,6 +214,74 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     // The AppActivityPanel isn't mounted for anon, so the scope-invocation query
     // is never called.
     expect(m.scopeSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE SEAM. `AppActivityPanel`'s `App` column gained a link to
+   * `/apps/store-preview/<slug>`; this drawer is the OTHER mount point, and it sits on top
+   * of a RUNNING full-page app. A top-level `<a>` here navigates the whole window out of
+   * the app the user is in — from a panel they opened to read — and the column is
+   * redundant in this mode anyway, since every row is the same app.
+   *
+   * Verified in ISOLATION the panel is correct either way; the defect this pins lives in
+   * the seam, i.e. in whether the drawer's caller actually reaches the suppressing branch.
+   * So the flags are set to a STORE-ELIGIBLE viewer and the row carries a REAL slug —
+   * neither the flag gate nor a null slug can be why it passes.
+   *
+   * 🔴 RED WITHOUT THE CHANGE: drop `linkable={!appBlockId}` from the panel's
+   * `ActivityAppName` call (or default the prop to `true` unconditionally) and this fails
+   * on `expected 'A' not to be 'A'`, while the whole-account control below stays green.
+   */
+  test('🔴 the App name is PLAIN TEXT in the drawer, even for a store-eligible viewer', async () => {
+    m.flags = { appListings: true };
+    m.scopes = [
+      {
+        id: '1',
+        createdAt: new Date('2026-07-14T10:00:00Z'),
+        appBlockId: 'ab-1',
+        appName: 'My App',
+        appSlug: 'my-app',
+        scope: 'buzz:read:self',
+        endpoint: 'me',
+        statusCode: 200,
+        detail: null,
+      },
+    ];
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={vi.fn()} />
+    );
+    const name = page.getByTestId('app-activity-app-name');
+    await expect.element(name.first()).toBeInTheDocument();
+    const el = name.first().element();
+    expect(
+      el.tagName,
+      'the drawer must not offer a link that navigates out of the running app'
+    ).not.toBe('A');
+    expect(el.getAttribute('href')).toBeNull();
+  });
+
+  test('POSITIVE CONTROL: the same viewer + row DOES get a link on the whole-account feed', async () => {
+    // Identical flags, identical row, no `appBlockId`. Without this the test above would
+    // be satisfied by a panel that never links at all.
+    m.flags = { appListings: true };
+    m.scopes = [
+      {
+        id: '1',
+        createdAt: new Date('2026-07-14T10:00:00Z'),
+        appBlockId: 'ab-1',
+        appName: 'My App',
+        appSlug: 'my-app',
+        scope: 'buzz:read:self',
+        endpoint: 'me',
+        statusCode: 200,
+        detail: null,
+      },
+    ];
+    renderWithProviders(<AppActivityPanel />);
+    const name = page.getByTestId('app-activity-app-name');
+    await expect.element(name.first()).toBeInTheDocument();
+    expect(name.first().element().tagName).toBe('A');
+    expect(name.first().element().getAttribute('href')).toBe('/apps/store-preview/my-app');
   });
 
   test('a closed drawer does not mount the body (no queries fire)', async () => {

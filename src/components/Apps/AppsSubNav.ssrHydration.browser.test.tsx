@@ -50,6 +50,7 @@ import type * as TrpcMod from '~/utils/trpc';
 
 type Summary = {
   hasInstalls: boolean;
+  hasActivity: boolean;
   hasSubmissions: boolean;
   hasApprovedApps: boolean;
   isReviewer: boolean;
@@ -59,6 +60,7 @@ type Summary = {
 
 const ALL_TRUE: Summary = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,

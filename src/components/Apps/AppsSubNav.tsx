@@ -27,8 +27,20 @@ import {
  * which tabs to show.
  */
 export type AppsNavSummary = {
-  /** ≥1 install/subscription → show "Activity". */
+  /** ≥1 install/subscription (a `block_user_subscriptions` row) — half of "Activity". */
   hasInstalls: boolean;
+  /**
+   * ≥1 row in EITHER table the activity feed walks — `block_buzz_attribution` (as the
+   * SPENDER) or `block_scope_invocations` — the OTHER half of "Activity".
+   *
+   * 🔴 IT IS NOT REDUNDANT WITH {@link hasInstalls}, AND THE GAP IS A WHOLE COHORT. An
+   * install is a SLOT subscription; a FULL-PAGE app (`/apps/run/<slug>`) is stateless by
+   * design and creates no subscription row at all. So a viewer who only ever runs page
+   * apps has activity — generations, scope-gated API calls, Buzz spends — and
+   * `hasInstalls: false`. Neither flag implies the other: an install with no usage yet is
+   * the mirror case.
+   */
+  hasActivity: boolean;
   /**
    * ≥1 publish request. Drove a "My submissions" tab, then widened "My apps".
    *
@@ -62,6 +74,7 @@ export type AppsNavSummary = {
 
 const EMPTY_SUMMARY: AppsNavSummary = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
@@ -188,21 +201,33 @@ const SUB_NAV_LINKS: SubNavLink[] = [
    * feed, and its gate widened past the model-slot flag — so "Installed" named one tab
    * of four and refused a cohort that has activity without a single install.
    *
-   * ⚠️ THE PREDICATE IS DELIBERATELY UNCHANGED, and that is not an oversight — it is the
-   * one place this row is knowingly narrower than its page. `s.hasInstalls` comes from
-   * `getNavSummary`, which is gated on `appBlocks`; the PAGE now admits
-   * `appBlocks || appBlocksPages`. So a pages-only viewer can load `/apps/activity` and
-   * has no tab pointing at it. That is the SAFE direction of the #3899 / #4668 defect
-   * class (an unreachable page, never a tab into a 404), and closing it properly means
-   * widening `blocks.getNavSummary`'s own gate — a server change on a `blocks.*`
-   * procedure, which this change deliberately does not touch. Recorded here rather than
-   * left to be re-derived.
+   * 🔴 BOTH TERMS ARE LOAD-BEARING; NEITHER IS A RESTATEMENT OF THE OTHER, AND
+   * "SIMPLIFYING" THIS BACK TO `s.hasInstalls` RE-HIDES THE PAGE FROM THE COHORT THE
+   * RENAME WIDENED IT FOR. They name two different facts:
+   *   • `hasInstalls` — a `block_user_subscriptions` row, i.e. a SLOT install. That is
+   *     what the "Installs" tab inside the page shows, and it is what the `appBlocks`
+   *     slot flag governs.
+   *   • `hasActivity` — a row in either table the FEED walks (`block_buzz_attribution` as
+   *     spender, `block_scope_invocations`). A full-page app is STATELESS by design —
+   *     `/apps/run`'s own header, Decision 2: "no `block_user_subscriptions` row, no
+   *     migration" — so someone who only runs page apps has a populated feed and ZERO
+   *     installs. Keyed on installs alone, this row was dark for exactly them: the page
+   *     admitted them (`appBlocks || appBlocksPages`) and no tab pointed at it.
+   * An install with no usage yet is the mirror case, which is why the OR keeps both.
+   *
+   * ⚠️ A RESIDUAL NARROWNESS SURVIVES, deliberately, and it is the SAFE direction of the
+   * #3899 / #4668 class (an unreachable page, never a tab into a 404): both flags come
+   * from `getNavSummary`, whose `enabled` and whose server middleware are gated on
+   * `appBlocks`, while the page admits `appBlocks || appBlocksPages`. A viewer holding
+   * `appBlocksPages` WITHOUT `appBlocks` still gets an all-false summary and no tab.
+   * Closing that means moving the procedure's own gate, which is a wider blast radius
+   * than this row (every flag on the summary would widen with it).
    */
   {
     href: '/apps/activity',
     label: 'Activity',
     icon: IconPlugConnected,
-    visible: (s) => s.hasInstalls,
+    visible: (s) => s.hasInstalls || s.hasActivity,
   },
   /**
    * 🔴 NEEDS `c.isAuthor` AS WELL AS ITS SUMMARY FLAG. `/apps/invites`
@@ -450,10 +475,20 @@ export function AppsSubNav() {
   // short-circuits rather than throwing, returning the ALL-FALSE summary without
   // running a single DB read. So for an `app-listings`-only viewer, widening this
   // `enabled` would buy a guaranteed round-trip to a guaranteed all-false answer.
-  // The conditional tabs it feeds (Activity / Invites / Revenue / Review) all point at
-  // pages that themselves 404 without `appBlocks`, so all-false is also the CORRECT tab
-  // set for that viewer. If the server proc ever moves to `enforceAppListingsReadFlag`,
-  // move this with it.
+  //
+  // ⚠️ THE OLD JUSTIFICATION HERE IS NOW FALSE AND IS CORRECTED RATHER THAN DELETED,
+  // because it is the plausible-sounding reason someone will decide this gate is
+  // airtight. It read: the conditional tabs "all point at pages that themselves 404
+  // without `appBlocks`, so all-false is also the CORRECT tab set for that viewer."
+  // `/apps/activity` NO LONGER 404s without `appBlocks` — it gates on
+  // `canAccessAppsActivity` = `appBlocks || appBlocksPages`. So for a viewer holding
+  // `appBlocksPages` but not `appBlocks`, all-false is NOT the correct tab set: the page
+  // would serve them and this gate hides the only route to it. That is the residual
+  // narrowness recorded on the Activity row, and it is the SAFE direction (an
+  // unreachable page, not a tab into a 404) — but do not re-derive the retired claim as
+  // proof that no gap exists. Invites / Revenue / Review are still `appBlocks`-gated
+  // pages, so the sentence remains true for them. If the server proc ever moves to
+  // `enforceAppListingsReadFlag` — or gains `appBlocksPages` — move this with it.
   const { data } = trpc.blocks.getNavSummary.useQuery(undefined, {
     enabled: !!features.appBlocks && !!currentUser,
     staleTime: 60_000,

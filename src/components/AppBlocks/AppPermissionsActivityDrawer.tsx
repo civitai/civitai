@@ -24,6 +24,17 @@ import { trpc } from '~/utils/trpc';
  * the parent chrome can render this on every run-frame without firing the queries
  * until the user actually opens the panel. (Also keeps `AppBlockChrome`'s own
  * component tests network-free: a closed drawer calls no tRPC hooks.)
+ *
+ * 🔴 THE FEED'S `App` COLUMN IS PLAIN TEXT HERE, NOT A STORE LINK, AND THAT IS A DECISION
+ * RATHER THAN AN OMISSION. `AppActivityPanel` gained a link from the app name to
+ * `/apps/store-preview/<slug>`; this drawer is mounted OVER A RUNNING FULL-PAGE APP, so
+ * that link would be a TOP-LEVEL navigation out of whatever the user was doing inside it
+ * — triggered from a panel they opened to read, with no warning and no way back to their
+ * in-app state. The panel suppresses it whenever it is in per-app drill-down mode
+ * (`linkable={!appBlockId}`), which is exactly the mode this drawer uses; the column is a
+ * label there anyway, since every row is the same app. Not a `target="_blank"`: a second
+ * rendering of one column is how the two come to disagree. Pinned by
+ * `AppPermissionsActivityDrawer.browser.test.tsx`.
  */
 export function AppPermissionsActivityDrawer({
   appBlockId,

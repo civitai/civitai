@@ -49,6 +49,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 const NONE: AppsNavSummary = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
@@ -58,6 +59,7 @@ const NONE: AppsNavSummary = {
 
 const ALL: AppsNavSummary = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
@@ -179,7 +181,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     expect(tab('Review').elements()).toHaveLength(0);
   });
 
-  test('Activity shows ONLY when hasInstalls', async () => {
+  test('Activity shows when hasInstalls', async () => {
     renderWithProviders(
       <AppsSubNavView
         summary={{ ...NONE, hasInstalls: true }}
@@ -192,6 +194,54 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     expect(tab('Invites').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE ROW-LEVEL HALF OF THE `hasActivity` FIX, AND THE ASSERTION THAT MATTERS: a
+   * viewer with ACTIVITY and ZERO INSTALLS must get the tab.
+   *
+   * That viewer is not hypothetical, they are the cohort `/apps/installed` →
+   * `/apps/activity` was renamed for. A full-page app (`/apps/run/<slug>`) is STATELESS by
+   * design — `/apps/run`'s own header, Decision 2: "no `block_user_subscriptions` row, no
+   * migration" — so someone who only runs page apps has generations, scope-gated API
+   * calls and Buzz spends in the feed, and `hasInstalls: false` forever. The row shipped
+   * as `visible: (s) => s.hasInstalls`, which is dark for exactly them while
+   * `/apps/activity` (gated on `appBlocks || appBlocksPages`) serves them.
+   *
+   * 🔴 RED WITHOUT THE CHANGE, AND FOR THIS TEST'S OWN REASON. Restore
+   * `visible: (s) => s.hasInstalls` and this fails on `expect.element(tab('Activity'))`
+   * timing out — no Activity tab renders — while `Activity shows when hasInstalls` above
+   * stays green. A test that only asserted the summary FIELD exists could not tell those
+   * two implementations apart.
+   */
+  test('🔴 Activity shows for hasActivity with NO installs (the page-app cohort)', async () => {
+    renderWithProviders(
+      <AppsSubNavView
+        summary={{ ...NONE, hasActivity: true }}
+        context={NOT_AUTHOR}
+        currentPath="/apps"
+      />
+    );
+    await expect.element(tab('Activity')).toBeInTheDocument();
+    // …and it is the ONLY conditional tab this summary lights, so the pass cannot be a
+    // row that became unconditional.
+    expect(tab('Invites').elements()).toHaveLength(0);
+    expect(tab('Revenue').elements()).toHaveLength(0);
+    expect(tab('Review').elements()).toHaveLength(0);
+  });
+
+  test('NEGATIVE CONTROL: neither installs nor activity ⇒ no Activity tab', async () => {
+    // Guards both cases above against a row that renders for everyone. (The all-false
+    // case above asserts the same thing among four tabs; this one names the pair.)
+    renderWithProviders(
+      <AppsSubNavView
+        summary={{ ...NONE, hasInstalls: false, hasActivity: false, isReviewer: true }}
+        context={AUTHOR}
+        currentPath="/apps"
+      />
+    );
+    await expect.element(tab('Review')).toBeInTheDocument();
+    expect(tab('Activity').elements()).toHaveLength(0);
   });
 
   /**

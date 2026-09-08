@@ -2609,6 +2609,7 @@ export const blocksRouter = router({
   getNavSummary: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     const allFalse = {
       hasInstalls: false,
+      hasActivity: false,
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: false,
@@ -2624,24 +2625,61 @@ export const blocksRouter = router({
     // `status: 'accepted'` consent filter in the codebase and failed
     // `app-access.call-site-ledger.test.ts` on the growth — one home, one filter.
     const { resolveAppsNavAccess } = await import('~/server/services/blocks/app-access.service');
-    const [install, submission, approvedApp, navAccess] = await Promise.all([
-      dbRead.blockUserSubscription.findFirst({
-        where: { userId: user.id },
-        select: { id: true },
-      }),
-      dbRead.appBlockPublishRequest.findFirst({
-        where: { submittedByUserId: user.id },
-        select: { id: true },
-      }),
-      dbRead.appBlock.findFirst({
-        where: { app: { userId: user.id }, status: 'approved' },
-        select: { id: true },
-      }),
-      resolveAppsNavAccess(user.id),
-    ]);
+    const [install, buzzActivity, scopeActivity, submission, approvedApp, navAccess] =
+      await Promise.all([
+        dbRead.blockUserSubscription.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        // 🔴 THE TWO ACTIVITY PROBES BELOW ARE THE TWO TABLES `/apps/activity` ACTUALLY
+        // WALKS — `listMyAppActivity` reads `block_buzz_attribution` filtered on the
+        // SPENDER's `userId`, and `listMyScopeInvocations` reads
+        // `block_scope_invocations` on the same column (both in
+        // `~/server/services/blocks/user-app-surface.service`). They are NOT a proxy for
+        // "the user did something app-ish": a probe on a table the feed does not read
+        // would light a tab over an empty page, which is the mirror of the defect this
+        // whole row exists to close.
+        dbRead.blockBuzzAttribution.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        // The scope-invocation half MIRRORS the feed's own WHERE clause, including the
+        // external-OAuth exclusion: the global feed keeps `app-block` and synthetic
+        // dev-tunnel rows (`appBlockId IS NOT NULL OR syntheticAppId IS NOT NULL`) and
+        // drops external-OAuth rows, which carry BOTH columns null. Without that term an
+        // external-OAuth-only viewer would be shown an Activity tab whose feed renders
+        // "No activity yet". Both columns are PRE-EXISTING, so this read is safe whether
+        // or not the `source`/`oauth_client_id` migration has been applied.
+        dbRead.blockScopeInvocation.findFirst({
+          where: {
+            userId: user.id,
+            OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }],
+          },
+          select: { id: true },
+        }),
+        dbRead.appBlockPublishRequest.findFirst({
+          where: { submittedByUserId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlock.findFirst({
+          where: { app: { userId: user.id }, status: 'approved' },
+          select: { id: true },
+        }),
+        resolveAppsNavAccess(user.id),
+      ]);
 
     return {
       hasInstalls: install !== null,
+      /**
+       * 🔴 ACTIVITY IS NOT INSTALLS, AND THAT IS THE WHOLE REASON THIS FIELD EXISTS.
+       * `hasInstalls` is a `block_user_subscriptions` row — a SLOT subscription. A
+       * FULL-PAGE app (`/apps/run/<slug>`) is stateless by design and writes no such row
+       * ("no `block_user_subscriptions` row, no migration" — the run route's own header),
+       * so a viewer who only ever runs page apps has a populated activity feed and
+       * `hasInstalls: false`. Keying the Activity tab on installs alone hid the page from
+       * exactly the cohort the `/apps/installed` → `/apps/activity` rename widened it for.
+       */
+      hasActivity: buzzActivity !== null || scopeActivity !== null,
       hasSubmissions: submission !== null,
       hasApprovedApps: approvedApp !== null,
       isReviewer: isAppReviewer(user),

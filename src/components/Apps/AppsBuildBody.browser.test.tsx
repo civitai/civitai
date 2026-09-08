@@ -41,6 +41,7 @@ import type * as TrpcMod from '~/utils/trpc';
 /** A summary for an author who HAS apps — the cohort the bug hit. */
 const SUMMARY_WITH_APPS = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,

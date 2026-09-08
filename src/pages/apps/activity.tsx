@@ -34,7 +34,7 @@ import { AppsCardGrid } from '~/components/Apps/appsWideLayout';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags, useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   AvailableBlock,
   SubscriptionRecord,
@@ -48,7 +48,7 @@ import {
   resolveActivityTab,
 } from '~/components/Apps/appsActivityTabs';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
-import { canAccessAppsActivity } from '~/shared/utils/app-blocks-access';
+import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -307,7 +307,22 @@ export function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
   );
 }
 
+/**
+ * 🔴 THE `/apps` ANCHOR IS GATED ON `hasAppsStoreAccess`, AND THE GAP IT CLOSES IS THIS
+ * PR'S OWN. `/apps` SSR-gates on `resolveAppsPageAccess` → `hasAppsStoreAccess` =
+ * `appListings || appBlocks || appListingsPublicExternal`. `appBlocksPages` is NOT one of
+ * those disjuncts — but this PAGE now admits `appBlocks || appBlocksPages`. So the cohort
+ * criterion 2 widened the page for can hold `appBlocksPages` ALONE, load this page, and
+ * be offered a marketplace link that answers `notFound`: the #3899 / #4668 defect class
+ * (an affordance into a 404), reintroduced by the widening rather than by a drifted rule.
+ *
+ * The CTA is OMITTED rather than reworded — a viewer with no store has no destination, so
+ * there is no honest link text. `useOptionalFeatureFlags` (not `useFeatureFlags`) so the
+ * absence of a provider REMOVES the affordance instead of throwing; same fail-closed
+ * decision as `ActivityAppName`.
+ */
 function EmptyState({ label }: { label: string }) {
+  const canSeeStore = hasAppsStoreAccess(useOptionalFeatureFlags());
   return (
     <Center py="md">
       <Stack align="center" gap="xs">
@@ -315,9 +330,11 @@ function EmptyState({ label }: { label: string }) {
         <Text size="sm" c="dimmed">
           {label}
         </Text>
-        <Anchor component={Link} href="/apps" size="sm">
-          Browse the marketplace
-        </Anchor>
+        {canSeeStore && (
+          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+            Browse the marketplace
+          </Anchor>
+        )}
       </Stack>
     </Center>
   );

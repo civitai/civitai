@@ -89,6 +89,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     'blocks.listMyScopeInvocations': { pages: [{ items: [], nextCursor: null }] },
     'blocks.getNavSummary': {
       hasInstalls: true,
+      hasActivity: true,
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: false,
@@ -285,6 +286,47 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
       bodyMarketplaceLinks().map((el) => el.textContent?.trim()),
       'the header CTA is back, or an empty-state anchor is gone'
     ).toEqual(['Browse the marketplace', 'Browse the marketplace', 'Browse the marketplace']);
+  });
+
+  /**
+   * 🔴 …AND THOSE ANCHORS ARE THEMSELVES STORE-GATED, which is a gap THIS PR OPENED.
+   *
+   * `/apps` SSR-gates on `resolveAppsPageAccess` → `hasAppsStoreAccess` =
+   * `appListings || appBlocks || appListingsPublicExternal`. `appBlocksPages` is NOT one
+   * of those three. So the moment this page widened to `appBlocks || appBlocksPages`, a
+   * viewer holding `appBlocksPages` ALONE could load it and be handed a marketplace link
+   * that answers `notFound` — the #3899 / #4668 defect class (an affordance into a 404),
+   * introduced by the widening rather than by a drifted rule.
+   *
+   * ── THE MUTATION CHECK ───────────────────────────────────────────────────────
+   * Delete the `canSeeStore &&` guard from `EmptyState` in `pages/apps/activity.tsx` and
+   * the first test below fails on its OWN assertion — the anchor list it requires to be
+   * empty comes back non-empty. The two tests above (which run with `appListings: true`)
+   * stay green under that mutant, so the red is attributable to the gate.
+   */
+  test('🔴 a page-apps-only viewer gets NO marketplace anchor anywhere on the page', async () => {
+    // The exact cohort criterion 2 admitted: the PAGE gate passes on `appBlocksPages`,
+    // the STORE gate passes on nothing.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: false };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    expect(
+      bodyMarketplaceLinks().map((el) => el.textContent?.trim()),
+      'a link into a `notFound` was offered to a viewer with no store access'
+    ).toEqual([]);
+    // …and the page itself still rendered, so the empty anchor list is not the empty list
+    // of a 404. Two empty states mount for this viewer (activity + permissions); the
+    // Installs panel is slot-flag-gated away.
+    expect(page.getByText(/No activity yet/).elements().length).toBeGreaterThan(0);
+  });
+
+  test('POSITIVE CONTROL: adding the STORE flag alone brings the anchors back', async () => {
+    // Same runtime flags, one store flag added. Without this the assertion above would
+    // also be satisfied by empty states that lost their CTA for everyone.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    expect(bodyMarketplaceLinks().length).toBeGreaterThan(0);
   });
 
   test('🔴 NEGATIVE CONTROL: the count is not trivially "whatever renders"', async () => {

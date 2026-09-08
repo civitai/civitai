@@ -174,12 +174,43 @@ export type AppActivityItem = {
   createdAt: Date;
   appBlockId: string;
   appName: string;
-  appSlug: string;
+  /**
+   * The app's STORE-LISTING slug (`AppBlock.blockId`), or NULL when the row's AppBlock
+   * does not resolve. See "the appSlug contract" below — it is never an `AppBlock.id`.
+   */
+  appSlug: string | null;
   blockInstanceId: string;
   scope: string;
   usdAmountCents: number;
   status: string;
 };
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * THE `appSlug` CONTRACT — shared by BOTH activity feeds below.
+ *
+ * 🔴 `appSlug` IS A STORE-LISTING SLUG OR IT IS NULL — IT IS NEVER AN `AppBlock` PRIMARY
+ * KEY, AND THE FALLBACK THAT MADE IT ONE WAS A GUARANTEED 404.
+ *
+ * Both feeds used to emit `appSlug: r.appBlock?.blockId ?? r.appBlockId`. Those two
+ * columns are not interchangeable: `AppBlock.blockId` is the SLUG that `AppListing.slug`
+ * mirrors (`app-listing-mapper.ts` writes `slug: ab.blockId`) and that
+ * `/apps/run/<slug>` resolves, while `appBlockId` is the FOREIGN KEY — the AppBlock's
+ * `id`. So whenever the join did NOT resolve, the fallback handed the UI a primary key
+ * dressed as a slug, and `ActivityAppName` rendered `/apps/store-preview/<pk>`: a link
+ * that can only 404, offered precisely on the rows where the app is least resolvable.
+ * That join genuinely does come back null — a scope-invocation row's `appBlockId` is
+ * NULLABLE (a pre-approval App-Dev-Tunnel spend writes `appBlockId: null` +
+ * `syntheticAppId`), and a `Restrict`-deleted AppBlock leaves the same shape.
+ *
+ * The fix is a NULL, not a better fallback: a row with no resolvable AppBlock has no
+ * listing to link to, and the consumer's job is to render plain text. That is
+ * `AppNameCrumb`'s rule ("Omitted → no store cluster … not a broken link"), applied at
+ * the source rather than re-derived per call site — and it is deliberately NOT a
+ * per-row client fetch, which on a paginated table would be an N+1.
+ *
+ * `appName` keeps its `?? r.appBlockId` tail on purpose: that is a DISPLAY string with no
+ * navigational meaning, so a last-resort identifier there is worse-looking, not broken.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
 export type AppActivityPage = {
   items: AppActivityItem[];
@@ -258,7 +289,9 @@ export async function listMyAppActivity({
       createdAt: r.attributedAt,
       appBlockId: r.appBlockId,
       appName,
-      appSlug: r.appBlock?.blockId ?? r.appBlockId,
+      // NULL, not `?? r.appBlockId` — see "the appSlug contract" above. `appBlockId` is
+      // the FK (AppBlock.id), and emitting it here produced `/apps/store-preview/<pk>`.
+      appSlug: r.appBlock?.blockId ?? null,
       blockInstanceId: r.blockInstanceId,
       scope: r.scope,
       usdAmountCents: r.usdAmountCents,
@@ -333,7 +366,13 @@ export type ScopeInvocationItem = {
   createdAt: Date;
   appBlockId: string;
   appName: string;
-  appSlug: string;
+  /**
+   * The app's STORE-LISTING slug (`AppBlock.blockId`), or NULL when the row's AppBlock
+   * does not resolve — which on THIS feed is a live case, not a theoretical one: a
+   * pre-approval App-Dev-Tunnel spend writes `appBlockId: null` + `syntheticAppId`. See
+   * "the appSlug contract" above `AppActivityItem`.
+   */
+  appSlug: string | null;
   blockInstanceId: string;
   scope: string;
   endpoint: string;
@@ -447,7 +486,9 @@ export async function listMyScopeInvocations(opts: {
       createdAt: r.invokedAt,
       appBlockId: r.appBlockId,
       appName,
-      appSlug: r.appBlock?.blockId ?? r.appBlockId,
+      // NULL, not `?? r.appBlockId` — see "the appSlug contract" above. `appBlockId` is
+      // the FK (AppBlock.id), and emitting it here produced `/apps/store-preview/<pk>`.
+      appSlug: r.appBlock?.blockId ?? null,
       blockInstanceId: r.blockInstanceId,
       scope: r.scope,
       endpoint: r.endpoint,

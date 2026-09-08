@@ -91,6 +91,16 @@ const SRC = path.resolve(__dirname, '../../..');
  *    `appBlocks` alone — a second RUNTIME flag, not the store predicate, so the
  *    distinction this paragraph draws is unaffected.)
  *
+ *    🔴 `pages/apps/activity.tsx` IS NEVERTHELESS IN THE LEDGER, AND THAT IS NOT A
+ *    CONTRADICTION — read the distinction rather than "fixing" it. Its PAGE gate is
+ *    still `canAccessAppsActivity`; what is store-gated is ONE affordance inside it,
+ *    the empty state's `/apps` anchor. `/apps` gates on `hasAppsStoreAccess`, and
+ *    `appBlocksPages` is not one of that predicate's three disjuncts — so once this
+ *    page widened to `appBlocks || appBlocksPages`, an ungated anchor became a link
+ *    into a `notFound` for the newly-admitted cohort. Same shape, same reason, as
+ *    `components/Apps/AppActivityPanel.tsx` below. A page can be gated on the runtime
+ *    and still contain a link that must be gated on the store.
+ *
  * 2. The user-menu entry is IN the ledger now (#3907, resolved), and its module
  *    lives outside `components/Apps` — `components/AppLayout/AppHeader/
  *    appsNavVisibility.ts` — which is why `SCAN_ROOTS` carries that directory
@@ -122,6 +132,10 @@ const STORE_GATE_SITES = [
   'components/Apps/AppsSubNav.tsx',
   'components/Apps/RelatedListings.tsx',
   'components/Apps/resolveAppsPageAccess.ts',
+  // 🔴 THE EMPTY-STATE `/apps` ANCHOR ON `/apps/activity` — the sibling of the panel
+  // entry above, and the reason note 1 in this header carries an explicit carve-out. The
+  // page itself is runtime-gated; this ONE anchor points at a store-gated route.
+  'pages/apps/activity.tsx',
   'pages/apps/index.tsx',
   'pages/apps/store-preview/[slug].tsx',
 ] as const;

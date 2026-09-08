@@ -280,14 +280,32 @@ describe('listMyAppActivity', () => {
     expect(result.items[0].appName).toBe('gen-from-model');
   });
 
-  it('falls back to appBlockId when appBlock relation is null (defensive)', async () => {
+  /**
+   * 🔴 THIS TEST USED TO ASSERT `appSlug` FELL BACK TO `appBlockId`, AND THAT EXPECTATION
+   * WAS THE DEFECT WRITTEN DOWN. `appBlockId` is the FOREIGN KEY — the AppBlock's `id` —
+   * while `appSlug` is consumed as a store slug: `ActivityAppName` builds
+   * `/apps/store-preview/<slug>` from it, and `AppListing.slug` mirrors
+   * `AppBlock.blockId`, never the id. So the "defensive" fallback handed the UI a primary
+   * key dressed as a slug and produced a link that can only 404 — offered precisely on
+   * the rows where the app is least resolvable.
+   *
+   * The two halves are now deliberately DIFFERENT, which is the whole point:
+   *   • `appName` keeps the fallback — a display string with no navigational meaning.
+   *   • `appSlug` goes NULL — there is no listing to link to, and the consumer renders
+   *     plain text (`AppNameCrumb`'s rule, applied at the source).
+   */
+  it('🔴 appSlug is NULL when the appBlock relation is null — never the primary key', async () => {
     const { listMyAppActivity } = await import('../user-app-surface.service');
     mockDbRead.blockBuzzAttribution.findMany.mockResolvedValue([
       row({ appBlock: null, appBlockId: 'apb_x' }),
     ]);
     const result = await listMyAppActivity({ userId: 42 });
+    // The DISPLAY name still degrades to an identifier rather than to nothing.
     expect(result.items[0].appName).toBe('apb_x');
-    expect(result.items[0].appSlug).toBe('apb_x');
+    expect(
+      result.items[0].appSlug,
+      'the AppBlock PRIMARY KEY was emitted as a store slug — /apps/store-preview/<pk> 404s'
+    ).toBeNull();
   });
 
   it('orderBy is createdAt desc + id desc tiebreak', async () => {
@@ -498,6 +516,29 @@ describe('listMyScopeInvocations', () => {
     // present in the dev's own audit feed, restoring the pre-PR behaviour.
     expect(result.items).toHaveLength(1);
     expect(result.items[0].id).toBe('7');
+    // 🔴 …AND ITS `appSlug` IS NULL, NOT THE PRIMARY KEY. This is the LIVE instance of
+    // the fallback defect, not a defensive one: a synthetic dev-tunnel row genuinely has
+    // no AppBlock, so `?? r.appBlockId` used to emit an id (or, here, `null`'s
+    // stand-in) into a value the UI turns into `/apps/store-preview/<slug>`. There is no
+    // listing for a pre-approval app, so there must be no link. See "the appSlug
+    // contract" in the service.
+    expect(result.items[0].appSlug).toBeNull();
+  });
+
+  it('🔴 appSlug is NULL when the AppBlock join fails on a row that HAS an appBlockId', async () => {
+    // The other shape: `appBlockId` is set (a real FK) but the relation did not resolve.
+    // The old fallback emitted that FK — an `AppBlock.id` — as the store slug. Split from
+    // the synthetic case above so each dies for its own reason.
+    const { listMyScopeInvocations } = await import('../user-app-surface.service');
+    mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([
+      invocationRow({ id: 8n, appBlockId: 'apb_orphan', appBlock: null }),
+    ]);
+    const result = await listMyScopeInvocations({ userId: 42 });
+    expect(result.items[0].appSlug).toBeNull();
+    // POSITIVE CONTROL for the assertion above: a resolvable row DOES carry its slug, so
+    // "null" is not simply what this feed always returns.
+    mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([invocationRow({ id: 9n })]);
+    expect((await listMyScopeInvocations({ userId: 42 })).items[0].appSlug).toBe('who-am-i');
   });
 
   it('emits a nextCursor when the page is full and silently ignores a malformed inbound cursor', async () => {

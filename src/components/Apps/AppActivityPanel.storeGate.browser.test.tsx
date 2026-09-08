@@ -48,7 +48,19 @@ import type * as TrpcMod from '~/utils/trpc';
  * gets its own test with the hook returning `null` explicitly.
  */
 
-const ROW = {
+type ScopeRow = {
+  id: string;
+  createdAt: Date;
+  appBlockId: string;
+  appName: string;
+  appSlug: string | null;
+  scope: string;
+  endpoint: string;
+  statusCode: number;
+  detail: null;
+};
+
+const ROW: ScopeRow = {
   id: 'sc_1',
   createdAt: new Date(Date.now() - 20 * 60 * 1000), // 20 minutes ago
   appBlockId: 'apb_1',
@@ -62,6 +74,9 @@ const ROW = {
 
 const mocks = vi.hoisted(() => ({
   flags: null as null | Record<string, boolean>,
+  // Mutable so a test can drive the EMPTY-state branch (the marketplace-CTA gate) and
+  // the unresolvable-listing branch (`appSlug: null`) without a second mock factory.
+  scopeRows: undefined as unknown[] | undefined,
 }));
 
 // `DaysFromNow` reads `useIsClient()` from this provider and THROWS outside it;
@@ -97,7 +112,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     trpc: {
       blocks: {
         listMyAppActivity: { useInfiniteQuery: () => page1([]) },
-        listMyScopeInvocations: { useInfiniteQuery: () => page1([ROW]) },
+        listMyScopeInvocations: { useInfiniteQuery: () => page1(mocks.scopeRows ?? [ROW]) },
       },
       modelVersion: { getVersionsByIds: { useQuery: () => ({ ...inert, data: [] }) } },
       useQueries: () => [],
@@ -111,6 +126,7 @@ const appName = () => page.getByTestId('app-activity-app-name');
 
 beforeEach(() => {
   mocks.flags = null;
+  mocks.scopeRows = undefined;
 });
 
 describe('the App column links to the store detail — GATED', () => {
@@ -172,7 +188,139 @@ describe('the App column links to the store detail — GATED', () => {
   );
 });
 
-describe('the When column is RELATIVE, with the absolute time still in the tooltip', () => {
+/**
+ * 🔒 A ROW WITH NO RESOLVABLE LISTING GETS PLAIN TEXT — the half of `AppNameCrumb` this
+ * component did NOT copy.
+ *
+ * The crumb withholds its link on TWO conditions: the flag gate AND the listing failing
+ * to resolve ("Omitted → no store cluster … not a broken link"). `ActivityAppName` copied
+ * only the flag half, and the server made that fatal: both feeds emitted
+ * `appSlug: r.appBlock?.blockId ?? r.appBlockId`, whose fallback is the AppBlock PRIMARY
+ * KEY, not the `block_id` that `AppListing.slug` mirrors. So an unresolved join produced
+ * `/apps/store-preview/<pk>` — a link that can only 404. The service now emits `null`
+ * there (see "the appSlug contract" in `user-app-surface.service`), and this pins the
+ * consumer's side of that contract.
+ */
+describe('a row whose listing does not resolve (appSlug: null)', () => {
+  test('🔴 renders PLAIN TEXT, not a link, for an ELIGIBLE viewer', async () => {
+    // 🔴 THE VIEWER IS ELIGIBLE ON PURPOSE. With `appListings: false` this would pass for
+    // the flag gate's reason and say nothing about the slug, which is the whole point.
+    mocks.flags = { appListings: true };
+    mocks.scopeRows = [{ ...ROW, appSlug: null }];
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(appName()).toBeInTheDocument();
+    const el = appName().element();
+    expect(el.tagName, 'a row with no listing slug must not be given an anchor').not.toBe('A');
+    expect(el.getAttribute('href')).toBeNull();
+    // The name still shows — withholding the LINK must not withhold the identity.
+    expect(el.textContent).toContain('Lighthouse');
+  });
+
+  test('🔴 …and the slug BADGE is dropped rather than printing the primary key', async () => {
+    // The badge rendered `item.appSlug` unconditionally, so on the same rows it printed
+    // the AppBlock id as though it were the app's public slug.
+    mocks.flags = { appListings: true };
+    mocks.scopeRows = [{ ...ROW, appSlug: null }];
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(appName()).toBeInTheDocument();
+    const cell = document.querySelector('table tbody tr:first-child > td:nth-child(2)');
+    expect(cell, 'no App cell').not.toBeNull();
+    expect(cell!.textContent?.trim()).toBe('Lighthouse');
+    // POSITIVE CONTROL for the line above: with a real slug the badge IS rendered, so
+    // this is not an assertion satisfied by a badge that never renders at all.
+    expect(cell!.textContent).not.toContain('apb_1');
+  });
+
+  test('POSITIVE CONTROL: with a real slug the badge renders beside the link', async () => {
+    mocks.flags = { appListings: true };
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(appName()).toBeInTheDocument();
+    const cell = document.querySelector('table tbody tr:first-child > td:nth-child(2)');
+    expect(cell!.textContent).toContain('lighthouse');
+    expect(appName().element().tagName).toBe('A');
+  });
+});
+
+/**
+ * 🔒 THE PER-APP DRILL-DOWN SUPPRESSES THE LINK ENTIRELY — `linkable={!appBlockId}`.
+ *
+ * The drill-down caller is the run-frame's "Permissions & activity" drawer, mounted OVER
+ * A RUNNING FULL-PAGE APP. A top-level `<a>` there navigates the whole window out of the
+ * app the user is using, from a panel they opened to READ — and the column is redundant
+ * in that mode anyway, since every row is the same app. Asserted for an ELIGIBLE viewer
+ * with a REAL slug, so neither the flag gate nor a null slug can be the reason it passes.
+ */
+describe('per-app drill-down: the App name is never a top-level navigation', () => {
+  test('🔴 appBlockId set ⇒ plain text, even for an eligible viewer with a real slug', async () => {
+    mocks.flags = { appListings: true };
+    renderWithProviders(<AppActivityPanel appBlockId="apb_1" />);
+    await expect.element(appName()).toBeInTheDocument();
+    const el = appName().element();
+    expect(
+      el.tagName,
+      'the drawer must not offer a link that navigates out of the running app'
+    ).not.toBe('A');
+    expect(el.getAttribute('href')).toBeNull();
+    expect(el.textContent).toContain('Lighthouse');
+  });
+
+  test('POSITIVE CONTROL: the SAME viewer + row DOES get a link on the whole-account feed', async () => {
+    // Identical flags, identical row — only `appBlockId` differs. Without this the test
+    // above would pass against a component that never links.
+    mocks.flags = { appListings: true };
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(appName()).toBeInTheDocument();
+    expect(appName().element().tagName).toBe('A');
+  });
+});
+
+/**
+ * 🔒 THE EMPTY STATE'S `/apps` ANCHOR IS STORE-GATED.
+ *
+ * `/apps` SSR-gates on `hasAppsStoreAccess` = `appListings || appBlocks ||
+ * appListingsPublicExternal`. `appBlocksPages` is NOT one of those disjuncts, while
+ * `/apps/activity` now admits `appBlocks || appBlocksPages` — so the cohort this PR
+ * widened the page for could reach this empty state and be handed a link the marketplace
+ * answers `notFound` for. Same 404-affordance class as the `App` column above.
+ *
+ * ── THE MUTATION CHECK ──────────────────────────────────────────────────────
+ * Delete the `canSeeStore &&` guard from `EmptyActivity` and the first test here fails on
+ * its OWN assertion (the anchor it asserts absent is present); the positive control below
+ * stays green, which is what attributes the red to the gate rather than to the render.
+ */
+describe('the empty state offers /apps only to a viewer /apps would serve', () => {
+  const cta = () => document.querySelectorAll('a[href="/apps"]');
+
+  test('🔴 a page-apps-only viewer gets NO marketplace link', async () => {
+    // The exact newly-admitted cohort: the page's gate passes on `appBlocksPages`, the
+    // store's does not pass at all.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: false };
+    mocks.scopeRows = [];
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(page.getByText(/No activity yet/)).toBeInTheDocument();
+    expect(cta(), 'a link into a `notFound` was rendered for a store-less viewer').toHaveLength(0);
+  });
+
+  test('POSITIVE CONTROL: a store-visible viewer still gets it', async () => {
+    // Without this, "no anchor" would also be satisfied by an empty state that lost its
+    // CTA for everyone.
+    mocks.flags = { appListings: true };
+    mocks.scopeRows = [];
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(page.getByText(/No activity yet/)).toBeInTheDocument();
+    expect(cta()).toHaveLength(1);
+  });
+
+  test('FAILS CLOSED with no FeatureFlags provider at all', async () => {
+    mocks.flags = null;
+    mocks.scopeRows = [];
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(page.getByText(/No activity yet/)).toBeInTheDocument();
+    expect(cta()).toHaveLength(0);
+  });
+});
+
+describe('the When column is RELATIVE, and the absolute instant survives on the <time>', () => {
   test('🔴 renders a relative string, not a YYYY-MM-DD HH:mm stamp', async () => {
     mocks.flags = { appListings: true };
     renderWithProviders(<AppActivityPanel />);
@@ -188,7 +336,7 @@ describe('the When column is RELATIVE, with the absolute time still in the toolt
     expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
-  test('🔴 the absolute instant survives — in the tooltip label AND as `datetime`', async () => {
+  test('🔴 the absolute instant survives — as `title` AND as `datetime`', async () => {
     // The relative string is the readable half; losing the exact instant would make the
     // audit feed unusable for the question it exists to answer.
     mocks.flags = { appListings: true };
@@ -199,10 +347,56 @@ describe('the When column is RELATIVE, with the absolute time still in the toolt
     // `DaysFromNow` puts the formatted instant on both attributes.
     expect(time!.getAttribute('datetime')).toBeTruthy();
     expect(time!.getAttribute('title')).toBeTruthy();
-    // Mantine's Tooltip keeps its label on the wrapped child's `aria-describedby`
-    // target only while open, so the durable assertion is the wrapper's own presence:
-    // the cell still carries the tooltip-bearing element it did before.
     const cell = document.querySelector('table tbody tr:first-child > td');
     expect(cell!.firstElementChild).not.toBeNull();
+  });
+
+  /**
+   * 🔴 ONE HOVER, ONE TOOLTIP. The cell used to wrap `DaysFromNow` in a Mantine
+   * `Tooltip label={item.createdAt.toString()}`, while `DaysFromNow` renders its own
+   * `<time title={day.format()}>`. Both fire on the SAME hover, and they format the same
+   * instant differently (`Date.prototype.toString()` — "Mon Sep 08 2026 14:05:00 GMT+0000
+   * (Coordinated Universal Time)" — vs dayjs `format()` — "2026-09-08T14:05:00+00:00"), so
+   * a reader got two boxes disagreeing about how to spell one time.
+   *
+   * 🔴 IT HAS TO BE A HOVER, AND THE FIRST VERSION OF THIS GUARD WAS VACUOUS BECAUSE IT
+   * WAS NOT. Asserting the DOM at render time — counting `[title]` nodes in the cell, or
+   * looking for `aria-describedby` — cannot see this at all: a CLOSED Mantine `Tooltip`
+   * adds no attribute and no element, so the wrapped and unwrapped markup are IDENTICAL
+   * until someone hovers. Measured: with the `<Tooltip>` re-added around `DaysFromNow`,
+   * the structural version passed 17/17. Only the floating surface it mounts ON HOVER
+   * distinguishes them, so that is what is asserted.
+   *
+   * The poll is bounded and its discriminating power is measured, not assumed: under the
+   * re-added wrapper `role="tooltip"` appears well inside the window (Mantine's default
+   * `openDelay` is 0), and the guard fails on its own assertion.
+   */
+  test('🔴 hovering the When cell raises NO second tooltip over the native one', async () => {
+    mocks.flags = { appListings: true };
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(appName()).toBeInTheDocument();
+
+    const time = document.querySelector('table tbody tr:first-child > td time');
+    expect(time, 'DaysFromNow should render a <time> element').not.toBeNull();
+    // The native affordance the row genuinely owns — asserted first so "no tooltip
+    // appeared" cannot be satisfied by a cell that lost its hover text entirely.
+    expect(time!.getAttribute('title')).toBeTruthy();
+
+    // `withinPortal` is Mantine's default, so a raised tooltip lands on `document.body`
+    // rather than inside the cell — query the document.
+    await page.getByText(/ago$/).hover();
+    let raised: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      raised = Array.from(document.querySelectorAll('[role="tooltip"]')).map(
+        (el) => el.textContent ?? ''
+      );
+      if (raised.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(
+      raised,
+      'a second tooltip was re-added over `DaysFromNow`, which already owns `title` — ' +
+        'one hover then shows the same instant twice, in two different formats'
+    ).toEqual([]);
   });
 });

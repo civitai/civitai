@@ -53,6 +53,7 @@ import type * as TrpcMod from '~/utils/trpc';
 
 const ALL_TRUE_SUMMARY = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
@@ -217,6 +218,7 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     mocks.navSummary = {
       ...ALL_TRUE_SUMMARY,
       hasInstalls: false,
+      hasActivity: false,
       hasApprovedApps: false,
       isReviewer: false,
       hasPendingInvites: false,
@@ -455,6 +457,7 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
 describe('AppsSubNav container — hides entirely below two tabs', () => {
   const EMPTY_SUMMARY = {
     hasInstalls: false,
+    hasActivity: false,
     hasSubmissions: false,
     hasApprovedApps: false,
     isReviewer: false,

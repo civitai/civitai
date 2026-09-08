@@ -40,6 +40,7 @@ import type * as TrpcMod from '~/utils/trpc';
 
 const ALL_TRUE_SUMMARY = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
