@@ -1,5 +1,5 @@
 import type { S3Client } from '@aws-sdk/client-s3';
-import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
+import { getImageUploadProbeBackend, headObject } from '~/utils/s3-utils';
 
 /**
  * Does the media an `Image` row is about to point at actually exist in the store?
@@ -20,7 +20,7 @@ import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
  * 🔴 WHAT THIS COVERS, STATED EXACTLY: `Image` rows written through `createImage`. That is
  * the widest single funnel — post images, model-version and collection paths, comics, cover
  * images, thumbnails — and it reaches every session regardless of which bundle it loaded,
- * which a client-side fix cannot. It is NOT every `Image` row: five write paths reach the
+ * which a client-side fix cannot. It is NOT every `Image` row: six write paths reach the
  * table directly and are enumerated at the call site in `~/server/services/image.service`
  * (`createImage`), the highest-risk being `linkArticleContentImages`, which materialises
  * TipTap article content — fed by the same resolves-on-a-refused-PUT hook described above —
@@ -101,23 +101,49 @@ export type CreatedImageMediaVerdict =
  * An abort surfaces as an `AbortError`, which is not a not-found shape, so it lands on
  * `unknown` like any other unreachable-bucket outcome.
  *
- * 🔴 THIS BOUNDS EACH NETWORK ATTEMPT, NOT WALL-CLOCK TIME. `~/utils/s3-utils` records the
- * mechanism on `checkFileExists` and `headObject`: the signal is shared by every retry
- * attempt, but the SDK sleeps BETWEEN attempts on a plain, non-abort-aware timer, so a
+ * 🔴 ON ITS OWN THIS BOUNDS EACH NETWORK ATTEMPT, NOT WALL-CLOCK TIME. `~/utils/s3-utils`
+ * records the mechanism on `checkFileExists` and `headObject`: the signal is shared by every
+ * retry attempt, but the SDK sleeps BETWEEN attempts on a plain, non-abort-aware timer, so a
  * deadline landing mid-backoff lets that sleep run to completion and only the next attempt
- * short-circuits. Worst case per call is therefore this budget plus one backoff, not 2s.
- * `getB2ImageS3Client` (`~/utils/s3-utils`) sets neither `maxAttempts` nor a
- * request-handler timeout, so the backoff length is whatever the SDK default schedule
- * produces — s3-utils records one measurement against the installed SDK, a 300ms budget
- * with a ~5s backoff in flight returning in ~4.7s. The consequence for the callers that
- * loop is sized at the `createImage` call site.
+ * short-circuits — worst case would be this budget plus one backoff (s3-utils records one
+ * measurement against the installed SDK: a 300ms budget with a ~5s backoff in flight
+ * returning in ~4.7s).
+ *
+ * TWO THINGS CLOSE THAT, and they are independent on purpose:
+ *   1. the probe uses `getImageUploadProbeBackend()`, whose client is built with
+ *      `maxAttempts: 1` — with one attempt there are no between-attempt sleeps at all, so
+ *      the abort budget IS the call's budget;
+ *   2. {@link CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS} races the whole head call, so the
+ *      bound holds even if (1) stops being true — a config value nobody watched take
+ *      effect is a claim, and this one is checked by the caller rather than trusted.
  */
 export const CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS = 2000;
 
 /**
+ * Hard wall-clock ceiling on ONE `probeCreatedImageMedia` call, whatever the store does.
+ *
+ * 🔴 THE ONE BOUND THAT DOES NOT DEPEND ON THE SDK HONOURING ANYTHING. `AbortSignal` and
+ * `maxAttempts` are both requests to the SDK; this is a race the probe runs itself, so a
+ * head call that never settles — a wedged socket, a handler that swallows the abort, a
+ * future SDK that reinstates a retry — still returns `unknown` here. It exists because
+ * `createImage` sits inline on a user-facing mutation and two `comics.router.ts` procedures
+ * call it in bounded loops (20 and 10), so an unbounded per-call cost multiplies.
+ *
+ * Deliberately LARGER than the per-attempt budget, not equal to it: at 2000/2000 the race
+ * would routinely be won by this deadline rather than by the abort, which would hide a
+ * broken abort path behind a passing one. The 1s of headroom is the SDK's window to surface
+ * its own `AbortError` on the ordinary path.
+ */
+export const CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS = 3000;
+
+/**
  * Seam for tests. Both default to the real implementations, so production behaviour is
- * whatever `getImageUploadBackend` / `headObject` do — the injection point exists so a test
- * can drive every verdict without a bucket, not so the probe can differ in production.
+ * whatever `getImageUploadProbeBackend` / `headObject` do — the injection point exists so a
+ * test can drive every verdict without a bucket, not so the probe can differ in production.
+ *
+ * ⚠ Every test that passes `deps` therefore says NOTHING about which backend production
+ * resolves. That gap is covered separately, by
+ * `src/server/utils/__tests__/created-image-media-probe.default-deps.test.ts`.
  */
 export type CreatedImageMediaProbeDeps = {
   getBackend: () => Promise<{ s3: S3Client; bucket: string }>;
@@ -125,7 +151,7 @@ export type CreatedImageMediaProbeDeps = {
 };
 
 /**
- * 🔴 THE BUCKET IS RESOLVED THROUGH `getImageUploadBackend()`, NOT OPEN-CODED.
+ * 🔴 THE BUCKET IS RESOLVED THROUGH THE UPLOAD BACKEND RESOLVER, NOT OPEN-CODED.
  *
  * `Image.url` is the key the UPLOAD path minted, so the only store that can answer about it
  * is the one that path writes to. Every key-minting site already goes through this resolver,
@@ -133,10 +159,14 @@ export type CreatedImageMediaProbeDeps = {
  * than by two constants happening to agree today. `cover-image.service` resolves the same
  * way; an open-coded client plus a bucket literal would silently keep asking the old store
  * the moment uploads move, and answer 404 for every key.
+ *
+ * 🔴 `getImageUploadProbeBackend`, NOT `getImageUploadBackend`: same bucket expression, but
+ * a retry-free client. See `B2_IMAGE_PROBE_MAX_ATTEMPTS` in `~/utils/s3-utils` for why the
+ * shared upload client must NOT have its retries taken away to achieve this.
  */
 const defaultDeps: CreatedImageMediaProbeDeps = {
   getBackend: async () => {
-    const { s3, bucket } = await getImageUploadBackend();
+    const { s3, bucket } = await getImageUploadProbeBackend();
     return { s3, bucket };
   },
   headObject,
@@ -146,6 +176,12 @@ const defaultDeps: CreatedImageMediaProbeDeps = {
  * 🔴 NEVER THROWS. This observes a working code path, so it must not be able to break that
  * path by its own absence: resolving the backend is inside the try, and an unconfigured
  * environment (local, CI, rotated credentials) lands on `unknown` rather than propagating.
+ *
+ * 🔴 NEVER RUNS LONGER THAN {@link CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS}. Both the backend
+ * resolution and the head call are inside the race, because either can be the thing that
+ * hangs. Losing the race yields `unknown` — the same fail-open verdict as any other "could
+ * not consult the store" outcome, so a slow store degrades the MEASUREMENT and never the
+ * mutation.
  */
 export async function probeCreatedImageMedia(
   url: unknown,
@@ -153,22 +189,34 @@ export async function probeCreatedImageMedia(
 ): Promise<CreatedImageMediaVerdict> {
   if (!isProbeableMediaKey(url)) return 'not-applicable';
 
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { s3, bucket } = await deps.getBackend();
-    const head = await deps.headObject(bucket, url, s3, {
-      abortSignal: AbortSignal.timeout(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS),
-    });
-    if (head.status === 'absent') return 'absent';
-    if (head.status === 'unknown') return 'unknown';
-    /**
-     * A zero-length object is a stored object that cannot render — the same defect from the
-     * viewer's point of view, and the shape the production sample actually showed. `size:
-     * null` is "the backend reported no length", NOT "size zero", so it must not trip this;
-     * see `ObjectHeadResult`.
-     */
-    if (head.size === 0) return 'absent';
-    return 'present';
+    return await Promise.race([
+      (async (): Promise<CreatedImageMediaVerdict> => {
+        const { s3, bucket } = await deps.getBackend();
+        const head = await deps.headObject(bucket, url, s3, {
+          abortSignal: AbortSignal.timeout(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS),
+        });
+        if (head.status === 'absent') return 'absent';
+        if (head.status === 'unknown') return 'unknown';
+        /**
+         * A zero-length object is a stored object that cannot render — the same defect from
+         * the viewer's point of view, and the shape the production sample actually showed.
+         * `size: null` is "the backend reported no length", NOT "size zero", so it must not
+         * trip this; see `ObjectHeadResult`.
+         */
+        if (head.size === 0) return 'absent';
+        return 'present';
+      })(),
+      new Promise<CreatedImageMediaVerdict>((resolve) => {
+        deadline = setTimeout(() => resolve('unknown'), CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS);
+      }),
+    ]);
   } catch {
     return 'unknown';
+  } finally {
+    // Whoever won, stop holding the event loop open — an un-cleared timer would keep a
+    // serverless invocation (and a vitest run) alive for the full deadline on every call.
+    if (deadline) clearTimeout(deadline);
   }
 }

@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ObjectHeadResult } from '~/utils/s3-utils';
 import {
+  CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS,
   CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS,
   isProbeableMediaKey,
   probeCreatedImageMedia,
@@ -164,5 +165,74 @@ describe('probeCreatedImageMedia', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+/**
+ * The WALL-CLOCK bound, which is a different claim from the per-attempt one above.
+ *
+ * 🔴 Why these exist at all: the per-attempt budget is a request to the SDK, and the SDK's
+ * between-attempt sleep is not abort-aware — so before this bound a degraded store could
+ * hold a `createImage` call for the budget plus a full backoff, and the two `comics.router`
+ * loops multiply that by up to 20. A configured retry count nobody watched take effect is a
+ * claim; these watch it.
+ */
+describe('probeCreatedImageMedia — the wall-clock bound', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('gives up with unknown when the store never answers', async () => {
+    vi.useFakeTimers();
+    // A head that NEVER settles — the shape an unbounded probe cannot survive. Without the
+    // deadline race this test hangs until vitest's own timeout kills it.
+    const d = deps(() => new Promise<ObjectHeadResult>(() => undefined));
+
+    const verdict = probeCreatedImageMedia(KEY, d);
+    await vi.advanceTimersByTimeAsync(CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS);
+
+    await expect(verdict).resolves.toBe('unknown');
+  });
+
+  it('gives up with unknown when resolving the backend never answers', async () => {
+    // 🔴 The head is not the only thing that can hang. `getBackend` builds a client and
+    // reads config; putting only the head inside the race would leave this uncovered.
+    vi.useFakeTimers();
+    const d = deps({ status: 'present', size: 1 });
+    d.getBackend = vi.fn(() => new Promise(() => undefined)) as never;
+
+    const verdict = probeCreatedImageMedia(KEY, d);
+    await vi.advanceTimersByTimeAsync(CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS);
+
+    await expect(verdict).resolves.toBe('unknown');
+  });
+
+  it('does NOT give up before the deadline — a slow-but-answering store still counts', async () => {
+    /**
+     * The negative control for the two cases above. A deadline that fires early would turn
+     * every slow-but-successful probe into `unknown`, which is exactly the reading that
+     * makes the `absent` rate unusable: `unknown` is the fail-open bucket, so a probe that
+     * quietly moved its own traffic there would report a healthy zero forever.
+     */
+    vi.useFakeTimers();
+    let release!: (r: ObjectHeadResult) => void;
+    const d = deps(() => new Promise<ObjectHeadResult>((r) => (release = r)));
+
+    const verdict = probeCreatedImageMedia(KEY, d);
+    await vi.advanceTimersByTimeAsync(CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS - 1);
+    release({ status: 'present', size: 7 });
+
+    await expect(verdict).resolves.toBe('present');
+  });
+
+  it('bounds one call at 3s, above the per-attempt budget and below any request timeout', () => {
+    // Literals, not a re-read of the constants: a mutant that moves the deadline has to
+    // fail here even if it moves the constant's declaration with it.
+    expect(CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS).toBe(3000);
+    // 🔴 The ORDER is the load-bearing part. Equal budgets would let the deadline win the
+    // race on the ordinary abort path, hiding a broken abort behind a passing test.
+    expect(CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS).toBeGreaterThan(
+      CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS
+    );
   });
 });

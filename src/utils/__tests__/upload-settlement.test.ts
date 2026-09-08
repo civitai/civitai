@@ -218,10 +218,28 @@ describe('attachUploadSettlement', () => {
   // the store and is REFUSED — an expired presign (403), a malformed request (400), a
   // store that is briefly unavailable (503) — completes normally and lands on
   // `loadend`. That branch reported nothing at all, so the tracked file went on
-  // asserting `uploading` forever: `ImageUpload` renders `status === 'error'` (a badge
-  // it never got to show) and `ChallengeSubmitModal` both renders it AND gates its
-  // submit on `status === 'uploading'`, so a refused PUT there wedges the submit
-  // button with a spinner that can never clear.
+  // asserting `uploading` forever.
+  //
+  // WHERE THAT IS USER-VISIBLE, MEASURED RATHER THAN ASSUMED: `ChallengeSubmitModal`
+  // reads the hook's `TrackedFile.status` directly — it renders `f.status === 'error'`
+  // (`ChallengeSubmitModal.tsx:593`) AND gates its submit on
+  // `some(f => f.status === 'uploading')` (`:407`) — so before this change a refused PUT
+  // there wedged the submit button with a spinner that could never clear. That half is
+  // verified end to end.
+  //
+  // 🔴 `ImageUpload` IS NOT SUCH A PLACE, AND AN EARLIER VERSION OF THIS COMMENT SAID IT
+  // WAS ("`ImageUpload` renders `status === 'error'`, a badge it never got to show").
+  // `ImageUpload.tsx` reads only `progress` off the hook's tracked file
+  // (`ImageUpload.tsx:214-215`); its `image.status === 'error'` at `:302` is
+  // `CustomFile.status`, the post-upload INGESTION status — a different type over a
+  // different value set (`'processing' | 'uploading' | 'complete' | 'blocked' | 'error'`,
+  // `src/types/global.d.ts:64`), which the hook never writes. So on the `ImageUpload`
+  // path a refused PUT is STILL SILENT to the user after this change: settlement resolves,
+  // `handleDrop` clears the entry's `file` and stores the presign id as its `url`
+  // (`ImageUpload.tsx:118-125`), the loading overlay therefore drops, and the entry
+  // renders as an ordinary uploaded image with no status at all. Do not read that silence
+  // as the fix being broken — it is the reach of the fix, and closing it means having
+  // `ImageUpload` consume the tracked file's status.
   // ---------------------------------------------------------------------------
 
   it.each([201, 204])('treats a %i as the successful PUT it is', async (status) => {

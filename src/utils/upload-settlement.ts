@@ -56,6 +56,16 @@ export function attachUploadSettlement(
     // `abort()` dispatches `abort` and THEN `loadend`, so once `loadend` reports a
     // non-2xx as an error (below), a user cancel would be overwritten with a failure.
     // `keeps a user cancel reported as aborted, not errored` fails without this.
+    //
+    // ⚠ ONE HONEST QUALIFICATION, so this guard is not over-trusted: as of this change
+    // NOTHING IN PRODUCTION TRIGGERS IT. `useCFImageUpload` exposes `abort` on each
+    // tracked file, but no consumer of that hook calls it — checked by enumerating every
+    // non-test file that calls `useCFImageUpload` and grepping each for `abort`; the only
+    // hit is `IterativeImageEditor`'s `handleAbort`, which cancels a GENERATION, not an
+    // upload. The `abort` path is pre-existing and unwired. Keep the guard: it is
+    // reachable by this module's own contract, it is what the cancel test exercises, and
+    // wiring a cancel button is a UI change away from making it live. But do not read its
+    // presence as evidence that cancel is a supported flow today.
     let aborted = false;
 
     xhr.addEventListener('loadend', () => {

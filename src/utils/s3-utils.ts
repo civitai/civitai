@@ -109,6 +109,73 @@ export async function getImageUploadBackend(): Promise<{
 }
 
 /**
+ * How many times the READ-ONLY probe client may attempt a request. ONE — i.e. no retries.
+ *
+ * 🔴 THIS IS THE ONLY THING THAT MAKES A PROBE'S WALL TIME BOUNDABLE. An `abortSignal`
+ * bounds each network ATTEMPT but not the call: the SDK sleeps BETWEEN attempts on a plain,
+ * non-abort-aware timer, so a deadline landing mid-backoff lets that sleep run to
+ * completion (documented on {@link checkFileExists}; measured there — a 300 ms budget with a
+ * ~5 s backoff in flight returned in ~4.7 s). With one attempt there is no between, so the
+ * abort budget IS the call's budget.
+ */
+export const B2_IMAGE_PROBE_MAX_ATTEMPTS = 1;
+
+let _b2ImageProbeS3Client: S3Client | null = null;
+/**
+ * A SEPARATE, retry-free B2 image client for read-only existence probes on user-facing
+ * paths.
+ *
+ * 🔴 WHY NOT JUST SET `maxAttempts` ON {@link getB2ImageS3Client}: that client is SHARED by
+ * the live upload-completion endpoints (`src/pages/api/upload/complete.ts`,
+ * `src/pages/api/upload/abort.ts`), the announcement media check
+ * (`src/server/jobs/announcement-media-check.ts`) and the server-side upload/delete paths.
+ * Those WANT the SDK's default retries — a transient 500 there loses a user's bytes. Taking
+ * retries away from all of them to bound a telemetry probe would be a production change far
+ * wider than the probe. So the probe gets its own client and the shared factory above is
+ * untouched.
+ *
+ * Same credentials, same region, same endpoint, same PUT-metrics wrapper — the ONLY
+ * difference is `maxAttempts`. Anything else drifting between the two would mean the probe
+ * is asking a different store than the one the key was minted into.
+ */
+export function getB2ImageProbeS3Client(): S3Client {
+  if (!env.S3_IMAGE_B2_ACCESS_KEY || !env.S3_IMAGE_B2_SECRET_KEY || !env.S3_IMAGE_B2_ENDPOINT) {
+    throw new Error('B2 image upload credentials not configured');
+  }
+  if (!_b2ImageProbeS3Client) {
+    _b2ImageProbeS3Client = instrumentB2Client(
+      new S3Client({
+        credentials: {
+          accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
+          secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
+        },
+        region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
+        endpoint: env.S3_IMAGE_B2_ENDPOINT,
+        forcePathStyle: true,
+        maxAttempts: B2_IMAGE_PROBE_MAX_ATTEMPTS,
+      })
+    );
+  }
+  return _b2ImageProbeS3Client;
+}
+
+/**
+ * The image-upload backend, with the retry-free probe client in place of the shared one.
+ *
+ * The BUCKET is taken from {@link getImageUploadBackend} rather than re-read from `env`, so
+ * a probe can never end up asking a different bucket than the one the upload path mints
+ * keys into — the two cannot drift because there is only one expression.
+ */
+export async function getImageUploadProbeBackend(): Promise<{
+  s3: S3Client;
+  bucket: string;
+  backend: ImageUploadBackend;
+}> {
+  const { bucket, backend } = await getImageUploadBackend();
+  return { s3: getB2ImageProbeS3Client(), bucket, backend };
+}
+
+/**
  * Server-side: upload ALREADY-FETCHED image bytes into the SAME store the
  * browser-direct client upload path uses (the B2 image bucket resolved by
  * `getImageUploadBackend`, registered in storage-resolver) and return the UUID

@@ -76,9 +76,27 @@ class FakeXHR {
     this.fire('error');
     this.fire('loadend');
   }
-  /** A user cancel: `abort` then `loadend`. */
+  /**
+   * A user cancel: `abort` then `loadend`.
+   *
+   * 🔴 `readyState` is 4 — the same value `src/utils/__tests__/upload-settlement.test.ts`
+   * uses, and for the same reason: `abort()` runs the request-error steps, which set the
+   * state to DONE and fire both events, and only afterwards is the state reset to UNSENT.
+   * This stub said 0, i.e. two stubs of the same browser event disagreed about it, and one
+   * of them had to be wrong.
+   *
+   * ⚠ THE SCOPE OF THAT FIX, MEASURED RATHER THAN ASSUMED. A round-2 audit predicted the
+   * old `0` made the cancel case pass for the wrong reason — `success` computing false via
+   * the `readyState === 4` clause instead of via `status === 0`. That prediction does not
+   * hold here: deleting the `aborted` guard from `attachUploadSettlement` turns this case
+   * red under BOTH values, identically (`expected [ 'error' ] to deeply equal [ 'aborted' ]`,
+   * 1 failed | 8 passed), because with the guard gone `success` is false either way and
+   * `onError` overwrites the cancel regardless of which clause produced the false. So this
+   * is a FIDELITY fix — the stub now models the browser and agrees with its sibling — and
+   * not a discrimination fix. The case was already discriminating.
+   */
   cancel() {
-    this.readyState = 0;
+    this.readyState = 4;
     this.status = 0;
     this.fire('abort');
     this.fire('loadend');
@@ -188,9 +206,19 @@ describe('useCFImageUpload — the tracked file must not lie about a refused PUT
      * 🔴 THE REMAINING HALF OF THE DEFECT, PINNED RATHER THAN FIXED. `uploadToCF` still
      * RESOLVES on a refused PUT, handing the caller a media key with nothing behind it —
      * which is how an `Image` row gets written for media that never landed. Making it
-     * reject is the follow-up, and it is not a one-line change: 14 of the 32 direct call
-     * sites do not catch, and `ImageUpload`'s uncaught `Promise.all` would propagate local
-     * `blob:` URLs into `onChange` as image values. Asserting the current behaviour makes
+     * reject is the follow-up, and it is not a one-line change: most direct call sites do
+     * not catch, and `ImageUpload`'s uncaught `Promise.all` would propagate local `blob:`
+     * URLs into `onChange` as image values.
+     *
+     * ⚠ There was a precise count here ("14 of the 32 direct call sites"). It is gone
+     * deliberately, and NOT because the qualitative claim weakened — the `Promise.all`
+     * consequence above is verified at `src/components/ImageUpload/ImageUpload.tsx`. The
+     * count is gone because it was derived four times and moved every time (24 → ~38 → 42
+     * → 32/14), a round-2 audit independently got a different numerator, and nothing in
+     * this repo asserts on any of those numbers, so the figure could only ever rot. Do not
+     * reinstate one without a test that fails when it drifts.
+     *
+     * Asserting the current behaviour makes
      * that follow-up a deliberate edit to this expectation instead of a silent drift, and
      * the observe-only probe in `createImage` covers the `createImage` funnel server-side
      * meanwhile — not every `Image` row; see that call site for the paths it misses.

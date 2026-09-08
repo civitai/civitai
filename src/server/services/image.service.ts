@@ -6124,7 +6124,7 @@ export async function createImage({
    * each caller, because a predicate open-coded at N sites is wrong at N-1 of them. It
    * cannot live in the zod schema, because it needs IO.
    *
-   * 🔴 IT IS NOT EVERY `Image` ROW, AND THIS COMMENT USED TO CLAIM IT WAS. Five write
+   * 🔴 IT IS NOT EVERY `Image` ROW, AND THIS COMMENT USED TO CLAIM IT WAS. Six write
    * paths reach the `Image` table without passing through here, so their rows appear in
    * neither the numerator nor the denominator of anything this emits:
    *   1. `article.service.ts` `linkArticleContentImages` (`tx.image.createManyAndReturn`)
@@ -6132,6 +6132,21 @@ export async function createImage({
    *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
    *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
    *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
+   *   6. `jobs/daily-challenge-processing.ts` `duplicateImage` — a raw
+   *      `INSERT INTO "Image" (…) SELECT … FROM "Image" i WHERE i.id = …` that re-owns an
+   *      existing row's columns (`url` first among them) to another user, for the
+   *      challenge cover.
+   *
+   * 🔴 THIS LIST SAID FIVE UNTIL A ROUND-2 AUDIT FOUND (6), so treat it as a claim that
+   * has already been wrong once. The population it asserts over is: every
+   * `.image.(create|createMany|createManyAndReturn|upsert)` call and every raw
+   * `INSERT INTO "Image"` under `src/`, excluding test files. Re-derive it, do not trust
+   * it — and note that (6) is the LOWER-risk shape of the two kinds here: its `url` is
+   * copied from a row that already exists rather than freshly minted from a client
+   * upload, so it can propagate an existing defective key but cannot create a new one.
+   * (1)–(5) all take their `url` from their INPUT rather than from an existing `Image`
+   * row, so those are where a brand-new orphan key can enter. That is a claim about the
+   * SHAPE of each write, not a ranking — nothing here has measured a per-path rate.
    *
    * 🔴 The article path is the highest-risk of those, because it is fed by the exact hook
    * defect this change describes: the TipTap editor nodes (`TipTap/EdgeMediaNode.tsx`,
@@ -6164,15 +6179,26 @@ export async function createImage({
    * (`images` capped at 10). Both loops are sequential, so they add up to 20 and up to 10
    * sequential probes respectively.
    *
-   * 🔴 Size the DEGRADED case, not the healthy one: as documented on
-   * `CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS`, the 2s budget bounds each network attempt but
-   * not wall-clock time, so per-call worst case is the budget plus one non-abort-aware SDK
-   * backoff. Against a degraded store the added cost of a full bulk import is therefore 20
-   * of those, not 20 × 2s. Both loops are already N sequential IO round-trips per item (a
-   * DB write plus an ingestion call), so this is a proportional addition to an existing
-   * sequential-IO path rather than a new failure class — but "proportional" is a claim
-   * about shape, not about the absolute number, and the absolute number is unbounded until
-   * `getB2ImageS3Client` sets a `maxAttempts`.
+   * 🔴 Size the DEGRADED case, not the healthy one — and it is now an ACTUAL NUMBER. An
+   * earlier version of this comment ended "the absolute number is unbounded until
+   * `getB2ImageS3Client` sets a `maxAttempts`", which was true and is the defect this
+   * paragraph used to describe: an abort signal bounds each network ATTEMPT, and the SDK's
+   * between-attempt sleep is not abort-aware, so a degraded store could add tens of seconds
+   * to a 20-item import and blow the request budget — telemetry becoming a new failure mode
+   * on a working path.
+   *
+   * That is closed, and NOT by changing `getB2ImageS3Client`: that factory is shared with
+   * the live upload-completion endpoints, which want their retries. The probe was given its
+   * own `maxAttempts: 1` client (`getImageUploadProbeBackend`), and
+   * `probeCreatedImageMedia` additionally races itself against
+   * `CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS` so the bound holds without trusting the SDK.
+   * Worst case is therefore 3s per call: 60s added to a 20-item `bulkCreatePanels` and 30s
+   * to a 10-item `addReferenceImages` — bounded, and only while the store is degraded.
+   *
+   * Both loops are already N sequential IO round-trips per item (a DB write plus an
+   * ingestion call), so this remains a proportional addition to an existing sequential-IO
+   * path. If those worst cases are judged too large, the lever is the deadline constant or
+   * making these two routers probe concurrently — not removing the bound.
    */
   const mediaVerdict = await probeCreatedImageMedia(image.url);
 
