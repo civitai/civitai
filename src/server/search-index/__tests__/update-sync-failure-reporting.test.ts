@@ -186,8 +186,11 @@ describe('updateSync :: per-index chunk size', () => {
   // The non-finite cases are what pin `Number.isFinite` rather than a `typeof x === 'number'`
   // test: `NaN`, `Infinity` and `-Infinity` are all of type `number`, so the declared type does
   // not exclude them, and `Math.max(1, Math.floor(NaN))` is `NaN` — the same empty-chunk silent
-  // success the clamp exists to remove. (`-Infinity` is the weakest of the three: a `typeof`
-  // mutant clamps it to 1, so only the exact-size assertion below separates it from the floor.)
+  // success the clamp exists to remove. (`Infinity` is the weakest of the three: under a `typeof`
+  // mutant `Math.max(1, Math.floor(Infinity))` is `Infinity`, and `chunk(60, Infinity)` is one
+  // batch of 60 — byte-identical to the default-sized batch this row expects — so the exact-size
+  // assertion below is the only thing that separates them. `-Infinity` clamps to 1 under the same
+  // mutant, giving 60 batches instead of 1, so the batch-count assertions catch it too.)
 
   // 60 ids at one id per batch is 60 batches of 1; 60 ids at the default (which is larger than
   // 60) is a single batch of 60.

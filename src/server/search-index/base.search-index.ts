@@ -68,9 +68,11 @@ type SearchIndexProcessor = {
   updateInterval?: number;
   workerCount?: number;
   /**
-   * Ids per batch for `updateSync`. Each batch becomes one `pullData` call, so this is the knob
-   * that decides whether that query fits inside the database statement timeout. Defaults to
-   * `DEFAULT_UPDATE_SYNC_CHUNK_SIZE`.
+   * Ids per batch for `updateSync`. Each batch becomes one targeted pull task, so this is the
+   * knob that bounds the id list a `pullData` query is handed, and therefore whether that query
+   * fits inside the database statement timeout. Note that it bounds the id list per call, not the
+   * number of calls: a processor that also sets `pullSteps` runs the same batch of ids through
+   * `pullData` once per step. Defaults to `DEFAULT_UPDATE_SYNC_CHUNK_SIZE`.
    */
   updateSyncChunkSize?: number;
   pullSteps?: number;
@@ -207,14 +209,15 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
   } = processor;
 
-  // `chunk(xs, 0)`, `chunk(xs, -1)` and `chunk(xs, NaN)` all return `[]`, so a processor
-  // configured that way would queue zero tasks, write nothing to the index, and still report
-  // `totalTasks: 0, failedTasks: 0` — the silent success this reporting exists to remove. Clamp a
-  // finite value to at least one id per batch; fall back to the default for a NON-FINITE one.
-  // `NaN`, `Infinity` and `-Infinity` are all of type `number`, so the declared type does not
-  // exclude them and a value derived from config or an env var can reach here. Note that this
-  // changes what `Infinity` does: it used to reach `chunk` and yield a single batch of everything,
-  // and now yields default-sized batches instead.
+  // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
+  // (lodash-es 4.17.21; `Infinity` is the one non-finite size that does not — it returns a single
+  // batch of everything). A processor configured with any of the empty-returning values would
+  // queue zero tasks, write nothing to the index, and still report `totalTasks: 0,
+  // failedTasks: 0` — the silent success this reporting exists to remove. Clamp a finite value to
+  // at least one id per batch; fall back to the default for a NON-FINITE one. `NaN`, `Infinity`
+  // and `-Infinity` are all of type `number`, so the declared type does not exclude them.
+  // Defensive only: no caller passes one today — `collections.search-index.ts` is the sole
+  // processor that configures this field at all, at 25.
   const updateSyncChunkSize = Number.isFinite(configuredUpdateSyncChunkSize)
     ? Math.max(1, Math.floor(configuredUpdateSyncChunkSize))
     : DEFAULT_UPDATE_SYNC_CHUNK_SIZE;

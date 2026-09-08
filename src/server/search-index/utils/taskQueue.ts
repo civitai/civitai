@@ -183,9 +183,11 @@ export class TaskQueue {
     task.retries = task.retries ?? 0;
 
     if (task.retries < task.maxRetries) {
-      // Requeue it. The task is no longer processing and not yet queued, so it is invisible to
-      // isQueueEmpty() for the whole backoff — without `retrying` every worker can decide the
-      // queue is empty and resolve before the retry is ever added back.
+      // Requeue it. The task is no longer processing and not yet queued, so `retrying` is what
+      // keeps it visible to isQueueEmpty() across the backoff. It is redundant with the `await`
+      // in getTaskQueueWorker rather than an alternative to it: measured, either mechanism on its
+      // own keeps the retry alive, and only with neither do the workers all decide the queue is
+      // empty and resolve before the retry is added back.
       this.stats.processing--;
       this.retrying++;
       try {
@@ -198,9 +200,11 @@ export class TaskQueue {
       return;
     }
 
-    // Summarise rather than retain: once this returns, no structure on the queue reaches the task
-    // or its `data`/`currentData` payload. (Pinned queue-wide, not just for `failedTasks`, by the
-    // reachability walk in `src/server/search-index/utils/__tests__/taskQueue.test.ts`.)
+    // Summarise rather than retain. On this path only — the task has given up, the retry branch
+    // above having already returned with it back on `queues[type]` — no structure on the queue
+    // reaches the task or its `data`/`currentData` payload once this returns. (Pinned queue-wide,
+    // not just for `failedTasks`, by the reachability walk in
+    // `src/server/search-index/utils/__tests__/taskQueue.test.ts`.)
     this.failedTasks.push({
       type: task.type,
       idCount: task.idCount ?? 0,
@@ -235,8 +239,9 @@ export const getTaskQueueWorker = (
       const result = await processor(task);
 
       if (result === 'error') {
-        // Awaited: failTask holds the task's retry slot open, and dropping the promise on the
-        // floor also drops any error it raises.
+        // Awaited so a rejection from failTask is not dropped on the floor. It is not what keeps
+        // the retry alive — `retrying` does that — but the two are redundant, not alternatives;
+        // see the comment on the retry branch in `failTask`.
         await queue.failTask(task);
       } else {
         queue.completeTask(task);

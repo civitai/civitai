@@ -42,7 +42,8 @@ vi.mock('~/server/jobs/job', () => ({
   inJobContext: (_res: NextApiResponse, fn: (jobContext: unknown) => Promise<void>) => fn({}),
 }));
 
-// The real index objects open a Meilisearch client and hit the database at module load.
+// Replaced with spies because which of these objects the handler reaches for is the thing under
+// test; the real ones would talk to Meilisearch and the database once called.
 vi.mock('~/server/search-index', () => indexMocks);
 
 import {
