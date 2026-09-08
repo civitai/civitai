@@ -54,7 +54,9 @@ const ecosystemToMode: Record<string, Flux2KleinMode> = {
 const distilled = defineGraph<FamilyExt>()
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
-  .field('steps', sliderDef({ min: 4, max: 12, default: 8 }))
+  // scoped per arm: base's 20-50 range shares the family bucket and its
+  // values fail distilled's max(12) at validate
+  .field('steps', { ...sliderDef({ min: 4, max: 12, default: 8 }), scope: 'distilled' })
   .field('seed', SEED);
 
 const base = defineGraph<FamilyExt>()
@@ -63,7 +65,7 @@ const base = defineGraph<FamilyExt>()
   .field('sampler', selectDef({ options: flux2KleinSamplers, default: 'euler' }))
   .field('scheduler', selectDef({ options: flux2KleinSchedules, default: 'simple' }))
   .field('cfgScale', sliderDef({ min: 2, max: 20, default: 7, step: 0.5 }))
-  .field('steps', sliderDef({ min: 20, max: 50, default: 30 }))
+  .field('steps', { ...sliderDef({ min: 20, max: 50, default: 30 }), scope: 'base' })
   .field('seed', SEED);
 
 /** Tagged: v1's `flux2KleinMode` computed becomes the branch key. */

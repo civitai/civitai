@@ -127,11 +127,19 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
     _ext.workflow.startsWith('txt') ? boolDef(false) : null
   )
   // --- image-to-3D fields ---
-  .field('images', ({ polygenVersion, _ext }) =>
-    !_ext.workflow.startsWith('txt')
-      ? imagesDef({ min: 1, max: polygenVersion === 'v7' ? POLYGEN_V7_MAX_IMAGES : 1 })
-      : null
-  )
+  .field('images', ({ polygenVersion, _ext }) => {
+    if (_ext.workflow.startsWith('txt')) return null;
+    const max = polygenVersion === 'v7' ? POLYGEN_V7_MAX_IMAGES : 1;
+    return {
+      ...imagesDef({ min: 1, max }),
+      // v7's multi-image staging truncates on a v6 switch instead of failing
+      // max(1) at validate; intent keeps the full set for the switch back
+      correct: (value: unknown) =>
+        Array.isArray(value) && value.length > max
+          ? { value: value.slice(0, max), reason: 'image_limit' }
+          : undefined,
+    };
+  })
   .field('shouldTexture', ({ _ext }) => (!_ext.workflow.startsWith('txt') ? boolDef(true) : null))
   // --- shared Meshy controls ---
   .field(

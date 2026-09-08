@@ -6,13 +6,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // config read fails — a sysRedis DOWN (hGet throws) or SLOW/half-open (withSysReadDeadline
 // rejects) must return early WITHOUT touching clickhouse/dbWrite.
 
-const { hGet, withSysReadDeadline, chQuery, createNotification, refresh } = vi.hoisted(() => ({
-  hGet: vi.fn(),
-  withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-  chQuery: vi.fn(),
-  createNotification: vi.fn(() => Promise.resolve(undefined)),
-  refresh: vi.fn(() => Promise.resolve(undefined)),
-}));
+const { hGet, withSysReadDeadline, chQuery, createNotification, refresh, chInsert, logToAxiom } =
+  vi.hoisted(() => ({
+    hGet: vi.fn(),
+    withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+    chQuery: vi.fn(),
+    createNotification: vi.fn(() => Promise.resolve(undefined)),
+    refresh: vi.fn(() => Promise.resolve(undefined)),
+    chInsert: vi.fn(() => Promise.resolve(undefined)),
+    logToAxiom: vi.fn(() => Promise.resolve(undefined)),
+  }));
 
 vi.mock('~/server/redis/client', () => ({
   sysRedis: { hGet },
@@ -21,8 +24,11 @@ vi.mock('~/server/redis/client', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({
-  clickhouse: { $query: chQuery },
+  clickhouse: { $query: chQuery, insert: chInsert },
 }));
+
+// The dynamic `import('~/server/logging/client')` on the decision-log failure path.
+vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
 vi.mock('~/server/redis/caches', () => ({
   userMultipliersCache: { refresh },
@@ -280,5 +286,100 @@ describe('rewards-abuse-prevention — scan bounds and config safety', () => {
 
     await expect(rewardsAbusePrevention.run().result).rejects.toThrow(/SQL-significant characters/);
     expect(chQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('rewards-abuse-prevention — decision log', () => {
+  const twoClusters = [
+    { ip: '203.0.113.7', user_count: 2, ip_user_count: 2, awarded: 200, user_ids: [1, 2] },
+    { ip: '203.0.113.8', user_count: 2, ip_user_count: 2, awarded: 200, user_ids: [3, 4] },
+  ];
+  type DecisionRow = {
+    runId: string;
+    ip: string;
+    userIds: number[];
+    disabledUserIds: number[];
+    usersDisabled: number;
+  };
+  const rowsWritten = () => chInsert.mock.calls[0]?.[0] as { table: string; values: DecisionRow[] };
+
+  it('writes one row per flagged cluster, carrying the config that flagged it', async () => {
+    chQuery.mockResolvedValue(twoClusters);
+
+    await runWith({ dryRun: true, require_exclusive_ip: true, user_count: 1, awarded: 100 });
+
+    const { table, values } = rowsWritten();
+    expect(table).toBe('rewards_abuse_decisions');
+    expect(values).toHaveLength(2);
+    expect(values[0]).toMatchObject({
+      ip: '203.0.113.7',
+      userIds: [1, 2],
+      userCount: 2,
+      ipUserCount: 2,
+      awarded: 200,
+      dryRun: 1,
+      requireExclusiveIp: 1,
+      userCountThreshold: 1,
+      awardedThreshold: 100,
+    });
+    // One runId for the night, so a run is one query rather than a time range.
+    expect(values[0].runId).toBe(values[1].runId);
+  });
+
+  it('records nobody as disabled on a dry run', async () => {
+    chQuery.mockResolvedValue(twoClusters);
+
+    await runWith({ dryRun: true });
+
+    expect(rowsWritten().values.map((v) => v.disabledUserIds)).toEqual([[], []]);
+  });
+
+  it('records only the accounts the update actually changed', async () => {
+    chQuery.mockResolvedValue(twoClusters);
+    // The flagged set is 1-4; the UPDATE skips 2 (Protected) and 4 (already ineligible).
+    dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 3 }]);
+
+    await runWith({});
+
+    const values = rowsWritten().values;
+    expect(values.map((v) => v.disabledUserIds)).toEqual([[1], [3]]);
+    // …and the flagged list is untouched, so the gap between them stays visible.
+    expect(values.map((v) => v.userIds)).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  });
+
+  it('still writes a row when the run flagged nothing', async () => {
+    chQuery.mockResolvedValue([]);
+
+    await runWith({});
+
+    const values = rowsWritten().values;
+    expect(values).toHaveLength(1);
+    expect(values[0]).toMatchObject({ ip: '', userIds: [], usersDisabled: 0 });
+  });
+
+  it('does not fail the job when the log write fails', async () => {
+    chQuery.mockResolvedValue(twoClusters);
+    dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }]);
+    chInsert.mockRejectedValueOnce(new Error('clickhouse unreachable'));
+
+    const result = await runWith({});
+
+    // The accounts are already disabled by this point. Failing here would leave the database
+    // changed and the run reported as failed.
+    expect(result).toMatchObject({ usersDisabled: 1 });
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: the same write succeeding reports no error', async () => {
+    chQuery.mockResolvedValue(twoClusters);
+    dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }]);
+
+    await runWith({});
+
+    expect(chInsert).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });

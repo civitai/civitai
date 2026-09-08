@@ -91,7 +91,9 @@ const legacy = defineGraph<KlingExt>()
         }
       : null
   )
-  .field('duration', enumDef({ options: klingDurations, default: '5' }))
+  // scoped per version arm: legacy's STRING enum and v3's number range share
+  // this address in one family bucket — either value fails the other's schema
+  .field('duration', { ...enumDef({ options: klingDurations, default: '5' }), scope: 'legacy' })
   .field(
     'cfgScale',
     sliderDef({
@@ -127,7 +129,7 @@ const v3 = defineGraph<KlingExt>()
   )
   .field('seed', SEED)
   .field('mode', enumDef({ options: klingModes, default: 'standard' }))
-  .field('duration', V3_DURATION)
+  .field('duration', { ...V3_DURATION, scope: 'v3' })
   .field('aspectRatio', ({ _ext }) =>
     _ext.workflow === 'txt2vid' || _ext.workflow === 'img2vid:ref2vid'
       ? aspectRatioDef({ options: klingAspectRatios, default: '1:1' })

@@ -61,10 +61,15 @@ export const grokVideo = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('resolution', ({ model, _ext }) => {
     const supports1080p = isGrokV15(modelIdOf(model)) && _ext.workflow !== 'img2vid:ref2vid';
-    return enumDef({
-      options: supports1080p ? grokV15Resolutions : grokResolutions,
-      default: '720p',
-    });
+    // scoped per option set: a 1080p pick must not ride onto a configuration
+    // whose enum lacks it (trusted values skip the input remap)
+    return {
+      ...enumDef({
+        options: supports1080p ? grokV15Resolutions : grokResolutions,
+        default: '720p',
+      }),
+      scope: supports1080p ? 'hires' : 'base',
+    };
   })
   .field('duration', DURATION)
   .field('aspectRatio', ({ resolution, images, video, _ext }) => {

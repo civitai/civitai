@@ -66,6 +66,11 @@ export const videoUpscale = defineGraph<GenerationCtx>()
           message: `Scale factor would exceed maximum output resolution of ${MAX_OUTPUT_RESOLUTION}px`,
         }),
       default: defaultValue,
+      // remembered per source size: a factor picked for a smaller video would
+      // otherwise stick as a trusted value on a larger one and fail the
+      // refine (dead submit). Scope, not correct — the parse boundary must
+      // keep REFUSING an over-ceiling raw value exactly like v1 does.
+      scope: maxDimension != null ? String(maxDimension) : undefined,
       meta: {
         options,
         canUpscale,

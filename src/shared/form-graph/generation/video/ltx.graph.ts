@@ -326,7 +326,9 @@ const shared = defineGraph<FamilyExt>()
 const v2 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field('aspectRatio', ({ _ext }) => (_ext.workflow !== 'img2vid' ? AR_V2 : null))
-  .field('duration', DURATION_V2)
+  // scoped: v2's enum and v23/v25's slider share the LTXV family bucket —
+  // a slider value (e.g. 20) fails v2's enum and dead-submits
+  .field('duration', { ...DURATION_V2, scope: 'v2' })
   .use(textBlock);
 
 const v23 = defineGraph<FamilyExt>({ scope: familyScope })
@@ -341,7 +343,7 @@ const v23 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('aspectRatio', ({ resolution, _ext }) =>
     _ext.workflow === 'txt2vid' || _ext.workflow === 'img2vid:ref2vid' ? AR_V23(resolution) : null
   )
-  .field('duration', ({ resolution }) => DURATION(resolution))
+  .field('duration', ({ resolution }) => ({ ...DURATION(resolution), scope: resolution }))
   .field('cannyLowThreshold', ({ _ext }) => (_ext.workflow === 'vid2vid:edit' ? CANNY_LOW : null))
   .field('cannyHighThreshold', ({ _ext }) => (_ext.workflow === 'vid2vid:edit' ? CANNY_HIGH : null))
   .field('guideStrength', ({ _ext }) => (_ext.workflow === 'vid2vid:edit' ? GUIDE_STRENGTH : null))
@@ -355,7 +357,7 @@ const v25 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('aspectRatio', ({ resolution, _ext }) =>
     _ext.workflow === 'txt2vid' || _ext.workflow === 'img2vid:ref2vid' ? AR_V25(resolution) : null
   )
-  .field('duration', ({ resolution }) => DURATION(resolution))
+  .field('duration', ({ resolution }) => ({ ...DURATION(resolution), scope: resolution }))
   .field('generateAudio', GENERATE_AUDIO)
   .use(textBlock);
 

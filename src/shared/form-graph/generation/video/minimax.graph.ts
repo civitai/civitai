@@ -64,11 +64,14 @@ const comfy = defineGraph<FamilyExt>()
   .field('resources', familyResources)
   .field('seed', SEED)
   .field('turbo', boolDef(false))
-  .field('steps', ({ turbo }) =>
-    turbo === true
+  // scoped per mode: each turbo state remembers its own steps — without the
+  // scope, the adopted 30 sticks (out of range) when turbo reshapes the range
+  .field('steps', ({ turbo }) => ({
+    ...(turbo === true
       ? sliderDef({ min: 1, max: 20, default: 8 })
-      : sliderDef({ min: 10, max: 60, default: 30 })
-  );
+      : sliderDef({ min: 10, max: 60, default: 30 })),
+    scope: turbo === true ? 'turbo' : 'standard',
+  }));
 
 type MinimaxExt = FamilyExt & { model?: unknown };
 
