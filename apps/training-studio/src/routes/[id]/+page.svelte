@@ -2,6 +2,14 @@
   import { browser } from '$app/environment';
   import { invalidate } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import {
+    IconPencil,
+    IconCopy,
+    IconCheck,
+    IconAlertTriangle,
+    IconStarFilled,
+    IconDownload,
+  } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { postRename } from '$lib/train';
@@ -193,7 +201,7 @@
               onclick={startRename}
               class="shrink-0 rounded p-1 text-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              ✎ Rename
+              <IconPencil size={14} stroke={2} class="mr-1 inline" />Rename
             </button>
           </div>
         {/if}
@@ -227,7 +235,11 @@
               : 'text-primary hover:text-primary/80 hover:underline'}"
             title="Copy workflow ID"
           >
-            {copied ? '✓ copied' : '⧉ copy'}
+            {#if copied}<IconCheck size={12} stroke={2.5} class="mr-0.5 inline" />copied{:else}<IconCopy
+                size={12}
+                stroke={2}
+                class="mr-0.5 inline"
+              />copy{/if}
           </button>
         </dd>
       </div>
@@ -263,7 +275,7 @@
 
   {#if d.state === 'failed'}
     <div class="rounded-md border border-red-500/20 bg-red-500/5 p-8 text-center">
-      <div class="text-3xl">⚠️</div>
+      <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>
       <p class="mx-auto mt-1 max-w-md text-sm text-dark-2">
         No weights were produced. If Buzz was charged for this run it's refunded automatically — nothing
@@ -327,7 +339,7 @@
                   : 'border-dark-4 text-dark-0 hover:border-dark-2 hover:bg-dark-5'}"
                 title="Open epoch {epoch.number}"
               >
-                {#if epoch === recommended}★{/if}Epoch {epoch.number}
+                {#if epoch === recommended}<IconStarFilled size={11} class="inline" />{/if}Epoch {epoch.number}
               </button>
             {/each}
 
@@ -366,7 +378,7 @@
               <span
                 class="rounded bg-[#f59f00]/15 px-2 py-0.5 text-[10px] font-semibold text-[#f59f00]"
               >
-                ★ Recommended
+<IconStarFilled size={10} class="mr-0.5 inline" />Recommended
               </span>
             {/if}
           </div>
@@ -376,7 +388,7 @@
               download
               class="ml-auto inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
             >
-              ↓ Download weights
+<IconDownload size={14} stroke={2} class="mr-1 inline" />Download weights
             </a>
           {:else}
             <span
@@ -433,7 +445,8 @@
                 <div class="mb-2.5 flex items-center gap-2">
                   <span class="text-sm font-bold text-dark-0">Epoch {epoch.number}</span>
                   {#if epoch === recommended}
-                    <span class="text-[#f59f00]" title="Recommended checkpoint">★</span>
+                    <IconStarFilled size={12} class="text-[#f59f00]" />
+
                   {/if}
                   <span class="ml-auto font-mono text-[10px] text-dark-2">
                     {epoch.modelUrl ? 'weights ready' : 'no weights'}
