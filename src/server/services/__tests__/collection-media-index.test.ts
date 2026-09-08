@@ -32,6 +32,7 @@ import {
   enqueueCollectionRebuild,
   getCollectionIdsForImages,
   getCollectionIdsForModelCascade,
+  getCollectionIdsForOwner,
 } from '~/server/services/collection-media-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -322,6 +323,47 @@ describe('getCollectionIdsForModelCascade', () => {
     expect(sql).toMatch(/\bUNION\b/);
     expect(sql.match(/FROM "CollectionItem"/g)).toHaveLength(3);
     expect(sql).not.toMatch(/\bOR\b/i);
+  });
+});
+
+const USER_ID = 3319;
+
+describe('getCollectionIdsForOwner', () => {
+  // Ownership, not membership: the avatar rides on `user.profilePicture`, which every document
+  // carries whatever the collection contains — `CollectionItem` would find a different set,
+  // and nothing at all for an empty collection.
+  it('resolves by Collection.userId, not through CollectionItem', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows(COLLECTION_A, COLLECTION_B));
+
+    const result = await getCollectionIdsForOwner({ userId: USER_ID });
+
+    const call = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(sqlOf(call)).toMatch(/FROM "Collection" c\s+WHERE c\."userId" =/);
+    expect(sqlOf(call)).not.toContain('CollectionItem');
+    expect(call.slice(1)).toContain(USER_ID);
+    expect(result.collectionIds).toEqual([COLLECTION_A, COLLECTION_B]);
+  });
+
+  it('flags truncation when the cap is exceeded', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows(COLLECTION_A, COLLECTION_B, COLLECTION_C));
+
+    const result = await getCollectionIdsForOwner({ userId: USER_ID, cap: 2 });
+
+    expect(result.collectionIds).toEqual([COLLECTION_A, COLLECTION_B]);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('never throws when the lookup fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(getCollectionIdsForOwner({ userId: USER_ID })).resolves.toEqual({
+      collectionIds: [],
+      truncated: false,
+    });
+    expect(serialisedError('collection-media-index-resolve-failed')).toMatchObject({
+      name: 'Error',
+      message: 'connection reset',
+    });
   });
 });
 

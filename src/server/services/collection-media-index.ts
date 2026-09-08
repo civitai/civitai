@@ -50,15 +50,15 @@ import { collectionsSearchIndex } from '~/server/search-index';
 // It does NOT delete the user's collections — `removeAllContent` is the function that
 // does that, and it is a separate moderator endpoint.
 //
-// The gap that leaves is real and is NOT closed here: a user changes their avatar, the
-// old Image row and its object are destroyed 30 days later, and every collection they
-// own still ships `user.profilePicture` pointing at a dead url. Closing it needs an
-// enqueue at REPLACEMENT time, which is a different trigger from removal and outside
-// what this module is wired to. Tracked separately. The leg is kept because it is
-// correct for the case it does match (a moderator or ingestion delete of a live
-// avatar). Its cost scales with the number of bound ids — measured 9.47 at one,
-// 18.94 at two, 28.41 at three — so at the 100-id batch `deleteImages` uses it is
-// ~950, not 9.47. Bounded per id because `profilePictureId` is `@unique`.
+// The REPLACEMENT half of that is closed by `getCollectionIdsForOwner` below, which
+// `updateUserHandler` calls when `profilePictureId` CHANGES rather than when the old
+// image is reaped. The `deleteUser` half is NOT: it nulls the column with its own
+// `user.update`, never through that handler, so a deleted user's collections keep a
+// `profilePicture` the reaper goes on to destroy. The leg here is still the only cover
+// for a moderator or ingestion delete of a LIVE avatar. Its cost scales with the number
+// of bound ids — measured 9.47 at one, 18.94 at two, 28.41 at three — so at the 100-id
+// batch `deleteImages` uses it is ~950, not 9.47. Bounded per id because
+// `profilePictureId` is `@unique`.
 //
 // Route 6 is the one that matters most on screen: CollectionCard renders
 // `if (data.image) return [data.image]`, so a cover WINS over every item image, and
@@ -75,8 +75,8 @@ import { collectionsSearchIndex } from '~/server/search-index';
 // here imports another service, so no cycle is possible from either caller.
 //
 // EVERY exported function is non-throwing by contract. They are bookkeeping for a
-// search index, called around deletes that have either already committed or are about
-// to; a failure must cost a stale document, never the user's delete. Failures are
+// search index, called around writes that have either already committed or are about
+// to; a failure must cost a stale document, never the user's write. Failures are
 // logged rather than swallowed, because silence is indistinguishable from "this model
 // was in no collections".
 
@@ -537,6 +537,43 @@ export async function getCollectionIdsForArticle({
       'collection-media-index-resolve-failed',
       source,
       `failed to resolve collections for article ${articleId}`,
+      error
+    );
+    return EMPTY;
+  }
+}
+
+/**
+ * Collections owned by a user, for the avatar-REPLACEMENT trigger described in the
+ * route-7 note at the top of this file.
+ *
+ * Unlike the removal helpers this is not resolve-before-delete: nothing is being
+ * destroyed, so it may run after the user row is written.
+ *
+ * One index probe on `Collection_userId_idx` (prod replica: cost 6.77, 0.51 ms). The
+ * most collections any one account owns is 8,987, under `DEFAULT_COLLECTION_CAP`.
+ */
+export async function getCollectionIdsForOwner({
+  userId,
+  source = 'avatar-replace',
+  cap = DEFAULT_COLLECTION_CAP,
+}: {
+  userId: number;
+  source?: string;
+  cap?: number;
+}): Promise<CollectionsToRebuild> {
+  try {
+    const rows = await dbWrite.$queryRaw<{ collectionId: number }[]>`
+      SELECT c.id AS "collectionId" FROM "Collection" c
+      WHERE c."userId" = ${userId}
+      LIMIT ${cap + 1}
+    `;
+    return applyCap(rows, cap);
+  } catch (error) {
+    logFailure(
+      'collection-media-index-resolve-failed',
+      source,
+      `failed to resolve collections owned by user ${userId}`,
       error
     );
     return EMPTY;
