@@ -229,9 +229,9 @@ export const useToggleCheckpointCoverageMutation = () => {
 };
 
 /**
- * `model.getAll` is rate limited at the edge, and the 300px list shows under four rows —
- * a page of 10 ran out in a couple of flicks and spent a request on each one. The feed
- * itself runs at the handler default of 100.
+ * The showcase fetches this once and then links out to the collection, so it is the whole
+ * list rather than a page of one — `model.getAll` is rate limited at the edge, and the
+ * widget walking a collection a page at a time is what tripped that limit.
  */
 const SHOWCASE_PAGE_SIZE = 50;
 
@@ -276,7 +276,6 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
     ...rest,
     collection: showcase,
     items: models,
-    pageCount: data?.pages.length ?? 0,
     isLoading: loadingCollection || loadingModels,
     setShowcaseCollection: handleSetShowcaseCollection,
     settingShowcase: setShowcaseMutation.isPending,

@@ -10,6 +10,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import {
+  IconArrowRight,
   IconBookmark,
   IconDownload,
   IconEye,
@@ -22,7 +23,6 @@ import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
@@ -31,27 +31,9 @@ import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { getModelUrl } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-/**
- * `InViewLoader` re-arms 500ms after each load for as long as it stays on screen, and a
- * list this short keeps it there — so uncapped it walks the whole collection, thousands
- * of models on the largest showcases, one rate-limited request at a time.
- */
-const MAX_AUTO_LOADED_PAGES = 5;
-
 export function CollectionShowcase({ modelId, loading }: Props) {
-  const {
-    items = [],
-    isLoading,
-    isError,
-    hasNextPage,
-    fetchNextPage,
-    isFetching,
-    isRefetching,
-    pageCount,
-    refetch,
-  } = useModelShowcaseCollection({ modelId });
-
-  const autoLoad = !isError && pageCount < MAX_AUTO_LOADED_PAGES;
+  const { items = [], collection, isLoading, isError, hasNextPage, isRefetching, refetch } =
+    useModelShowcaseCollection({ modelId });
 
   return (
     <div className="relative">
@@ -66,29 +48,15 @@ export function CollectionShowcase({ modelId, loading }: Props) {
             {items.map((model) => (
               <ShowcaseItem key={model.id} {...model} />
             ))}
-            {hasNextPage &&
-              (autoLoad ? (
-                <InViewLoader
-                  loadFn={fetchNextPage}
-                  loadCondition={!isFetching}
-                  style={{ gridColumn: '1/-1' }}
-                >
-                  <div className="flex items-center justify-center px-4 py-2">
-                    <Loader type="bars" size="sm" />
-                  </div>
-                </InViewLoader>
-              ) : (
-                <div className="flex items-center justify-center px-4 py-2">
-                  <Button
-                    variant="subtle"
-                    size="compact-sm"
-                    loading={isFetching}
-                    onClick={() => fetchNextPage()}
-                  >
-                    Load more
-                  </Button>
-                </div>
-              ))}
+            {hasNextPage && collection && (
+              <Link
+                href={`/collections/${collection.id}`}
+                className="flex items-center justify-center gap-1 px-4 py-3 text-sm font-medium text-blue-6 no-underline hover:bg-gray-1 dark:text-blue-4 dark:hover:bg-dark-5"
+              >
+                View all {collection.itemCount.toLocaleString()} models
+                <IconArrowRight size={14} strokeWidth={2.5} />
+              </Link>
+            )}
           </>
         ) : isError ? (
           <div className="flex flex-col items-center justify-center gap-2 p-2">
