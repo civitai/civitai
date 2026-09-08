@@ -69,17 +69,17 @@ describe('probeCreatedImageMedia', () => {
   });
 
   it('returns present when the store reports the object with bytes', async () => {
-    await expect(probeCreatedImageMedia(KEY, deps({ status: 'present', size: 4096 }))).resolves.toBe(
-      'present'
-    );
+    await expect(
+      probeCreatedImageMedia(KEY, deps({ status: 'present', size: 4096 }))
+    ).resolves.toBe('present');
   });
 
   it('returns present when the store reports no length at all', async () => {
     // 🔴 `size: null` is "the backend reported no length", NOT "size zero". Reading it as
     // zero would report every length-less backend response as a missing-media defect.
-    await expect(probeCreatedImageMedia(KEY, deps({ status: 'present', size: null }))).resolves.toBe(
-      'present'
-    );
+    await expect(
+      probeCreatedImageMedia(KEY, deps({ status: 'present', size: null }))
+    ).resolves.toBe('present');
   });
 
   it('returns absent when the store answers that the key is not there', async () => {
