@@ -1418,6 +1418,21 @@
                       }
                     },
                     {
+                      "id": "DWp0b",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "jGyuJ",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -1467,7 +1482,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -1483,33 +1498,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "D6z1T",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "DWp0b",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -2070,6 +2058,21 @@
                       }
                     },
                     {
+                      "id": "rLLk9",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "ery5f",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -2119,7 +2122,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -2135,33 +2138,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ZBj1f",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "rLLk9",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -2716,10 +2692,11 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "cnGKu",
+                                  "id": "xpu7f",
                                   "name": "Score",
                                   "width": "fill_container",
-                                  "gap": 14,
+                                  "layout": "vertical",
+                                  "gap": 3,
                                   "padding": [
                                     "$space-xs",
                                     0,
@@ -2729,61 +2706,45 @@
                                   "alignItems": "center",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "YolkT",
-                                      "name": "Value",
-                                      "layout": "vertical",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "JTCLv",
-                                          "name": "Number",
-                                          "fill": "$text-bright",
-                                          "content": "3.6m",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-h2",
-                                          "fontWeight": "$fw-bold"
-                                        }
-                                      ]
+                                      "type": "text",
+                                      "id": "eX52B",
+                                      "name": "Number",
+                                      "fill": "$color-green-6",
+                                      "content": "3.6m",
+                                      "lineHeight": 1.2,
+                                      "fontFamily": "$font-body",
+                                      "fontSize": 32,
+                                      "fontWeight": "$fw-bold"
                                     },
                                     {
-                                      "type": "frame",
-                                      "id": "J78jsG",
-                                      "name": "Text",
-                                      "width": "fill_container",
-                                      "layout": "vertical",
-                                      "gap": 2,
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "R4bszQ",
-                                          "name": "Label",
-                                          "fill": "$text-primary",
-                                          "content": "Creator Score",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-sm",
-                                          "fontWeight": "$fw-semibold"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "dyUid",
-                                          "name": "Desc",
-                                          "fill": "$text-dimmed",
-                                          "textGrowth": "fixed-width",
-                                          "width": "fill_container",
-                                          "content": "Reputation from your content, minus content removed for violations.",
-                                          "lineHeight": "$lh-body",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "normal"
-                                        }
-                                      ]
+                                      "type": "text",
+                                      "id": "P1JIif",
+                                      "name": "Label",
+                                      "fill": "$text-dimmed",
+                                      "content": "Creator Score",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-sm",
+                                      "fontWeight": "normal"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "SYUqe",
+                                      "name": "Desc",
+                                      "fill": "$text-dimmed",
+                                      "textGrowth": "fixed-width",
+                                      "width": 260,
+                                      "content": "Reputation from your content, minus content removed for violations",
+                                      "lineHeight": "$lh-body",
+                                      "textAlign": "center",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-xs",
+                                      "fontWeight": "normal"
                                     }
                                   ]
                                 },
                                 {
                                   "type": "rectangle",
-                                  "id": "x6OuZh",
+                                  "id": "DENWj",
                                   "name": "Rule",
                                   "fill": "$border",
                                   "width": "fill_container",
@@ -2791,167 +2752,235 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "cH2WV",
-                                  "name": "Breakdown",
+                                  "id": "VeFvQ",
+                                  "name": "Score Bar",
+                                  "clip": true,
                                   "width": "fill_container",
-                                  "layout": "vertical",
-                                  "gap": 7,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "children": [
+                                    {
+                                      "type": "rectangle",
+                                      "id": "STKDr",
+                                      "name": "Models",
+                                      "fill": "$color-blue-6",
+                                      "width": 206,
+                                      "height": 16
+                                    },
+                                    {
+                                      "type": "rectangle",
+                                      "id": "rIm4W",
+                                      "name": "Images",
+                                      "fill": "$color-teal-6",
+                                      "width": 130,
+                                      "height": 16
+                                    },
+                                    {
+                                      "type": "rectangle",
+                                      "id": "jVErU",
+                                      "name": "Articles",
+                                      "fill": "$color-orange-6",
+                                      "width": 37,
+                                      "height": 16
+                                    },
+                                    {
+                                      "type": "rectangle",
+                                      "id": "f80IJP",
+                                      "name": "Users",
+                                      "fill": "$color-grape-6",
+                                      "width": 19,
+                                      "height": 16
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ALASI",
+                                  "name": "Legend",
+                                  "width": "fill_container",
+                                  "gap": 16,
+                                  "alignItems": "center",
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "QG0Ci",
+                                      "id": "IY1xz",
                                       "name": "Models",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "swHpg",
+                                          "name": "Swatch",
+                                          "fill": "$color-blue-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "ExBq5",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "OKfZZ",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Models",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "LKNgb",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+1.9m pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "oO16F",
+                                      "id": "f1b8oA",
                                       "name": "Images",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "j5snGL",
+                                          "name": "Swatch",
+                                          "fill": "$color-teal-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "m0SUGn",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "QUe7x",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Images",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "GXUJU",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+1.2m pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "aeQaO",
+                                      "id": "d66Doj",
                                       "name": "Articles",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "eThgi",
+                                          "name": "Swatch",
+                                          "fill": "$color-orange-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "C92Cjw",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "s3vBh",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Articles",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "y15nxN",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+340k pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "omuI7",
+                                      "id": "IR5fD",
                                       "name": "Users",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "bjJZ8",
+                                          "name": "Swatch",
+                                          "fill": "$color-grape-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "o9eQN3",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "dAGPN",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Users",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "bGUPg",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+180k pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "sl1Kt",
-                                      "name": "Reports against",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
-                                      "alignItems": "center",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "oVPGF",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
-                                          "content": "Reports against",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "Y7HBa",
-                                          "name": "Val",
-                                          "fill": "$danger",
-                                          "content": "-12k pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     }
                                   ]
                                 },
                                 {
+                                  "type": "frame",
+                                  "id": "fX3Id",
+                                  "name": "Reports Against",
+                                  "width": "fill_container",
+                                  "fill": "$danger-subtle",
+                                  "cornerRadius": "$radius-md",
+                                  "gap": 8,
+                                  "padding": [
+                                    8,
+                                    12
+                                  ],
+                                  "justifyContent": "space_between",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "W19dOq",
+                                      "name": "Left",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "icon",
+                                          "id": "xBPKk",
+                                          "name": "Flag",
+                                          "width": 15,
+                                          "height": 15,
+                                          "icon": "flag",
+                                          "library": "lucide",
+                                          "fill": "$danger"
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "p2Gt1s",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
+                                          "content": "Reports against",
+                                          "fontFamily": "$font-body",
+                                          "fontSize": "$fs-sm",
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "icon",
+                                          "id": "U71xvc",
+                                          "name": "Info",
+                                          "width": 13,
+                                          "height": 13,
+                                          "icon": "info",
+                                          "library": "lucide",
+                                          "fill": "$text-dimmed"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "M324x",
+                                      "name": "Value",
+                                      "fill": "$danger",
+                                      "content": "-12k pts",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-sm",
+                                      "fontWeight": "$fw-bold"
+                                    }
+                                  ]
+                                },
+                                {
                                   "type": "rectangle",
-                                  "id": "LSXQ6",
+                                  "id": "Vw6pG",
                                   "name": "Rule 2",
                                   "fill": "$border",
                                   "width": "fill_container",
@@ -2959,7 +2988,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "eZkvz",
+                                  "id": "wMZft",
                                   "name": "Strikes",
                                   "width": "fill_container",
                                   "gap": 12,
@@ -2967,7 +2996,7 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "qQZvO",
+                                      "id": "nXJqW",
                                       "name": "Text",
                                       "width": "fill_container",
                                       "layout": "vertical",
@@ -2975,7 +3004,7 @@
                                       "children": [
                                         {
                                           "type": "text",
-                                          "id": "kwNyR",
+                                          "id": "xYoS2",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Strikes",
@@ -2985,7 +3014,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "Njibh",
+                                          "id": "ItSWn",
                                           "name": "Desc",
                                           "fill": "$text-dimmed",
                                           "content": "No active strikes.",
@@ -2996,7 +3025,7 @@
                                       ]
                                     },
                                     {
-                                      "id": "GQefE",
+                                      "id": "m5QoH",
                                       "type": "ref",
                                       "ref": "O9AYop",
                                       "name": "Badge",
@@ -3338,6 +3367,21 @@
                       }
                     },
                     {
+                      "id": "TNguf",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "A6OUNp",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -3387,7 +3431,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -3403,33 +3447,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "OkIiF",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "TNguf",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -4461,6 +4478,21 @@
                       }
                     },
                     {
+                      "id": "JuOok",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "gS9F9",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -4510,7 +4542,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -4526,33 +4558,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "k5DutU",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "JuOok",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -5371,6 +5376,21 @@
                       }
                     },
                     {
+                      "id": "oSxGe",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "Pd5Cr",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -5420,7 +5440,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -5436,33 +5456,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "x0bQk",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "oSxGe",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -6413,6 +6406,21 @@
                       }
                     },
                     {
+                      "id": "f4BJD",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "y2cMX",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -6462,7 +6470,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -6478,33 +6486,6 @@
                         },
                         "jRhMD": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "uhv2z",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "f4BJD",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -7275,6 +7256,21 @@
                       }
                     },
                     {
+                      "id": "uwROj",
+                      "type": "ref",
+                      "ref": "lDPgN",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "eKOtt": {
+                          "icon": "bell"
+                        },
+                        "jRhMD": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "YlKRl",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -7324,7 +7320,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -7340,33 +7336,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "CeAe3",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "uwROj",
-                      "type": "ref",
-                      "ref": "lDPgN",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "eKOtt": {
-                          "icon": "bell"
-                        },
-                        "jRhMD": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -7899,6 +7868,21 @@
                       }
                     },
                     {
+                      "id": "luS7c",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "mETm9",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -7948,7 +7932,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -7964,33 +7948,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "UJpeX",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "luS7c",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -8612,51 +8569,6 @@
                           }
                         },
                         {
-                          "type": "rectangle",
-                          "id": "Ld5lI",
-                          "name": "Rule",
-                          "fill": "$border",
-                          "width": "fill_container",
-                          "height": 1
-                        },
-                        {
-                          "type": "rectangle",
-                          "id": "Qnqc9",
-                          "name": "Rule",
-                          "fill": "$border",
-                          "width": "fill_container",
-                          "height": 1
-                        },
-                        {
-                          "id": "PTbvv",
-                          "type": "ref",
-                          "ref": "XebdS",
-                          "name": "Refresh my session",
-                          "width": "fill_container",
-                          "descendants": {
-                            "Q33cHI": {
-                              "content": "Refresh my session"
-                            },
-                            "DomlW": {
-                              "content": "Pull fresh permissions if something you just bought hasn't appeared."
-                            },
-                            "KQ5Vn": {
-                              "id": "sCLOG",
-                              "type": "ref",
-                              "ref": "U22Qtj",
-                              "name": "Control",
-                              "descendants": {
-                                "rn3rh": {
-                                  "icon": "refresh-cw"
-                                },
-                                "KL0oV": {
-                                  "content": "Refresh"
-                                }
-                              }
-                            }
-                          }
-                        },
-                        {
                           "type": "frame",
                           "id": "PHOk4",
                           "name": "Connected Apps List",
@@ -8892,6 +8804,88 @@
                               ]
                             }
                           ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n91ttF",
+                      "name": "Card Session",
+                      "width": "fill_container",
+                      "fill": "$bg-card",
+                      "cornerRadius": "$radius-md",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "gap": 16,
+                      "padding": "$space-lg",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "t4uIw",
+                          "name": "Icon Wrap",
+                          "width": 38,
+                          "height": 38,
+                          "fill": "$bg-hover",
+                          "cornerRadius": "$radius-sm",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "T0FsvQ",
+                              "name": "Icon",
+                              "width": 18,
+                              "height": 18,
+                              "icon": "refresh-cw",
+                              "library": "lucide",
+                              "fill": "$text-dimmed"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "F8kVBY",
+                          "name": "Text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "a1AGIE",
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "content": "Refresh my session",
+                              "fontFamily": "$font-body",
+                              "fontSize": "$fs-sm",
+                              "fontWeight": "$fw-semibold"
+                            },
+                            {
+                              "type": "text",
+                              "id": "nN51E",
+                              "name": "Desc",
+                              "fill": "$text-dimmed",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Pulls fresh permissions. Use it if something you just bought or were granted hasn't shown up yet.",
+                              "lineHeight": "$lh-body",
+                              "fontFamily": "$font-body",
+                              "fontSize": "$fs-xs",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "RUm24",
+                          "type": "ref",
+                          "ref": "IsRj5",
+                          "name": "Refresh",
+                          "descendants": {
+                            "X4HjPk": {
+                              "content": "Refresh"
+                            }
+                          }
                         }
                       ]
                     }
@@ -9264,6 +9258,60 @@
                           "fill": "$text-dimmed"
                         }
                       ]
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "o89fm8",
+                      "name": "Rule",
+                      "fill": "$border",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YGBnF",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "gap": 12,
+                      "padding": [
+                        13,
+                        14
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "g1aajJ",
+                          "name": "Icon",
+                          "width": 18,
+                          "height": 18,
+                          "icon": "bell",
+                          "library": "lucide",
+                          "fill": "$text-dimmed"
+                        },
+                        {
+                          "type": "text",
+                          "id": "VA8E3",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Notifications",
+                          "fontFamily": "$font-body",
+                          "fontSize": "$fs-sm",
+                          "fontWeight": "$fw-medium"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "p4h3R7",
+                          "name": "Chevron",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$text-dimmed"
+                        }
+                      ]
                     }
                   ]
                 }
@@ -9427,7 +9475,7 @@
                   "id": "nzt0X",
                   "name": "Group",
                   "fill": "$text-dimmed",
-                  "content": "BILLING",
+                  "content": "BILLING & ACCESS",
                   "fontFamily": "$font-body",
                   "fontSize": 10,
                   "fontWeight": "$fw-semibold",
@@ -9490,96 +9538,10 @@
                           "fill": "$text-dimmed"
                         }
                       ]
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "PQG8D",
-              "name": "Group ACCESS",
-              "width": "fill_container",
-              "layout": "vertical",
-              "padding": [
-                6,
-                0,
-                0,
-                0
-              ],
-              "children": [
-                {
-                  "type": "text",
-                  "id": "OTcWb",
-                  "name": "Group",
-                  "fill": "$text-dimmed",
-                  "content": "ACCESS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "$fw-semibold",
-                  "letterSpacing": 0.9
-                },
-                {
-                  "type": "frame",
-                  "id": "iNYS6",
-                  "name": "List",
-                  "clip": true,
-                  "width": "fill_container",
-                  "fill": "$bg-card",
-                  "cornerRadius": "$radius-md",
-                  "stroke": "$border",
-                  "strokeWidth": 1,
-                  "layout": "vertical",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "YGBnF",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "gap": 12,
-                      "padding": [
-                        13,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "g1aajJ",
-                          "name": "Icon",
-                          "width": 18,
-                          "height": 18,
-                          "icon": "bell",
-                          "library": "lucide",
-                          "fill": "$text-dimmed"
-                        },
-                        {
-                          "type": "text",
-                          "id": "VA8E3",
-                          "name": "Label",
-                          "fill": "$text-primary",
-                          "textGrowth": "fixed-width",
-                          "width": "fill_container",
-                          "content": "Notifications",
-                          "fontFamily": "$font-body",
-                          "fontSize": "$fs-sm",
-                          "fontWeight": "$fw-medium"
-                        },
-                        {
-                          "type": "icon",
-                          "id": "p4h3R7",
-                          "name": "Chevron",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "chevron-right",
-                          "library": "lucide",
-                          "fill": "$text-dimmed"
-                        }
-                      ]
                     },
                     {
                       "type": "rectangle",
-                      "id": "AofBs",
+                      "id": "L9WOP",
                       "name": "Rule",
                       "fill": "$border",
                       "width": "fill_container",
@@ -11244,6 +11206,21 @@
                       }
                     },
                     {
+                      "id": "Pm0yc",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "VIh09",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -11293,7 +11270,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -11309,33 +11286,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "Sm2Hq",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "Pm0yc",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -11896,6 +11846,21 @@
                       }
                     },
                     {
+                      "id": "O5NF6",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "bell"
+                        },
+                        "yeAsS": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "k1F4lP",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -11945,7 +11910,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -11961,33 +11926,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "aR2Fm",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "O5NF6",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "bell"
-                        },
-                        "yeAsS": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -12675,6 +12613,21 @@
                       }
                     },
                     {
+                      "id": "q6VAHi",
+                      "type": "ref",
+                      "ref": "lDPgN",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "eKOtt": {
+                          "icon": "bell"
+                        },
+                        "jRhMD": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "GIy3R",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -12724,7 +12677,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -12740,33 +12693,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "fHRV2",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "q6VAHi",
-                      "type": "ref",
-                      "ref": "lDPgN",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "eKOtt": {
-                          "icon": "bell"
-                        },
-                        "jRhMD": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -13871,6 +13797,21 @@
                       }
                     },
                     {
+                      "id": "HXncm",
+                      "type": "ref",
+                      "ref": "lDPgN",
+                      "name": "Notifications",
+                      "width": "fill_container",
+                      "descendants": {
+                        "eKOtt": {
+                          "icon": "bell"
+                        },
+                        "jRhMD": {
+                          "content": "Notifications"
+                        }
+                      }
+                    },
+                    {
                       "id": "LYJZh",
                       "type": "ref",
                       "ref": "x73SpQ",
@@ -13920,7 +13861,7 @@
                       "width": "fill_container",
                       "descendants": {
                         "E3DSKI": {
-                          "content": "BILLING"
+                          "content": "BILLING & ACCESS"
                         }
                       }
                     },
@@ -13936,33 +13877,6 @@
                         },
                         "yeAsS": {
                           "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "sWhML",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "HXncm",
-                      "type": "ref",
-                      "ref": "lDPgN",
-                      "name": "Notifications",
-                      "width": "fill_container",
-                      "descendants": {
-                        "eKOtt": {
-                          "icon": "bell"
-                        },
-                        "jRhMD": {
-                          "content": "Notifications"
                         }
                       }
                     },
@@ -14559,7 +14473,7 @@
     },
     {
       "type": "frame",
-      "id": "wxrUM",
+      "id": "izuKb",
       "x": 6020,
       "y": 3780,
       "name": "Edge / Two active strikes",
@@ -14571,7 +14485,7 @@
       "children": [
         {
           "type": "frame",
-          "id": "F5VfN",
+          "id": "P80Un",
           "name": "App Header",
           "width": "fill_container",
           "height": 60,
@@ -14590,7 +14504,7 @@
           "children": [
             {
               "type": "text",
-              "id": "tK3e7",
+              "id": "EpfuD",
               "name": "Logo",
               "fill": "$text-bright",
               "content": "CIVITAI",
@@ -14601,14 +14515,14 @@
             },
             {
               "type": "frame",
-              "id": "T8zo9j",
+              "id": "m0IaV",
               "name": "Header Right",
               "gap": 14,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "yepfj",
+                  "id": "UJiY7",
                   "name": "Icon zap",
                   "width": 18,
                   "height": 18,
@@ -14618,7 +14532,7 @@
                 },
                 {
                   "type": "icon",
-                  "id": "G5C15q",
+                  "id": "pec2v",
                   "name": "Icon bell",
                   "width": 18,
                   "height": 18,
@@ -14628,7 +14542,7 @@
                 },
                 {
                   "type": "icon",
-                  "id": "X67Zn",
+                  "id": "N4RN4",
                   "name": "Icon message-square",
                   "width": 18,
                   "height": 18,
@@ -14638,7 +14552,7 @@
                 },
                 {
                   "type": "ellipse",
-                  "id": "igKlu",
+                  "id": "DczWM",
                   "name": "Avatar",
                   "fill": "$color-dark-4",
                   "width": 28,
@@ -14650,7 +14564,7 @@
         },
         {
           "type": "frame",
-          "id": "E02gla",
+          "id": "tpJcB",
           "name": "Body",
           "width": "fill_container",
           "height": "fill_container",
@@ -14663,7 +14577,7 @@
           "children": [
             {
               "type": "frame",
-              "id": "Zvn4l",
+              "id": "nIZgE",
               "name": "Shell",
               "width": 1180,
               "height": "fill_container",
@@ -14671,7 +14585,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "RBDZM",
+                  "id": "LblBu",
                   "name": "Rail",
                   "width": 260,
                   "layout": "vertical",
@@ -14679,7 +14593,7 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "wnWk2",
+                      "id": "E9cHzZ",
                       "name": "Rail Search",
                       "width": "fill_container",
                       "fill": "$bg-input",
@@ -14695,7 +14609,7 @@
                       "children": [
                         {
                           "type": "icon",
-                          "id": "kXkfu",
+                          "id": "xw0dJ",
                           "name": "Icon",
                           "width": 15,
                           "height": 15,
@@ -14705,7 +14619,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "Neyxg",
+                          "id": "ljYs1",
                           "name": "Placeholder",
                           "fill": "$text-dimmed",
                           "content": "Find a setting",
@@ -14716,7 +14630,7 @@
                       ]
                     },
                     {
-                      "id": "WOBXF",
+                      "id": "AuQFC",
                       "type": "ref",
                       "ref": "x73SpQ",
                       "name": "Group ACCOUNT",
@@ -14728,7 +14642,7 @@
                       }
                     },
                     {
-                      "id": "kBb0E",
+                      "id": "xJJ03",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Overview",
@@ -14743,7 +14657,7 @@
                       }
                     },
                     {
-                      "id": "NLkBB",
+                      "id": "tDUjM",
                       "type": "ref",
                       "ref": "lDPgN",
                       "name": "Profile & Account",
@@ -14758,7 +14672,7 @@
                       }
                     },
                     {
-                      "id": "AFVCl",
+                      "id": "VAgFo",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Preferences",
@@ -14773,88 +14687,7 @@
                       }
                     },
                     {
-                      "id": "tV8bg",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group CONTENT",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "CONTENT"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ks3U5",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Content & Browsing",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "eye"
-                        },
-                        "yeAsS": {
-                          "content": "Content & Browsing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "pC23C",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Creator",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "palette"
-                        },
-                        "yeAsS": {
-                          "content": "Creator"
-                        }
-                      }
-                    },
-                    {
-                      "id": "AJQKt",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group BILLING",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "BILLING"
-                        }
-                      }
-                    },
-                    {
-                      "id": "mPvjP",
-                      "type": "ref",
-                      "ref": "tldSE",
-                      "name": "Membership & Billing",
-                      "width": "fill_container",
-                      "descendants": {
-                        "kLTxB": {
-                          "icon": "credit-card"
-                        },
-                        "yeAsS": {
-                          "content": "Membership & Billing"
-                        }
-                      }
-                    },
-                    {
-                      "id": "q1bD6d",
-                      "type": "ref",
-                      "ref": "x73SpQ",
-                      "name": "Group ACCESS",
-                      "width": "fill_container",
-                      "descendants": {
-                        "E3DSKI": {
-                          "content": "ACCESS"
-                        }
-                      }
-                    },
-                    {
-                      "id": "HGYjB",
+                      "id": "gXzME",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Notifications",
@@ -14869,7 +14702,76 @@
                       }
                     },
                     {
-                      "id": "Q2CtF",
+                      "id": "KA2Vi",
+                      "type": "ref",
+                      "ref": "x73SpQ",
+                      "name": "Group CONTENT",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E3DSKI": {
+                          "content": "CONTENT"
+                        }
+                      }
+                    },
+                    {
+                      "id": "K1k4D",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Content & Browsing",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "eye"
+                        },
+                        "yeAsS": {
+                          "content": "Content & Browsing"
+                        }
+                      }
+                    },
+                    {
+                      "id": "xfCoa",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Creator",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "palette"
+                        },
+                        "yeAsS": {
+                          "content": "Creator"
+                        }
+                      }
+                    },
+                    {
+                      "id": "e7QuLC",
+                      "type": "ref",
+                      "ref": "x73SpQ",
+                      "name": "Group BILLING",
+                      "width": "fill_container",
+                      "descendants": {
+                        "E3DSKI": {
+                          "content": "BILLING & ACCESS"
+                        }
+                      }
+                    },
+                    {
+                      "id": "aaJdv",
+                      "type": "ref",
+                      "ref": "tldSE",
+                      "name": "Membership & Billing",
+                      "width": "fill_container",
+                      "descendants": {
+                        "kLTxB": {
+                          "icon": "credit-card"
+                        },
+                        "yeAsS": {
+                          "content": "Membership & Billing"
+                        }
+                      }
+                    },
+                    {
+                      "id": "J0mmsM",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Security & Apps",
@@ -14887,14 +14789,14 @@
                 },
                 {
                   "type": "frame",
-                  "id": "cIGBw",
+                  "id": "wQs3k",
                   "name": "Content",
                   "width": "fill_container",
                   "layout": "vertical",
                   "gap": 16,
                   "children": [
                     {
-                      "id": "SQhl6",
+                      "id": "Ax0ff",
                       "type": "ref",
                       "ref": "yazBH",
                       "name": "Header",
@@ -14910,14 +14812,14 @@
                     },
                     {
                       "type": "frame",
-                      "id": "pX3ti",
+                      "id": "X07ijv",
                       "name": "Columns",
                       "width": "fill_container",
                       "gap": "$space-md",
                       "children": [
                         {
                           "type": "frame",
-                          "id": "RjLrI",
+                          "id": "Hx9dC",
                           "name": "Left",
                           "width": "fill_container",
                           "layout": "vertical",
@@ -14925,7 +14827,7 @@
                           "children": [
                             {
                               "type": "frame",
-                              "id": "OQjyL",
+                              "id": "SjqpB",
                               "name": "Card Account info",
                               "width": "fill_container",
                               "fill": "$bg-card",
@@ -14938,7 +14840,7 @@
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "ASNCR",
+                                  "id": "uk3Y1",
                                   "name": "Card Header",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -14946,7 +14848,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "xCW4o",
+                                      "id": "Ng4zi",
                                       "name": "Card Title",
                                       "fill": "$text-bright",
                                       "content": "Account info",
@@ -14958,7 +14860,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "fbaiD",
+                                  "id": "ClMt8",
                                   "name": "Fields",
                                   "width": "fill_container",
                                   "gap": "$space-md",
@@ -14970,7 +14872,7 @@
                                   ],
                                   "children": [
                                     {
-                                      "id": "tTLOg",
+                                      "id": "R2TH6",
                                       "type": "ref",
                                       "ref": "pQn79",
                                       "name": "Username",
@@ -14985,7 +14887,7 @@
                                       }
                                     },
                                     {
-                                      "id": "oG3eB",
+                                      "id": "i7a8Bh",
                                       "type": "ref",
                                       "ref": "pQn79",
                                       "name": "Email",
@@ -15004,7 +14906,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "Z8M4ee",
+                                  "id": "KWLd0",
                                   "name": "Actions",
                                   "width": "fill_container",
                                   "gap": "$space-xs",
@@ -15018,7 +14920,7 @@
                                   "alignItems": "center",
                                   "children": [
                                     {
-                                      "id": "aG92X",
+                                      "id": "kgJyQ",
                                       "type": "ref",
                                       "ref": "U22Qtj",
                                       "name": "Change email",
@@ -15032,7 +14934,7 @@
                                       }
                                     },
                                     {
-                                      "id": "JMEvQ",
+                                      "id": "ENzAD",
                                       "type": "ref",
                                       "ref": "qjSFM",
                                       "name": "Save",
@@ -15048,7 +14950,7 @@
                             },
                             {
                               "type": "frame",
-                              "id": "Xjxz6",
+                              "id": "A3IkbQ",
                               "name": "Card Creator profile",
                               "width": "fill_container",
                               "fill": "$bg-card",
@@ -15061,7 +14963,7 @@
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "c2X8hV",
+                                  "id": "ngP8f",
                                   "name": "Card Header",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -15069,7 +14971,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "zf5Fi",
+                                      "id": "MtVTX",
                                       "name": "Card Title",
                                       "fill": "$text-bright",
                                       "content": "Creator profile",
@@ -15079,7 +14981,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "m7r0fZ",
+                                      "id": "K8REq",
                                       "name": "Card Sub",
                                       "fill": "$text-dimmed",
                                       "textGrowth": "fixed-width",
@@ -15094,7 +14996,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "BW6xq",
+                                  "id": "OH4Fy",
                                   "name": "Social Links",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -15108,7 +15010,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "ljR4b",
+                                      "id": "YClgo",
                                       "name": "Group",
                                       "fill": "$text-dimmed",
                                       "content": "SOCIAL LINKS",
@@ -15119,7 +15021,7 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "QpmKw",
+                                      "id": "cpo3I",
                                       "name": "GitHub",
                                       "width": "fill_container",
                                       "fill": "$bg-hover",
@@ -15133,7 +15035,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "JQjp4",
+                                          "id": "dW6o5",
                                           "name": "Icon",
                                           "width": 16,
                                           "height": 16,
@@ -15143,7 +15045,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "ZxSyc",
+                                          "id": "w4IFNV",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "textGrowth": "fixed-width",
@@ -15155,7 +15057,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "O6TOc",
+                                          "id": "fNDMs",
                                           "name": "Url",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15167,7 +15069,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "Jvg3G",
+                                          "id": "mywjj",
                                           "name": "Drag",
                                           "width": 14,
                                           "height": 14,
@@ -15177,7 +15079,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "a8lml",
+                                          "id": "Li9wB",
                                           "name": "Remove",
                                           "width": 14,
                                           "height": 14,
@@ -15189,7 +15091,7 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "TTg5s",
+                                      "id": "ZBk0o",
                                       "name": "X",
                                       "width": "fill_container",
                                       "fill": "$bg-hover",
@@ -15203,7 +15105,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "wJeZu",
+                                          "id": "erPog",
                                           "name": "Icon",
                                           "width": 16,
                                           "height": 16,
@@ -15213,7 +15115,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "q13Gh",
+                                          "id": "MCX2d",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "textGrowth": "fixed-width",
@@ -15225,7 +15127,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "F2CVy",
+                                          "id": "Re5ie",
                                           "name": "Url",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15237,7 +15139,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "LaKny",
+                                          "id": "GHtdU",
                                           "name": "Drag",
                                           "width": 14,
                                           "height": 14,
@@ -15247,7 +15149,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "mN0Oo",
+                                          "id": "i8DDK8",
                                           "name": "Remove",
                                           "width": 14,
                                           "height": 14,
@@ -15261,7 +15163,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "p8k2Zw",
+                                  "id": "i1Nco",
                                   "name": "Sponsorship",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -15275,7 +15177,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "YTji3",
+                                      "id": "U58e7",
                                       "name": "Group",
                                       "fill": "$text-dimmed",
                                       "content": "SPONSORSHIP LINKS",
@@ -15286,7 +15188,7 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "e0pCA",
+                                      "id": "an7CU",
                                       "name": "Ko-fi",
                                       "width": "fill_container",
                                       "fill": "$bg-hover",
@@ -15300,7 +15202,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "qgdRi",
+                                          "id": "RgGT9",
                                           "name": "Icon",
                                           "width": 16,
                                           "height": 16,
@@ -15310,7 +15212,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "j2WaO",
+                                          "id": "frb6j",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "textGrowth": "fixed-width",
@@ -15322,7 +15224,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "lDxDh",
+                                          "id": "RcqOx",
                                           "name": "Url",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15334,7 +15236,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "t7vHH",
+                                          "id": "zFP5y",
                                           "name": "Drag",
                                           "width": 14,
                                           "height": 14,
@@ -15344,7 +15246,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "ZPkek",
+                                          "id": "yx5n1",
                                           "name": "Remove",
                                           "width": 14,
                                           "height": 14,
@@ -15358,7 +15260,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "aJvi8",
+                                  "id": "i7XjE",
                                   "name": "Actions",
                                   "width": "fill_container",
                                   "padding": [
@@ -15370,7 +15272,7 @@
                                   "justifyContent": "end",
                                   "children": [
                                     {
-                                      "id": "a897W4",
+                                      "id": "cVdlt",
                                       "type": "ref",
                                       "ref": "IsRj5",
                                       "name": "Add link",
@@ -15388,7 +15290,7 @@
                         },
                         {
                           "type": "frame",
-                          "id": "Gdp5J",
+                          "id": "g5V99o",
                           "name": "Right",
                           "width": "fill_container",
                           "layout": "vertical",
@@ -15396,7 +15298,7 @@
                           "children": [
                             {
                               "type": "frame",
-                              "id": "y4yDK",
+                              "id": "Egd2s",
                               "name": "Card Account standing",
                               "width": "fill_container",
                               "fill": "$bg-card",
@@ -15409,7 +15311,7 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "Jiqxe",
+                                  "id": "Wjwyz",
                                   "name": "Card Title",
                                   "fill": "$text-bright",
                                   "content": "Account standing",
@@ -15419,10 +15321,11 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "ZC0BX",
+                                  "id": "u1CMMi",
                                   "name": "Score",
                                   "width": "fill_container",
-                                  "gap": 14,
+                                  "layout": "vertical",
+                                  "gap": 3,
                                   "padding": [
                                     "$space-xs",
                                     0,
@@ -15432,61 +15335,45 @@
                                   "alignItems": "center",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "NbDB5",
-                                      "name": "Value",
-                                      "layout": "vertical",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "EBuUd",
-                                          "name": "Number",
-                                          "fill": "$text-bright",
-                                          "content": "3.6m",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-h2",
-                                          "fontWeight": "$fw-bold"
-                                        }
-                                      ]
+                                      "type": "text",
+                                      "id": "dXbzQ",
+                                      "name": "Number",
+                                      "fill": "$color-green-6",
+                                      "content": "3.6m",
+                                      "lineHeight": 1.2,
+                                      "fontFamily": "$font-body",
+                                      "fontSize": 32,
+                                      "fontWeight": "$fw-bold"
                                     },
                                     {
-                                      "type": "frame",
-                                      "id": "WGqA1",
-                                      "name": "Text",
-                                      "width": "fill_container",
-                                      "layout": "vertical",
-                                      "gap": 2,
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "pzjtr",
-                                          "name": "Label",
-                                          "fill": "$text-primary",
-                                          "content": "Creator Score",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-sm",
-                                          "fontWeight": "$fw-semibold"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "NhAcM",
-                                          "name": "Desc",
-                                          "fill": "$text-dimmed",
-                                          "textGrowth": "fixed-width",
-                                          "width": "fill_container",
-                                          "content": "Reputation from your content, minus content removed for violations.",
-                                          "lineHeight": "$lh-body",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "normal"
-                                        }
-                                      ]
+                                      "type": "text",
+                                      "id": "zU1on",
+                                      "name": "Label",
+                                      "fill": "$text-dimmed",
+                                      "content": "Creator Score",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-sm",
+                                      "fontWeight": "normal"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "rJ2gu",
+                                      "name": "Desc",
+                                      "fill": "$text-dimmed",
+                                      "textGrowth": "fixed-width",
+                                      "width": 260,
+                                      "content": "Reputation from your content, minus content removed for violations",
+                                      "lineHeight": "$lh-body",
+                                      "textAlign": "center",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-xs",
+                                      "fontWeight": "normal"
                                     }
                                   ]
                                 },
                                 {
                                   "type": "rectangle",
-                                  "id": "aedGp",
+                                  "id": "wx5om",
                                   "name": "Rule",
                                   "fill": "$border",
                                   "width": "fill_container",
@@ -15494,167 +15381,235 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "TWt4b",
-                                  "name": "Breakdown",
+                                  "id": "Xr232",
+                                  "name": "Score Bar",
+                                  "clip": true,
                                   "width": "fill_container",
-                                  "layout": "vertical",
-                                  "gap": 7,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "children": [
+                                    {
+                                      "type": "rectangle",
+                                      "id": "f6T32U",
+                                      "name": "Models",
+                                      "fill": "$color-blue-6",
+                                      "width": 206,
+                                      "height": 16
+                                    },
+                                    {
+                                      "type": "rectangle",
+                                      "id": "v0C0D",
+                                      "name": "Images",
+                                      "fill": "$color-teal-6",
+                                      "width": 130,
+                                      "height": 16
+                                    },
+                                    {
+                                      "type": "rectangle",
+                                      "id": "SyPTq",
+                                      "name": "Articles",
+                                      "fill": "$color-orange-6",
+                                      "width": 37,
+                                      "height": 16
+                                    },
+                                    {
+                                      "type": "rectangle",
+                                      "id": "IW12U",
+                                      "name": "Users",
+                                      "fill": "$color-grape-6",
+                                      "width": 19,
+                                      "height": 16
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "jyekE",
+                                  "name": "Legend",
+                                  "width": "fill_container",
+                                  "gap": 16,
+                                  "alignItems": "center",
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "lW3zR",
+                                      "id": "kwrad",
                                       "name": "Models",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "OtmBZ",
+                                          "name": "Swatch",
+                                          "fill": "$color-blue-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "BE8tw",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "YtFtZ",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Models",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "Ln2IX",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+1.9m pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "fJI6D",
+                                      "id": "P5LkJK",
                                       "name": "Images",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "VeC83",
+                                          "name": "Swatch",
+                                          "fill": "$color-teal-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "PYI5N",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "cjy9Y",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Images",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "Eeft1",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+1.2m pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "H6BMuy",
+                                      "id": "y2z1QH",
                                       "name": "Articles",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "ZNGvD",
+                                          "name": "Swatch",
+                                          "fill": "$color-orange-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "mgMVm",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "cVzSp",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Articles",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "eYiEj",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+340k pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "TiHRY",
+                                      "id": "lD8DX",
                                       "name": "Users",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
+                                      "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
+                                          "type": "ellipse",
+                                          "id": "iNgpr",
+                                          "name": "Swatch",
+                                          "fill": "$color-grape-6",
+                                          "width": 10,
+                                          "height": 10
+                                        },
+                                        {
                                           "type": "text",
-                                          "id": "xWYtI",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
+                                          "id": "DjI06",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
                                           "content": "Users",
                                           "fontFamily": "$font-body",
                                           "fontSize": "$fs-xs",
                                           "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "h0itOl",
-                                          "name": "Val",
-                                          "fill": "$text-primary",
-                                          "content": "+180k pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "nEMIh",
-                                      "name": "Reports against",
-                                      "width": "fill_container",
-                                      "justifyContent": "space_between",
-                                      "alignItems": "center",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "VTcIF",
-                                          "name": "Key",
-                                          "fill": "$text-dimmed",
-                                          "content": "Reports against",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "normal"
-                                        },
-                                        {
-                                          "type": "text",
-                                          "id": "Z4f5UT",
-                                          "name": "Val",
-                                          "fill": "$danger",
-                                          "content": "-12k pts",
-                                          "fontFamily": "$font-body",
-                                          "fontSize": "$fs-xs",
-                                          "fontWeight": "$fw-semibold"
                                         }
                                       ]
                                     }
                                   ]
                                 },
                                 {
+                                  "type": "frame",
+                                  "id": "NKCrC",
+                                  "name": "Reports Against",
+                                  "width": "fill_container",
+                                  "fill": "$danger-subtle",
+                                  "cornerRadius": "$radius-md",
+                                  "gap": 8,
+                                  "padding": [
+                                    8,
+                                    12
+                                  ],
+                                  "justifyContent": "space_between",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "F1xDl7",
+                                      "name": "Left",
+                                      "width": "fill_container",
+                                      "gap": 8,
+                                      "alignItems": "center",
+                                      "children": [
+                                        {
+                                          "type": "icon",
+                                          "id": "zaQLx",
+                                          "name": "Flag",
+                                          "width": 15,
+                                          "height": 15,
+                                          "icon": "flag",
+                                          "library": "lucide",
+                                          "fill": "$danger"
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "X556t",
+                                          "name": "Label",
+                                          "fill": "$text-primary",
+                                          "content": "Reports against",
+                                          "fontFamily": "$font-body",
+                                          "fontSize": "$fs-sm",
+                                          "fontWeight": "normal"
+                                        },
+                                        {
+                                          "type": "icon",
+                                          "id": "ScoQL",
+                                          "name": "Info",
+                                          "width": 13,
+                                          "height": 13,
+                                          "icon": "info",
+                                          "library": "lucide",
+                                          "fill": "$text-dimmed"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "N6IEV",
+                                      "name": "Value",
+                                      "fill": "$danger",
+                                      "content": "-12k pts",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-sm",
+                                      "fontWeight": "$fw-bold"
+                                    }
+                                  ]
+                                },
+                                {
                                   "type": "rectangle",
-                                  "id": "U3bR5y",
+                                  "id": "tvWPt",
                                   "name": "Rule 2",
                                   "fill": "$border",
                                   "width": "fill_container",
@@ -15662,7 +15617,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "ddXQy",
+                                  "id": "RcXXd",
                                   "name": "Strikes",
                                   "width": "fill_container",
                                   "gap": 12,
@@ -15670,7 +15625,7 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "mR2uK",
+                                      "id": "fqxDw",
                                       "name": "Text",
                                       "width": "fill_container",
                                       "layout": "vertical",
@@ -15678,7 +15633,7 @@
                                       "children": [
                                         {
                                           "type": "text",
-                                          "id": "iuoq6",
+                                          "id": "AhTkr",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Strikes",
@@ -15688,7 +15643,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "laZ7e",
+                                          "id": "nV2I3",
                                           "name": "Desc",
                                           "fill": "$warning",
                                           "content": "Uploads are rate-limited until the older strike expires on 3 November 2026. A third suspends the account.",
@@ -15699,7 +15654,7 @@
                                       ]
                                     },
                                     {
-                                      "id": "G2at0",
+                                      "id": "X8y1n",
                                       "type": "ref",
                                       "ref": "l2b9c",
                                       "name": "Badge",
@@ -15715,7 +15670,7 @@
                             },
                             {
                               "type": "frame",
-                              "id": "nsW1p",
+                              "id": "mbjap",
                               "name": "Danger Zone",
                               "width": "fill_container",
                               "fill": "$danger-subtle",
@@ -15728,7 +15683,7 @@
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "u8OGy",
+                                  "id": "tfaHH",
                                   "name": "Header",
                                   "width": "fill_container",
                                   "gap": 8,
@@ -15736,7 +15691,7 @@
                                   "children": [
                                     {
                                       "type": "icon",
-                                      "id": "C3hd4m",
+                                      "id": "rMHBO",
                                       "name": "Icon",
                                       "width": 16,
                                       "height": 16,
@@ -15746,7 +15701,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "B8MBC7",
+                                      "id": "FHZfG",
                                       "name": "Title",
                                       "fill": "$danger",
                                       "content": "Danger zone",
@@ -15758,7 +15713,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "SjhZw",
+                                  "id": "A8ys0",
                                   "name": "Row",
                                   "width": "fill_container",
                                   "gap": 16,
@@ -15767,7 +15722,7 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "xuapC",
+                                      "id": "lOXIn",
                                       "name": "Text",
                                       "width": "fill_container",
                                       "layout": "vertical",
@@ -15775,7 +15730,7 @@
                                       "children": [
                                         {
                                           "type": "text",
-                                          "id": "XYOJc",
+                                          "id": "NRC2U",
                                           "name": "Title",
                                           "fill": "$text-primary",
                                           "content": "Delete account",
@@ -15785,7 +15740,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "xMjGA",
+                                          "id": "wpypH",
                                           "name": "Desc",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15799,7 +15754,7 @@
                                       ]
                                     },
                                     {
-                                      "id": "gF6Vi",
+                                      "id": "L1kpa",
                                       "type": "ref",
                                       "ref": "RhIzB",
                                       "name": "Delete",
@@ -16712,6 +16667,14 @@
     "fw-bold": {
       "type": "string",
       "value": "700"
+    },
+    "color-teal-6": {
+      "type": "color",
+      "value": "#12B886"
+    },
+    "color-grape-6": {
+      "type": "color",
+      "value": "#BE4BDB"
     }
   },
   "fileToken": "6c463e36-0656-4053-8478-b1e90e0da0ac"
