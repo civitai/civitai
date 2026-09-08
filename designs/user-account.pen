@@ -2656,6 +2656,88 @@
                                   ]
                                 }
                               ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n91ttF",
+                              "name": "Card Session",
+                              "width": "fill_container",
+                              "fill": "$bg-card",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 16,
+                              "padding": "$space-lg",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "t4uIw",
+                                  "name": "Icon Wrap",
+                                  "width": 38,
+                                  "height": 38,
+                                  "fill": "$bg-hover",
+                                  "cornerRadius": "$radius-sm",
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "T0FsvQ",
+                                      "name": "Icon",
+                                      "width": 18,
+                                      "height": 18,
+                                      "icon": "refresh-cw",
+                                      "library": "lucide",
+                                      "fill": "$text-dimmed"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "F8kVBY",
+                                  "name": "Text",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "a1AGIE",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Refresh my session",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-sm",
+                                      "fontWeight": "$fw-semibold"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "nN51E",
+                                      "name": "Desc",
+                                      "fill": "$text-dimmed",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Reloads your account data. Safe to run any time — nothing changes.",
+                                      "lineHeight": "$lh-body",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-xs",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "RUm24",
+                                  "type": "ref",
+                                  "ref": "IsRj5",
+                                  "name": "Refresh",
+                                  "descendants": {
+                                    "X4HjPk": {
+                                      "content": "Refresh"
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           ]
                         },
@@ -8806,88 +8888,6 @@
                           ]
                         }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "n91ttF",
-                      "name": "Card Session",
-                      "width": "fill_container",
-                      "fill": "$bg-card",
-                      "cornerRadius": "$radius-md",
-                      "stroke": "$border",
-                      "strokeWidth": 1,
-                      "gap": 16,
-                      "padding": "$space-lg",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "t4uIw",
-                          "name": "Icon Wrap",
-                          "width": 38,
-                          "height": 38,
-                          "fill": "$bg-hover",
-                          "cornerRadius": "$radius-sm",
-                          "justifyContent": "center",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon",
-                              "id": "T0FsvQ",
-                              "name": "Icon",
-                              "width": 18,
-                              "height": 18,
-                              "icon": "refresh-cw",
-                              "library": "lucide",
-                              "fill": "$text-dimmed"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "F8kVBY",
-                          "name": "Text",
-                          "width": "fill_container",
-                          "layout": "vertical",
-                          "gap": 2,
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "a1AGIE",
-                              "name": "Title",
-                              "fill": "$text-primary",
-                              "content": "Refresh my session",
-                              "fontFamily": "$font-body",
-                              "fontSize": "$fs-sm",
-                              "fontWeight": "$fw-semibold"
-                            },
-                            {
-                              "type": "text",
-                              "id": "nN51E",
-                              "name": "Desc",
-                              "fill": "$text-dimmed",
-                              "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "Pulls fresh permissions. Use it if something you just bought or were granted hasn't shown up yet.",
-                              "lineHeight": "$lh-body",
-                              "fontFamily": "$font-body",
-                              "fontSize": "$fs-xs",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "id": "RUm24",
-                          "type": "ref",
-                          "ref": "IsRj5",
-                          "name": "Refresh",
-                          "descendants": {
-                            "X4HjPk": {
-                              "content": "Refresh"
-                            }
-                          }
-                        }
-                      ]
                     }
                   ]
                 }
@@ -14473,7 +14473,7 @@
     },
     {
       "type": "frame",
-      "id": "izuKb",
+      "id": "x2IVr4",
       "x": 6020,
       "y": 3780,
       "name": "Edge / Two active strikes",
@@ -14485,7 +14485,7 @@
       "children": [
         {
           "type": "frame",
-          "id": "P80Un",
+          "id": "gmSBG",
           "name": "App Header",
           "width": "fill_container",
           "height": 60,
@@ -14504,7 +14504,7 @@
           "children": [
             {
               "type": "text",
-              "id": "EpfuD",
+              "id": "L5N2uS",
               "name": "Logo",
               "fill": "$text-bright",
               "content": "CIVITAI",
@@ -14515,14 +14515,14 @@
             },
             {
               "type": "frame",
-              "id": "m0IaV",
+              "id": "wPKWf",
               "name": "Header Right",
               "gap": 14,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "UJiY7",
+                  "id": "hkyTj",
                   "name": "Icon zap",
                   "width": 18,
                   "height": 18,
@@ -14532,7 +14532,7 @@
                 },
                 {
                   "type": "icon",
-                  "id": "pec2v",
+                  "id": "Xixz9",
                   "name": "Icon bell",
                   "width": 18,
                   "height": 18,
@@ -14542,7 +14542,7 @@
                 },
                 {
                   "type": "icon",
-                  "id": "N4RN4",
+                  "id": "qUqqP",
                   "name": "Icon message-square",
                   "width": 18,
                   "height": 18,
@@ -14552,7 +14552,7 @@
                 },
                 {
                   "type": "ellipse",
-                  "id": "DczWM",
+                  "id": "i2UZh2",
                   "name": "Avatar",
                   "fill": "$color-dark-4",
                   "width": 28,
@@ -14564,7 +14564,7 @@
         },
         {
           "type": "frame",
-          "id": "tpJcB",
+          "id": "CDM6R",
           "name": "Body",
           "width": "fill_container",
           "height": "fill_container",
@@ -14577,7 +14577,7 @@
           "children": [
             {
               "type": "frame",
-              "id": "nIZgE",
+              "id": "A7XmJ",
               "name": "Shell",
               "width": 1180,
               "height": "fill_container",
@@ -14585,7 +14585,7 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "LblBu",
+                  "id": "fQOnT",
                   "name": "Rail",
                   "width": 260,
                   "layout": "vertical",
@@ -14593,7 +14593,7 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "E9cHzZ",
+                      "id": "NMMkt",
                       "name": "Rail Search",
                       "width": "fill_container",
                       "fill": "$bg-input",
@@ -14609,7 +14609,7 @@
                       "children": [
                         {
                           "type": "icon",
-                          "id": "xw0dJ",
+                          "id": "JYqXj",
                           "name": "Icon",
                           "width": 15,
                           "height": 15,
@@ -14619,7 +14619,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "ljYs1",
+                          "id": "p18SyZ",
                           "name": "Placeholder",
                           "fill": "$text-dimmed",
                           "content": "Find a setting",
@@ -14630,7 +14630,7 @@
                       ]
                     },
                     {
-                      "id": "AuQFC",
+                      "id": "YQ2eW",
                       "type": "ref",
                       "ref": "x73SpQ",
                       "name": "Group ACCOUNT",
@@ -14642,7 +14642,7 @@
                       }
                     },
                     {
-                      "id": "xJJ03",
+                      "id": "uAQ4j",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Overview",
@@ -14657,7 +14657,7 @@
                       }
                     },
                     {
-                      "id": "tDUjM",
+                      "id": "Xx8wp",
                       "type": "ref",
                       "ref": "lDPgN",
                       "name": "Profile & Account",
@@ -14672,7 +14672,7 @@
                       }
                     },
                     {
-                      "id": "VAgFo",
+                      "id": "U1TJf",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Preferences",
@@ -14687,7 +14687,7 @@
                       }
                     },
                     {
-                      "id": "gXzME",
+                      "id": "NNSfu",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Notifications",
@@ -14702,7 +14702,7 @@
                       }
                     },
                     {
-                      "id": "KA2Vi",
+                      "id": "f5w5z9",
                       "type": "ref",
                       "ref": "x73SpQ",
                       "name": "Group CONTENT",
@@ -14714,7 +14714,7 @@
                       }
                     },
                     {
-                      "id": "K1k4D",
+                      "id": "apEvn",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Content & Browsing",
@@ -14729,7 +14729,7 @@
                       }
                     },
                     {
-                      "id": "xfCoa",
+                      "id": "l4wTpU",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Creator",
@@ -14744,7 +14744,7 @@
                       }
                     },
                     {
-                      "id": "e7QuLC",
+                      "id": "MVMbR",
                       "type": "ref",
                       "ref": "x73SpQ",
                       "name": "Group BILLING",
@@ -14756,7 +14756,7 @@
                       }
                     },
                     {
-                      "id": "aaJdv",
+                      "id": "WTdNX",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Membership & Billing",
@@ -14771,7 +14771,7 @@
                       }
                     },
                     {
-                      "id": "J0mmsM",
+                      "id": "wdExD",
                       "type": "ref",
                       "ref": "tldSE",
                       "name": "Security & Apps",
@@ -14789,14 +14789,14 @@
                 },
                 {
                   "type": "frame",
-                  "id": "wQs3k",
+                  "id": "knxV8",
                   "name": "Content",
                   "width": "fill_container",
                   "layout": "vertical",
                   "gap": 16,
                   "children": [
                     {
-                      "id": "Ax0ff",
+                      "id": "eNSaV",
                       "type": "ref",
                       "ref": "yazBH",
                       "name": "Header",
@@ -14812,14 +14812,14 @@
                     },
                     {
                       "type": "frame",
-                      "id": "X07ijv",
+                      "id": "qQPZ0",
                       "name": "Columns",
                       "width": "fill_container",
                       "gap": "$space-md",
                       "children": [
                         {
                           "type": "frame",
-                          "id": "Hx9dC",
+                          "id": "OLK9V",
                           "name": "Left",
                           "width": "fill_container",
                           "layout": "vertical",
@@ -14827,7 +14827,7 @@
                           "children": [
                             {
                               "type": "frame",
-                              "id": "SjqpB",
+                              "id": "cLXQt",
                               "name": "Card Account info",
                               "width": "fill_container",
                               "fill": "$bg-card",
@@ -14840,7 +14840,7 @@
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "uk3Y1",
+                                  "id": "DiKWU",
                                   "name": "Card Header",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -14848,7 +14848,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "Ng4zi",
+                                      "id": "P3KZK",
                                       "name": "Card Title",
                                       "fill": "$text-bright",
                                       "content": "Account info",
@@ -14860,7 +14860,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "ClMt8",
+                                  "id": "FvK2H",
                                   "name": "Fields",
                                   "width": "fill_container",
                                   "gap": "$space-md",
@@ -14872,7 +14872,7 @@
                                   ],
                                   "children": [
                                     {
-                                      "id": "R2TH6",
+                                      "id": "QYViv",
                                       "type": "ref",
                                       "ref": "pQn79",
                                       "name": "Username",
@@ -14887,7 +14887,7 @@
                                       }
                                     },
                                     {
-                                      "id": "i7a8Bh",
+                                      "id": "T2juXF",
                                       "type": "ref",
                                       "ref": "pQn79",
                                       "name": "Email",
@@ -14906,7 +14906,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "KWLd0",
+                                  "id": "NJmRj",
                                   "name": "Actions",
                                   "width": "fill_container",
                                   "gap": "$space-xs",
@@ -14920,7 +14920,7 @@
                                   "alignItems": "center",
                                   "children": [
                                     {
-                                      "id": "kgJyQ",
+                                      "id": "wdxro",
                                       "type": "ref",
                                       "ref": "U22Qtj",
                                       "name": "Change email",
@@ -14934,7 +14934,7 @@
                                       }
                                     },
                                     {
-                                      "id": "ENzAD",
+                                      "id": "uHtm7",
                                       "type": "ref",
                                       "ref": "qjSFM",
                                       "name": "Save",
@@ -14950,7 +14950,7 @@
                             },
                             {
                               "type": "frame",
-                              "id": "A3IkbQ",
+                              "id": "CCa6y",
                               "name": "Card Creator profile",
                               "width": "fill_container",
                               "fill": "$bg-card",
@@ -14963,7 +14963,7 @@
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "ngP8f",
+                                  "id": "MFzkU",
                                   "name": "Card Header",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -14971,7 +14971,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "MtVTX",
+                                      "id": "G08zLb",
                                       "name": "Card Title",
                                       "fill": "$text-bright",
                                       "content": "Creator profile",
@@ -14981,7 +14981,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "K8REq",
+                                      "id": "S4IzNr",
                                       "name": "Card Sub",
                                       "fill": "$text-dimmed",
                                       "textGrowth": "fixed-width",
@@ -14996,7 +14996,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "OH4Fy",
+                                  "id": "krvIv",
                                   "name": "Social Links",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -15010,7 +15010,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "YClgo",
+                                      "id": "Ud6fI",
                                       "name": "Group",
                                       "fill": "$text-dimmed",
                                       "content": "SOCIAL LINKS",
@@ -15021,7 +15021,7 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "cpo3I",
+                                      "id": "OYUzJ",
                                       "name": "GitHub",
                                       "width": "fill_container",
                                       "fill": "$bg-hover",
@@ -15035,7 +15035,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "dW6o5",
+                                          "id": "H395B",
                                           "name": "Icon",
                                           "width": 16,
                                           "height": 16,
@@ -15045,7 +15045,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "w4IFNV",
+                                          "id": "n5m6xe",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "textGrowth": "fixed-width",
@@ -15057,7 +15057,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "fNDMs",
+                                          "id": "N0OL0J",
                                           "name": "Url",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15069,7 +15069,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "mywjj",
+                                          "id": "b93yga",
                                           "name": "Drag",
                                           "width": 14,
                                           "height": 14,
@@ -15079,7 +15079,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "Li9wB",
+                                          "id": "M0ZOom",
                                           "name": "Remove",
                                           "width": 14,
                                           "height": 14,
@@ -15091,7 +15091,7 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "ZBk0o",
+                                      "id": "NdDPM",
                                       "name": "X",
                                       "width": "fill_container",
                                       "fill": "$bg-hover",
@@ -15105,7 +15105,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "erPog",
+                                          "id": "N3eIF9",
                                           "name": "Icon",
                                           "width": 16,
                                           "height": 16,
@@ -15115,7 +15115,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "MCX2d",
+                                          "id": "FDoZD",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "textGrowth": "fixed-width",
@@ -15127,7 +15127,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "Re5ie",
+                                          "id": "FiwC3",
                                           "name": "Url",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15139,7 +15139,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "GHtdU",
+                                          "id": "Q0mvU",
                                           "name": "Drag",
                                           "width": 14,
                                           "height": 14,
@@ -15149,7 +15149,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "i8DDK8",
+                                          "id": "q6dZt",
                                           "name": "Remove",
                                           "width": 14,
                                           "height": 14,
@@ -15163,7 +15163,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "i1Nco",
+                                  "id": "Rpy94",
                                   "name": "Sponsorship",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -15177,7 +15177,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "U58e7",
+                                      "id": "PGODb",
                                       "name": "Group",
                                       "fill": "$text-dimmed",
                                       "content": "SPONSORSHIP LINKS",
@@ -15188,7 +15188,7 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "an7CU",
+                                      "id": "v1CyJx",
                                       "name": "Ko-fi",
                                       "width": "fill_container",
                                       "fill": "$bg-hover",
@@ -15202,7 +15202,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "RgGT9",
+                                          "id": "r0l07G",
                                           "name": "Icon",
                                           "width": 16,
                                           "height": 16,
@@ -15212,7 +15212,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "frb6j",
+                                          "id": "tYsnR",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "textGrowth": "fixed-width",
@@ -15224,7 +15224,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "RcqOx",
+                                          "id": "D1CfgK",
                                           "name": "Url",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15236,7 +15236,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "zFP5y",
+                                          "id": "dUC6T",
                                           "name": "Drag",
                                           "width": 14,
                                           "height": 14,
@@ -15246,7 +15246,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "yx5n1",
+                                          "id": "VaZL6",
                                           "name": "Remove",
                                           "width": 14,
                                           "height": 14,
@@ -15260,7 +15260,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "i7XjE",
+                                  "id": "oAiJm",
                                   "name": "Actions",
                                   "width": "fill_container",
                                   "padding": [
@@ -15272,7 +15272,7 @@
                                   "justifyContent": "end",
                                   "children": [
                                     {
-                                      "id": "cVdlt",
+                                      "id": "vbrcX",
                                       "type": "ref",
                                       "ref": "IsRj5",
                                       "name": "Add link",
@@ -15285,12 +15285,94 @@
                                   ]
                                 }
                               ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "bYZMh",
+                              "name": "Card Session",
+                              "width": "fill_container",
+                              "fill": "$bg-card",
+                              "cornerRadius": "$radius-md",
+                              "stroke": "$border",
+                              "strokeWidth": 1,
+                              "gap": 16,
+                              "padding": "$space-lg",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "UDyAy",
+                                  "name": "Icon Wrap",
+                                  "width": 38,
+                                  "height": 38,
+                                  "fill": "$bg-hover",
+                                  "cornerRadius": "$radius-sm",
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "SanNB",
+                                      "name": "Icon",
+                                      "width": 18,
+                                      "height": 18,
+                                      "icon": "refresh-cw",
+                                      "library": "lucide",
+                                      "fill": "$text-dimmed"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "iD0R3",
+                                  "name": "Text",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "RObwO",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Refresh my session",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-sm",
+                                      "fontWeight": "$fw-semibold"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "KwFA0",
+                                      "name": "Desc",
+                                      "fill": "$text-dimmed",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Reloads your account data. Safe to run any time — nothing changes.",
+                                      "lineHeight": "$lh-body",
+                                      "fontFamily": "$font-body",
+                                      "fontSize": "$fs-xs",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "IcIfq",
+                                  "type": "ref",
+                                  "ref": "IsRj5",
+                                  "name": "Refresh",
+                                  "descendants": {
+                                    "X4HjPk": {
+                                      "content": "Refresh"
+                                    }
+                                  }
+                                }
+                              ]
                             }
                           ]
                         },
                         {
                           "type": "frame",
-                          "id": "g5V99o",
+                          "id": "DPB6o",
                           "name": "Right",
                           "width": "fill_container",
                           "layout": "vertical",
@@ -15298,7 +15380,7 @@
                           "children": [
                             {
                               "type": "frame",
-                              "id": "Egd2s",
+                              "id": "NfIda",
                               "name": "Card Account standing",
                               "width": "fill_container",
                               "fill": "$bg-card",
@@ -15311,7 +15393,7 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "Wjwyz",
+                                  "id": "DHrjL",
                                   "name": "Card Title",
                                   "fill": "$text-bright",
                                   "content": "Account standing",
@@ -15321,7 +15403,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "u1CMMi",
+                                  "id": "HPumE",
                                   "name": "Score",
                                   "width": "fill_container",
                                   "layout": "vertical",
@@ -15336,7 +15418,7 @@
                                   "children": [
                                     {
                                       "type": "text",
-                                      "id": "dXbzQ",
+                                      "id": "PkHam",
                                       "name": "Number",
                                       "fill": "$color-green-6",
                                       "content": "3.6m",
@@ -15347,7 +15429,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "zU1on",
+                                      "id": "SNxqg",
                                       "name": "Label",
                                       "fill": "$text-dimmed",
                                       "content": "Creator Score",
@@ -15357,7 +15439,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "rJ2gu",
+                                      "id": "eTxj1",
                                       "name": "Desc",
                                       "fill": "$text-dimmed",
                                       "textGrowth": "fixed-width",
@@ -15373,7 +15455,7 @@
                                 },
                                 {
                                   "type": "rectangle",
-                                  "id": "wx5om",
+                                  "id": "Q8edh",
                                   "name": "Rule",
                                   "fill": "$border",
                                   "width": "fill_container",
@@ -15381,7 +15463,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "Xr232",
+                                  "id": "zmhQv",
                                   "name": "Score Bar",
                                   "clip": true,
                                   "width": "fill_container",
@@ -15390,7 +15472,7 @@
                                   "children": [
                                     {
                                       "type": "rectangle",
-                                      "id": "f6T32U",
+                                      "id": "hJn1i",
                                       "name": "Models",
                                       "fill": "$color-blue-6",
                                       "width": 206,
@@ -15398,7 +15480,7 @@
                                     },
                                     {
                                       "type": "rectangle",
-                                      "id": "v0C0D",
+                                      "id": "TjvW3",
                                       "name": "Images",
                                       "fill": "$color-teal-6",
                                       "width": 130,
@@ -15406,7 +15488,7 @@
                                     },
                                     {
                                       "type": "rectangle",
-                                      "id": "SyPTq",
+                                      "id": "iFmO8",
                                       "name": "Articles",
                                       "fill": "$color-orange-6",
                                       "width": 37,
@@ -15414,7 +15496,7 @@
                                     },
                                     {
                                       "type": "rectangle",
-                                      "id": "IW12U",
+                                      "id": "JBxC8",
                                       "name": "Users",
                                       "fill": "$color-grape-6",
                                       "width": 19,
@@ -15424,7 +15506,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "jyekE",
+                                  "id": "lS1On",
                                   "name": "Legend",
                                   "width": "fill_container",
                                   "gap": 16,
@@ -15432,14 +15514,14 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "kwrad",
+                                      "id": "Y3Fk3T",
                                       "name": "Models",
                                       "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
                                           "type": "ellipse",
-                                          "id": "OtmBZ",
+                                          "id": "i3SmQh",
                                           "name": "Swatch",
                                           "fill": "$color-blue-6",
                                           "width": 10,
@@ -15447,7 +15529,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "YtFtZ",
+                                          "id": "x55s3",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Models",
@@ -15459,14 +15541,14 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "P5LkJK",
+                                      "id": "i6hDH",
                                       "name": "Images",
                                       "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
                                           "type": "ellipse",
-                                          "id": "VeC83",
+                                          "id": "HRScm",
                                           "name": "Swatch",
                                           "fill": "$color-teal-6",
                                           "width": 10,
@@ -15474,7 +15556,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "cjy9Y",
+                                          "id": "tj1we",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Images",
@@ -15486,14 +15568,14 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "y2z1QH",
+                                      "id": "r1ccz",
                                       "name": "Articles",
                                       "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
                                           "type": "ellipse",
-                                          "id": "ZNGvD",
+                                          "id": "kv3Kb",
                                           "name": "Swatch",
                                           "fill": "$color-orange-6",
                                           "width": 10,
@@ -15501,7 +15583,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "cVzSp",
+                                          "id": "FwvAk",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Articles",
@@ -15513,14 +15595,14 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "lD8DX",
+                                      "id": "IB0hG",
                                       "name": "Users",
                                       "gap": 6,
                                       "alignItems": "center",
                                       "children": [
                                         {
                                           "type": "ellipse",
-                                          "id": "iNgpr",
+                                          "id": "P9D3v",
                                           "name": "Swatch",
                                           "fill": "$color-grape-6",
                                           "width": 10,
@@ -15528,7 +15610,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "DjI06",
+                                          "id": "nwjOO",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Users",
@@ -15542,7 +15624,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "NKCrC",
+                                  "id": "P6ywd",
                                   "name": "Reports Against",
                                   "width": "fill_container",
                                   "fill": "$danger-subtle",
@@ -15557,7 +15639,7 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "F1xDl7",
+                                      "id": "v9uzP",
                                       "name": "Left",
                                       "width": "fill_container",
                                       "gap": 8,
@@ -15565,7 +15647,7 @@
                                       "children": [
                                         {
                                           "type": "icon",
-                                          "id": "zaQLx",
+                                          "id": "kbUZP",
                                           "name": "Flag",
                                           "width": 15,
                                           "height": 15,
@@ -15575,7 +15657,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "X556t",
+                                          "id": "MKwkB",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Reports against",
@@ -15585,7 +15667,7 @@
                                         },
                                         {
                                           "type": "icon",
-                                          "id": "ScoQL",
+                                          "id": "U95Q2",
                                           "name": "Info",
                                           "width": 13,
                                           "height": 13,
@@ -15597,7 +15679,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "N6IEV",
+                                      "id": "ccxYJ",
                                       "name": "Value",
                                       "fill": "$danger",
                                       "content": "-12k pts",
@@ -15609,7 +15691,7 @@
                                 },
                                 {
                                   "type": "rectangle",
-                                  "id": "tvWPt",
+                                  "id": "jVSP5",
                                   "name": "Rule 2",
                                   "fill": "$border",
                                   "width": "fill_container",
@@ -15617,7 +15699,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "RcXXd",
+                                  "id": "L0kWl",
                                   "name": "Strikes",
                                   "width": "fill_container",
                                   "gap": 12,
@@ -15625,7 +15707,7 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "fqxDw",
+                                      "id": "wx6XW",
                                       "name": "Text",
                                       "width": "fill_container",
                                       "layout": "vertical",
@@ -15633,7 +15715,7 @@
                                       "children": [
                                         {
                                           "type": "text",
-                                          "id": "AhTkr",
+                                          "id": "lWZ7q",
                                           "name": "Label",
                                           "fill": "$text-primary",
                                           "content": "Strikes",
@@ -15643,7 +15725,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "nV2I3",
+                                          "id": "z9dDLw",
                                           "name": "Desc",
                                           "fill": "$warning",
                                           "content": "Uploads are rate-limited until the older strike expires on 3 November 2026. A third suspends the account.",
@@ -15654,7 +15736,7 @@
                                       ]
                                     },
                                     {
-                                      "id": "X8y1n",
+                                      "id": "OlMu8",
                                       "type": "ref",
                                       "ref": "l2b9c",
                                       "name": "Badge",
@@ -15670,7 +15752,7 @@
                             },
                             {
                               "type": "frame",
-                              "id": "mbjap",
+                              "id": "T3YCX",
                               "name": "Danger Zone",
                               "width": "fill_container",
                               "fill": "$danger-subtle",
@@ -15683,7 +15765,7 @@
                               "children": [
                                 {
                                   "type": "frame",
-                                  "id": "tfaHH",
+                                  "id": "u0QXMq",
                                   "name": "Header",
                                   "width": "fill_container",
                                   "gap": 8,
@@ -15691,7 +15773,7 @@
                                   "children": [
                                     {
                                       "type": "icon",
-                                      "id": "rMHBO",
+                                      "id": "NdDEc",
                                       "name": "Icon",
                                       "width": 16,
                                       "height": 16,
@@ -15701,7 +15783,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "FHZfG",
+                                      "id": "R9Lpz",
                                       "name": "Title",
                                       "fill": "$danger",
                                       "content": "Danger zone",
@@ -15713,7 +15795,7 @@
                                 },
                                 {
                                   "type": "frame",
-                                  "id": "A8ys0",
+                                  "id": "sxfi2",
                                   "name": "Row",
                                   "width": "fill_container",
                                   "gap": 16,
@@ -15722,7 +15804,7 @@
                                   "children": [
                                     {
                                       "type": "frame",
-                                      "id": "lOXIn",
+                                      "id": "dLAFx",
                                       "name": "Text",
                                       "width": "fill_container",
                                       "layout": "vertical",
@@ -15730,7 +15812,7 @@
                                       "children": [
                                         {
                                           "type": "text",
-                                          "id": "NRC2U",
+                                          "id": "ZkRpW",
                                           "name": "Title",
                                           "fill": "$text-primary",
                                           "content": "Delete account",
@@ -15740,7 +15822,7 @@
                                         },
                                         {
                                           "type": "text",
-                                          "id": "wpypH",
+                                          "id": "t60xm",
                                           "name": "Desc",
                                           "fill": "$text-dimmed",
                                           "textGrowth": "fixed-width",
@@ -15754,7 +15836,7 @@
                                       ]
                                     },
                                     {
-                                      "id": "L1kpa",
+                                      "id": "iOHk8",
                                       "type": "ref",
                                       "ref": "RhIzB",
                                       "name": "Delete",
