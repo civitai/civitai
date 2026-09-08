@@ -48,7 +48,12 @@ const getOrCreateIndex = async (
         if (meiliSearchError.code === 'index_not_found') {
           console.error('getOrCreateIndex :: Error :: Index not found. Attempting to create it...');
           const createdIndexTask = await client.createIndex(indexName, options);
-          await client.waitForTask(createdIndexTask.taskUid);
+          // Index creation is a QUEUED task, so this waits for queue position, not for work. A bare
+          // waitForTask takes the client default of 5s and never retries, so a reset fired against a
+          // backlog threw MeiliSearchTimeOutError and built nothing while the creation task sat
+          // enqueued, making the dead job read as running. The escalating retry budget (~75s) covers
+          // ordinary queue depth only — a quiet queue is still a precondition for a reset.
+          await waitForTasksWithRetries([createdIndexTask.taskUid], undefined, client);
           return await client.getIndex(indexName);
         } else {
           console.error('getOrCreateIndex :: Error :: ', e);
@@ -170,7 +175,10 @@ const waitForTasksWithRetries = async (
     return tasks;
   } catch (e) {
     if (e instanceof MeiliSearchTimeOutError) {
-      return waitForTasksWithRetries(taskUids, remainingRetries - 1);
+      // `client` MUST be forwarded. Without it the retry falls back to the module-level searchClient,
+      // which is a different instance than the metrics processors pass and is null when SEARCH_HOST
+      // is unset — where the guard above returns an EMPTY array as if the tasks had succeeded.
+      return waitForTasksWithRetries(taskUids, remainingRetries - 1, client);
     }
 
     throw e;
