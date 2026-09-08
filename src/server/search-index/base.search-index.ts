@@ -207,10 +207,14 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
   } = processor;
 
-  // `chunk(xs, 0)` and `chunk(xs, -1)` both return `[]`, so a processor configured with a
-  // non-positive chunk size would queue zero tasks, write nothing to the index, and still report
-  // `totalTasks: 0, failedTasks: 0` — the silent success this reporting exists to remove. Clamp to
-  // at least one id per batch, and fall back to the default for a non-numeric value.
+  // `chunk(xs, 0)`, `chunk(xs, -1)` and `chunk(xs, NaN)` all return `[]`, so a processor
+  // configured that way would queue zero tasks, write nothing to the index, and still report
+  // `totalTasks: 0, failedTasks: 0` — the silent success this reporting exists to remove. Clamp a
+  // finite value to at least one id per batch; fall back to the default for a NON-FINITE one.
+  // `NaN`, `Infinity` and `-Infinity` are all of type `number`, so the declared type does not
+  // exclude them and a value derived from config or an env var can reach here. Note that this
+  // changes what `Infinity` does: it used to reach `chunk` and yield a single batch of everything,
+  // and now yields default-sized batches instead.
   const updateSyncChunkSize = Number.isFinite(configuredUpdateSyncChunkSize)
     ? Math.max(1, Math.floor(configuredUpdateSyncChunkSize))
     : DEFAULT_UPDATE_SYNC_CHUNK_SIZE;

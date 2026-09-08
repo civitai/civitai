@@ -177,27 +177,66 @@ describe('updateSync :: per-index chunk size', () => {
     expect(pulledIdCounts(pullData)).toEqual([ITEM_COUNT]);
   });
 
-  // `chunk(xs, 0)` and `chunk(xs, -1)` both return [] in lodash, so an unclamped chunk size would
-  // queue zero tasks and return `{ totalTasks: 0, failedTasks: 0 }` — a clean result for a run
-  // that indexed nothing.
+  // `chunk(xs, 0)`, `chunk(xs, -1)` and `chunk(xs, NaN)` all return [] in lodash, so an unguarded
+  // chunk size would queue zero tasks and return `{ totalTasks: 0, failedTasks: 0 }` — a clean
+  // result for a run that indexed nothing. The two arms of the guard produce different sizes and
+  // are pinned separately: a non-positive but finite value is CLAMPED to the one-id floor, while a
+  // non-finite one FALLS BACK to the default.
+  //
+  // The non-finite cases are what pin `Number.isFinite` rather than a `typeof x === 'number'`
+  // test: `NaN`, `Infinity` and `-Infinity` are all of type `number`, so the declared type does
+  // not exclude them, and `Math.max(1, Math.floor(NaN))` is `NaN` — the same empty-chunk silent
+  // success the clamp exists to remove. (`-Infinity` is the weakest of the three: a `typeof`
+  // mutant clamps it to 1, so only the exact-size assertion below separates it from the floor.)
+
+  // 60 ids at one id per batch is 60 batches of 1; 60 ids at the default (which is larger than
+  // 60) is a single batch of 60.
+  const CLAMPED_TO_FLOOR = Array.from({ length: ITEM_COUNT }, () => 1);
+  const ONE_DEFAULT_SIZED_BATCH = [ITEM_COUNT];
+
   it.each([
-    { configured: 0, label: 'zero' },
-    { configured: -5, label: 'negative' },
+    { configured: 0, label: 'zero', expectedChunkSize: 1, expectedBatchSizes: CLAMPED_TO_FLOOR },
+    {
+      configured: -5,
+      label: 'negative',
+      expectedChunkSize: 1,
+      expectedBatchSizes: CLAMPED_TO_FLOOR,
+    },
+    {
+      configured: NaN,
+      label: 'NaN',
+      expectedChunkSize: DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
+      expectedBatchSizes: ONE_DEFAULT_SIZED_BATCH,
+    },
+    {
+      configured: Infinity,
+      label: 'Infinity',
+      expectedChunkSize: DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
+      expectedBatchSizes: ONE_DEFAULT_SIZED_BATCH,
+    },
+    {
+      configured: -Infinity,
+      label: 'negative Infinity',
+      expectedChunkSize: DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
+      expectedBatchSizes: ONE_DEFAULT_SIZED_BATCH,
+    },
   ])(
     'still indexes every item when the chunk size is $label',
-    async ({ configured }) => {
+    async ({ configured, expectedChunkSize, expectedBatchSizes }) => {
       const pullData = vi.fn(async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []));
       const pushData = vi.fn().mockResolvedValue(undefined);
       const index = buildIndex({ pullData, pushData, updateSyncChunkSize: configured });
 
       const result = await index.updateSync(updateItems(ITEM_COUNT));
 
-      expect(index.updateSyncChunkSize).toBeGreaterThanOrEqual(1);
-      // One id per batch is the floor, so 60 items produce 60 tasks — the point is that it is not 0.
-      expect(result.totalTasks).toBe(ITEM_COUNT);
+      // An exact size, not `toBeGreaterThanOrEqual(1)`: that weaker form cannot tell the clamped
+      // floor from the default from `Infinity`, all three of which satisfy it.
+      expect(index.updateSyncChunkSize).toBe(expectedChunkSize);
+      // The point common to every case is that this is not 0.
+      expect(result.totalTasks).toBe(expectedBatchSizes.length);
       expect(result.failedTasks).toBe(0);
-      expect(pushData).toHaveBeenCalledTimes(ITEM_COUNT);
-      expect(pulledIdCounts(pullData)).toEqual(Array.from({ length: ITEM_COUNT }, () => 1));
+      expect(pushData).toHaveBeenCalledTimes(expectedBatchSizes.length);
+      expect(pulledIdCounts(pullData)).toEqual(expectedBatchSizes);
     },
     30_000
   );

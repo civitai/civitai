@@ -58,13 +58,18 @@ type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
  * up to a processor's document batch size) and any multi-step pull task carries `currentData`.
  * Holding the task object would keep those payloads alive for the whole life of the queue —
  * which, on a degraded backend where many batches fail, is a large amount of memory retained for
- * the sake of a number. Only the fields a caller actually reports on are kept.
+ * the sake of a number. `idCount` is the only field any production consumer reads (via
+ * `failedIdCount`); `type` and `retries` are kept for diagnostics and are so far read only by the
+ * specs.
  */
 export type FailedTaskRecord = {
   type: Task['type'];
   /** Source ids this task was responsible for; none of them reached the index. */
   idCount: number;
-  /** Attempts made before giving up. */
+  /**
+   * Retries the task had already made when it gave up — it was attempted `retries + 1` times.
+   * A task with `maxRetries: 0` is attempted once and records 0.
+   */
   retries: number;
 };
 
@@ -193,8 +198,9 @@ export class TaskQueue {
       return;
     }
 
-    // Summarise rather than retain: the task (and its `data`/`currentData` payload) becomes
-    // garbage as soon as this returns.
+    // Summarise rather than retain: once this returns, no structure on the queue reaches the task
+    // or its `data`/`currentData` payload. (Pinned queue-wide, not just for `failedTasks`, by the
+    // reachability walk in `src/server/search-index/utils/__tests__/taskQueue.test.ts`.)
     this.failedTasks.push({
       type: task.type,
       idCount: task.idCount ?? 0,
