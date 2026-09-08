@@ -56,9 +56,14 @@
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
   // to watch it live — a single run opens its detail, a sweep goes to the list. Errors propagate to
   // ReviewStep, which shows them on the Start button.
-  async function start(launched: LaunchedRun[], prompts: string[], name: string) {
+  async function start(
+    launched: LaunchedRun[],
+    prompts: string[],
+    name: string,
+    currencies: string[]
+  ) {
     if (!selection) return;
-    const runs = buildTrainingRuns(selection, images, trigger, name, launched, prompts);
+    const runs = buildTrainingRuns(selection, images, trigger, name, launched, prompts, currencies);
     const ids = await postTraining(runs);
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.

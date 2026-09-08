@@ -27,6 +27,8 @@ export interface TrainingRunPayload {
   trigger: string;
   items: TrainingItem[];
   prompts: string[];
+  /** Buzz accounts to charge, in priority order — the user's Review-step choice (validated server-side). */
+  currencies: string[];
   meta: TrainingStudioMeta;
 }
 

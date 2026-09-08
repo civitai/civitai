@@ -31,7 +31,12 @@
     labels: string[];
     /** The chosen trigger word, if any — pre-fills the name field (the run is named after it by default). */
     trigger: string;
-    onStart: (launched: LaunchedRun[], prompts: string[], name: string) => Promise<void>;
+    onStart: (
+      launched: LaunchedRun[],
+      prompts: string[],
+      name: string,
+      currencies: string[]
+    ) => Promise<void>;
     onBack: () => void;
   } = $props();
 
@@ -40,6 +45,23 @@
   let name = $state(untrack(() => trigger.trim()));
   let starting = $state(false);
   let startError = $state('');
+
+  // Which Buzz accounts to charge, in priority order. Yellow (purchased) + blue (generation) by default —
+  // the prior fixed behavior; the user can add/remove Green. The submit filters/defaults this server-side.
+  const BUZZ_OPTIONS = [
+    { key: 'yellow', label: 'Yellow', hint: 'purchased' },
+    { key: 'blue', label: 'Blue', hint: 'generation' },
+    { key: 'green', label: 'Green', hint: 'membership' },
+  ] as const;
+  let currencies = $state<string[]>(['yellow', 'blue']);
+  function toggleCurrency(key: string) {
+    if (currencies.includes(key)) {
+      if (currencies.length > 1) currencies = currencies.filter((c) => c !== key); // keep ≥1
+    } else {
+      // re-derive in BUZZ_OPTIONS order so the array stays a stable priority list
+      currencies = BUZZ_OPTIONS.map((o) => o.key).filter((k) => k === key || currencies.includes(k));
+    }
+  }
 
   const SAMPLE_RATE = 30;
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -140,7 +162,8 @@
       await onStart(
         selection.runs.map((run, i) => ({ run, params: params[i]! })),
         prompts.map((p) => p.text),
-        name
+        name,
+        currencies
       );
     } catch (e) {
       startError = e instanceof Error ? e.message : 'Could not start training';
@@ -339,6 +362,30 @@
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
       ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} image{imageCount === 1 ? '' : 's'}
     </div>
+
+    <div class="mt-4 border-t border-dark-4 pt-3.5">
+      <div class="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-dark-2">Pay with</div>
+      <div class="flex flex-wrap gap-1.5">
+        {#each BUZZ_OPTIONS as opt (opt.key)}
+          {@const on = currencies.includes(opt.key)}
+          <button
+            type="button"
+            aria-pressed={on}
+            onclick={() => toggleCurrency(opt.key)}
+            class="rounded border px-2 py-1 text-left transition-colors {on
+              ? 'border-[#f59f00]/40 bg-[#f59f00]/10'
+              : 'border-dark-4 bg-dark-7 hover:border-dark-3'}"
+          >
+            <span class="text-[12px] font-semibold {on ? 'text-[#f59f00]' : 'text-dark-1'}">
+              ⚡ {opt.label}
+            </span>
+            <span class="ml-1 font-mono text-[10px] text-dark-2">{opt.hint}</span>
+          </button>
+        {/each}
+      </div>
+      <p class="mt-1.5 font-mono text-[10px] text-dark-2">Charged in this order until covered.</p>
+    </div>
+
     <Button class="mt-4 w-full" onclick={start} disabled={starting}>
       {#if starting}
         ⚡ Starting…

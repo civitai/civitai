@@ -45,11 +45,25 @@ export interface TrainingRunInput {
   trigger: string;
   items: TrainingItem[];
   prompts: string[];
+  /** Which Buzz accounts to charge, in priority order (the user's choice on Review). Validated + defaulted
+   *  server-side — never trusted from the client body. */
+  currencies?: string[];
   meta: TrainingStudioMeta;
 }
 
-// Real-spend wallets (Buzz), same set the whatif quotes against.
+// Real-spend wallets (Buzz), same set the whatif quotes against. Also the default when the client sends
+// nothing valid.
 const CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+// The Buzz accounts a training run may draw from — the client's `currencies` is filtered to this set so a
+// tampered/garbage body can't send an arbitrary account to the orchestrator.
+const ALLOWED_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue', 'green'];
+
+function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
+  const picked = (input ?? []).filter((c): c is BuzzClientAccount =>
+    ALLOWED_CURRENCIES.includes(c as BuzzClientAccount)
+  );
+  return picked.length ? picked : CURRENCIES;
+}
 // Opt each epoch job into an NDJSON live trace (step progress + console logs), exposed as
 // `output.epochs[].traceUrl` (ai-toolkit only). OFF by default: sending this unknown field before the
 // orchestrator's trace feature is live could get the whole submit rejected, so it's gated on an env flag —
@@ -150,7 +164,7 @@ export async function submitTraining(token: string, run: TrainingRunInput): Prom
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [buildStep(run)],
-      currencies: CURRENCIES,
+      currencies: resolveCurrencies(run.currencies),
     },
     query: { wait: 0 },
   });

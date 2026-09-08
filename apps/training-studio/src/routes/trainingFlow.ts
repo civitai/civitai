@@ -193,7 +193,8 @@ export function buildTrainingRuns(
   trigger: string,
   name: string,
   launched: LaunchedRun[],
-  prompts: string[]
+  prompts: string[],
+  currencies: string[]
 ): TrainingRunPayload[] {
   const mode = runCard(selection.runs[0]!).label;
   const items = images
@@ -223,6 +224,7 @@ export function buildTrainingRuns(
       trigger: t,
       items,
       prompts,
+      currencies,
       meta: {
         name: name.trim() || t || selection.loraType,
         media: selection.media,
