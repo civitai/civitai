@@ -102,8 +102,19 @@ ALTER TABLE default.reports
 --
 --    Recorded here for history; re-applying it is a no-op. 🔴 The warning below is NOT
 --    historical trivia — it still governs any REVERT, and it is the reason this section
---    cannot be reverted on its own. See the rollback bundle and, in particular, its
---    ORDER, at <talos-infra>/claudedocs/clickhouse-enum-widening-2026-09-07/rollback-reaction-type.sql
+--    cannot be reverted on its own.
+--
+-- 🔴 REVERT ORDER, IF IT EVER COMES TO THAT: narrow the COLUMN first, then the view —
+--    the REVERSE of the apply order. The hazard shape in both directions is "wide column
+--    + narrow view", so narrowing the view first opens exactly the window section 3 warns
+--    about, whereas once 'Post_Create' is not a member of the column no row can carry it
+--    and the view's surplus IN-list element is inert. The objection to column-first —
+--    that the view would then compare an Enum8 against a literal the enum no longer
+--    contains and throw, breaking every INSERT into reactions — was measured and is
+--    FALSE: an unknown element in an IN list evaluates to 0, no error. (Verified with a
+--    positive control, because a 0 from a query failing shut would look identical.)
+--    Precondition either way: require 0 rows carrying 'Post_Create'/'Post_Delete', since
+--    narrowing an enum that already carries a value makes those rows unreadable.
 --
 -- 🔴🔴 SECTIONS 3 AND 4 ARE ONE OPERATION. APPLY BOTH, IN THIS ORDER, IN ONE SITTING.
 --
