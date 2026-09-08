@@ -26,7 +26,7 @@ import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { HIDE_PAID_MODELS_FILTER } from '~/components/Search/paid-model-search-filter';
+import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-search-filter';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
@@ -60,7 +60,7 @@ const RenderFilters = () => {
     `availability != ${Availability.Private}${
       currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
     }`,
-    features.paidModelSearchFilter && hidePaid ? HIDE_PAID_MODELS_FILTER : null,
+    paidModelsSearchFilterClause(features.paidModelSearchFilter, hidePaid),
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '
     )}] AND version.baseModel IN [${nsfwRestrictedBaseModels

@@ -28,7 +28,12 @@ import { booleanString } from '~/utils/zod-helpers';
  * inferred from the call returning. `addToQueue` fails open on a degraded sysRedis — it parks the
  * ids in Postgres and returns false — and neither `SearchIndexUpdate.queueUpdate` nor
  * `modelsSearchIndex.queueUpdate` propagates that boolean. So "the call returned" is not evidence
- * the ids landed; the delta between the two depths is.
+ * the ids landed.
+ *
+ * `landed` is one-directional evidence. Equal to `gatedModelCount` it proves the ids are queued.
+ * BELOW it, the ids may have been dropped OR the 15-minute search-index sync may have checked the
+ * queue out destructively between the enqueue and the read — a low count is a reason to re-run,
+ * not a diagnosis. Re-running is harmless; the enqueue is idempotent.
  */
 
 const schema = z.object({
@@ -40,7 +45,7 @@ const QUEUE_ACTION = SearchIndexUpdateQueueAction.Update;
 
 async function readQueuedIds() {
   // readOnly: does NOT append a new bucket or retire the current ones, so calling this cannot
-  // consume work the */15 sync is about to pick up.
+  // consume work the 15-minute sync is about to pick up.
   const queue = await SearchIndexUpdate.getQueue(MODELS_SEARCH_INDEX, QUEUE_ACTION, true);
   return queue.content;
 }
@@ -52,13 +57,16 @@ export default WebhookEndpoint(async (req, res) => {
 
   const modelIds = await queryGatedModelIds();
   const before = await readQueuedIds();
+  // Set, not Array.includes: this queue reaches ~211K ids on a large fan-out, and scanning it once
+  // per gated model is enough to wedge the handler.
+  const beforeSet = new Set(before);
 
   if (dryRun) {
     return res.status(200).json({
       dryRun: true,
       gatedModelCount: modelIds.length,
       queueDepthBefore: before.length,
-      alreadyQueued: modelIds.filter((id) => before.includes(id)).length,
+      alreadyQueued: modelIds.filter((id) => beforeSet.has(id)).length,
     });
   }
 
@@ -76,9 +84,8 @@ export default WebhookEndpoint(async (req, res) => {
     gatedModelCount: modelIds.length,
     queueDepthBefore: before.length,
     queueDepthAfter: after.length,
-    // The number that decides whether this worked. `landed < gatedModelCount` means sysRedis
-    // dropped ids; they are parked in KeyValue under `search-index-queue-fallback:` and the
-    // `search-index-queue-drain` job replays them. Re-run rather than assuming.
+    // `landed === gatedModelCount` is proof the ids are queued. A lower number is ambiguous — see
+    // the note at the top of this file — and the response to it is to re-run.
     landed,
   });
 });

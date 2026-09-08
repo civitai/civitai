@@ -93,6 +93,41 @@ describe('queue-paid-models-reindex', () => {
     expect(payload.landed).toBe(3);
   });
 
+  it('rejects a call with the wrong token, and queues nothing', async () => {
+    // Deleting the WebhookEndpoint wrapper leaves both routes world-callable, and every other test
+    // here passes a valid token, so nothing else can see it.
+    const req = { method: 'POST', query: { token: 'wrong' }, headers: {} } as never;
+    let statusCode = 0;
+    const res = {
+      status(code: number) {
+        statusCode = code;
+        return res;
+      },
+      json: () => res,
+      send: () => res,
+      setHeader: () => res,
+      end: () => res,
+    };
+    await handler(req, res as never);
+
+    expect(statusCode).toBe(401);
+    expect(queryGatedModelIds).not.toHaveBeenCalled();
+    expect(queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('chunks by chunkSize rather than queueing only the first chunk', async () => {
+    // slice(i, chunkSize) instead of slice(i, i + chunkSize) — the standard slice-arguments slip —
+    // is invisible at the default chunk size, because three ids fit in one iteration.
+    getQueue
+      .mockResolvedValueOnce({ content: [], commit: async () => undefined })
+      .mockResolvedValueOnce({ content: [1, 2, 3], commit: async () => undefined });
+
+    await call({ dryRun: 'false', chunkSize: '2' });
+
+    const batches = queueUpdate.mock.calls.map((c) => (c[0] as { id: number }[]).map((x) => x.id));
+    expect(batches).toEqual([[1, 2], [3]]);
+  });
+
   it('reports landed 0 when the enqueue silently dropped every id', async () => {
     // The fail-open shape: queueUpdate resolves, and the queue is still empty afterwards. A handler
     // that inferred success from the call returning would report 3 here.
