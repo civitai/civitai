@@ -33,15 +33,20 @@ import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
 const DEFAULT_DAYS_LOOKBACK = 3;
 const DEFAULT_LIMIT = 500;
-const MAX_POST_ID = 2147483647;
 
-const schema = z.object({
-  days: z.coerce.number().int().positive().default(DEFAULT_DAYS_LOOKBACK),
-  limit: z.coerce.number().int().positive().max(5000).default(DEFAULT_LIMIT),
-  beforeAt: z.coerce.date().optional(),
-  beforeId: z.coerce.number().int().nonnegative().optional(),
-  indexes: commaDelimitedEnumArray(['search', 'metrics']).default(['search', 'metrics']),
-});
+const schema = z
+  .object({
+    days: z.coerce.number().int().positive().default(DEFAULT_DAYS_LOOKBACK),
+    limit: z.coerce.number().int().positive().max(5000).default(DEFAULT_LIMIT),
+    beforeAt: z.coerce.date().optional(),
+    beforeId: z.coerce.number().int().nonnegative().optional(),
+    indexes: commaDelimitedEnumArray(['search', 'metrics']).default(['search', 'metrics']),
+  })
+  // Half a cursor is worse than none: it would silently restart from the newest page and
+  // re-walk everything the operator already paged through.
+  .refine((v) => (v.beforeAt === undefined) === (v.beforeId === undefined), {
+    message: 'beforeAt and beforeId must be given together',
+  });
 
 export const reindexRecentScheduledImages = createJob(
   'reindex-recent-scheduled-images',
@@ -61,13 +66,20 @@ export const reindexRecentScheduledImages = createJob(
     //
     // The id is a real tiebreak, not decoration: posts share a publishedAt to the second, so
     // a bare timestamp cursor silently drops whatever sits on the page boundary.
+    //
+    // The first page omits the clause outright rather than seeding it with a sentinel row —
+    // "greater than every row" has no honest literal, and the ORDER BY alone already walks
+    // the index from its high end.
+    const after =
+      beforeAt && beforeId !== undefined
+        ? Prisma.sql`AND (p."publishedAt", p.id) < (${beforeAt}, ${beforeId})`
+        : Prisma.empty;
+
     const posts = await dbRead.$queryRaw<{ id: number; publishedAt: Date }[]>`
       SELECT p.id, p."publishedAt"
       FROM "Post" p
       WHERE p."publishedAt" IS NOT NULL
-        AND (p."publishedAt", p.id) < (${beforeAt ?? new Date(8640000000000000)}, ${
-      beforeId ?? MAX_POST_ID
-    })
+        ${after}
         AND (
           p."publishedAt" > now()
           OR (

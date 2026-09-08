@@ -52,9 +52,16 @@ describe('reindex-recent-scheduled-images :: query param wiring through createJo
       beforeId: '77',
       limit: '250',
     });
-    const args = dbMock.dbRead.$queryRaw.mock.calls[0] as unknown[];
-    expect(args).toContainEqual(at);
-    expect(args).toContain(77);
-    expect(args).toContain(250);
+    // The cursor arrives as a nested Prisma.sql fragment, so flatten one level before
+    // asserting or this passes against a query that dropped it.
+    const [, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const flat = values.flatMap((v) =>
+      v && typeof v === 'object' && Array.isArray((v as { values?: unknown[] }).values)
+        ? ((v as { values: unknown[] }).values as unknown[])
+        : [v]
+    );
+    expect(flat).toContainEqual(at);
+    expect(flat).toContain(77);
+    expect(flat).toContain(250);
   });
 });

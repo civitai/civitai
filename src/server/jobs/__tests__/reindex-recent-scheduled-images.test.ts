@@ -54,14 +54,29 @@ const stubReads = ({
   });
 };
 
-const postQuerySql = () =>
-  (
-    (
-      mockDbRead.$queryRaw.mock.calls.find((args) =>
-        (args[0] as string[]).join(' ').includes('FROM "Post" p')
-      ) as unknown[]
-    )[0] as string[]
-  ).join(' ');
+const postQueryCall = () =>
+  mockDbRead.$queryRaw.mock.calls.find((args) =>
+    (args[0] as string[]).join(' ').includes('FROM "Post" p')
+  ) as unknown[];
+
+type SqlFragment = { strings: string[]; values: unknown[] };
+const isFragment = (v: unknown): v is SqlFragment =>
+  !!v && typeof v === 'object' && Array.isArray((v as SqlFragment).strings);
+
+// The cursor is interpolated as a nested Prisma.sql fragment, so the outer template holds
+// it as a VALUE rather than as text. Render both levels or the shape assertions below
+// silently pass against SQL that no longer contains what they claim to check.
+const postQuerySql = () => {
+  const [strings, ...values] = postQueryCall() as [string[], ...unknown[]];
+  return strings
+    .map((s, i) => s + (isFragment(values[i]) ? values[i].strings.join(' ? ') : ''))
+    .join('');
+};
+
+const postQueryValues = () => {
+  const [, ...values] = postQueryCall() as [string[], ...unknown[]];
+  return values.flatMap((v) => (isFragment(v) ? v.values : [v]));
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -110,10 +125,10 @@ describe('reindexRecentScheduledImages', () => {
   it('passes the cursor and limit into the post query', async () => {
     const at = new Date('2026-08-20T00:00:00.000Z');
     await runJob({ beforeAt: at.toISOString(), beforeId: '77', limit: '250' });
-    const args = mockDbRead.$queryRaw.mock.calls[0] as unknown[];
-    expect(args).toContainEqual(at);
-    expect(args).toContain(77);
-    expect(args).toContain(250);
+    const values = postQueryValues();
+    expect(values).toContainEqual(at);
+    expect(values).toContain(77);
+    expect(values).toContain(250);
   });
 
   it('syncs nothing and stops when the page is empty', async () => {
@@ -130,6 +145,14 @@ describe('reindexRecentScheduledImages', () => {
     expect(mockSearchSync).not.toHaveBeenCalled();
     expect(mockMetricsSync).not.toHaveBeenCalled();
   });
+
+  // Accepting half a cursor would restart from the newest page while the operator believed
+  // they were resuming, so they would re-walk everything already done and never notice.
+  it('rejects half a cursor rather than silently restarting', async () => {
+    await expect(runJob({ beforeId: '77' })).rejects.toThrow();
+    await expect(runJob({ beforeAt: AT.toISOString() })).rejects.toThrow();
+    expect(mockSearchSync).not.toHaveBeenCalled();
+  });
 });
 
 // A plan regression is invisible to a suite with a mocked database, so this asserts the
@@ -140,9 +163,23 @@ describe('reindexRecentScheduledImages', () => {
 describe('reindexRecentScheduledImages :: query shape that keeps the index', () => {
   it('pages over posts ordered by ("publishedAt", id) DESC', async () => {
     await runJob();
-    const sql = postQuerySql().replace(/\s+/g, ' ');
-    expect(sql).toContain('ORDER BY p."publishedAt" DESC, p.id DESC');
-    expect(sql).toContain('(p."publishedAt", p.id) <');
+    expect(postQuerySql().replace(/\s+/g, ' ')).toContain(
+      'ORDER BY p."publishedAt" DESC, p.id DESC'
+    );
+  });
+
+  it('compares the cursor as a row, so the id breaks ties on publishedAt', async () => {
+    await runJob({ beforeAt: AT.toISOString(), beforeId: '77' });
+    expect(postQuerySql().replace(/\s+/g, ' ')).toContain('(p."publishedAt", p.id) <');
+  });
+
+  // The alternative was seeding the cursor with a sentinel "greater than every row" — a
+  // hardcoded max id and max date, both of which encode an assumption nothing checks.
+  // Omitting the clause is what makes those constants unnecessary.
+  it('omits the cursor clause entirely on the first page', async () => {
+    await runJob();
+    expect(postQuerySql()).not.toContain('(p."publishedAt", p.id) <');
+    expect(postQueryValues()).not.toContain(2147483647);
   });
 
   it('never orders or cursors on Image.id', async () => {
