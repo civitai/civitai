@@ -66,6 +66,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueOwnerAvatarReindex } from '~/server/services/owner-avatar-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
@@ -1160,6 +1161,16 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   await userFollowsCache.bust(user.id);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  // None of the collections/bounties/comics indexes filters on `deletedAt`, so their
+  // documents keep an avatar `remove-deleted-user-images` later destroys.
+  //
+  // Caught here even though the callee is non-throwing by contract: the delete has
+  // committed, and everything below — subscription cancellation, session invalidation —
+  // would be skipped by a throw. That would leave a closed account still billing with a
+  // live session, on the strength of a contract that lives in another file.
+  await queueOwnerAvatarReindex({ userId: id, source: 'user-delete' }).catch(() => undefined);
+
   await deleteBasicDataForUser(id);
 
   // Cancel their subscription

@@ -47,10 +47,7 @@ import type {
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
-import {
-  enqueueCollectionRebuild,
-  getCollectionIdsForOwner,
-} from '~/server/services/collection-media-index';
+import { queueOwnerAvatarReindex } from '~/server/services/owner-avatar-index';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
@@ -711,11 +708,7 @@ export const updateUserHandler = async ({
     // Looks redundant with the removal-side leg in collection-media-index, but that leg only
     // matches images that are somebody's avatar right now — never one that was replaced.
     if (updatedUser.profilePictureId !== user.profilePictureId) {
-      postUpdatePromises.push(
-        getCollectionIdsForOwner({ userId: id, source: 'avatar-replace' }).then((collections) =>
-          enqueueCollectionRebuild({ ...collections, source: 'avatar-replace' })
-        )
-      );
+      postUpdatePromises.push(queueOwnerAvatarReindex({ userId: id, source: 'avatar-replace' }));
     }
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();

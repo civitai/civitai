@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserService from '~/server/services/user.service';
 
 /**
- * Changing an avatar must re-index the collections that user owns — see the route-7 note in
- * collection-media-index.ts for why the removal-side leg cannot cover a replacement.
+ * Changing an avatar must fan out to the indexes that denormalize it — see the header of
+ * owner-avatar-index.ts. This file pins the TRIGGER (which `profilePictureId` transitions
+ * reach it); the fan-out itself is `owner-avatar-index.test.ts`.
  */
 
 const { mockUpdateUserById, mockGetUserById, mockIngestImage, mockCollectionsQueueUpdate } =
@@ -41,6 +42,8 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/search-index', () => ({
   usersSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+  bountiesSearchIndex: { queueUpdate: vi.fn() },
+  comicsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
 
@@ -77,12 +80,12 @@ beforeEach(() => {
   mockIngestImage.mockResolvedValue(undefined);
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
     Array.from(strings).join('?').includes('"Collection"')
-      ? [{ collectionId: OWNED_COLLECTION_A }, { collectionId: OWNED_COLLECTION_B }]
+      ? [{ id: OWNED_COLLECTION_A }, { id: OWNED_COLLECTION_B }]
       : []
   );
 });
 
-describe('avatar replacement re-indexes the owner’s collections', () => {
+describe('avatar replacement fans out to the owner’s documents', () => {
   it('queues an Update for every collection the user owns', async () => {
     await replacePicture();
 
@@ -97,7 +100,7 @@ describe('avatar replacement re-indexes the owner’s collections', () => {
 
     const call = collectionLookup();
     expect(call).toBeDefined();
-    expect(Array.from(call![0]).join('?')).toMatch(/c\."userId"\s*=\s*\?/);
+    expect(Array.from(call![0]).join('?')).toMatch(/WHERE "userId" = \?/);
     expect(call!.slice(1)).toContain(USER_ID);
   });
 
@@ -129,16 +132,16 @@ describe('avatar replacement re-indexes the owner’s collections', () => {
     await expect(replacePicture()).resolves.toMatchObject({ id: USER_ID });
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'collection-media-index-resolve-failed' })
+      expect.objectContaining({ name: 'owner-avatar-index-resolve-failed' })
     );
   });
 
   it('still saves the profile when the queue write fails', async () => {
-    mockCollectionsQueueUpdate.mockRejectedValue(new Error('redis unavailable'));
+    mockCollectionsQueueUpdate.mockRejectedValueOnce(new Error('redis unavailable'));
 
     await expect(replacePicture()).resolves.toMatchObject({ id: USER_ID });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'collection-media-index-enqueue-failed' })
+      expect.objectContaining({ name: 'owner-avatar-index-enqueue-failed' })
     );
   });
 });
