@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconBoltFilled } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -112,7 +113,7 @@
   const total = $derived(runTotal == null ? null : runTotal + sampleCost);
   const runCostLabel = (i: number) => {
     const cost = runCostAt(i);
-    return cost == null ? '—' : `⚡ ${cost.toLocaleString()}`;
+    return cost == null ? null : cost.toLocaleString();
   };
   const etaMin = $derived(
     Math.max(...selection.runs.map((_, i) => Math.max(1, Math.round((params[i]!.steps / 2000) * 18)))),
@@ -329,19 +330,24 @@
   <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-md border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Final price</h3>
     {#each selection.runs as run, i (run.id)}
+      {@const costLabel = runCostLabel(i)}
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
         <span class="truncate text-dark-2">{multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}</span>
-        <span class="font-semibold text-dark-0">{runCostLabel(i)}</span>
+        <span class="font-semibold text-dark-0">
+          {#if costLabel}<IconBoltFilled size={13} stroke={2} class="mb-px inline" /> {costLabel}{:else}—{/if}
+        </span>
       </div>
     {/each}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
       <span class="text-dark-2">Sample images</span>
-      <span class="font-semibold text-dark-0">⚡ {sampleCost.toLocaleString()}</span>
+      <span class="font-semibold text-dark-0">
+        <IconBoltFilled size={13} stroke={2} class="mb-px inline" /> {sampleCost.toLocaleString()}
+      </span>
     </div>
     <div class="mt-2 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm text-dark-2">Total</span>
       <span class="font-mono text-2xl font-bold text-buzz">
-        {total == null ? '—' : `⚡ ${total.toLocaleString()}`}
+        {#if total == null}—{:else}<IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}{/if}
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
@@ -349,15 +355,16 @@
     </div>
 
     <p class="mt-3 font-mono text-[10px] text-dark-2">
-      Paid with your <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz (then generation) —
-      switch in the top bar.
+      Paid with your <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz, then
+      <span class="text-blue-400">Blue</span> — switch in the top bar.
     </p>
 
     <Button class="mt-4 w-full" onclick={start} disabled={starting}>
       {#if starting}
-        ⚡ Starting…
+        <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
       {:else}
-        ⚡ {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
+        <IconBoltFilled size={16} stroke={2} class="mr-1 inline" />
+        {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
       {/if}
     </Button>
     {#if startError}

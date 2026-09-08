@@ -1422,6 +1422,9 @@ importers:
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui
+      '@microsoft/signalr':
+        specifier: ^7.0.14
+        version: 7.0.14(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@tabler/icons-svelte':
         specifier: ^3.44.0
         version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))

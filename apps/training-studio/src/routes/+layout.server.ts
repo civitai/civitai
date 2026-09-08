@@ -9,4 +9,6 @@ import type { LayoutServerLoad } from './$types';
 export const load: LayoutServerLoad = async ({ locals, url }) => ({
   logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
   buzz: locals.devPreview ? null : await getSpendableBuzz(locals.user.id),
+  // The dev-login stub has no real user to mint a signals token for, so it stays on polling.
+  signalsEnabled: !locals.devPreview,
 });

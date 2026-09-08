@@ -1,13 +1,15 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { IconBoltFilled, IconChevronDown } from '@tabler/icons-svelte';
   import { getEdgeUrl } from '$lib/edge-url';
   import { buzzMode } from '$lib/buzz-mode.svelte';
+  import { buzzBalance } from '$lib/buzz-balance.svelte';
 
   let {
     username,
     image,
     logoutUrl,
-    buzz,
+    buzz: initialBuzz,
   }: {
     username?: string;
     image?: string;
@@ -16,6 +18,9 @@
   } = $props();
 
   const avatarUrl = $derived(getEdgeUrl(image));
+  // The live store (updated by `buzz:update` signals) wins once seeded in the browser; the load-provided
+  // prop is the SSR / signals-off fallback.
+  const buzz = $derived((browser && buzzBalance.value) || initialBuzz);
   // The chosen primary account's balance (yellow or green); blue (generation) is always available too.
   const primaryBalance = $derived(buzz ? (buzzMode.value === 'green' ? buzz.green : buzz.yellow) : 0);
 </script>
@@ -41,14 +46,14 @@
       <button
         type="button"
         onclick={() => buzzMode.toggle()}
-        title={`Yellow ${buzz.yellow.toLocaleString()} · Green ${buzz.green.toLocaleString()} · Blue ${buzz.blue.toLocaleString()} (generation) — click to switch primary Buzz`}
+        title={`Yellow ${buzz.yellow.toLocaleString()} · Green ${buzz.green.toLocaleString()} · Blue ${buzz.blue.toLocaleString()} — click to switch primary Buzz`}
         class="inline-flex items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25"
       >
-        <IconBoltFilled size={15} />
+        <IconBoltFilled size={15} stroke={2} />
         {primaryBalance.toLocaleString()}
         <span class="text-[10px] font-normal capitalize opacity-70">{buzzMode.value}</span>
-        <span class="ml-1 border-l border-current/20 pl-1.5 text-[11px] font-normal text-dark-1">
-          +{buzz.blue.toLocaleString()} gen
+        <span class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-[11px] font-normal text-blue-400">
+          <IconBoltFilled size={11} stroke={2} />{buzz.blue.toLocaleString()}
         </span>
       </button>
     {/if}
@@ -78,7 +83,7 @@
           {#if logoutUrl}
             <a
               href={logoutUrl}
-              class="block rounded px-3 py-2 text-sm text-dark-1 transition-colors hover:bg-dark-5 hover:text-white"
+              class="block rounded px-3 py-2 text-sm text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
             >
               Sign out
             </a>

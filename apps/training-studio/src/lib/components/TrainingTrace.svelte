@@ -93,21 +93,23 @@
   // showed up as every trace request being canceled every ~5s).
   const traceKey = $derived(traceUrl.split('?')[0]);
 
-  // (Re)tail whenever the epoch (path) changes. Retries the 404 "not yet written" window, tails until the
-  // stream closes, then waits for the next epoch's path.
+  // (Re)tail whenever the epoch (path) changes. We deliberately DON'T reset the visible summary here: the
+  // orchestrator pre-creates every epoch's trace and marks them done as weights land, so at a boundary we
+  // switch to the next epoch's stream — which may 404 for a moment (not written yet) or already be closed
+  // (a fast epoch that finished between polls). Blanking to "Waiting…" or snapping the phase back on every
+  // switch is the jarring jump; instead we keep the last live view until the new stream replaces it, and the
+  // global step counter (x / totalSteps) only ever climbs, so it reads as continuous progress.
   $effect(() => {
-    void traceKey; // track the path only
-    const url = untrack(() => traceUrl); // use the current signed URL without tracking its query
-    raw = [];
-    phase = null;
-    epoch = null;
-    step = maxSteps = stepsRemaining = secondsPerStep = null;
-    started = false;
+    void traceKey; // re-tail on the epoch (path) change; keep the last view until new data arrives
     const controller = new AbortController();
     (async () => {
       while (!controller.signal.aborted) {
         let ready = false;
         try {
+          // Read the freshest signed URL each attempt. The parent re-signs it every poll, but this effect
+          // is keyed on the PATH, so it never re-runs for a signature refresh — a once-captured URL would
+          // expire mid-retry and get stuck 404/403-looping, which is one way an epoch never streamed.
+          const url = untrack(() => traceUrl);
           ({ ready } = await tailTrace(url, ingest, controller.signal));
         } catch (err) {
           if (isAbort(err)) return;

@@ -7,6 +7,7 @@ import {
 } from '@civitai/client';
 import { env } from '$env/dynamic/private';
 import { isFlux2, orchestratorClient } from './orchestrator';
+import { workflowSignalCallbacks } from './signals';
 import {
   CIVITAI_TAG,
   META_VERSION,
@@ -152,10 +153,16 @@ function nameSlug(name: string): string {
     .slice(0, 60);
 }
 
-/** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. */
-export async function submitTraining(token: string, run: TrainingRunInput): Promise<string> {
+/** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. The
+ *  `userId` registers the orchestrator callback that pushes live `workflow-update` signals for this run. */
+export async function submitTraining(
+  token: string,
+  run: TrainingRunInput,
+  userId: number
+): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
   const slug = run.meta.name ? nameSlug(run.meta.name) : '';
+  const callbacks = workflowSignalCallbacks(userId);
   const { data, error } = await submitWorkflow({
     client: orchestratorClient(token),
     body: {
@@ -165,6 +172,7 @@ export async function submitTraining(token: string, run: TrainingRunInput): Prom
       metadata: metadata as Record<string, unknown>,
       steps: [buildStep(run)],
       currencies: resolveCurrencies(run.currencies),
+      ...(callbacks ? { callbacks } : {}),
     },
     query: { wait: 0 },
   });

@@ -21,7 +21,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 
   const workflowIds: string[] = [];
   try {
-    for (const run of runs) workflowIds.push(await submitTraining(token, run));
+    for (const run of runs) workflowIds.push(await submitTraining(token, run, locals.user.id));
   } catch (err) {
     console.warn('[training-studio] submitTraining failed', err);
     // Nothing landed → clean failure, safe to retry the whole batch. Some landed → fall through and return

@@ -270,11 +270,13 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     // just-started run renders as N empty checkpoints instead of a "training underway" state.
     .filter((e) => e.modelUrl != null || e.samples.some((s) => s !== null));
 
-  // The live trace is the currently-training epoch's stream: has a traceUrl but no finished weights yet,
-  // newest first. Absent once every epoch is done (nothing to tail).
+  // The live trace is the currently-training epoch's stream. The orchestrator pre-creates ALL epoch entries
+  // up front, each with a traceUrl, and marks them done as weights land — so the epoch training *now* is the
+  // LOWEST-numbered one without finished weights. (Picking the highest tailed the final epoch's stream, which
+  // stays empty until the run is nearly over — the "blank until ~80%" bug.) Absent once every epoch is done.
   const liveTraceUrl = [...(output.epochs ?? [])]
     .filter((e) => typeof e.traceUrl === 'string' && !e.model?.available)
-    .sort((a, b) => (b.epochNumber ?? 0) - (a.epochNumber ?? 0))[0]?.traceUrl;
+    .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))[0]?.traceUrl;
 
   return {
     workflowId: w.id,

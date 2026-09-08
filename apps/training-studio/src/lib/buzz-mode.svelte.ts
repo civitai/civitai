@@ -12,6 +12,9 @@ function stored(): BuzzMode {
   return localStorage.getItem(KEY) === 'green' ? 'green' : 'yellow';
 }
 
+// Module-scope `$state`, safe across SSR requests only because `stored()` returns a user-independent
+// constant on the server and the mutators below run in the browser only. Never seed this from a
+// cookie/session or call `set()` in a server load — that would leak one user's choice into another's render.
 let mode = $state<BuzzMode>(stored());
 
 function applyClass(next: BuzzMode) {

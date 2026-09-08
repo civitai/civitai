@@ -1,6 +1,8 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { invalidate } from '$app/navigation';
+  import { onSignal } from '$lib/signals';
+  import { WORKFLOW_UPDATE_SIGNAL } from '$lib/signal-events';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import {
     IconPencil,
@@ -45,6 +47,19 @@
     if (!browser || d.state !== 'training') return;
     const timer = setTimeout(() => invalidate('app:training-detail'), POLL_MS);
     return () => clearTimeout(timer);
+  });
+
+  // The push counterpart to the poll: the orchestrator emits `workflow-update` on each step (runs started
+  // from this app register the callback), so a matching event refreshes immediately instead of waiting out
+  // the 5s tick. The poll above stays as the fallback for runs without the callback (main-app-created, or
+  // started before the callback shipped).
+  $effect(() => {
+    if (!browser) return;
+    const workflowId = d.workflowId;
+    return onSignal(WORKFLOW_UPDATE_SIGNAL, (payload) => {
+      if ((payload as { workflowId?: string } | null)?.workflowId === workflowId)
+        invalidate('app:training-detail');
+    });
   });
 
   // Inline rename of the run title (updates metadata + name tag on the workflow).
@@ -270,7 +285,11 @@
   {/if}
 
   {#if d.state === 'training' && d.liveTraceUrl}
-    <TrainingTrace traceUrl={d.liveTraceUrl} />
+    <!-- Key on the run, not the epoch: the panel persists across epoch switches (holding its last view) but
+         resets cleanly when navigating to a different training. -->
+    {#key d.workflowId}
+      <TrainingTrace traceUrl={d.liveTraceUrl} />
+    {/key}
   {/if}
 
   {#if d.state === 'failed'}

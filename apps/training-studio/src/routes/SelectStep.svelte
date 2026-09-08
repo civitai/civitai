@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconBoltFilled } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import {
     CUSTOM_MODEL_SURCHARGE,
@@ -168,11 +169,12 @@
   }
 </script>
 
-<!-- A "from ⚡X" price, or a muted em-dash when there's no quote — used by the run summaries. (The model
-     tile renders its own gold badge inline.) -->
+<!-- A "from" price with a bolt, or a muted em-dash when there's no quote — used by the run summaries. -->
 {#snippet priceTag(amount: number | null, size: string)}
   {#if amount != null}
-    <span class="whitespace-nowrap font-mono {size} text-buzz">from ⚡{amount.toLocaleString()}</span>
+    <span class="whitespace-nowrap font-mono {size} text-buzz"
+      >from <IconBoltFilled size={12} stroke={2} class="mb-px inline" />{amount.toLocaleString()}</span
+    >
   {:else}
     <span class="whitespace-nowrap font-mono {size} text-dark-2">—</span>
   {/if}
@@ -325,7 +327,7 @@
                 <span
                   class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
                 >
-                  from ⚡{cardPrice.toLocaleString()}
+                  from <IconBoltFilled size={11} stroke={2} class="mx-px inline" />{cardPrice.toLocaleString()}
                 </span>
               {:else}
                 <span class="font-mono text-[10px] text-dark-2">—</span>
@@ -373,7 +375,11 @@
                 {runVersionLabel(primary)}
               </div>
               <div class="font-mono text-[11px] text-dark-2">
-                {labelNoun(card)}{isCustom(primary) ? ` · custom (+⚡${CUSTOM_MODEL_SURCHARGE})` : ''}
+                {labelNoun(card)}{#if isCustom(primary)} · custom (+<IconBoltFilled
+                    size={10}
+                    stroke={2}
+                    class="inline"
+                  />{CUSTOM_MODEL_SURCHARGE}){/if}
               </div>
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
@@ -402,7 +408,7 @@
                     <div
                       class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
                     >
-                      +⚡{v.surcharge.toLocaleString()}
+                      +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
                     </div>
                   {/if}
                   {#if v.note}
@@ -454,9 +460,11 @@
                       {runVersionLabel(r)}
                     </div>
                     <div class="font-mono text-[11px] text-dark-2">
-                      {labelNoun(card)}{isCustom(r)
-                        ? ` · custom (+⚡${CUSTOM_MODEL_SURCHARGE})`
-                        : ''}{focusedRow ? ' · editing' : ''}
+                      {labelNoun(card)}{#if isCustom(r)} · custom (+<IconBoltFilled
+                          size={10}
+                          stroke={2}
+                          class="inline"
+                        />{CUSTOM_MODEL_SURCHARGE}){/if}{focusedRow ? ' · editing' : ''}
                     </div>
                   </div>
                 </button>
@@ -488,7 +496,7 @@
                       <div
                         class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
                       >
-                        +⚡{v.surcharge.toLocaleString()}
+                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
                       </div>
                     {/if}
                     {#if v.note}
@@ -531,7 +539,9 @@
     <div class="mt-3.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm text-dark-2">Starting at</span>
       {#if total != null}
-        <span class="font-mono text-2xl font-bold text-buzz">⚡ {total.toLocaleString()}</span>
+        <span class="font-mono text-2xl font-bold text-buzz">
+          <IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}
+        </span>
       {:else}
         <span class="font-mono text-2xl font-bold text-dark-2">—</span>
       {/if}

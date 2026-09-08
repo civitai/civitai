@@ -21,6 +21,7 @@
     "@civitai/db-schema": "workspace:*",
     "@civitai/redis": "workspace:*",
     "@civitai/ui": "workspace:*",
+    "@microsoft/signalr": "^7.0.14",
     "@tabler/icons-svelte": "^3.44.0",
     "kysely": "^0.28.7",
     "msgpackr": "^1.11.5",
