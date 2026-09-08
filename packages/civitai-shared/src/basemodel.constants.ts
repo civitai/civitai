@@ -3117,7 +3117,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Qwen,
     licenseId: 13,
-    experimental: true,
   },
   {
     id: BM.Qwen2,

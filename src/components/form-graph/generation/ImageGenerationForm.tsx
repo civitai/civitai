@@ -29,6 +29,8 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import { CheckpointRow } from './inputs/CheckpointRow';
+import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import type { GenerationStore } from './store';
 
 /**
@@ -46,42 +48,58 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
     <Stack gap="sm">
       <div className="flex flex-col gap-1">
         <Controller
-          graph={imageHub}
-          name="model"
-          render={({ value, meta, onChange }) => {
-            const defaultModelId = meta?.defaultModelId;
-            return (
-              <>
-                <ResourceSelectInput
-                  value={value}
-                  onChange={onChange}
-                  label={
-                    <ControllerLabel
-                      label="Model"
-                      info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
+          graph={generationHub}
+          name="ecosystem"
+          render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
+            <Controller
+              graph={imageHub}
+              name="model"
+              render={({ value, meta, onChange }) => {
+                const defaultModelId = meta?.defaultModelId;
+                return (
+                  <>
+                    <CheckpointRow
+                      value={value}
+                      ecosystem={ecosystem}
+                      options={meta?.options}
+                      locked={meta?.modelLocked}
+                      onOpenPicker={() =>
+                        openCheckpointPicker({
+                          options: meta?.options,
+                          onSelect: onChange,
+                          onEcosystemChange,
+                          // Read at click time rather than subscribing: the
+                          // footer is the only consumer, and a subscription
+                          // would re-render this row on every strength drag.
+                          resources: readResources(store),
+                          ecosystem: {
+                            value: ecosystem,
+                            modelLocked: meta?.modelLocked,
+                            compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
+                            excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
+                            ecosystemStates: ecosystemMeta?.ecosystemStates,
+                            outputType: ecosystemMeta?.mediaType,
+                          },
+                        })
+                      }
+                      onRevertToDefault={
+                        defaultModelId
+                          ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                          : undefined
+                      }
                     />
-                  }
-                  buttonLabel="Select Model"
-                  modalTitle="Select Model"
-                  options={meta?.options}
-                  allowRemove={false}
-                  allowSwap={!meta?.modelLocked}
-                  onRevertToDefault={
-                    defaultModelId
-                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                      : undefined
-                  }
-                />
-                {meta?.versions ? (
-                  <VersionGroupSelector
-                    versions={meta.versions}
-                    modelId={value?.id}
-                    onChange={onChange}
-                  />
-                ) : null}
-              </>
-            );
-          }}
+                    {meta?.versions ? (
+                      <VersionGroupSelector
+                        versions={meta.versions}
+                        modelId={value?.id}
+                        onChange={onChange}
+                      />
+                    ) : null}
+                  </>
+                );
+              }}
+            />
+          )}
         />
       </div>
       <Controller
@@ -96,6 +114,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             modalTitle="Select Resources"
             options={meta?.options}
             limit={meta?.limit}
+            role="resource"
           />
         )}
       />

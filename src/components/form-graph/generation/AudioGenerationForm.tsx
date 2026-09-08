@@ -4,13 +4,15 @@ import { Controller } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
-import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
 import { ControllerLabel, VersionGroupSelector } from './form-helpers';
+import { CheckpointRow } from './inputs/CheckpointRow';
+import { openCheckpointPicker } from './inputs/openCheckpointPicker';
 
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
@@ -23,27 +25,44 @@ export function AudioGenerationForm() {
   return (
     <Stack gap="sm">
       <Controller
-        graph={audioHub}
-        name="model"
-        render={({ value, meta, onChange }) => (
-          <>
-            <ResourceSelectInput
-              value={value}
-              onChange={onChange}
-              label={<ControllerLabel label="Model" />}
-              buttonLabel="Select Model"
-              modalTitle="Select Model"
-              options={meta?.options}
-              allowRemove={false}
-            />
-            {meta?.versions ? (
-              <VersionGroupSelector
-                versions={meta.versions}
-                modelId={value?.id}
-                onChange={onChange}
-              />
-            ) : null}
-          </>
+        graph={generationHub}
+        name="ecosystem"
+        render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
+          <Controller
+            graph={audioHub}
+            name="model"
+            render={({ value, meta, onChange }) => (
+              <>
+                <CheckpointRow
+                  value={value}
+                  ecosystem={ecosystem}
+                  options={meta?.options}
+                  onOpenPicker={() =>
+                    openCheckpointPicker({
+                      options: meta?.options,
+                      onSelect: onChange,
+                      onEcosystemChange,
+                      ecosystem: {
+                        value: ecosystem,
+                        modelLocked: meta?.modelLocked,
+                        compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
+                        excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
+                        ecosystemStates: ecosystemMeta?.ecosystemStates,
+                        outputType: ecosystemMeta?.mediaType,
+                      },
+                    })
+                  }
+                />
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </>
+            )}
+          />
         )}
       />
       <Controller

@@ -1,9 +1,12 @@
 import { Button, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { useDebouncer } from '~/utils/debouncer';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
@@ -15,8 +18,63 @@ import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/Generation
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
+const GRID_GAP = 16;
+/** Below this a column stops being worth showing, so the count drops instead. */
+const MIN_COLUMN_WIDTH = 240;
+const MAX_COLUMN_COUNT = 4;
+
+/**
+ * The catalog grid, sized to FILL its pane.
+ *
+ * `MasonryProvider` holds `columnWidth` fixed and centres whatever it can fit,
+ * which is right for the page feeds — they sit in an open page and the leftover
+ * becomes margin. In a modal pane that leftover reads as broken padding: at
+ * three columns of 278px it is ~150px of dead space. So the column width is
+ * derived from the measured pane instead — the count comes from a minimum
+ * width, and the columns then divide the space exactly.
+ */
+function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
+  const [width, setWidth] = useState(0);
+  // Debounced to match MasonryProvider's own 100ms observer. `columnWidth`
+  // arrives there as a prop and bypasses that debounce, so an undebounced
+  // update here re-lays the grid once per animation frame for the length of a
+  // window drag — and the two observers settling at different times briefly
+  // disagree about the column count.
+  const debounce = useDebouncer(100);
+  const ref = useResizeObserver<HTMLDivElement>((entry) => {
+    const next = entry.contentRect.width;
+    debounce(() => setWidth(next));
+  });
+
+  // Measure before paint, as MasonryProvider does. Without this the first paint
+  // lays every result into a single MIN_COLUMN_WIDTH column and then relayouts.
+  useIsomorphicLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const style = getComputedStyle(node);
+    const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    setWidth(node.clientWidth - paddingX);
+  }, []);
+
+  const [columnCount, columnWidth] = useMemo(() => {
+    if (!width) return [1, MIN_COLUMN_WIDTH];
+    const fits = Math.floor((width + GRID_GAP) / (MIN_COLUMN_WIDTH + GRID_GAP));
+    const count = Math.min(Math.max(fits, 1), MAX_COLUMN_COUNT);
+    return [count, Math.floor((width - (count - 1) * GRID_GAP) / count)];
+  }, [width]);
+
+  return (
+    <div ref={ref}>
+      <MasonryProvider columnWidth={columnWidth} maxColumnCount={columnCount} gap={GRID_GAP}>
+        {children}
+      </MasonryProvider>
+    </div>
+  );
+}
+
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
+  const { canGenerate, resources, selectSource, excludedIds, tab, optionsOverride } =
+    useResourceSelectContext();
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -30,6 +88,7 @@ export function ResourceHitList({ query }: { query: string }) {
     fetchNextPage,
     hasNextPage,
     isError,
+    isPlaceholderData,
     refetch,
   } = useResourceSelectInfinite({ query });
 
@@ -199,8 +258,23 @@ export function ResourceHitList({ query }: { query: string }) {
   // Exclude podium items from the main grid
   const restItems = tab === 'featured' ? filtered.filter((m) => !topItemIds.has(m.id)) : filtered;
 
+  /**
+   * `keepPreviousData` holds the last catalog on screen while a new one loads.
+   * That is right when only the query changed, and wrong once a rail can re-aim
+   * the OPTIONS: the rows on screen then belong to a family the form is no
+   * longer pointed at, and clicking one commits a model the graph substitutes
+   * away. Inert for every consumer that never sets an override.
+   */
+  const showingOtherEcosystem = isPlaceholderData && !!optionsOverride;
+
   return (
-    <div className="flex flex-col gap-3 p-3">
+    <div
+      className={clsx(
+        'flex flex-col gap-3 p-3',
+        showingOtherEcosystem && 'pointer-events-none opacity-50'
+      )}
+      aria-busy={showingOtherEcosystem}
+    >
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
@@ -227,7 +301,7 @@ export function ResourceHitList({ query }: { query: string }) {
         </div>
       )}
 
-      <MasonryProvider columnWidth={278} maxColumnCount={4}>
+      <FillingMasonryGrid>
         <MasonryColumnsVirtual
           data={restItems}
           render={renderCard}
@@ -235,7 +309,7 @@ export function ResourceHitList({ query }: { query: string }) {
           adjustHeight={({ height }) => height + 82}
           itemId={(x) => x.id}
         />
-      </MasonryProvider>
+      </FillingMasonryGrid>
 
       {items.length > 0 && hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
