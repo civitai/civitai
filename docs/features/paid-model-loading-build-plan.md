@@ -323,6 +323,7 @@ Recorded so they do not creep back in:
 - **A queue ranking algorithm.** The orchestrator merges providers, de-dupes by AIR and ranks. Justin's
   "make it look like 1, 2, 3, 4" is done server-side.
 - **A size→price table.** The orchestrator prices; the CTA reads `whatIf`.
-- **A residency countdown.** There is no 48-hour mechanism to count down from yet.
+- **A residency countdown.** The 48-hour policy is real (the spine controllers enforce it), but no
+  API reports when a given resource's window ends, so there is nothing to count down from.
 - **Load state in search.** Deliberately deferred.
 - **Queue-position boosting.** Out for v1.

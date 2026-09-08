@@ -24,12 +24,14 @@ model" question). Every open item here is restated with an owner and a closing c
 - [ ] **C14 — decide: standalone demo client, mod-only launch, or straight into the platform.**
       Justin owns it. Gates C5–C8. ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
       *Closes when:* Justin states the choice in the task.
-- [x] 🔴 **What we can honestly sell, given the 48-hour guarantee is not implemented.** Settled:
-      **no surface promises a duration** — a paid load buys a load. Verified against deployed
-      orchestrator source: nothing pins a prepared resource, so a paid load buys a download and then
-      ordinary eviction. See [Orchestrator state](#orchestrator-state--verified-against-source).
-      Whether Koen *builds* retention is his open question, not a decision of ours — it is
-      [K1](paid-model-loading-decisions.md#k1--is-the-48-hour-residency-planned-and-where).
+- [ ] 🔴 **What we can honestly sell.** Reopened 2026-09-07: this was settled as "promise nothing"
+      on the premise that residency did not exist, and that premise was false —
+      [it does](#residency--in-a-repo-this-list-does-not-read), enforced by the spine controllers.
+      What is open now is narrower and better: the policy declines to evict inside 48h *unless
+      another controller has a copy*, so "we keep it for 48 hours" and "it stays reachable for 48
+      hours" are not the same promise. Decision
+      [1.3](paid-model-loading-decisions.md#13--what-the-surfaces-may-promise-now-that-residency-exists).
+      *Closes when:* the CTA copy is written and someone named signs it off.
 - [ ] **Decide "select any model", and decide it as two questions.** `GenerationCoverage` is a
       **view**, not a flag. LoRAs/TI/VAE/LoCon/DoRA are already covered once licensed and scanned —
       they are merely not resident, which is the thing paid loading fixes, and need **no view
@@ -221,12 +223,29 @@ like a missing feature. It is not missing — it is unadvertised.
 `x.EventType is null || x.EventType == @event.Status`. `getOrchestratorCallbacks` already uses
 `step:*`, so generation receives these today.
 
-### Not built — and one of them is the product
+### Not built
+
+🔴 **This table once carried a residency row saying the 48-hour guarantee did not exist. That was
+wrong**, and wrong in the most expensive direction: it said the product's headline feature was
+missing. The mechanism lives in `civitai-spine-controller` — a repo this list never read — and
+`PinModelJob`, named here as the intended primitive, is legacy (Koen, 2026-09-04). See
+[Residency](#residency--in-a-repo-this-list-does-not-read) below. Only the pricing gap was real.
 
 | Gap | Consequence |
 | --- | --- |
-| 🔴 **The 48-hour residency guarantee does not exist.** `PrepareResourceJob` downloads the model and ends; the copy is then subject to ordinary worker eviction like any other. The one primitive that looks intended for it — **`PinModelJob`** — is defined and has a `PushWorkerHandler` handler, but **nothing in the repo creates one**, and `PrepareResourceHandler` does not issue it. | This is the thing being sold. Without it, a paid load buys a download and no residency at all. **Nothing on the site should promise 48 hours until this exists.** |
 | 🔴 **Cost is hardcoded to zero.** `PrepareResourceHandler.CalculateCost` returns `{ Factors = [], Fixed = [] }`, and its own comment says both collections empty is what short-circuits to a zero cost. | C2 is not a config toggle — the size-scaled pricing function has not been written. `?whatif=true` today returns **zero**, not a price, so the CTA has no number to show. |
+
+### Residency — in a repo this list does not read
+
+Not verified here, and it cannot be: `civitai-spine-controller` is not checked out on the site side.
+This records Koen's answer (DM, 2026-09-04) rather than source we read.
+
+- The spine controllers check with each other before evicting a resource and **refuse to evict
+  anything less than 48h old unless another spine controller has it**.
+- `PrepareResourceJob`'s only job is to get the resource into the DC; that eviction policy guards
+  its lifetime from then on. Code: `ClusterAwareEvictionPolicy.cs`.
+- **`PinModelJob` is legacy — "don't even look at it."**
+- ⚠️ Nothing exposes *when* a resource's 48h window ends, so there is still no countdown to build.
 
 ### Site-relevant details worth knowing
 
@@ -249,19 +268,20 @@ like a missing feature. It is not missing — it is unadvertised.
 
 ### Still worth asking Koen
 
-Deployment, concurrent prepares and the site-side rate-limit posture are all settled and no longer
-need asking. The two that remain — 48-hour residency
-([K1](paid-model-loading-decisions.md#k1--is-the-48-hour-residency-planned-and-where)) and whether
-`step:preparing` is unadvertised on purpose
-([K2](paid-model-loading-decisions.md#k2-is-steppreparing-unadvertised-on-purpose)) — live in the
-decisions register with C2, where Koen can answer them in place.
+**Both answered, 2026-09-04 and 2026-09-07.** Residency exists and is enforced by the spine
+controllers ([above](#residency--in-a-repo-this-list-does-not-read)); `step:preparing` was missing
+from the spec by accident — a 2024 change with no comment — and Koen has since added the missing
+event types back. `step:*` stays the correct subscription either way. C2 (pricing) is the only
+thing still with him.
 
 ## Not in v1, on the record
 
 - Pay to boost queue position — Justin expects it back if bot armies defeat the rate limits.
 - Load state in search results.
 - Any hard guarantee on when a model becomes available. Bandwidth into the data centre was ~10
-  KB/s at the time of the call; LoRAs took four hours. Design every surface to promise nothing.
+  KB/s at the time of the call; LoRAs took four hours. Promise nothing about *arrival* — a separate
+  question from how long it stays once it arrives, which is
+  [1.3](paid-model-loading-decisions.md#13--what-the-surfaces-may-promise-now-that-residency-exists).
 
 ---
 
@@ -271,5 +291,5 @@ Real work with no task and no owner. Listed so they are decided rather than disc
 
 - [ ] **Refund path** for a load that fails or never completes. Open decision —
       [1.2](paid-model-loading-decisions.md#12-what-happens-when-a-load-fails-or-never-finishes).
-- [ ] **Residency display.** Moot while no surface promises a duration; it becomes real work the day
-      retention ships, and nothing today would tell us it had.
+- [ ] **Residency display.** Residency is real, but no API reports when a resource's 48h window
+      ends, so there is nothing to count down from. Needs an orchestrator ask before it is work.

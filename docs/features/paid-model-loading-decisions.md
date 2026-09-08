@@ -19,7 +19,8 @@ work rather than a judgement belongs in the checklist — see [Not decisions](#n
 at the end for the two big ones people keep mistaking for open questions.
 
 **Nothing here blocks Phase A**, which is built. §1 blocks launch, §2 blocks specific build work,
-§3 is already implemented one way and needs ratifying or reversing, and §4 is for Koen.
+§3 is already implemented one way and needs ratifying or reversing, and §4 is for Koen — where both
+of his questions are now answered, and one of the answers reopened a decision we thought settled.
 
 ## Who needs to answer what
 
@@ -28,8 +29,8 @@ answer in place. Search the file for `@dev:` to jump between them, or take just 
 
 | Who | Items |
 | --- | --- |
-| **Justin** | [1.1](#11--models-without-a-rentcivit-licence) licence gate · [1.2](#12-what-happens-when-a-load-fails-or-never-finishes) refund path · [2.1](#21-c14--demo-client-mod-only-or-straight-into-the-platform) C14 · [2.2](#22-select-any-model--and-it-is-two-questions-not-one) select any model · [2.3](#23--who-owns-coveredcheckpoint) `CoveredCheckpoint` |
-| **Koen** | [K1](#k1--is-the-48-hour-residency-planned-and-where) residency · [K2](#k2-is-steppreparing-unadvertised-on-purpose) `step:preparing` |
+| **Justin** | [1.1](#11--models-without-a-rentcivit-licence) licence gate · [1.2](#12-what-happens-when-a-load-fails-or-never-finishes) refund path · [1.3](#13--what-the-surfaces-may-promise-now-that-residency-exists) what we promise · [2.1](#21-c14--demo-client-mod-only-or-straight-into-the-platform) C14 · [2.2](#22-select-any-model--and-it-is-two-questions-not-one) select any model · [2.3](#23--who-owns-coveredcheckpoint) `CoveredCheckpoint` |
+| **Koen** | nothing open — K1 and K2 [answered](#answered-2026-09-04-and-2026-09-07); C2 (pricing) is still his to build |
 | **Briant / team** | [2.4](#24-whether-to-build-the-c4-webhook-at-all) C4 webhook · [2.5](#25-the-rate-limit-numbers-are-off-by-one) off-by-one · [3.1](#31-a-fifth-state-unknown)–[3.3](#33-which-buzz-account-pays) ratify Phase A |
 
 Answering in place is enough — nothing here needs a meeting. An item with no answer after review is
@@ -82,6 +83,40 @@ and the surfaces say so before purchase.
 
 > **@dev: Justin** — A load that never finishes: refund, or say up front that we do not refund?
 > Not urgent until C2 makes the money real, but it decides what the CTA has to say before purchase.
+>
+> _Answer:_
+
+### 1.3 🔴 What the surfaces may promise, now that residency exists
+
+**The decision:** what the CTA says a paid load buys.
+
+**Reopened 2026-09-07.** This was settled as "promise a load, never a duration", on the premise that
+no residency mechanism existed. That premise was false — it lives in `civitai-spine-controller`,
+which nothing on the site side had read. The old answer is therefore not safe to keep by default: it
+was right about a world we are not in.
+
+**What turns on it:** the policy refuses to evict a resource less than 48h old **unless another
+spine controller has a copy**. So the honest sentence is closer to *"it stays reachable in the
+cluster for 48 hours"* than *"we hold your copy for 48 hours"* — and for a user who paid, the
+difference only shows up on the day it bites.
+
+Two things nobody on the site side can currently check: we have not read the policy (private repo),
+and **no API reports when a given resource's window ends**, so we cannot show a countdown even if we
+promised one.
+
+**Options:** promise the 48 hours as pitched; promise reachability without a duration; or promise
+the duration with the caveat stated in the CTA.
+
+**Recommendation:** ask Koen to confirm the user-visible consequence of the "unless another
+controller has it" branch before writing any of the three. It is one question and it decides the
+sentence.
+
+**Owner:** Justin — no ClickUp task yet.
+**Closes when:** the CTA copy is written and someone named signs it off.
+
+> **@dev: Justin** — Residency turned out to exist (see §4). What do we tell a buyer they are
+> getting: "48 hours", "loaded and kept available", or "48 hours, usually"? Worth one confirmation
+> from Koen on the eviction caveat first.
 >
 > _Answer:_
 
@@ -233,52 +268,39 @@ a specific account type only, this is the line to change.
 
 ## 4. For Koen
 
-### K1 🔴 Is the 48-hour residency planned, and where?
+### C2 — pricing
 
-`PinModelJob` looks like the intended primitive — defined, `[Preview]`, with a `PushWorkerHandler`
-handler — but nothing in the repo creates one and `PrepareResourceHandler` does not issue it. So a
-prepared resource is evicted like any other.
+The only thing still with Koen. `PrepareResourceHandler.CalculateCost` returns an empty cost, so
+`whatIf` reports 0 and the site's estimate procedure has no number to show. Everything else on the
+purchase path is built and waiting on it. ([868ktt57p](https://app.clickup.com/t/868ktt57p))
 
-**What turns on it:** whether the pitched product is reachable at all, or whether paid loading is
-permanently "a faster download". Every site surface is already written to promise only a load, so
-nothing is blocked on the answer — but the pitch is.
+Not a decision and not a new request — noted so this file shows everything he is holding. Context
+from 2026-09-01, on a neighbouring topic, for whoever chases it: *"The whole pricing section in the
+orchestrator is one big mess with many features hacked on top of other features, that makes me
+irrationally reluctant to touch it, but I do agree with your reasoning, will put it on my list."*
 
-> **@dev: Koen** — Is retention planned, and is `PinModelJob` the primitive it will use? A rough "yes,
-> after X" is enough; we are not asking for a date. If the answer is no, say so plainly and we will
-> stop describing this as a residency guarantee anywhere.
->
-> _Answer:_
+### Answered, 2026-09-04 and 2026-09-07
 
-### K2 Is `step:preparing` unadvertised on purpose?
+Kept as a record because both answers changed what this document says.
 
-`WorkflowCallbackSchemaFilter` strips `preparing` and `scheduled` from the advertised callback-type
-enum, which is why the generated SDK looks like it is missing the feature. `step:*` matches it and is
-what the code uses.
+**K1 — is the 48-hour residency planned, and where?** It is not planned; it **exists**. The spine
+controllers check with each other before evicting a resource and refuse to evict anything less than
+48h old unless another spine controller has it. `PrepareResourceJob` gets the resource into the DC
+and that policy guards its lifetime from then on — `ClusterAwareEvictionPolicy.cs` in
+`civitai-spine-controller`. **`PinModelJob` is legacy: "don't even look at it."** This register had
+it as the intended primitive, which was wrong. What the answer opens rather than closes is
+[1.3](#13--what-the-surfaces-may-promise-now-that-residency-exists).
 
-**What turns on it:** nothing today — the wildcard works. But more surfaces are about to depend on
-it, and a deliberate omission is worth knowing about before they do.
-
-> **@dev: Koen** — Deliberate, or an artifact of the Swagger filter? And is `step:*` the subscription
-> you want consumers on, or should we be naming statuses?
->
-> _Answer:_
-
-### C2 — pricing (already yours, no question attached)
-
-Not a decision, and not a request — noted only so this file is a complete picture of what Koen is
-holding. `PrepareResourceHandler.CalculateCost` returns an empty cost, so `whatIf` reports 0 and the
-site's estimate procedure has no number to show. Everything else on the purchase path is built and
-waiting on it. ([868ktt57p](https://app.clickup.com/t/868ktt57p))
+**K2 — is `step:preparing` unadvertised on purpose?** No. Koen: the intent was that `preparing` and
+`scheduled` are step statuses and never workflow statuses, but their absence from the callback enum
+was a spec limitation from a 2024 change made with no comment. He has **added the missing event
+types to the spec**. `step:*` remains correct, and a future `@civitai/client` publish should carry
+the types.
 
 ---
 
 ## Not decisions: tracked elsewhere
 
-Both of these block launch, and neither is an open question. They are work with an owner, listed
-here only because they are the two things most often raised as though a decision were pending.
-
-- **C2 — pricing and charging.** Koen's, and not a config toggle — see
-  [§4](#c2--pricing-already-yours-no-question-attached).
-- **Residency.** No mechanism pins a prepared resource. What the surfaces may claim meanwhile is
-  already settled — they promise a load, not a duration — so what remains is [K1](#k1--is-the-48-hour-residency-planned-and-where),
-  a question for Koen, not a decision for us.
+- **C2 — pricing and charging.** Koen's, and not a config toggle — see [§4](#c2--pricing).
+- **Residency.** Built, and not ours — the spine controllers enforce it. What is ours is the copy
+  question, [1.3](#13--what-the-surfaces-may-promise-now-that-residency-exists).

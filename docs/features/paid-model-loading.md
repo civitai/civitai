@@ -3,9 +3,14 @@
 **Status:** Phase A (server plumbing plus a mod-only test page) is built behind the `resourceLoad`
 flag; no public surface exists. The orchestrator can download and report; it cannot yet charge or
 guarantee residency. State of the work: [checklist](paid-model-loading-checklist.md).
-**Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, and the
+**Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, the
 `civitai-orchestration` source at `9306e7333` — **which is deployed**, so everything described as
-built below is live.
+built below is live — and Koen's answers in DM, 2026-09-04 and 2026-09-07.
+
+🔴 **`civitai-orchestration` is not the whole system.** Resource *residency* lives in a second
+repo, `civitai-spine-controller`. Reading only the orchestrator produced a confident, wrong
+conclusion here once already (see What it is), so "verified against source" in this document means
+verified against the orchestrator unless it says otherwise.
 **Tracking:** ClickUp C2–C14, `Synced Team`.
 
 ---
@@ -16,11 +21,21 @@ Any model on the site becomes generatable. If the model is not resident in the g
 cluster, the user pays to load it in, and — as pitched — we guarantee it stays resident for
 **48 hours**. The orchestrator sets the price, scaled by model size.
 
-🔴 **Two halves of that sentence are not built.** Verified against orchestrator source
-(`civitai-orchestration` @ `9306e7333`): there is **no residency mechanism at all** — nothing pins a
-prepared resource, so it is evicted like any other — and **the cost function returns a hardcoded
-zero**, so there is no size-scaled price to show. The download machinery is real and working; the
-product wrapped around it is not. See [Orchestrator state](paid-model-loading-checklist.md#orchestrator-state--verified-against-source).
+**Residency exists.** Koen, 2026-09-04: the spine controllers check with each other before evicting
+a resource and refuse to evict anything less than 48h old **unless another spine controller has it**.
+`PrepareResourceJob` gets the resource into the DC and that eviction policy guards its lifetime
+from then on — the code is `ClusterAwareEvictionPolicy.cs` in `civitai-spine-controller`.
+`PinModelJob`, which an earlier reading of this document called the intended primitive, is
+**legacy — Koen: "don't even look at it."**
+
+⚠️ Nobody on the site side has read that policy: the repo is private to us here. And the condition
+is not unconditional — a copy *can* go inside 48h when another controller holds one — which is the
+difference between "we keep it for 48 hours" and "it stays reachable for 48 hours". What we may
+therefore promise is
+[1.3](paid-model-loading-decisions.md#13--what-the-surfaces-may-promise-now-that-residency-exists).
+
+🔴 **The price half is still missing.** The cost function returns a hardcoded zero, so there is no
+size-scaled price to show. See [Orchestrator state](paid-model-loading-checklist.md#orchestrator-state--verified-against-source).
 
 This replaces auctions as the mechanism for getting a checkpoint into the generator.
 
@@ -278,11 +293,10 @@ deciding anything.
    with LoRAs taking four hours, which Koen read as an unstable tunnel into the data centre.
    Koen: "we got to be prepared for us not giving any hard guarantees about when it's going to be
    available." A refund path is implied and unscoped.
-3. **The 48-hour guarantee does not exist yet**, on the site or in the orchestrator. Nothing pins a
-   prepared resource and nothing records an expiry. What the surfaces may claim meanwhile is
-   settled — see Decided below. What is open is Koen's
-   [K1](paid-model-loading-decisions.md#k1--is-the-48-hour-residency-planned-and-where): whether
-   retention is planned at all.
+3. **The 48-hour residency exists, but nothing exposes an expiry.** The spine controllers enforce
+   it; no API reports when a given resource's window ends, so there is still no countdown to design.
+   What the surfaces may claim is
+   [1.3](paid-model-loading-decisions.md#13--what-the-surfaces-may-promise-now-that-residency-exists).
 4. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
    irrelevant checkpoints and starves the popular ones. The answers on record are that popular
    models stay resident because workers keep them, plus the rate limits, plus Koen's
@@ -307,8 +321,7 @@ deciding anything.
 - A bystander on the model page can subscribe to someone else's in-flight load and get the
   notification. Load state and the queue are therefore **public reads** — everyone sees them, not
   only the buyer.
-- Until residency exists, no surface promises a duration. A paid load buys a load; the 48 hours are
-  not ours to sell yet.
+- `PinModelJob` is legacy and is not part of this feature (Koen, 2026-09-04).
 - The daily cap must also cover the implicit path — a generation submitted against a non-resident
   resource — or it is decorative. Same quota, not a second one.
 - Free tier gets 0 per day at launch.
