@@ -46,14 +46,24 @@ const schema = z.object({
   force: booleanString().default(false),
 });
 
+// Returns null when the tasks API could not be reached or refused. That is deliberately distinct
+// from an empty array: an empty array means "checked, nothing pending", null means "do not know",
+// and the write path treats not-knowing as a refusal. Swallowing the difference would turn a
+// permissions or availability problem into a green light for a full-index reindex.
+//
+// The SDK scopes this to the index handle (it sends indexUids=<uid>), so it does not scan globally.
 async function pendingSettingsTaskUids(index: {
   getTasks: (q: { statuses: string[]; types: string[] }) => Promise<{ results: { uid: number }[] }>;
 }) {
-  const tasks = await index.getTasks({
-    statuses: ['enqueued', 'processing'],
-    types: ['settingsUpdate'],
-  });
-  return tasks.results.map((t) => t.uid);
+  try {
+    const tasks = await index.getTasks({
+      statuses: ['enqueued', 'processing'],
+      types: ['settingsUpdate'],
+    });
+    return tasks.results.map((t) => t.uid);
+  } catch {
+    return null;
+  }
 }
 
 export default WebhookEndpoint(async (req, res) => {
@@ -74,6 +84,8 @@ export default WebhookEndpoint(async (req, res) => {
   const pending = await pendingSettingsTaskUids(index as never);
 
   if (dryRun) {
+    // Reports `pending: null` rather than failing when the tasks API is unreachable, so the read-only
+    // path still answers the question it is for — what would change — even if the write could not run.
     return res.status(200).json({ dryRun: true, current, desired, missing, extra, pending });
   }
 
@@ -89,7 +101,14 @@ export default WebhookEndpoint(async (req, res) => {
     });
   }
 
-  if (pending.length && !force) {
+  if (pending === null && !force) {
+    return res.status(409).json({
+      error: 'could not determine whether a settings task is already pending',
+      hint: 'the tasks API was unreachable or refused; SEARCH_API_KEY may lack tasks.get. Pass force=true only if you have checked by hand',
+    });
+  }
+
+  if (pending?.length && !force) {
     return res.status(409).json({
       error: 'a settings task is already enqueued on this index',
       pending,

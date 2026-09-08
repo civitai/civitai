@@ -1,17 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/db.mock';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 
 /**
  * This endpoint is the only in-repo way to apply `modelsFilterableAttributes` to the LIVE models
  * index without a full rebuild, and Meilisearch reindexes the filterable fields across every
- * document when the list changes — an unmeasured cost on ~705K documents.
+ * document when the list changes — unmeasured on ~705K documents.
  *
- * So what is pinned here is that it is INERT unless someone explicitly asks for the write, and that
- * the write it makes is the whole desired list. `updateFilterableAttributes` REPLACES rather than
- * merges, so writing anything narrower silently strips the rest of the index's filterable
- * attributes and every models search then answers 400 invalid_search_filter.
+ * Two properties are pinned: it is INERT unless someone explicitly asks for the write, and the
+ * write it makes is the whole desired list ON THE MODELS INDEX. `updateFilterableAttributes`
+ * REPLACES rather than merges, so writing anything narrower — or writing to the wrong index —
+ * silently strips that index's filterable attributes and every search on it then answers
+ * 400 invalid_search_filter.
  */
 
 const { env, getFilterableAttributes, updateFilterableAttributes, getTasks, index } = vi.hoisted(
@@ -72,16 +74,34 @@ describe('apply-models-index-filterable-attributes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getFilterableAttributes.mockResolvedValue(['id', 'nsfwLevel']);
+    getTasks.mockReset();
     getTasks.mockResolvedValue({ results: [] });
   });
 
   it('rejects a call with the wrong token, and writes nothing', async () => {
-    // Deleting the WebhookEndpoint wrapper makes this route world-callable, and every other test
-    // here passes a valid token, so nothing else can see it.
     const { statusCode } = await call({ dryRun: 'false' }, 'wrong');
 
     expect(statusCode).toBe(401);
     expect(updateFilterableAttributes).not.toHaveBeenCalled();
+  });
+
+  it('targets the MODELS index', async () => {
+    // Retargeting this at another index passes every other assertion in this file while wiping that
+    // index's filterable attributes in production.
+    await call({});
+
+    expect(index).toHaveBeenCalledWith(MODELS_SEARCH_INDEX);
+  });
+
+  it('asks only for PENDING SETTINGS tasks when deciding whether one is in flight', async () => {
+    // Point this at another type or drop 'processing' and the double-reindex guard silently stops
+    // guarding, while the 409 test below keeps passing on its canned result.
+    await call({});
+
+    expect(getTasks.mock.calls[0][0]).toEqual({
+      statuses: ['enqueued', 'processing'],
+      types: ['settingsUpdate'],
+    });
   });
 
   it('writes NOTHING by default', async () => {
@@ -92,9 +112,28 @@ describe('apply-models-index-filterable-attributes', () => {
     expect(updateFilterableAttributes).not.toHaveBeenCalled();
   });
 
+  it('still answers the dry run when the tasks API is unreachable', async () => {
+    // A key without tasks.get would otherwise take out the read-only path too. null means "did not
+    // determine", which is distinct from [] meaning "checked, nothing pending".
+    getTasks.mockRejectedValue(new Error('403 forbidden'));
+
+    const { statusCode, payload } = await call({});
+
+    expect(statusCode).toBe(200);
+    expect(payload.pending).toBeNull();
+    expect(updateFilterableAttributes).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES the write when it cannot tell whether a settings task is pending', async () => {
+    getTasks.mockRejectedValue(new Error('403 forbidden'));
+
+    const { statusCode } = await call({ dryRun: 'false' });
+
+    expect(statusCode).toBe(409);
+    expect(updateFilterableAttributes).not.toHaveBeenCalled();
+  });
+
   it('writes the WHOLE desired list, because the call replaces rather than merges', async () => {
-    // toContain would pass on `updateFilterableAttributes(missing)`, which reads like the obvious
-    // edit and strips every other filterable attribute from the live index.
     const { payload } = await call({ dryRun: 'false' });
 
     expect(updateFilterableAttributes).toHaveBeenCalledTimes(1);
@@ -123,12 +162,15 @@ describe('apply-models-index-filterable-attributes', () => {
     expect(updateFilterableAttributes).not.toHaveBeenCalled();
   });
 
-  it('permits the removal only when allowRemove is passed', async () => {
+  it('permits the removal only with allowRemove, and actually removes', async () => {
+    // Asserting only that a write happened let `[...desired, ...extra]` pass — which reports
+    // `removed` while removing nothing, so an operator re-runs forever.
     getFilterableAttributes.mockResolvedValue(['id', 'somethingElse']);
 
-    await call({ dryRun: 'false', allowRemove: 'true' });
+    const { payload } = await call({ dryRun: 'false', allowRemove: 'true' });
 
-    expect(updateFilterableAttributes).toHaveBeenCalledTimes(1);
+    expect(updateFilterableAttributes.mock.calls[0][0]).toEqual([...modelsFilterableAttributes]);
+    expect(payload.removed).toEqual(['somethingElse']);
   });
 
   it('REFUSES a second write while a settings task is still enqueued', async () => {
@@ -144,11 +186,17 @@ describe('apply-models-index-filterable-attributes', () => {
     expect(updateFilterableAttributes).not.toHaveBeenCalled();
   });
 
-  it('permits it only when force is passed', async () => {
+  it('permits it only with force, and still writes the whole list', async () => {
+    // Production shape: the live index has everything except the one new attribute, so `added` is
+    // exactly that attribute rather than the 20 the default fixture is missing.
+    getFilterableAttributes.mockResolvedValue(
+      modelsFilterableAttributes.filter((a) => a !== 'hasActivePaidAccess')
+    );
     getTasks.mockResolvedValue({ results: [{ uid: 7 }] });
 
-    await call({ dryRun: 'false', force: 'true' });
+    const { payload } = await call({ dryRun: 'false', force: 'true' });
 
-    expect(updateFilterableAttributes).toHaveBeenCalledTimes(1);
+    expect(updateFilterableAttributes.mock.calls[0][0]).toEqual([...modelsFilterableAttributes]);
+    expect(payload.added).toEqual(['hasActivePaidAccess']);
   });
 });

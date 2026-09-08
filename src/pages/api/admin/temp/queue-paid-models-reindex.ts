@@ -17,6 +17,16 @@ import { booleanString } from '~/utils/zod-helpers';
  * Only GATED models need queueing: the card and the search filter both treat an absent attribute as
  * false, so the ~700K ungated documents are already correct and rewriting them would be waste.
  *
+ * 🔴 `alreadyQueued` is only meaningful IMMEDIATELY after an enqueue. The 15-minute sync checks
+ * this queue out destructively, so any later reading is near zero whatever happened — and a near
+ * zero reads naturally as "nothing is queued, safe to write again", which may be the opposite of
+ * the truth.
+ *
+ * History: the one-off backfill this was written for was performed on 2026-09-08 through
+ * /api/internal/search-index-update, because this endpoint was not yet deployed. This is not
+ * therefore spent — the gated set moves with the wall clock, since `endsAt` is in the predicate —
+ * but it is a reconciler rather than a pending step.
+ *
  * Usage:
  *   POST /api/admin/temp/queue-paid-models-reindex?token=$WEBHOOK_TOKEN&dryRun=false
  *
