@@ -122,13 +122,22 @@ describe('AppsBuildBodySkeleton — the server render', () => {
     expect(region, 'no element carries role="status"').not.toBeNull();
     expect(region?.[0], 'the live region itself is marked busy').not.toContain('aria-busy');
 
-    // 🔴 AND EVERY ANCESTOR — WITHOUT THIS THE NARROWING ABOVE BLINDS THE GUARD. ARIA treats
-    // `aria-busy` on an element CONTAINING a live region as the same instruction to withhold
-    // its announcements, so an ancestor suppresses this region exactly as the region itself
-    // would. MEASURED: wrapping the component in `<div aria-busy="true">` SURVIVES the scoped
-    // assertion alone (4 passed) and dies here. Everything before the region's opening tag is
-    // its ancestors and their preceding siblings — over-broad by exactly the siblings, which
-    // is the right direction to err for a suppression check.
+    // 🔴 AND EVERY ANCESTOR — WITHOUT THIS THE NARROWING ABOVE BLINDS THE GUARD. MEASURED:
+    // wrapping the component in `<div aria-busy="true">` SURVIVES the scoped assertion alone
+    // (4 passed) and dies here. Everything before the region's opening tag is its ancestors
+    // and their preceding siblings — over-broad by exactly the siblings, which is the right
+    // direction to err for a suppression check.
+    //
+    // ⚠️ WHY AN ANCESTOR IS WORTH GUARDING IS NOT A CLAIM I HAVE VERIFIED, AND AN EARLIER
+    // DRAFT OF THIS COMMENT ASSERTED IT AS FACT ("ARIA treats `aria-busy` on an element
+    // containing a live region as the same instruction to withhold its announcements"). That
+    // may well be right, but I checked it against neither the spec nor a screen reader, and
+    // this file has already been through two rounds of replacing one confident sentence with
+    // a differently wrong one. So the honest justification is the narrow one: the
+    // document-wide form this replaced DID cover the ancestor case, the narrowing dropped it
+    // for a reason that only argued about DESCENDANTS, and a dropped case is not something to
+    // re-derive a purpose for. If someone establishes that a busy ancestor cannot suppress
+    // this region, delete this assertion — do not reword it.
     //
     // 🔴 THE LESSON, BECAUSE IT COST A ROUND: when you NARROW a guard, mutate the case you
     // just EXCLUDED, not the case you kept. The previous round re-ran the region mutation,
