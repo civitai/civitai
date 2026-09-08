@@ -224,14 +224,21 @@ describe('createBoundedArchive', () => {
 
   it('settles EVERY parked append when the archiver errors — the error event fires only once', async () => {
     /**
-     * The failure path is the reason `releaseWaiters` loops. `archiver` emits `error` at most
-     * once, so that single event is the only wake-up a parked `append()` will ever get: nothing
-     * drains the waiter queue afterwards, because `entry` stops firing too. Released one at a
-     * time, every append past the first would hang forever — and in `archiveImages` a hung append
-     * wedges the `Promise.all` over a page, so the whole report neither archives nor rejects.
+     * The failure path is the reason `releaseWaiters` loops. `releaseWaiters` runs on `entry` and
+     * on `error` only, and once a failure is latched `append()` rejects immediately, so no new
+     * entries are produced: if the error is the last event the archive emits, it is also the last
+     * wake-up any parked waiter gets. Released one at a time, every append past the first hangs
+     * forever, and this helper's contract — an `append()` either resolves or rejects — is broken.
      *
      * A stub rather than the real archiver, deliberately: it must NEVER emit `entry`, so the
      * success path cannot release anyone and this measures the failure path alone.
+     *
+     * ⚠️ That makes this a claim about THIS module, not a reproduction of a production hang.
+     * `archiver@6` gives no guarantee in either direction (23 distinct `emit('error')` sites),
+     * and none of its real failure paths was found to produce the shape below: an empty entry
+     * name emits `error` and keeps emitting `entry` afterwards, a directory entry emits no error,
+     * and an erroring source stream stalls the archiver with no `error` event at all. The loop is
+     * cheap insurance on the contract, and is documented as that rather than as an incident fix.
      */
     const stub = new EventEmitter() as unknown as Archiver;
     (stub as unknown as { append: () => void }).append = () => undefined;

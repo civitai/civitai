@@ -121,23 +121,33 @@ export function createBoundedArchive({
   let failure: Error | undefined;
   const waiters: Array<() => void> = [];
 
-  // 🔴 The `while` is load-bearing on the FAILURE path and must not be narrowed to an `if`.
+  // 🔴 The `while` is what makes the FAILURE path settle, and must not be narrowed to an `if`.
+  // An earlier revision of this comment said the opposite — "that re-check is the actual guard",
+  // meaning the one in `append()` — and invited exactly that edit.
   //
-  // `archiver` emits `error` at most ONCE, and that single event is the only wake-up every
-  // waiter parked in `append()` will ever get — nothing drains them afterwards, because `entry`
-  // stops firing too. Draining the whole queue here is therefore what makes each parked append
-  // settle. As an `if`, one `error` releases exactly one waiter and the rest hang forever: in
-  // `archiveImages` that wedges the `Promise.all` over a page, so `archiveCsamDataForReport`
-  // never settles for that report — no archive, no rejection, and nothing logged. Pinned by
-  // "settles EVERY parked append when the archiver errors" in `archive-helpers.test.ts`, which
-  // fails with `raced: 'HUNG', settled: 3` against the `if`.
+  // `releaseWaiters` is called from exactly two places: `entry` and `error`. Once `failure` is
+  // latched no new entries are produced, because `append()` rejects immediately — so if the
+  // error is the last event the archive emits, it is also the last wake-up any parked waiter
+  // gets. Releasing one waiter per event strands the rest forever. Measured against this module
+  // with an archive stub emitting a single `error` and no `entry`: 2 of 5 appends never settle
+  // (`raced: 'HUNG', settled: 3`). Pinned by "settles EVERY parked append when the archiver
+  // errors" in `archive-helpers.test.ts`.
+  //
+  // ⚠️ SCOPE OF THAT CLAIM, because it is easy to overstate and was overstated once already:
+  // it is about THIS module's contract, not a reproduced production wedge. `archiver@6` has 23
+  // separate `emit('error')` sites and no "at most one error" guarantee either way; three of its
+  // real failure paths were probed and NONE reaches the stranding shape. An empty entry name
+  // emits `error` and then goes on emitting `entry` (8 more), so an `if` would drain there. A
+  // directory entry emits no `error` at all. A source stream that errors makes the archiver
+  // stall silently with no `error` event, which no variant of this loop can rescue. So the
+  // `while` is the cheap way to keep the contract true whichever site fires — not a fix for a
+  // hang anyone has observed in production.
   //
   // On the SUCCESS path the loop over-releases rather than handing out one wake-up per free
   // slot: `pending` is only incremented once a woken waiter actually resumes, on a later
   // microtask, so `pending < maxPendingEntries` is still true on the second and subsequent
   // iterations. That is harmless because `append()` re-checks the bound in its own `while` and a
-  // waiter that finds no free slot simply parks again. Both loops are needed — this one to
-  // settle everything on failure, that one to uphold the bound on success.
+  // waiter that finds no free slot simply parks again — that re-check is what upholds the bound.
   const releaseWaiters = () => {
     while (waiters.length > 0 && (failure !== undefined || pending < maxPendingEntries)) {
       waiters.shift()?.();
