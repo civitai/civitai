@@ -2691,7 +2691,7 @@ export class BlockRegistry {
     //   (a) Render "Pinned to: <Model Name>" badges on the management UI
     //       for pinned subscriptions, without a second per-row round-trip.
     //   (b) List available approved versions per app for the version pin
-    //       Select on /apps/installed. Empty array when the app has no
+    //       Select on /apps/activity. Empty array when the app has no
     //       publish_request rows (pre-W1 hackathon apps).
     const pinnedModelIds = new Set<number>();
     for (const row of rows) {

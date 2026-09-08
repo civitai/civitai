@@ -40,6 +40,7 @@ import type * as TrpcMod from '~/utils/trpc';
 
 const ALL_TRUE_SUMMARY = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
@@ -185,11 +186,11 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
       // first two retired routes 301 there and `/apps/submit` kept its route without a
       // tab. `hasSubmissions`/`hasEditableApps` are true in this summary and light
       // nothing, which is the property that keeps the row hydration-safe.
-      'Build',
       'Marketplace',
-      'Installed',
+      'Activity',
       'Invites',
       'Revenue',
+      'Build',
       'Review',
     ]);
   });
@@ -218,7 +219,7 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(1);
   });
 });
@@ -257,7 +258,7 @@ describe('AppsSubNav — no store access ⇒ no Marketplace tab, by two independ
 
     await expect.element(tab('Marketplace')).toBeInTheDocument();
     expect(tab('Marketplace').element().getAttribute('href')).toBe('/apps');
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('🔴 the external-only cohort is admitted too (appListingsPublicExternal)', async () => {
@@ -272,7 +273,7 @@ describe('AppsSubNav — no store access ⇒ no Marketplace tab, by two independ
     await renderSubNav();
 
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 });
 
@@ -315,7 +316,7 @@ describe('AppsSubNav — the collapse still hides the bar for a one-tab viewer',
     await renderSubNav();
 
     await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('a logged-out viewer with the store flag and no build capability gets no bar', async () => {
@@ -389,7 +390,7 @@ describe('AppsSubNav — the container gate is store access ALONE (the get-start
     await expect.element(tab('Build')).toBeInTheDocument();
     expect(tab('Build').element().getAttribute('href')).toBe('/apps/build');
     // Non-author, `appBlocks` off ⇒ summary query disabled ⇒ exactly the two frozen tabs.
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('🔴 store access but NO build capability → a bar with NO Build tab', async () => {
@@ -418,7 +419,7 @@ describe('AppsSubNav — the container gate is store access ALONE (the get-start
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity']);
     expect(tab('Build').elements()).toHaveLength(0);
   });
 
@@ -454,7 +455,7 @@ describe('AppsSubNav — the getNavSummary query gate stays on appBlocks', () =>
     await expect.element(tab('Marketplace')).toBeInTheDocument();
     expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // the hook did run
     expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
-    for (const name of ['Installed', 'Invites', 'Revenue', 'Review']) {
+    for (const name of ['Activity', 'Invites', 'Revenue', 'Review']) {
       expect(tab(name).elements()).toHaveLength(0);
     }
   });

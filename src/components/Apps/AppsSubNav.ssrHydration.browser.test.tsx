@@ -50,6 +50,7 @@ import type * as TrpcMod from '~/utils/trpc';
 
 type Summary = {
   hasInstalls: boolean;
+  hasActivity: boolean;
   hasSubmissions: boolean;
   hasApprovedApps: boolean;
   isReviewer: boolean;
@@ -59,6 +60,7 @@ type Summary = {
 
 const ALL_TRUE: Summary = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
@@ -248,7 +250,7 @@ describe('AppsSubNav — real SSR → hydrate', () => {
     expect(html).toContain('/apps"'); // the Marketplace anchor
     // …while the SUMMARY-driven tabs are absent even though the client cache below is
     // full…
-    expect(html).not.toContain('/apps/installed');
+    expect(html).not.toContain('/apps/activity');
     expect(html).not.toContain('/apps/review');
     // …and no retired row came back. `/apps/get-started` in particular is now a 301 to
     // `/apps/build`, so a tab still pointing there would route every click through a
@@ -279,7 +281,7 @@ describe('AppsSubNav — real SSR → hydrate', () => {
     expect(html).toContain('Build');
     // …while the summary-driven tabs are NOT (those are still deferred) — including
     // `Invites`, the one row that reads BOTH the summary and `isAuthor`.
-    expect(html).not.toContain('/apps/installed');
+    expect(html).not.toContain('/apps/activity');
     expect(html).not.toContain('/apps/invites');
     expect(html).not.toContain('/apps/review');
     for (const route of RETIRED_ROUTES) {

@@ -27,7 +27,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // GONE, replaced by a single "Build" row pointing at `/apps/build`; the two retired
 // routes 301 there and `/apps/submit` keeps its route but has no tab. Marketplace stopped
 // being unconditional and is now gated on `c.canSeeStore`. The full table, in order:
-//   Build (/apps/build) · Marketplace (/apps) · Installed (/apps/installed) ·
+//   Build (/apps/build) · Marketplace (/apps) · Activity (/apps/activity) ·
 //   Invites (/apps/invites) · Revenue (/apps/revenue) · Review (/apps/review)
 //
 // The sub-nav uses the Mantine **Tabs** LOOK but is wrapped in a real
@@ -49,6 +49,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 const NONE: AppsNavSummary = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
@@ -58,6 +59,7 @@ const NONE: AppsNavSummary = {
 
 const ALL: AppsNavSummary = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
@@ -173,13 +175,13 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
   test('with an all-false summary the conditional tabs are hidden', async () => {
     renderWithProviders(<AppsSubNavView summary={NONE} context={AUTHOR} currentPath="/apps" />);
     // None of the summary-driven tabs should render.
-    expect(tab('Installed').elements()).toHaveLength(0);
+    expect(tab('Activity').elements()).toHaveLength(0);
     expect(tab('Invites').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
   });
 
-  test('Installed shows ONLY when hasInstalls', async () => {
+  test('Activity shows when hasInstalls', async () => {
     renderWithProviders(
       <AppsSubNavView
         summary={{ ...NONE, hasInstalls: true }}
@@ -187,11 +189,59 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
         currentPath="/apps"
       />
     );
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     // The other conditionals stay hidden.
     expect(tab('Invites').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE ROW-LEVEL HALF OF THE `hasActivity` FIX, AND THE ASSERTION THAT MATTERS: a
+   * viewer with ACTIVITY and ZERO INSTALLS must get the tab.
+   *
+   * That viewer is not hypothetical, they are the cohort `/apps/installed` →
+   * `/apps/activity` was renamed for. A full-page app (`/apps/run/<slug>`) is STATELESS by
+   * design — `/apps/run`'s own header, Decision 2: "no `block_user_subscriptions` row, no
+   * migration" — so someone who only runs page apps has generations, scope-gated API
+   * calls and Buzz spends in the feed, and `hasInstalls: false` forever. The row shipped
+   * as `visible: (s) => s.hasInstalls`, which is dark for exactly them while
+   * `/apps/activity` (gated on `appBlocks || appBlocksPages`) serves them.
+   *
+   * 🔴 RED WITHOUT THE CHANGE, AND FOR THIS TEST'S OWN REASON. Restore
+   * `visible: (s) => s.hasInstalls` and this fails on `expect.element(tab('Activity'))`
+   * timing out — no Activity tab renders — while `Activity shows when hasInstalls` above
+   * stays green. A test that only asserted the summary FIELD exists could not tell those
+   * two implementations apart.
+   */
+  test('🔴 Activity shows for hasActivity with NO installs (the page-app cohort)', async () => {
+    renderWithProviders(
+      <AppsSubNavView
+        summary={{ ...NONE, hasActivity: true }}
+        context={NOT_AUTHOR}
+        currentPath="/apps"
+      />
+    );
+    await expect.element(tab('Activity')).toBeInTheDocument();
+    // …and it is the ONLY conditional tab this summary lights, so the pass cannot be a
+    // row that became unconditional.
+    expect(tab('Invites').elements()).toHaveLength(0);
+    expect(tab('Revenue').elements()).toHaveLength(0);
+    expect(tab('Review').elements()).toHaveLength(0);
+  });
+
+  test('NEGATIVE CONTROL: neither installs nor activity ⇒ no Activity tab', async () => {
+    // Guards both cases above against a row that renders for everyone. (The all-false
+    // case above asserts the same thing among four tabs; this one names the pair.)
+    renderWithProviders(
+      <AppsSubNavView
+        summary={{ ...NONE, hasInstalls: false, hasActivity: false, isReviewer: true }}
+        context={AUTHOR}
+        currentPath="/apps"
+      />
+    );
+    await expect.element(tab('Review')).toBeInTheDocument();
+    expect(tab('Activity').elements()).toHaveLength(0);
   });
 
   /**
@@ -240,10 +290,10 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
         currentPath="/apps"
       />
     );
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     // …and STILL no tab from the two unwired flags: the bar is exactly Marketplace +
-    // Installed, so the pinned literal catches a mutant that wires either of them in.
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    // Activity, so the pinned literal catches a mutant that wires either of them in.
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity']);
   });
 
   test('Revenue shows ONLY when hasApprovedApps', async () => {
@@ -255,7 +305,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
       />
     );
     await expect.element(tab('Revenue')).toBeInTheDocument();
-    expect(tab('Installed').elements()).toHaveLength(0);
+    expect(tab('Activity').elements()).toHaveLength(0);
     expect(tab('Invites').elements()).toHaveLength(0);
     expect(tab('Review').elements()).toHaveLength(0);
   });
@@ -269,7 +319,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
       />
     );
     await expect.element(tab('Review')).toBeInTheDocument();
-    expect(tab('Installed').elements()).toHaveLength(0);
+    expect(tab('Activity').elements()).toHaveLength(0);
     expect(tab('Invites').elements()).toHaveLength(0);
     expect(tab('Revenue').elements()).toHaveLength(0);
   });
@@ -278,14 +328,19 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     renderWithProviders(<AppsSubNavView summary={ALL} context={AUTHOR} currentPath="/apps" />);
     await expect.element(tab('Review')).toBeInTheDocument();
     // Pinned as an ORDERED literal, not a presence loop: order is a real property of this
-    // bar (build → discovery → manage → revenue → moderate) and a presence loop cannot
+    // bar (discovery → manage → revenue → build → moderate) and a presence loop cannot
     // see a row that moved.
+    //
+    // 🔴 `Build` MOVED TO SECOND-TO-LAST, and this literal is what makes that a checked
+    // fact rather than a claim in a comment. It led the table until the `/apps/activity`
+    // rename; it is the narrowest-audience tab here, so leading with it put the smallest
+    // cohort's destination in the position that reads as "what this bar is for".
     expect(renderedTabs()).toEqual([
-      'Build',
       'Marketplace',
-      'Installed',
+      'Activity',
       'Invites',
       'Revenue',
+      'Build',
       'Review',
     ]);
   });
@@ -308,7 +363,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
     await expect.element(tab('Review')).toBeInTheDocument();
     // Marketplace is present because this viewer HAS store access; Build and Invites are
     // the two rows the capabilities remove.
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed', 'Revenue', 'Review']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Review']);
   });
 });
 
@@ -348,7 +403,7 @@ describe('AppsSubNavView (Build is gated on canBuild)', () => {
     );
     // Positive control: the bar IS rendered…
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     // …and Build is absent from it.
     expect(tab('Build').elements()).toHaveLength(0);
   });
@@ -380,7 +435,7 @@ describe('AppsSubNavView (Build is gated on canBuild)', () => {
     // "simplified" to `c.isAuthor`.
     renderWithProviders(<AppsSubNavView summary={NONE} context={BUILDER} currentPath="/apps" />);
     await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 });
 
@@ -415,9 +470,9 @@ describe('AppsSubNavView (Marketplace is gated on canSeeStore)', () => {
       <AppsSubNavView summary={TWO_SUMMARY_TABS} context={NO_STORE} currentPath="/apps" />
     );
     // Positive control: the bar renders, on the two summary-driven rows.
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     await expect.element(tab('Review')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Installed', 'Review']);
+    expect(renderedTabs()).toEqual(['Activity', 'Review']);
     expect(tab('Marketplace').elements()).toHaveLength(0);
   });
 
@@ -426,7 +481,7 @@ describe('AppsSubNavView (Marketplace is gated on canSeeStore)', () => {
       <AppsSubNavView summary={TWO_SUMMARY_TABS} context={NOT_AUTHOR} currentPath="/apps" />
     );
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed', 'Review']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Review']);
     expect(tab('Marketplace').element().getAttribute('href')).toBe('/apps');
   });
 });
@@ -487,12 +542,12 @@ describe('AppsSubNavView (the collapse, and the canBuild gate that keeps it live
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('🔴 Build is ABSENT for a store-visible viewer WITHOUT the capability', async () => {
     // The cohort the defect would have 404'd. Given an install so the bar clears the
-    // floor on Marketplace + Installed, making this an assertion about the TAB rather
+    // floor on Marketplace + Activity, making this an assertion about the TAB rather
     // than about the bar.
     renderWithProviders(
       <AppsSubNavView
@@ -502,7 +557,7 @@ describe('AppsSubNavView (the collapse, and the canBuild gate that keeps it live
       />
     );
     await expect.element(tab('Marketplace')).toBeInTheDocument(); // positive control
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     expect(tab('Build').elements()).toHaveLength(0);
   });
 
@@ -518,14 +573,22 @@ describe('AppsSubNavView (the collapse, and the canBuild gate that keeps it live
       .getByRole('tab')
       .elements()
       .map((el) => el.getAttribute('href'));
-    expect(hrefs).toEqual(['/apps/build', '/apps']); // non-empty: the check below can fail
+    expect(hrefs).toEqual(['/apps', '/apps/build']); // non-empty: the check below can fail
     expect(hrefs).not.toContain('/apps/get-started');
   });
 
-  test('it leads the bar — Build is the FIRST tab when it renders', async () => {
+  test('🔴 it sits SECOND-TO-LAST, before Review — not first', async () => {
+    // 🔴 IT USED TO LEAD THE BAR, AND THIS TEST USED TO ASSERT THAT. The claim moved with
+    // the row: `Build` is the narrowest-audience tab here (`canAccessAppsBuild`), so
+    // leading with it put the smallest cohort's destination in the position that reads as
+    // "what this bar is for". Pinned by POSITION rather than by "not first", because the
+    // decision is a specific slot — after the consumer surfaces, before the moderator one.
     renderWithProviders(<AppsSubNavView summary={ALL} context={AUTHOR} currentPath="/apps" />);
     await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()[0]).toBe('Build');
+    const tabs = renderedTabs();
+    expect(tabs[0]).toBe('Marketplace');
+    expect(tabs[tabs.length - 2]).toBe('Build');
+    expect(tabs[tabs.length - 1]).toBe('Review');
   });
 
   test('a summary flag alone brings the bar back (one install, no canBuild)', async () => {
@@ -539,7 +602,7 @@ describe('AppsSubNavView (the collapse, and the canBuild gate that keeps it live
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity']);
   });
 
   // 🔴 NEGATIVE CONTROL for the counts above. Every assertion in this block is
@@ -551,7 +614,7 @@ describe('AppsSubNavView (the collapse, and the canBuild gate that keeps it live
     renderWithProviders(<AppsSubNavView summary={ALL} context={BUILDER} currentPath="/apps" />);
     await expect.element(tab('Build')).toBeInTheDocument();
     expect(tab('Invites').elements()).toHaveLength(0);
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace', 'Installed', 'Revenue', 'Review']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
   });
 });
 
@@ -583,11 +646,11 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
       <AppsSubNavView
         summary={{ ...NONE, hasInstalls: true }}
         context={AUTHOR}
-        currentPath="/apps/installed"
+        currentPath="/apps/activity"
       />
     );
-    await expect.element(tab('Installed')).toBeInTheDocument();
-    const installed = tab('Installed').element();
+    await expect.element(tab('Activity')).toBeInTheDocument();
+    const installed = tab('Activity').element();
     expect(installed.getAttribute('aria-selected')).toBe('true');
   });
 
@@ -599,10 +662,10 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
       <AppsSubNavView
         summary={{ ...NONE, hasInstalls: true }}
         context={AUTHOR}
-        currentPath="/apps/installed"
+        currentPath="/apps/activity"
       />
     );
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     const marketplace = tab('Marketplace').element();
     expect(marketplace.getAttribute('aria-selected')).toBe('false');
   });
@@ -636,7 +699,7 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
       <AppsSubNavView summary={ALL} context={AUTHOR} currentPath="/apps/submit" />
     );
     await expect.element(tab('Build')).toBeInTheDocument(); // the bar IS rendered
-    for (const name of ['Build', 'Marketplace', 'Installed', 'Invites', 'Revenue', 'Review']) {
+    for (const name of ['Build', 'Marketplace', 'Activity', 'Invites', 'Revenue', 'Review']) {
       expect(tab(name).element().getAttribute('aria-selected'), `${name} is selected`).toBe(
         'false'
       );
@@ -648,11 +711,11 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
   // the tabs that DID render.
   test('with Build hidden, the active route still lights the right tab', async () => {
     renderWithProviders(
-      <AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps/installed" />
+      <AppsSubNavView summary={ALL} context={NOT_AUTHOR} currentPath="/apps/activity" />
     );
-    await expect.element(tab('Installed')).toBeInTheDocument();
+    await expect.element(tab('Activity')).toBeInTheDocument();
     expect(tab('Build').elements()).toHaveLength(0);
-    expect(tab('Installed').element().getAttribute('aria-selected')).toBe('true');
+    expect(tab('Activity').element().getAttribute('aria-selected')).toBe('true');
     // Every other rendered tab is unselected — exactly one highlight.
     for (const name of ['Marketplace', 'Revenue', 'Review']) {
       expect(tab(name).element().getAttribute('aria-selected')).toBe('false');
@@ -670,7 +733,7 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
     await expect.element(tab('Marketplace')).toBeInTheDocument();
     expect(tab('Build').elements()).toHaveLength(0);
     expect(tab('Marketplace').element().getAttribute('aria-selected')).toBe('true');
-    expect(tab('Installed').element().getAttribute('aria-selected')).toBe('false');
+    expect(tab('Activity').element().getAttribute('aria-selected')).toBe('false');
   });
 });
 
@@ -686,7 +749,7 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
       // create buttons and the `?edit=` deep link, not from this bar.
       ['Build', '/apps/build'],
       ['Marketplace', '/apps'],
-      ['Installed', '/apps/installed'],
+      ['Activity', '/apps/activity'],
       // The collaborator inbox: `appCollaborators.listMyPendingInvites`. Owner-INDEPENDENT
       // — an invitee who owns nothing reaches every other tab's page empty.
       ['Invites', '/apps/invites'],
@@ -732,13 +795,13 @@ describe('AppsSubNavView (keyboard: arrow keys scan, do not auto-navigate)', () 
       />
     );
     // Wait for the async render before reaching into the DOM synchronously.
-    await expect.element(tab('Installed')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace', 'Installed']);
+    await expect.element(tab('Activity')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Build']);
 
     const marketplace = tab('Marketplace').element() as HTMLElement;
-    const installed = tab('Installed').element() as HTMLElement;
+    const installed = tab('Activity').element() as HTMLElement;
 
-    // Marketplace (= current route) is the selected tab; Installed is not.
+    // Marketplace (= current route) is the selected tab; Activity is not.
     expect(marketplace.getAttribute('aria-selected')).toBe('true');
     expect(installed.getAttribute('aria-selected')).toBe('false');
 
@@ -747,10 +810,10 @@ describe('AppsSubNavView (keyboard: arrow keys scan, do not auto-navigate)', () 
     expect(document.activeElement).toBe(marketplace);
     await userEvent.keyboard('{ArrowRight}');
 
-    // Focus moved to Installed (keyboard-reachable scan)…
+    // Focus moved to Activity (keyboard-reachable scan)…
     expect(document.activeElement).toBe(installed);
     // …but selection (aria-selected, driven by the route) did NOT follow focus.
-    // If activateTabWithKeyboard were on, Installed would now be aria-selected=true.
+    // If activateTabWithKeyboard were on, Activity would now be aria-selected=true.
     expect(installed.getAttribute('aria-selected')).toBe('false');
     expect(marketplace.getAttribute('aria-selected')).toBe('true');
   });
@@ -773,15 +836,15 @@ describe('AppsSubNavView (keyboard: arrow keys scan, do not auto-navigate)', () 
 describe('isActiveAppsRoute / activeAppsTab (route-matching helpers)', () => {
   test('/apps matches ONLY the exact marketplace route', () => {
     expect(isActiveAppsRoute('/apps', '/apps')).toBe(true);
-    expect(isActiveAppsRoute('/apps', '/apps/installed')).toBe(false);
+    expect(isActiveAppsRoute('/apps', '/apps/activity')).toBe(false);
     expect(isActiveAppsRoute('/apps', '/apps/run/foo')).toBe(false);
   });
 
   test('sub-routes match exact + deeper child paths (prefix)', () => {
-    expect(isActiveAppsRoute('/apps/installed', '/apps/installed')).toBe(true);
-    expect(isActiveAppsRoute('/apps/installed', '/apps/installed/123')).toBe(true);
-    expect(isActiveAppsRoute('/apps/installedX', '/apps/installed')).toBe(false);
-    expect(isActiveAppsRoute('/apps/build', '/apps/installed')).toBe(false);
+    expect(isActiveAppsRoute('/apps/activity', '/apps/activity')).toBe(true);
+    expect(isActiveAppsRoute('/apps/activity', '/apps/activity/123')).toBe(true);
+    expect(isActiveAppsRoute('/apps/activityX', '/apps/activity')).toBe(false);
+    expect(isActiveAppsRoute('/apps/build', '/apps/activity')).toBe(false);
   });
 
   test('activeAppsTab resolves the active tab href, or null when none matches', () => {
@@ -874,7 +937,7 @@ describe('AppsSubNavView (Invites is gated on the author capability)', () => {
       />
     );
     await expect.element(tab('Build')).toBeInTheDocument(); // the bar IS rendered
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
     expect(tab('Invites').elements()).toHaveLength(0);
   });
 
@@ -911,6 +974,6 @@ describe('AppsSubNavView (Invites is gated on the author capability)', () => {
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace', 'Invites']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Invites', 'Build']);
   });
 });

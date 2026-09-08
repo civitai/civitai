@@ -192,8 +192,11 @@ describe('the /apps route set that renders the shared chrome', () => {
       '/apps',
       '/apps/[appBlockId]/edit',
       '/apps/[appBlockId]/revenue',
+      // 🔴 `/apps/activity` SORTS BEFORE `/apps/build` — it is `/apps/installed`
+      // repointed ('a' < 'b', where 'i' > 'b'), so the position moving is not a second
+      // change to review.
+      '/apps/activity',
       '/apps/build',
-      '/apps/installed',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
       '/apps/revenue',

@@ -1,3 +1,4 @@
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
@@ -126,6 +127,7 @@ const otherModUser = { id: 99, isModerator: true, tier: 'free', username: 'mod2'
 
 const ALL_FALSE = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
@@ -137,6 +139,8 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockReset();
   mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
   mockDbRead.blockUserSubscription.findFirst.mockReset();
+  mockDbRead.blockBuzzAttribution.findFirst.mockReset();
+  mockDbRead.blockScopeInvocation.findFirst.mockReset();
   mockDbRead.appBlockPublishRequest.findFirst.mockReset();
   mockDbRead.appBlock.findFirst.mockReset();
   mockDbRead.appListing.findFirst.mockReset();
@@ -144,6 +148,8 @@ beforeEach(() => {
   mockDbRead.appOwnershipTransfer.findFirst.mockReset();
   // Default: nothing exists for anyone.
   mockDbRead.blockUserSubscription.findFirst.mockResolvedValue(null);
+  mockDbRead.blockBuzzAttribution.findFirst.mockResolvedValue(null);
+  mockDbRead.blockScopeInvocation.findFirst.mockResolvedValue(null);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
   mockDbRead.appListing.findFirst.mockResolvedValue(null);
@@ -184,6 +190,7 @@ describe('getNavSummary — booleans reflect existence', () => {
     const result = await caller.getNavSummary();
     expect(result).toEqual({
       hasInstalls: false,
+      hasActivity: false,
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: true, // flag-on user is a mod pre-GA
@@ -227,12 +234,122 @@ describe('getNavSummary — booleans reflect existence', () => {
     const result = await caller.getNavSummary();
     expect(result).toEqual({
       hasInstalls: true,
+      hasActivity: false,
       hasSubmissions: true,
       hasApprovedApps: true,
       isReviewer: true,
       hasEditableApps: false,
       hasPendingInvites: false,
     });
+  });
+});
+
+/**
+ * 🔴 `hasActivity` — THE FLAG THAT LETS THE `Activity` TAB SEE A FULL-PAGE-APP VIEWER.
+ *
+ * ── THE DEFECT ───────────────────────────────────────────────────────────────
+ * The sub-nav's Activity row keyed on `hasInstalls` alone, i.e. on a
+ * `block_user_subscriptions` row — a SLOT install. A full-page app
+ * (`/apps/run/<slug>`) is STATELESS by design and writes no such row ("no
+ * `block_user_subscriptions` row, no migration"), so a viewer who only ever runs page
+ * apps has a populated activity feed and NO tab pointing at it. Widening the PAGE's gate
+ * to `appBlocks || appBlocksPages` did not fix that — the tab is what was missing.
+ *
+ * ── WHY THESE TWO TABLES AND NOT ANY OTHER ───────────────────────────────────
+ * They are the two the FEED walks: `listMyAppActivity` reads `block_buzz_attribution`
+ * filtered on the SPENDER's `userId`, and `listMyScopeInvocations` reads
+ * `block_scope_invocations` on the same column (both in
+ * `~/server/services/blocks/user-app-surface.service`). A probe on a table the feed does
+ * NOT read would light a tab over a page that renders "No activity yet" — the mirror of
+ * the defect being fixed. That correspondence is what the per-table cases below assert.
+ *
+ * ── RED WITHOUT THE CHANGE ───────────────────────────────────────────────────
+ * Delete the `hasActivity` key from the procedure's return and every test in this block
+ * fails on its own assertion (`expected undefined to be true`). Delete only ONE of the
+ * two disjuncts and exactly one of the two per-table cases fails.
+ */
+describe('getNavSummary — hasActivity (page-app activity, no installs)', () => {
+  it('🔴 a BUZZ-ATTRIBUTION row alone lights hasActivity — with hasInstalls FALSE', async () => {
+    mockDbRead.blockBuzzAttribution.findFirst.mockResolvedValue({ id: 'bba_1' });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasActivity).toBe(true);
+    // The whole point: this viewer has NO subscription row.
+    expect(result.hasInstalls).toBe(false);
+  });
+
+  it('🔴 a SCOPE-INVOCATION row alone lights hasActivity — with hasInstalls FALSE', async () => {
+    mockDbRead.blockScopeInvocation.findFirst.mockResolvedValue({ id: '42' });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasActivity).toBe(true);
+    expect(result.hasInstalls).toBe(false);
+  });
+
+  it('NEGATIVE CONTROL: an INSTALL alone does not light hasActivity', async () => {
+    // Without this the two cases above are satisfied by `hasActivity` being wired to
+    // anything at all, including `hasInstalls` itself.
+    mockDbRead.blockUserSubscription.findFirst.mockResolvedValue({ id: 'bus_1' });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getNavSummary();
+    expect(result.hasInstalls).toBe(true);
+    expect(result.hasActivity).toBe(false);
+  });
+
+  it('both probes empty ⇒ false (the flag is not constant-true)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    expect((await caller.getNavSummary()).hasActivity).toBe(false);
+  });
+
+  it('each activity probe is scoped to ctx.user.id and selects only id (LIMIT 1)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(otherModUser) as never);
+    await caller.getNavSummary();
+
+    const buzzArgs = mockDbRead.blockBuzzAttribution.findFirst.mock.calls[0][0];
+    // `userId` is the SPENDER on this table, not the app owner — the same column the
+    // feed filters on. An owner-scoped probe would light the tab for the wrong person.
+    expect(buzzArgs.where).toEqual({ userId: otherModUser.id });
+    expect(buzzArgs.select).toEqual({ id: true });
+
+    const scopeArgs = mockDbRead.blockScopeInvocation.findFirst.mock.calls[0][0];
+    expect(scopeArgs.where.userId).toBe(otherModUser.id);
+    expect(scopeArgs.select).toEqual({ id: true });
+  });
+
+  it('🔴 the scope probe MIRRORS the feed: external-OAuth rows are excluded', async () => {
+    // The global feed keeps `app-block` + synthetic dev-tunnel rows
+    // (`appBlockId IS NOT NULL OR syntheticAppId IS NOT NULL`) and drops external-OAuth
+    // rows, which carry BOTH columns null. Without this term an external-OAuth-only
+    // viewer gets an Activity tab whose feed says "No activity yet".
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.getNavSummary();
+    const where = mockDbRead.blockScopeInvocation.findFirst.mock.calls[0][0].where;
+
+    // 🔴 IDENTITY, NOT EQUALITY — and that distinction is the whole guard. An audit WALKED the
+    // previous version of this check: it replaced the spread with a differently-spelled
+    // divergent predicate, left the `GLOBAL_SCOPE_ACTIVITY_OR` mention alive in a comment, and
+    // updated this test's own literal — the edit a developer making that change would make —
+    // and every suite stayed green (67/67) while the probe and the feed silently diverged.
+    // A `toEqual` against a literal cannot tell "read the shared constant" from "re-spelled
+    // the same clause"; `toBe` on the array reference can only pass if the object the router
+    // handed Prisma IS the exported one. That makes the single-sourcing structural instead of
+    // spelled — the exact upgrade this ladder keeps having to make.
+    expect(
+      where.OR,
+      'the probe did not pass the SHARED predicate to Prisma — it re-spelled its own copy'
+    ).toBe(GLOBAL_SCOPE_ACTIVITY_OR.OR);
+
+    // …and the shared constant still means what the feed needs. Kept as a second, cheap
+    // assertion so a change to the constant itself is not invisible here.
+    expect(where.OR).toEqual([{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }]);
+  });
+
+  it('flag OFF: neither activity probe runs', async () => {
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    expect((await caller.getNavSummary()).hasActivity).toBe(false);
+    expect(mockDbRead.blockBuzzAttribution.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.blockScopeInvocation.findFirst).not.toHaveBeenCalled();
   });
 });
 

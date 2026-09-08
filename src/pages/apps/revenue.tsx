@@ -44,7 +44,7 @@ export default function AppBlocksDashboardPage() {
         subtitle={
           <>
             Revenue share and analytics for your apps. Payouts are batched weekly; see{' '}
-            <Anchor component={Link} href="/apps/installed">
+            <Anchor component={Link} href="/apps/activity">
               Apps
             </Anchor>{' '}
             to manage installations.

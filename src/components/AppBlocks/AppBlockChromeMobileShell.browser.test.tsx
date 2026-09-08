@@ -377,11 +377,15 @@ describe('AppBlockChrome mobile shell', () => {
   });
 
   test(`REGRESSION — at ${PHONE[0]}x${PHONE[1]} the platform nav is inside the ⋮ sheet`, async () => {
-    // 🔴 RED AT `origin/main`, BEHAVIOURALLY. The failing assertion is the presence of
-    // "Installed apps" after opening the ⋮. That label exists ONLY in the platform-nav
-    // section — the ⋮ menu's own item for the same route is worded "Manage apps" — so
-    // at main, where the ⋮ carries app actions only, it is not reachable from this
-    // trigger at any width.
+    // 🔴 RED AT THE REVISION THAT INTRODUCED IT, BEHAVIOURALLY. The failing assertion is
+    // the presence of the platform nav's own label for the activity route after opening
+    // the ⋮. That label exists ONLY in the platform-nav section — the ⋮ menu's own item
+    // for the same route is worded "Manage apps" — so at the pre-fold revision, where the
+    // ⋮ carries app actions only, it is not reachable from this trigger at any width.
+    //
+    // ⚠️ THE LABEL MOVED WITH THE ROUTE: it read "Installed apps" until `/apps/installed`
+    // became `/apps/activity` and it became "App activity". Same item, same section, same
+    // claim — only the word changed.
     //
     // 🔴 IT IS ASSERTED BY LABEL, NOT BY A TESTID, ON PURPOSE. A testid on the new
     // sheet would go red at main merely by not existing, which proves nothing. A user-
@@ -399,7 +403,7 @@ describe('AppBlockChrome mobile shell', () => {
     expect(sheet, 'the ⋮ must have opened SOME surface').not.toBeNull();
 
     const labels = rowLabels(sheet as HTMLElement);
-    for (const label of ['Marketplace', 'Installed apps', 'My apps']) {
+    for (const label of ['Marketplace', 'App activity', 'My apps']) {
       expect(
         labels,
         `at ${PHONE[0]}px "${label}" must be reachable from the ⋮ — the platform nav folds into ` +

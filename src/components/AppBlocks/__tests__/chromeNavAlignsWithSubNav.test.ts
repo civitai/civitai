@@ -102,7 +102,7 @@ function parseSubNav(src: string): NavEntry[] {
  *
  * 🔴 SCOPED TO THE PLATFORM-NAV SECTION, WHICH IS NOT COSMETIC. The chrome also
  * renders the ⋮ overflow's "Manage apps", which points at the SAME
- * `/apps/installed` with a different, deliberate label. A whole-file scan would key
+ * `/apps/activity` with a different, deliberate label. A whole-file scan would key
  * both onto one href and either compare the wrong row or clobber it. The slice is
  * anchored on the `Civitai Apps` label, which is the section's own heading.
  *
@@ -174,7 +174,7 @@ function parsePlatformNav(src: string): NavEntry[] {
  * 🔴 THIS IS THE REPO-WIDE HALF, AND IT EXISTS BECAUSE THE SCOPED HALF MISSED A
  * SITE. The platform-nav-scoped parser above deliberately ignores the ⋮ overflow
  * menu so that two items pointing at one route cannot be keyed onto each other —
- * but that same scoping meant the ⋮ menu's "Manage apps" (`/apps/installed`) was
+ * but that same scoping meant the ⋮ menu's "Manage apps" (`/apps/activity`) was
  * invisible to the icon rule, and re-iconing only the platform nav left ONE route
  * wearing TWO glyphs a few pixels apart in one bar. The same-route rule has to be
  * enforced over the whole component or it just relocates the drift.
@@ -351,14 +351,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
 
     // …and the scope control: an item in a LATER section must not be picked up. This
     // is the fixture that would catch the F3 bound going wrong — the ⋮ overflow's own
-    // `/apps/installed` sits after its own `<ChromeSurfaceLabel>App</…>`, and if the
+    // `/apps/activity` sits after its own `<ChromeSurfaceLabel>App</…>`, and if the
     // slice ran past that label the two entries for one route would be keyed onto
     // each other and the icon comparison would be against the wrong row.
     const scoped = parsePlatformNav(`
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
       <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore />}>Marketplace</ChromeSurfaceItem>
       <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
-      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/activity" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
     `);
     expect(scoped.map((e) => e.href)).toEqual(['/apps']);
   });
@@ -475,7 +475,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const nav = parsePlatformNav(code(read(CHROME)));
     expect(nav).toEqual([
       { href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' },
-      { href: '/apps/installed', label: 'Installed apps', icon: 'IconPlugConnected' },
+      { href: '/apps/activity', label: 'App activity', icon: 'IconPlugConnected' },
       { href: '/apps/build', label: 'My apps', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
     ]);
@@ -497,19 +497,19 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
 
     // 🔴 THE OTHER THREE DELIBERATELY DIFFER, so this pins the chrome's own copy
     // rather than asserting equality. The subnav's tabs sit under an "Apps"
-    // heading and can afford one-word labels ("Installed", "Review"); these items
+    // heading and can afford one-word labels ("Activity", "Review"); these items
     // stand alone in a dropdown over a running app and need the noun. Asserting
     // equality here would force a wrong "fix" in one file or the other.
-    expect(navByHref.get('/apps/installed')?.label).toBe('Installed apps');
+    expect(navByHref.get('/apps/activity')?.label).toBe('App activity');
     expect(navByHref.get('/apps/build')?.label).toBe('My apps');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
-    expect(subByHref.get('/apps/installed')?.label).toBe('Installed');
+    expect(subByHref.get('/apps/activity')?.label).toBe('Activity');
   });
 
   it('ONE ROUTE, ONE ICON — every literal-href item in the chrome, both dropdowns', () => {
     // 🔴 THE RULE THIS PR EXISTS TO ENFORCE, APPLIED TO THE WHOLE COMPONENT. Two
     // items may legitimately carry different LABELS for one destination ("Manage
-    // apps" from inside a running app vs "Installed apps" as a destination); they
+    // apps" from inside a running app vs "App activity" as a destination); they
     // may not carry different PICTURES, because the two dropdowns open a few pixels
     // apart in the same bar. Fixing only the platform nav would have relocated the
     // drift rather than removed it, which is what this test is here to prevent.
@@ -558,12 +558,12 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
 
     // (c) The pair that actually collided, named explicitly so the regression is
     // legible: two items, one route, and now one icon.
-    const installed = links.filter((l) => l.href === '/apps/installed');
+    const installed = links.filter((l) => l.href === '/apps/activity');
     expect(
       installed.map((l) => l.label).sort(),
-      'the chrome should still offer BOTH `/apps/installed` entries — this rule is about ' +
+      'the chrome should still offer BOTH `/apps/activity` entries — this rule is about ' +
         'their icons, not about removing one of them (that would be a behaviour change).'
-    ).toEqual(['Installed apps', 'Manage apps']);
+    ).toEqual(['App activity', 'Manage apps']);
     expect(new Set(installed.map((l) => l.icon)).size).toBe(1);
 
     // (d) 🔴 THE LEDGER — the SET of routes the chrome links to, owned outright, so this
@@ -574,7 +574,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // item pointing at a route `SUB_NAV_LINKS` already carries, wearing that row's own
     // glyph, satisfies both and is invisible to them. Nor does anything else here close
     // the gap — the `expected glyphs` test enumerates the PLATFORM-NAV slice only, and (c)
-    // enumerates the two `/apps/installed` LABELS only. So an item added to the ⋮ overflow
+    // enumerates the two `/apps/activity` LABELS only. So an item added to the ⋮ overflow
     // was invisible to every assertion in this file. Measured on the PRE-(d) tree: adding
     // `<ChromeSurfaceItem href="/apps/invites" leftSection={<IconMail …/>}>Invites
     // </ChromeSurfaceItem>` to the overflow passed all 8 tests. (d) kills that one now.
@@ -620,7 +620,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     //
     // SORTED, so a re-ORDER cannot report a route change that did not happen — this rule
     // is about the SET, and the platform-nav slice's own `toEqual` is what governs order
-    // there. DUPLICATES KEPT: `/apps` and `/apps/installed` each legitimately appear more
+    // there. DUPLICATES KEPT: `/apps` and `/apps/activity` each legitimately appear more
     // than once, and collapsing to a Set would hide an extra item hung on a listed route.
     expect(
       links.map((l) => l.href).sort(),
@@ -638,12 +638,13 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       '/apps', // Marketplace — platform nav
       '/apps', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
       '/apps', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
-      // 🔴 REPOINTED FROM `/apps/mine`, which 301s here. Sorts BEFORE `/apps/installed`
-      // now ('b' < 'i'), where `/apps/mine` sorted after it — the list is `.sort()`ed, so
-      // the POSITION moving is not a second change to review.
+      // 🔴 REPOINTED TWICE, AND THE SORT POSITION MOVED BOTH TIMES — the list is
+      // `.sort()`ed, so neither move is a second change to review. `/apps/mine` →
+      // `/apps/build` (301) sorted it before `/apps/installed`; `/apps/installed` →
+      // `/apps/activity` (301) then sorted the pair back before it ('a' < 'b').
+      '/apps/activity', // App activity — platform nav
+      '/apps/activity', // Manage apps — ⋮ overflow; the pair (c) governs their labels
       '/apps/build', // My apps — platform nav; the store calls this row "Build"
-      '/apps/installed', // Installed apps — platform nav
-      '/apps/installed', // Manage apps — ⋮ overflow; the pair (c) governs their labels
       '/apps/review', // Review — platform nav, moderator-gated
     ]);
   });
@@ -654,12 +655,12 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // absent and the rule above would pass over exactly the site it was written for.
     const found = parseAllChromeLinks(`
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
-      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconPlugConnected />}>Installed apps</ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/activity" leftSection={<IconPlugConnected />}>App activity</ChromeSurfaceItem>
       <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
-      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/activity" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
     `);
     expect(found).toHaveLength(2);
-    expect(found.map((f) => f.label)).toEqual(['Installed apps', 'Manage apps']);
+    expect(found.map((f) => f.label)).toEqual(['App activity', 'Manage apps']);
     // …and it skips a template-literal href (the "Recently run" shape).
     expect(
       parseAllChromeLinks(

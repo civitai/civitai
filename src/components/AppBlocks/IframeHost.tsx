@@ -325,7 +325,7 @@ function storageErrorMessage(err: unknown): string {
  * block can't fake, restyle, or hide it. It's the user-facing safety
  * signal that says "this is a sandboxed app block, not native Civitai UI":
  * a thin top bar with the Civitai app-block badge plus a menu whose
- * "Manage apps" item routes to /apps/installed and a "Hide app" item
+ * "Manage apps" item routes to /apps/activity and a "Hide app" item
  * that locally hides this install for the viewer (a model owner's block shows
  * to every viewer; this lets a viewer dismiss one without affecting the
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
@@ -551,7 +551,7 @@ export function AppBlockChrome({
   //
   // 🔴 DEFINED BEFORE `appMenuItems` ON PURPOSE. `__tests__/chromeNavAlignsWithSubNav.ts`
   // slices this section out by anchoring on the `Civitai Apps` label and stopping at the
-  // NEXT `<ChromeSurfaceLabel>`, so that the ⋮ menu's own `/apps/installed` item is not
+  // NEXT `<ChromeSurfaceLabel>`, so that the ⋮ menu's own `/apps/activity` item is not
   // keyed onto the platform nav's. Reordering these two consts silently widens that
   // slice.
   const platformNavItems = (
@@ -603,19 +603,19 @@ export function AppBlockChrome({
           the PAGE, not this link, is what decides.
 
           The LABELS are deliberately NOT all identical: the subnav's tabs sit under
-          an "Apps" heading and can afford one-word labels ("Installed", "Review"),
+          an "Apps" heading and can afford one-word labels ("Activity", "Review"),
           whereas these items stand alone over a running app and need the noun
-          ("Installed apps"). "Marketplace" is the one label that is shared verbatim,
+          ("App activity"). "Marketplace" is the one label that is shared verbatim,
           because "Apps home" named a destination the store itself stopped calling
           that. */}
       <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore size={14} stroke={1.5} />}>
         Marketplace
       </ChromeSurfaceItem>
       <ChromeSurfaceItem
-        href="/apps/installed"
+        href="/apps/activity"
         leftSection={<IconPlugConnected size={14} stroke={1.5} />}
       >
-        Installed apps
+        App activity
       </ChromeSurfaceItem>
       <ChromeSurfaceItem href="/apps/build" leftSection={<IconCode size={14} stroke={1.5} />}>
         My apps
@@ -676,15 +676,15 @@ export function AppBlockChrome({
     <>
       <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
       {/* 🔴 SAME ROUTE ⇒ SAME ICON, ACROSS BOTH SURFACES. This item and the
-          platform nav's "Installed apps" are different WORDS for the same
-          destination (`/apps/installed`), so they must not be different
+          platform nav's "App activity" are different WORDS for the same
+          destination (`/apps/activity`), so they must not be different
           PICTURES: on a desktop bar the two dropdowns open a few pixels apart, and
           below `sm` they are literally rows of ONE sheet — a user who sees a plug in
           one and a grid in the other has to work out whether they lead to the same
           place. The glyph comes from the store subnav's row for this route
           (`SUB_NAV_LINKS`), exactly as the platform nav's does — the labels stay
           different on purpose ("Manage apps" is the action from inside a running app;
-          "Installed apps" is the destination), because the rule is about the ROUTE,
+          "App activity" is the destination), because the rule is about the ROUTE,
           not the copy.
 
           Pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`, which checks
@@ -692,7 +692,7 @@ export function AppBlockChrome({
           section — this item is the reason that check is repo-wide rather than
           scoped, since scoping it to one dropdown is what let this site drift. */}
       <ChromeSurfaceItem
-        href="/apps/installed"
+        href="/apps/activity"
         leftSection={<IconPlugConnected size={14} stroke={1.5} />}
       >
         Manage apps

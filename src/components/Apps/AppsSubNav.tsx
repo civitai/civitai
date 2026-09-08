@@ -27,8 +27,20 @@ import {
  * which tabs to show.
  */
 export type AppsNavSummary = {
-  /** ≥1 install/subscription → show "Installed". */
+  /** ≥1 install/subscription (a `block_user_subscriptions` row) — half of "Activity". */
   hasInstalls: boolean;
+  /**
+   * ≥1 row in EITHER table the activity feed walks — `block_buzz_attribution` (as the
+   * SPENDER) or `block_scope_invocations` — the OTHER half of "Activity".
+   *
+   * 🔴 IT IS NOT REDUNDANT WITH {@link hasInstalls}, AND THE GAP IS A WHOLE COHORT. An
+   * install is a SLOT subscription; a FULL-PAGE app (`/apps/run/<slug>`) is stateless by
+   * design and creates no subscription row at all. So a viewer who only ever runs page
+   * apps has activity — generations, scope-gated API calls, Buzz spends — and
+   * `hasInstalls: false`. Neither flag implies the other: an install with no usage yet is
+   * the mirror case.
+   */
+  hasActivity: boolean;
   /**
    * ≥1 publish request. Drove a "My submissions" tab, then widened "My apps".
    *
@@ -62,6 +74,7 @@ export type AppsNavSummary = {
 
 const EMPTY_SUMMARY: AppsNavSummary = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
@@ -128,7 +141,15 @@ type SubNavLink = {
 };
 
 /**
- * Tab order = build → discovery → manage → revenue → moderate.
+ * Tab order = discovery → manage → revenue → build → moderate.
+ *
+ * 🔴 `Build` MOVED FROM FIRST TO SECOND-TO-LAST (before `Review`), and the order is the
+ * claim. This bar's leading tab is the one it asserts you came here for, and for the
+ * overwhelming majority of viewers that is not authoring: `Build` is gated on
+ * `canAccessAppsBuild`, while `Marketplace` and `Activity` are the two consumer
+ * surfaces. Leading with `Build` put the narrowest audience's tab in the widest
+ * audience's first position. `Review` stays last because it is the moderator surface
+ * and reads as the end of the table rather than part of the user's own path.
  *
  * 🔴 EVERY ROW'S PREDICATE IS ITS PAGE'S OWN GATE, RESTATED AS A VIEWER FACT ON
  * {@link AppsNavContext} — never a raw flag read inside the predicate, and never a rule
@@ -158,40 +179,6 @@ type SubNavLink = {
  */
 const SUB_NAV_LINKS: SubNavLink[] = [
   /**
-   * The consolidated BUILD surface. It leads the table because it is the front door for
-   * someone who has not built anything yet, and it is now the ONLY authoring entry in
-   * this bar.
-   *
-   * 🔴 THIS ROW REPLACED THREE: "Build apps" (`/apps/get-started`), "Create"
-   * (`/apps/submit`) and "My apps" (`/apps/mine`). Those three were largely one another's
-   * content — get-started was static marketing whose every CTA pointed off-platform, and
-   * `/apps/submit`'s on-platform branch was the same copy-paste wall a second time — so a
-   * developer's path was three tabs that mostly showed each other. `/apps/build` is
-   * state-aware instead: pitch → first-app → workbench. The two retired routes 301 to it;
-   * `/apps/submit` KEEPS its route (the `?edit=<listingId>` deep link from the store card
-   * and the listing-detail ⋮ menus resolves there via `getOwnerEditHref`) and simply
-   * stops having a tab.
-   *
-   * 🔴 NOT `c.isAuthor`, AND NOT `!!features.appBlocksGetStarted` — `c.canBuild`, which
-   * is {@link canAccessAppsBuild} verbatim. `hasSubmissions` / `hasEditableApps` are
-   * deliberately ABSENT from this predicate even though they decide what the page
-   * RENDERS: they come from the client-only `getNavSummary`, and a tab that appeared
-   * after mount for an author with apps is the tab-set hydration mismatch this file
-   * already survived once. The page's own state machine reads them; the tab does not
-   * need to.
-   *
-   * Hydration-safe for the reason written out on the predicate: all of its inputs are
-   * SSR-seeded and frozen, and neither `appBlocksAuthor` nor `appBlocksGetStarted` is
-   * `toggleable`, so `computeUserFeatureFlagsOverlay` cannot move them between the
-   * server render and the first client paint.
-   */
-  {
-    href: '/apps/build',
-    label: 'Build',
-    icon: IconCode,
-    visible: (_s, c) => c.canBuild,
-  },
-  /**
    * 🔴 GATED ON STORE ACCESS AS OF THIS CHANGE — it was `() => true`, and that
    * unconditional predicate was a KNOWN, DOCUMENTED 404 exposure (see the note on
    * `AppsNavContext.canSeeStore`): `/apps` gates on `resolveAppsPageAccess`, so a viewer
@@ -208,11 +195,47 @@ const SUB_NAV_LINKS: SubNavLink[] = [
     icon: IconBuildingStore,
     visible: (_s, c) => c.canSeeStore,
   },
+  /**
+   * 🔴 REPOINTED AND RELABELLED: `/apps/installed` → `/apps/activity`, `Installed` →
+   * `Activity`. The route 301s (see `next.config.mjs`), the page opens on the activity
+   * feed, and its gate widened past the model-slot flag — so "Installed" named one tab
+   * of four and refused a cohort that has activity without a single install.
+   *
+   * 🔴 BOTH TERMS ARE LOAD-BEARING; NEITHER IS A RESTATEMENT OF THE OTHER, AND
+   * "SIMPLIFYING" THIS BACK TO `s.hasInstalls` RE-HIDES THE PAGE FROM THE COHORT THE
+   * RENAME WIDENED IT FOR. They name two different facts:
+   *   • `hasInstalls` — a `block_user_subscriptions` row, i.e. a SLOT install. That is
+   *     what the "Installs" tab inside the page shows, and it is what the `appBlocks`
+   *     slot flag governs.
+   *   • `hasActivity` — a row in either table the FEED walks (`block_buzz_attribution` as
+   *     spender, `block_scope_invocations`). A full-page app is STATELESS by design —
+   *     `/apps/run`'s own header, Decision 2: "no `block_user_subscriptions` row, no
+   *     migration" — so someone who only runs page apps has a populated feed and ZERO
+   *     installs. Keyed on installs alone, this row was dark for exactly them: the page
+   *     admitted them (`appBlocks || appBlocksPages`) and no tab pointed at it.
+   * An install with no usage yet is the mirror case, which is why the OR keeps both.
+   *
+   * ⚠️ A RESIDUAL NARROWNESS SURVIVES, deliberately, and it is the SAFE direction of the
+   * #3899 / #4668 class (an unreachable page, never a tab into a 404): both flags come
+   * from `getNavSummary`, whose `enabled` and whose server middleware are gated on
+   * `appBlocks`, while the page admits `appBlocks || appBlocksPages`. A viewer holding
+   * `appBlocksPages` WITHOUT `appBlocks` still gets an all-false summary and no tab.
+   * Closing that means moving the procedure's own gate, which is a wider blast radius
+   * than this row (every flag on the summary would widen with it).
+  // ⚠️ …AND THAT RESIDUAL IS NARROWER THAN THE SENTENCE ABOVE IMPLIES — corrected after an
+  // audit, because as written it invites a future widening of a `blocks.*` flag gate to
+  // close a gap that is effectively EMPTY. That cohort is refused by `/apps/run` itself
+  // (`[[...path]].tsx` requires BOTH `appBlocks` and `appBlocksPages`) and cannot install
+  // (slot installs are `appBlocks`-gated), so going forward they can generate NO activity
+  // at all: an all-false summary is the CORRECT tab set for them, not a deprivation. The
+  // only way they hold rows is a historical `appBlocks` grant since revoked. Do not widen
+  // the procedure's gate for this.
+   */
   {
-    href: '/apps/installed',
-    label: 'Installed',
+    href: '/apps/activity',
+    label: 'Activity',
     icon: IconPlugConnected,
-    visible: (s) => s.hasInstalls,
+    visible: (s) => s.hasInstalls || s.hasActivity,
   },
   /**
    * 🔴 NEEDS `c.isAuthor` AS WELL AS ITS SUMMARY FLAG. `/apps/invites`
@@ -243,13 +266,53 @@ const SUB_NAV_LINKS: SubNavLink[] = [
     icon: IconCurrencyDollar,
     visible: (s) => s.hasApprovedApps,
   },
+  /**
+   * The consolidated BUILD surface — the ONLY authoring entry in this bar.
+   *
+   * 🔴 IT USED TO LEAD THE TABLE, ON THE ARGUMENT THAT IT IS "the front door for someone
+   * who has not built anything yet". That sentence is now false and is not merely
+   * relocated: the row sits second-to-last, and the reason is on the table's own
+   * docstring — its audience is the narrowest of any consumer tab here, so leading with
+   * it put the smallest cohort's destination in the position that reads as "what this
+   * page is for". The front-door claim was always about the PITCH (state A of
+   * `/apps/build`), which is one of three states the row resolves to.
+   *
+   * 🔴 THIS ROW REPLACED THREE: "Build apps" (`/apps/get-started`), "Create"
+   * (`/apps/submit`) and "My apps" (`/apps/mine`). Those three were largely one another's
+   * content — get-started was static marketing whose every CTA pointed off-platform, and
+   * `/apps/submit`'s on-platform branch was the same copy-paste wall a second time — so a
+   * developer's path was three tabs that mostly showed each other. `/apps/build` is
+   * state-aware instead: pitch → first-app → workbench. The two retired routes 301 to it;
+   * `/apps/submit` KEEPS its route (the `?edit=<listingId>` deep link from the store card
+   * and the listing-detail ⋮ menus resolves there via `getOwnerEditHref`) and simply
+   * stops having a tab.
+   *
+   * 🔴 NOT `c.isAuthor`, AND NOT `!!features.appBlocksGetStarted` — `c.canBuild`, which
+   * is {@link canAccessAppsBuild} verbatim. `hasSubmissions` / `hasEditableApps` are
+   * deliberately ABSENT from this predicate even though they decide what the page
+   * RENDERS: they come from the client-only `getNavSummary`, and a tab that appeared
+   * after mount for an author with apps is the tab-set hydration mismatch this file
+   * already survived once. The page's own state machine reads them; the tab does not
+   * need to.
+   *
+   * Hydration-safe for the reason written out on the predicate: all of its inputs are
+   * SSR-seeded and frozen, and neither `appBlocksAuthor` nor `appBlocksGetStarted` is
+   * `toggleable`, so `computeUserFeatureFlagsOverlay` cannot move them between the
+   * server render and the first client paint.
+   */
+  {
+    href: '/apps/build',
+    label: 'Build',
+    icon: IconCode,
+    visible: (_s, c) => c.canBuild,
+  },
   { href: '/apps/review', label: 'Review', icon: IconGavel, visible: (s) => s.isReviewer },
 ];
 
 /**
  * Returns true when `current` is on the `href` route. `/apps` (the
  * marketplace) must match EXACTLY so it isn't lit on every `/apps/*` child;
- * the sub-routes match on prefix so deep paths (e.g. `/apps/installed?tab=...`
+ * the sub-routes match on prefix so deep paths (e.g. `/apps/activity/<x>`
  * or `/apps/run/<slug>` under the parent) keep the right tab active.
  */
 export function isActiveAppsRoute(href: string, current: string): boolean {
@@ -420,10 +483,20 @@ export function AppsSubNav() {
   // short-circuits rather than throwing, returning the ALL-FALSE summary without
   // running a single DB read. So for an `app-listings`-only viewer, widening this
   // `enabled` would buy a guaranteed round-trip to a guaranteed all-false answer.
-  // The conditional tabs it feeds (Installed / Invites / Revenue / Review) all point at
-  // pages that themselves 404 without `appBlocks`, so all-false is also the CORRECT tab
-  // set for that viewer. If the server proc ever moves to `enforceAppListingsReadFlag`,
-  // move this with it.
+  //
+  // ⚠️ THE OLD JUSTIFICATION HERE IS NOW FALSE AND IS CORRECTED RATHER THAN DELETED,
+  // because it is the plausible-sounding reason someone will decide this gate is
+  // airtight. It read: the conditional tabs "all point at pages that themselves 404
+  // without `appBlocks`, so all-false is also the CORRECT tab set for that viewer."
+  // `/apps/activity` NO LONGER 404s without `appBlocks` — it gates on
+  // `canAccessAppsActivity` = `appBlocks || appBlocksPages`. So for a viewer holding
+  // `appBlocksPages` but not `appBlocks`, all-false is NOT the correct tab set: the page
+  // would serve them and this gate hides the only route to it. That is the residual
+  // narrowness recorded on the Activity row, and it is the SAFE direction (an
+  // unreachable page, not a tab into a 404) — but do not re-derive the retired claim as
+  // proof that no gap exists. Invites / Revenue / Review are still `appBlocks`-gated
+  // pages, so the sentence remains true for them. If the server proc ever moves to
+  // `enforceAppListingsReadFlag` — or gains `appBlocksPages` — move this with it.
   const { data } = trpc.blocks.getNavSummary.useQuery(undefined, {
     enabled: !!features.appBlocks && !!currentUser,
     staleTime: 60_000,
@@ -435,7 +508,7 @@ export function AppsSubNav() {
   // bar. After the consolidation EVERY row in `SUB_NAV_LINKS` implies store access:
   //   • Build      — `canAccessAppsBuild` has `hasAppsStoreAccess` as a hard AND;
   //   • Marketplace— `c.canSeeStore` IS `hasAppsStoreAccess`;
-  //   • Installed / Invites / Revenue / Review — all driven by `getNavSummary`, whose
+  //   • Activity / Invites / Revenue / Review — all driven by `getNavSummary`, whose
   //     `enabled` requires `features.appBlocks`, and `appBlocks` is one of the three
   //     disjuncts of `hasAppsStoreAccess`, so the summary is all-false without it.
   // So a viewer this gate would have admitted on the second term alone qualifies for ZERO

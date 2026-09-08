@@ -19,7 +19,7 @@ import {
  * 🔴 THE DEFECT IS A GAP, NOT A CLIP. Nothing was cut off — a table's columns simply
  * stayed at their content width and the table distributed the extra 640px as PADDING,
  * which on a `space-between` row lands entirely between a row's content and the control
- * that acts on it. Measured on `/apps/installed`, where THREE
+ * that acts on it. Measured on `/apps/activity`, where THREE
  * `Group justify="space-between" wrap="nowrap"` rows (in `PinnedInstallRow`,
  * `InstalledAppCard` and `HiddenBlocksPanel`) each moved their button 640px further from
  * the name it belongs to. `/apps/review` had the same shape and had been "fixed" by
@@ -305,7 +305,7 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
 /**
  * 🔴 THERE IS NO `APPS_ACTIVITY_COLUMNS`, AND THAT IS A MEASURED DECISION.
  *
- * `/apps/installed`'s activity tab (`AppActivityPanel`) carried one for two rounds and it
+ * `/apps/activity`'s activity tab (`AppActivityPanel`) carried one for two rounds and it
  * was wrong both times — first with `Detail` primary (a fixed monospace ref), then with
  * shares set from a 1408 measurement, which squeezed three columns below their content at
  * every width a real desktop uses. Measured on a rich `tip` row, ROW HEIGHT:
@@ -317,7 +317,9 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  *
  * Round 3 was 79% taller than natural at 1440 — `When` broke a `YYYY-MM-DD HH:mm` stamp
  * across THREE lines, and `App` sat pinned at its 108.52 min-content from 768 through 2560
- * so a long name was ellipsised identically on both.
+ * so a long name was ellipsised identically on both. (`When` no longer renders that stamp
+ * — see the re-measurement at the foot of this comment. The natural row height is still
+ * 36.19 at all four widths, so this table's rows are unchanged.)
  *
  * 🔴 AND NO LEDGER FIXES IT, WHICH IS THE POINT. This table's max-content sum (~735px) is
  * the container's content width AT 768, so there is no surplus to place at the narrow end.
@@ -333,6 +335,39 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  * a share larger than its cell needs is padding relabelled — rules out the second. The
  * table is EXEMPT; the guard in `__tests__/appsWideLayout.test.ts` records that as a
  * `no-surplus` exemption and requires a geometry arm to keep proving it.
+ *
+ * ── 🔴 RE-MEASURED AFTER `When` WENT RELATIVE (`DaysFromNow`) ─────────────────
+ *
+ * The numbers above were taken with `When` rendering a fixed-width `YYYY-MM-DD HH:mm`
+ * stamp. It now renders `20 minutes ago`, so the measurement no longer described the
+ * table and was redone rather than inherited. Same fixture (one rich `tip` row), same
+ * four viewports, `AppsWideLayout.geometry.test.tsx`:
+ *
+ *   WHEN | APP | ACTION | DETAIL | STATUS, natural layout, cell widths in px
+ *
+ *   before   @768    119.67 | 177.34 | 194.36 | 179.09 |  65.53
+ *            @1200   189.94 | 281.44 | 308.44 | 284.23 | 103.95
+ *            @1440   228.95 | 339.27 | 371.81 | 342.63 | 125.34
+ *            @2560   411.09 | 609.14 | 667.58 | 615.19 | 225.00   ← the row above
+ *
+ *   after    @768    108.39 | 180.58 | 197.91 | 182.38 |  66.75
+ *            @1200   172.02 | 286.59 | 314.08 | 289.44 | 105.88
+ *            @1440   207.38 | 345.47 | 378.63 | 348.91 | 127.63
+ *            @2560   372.33 | 620.30 | 679.80 | 626.45 | 229.13
+ *
+ *   ROW HEIGHT        36.19 at 768 / 1200 / 1440 / 2560 — UNCHANGED, both before and
+ *                     after. That is the value the exemption rests on.
+ *
+ * 🔴 THE CONCLUSION SURVIVES, AND SO DOES THE REASON FOR IT. `When` gave up ~10% of its
+ * width at every viewport (38.76px at 2560) and the other four columns absorbed it
+ * proportionally — the table stayed at its natural distribution, it did not develop a
+ * surplus. The `no-surplus` argument is a claim about max-content sum vs container width
+ * at 768, and a narrower `When` makes that sum SMALLER, i.e. it moves further away from
+ * the case a ledger could help. Nothing here re-opens the decision.
+ *
+ * (The `before` @2560 row reproduces the recorded `natural @2560` figures exactly, which
+ * is the control on the re-measurement: the instrument agrees with the number that was
+ * already in this comment before it was pointed at anything new.)
  */
 
 /**
@@ -438,7 +473,7 @@ export const APPS_LEGACY_CONTENT_WIDTH = APPS_LEGACY_CONTAINER_WIDTH - APPS_CONT
  * `child=1200`, and `document.scrollWidth` **unchanged** — so the card is 1200px wide
  * inside a 358px grid, CLIPPED, with no scrollbar and no page-level overflow to notice
  * it by. Nothing on screen says the content is cut off. That matters because this
- * component converted three phone-reachable `Stack`s on `/apps/installed` into grids, so
+ * component converted three phone-reachable `Stack`s on `/apps/activity` into grids, so
  * the narrow case is a real users' case rather than a theoretical one, and it is pinned
  * at a phone viewport in `AppsWideLayout.geometry.test.tsx`.
  *
@@ -460,7 +495,7 @@ export function AppsCardGrid({
    * Track gap in px. Defaults to {@link APPS_CARD_LIST_GAP} (Mantine `md`).
    *
    * 🔴 IT IS A PROP BECAUSE THE PROVENANCE RULE APPLIES TO SPACING TOO. The lists this
-   * replaced did not all use the same gap — `/apps/installed`'s Hidden tab was
+   * replaced did not all use the same gap — `/apps/activity`'s Hidden tab was
    * `<Stack gap="sm">` (12px) — and defaulting every one of them to 16 would have moved
    * something a 1440 monitor shows, which is precisely what
    * `APPS_CARD_LIST_MIN_COLUMN`'s "nothing a 1440 or 1920 monitor shows changes" claim

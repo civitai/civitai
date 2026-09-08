@@ -13,7 +13,7 @@
  *
  *   · `AppsTableColgroup` — percentage widths on every column except the primary, which
  *     is left `auto` so the surplus lands there.
- *   · `AppsCardGrid` — `/apps/installed`'s cards step to a second column exactly where the
+ *   · `AppsCardGrid` — `/apps/activity`'s cards step to a second column exactly where the
  *     surplus appeared, so a card's own width stops tracking the container and the
  *     name→Manage gap stops growing.
  *
@@ -61,13 +61,13 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * ⚠️ WHAT THIS FILE DOES NOT PROVE, STATED SO NOBODY READS IT AS PROVEN
  * ─────────────────────────────────────────────────────────────────────────────
- * The `/apps/installed` block below mounts the real `InstalledAppCard` inside
+ * The `/apps/activity` block below mounts the real `InstalledAppCard` inside
  * `AppsCardGrid` — but the GRID IS SUPPLIED BY THE TEST, so these assertions say "the card
  * behaves correctly when it is in the grid", not "the page puts it in one". Measured
  * against `origin/main`'s components with only the new module scaffolded in, the two
  * installed tests PASSED while the four table tests went red — i.e. this file alone cannot
  * see the page reverting to a `Stack`. That claim is `__tests__/appsWideLayout.test.ts`'s
- * "🔴 /apps/installed uses the card GRID, and no longer caps its body", which is red at
+ * "🔴 /apps/activity uses the card GRID, and no longer caps its body", which is red at
  * `origin/main` for exactly that reason. Two guards, one for the mechanism and one for its
  * adoption; neither is a substitute for the other.
  */
@@ -164,7 +164,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           items: [
             {
               id: 'sc_1',
-              createdAt: new Date('2026-09-01T00:00:00Z'),
+              // 🔴 A FIXED OFFSET FROM `now`, NOT AN ABSOLUTE INSTANT. The `When` cell
+              // renders `DaysFromNow`, so an absolute fixture would render a string that
+              // GROWS with wall-clock time ('7 days ago' → 'a year ago') and quietly
+              // change the column widths this file measures. 20 minutes always renders
+              // '20 minutes ago'.
+              createdAt: new Date(Date.now() - 20 * 60 * 1000),
               appBlockId: 'ab_9',
               appName: 'Lighthouse',
               appSlug: 'lighthouse',
@@ -225,7 +230,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   );
   return { ...(await importOriginal<typeof TrpcMod>()), trpc: root };
 });
-// `/apps/installed`'s module calls `createServerSideProps` at import time, which pulls the
+// `/apps/activity`'s module calls `createServerSideProps` at import time, which pulls the
 // server graph into a browser bundle. Stubbed so the page's `InstalledAppCard` — the REAL
 // card whose gap this file measures — can be imported without it.
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -236,7 +241,7 @@ const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
 const { AppsCardGrid } = await import('~/components/Apps/appsWideLayout');
 const { UnifiedReviewList } = await import('~/components/Apps/UnifiedReviewList');
 const { MyAppsBodyView } = await import('~/components/Apps/MyAppsBody');
-const { InstalledAppCard } = await import('~/pages/apps/installed');
+const { InstalledAppCard } = await import('~/pages/apps/activity');
 const { ActivePreviewsPanel } = await import('~/components/Apps/ActivePreviewsPanel');
 const { OffsiteReportsQueue } = await import('~/components/Apps/OffsiteReviewQueue');
 const { AppActivityPanel } = await import('~/components/Apps/AppActivityPanel');
@@ -936,7 +941,7 @@ describe('/apps/review reports — the other table a ledger cannot help', () => 
   });
 });
 
-describe('/apps/installed activity — the table that a ledger cannot help', () => {
+describe('/apps/activity activity — the table that a ledger cannot help', () => {
   /**
    * 🔴 THIS TABLE IS DELIBERATELY UNLEDGERED, and this arm is what keeps that decision
    * honest — `__tests__/appsWideLayout.test.ts` requires it BY NAME for the `no-surplus`
@@ -1006,9 +1011,19 @@ describe('/apps/installed activity — the table that a ledger cannot help', () 
     // The mechanism behind the height, so a future change that keeps the height constant
     // some other way is still legible. `When` broke a `YYYY-MM-DD HH:mm` stamp across three
     // lines under the shipped ledger; `Detail`'s monospace ref broke across two.
+    //
+    // 🔴 THE `When` READ DRILLS TO THE `<time>`, AND THAT IS A MEASUREMENT FIX RATHER
+    // THAN A SOFTENING. `lineCount` is `Range.getClientRects().length`, which returns one
+    // rect PER BOX in the range — so once `When` became `<Text><time>…</time></Text>`
+    // (the `DaysFromNow` relative stamp) the wrapper's range held the `<time>` box AND its
+    // text box and returned 2 with nothing having wrapped. Measured: the row-height arm
+    // above stayed at 36.19 across all four widths through that change, which is the
+    // independent proof that the cell is still one line. Reading the text-bearing element
+    // is what makes this arm about WRAPPING again.
     const linesPerWidth = await atEachWidth(panel, () => {
       const cells = Array.from(document.querySelectorAll('table tbody tr:first-child > td'));
-      return [lineCount(cells[0].firstElementChild), lineCount(cells[3].firstElementChild)];
+      const when = cells[0].querySelector('time') ?? cells[0].firstElementChild;
+      return [lineCount(when), lineCount(cells[3].firstElementChild)];
     });
     expect(linesPerWidth).toEqual([
       [1, 1],
@@ -1101,9 +1116,9 @@ describe('🔴 NO LEDGER MAKES ITS ROWS TALLER AT A NARROWER WIDTH', () => {
   });
 });
 
-// ── /apps/installed — the 640px dead gap ─────────────────────────────────────
+// ── /apps/activity — the 640px dead gap ─────────────────────────────────────
 
-describe('/apps/installed — the space-between row keeps its control near its content', () => {
+describe('/apps/activity — the space-between row keeps its control near its content', () => {
   /**
    * The gap between the app NAME's right edge and the Manage button's left edge.
    *

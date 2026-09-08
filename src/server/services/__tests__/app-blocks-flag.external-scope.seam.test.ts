@@ -399,7 +399,7 @@ describe('🔴 the external-ONLY viewer: reachable, and scoped to offsite', () =
   });
 
   it('🔴 does NOT widen any block-RUNTIME surface', async () => {
-    // `/apps/installed`, `/apps/run/<slug>`, the `blocks.*` procs and the author
+    // `/apps/activity`, `/apps/run/<slug>`, the `blocks.*` procs and the author
     // surfaces gate on `appBlocks` / `appBlocksPages` / `appBlocksAuthor` alone.
     // The external cohort must reach the CATALOG and nothing else.
     const features = clientFeatures(makeUser({ id: 777 }));

@@ -589,7 +589,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
     );
 
   test('one column through the OLD container, two in the current one', () => {
-    // The whole justification for `/apps/installed` becoming a grid: it must change
+    // The whole justification for `/apps/activity` becoming a grid: it must change
     // nothing a 1440 or 1920 monitor showed, and spend the 640px the ultrawide pass
     // added. A min column of 1200 is what puts the step between the two.
     expect(columnsAt(1408)).toBe(1); // 1440 viewport
@@ -897,8 +897,8 @@ describe('every /apps page on disk is classified', () => {
         // consolidated into this (301s), and `/apps/submit` KEEPS its route but lost its
         // sub-nav row. So the set SHRANK by two — which is exactly the direction this
         // ledger exists to make visible, and the reason it is a `toEqual` and not a floor.
+        '/apps/activity',
         '/apps/build',
-        '/apps/installed',
         '/apps/invites',
         '/apps/listing/[appListingId]/edit',
         // 🔴 'revenue' sorts BEFORE 'review' — they diverge at index 9, 'e' < 'i'.

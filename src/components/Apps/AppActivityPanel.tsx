@@ -8,12 +8,14 @@ import {
   Stack,
   Table,
   Text,
-  Tooltip,
 } from '@mantine/core';
 import { IconHistory } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
-import { formatDate } from '~/utils/date-helpers';
+import { getListingDetailHref } from '~/components/Apps/appListingCardView';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 import {
   describeBlockAction,
@@ -23,10 +25,11 @@ import {
 
 /**
  * Shared per-viewer app-activity timeline. Extracted from
- * `src/pages/apps/installed.tsx` (W5 v0.5) so the same interleaved feed can be
- * reused both there (whole-account view) AND on the run-frame "Permissions &
- * activity" drawer scoped to a single app (`appBlockId`). DRY: the humanise
- * helpers + row shape live here, in one tested place, instead of duplicated.
+ * `src/pages/apps/activity.tsx` (W5 v0.5, when that page was `/apps/installed`) so
+ * the same interleaved feed can be reused both there (whole-account view) AND on the
+ * run-frame "Permissions & activity" drawer scoped to a single app (`appBlockId`).
+ * DRY: the humanise helpers + row shape live here, in one tested place, instead of
+ * duplicated.
  *
  * Two cursor-paginated tRPC queries — `blocks.listMyAppActivity` (Buzz
  * attribution) + `blocks.listMyScopeInvocations` (scope-gated call audit) —
@@ -37,7 +40,7 @@ import {
  * fetch + client filter would under-report this app's Buzz behind other apps'
  * rows on page 1). A client-side `item.appBlockId` check is kept as cheap
  * belt-and-suspenders. When `appBlockId` is omitted the feed is whole-account —
- * exactly the /apps/installed behaviour, unchanged.
+ * exactly the /apps/activity behaviour, unchanged.
  *
  * `enabled` gates the queries: pass `false` for an anonymous viewer (these
  * procedures are `protectedProcedure`, so firing them unauthenticated just
@@ -155,6 +158,86 @@ export function humaniseScopeEndpoint(
   return endpoint;
 }
 
+/**
+ * The `App` cell's name — a LINK to the app's store detail for a viewer who can open
+ * it, and the pre-change plain `<Text>` for everyone else.
+ *
+ * 🔴 THE GATE IS `hasAppsStoreAccess`, AND IT IS NOT OPTIONAL POLISH. The destination
+ * `/apps/store-preview/<slug>` `getServerSideProps`-gates on exactly this predicate
+ * (via `resolveAppsPageAccess`) and returns `notFound`, and `appListings.getAppDetail`
+ * resolves a `StoreVisibilityScope` of `none` and throws NOT_FOUND. An ungated link is
+ * therefore a 404 affordance — the defect class civitai#4668 shipped and civitai#4685
+ * exists to prevent. This is `AppNameCrumb`'s solution copied rather than re-derived;
+ * see that file for the full argument.
+ *
+ * 🔴 IT READS THE FLAGS THROUGH `useOptionalFeatureFlags`, NOT `useFeatureFlags`, AND
+ * THAT IS A FAIL-CLOSED DECISION. `useFeatureFlags` THROWS outside its provider. This
+ * panel is mounted from `/apps/activity` AND from the run-frame's permissions drawer,
+ * and it is rendered in isolation under test; making it throw would turn "flags are
+ * unavailable here" into a crashed panel. The optional hook returns `null` there, and
+ * `hasAppsStoreAccess(null)` is `false` — so the absence of flags removes the link
+ * instead of granting it.
+ *
+ * The `href` comes from the CANONICAL `getListingDetailHref`, never a concatenation
+ * here: one function owns the store-detail path (and its `encodeURIComponent`), so a
+ * route change cannot leave this call site pointing at the old one.
+ *
+ * 🔴 THERE ARE THREE WAYS TO GET PLAIN TEXT, AND ALL THREE ARE DELIBERATE — the flag
+ * gate above, a NULL `slug`, and `linkable={false}`. The middle one is the copy of
+ * `AppNameCrumb` this component originally MISSED: the crumb withholds the link when the
+ * listing does not resolve, and this one only copied the flag half. The row's `appSlug`
+ * is now null exactly when the server could not resolve a real listing slug (see "the
+ * appSlug contract" in `~/server/services/blocks/user-app-surface.service`), so a null
+ * here means "there is no listing to open", not "the caller forgot".
+ */
+export function ActivityAppName({
+  name,
+  slug,
+  linkable = true,
+}: {
+  name: string;
+  /** `AppBlock.blockId`, or NULL when the row has no resolvable store listing. */
+  slug: string | null;
+  /**
+   * 🔴 `false` SUPPRESSES THE LINK REGARDLESS OF THE VIEWER'S FLAGS, and the caller that
+   * passes it is the PER-APP drill-down (the run-frame's "Permissions & activity"
+   * drawer). Two reasons, and the first is the one that matters: that drawer is mounted
+   * OVER A RUNNING FULL-PAGE APP, so a top-level `<a>` navigation destroys whatever the
+   * user was doing inside it — with no warning, from a panel they opened to READ. The
+   * second is that in drill-down mode every row is the same app, so the column is a
+   * label rather than a destination. Not a `target="_blank"`: a second mechanism for the
+   * same column is how the two renderings come to disagree.
+   */
+  linkable?: boolean;
+}) {
+  const features = useOptionalFeatureFlags();
+  const canSeeStore = hasAppsStoreAccess(features);
+
+  // Ineligible viewer, no listing slug on the row, or a caller that suppressed the link:
+  // the pre-change static text, with the same testid so nothing downstream has to branch
+  // on the gate.
+  if (!linkable || !canSeeStore || !slug) {
+    return (
+      <Text size="sm" fw={500} className="truncate" data-testid="app-activity-app-name">
+        {name}
+      </Text>
+    );
+  }
+
+  return (
+    <Anchor
+      component={Link}
+      href={getListingDetailHref(slug)}
+      size="sm"
+      fw={500}
+      className="truncate"
+      data-testid="app-activity-app-name"
+    >
+      {name}
+    </Anchor>
+  );
+}
+
 function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
   const color =
     statusCode < 300 ? 'green' : statusCode < 400 ? 'blue' : statusCode < 500 ? 'orange' : 'red';
@@ -186,7 +269,8 @@ type ActivityFeedRow =
       createdAt: Date;
       appBlockId: string;
       appName: string;
-      appSlug: string;
+      /** NULL when the server could not resolve a listing slug — see the service. */
+      appSlug: string | null;
       scope: string;
       usdAmountCents: number;
       status: string;
@@ -197,7 +281,8 @@ type ActivityFeedRow =
       createdAt: Date;
       appBlockId: string;
       appName: string;
-      appSlug: string;
+      /** NULL when the server could not resolve a listing slug — see the service. */
+      appSlug: string | null;
       scope: string;
       endpoint: string;
       statusCode: number;
@@ -380,18 +465,48 @@ export function AppActivityPanel({
           {items.map((item) => (
             <Table.Tr key={item.id}>
               <Table.Td>
-                <Tooltip label={item.createdAt.toString()}>
-                  <Text size="xs">{formatDate(item.createdAt, 'YYYY-MM-DD HH:mm')}</Text>
-                </Tooltip>
+                {/* 🔴 RELATIVE, WITH THE ABSOLUTE STAMP STILL ONE HOVER AWAY. "20m ago"
+                    is what a reader of an audit feed actually wants — the question is
+                    "was this just now?", not "what wall-clock minute was it?".
+                    `DaysFromNow` renders a `<time title dateTime>` (so the exact instant
+                    is BOTH the native hover text and machine-readable in the DOM) and
+                    returns `null` until `useIsClient` goes true, which is what keeps a
+                    relative string from being server-rendered and then hydrating to a
+                    different one.
+
+                    🔴 NO MANTINE `Tooltip` WRAPPER — it used to be here and it was a
+                    DOUBLE tooltip: `DaysFromNow`'s own `title` attribute fires the
+                    browser's native tip while Mantine floated a second one, on the same
+                    hover, showing the SAME instant in a DIFFERENT format
+                    (`Date.prototype.toString()` vs dayjs `format()`). One hover, two
+                    boxes, two spellings of one time. The `<time>` element already owns
+                    this affordance; do not re-wrap it.
+
+                    `live` — an audit feed is a tab people leave open. Without it every
+                    relative string freezes at mount and "20m ago" silently means an hour;
+                    with it each row re-renders on a 15s interval. */}
+                <Text size="xs">
+                  <DaysFromNow date={item.createdAt} live />
+                </Text>
               </Table.Td>
               <Table.Td>
                 <Group gap={6} wrap="nowrap">
-                  <Text size="sm" fw={500} className="truncate">
-                    {item.appName}
-                  </Text>
-                  <Badge size="xs" variant="outline">
-                    {item.appSlug}
-                  </Badge>
+                  {/* `linkable` is FALSE in per-app drill-down (the run-frame drawer) —
+                      see the prop's own docstring: a top-level navigation out of a
+                      RUNNING full-page app is not something a read-only panel may do. */}
+                  <ActivityAppName
+                    name={item.appName}
+                    slug={item.appSlug}
+                    linkable={!appBlockId}
+                  />
+                  {/* Only when there IS a slug. The badge used to render `item.appSlug`
+                      unconditionally, which on an unresolvable row printed the AppBlock
+                      PRIMARY KEY as though it were the app's public slug. */}
+                  {item.appSlug && (
+                    <Badge size="xs" variant="outline">
+                      {item.appSlug}
+                    </Badge>
+                  )}
                 </Group>
               </Table.Td>
               <Table.Td>
@@ -457,7 +572,23 @@ export function AppActivityPanel({
   );
 }
 
+/**
+ * 🔴 THE `/apps` ANCHOR IS GATED ON `hasAppsStoreAccess`, AND IT IS THE SAME 404-AFFORDANCE
+ * CLASS AS THE `App` COLUMN'S LINK ABOVE — not polish. `/apps` SSR-gates on
+ * `resolveAppsPageAccess` → `hasAppsStoreAccess` = `appListings || appBlocks ||
+ * appListingsPublicExternal`. `appBlocksPages` is NOT one of those disjuncts, while
+ * `/apps/activity` now admits `appBlocks || appBlocksPages` — so this PR's newly-admitted
+ * cohort (page-apps-only, no `appBlocks`) can reach this empty state and would be handed
+ * a link the marketplace answers `notFound` for. The CTA is omitted rather than reworded:
+ * a viewer with no store has nowhere to browse, so there is no honest destination.
+ *
+ * `useOptionalFeatureFlags`, not `useFeatureFlags`, for the reason {@link ActivityAppName}
+ * gives: this panel renders in the run-frame drawer and in isolation under test, and a
+ * throwing hook would turn "no flags here" into a crashed panel. `null` → `false` → no
+ * link, i.e. it fails CLOSED.
+ */
 function EmptyActivity() {
+  const canSeeStore = hasAppsStoreAccess(useOptionalFeatureFlags());
   return (
     <Center py="md">
       <Stack align="center" gap="xs">
@@ -466,9 +597,11 @@ function EmptyActivity() {
           No activity yet. This feed populates whenever an app runs a generation, calls a
           scope-gated Civitai API, or sources a Buzz purchase on your behalf.
         </Text>
-        <Anchor component={Link} href="/apps" size="sm">
-          Browse the marketplace
-        </Anchor>
+        {canSeeStore && (
+          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+            Browse the marketplace
+          </Anchor>
+        )}
       </Stack>
     </Center>
   );

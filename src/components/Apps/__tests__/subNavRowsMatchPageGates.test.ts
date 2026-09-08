@@ -1,8 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { canAccessAppsBuild, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import {
+  canAccessAppsActivity,
+  canAccessAppsBuild,
+  hasAppsStoreAccess,
+} from '~/shared/utils/app-blocks-access';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
 
 /**
@@ -10,18 +15,29 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * GATE ON THE PAGE IT POINTS AT — plus a structural check that binds the whole table.
  *
  * 🔴 SCOPE, STATED EXACTLY, BECAUSE AN EARLIER REVISION OF THIS HEADER CLAIMED "EVERY
- * SUB-NAV ROW" AND MEANT ONE. Two rows are compared to their page's resolver:
- *   • Marketplace → `/apps`       vs `resolveAppsPageAccess`
- *   • Build       → `/apps/build` vs `resolveBuildPageAccess`
- * Those are the two whose visibility is a FLAG decision, and therefore the two that can
- * drift from a page gate. The remaining four (Installed / Invites / Revenue / Review) key
- * off `getNavSummary` DATA — `s.hasInstalls`, `s.isReviewer`, … — which is a server answer
- * about this user, not a rule restated at the row, so there is no second copy to disagree
- * with. They are covered by the `no row is unconditionally visible` check below, which is
- * a property of the TABLE and does bind all six.
+ * SUB-NAV ROW" AND MEANT ONE. Three rows are pinned against their page:
+ *   • Marketplace → `/apps`          vs `resolveAppsPageAccess`   (flag ⟺ flag)
+ *   • Build       → `/apps/build`    vs `resolveBuildPageAccess`  (flag ⟺ flag)
+ *   • Activity    → `/apps/activity` vs `canAccessAppsActivity`   (see below)
  *
- * Reading as coverage while providing none is worse than none, so: if a fifth row ever
- * gains a flag term, it belongs in the loop set above and this list must grow with it.
+ * The first two are the rows whose visibility is a pure FLAG decision, and therefore the
+ * two that can drift from a page gate by restating it wrongly.
+ *
+ * ⚠️ THE CLAIM THAT USED TO SIT HERE IS NOW FALSE, AND IS CORRECTED RATHER THAN DELETED
+ * BECAUSE IT IS WHY THE ACTIVITY ROW WENT UNCHECKED. It read: the four summary-driven
+ * rows "key off `getNavSummary` DATA … a server answer about this user, not a rule
+ * restated at the row, so there is no second copy to disagree with." That is still true
+ * of Invites / Revenue / Review. It is NOT true of Activity: its predicate is a
+ * hand-written DISJUNCTION over two summary fields (`hasInstalls || hasActivity`), and
+ * choosing WHICH fields to OR is exactly a rule restated at the row. The row shipped as
+ * `s.hasInstalls` alone while `/apps/activity` admits `appBlocks || appBlocksPages` — so
+ * a viewer whose only app usage is a stateless FULL-PAGE app (no `block_user_subscriptions`
+ * row, ever) could load the page and had no tab pointing at it. Nothing here saw it,
+ * because nothing here looked at that row at all.
+ *
+ * Reading as coverage while providing none is worse than none, so: if a fourth row ever
+ * gains a flag term or a hand-written predicate, it belongs in the set above and this
+ * list must grow with it.
  *
  * THE DEFECT CLASS. A tab offered to a cohort whose destination answers `notFound`. It
  * has shipped here twice — #3899 ("Create" was store-gated while `/apps/submit` is
@@ -119,6 +135,7 @@ function evaluate(expr: string, s: Summary, c: Context): boolean {
 /** Every summary flag false; every context capability false. */
 const NO_SUMMARY: Summary = {
   hasInstalls: false,
+  hasActivity: false,
   hasSubmissions: false,
   hasApprovedApps: false,
   isReviewer: false,
@@ -325,6 +342,99 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
     expect(canAccessAppsBuild(null, { appListings: true })).toBe(false);
     // the get-started disjunct opens it for a non-author
     expect(canAccessAppsBuild(null, { appListings: true, appBlocksGetStarted: true })).toBe(true);
+  });
+
+  /**
+   * 🔴 THE ACTIVITY ROW — the one this file's header used to declare out of scope, on the
+   * argument that a summary-driven row has "no second copy to disagree with". It has one:
+   * WHICH summary fields the predicate ORs together is a rule written at the row, and it
+   * was written too narrowly.
+   *
+   * THE SHIPPED DEFECT, restated so the assertion is readable. `hasInstalls` is a
+   * `block_user_subscriptions` row — a SLOT install. A full-page app
+   * (`/apps/run/<slug>`) is stateless BY DESIGN and creates no such row, so a viewer whose
+   * only app usage is page apps has a populated activity feed and `hasInstalls: false`
+   * forever. `/apps/activity` admits them (`appBlocks || appBlocksPages`); the row keyed
+   * on installs alone did not. That is the MIRROR of #3899 / #4668 — an unreachable page
+   * rather than a tab into a 404 — which is the safe direction and still a defect.
+   *
+   * 🔴 MEASURED RED ON THE PRE-FIX ROW. Restore `visible: (s) => s.hasInstalls` and this
+   * case fails on its own assertion at the first `hasInstalls=false, hasActivity=true`
+   * cell; the two flag-row cases above and the structural check below stay green, which
+   * is what makes the red attributable to THIS row.
+   *
+   * The whole (installs × activity) space is enumerated against TWO summary bases — one
+   * with every other flag false and one with every other flag true — plus a varying
+   * context, so a predicate that quietly reads a third field, or a capability, fails here
+   * instead of passing on a lucky fixture.
+   */
+  it('Activity is visible exactly when the viewer has installs OR activity', () => {
+    const row = rows.find((r) => r.href === '/apps/activity');
+    expect(row, 'the Activity row is missing from SUB_NAV_LINKS').toBeDefined();
+
+    const OTHERS_TRUE: Summary = { ...ALL_SUMMARY, hasInstalls: false, hasActivity: false };
+
+    for (const base of [NO_SUMMARY, OTHERS_TRUE])
+      for (const hasInstalls of [false, true])
+        for (const hasActivity of [false, true])
+          for (const store of [false, true])
+            for (const author of [false, true]) {
+              const summary: Summary = { ...base, hasInstalls, hasActivity };
+              const tabVisible = evaluate(
+                row!.visible,
+                summary,
+                context({ store, author, getStarted: false })
+              );
+              expect(
+                tabVisible,
+                `hasInstalls=${hasInstalls} hasActivity=${hasActivity} ` +
+                  `(others=${base === NO_SUMMARY ? 'false' : 'true'} store=${store} ` +
+                  `author=${author}): the Activity TAB is ` +
+                  `${tabVisible ? 'VISIBLE' : 'hidden'}. It must key on BOTH terms: an ` +
+                  `install is a slot subscription, activity is stateless full-page-app ` +
+                  `usage that writes no subscription row. Dropping either term hides ` +
+                  `\`/apps/activity\` from a cohort the page serves.`
+              ).toBe(hasInstalls || hasActivity);
+            }
+  });
+
+  /**
+   * 🔴 THE PAGE-GATE TIE. The case above pins the row against a RULE; this pins that rule
+   * against the page's REAL resolver, so "installs OR activity" cannot quietly become a
+   * private convention nobody checks against `/apps/activity` itself.
+   *
+   * The cohort that makes `hasActivity` load-bearing is the one holding `appBlocksPages`
+   * without `appBlocks`. `resolveActivityPageAccess` — the page's own
+   * `getServerSideProps` resolver, called here rather than restated — admits them, and
+   * their `hasInstalls` is structurally false. So `hasActivity` is the ONLY summary
+   * signal that can ever light this row for them.
+   */
+  it('🔴 the page ADMITS the cohort whose only possible signal is hasActivity', () => {
+    const row = rows.find((r) => r.href === '/apps/activity');
+    expect(row, 'the Activity row is missing from SUB_NAV_LINKS').toBeDefined();
+
+    const admits = (features: Record<string, boolean>) =>
+      'props' in
+      resolveActivityPageAccess({ features, user: { id: 1 }, loginDestination: '/login' });
+
+    // The page really does serve a pages-only viewer …
+    expect(admits({ appBlocksPages: true }), 'the page gate narrowed back to appBlocks').toBe(true);
+    // … and really does refuse someone (so the line above is not vacuous).
+    expect(admits({})).toBe(false);
+    // …the shared predicate agrees, per-term, so neither disjunct can be dropped silently.
+    expect(canAccessAppsActivity({ appBlocks: true })).toBe(true);
+    expect(canAccessAppsActivity({ appBlocksPages: true })).toBe(true);
+    expect(canAccessAppsActivity({})).toBe(false);
+
+    // …and for that viewer, activity WITHOUT installs must light the tab.
+    expect(
+      evaluate(
+        row!.visible,
+        { ...NO_SUMMARY, hasActivity: true },
+        context({ store: true, author: false, getStarted: false })
+      ),
+      'a viewer the page serves — page-app activity, zero slot installs — has no tab'
+    ).toBe(true);
   });
 
   /**

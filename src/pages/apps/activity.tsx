@@ -19,12 +19,12 @@ import {
   IconEyeOff,
   IconHistory,
   IconPlugConnected,
-  IconPlus,
   IconSettings,
   IconShieldLock,
   IconTrash,
 } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
@@ -34,33 +34,37 @@ import { AppsCardGrid } from '~/components/Apps/appsWideLayout';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags, useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   AvailableBlock,
   SubscriptionRecord,
 } from '~/server/schema/blocks/subscription.schema';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
+import {
+  ACTIVITY_TAB_QUERY_KEY,
+  activityTabQuery,
+  isActivityTab,
+  resolveActivityTab,
+} from '~/components/Apps/appsActivityTabs';
+import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
+import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+/** 🔴 The gate is the SHARED `resolveActivityPageAccess`, never an inline flag read —
+ *  and it is `appBlocks || appBlocksPages`. See `canAccessAppsActivity`. */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features, session, ctx }) => {
-    if (!features?.appBlocks) return { notFound: true };
-    if (!session?.user) {
-      return {
-        redirect: {
-          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
-          permanent: false,
-        },
-      };
-    }
-    return { props: {} };
-  },
+  resolver: async ({ features, session, ctx }) =>
+    resolveActivityPageAccess({
+      features,
+      user: session?.user,
+      loginDestination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+    }),
 });
 
 const PIN_LATEST_VALUE = '__latest__';
@@ -303,7 +307,22 @@ export function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
   );
 }
 
+/**
+ * 🔴 THE `/apps` ANCHOR IS GATED ON `hasAppsStoreAccess`, AND THE GAP IT CLOSES IS THIS
+ * PR'S OWN. `/apps` SSR-gates on `resolveAppsPageAccess` → `hasAppsStoreAccess` =
+ * `appListings || appBlocks || appListingsPublicExternal`. `appBlocksPages` is NOT one of
+ * those disjuncts — but this PAGE now admits `appBlocks || appBlocksPages`. So the cohort
+ * criterion 2 widened the page for can hold `appBlocksPages` ALONE, load this page, and
+ * be offered a marketplace link that answers `notFound`: the #3899 / #4668 defect class
+ * (an affordance into a 404), reintroduced by the widening rather than by a drifted rule.
+ *
+ * The CTA is OMITTED rather than reworded — a viewer with no store has no destination, so
+ * there is no honest link text. `useOptionalFeatureFlags` (not `useFeatureFlags`) so the
+ * absence of a provider REMOVES the affordance instead of throwing; same fail-closed
+ * decision as `ActivityAppName`.
+ */
 function EmptyState({ label }: { label: string }) {
+  const canSeeStore = hasAppsStoreAccess(useOptionalFeatureFlags());
   return (
     <Center py="md">
       <Stack align="center" gap="xs">
@@ -311,9 +330,11 @@ function EmptyState({ label }: { label: string }) {
         <Text size="sm" c="dimmed">
           {label}
         </Text>
-        <Anchor component={Link} href="/apps" size="sm">
-          Browse the marketplace
-        </Anchor>
+        {canSeeStore && (
+          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+            Browse the marketplace
+          </Anchor>
+        )}
       </Stack>
     </Center>
   );
@@ -456,10 +477,21 @@ function HiddenBlocksPanel() {
   );
 }
 
-export default function InstalledAppsPage() {
+export default function AppActivityPage() {
   const features = useFeatureFlags();
+  const router = useRouter();
+  // 🔴 The Installs tab's gate is the `appBlocks` SLOT flag; the PAGE's is
+  // `appBlocks || appBlocksPages`. A tab's predicate is its content's own gate,
+  // restated — and this one is NON-VACUOUS only because the page gate widened.
+  const canSeeInstalls = !!features.appBlocks;
   const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: !!features.appBlocks,
+    enabled: canSeeInstalls,
+  });
+
+  // 🔴 URL-backed, controlled tabs. `resolveActivityTab` returns the default for an
+  // absent value, so an empty first-render `router.query` renders what SSR did.
+  const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], {
+    canSeeInstalls,
   });
 
   const groupedApps = useMemo(() => groupSubscriptionsByApp(subs ?? []), [subs]);
@@ -493,69 +525,48 @@ export default function InstalledAppsPage() {
     openAppSettingsModal({ block, existingByScope });
   }
 
-  if (!features.appBlocks) return <NotFound />;
+  // The client-side re-check reads the SAME predicate the SSR gate does, so the two
+  // cannot answer differently for one viewer.
+  if (!canAccessAppsActivity(features)) return <NotFound />;
 
   return (
     <>
-      <Meta title="Installed Apps — Civitai" deIndex />
+      <Meta title="App activity — Civitai" deIndex />
       <AppsPageLayout
-        title="Your installed apps"
-        subtitle="Manage where Civitai Apps show up across the site."
-        actions={
-          <Button
-            component={Link}
-            href="/apps"
-            leftSection={<IconPlus size={16} />}
-            variant="default"
-          >
-            Browse marketplace
-          </Button>
-        }
+        title="Your app activity"
+        subtitle="What Civitai Apps have done on your behalf, what they can access, and where they show up."
       >
-        <Tabs defaultValue="subscriptions" variant="outline">
+        {/* 🔴 CONTROLLED, NOT `defaultValue` — that is what puts the selection in the
+            URL. `replace` + `shallow`: no re-run of `getServerSideProps`, and no history
+            entry per click (which would turn Back into a tab-by-tab rewind). */}
+        <Tabs
+          value={activeTab}
+          onChange={(value) => {
+            if (!isActivityTab(value)) return;
+            void router.replace(
+              { pathname: router.pathname, query: activityTabQuery(value, router.query) },
+              undefined,
+              { shallow: true }
+            );
+          }}
+          variant="outline"
+        >
           <Tabs.List>
-            <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
-              Installs
-            </Tabs.Tab>
-            <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
-              Apps & permissions
-            </Tabs.Tab>
             <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
               Recent activity
+            </Tabs.Tab>
+            {canSeeInstalls && (
+              <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
+                Installs
+              </Tabs.Tab>
+            )}
+            <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
+              Apps & permissions
             </Tabs.Tab>
             <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
               Hidden
             </Tabs.Tab>
           </Tabs.List>
-
-          <Tabs.Panel value="subscriptions" pt="md">
-            {isLoading ? (
-              <Center py="xl">
-                <Loader />
-              </Center>
-            ) : groupedApps.length === 0 ? (
-              <EmptyState label="Nothing installed yet — browse the marketplace." />
-            ) : (
-              /* A GRID, NOT A `Stack` — the 640px dead-gap fix. Rationale + the measured
-                 ladder: `APPS_CARD_LIST_MIN_COLUMN` in `~/components/Apps/appsPageWidths`. */
-              <AppsCardGrid testId="apps-installed-apps-grid">
-                {groupedApps.map((app) => (
-                  <InstalledAppCard key={app.appBlockId} app={app} onManage={handleManage} />
-                ))}
-              </AppsCardGrid>
-            )}
-          </Tabs.Panel>
-
-          <Tabs.Panel value="permissions" pt="md">
-            <Stack gap="sm">
-              <Text size="sm" c="dimmed">
-                What each app you've installed can request, and where you have it. This is a
-                reflection of the current state — to revoke access, remove the install or
-                subscription on the Subscriptions tab.
-              </Text>
-              <ScopeGrantsPanel />
-            </Stack>
-          </Tabs.Panel>
 
           <Tabs.Panel value="activity" pt="md">
             <Stack gap="sm">
@@ -564,6 +575,39 @@ export default function InstalledAppsPage() {
                 API call (read profile, read model, etc.).
               </Text>
               <AppActivityPanel />
+            </Stack>
+          </Tabs.Panel>
+
+          {/* 🔴 THE PANEL IS GATED TOO. A `Tabs.Panel` with no tab is unreachable but
+              still MOUNTS its children on every render. */}
+          {canSeeInstalls && (
+            <Tabs.Panel value="subscriptions" pt="md">
+              {isLoading ? (
+                <Center py="xl">
+                  <Loader />
+                </Center>
+              ) : groupedApps.length === 0 ? (
+                <EmptyState label="Nothing installed yet — browse the marketplace." />
+              ) : (
+                /* A GRID, NOT A `Stack` — the 640px dead-gap fix. Rationale + the measured
+                   ladder: `APPS_CARD_LIST_MIN_COLUMN` in `~/components/Apps/appsPageWidths`. */
+                <AppsCardGrid testId="apps-installed-apps-grid">
+                  {groupedApps.map((app) => (
+                    <InstalledAppCard key={app.appBlockId} app={app} onManage={handleManage} />
+                  ))}
+                </AppsCardGrid>
+              )}
+            </Tabs.Panel>
+          )}
+
+          <Tabs.Panel value="permissions" pt="md">
+            <Stack gap="sm">
+              <Text size="sm" c="dimmed">
+                What each app you've installed can request, and where you have it. This is a
+                reflection of the current state — to revoke access, remove the install or
+                subscription on the Installs tab.
+              </Text>
+              <ScopeGrantsPanel />
             </Stack>
           </Tabs.Panel>
 

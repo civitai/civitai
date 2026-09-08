@@ -34,7 +34,7 @@ import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
  * A viewer admitted by the catalog flags alone lands on a page that renders
  * fine — the store, scoped server-side to whatever catalog they may see (the
  * external-only cohort gets `kind='offsite'` listings and nothing else). The
- * block-RUNTIME surfaces behind it (`/apps/installed`, `/apps/run/<slug>`, …)
+ * block-RUNTIME surfaces behind it (`/apps/activity`, `/apps/run/<slug>`, …)
  * keep their own `appBlocks` gates, so showing this entry widens discovery, not
  * capability.
  *
