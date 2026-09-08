@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ArticleService from '~/server/services/article.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 
@@ -14,20 +15,17 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  * article page, which is exactly why a server-side gap here stayed invisible.
  */
 
-const { mockGetArticleScanStatus, mockFindUnique } = vi.hoisted(() => ({
+const { mockGetArticleScanStatus } = vi.hoisted(() => ({
   mockGetArticleScanStatus: vi.fn(),
-  mockFindUnique: vi.fn(),
 }));
+
+// `isOwnerOrModerator` resolves the article's owner itself; this is the row it reads. It uses
+// `dbRead` only, so the previous fixture's `dbWrite` alias was never exercised.
+const mockFindUnique = dbMock.dbRead.article.findUnique;
 
 vi.mock('~/server/services/article.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ArticleService>()),
   getArticleScanStatus: mockGetArticleScanStatus,
-}));
-
-// `isOwnerOrModerator` resolves the article's owner itself; this is the row it reads.
-vi.mock('~/server/db/client', () => ({
-  dbRead: { article: { findUnique: mockFindUnique } },
-  dbWrite: { article: { findUnique: mockFindUnique } },
 }));
 
 // The procedure sits behind `isFlagProtected('articleImageScanning')`. Left off, every
