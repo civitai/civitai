@@ -327,6 +327,7 @@ function AppPage(props: PageProps) {
     missingScopes,
     domain,
     maxBrowsingLevel,
+    effectiveBrowsingLevel,
     error,
     // `terminal` = the mint failed, nothing usable is left, AND the hook's
     // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
@@ -458,6 +459,7 @@ function AppPage(props: PageProps) {
           needsConsent={needsConsent}
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
+          effectiveBrowsingLevel={effectiveBrowsingLevel}
           tokenError={error != null}
           tokenTerminal={terminal}
           viewer={viewer}

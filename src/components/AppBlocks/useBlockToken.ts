@@ -22,6 +22,12 @@ interface UseBlockTokenResult {
   /** Advisory: the bitwise browsing-level ceiling for the domain (SFW on
    *  green/blue, all on red). undefined on legacy responses → fail closed. */
   maxBrowsingLevel: number | undefined;
+  /** Advisory: {@link maxBrowsingLevel} intersected with the VIEWER's own
+   *  browsing level — what THIS person may be shown here, as opposed to what
+   *  the domain permits anyone. Always a subset of `maxBrowsingLevel`.
+   *  undefined on legacy responses → consumers fall back to the domain
+   *  ceiling, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel: number | undefined;
   /**
    * A bounded automatic re-mint is scheduled after a refresh failure — i.e. the
    * hook has NOT settled. Consumers must not take a destructive action (collapse
@@ -50,6 +56,7 @@ interface TokenResponse {
   /** Advisory maturity signal. Omitted by pre-feature responses → fail closed. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  effectiveBrowsingLevel?: number;
 }
 
 const REFRESH_LEAD_MS = 2 * 60 * 1000; // refresh 2 minutes before expiry
@@ -84,6 +91,9 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
   const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
   const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
+  const [effectiveBrowsingLevel, setEffectiveBrowsingLevel] = useState<number | undefined>(
+    undefined
+  );
   // A bounded automatic re-mint is scheduled. State (not a ref) because it is
   // part of the returned contract — it drives whether a consumer may take a
   // destructive action — so it has to re-render.
@@ -230,6 +240,16 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       setMaxBrowsingLevel(
         typeof data.maxBrowsingLevel === 'number' && Number.isFinite(data.maxBrowsingLevel)
           ? data.maxBrowsingLevel
+          : undefined
+      );
+      // Carried RAW here (shape-check only, no clamp): the intersection against
+      // the projected ceiling is `projectBlockInitMaturity`'s job, and doing it
+      // in exactly one place is what lets that function's tests be the whole
+      // statement of the never-widen rule.
+      setEffectiveBrowsingLevel(
+        typeof data.effectiveBrowsingLevel === 'number' &&
+          Number.isFinite(data.effectiveBrowsingLevel)
+          ? data.effectiveBrowsingLevel
           : undefined
       );
       setPending(false);
@@ -430,6 +450,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
     missingScopes,
     domain,
     maxBrowsingLevel,
+    effectiveBrowsingLevel,
     retrying,
     // The mint failed, nothing usable is left, and no automatic attempt is
     // coming. This — NOT a bare `error` — is what a consumer may act

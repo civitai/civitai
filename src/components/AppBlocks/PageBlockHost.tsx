@@ -538,6 +538,10 @@ export interface PageBlockHostProps {
    *  values from the token mint — forwarded, never derived client-side. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  /** The domain ceiling intersected with the VIEWER's own browsing level (see
+   *  `projectBlockInitMaturity`). Absent → the block falls back to
+   *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel?: number;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -695,6 +699,7 @@ export function PageBlockHost({
   tokenTerminal = false,
   domain,
   maxBrowsingLevel,
+  effectiveBrowsingLevel,
   viewer,
   theme,
   onConsentGranted,
@@ -1153,7 +1158,7 @@ export function PageBlockHost({
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
-      ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
+      ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
     }),
     [
       appId,
@@ -1167,6 +1172,7 @@ export function PageBlockHost({
       theme,
       domain,
       maxBrowsingLevel,
+      effectiveBrowsingLevel,
     ]
   );
   buildInitPayloadRef.current = buildInitPayload;

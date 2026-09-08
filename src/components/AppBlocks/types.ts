@@ -405,9 +405,20 @@ export interface BlockInitPayload {
    * - `maxBrowsingLevel`: the bitwise browsing-level ceiling for this domain
    *   (green/blue → SFW, red → all). Consumed by the SDK `useDomainMaturity()`
    *   hook (separate follow-up PR in the SDK repo).
+   * - `effectiveBrowsingLevel`: that domain ceiling intersected with the
+   *   VIEWER's own browsing level. `maxBrowsingLevel` is identical for every
+   *   viewer on a domain, so it cannot answer "may I show THIS person mature
+   *   content"; this field can. ALWAYS a subset of `maxBrowsingLevel` — a block
+   *   can never widen its own ceiling by reading it. Absent when the mint did
+   *   not supply one, in which case consumers fall back to `maxBrowsingLevel`
+   *   (the pre-field behaviour). The viewer's RAW level is deliberately never
+   *   sent: on `blue` it is WIDER than the domain permits, and it is the
+   *   high-resolution form of the `viewerNsfwEnabled` over-share that
+   *   `projectBlockInit.ts` exists to drop.
    */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  effectiveBrowsingLevel?: number;
 }
 
 export interface BlockManifest {
