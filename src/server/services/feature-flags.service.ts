@@ -548,16 +548,26 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
-  // App Blocks — "App builders" get-started landing page (`/apps/get-started`).
-  // Scope A soft launch: a single marketing/funnel page that explains the
-  // platform to would-be app developers. INDEPENDENT of the mod-only `appBlocks`
-  // gate — this flag controls ONLY the get-started page + its nav entry, NOT
-  // any other `/apps/*` surface (those stay gated on `appBlocks`). Staged
-  // mod-only today (like `appBlocks` / `appBlocksPages`) so it deploys dark-to-
-  // public and mods can review the page live on prod; widened to `['public']`
-  // (a one-line flag change) when launch copy + the real Request-access link
-  // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
-  // to drop the page + nav entry without a deploy).
+  // App Blocks — "App builders" get-started pitch, now state A of the
+  // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
+  // launch: a single marketing/funnel page that explains the platform to
+  // would-be app developers. Staged mod-only today (like `appBlocks` /
+  // `appBlocksPages`) so it deploys dark-to-public and mods can review the page
+  // live on prod. The Flipt key stays the kill-switch lever (flip it off to drop
+  // the pitch + its nav entry without a deploy).
+  //
+  // 🔴 WIDENING THIS IS NO LONGER A ONE-LINE CHANGE, and the old comment saying
+  // it was is what this replaces. Since the `/apps/build` consolidation the pitch
+  // lives behind `canAccessAppsBuild` = `hasAppsStoreAccess(features) &&
+  // (isAppDeveloper(user, …) || appBlocksGetStarted)`, so this flag is now one
+  // disjunct UNDER a store AND, not an independent gate: widening it alone gives
+  // the new cohort a `notFound` from `/apps/build` (and from `/apps/get-started`,
+  // which 301s there), no user-menu "Apps" entry, and no sub-nav — the pitch
+  // becomes unreachable by every route, silently, for exactly the audience it was
+  // widened for. Widening it therefore ALSO requires widening a store flag
+  // (`app-listings` is the intended one; `appBlocks` and
+  // `appListingsPublicExternal` are the other two disjuncts of
+  // `hasAppsStoreAccess`).
   appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
   // App Blocks — AUTHOR capability (developer soft-launch, Phase B). Grants the
   // right to SUBMIT apps + use `dev:live` (the author surfaces + the runtime

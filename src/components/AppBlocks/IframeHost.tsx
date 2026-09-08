@@ -6,6 +6,7 @@ import {
   IconApps,
   IconBuildingStore,
   IconChevronLeft,
+  IconCode,
   IconDots,
   IconEyeOff,
   IconGavel,
@@ -569,16 +570,33 @@ export function AppBlockChrome({
           subnav changes and this menu does not.
 
           🔴 THIS SECTION IS A DELIBERATE SUBSET, NOT A MIRROR. The subnav also
-          carries `/apps/get-started` ("Build apps"), `/apps/submit`,
-          `/apps/invites` and `/apps/revenue`, and none of them belong in a menu
-          that opens over a RUNNING app. `/apps/get-started` additionally sits
-          behind the `appBlocksGetStarted` kill switch, which this section has no
-          way to read — every item here is unconditional except Review. (The SUBNAV
-          does read it: its row is `visible: (_s, c) => c.canGetStarted`. That is the
-          difference, and it is the whole argument — a surface that cannot honour a
-          kill switch must not advertise the route it switches off.) That excluded
-          SET is itself asserted by the same guard, so adding a subnav row fails
-          there until someone decides which side it lands on.
+          carries `/apps/invites` and `/apps/revenue`, and neither belongs in a menu
+          that opens over a RUNNING app — this is navigation for someone CONSUMING
+          an app, not managing one. That excluded SET is itself asserted by the same
+          guard, so adding a subnav row fails there until someone decides which side
+          it lands on.
+
+          🔴 `/apps/mine` BECAME `/apps/build`, AND THE CHOICE WAS BETWEEN REPOINTING
+          AND DELETING. The store consolidated "Build apps" / "Create" / "My apps"
+          into ONE state-aware `/apps/build`; `/apps/mine` 301s there. Leaving the
+          old href would have made every press from this menu a redirect hop, and
+          removing the item outright would delete a door out of a running app for
+          the app's own owner — which the ledger guard's own message warns against.
+          So it is repointed, keeping the label ("My apps" still names what an owner
+          arrives at: state C is their app list) and taking the subnav's glyph for
+          the row it now shares, `IconCode`.
+
+          🔴 WHAT THAT DOES *NOT* DO IS DEFEAT A KILL SWITCH — and the previous
+          version of this note is why the question has to be asked. `/apps/build`
+          IS flag-gated (`canAccessAppsBuild`), and this section still reads no
+          flags. But `/apps/mine` was flag-gated too (`appBlocksAuthor` +
+          `isAppDeveloper`, a hard `notFound`), so an ungated link here to a gated
+          destination is the STATUS QUO, not something introduced by the repoint.
+          The behaviour change is strictly in the harmless direction: where a
+          non-author pressing this item used to get a 404, one holding
+          `appBlocksGetStarted` now gets the public pitch — a page with no private
+          data on it. Nobody reaches a surface they could not reach before, because
+          the PAGE, not this link, is what decides.
 
           The LABELS are deliberately NOT all identical: the subnav's tabs sit under
           an "Apps" heading and can afford one-word labels ("Installed", "Review"),
@@ -595,7 +613,7 @@ export function AppBlockChrome({
       >
         Installed apps
       </ChromeSurfaceItem>
-      <ChromeSurfaceItem href="/apps/mine" leftSection={<IconApps size={14} stroke={1.5} />}>
+      <ChromeSurfaceItem href="/apps/build" leftSection={<IconCode size={14} stroke={1.5} />}>
         My apps
       </ChromeSurfaceItem>
       {isModerator && (

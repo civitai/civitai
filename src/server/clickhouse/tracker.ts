@@ -189,6 +189,18 @@ export const ActionType = [
   // browser, so a client arm would let anyone inflate any app's play count by POSTing.
   // A number printed on a public store card has to be one a script cannot manufacture.
   'App_Open',
+  // The consolidated `/apps/build` developer funnel — ONE action type carrying its
+  // step in `details.action`, rather than four sibling enum values.
+  //
+  // 🔴 ONE TYPE, NOT FOUR, AND THE REASON IS THE ENUM RATHER THAN TIDINESS. Every value
+  // here costs a hand-applied `Enum16` widening on a live ClickHouse table (see
+  // migrations/2026-09-06-apps-build-action.sql), and a value the column does not carry
+  // is dropped SILENTLY at the tracker service — so the cheapest way to be wrong four
+  // times is to need four migrations. `details.action` is a `String` column at storage,
+  // so adding a fifth funnel step later is a zod change alone with no DDL at all.
+  // `Feed_TagBar_Click` is the existing precedent for a type whose `details` carries the
+  // discriminator (`action: 'select' | 'clear'`).
+  'AppsBuild_Action',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

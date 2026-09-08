@@ -91,10 +91,14 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();
     expect(installed.getAttribute('href')).toBe('/apps/installed');
 
-    // Was "My submissions" → `/apps/my-submissions`; that page merged into `/apps/mine`
+    // Was "My submissions" → `/apps/my-submissions`, then `/apps/mine`; that table is now
+    // state C of the consolidated `/apps/build`, and this item was REPOINTED rather than
+    // removed (removing it would delete a door out of a running app for the app's own
+    // owner; leaving the old href would make every press a 301 hop). The LABEL is
+    // deliberately still "My apps" — it names what an owner arrives at.
     // and 301s there, so the in-app link points at the surviving route directly.
     const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
-    expect(mine.getAttribute('href')).toBe('/apps/mine');
+    expect(mine.getAttribute('href')).toBe('/apps/build');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {

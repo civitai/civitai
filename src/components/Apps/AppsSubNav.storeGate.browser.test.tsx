@@ -21,6 +21,13 @@ import type * as TrpcMod from '~/utils/trpc';
  * so the two predicates agree. `app-listings` exists precisely so the catalog can
  * widen independently of the held block runtime, which is when they stop agreeing.
  *
+ * 🔴 WHAT THE `/apps/build` CONSOLIDATION CHANGED IN THIS FILE. The container gate LOST
+ * its `|| features.appBlocksGetStarted` term, so store access is now the whole gate; and
+ * `Marketplace` stopped being an unconditional row. The observable consequence is a
+ * DELIBERATE BEHAVIOUR CHANGE for one cohort — get-started WITHOUT any store flag now
+ * gets no bar at all, where it used to get a two-tab one — and it has its own describe
+ * block below, with the reasoning.
+ *
  * ── WHY THIS FILE MOCKS `useQuery` DIFFERENTLY FROM THE HYDRATION SUITE ────────
  * The sibling `AppsSubNav.hydration.browser.test.tsx` returns `mocks.navSummary`
  * unconditionally, which is right for what it tests (the `useIsClient` deferral).
@@ -36,6 +43,8 @@ const ALL_TRUE_SUMMARY = {
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
+  hasEditableApps: true,
+  hasPendingInvites: true,
 };
 
 const mocks = vi.hoisted(() => ({
@@ -127,10 +136,10 @@ beforeEach(() => {
   mocks.isClient = true; // post-mount, so the full tab set is observable
   mocks.navSummary = { ...ALL_TRUE_SUMMARY };
   mocks.flags = {};
-  // An AUTHOR by capability (not a mod), so `Create` qualifies and the bar can
-  // clear the 2-tab floor on store-visibility alone — without it, an
-  // `appListings`-only viewer qualifies for Marketplace ONLY and the <2 collapse
-  // would hide the bar for a reason that has nothing to do with the gate under test.
+  // An AUTHOR by capability (not a mod), so `canAccessAppsBuild` resolves true and the
+  // bar can clear the 2-tab floor on Build + Marketplace alone — without it, an
+  // `appListings`-only viewer qualifies for Marketplace ONLY and the <2 collapse would
+  // hide the bar for a reason that has nothing to do with the gate under test.
   mocks.user = { id: 7, username: 'author', isModerator: false };
   mocks.navSummaryEnabled = [];
 });
@@ -147,7 +156,7 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    await expect.element(tab('Build')).toBeInTheDocument();
   });
 
   test('appBlocks ONLY (appListings OFF) → still renders (the OR-fallback cohort)', async () => {
@@ -158,7 +167,7 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    await expect.element(tab('Build')).toBeInTheDocument();
   });
 
   test('BOTH flags true → renders (today’s live cohort — unchanged behaviour)', async () => {
@@ -171,15 +180,15 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
     // With `appBlocks` on, the summary query is enabled, so the conditional tabs
     // resolve too — the full bar today's testers actually see.
     await expect.element(tab('Review')).toBeInTheDocument();
-    // No `appBlocksGetStarted` in this flag set, so "Build apps" is gated out —
-    // this IS today's live moderator/tester cohort.
     expect(renderedTabs()).toEqual([
+      // "Build apps"/"Create"/"My apps" collapsed into this ONE row (`/apps/build`); the
+      // first two retired routes 301 there and `/apps/submit` kept its route without a
+      // tab. `hasSubmissions`/`hasEditableApps` are true in this summary and light
+      // nothing, which is the property that keeps the row hydration-safe.
+      'Build',
       'Marketplace',
-      'Create',
       'Installed',
-      // "My submissions" was here until its page merged into `/apps/mine`; `hasSubmissions`
-      // now lights "My apps", which sits after Installed in the link table.
-      'My apps',
+      'Invites',
       'Revenue',
       'Review',
     ]);
@@ -209,21 +218,74 @@ describe('AppsSubNav — store-visibility gate matches resolveAppsPageAccess', (
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
+    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(1);
   });
 });
 
 /**
- * 🔴 THE <2-TAB COLLAPSE, DRIVEN THROUGH THE CONTAINER — UNCHANGED FROM `main` FOR
- * EVERY COHORT THAT DOES NOT HOLD `appBlocksGetStarted`.
+ * 🔴 MARKETPLACE IS GATED ON STORE ACCESS NOW — THE 404 EXPOSURE THIS CHANGE CLOSED,
+ * DRIVEN THROUGH THE CONTAINER.
  *
- * An `appListings`-only non-author (and a logged-out viewer) qualifies for Marketplace
- * ALONE and the collapse drops the whole bar. "Build apps" is gated on
- * `context.canGetStarted`, so it does NOT lift these cohorts over the floor — which is
- * the point: they cannot load `/apps/get-started`, so a tab into it would be a tab into
- * a 404. Pinned here so a later widening of that predicate is visible in a diff rather
- * than discovered on staging.
+ * The row was `visible: () => true` while `/apps` gates on `resolveAppsPageAccess`, a
+ * documented and deliberately-unfixed mismatch: closing it used to drop the
+ * get-started-only cohort to one tab, where the collapse deletes the bar. At the
+ * container level the fix is now belt-and-braces, and BOTH belts are asserted here
+ * because they fail differently:
+ *   1. the container returns `null` for a viewer with no store access, so there is no bar;
+ *   2. the row itself keys on `c.canSeeStore`, so even if the container gate were
+ *      widened again the tab would not come back.
+ * Test 2 is what a reviewer would otherwise call redundant — it is the one that still
+ * fails if someone "restores" the `|| features.appBlocksGetStarted` term to the gate.
+ */
+describe('AppsSubNav — no store access ⇒ no Marketplace tab, by two independent gates', () => {
+  test('🔴 no store flags at all → no bar (the container gate)', async () => {
+    mocks.flags = { appBlocks: false, appListings: false, appBlocksAuthor: true };
+    mocks.user = { id: 7, username: 'author', isModerator: false };
+    await renderSubNav(); // barrier awaited inside — absence below is a real observation
+
+    expect(renderedTabs()).toEqual([]);
+    expect(tab('Marketplace').elements()).toHaveLength(0);
+  });
+
+  test('🔴 DISCRIMINATING CONTROL: one store flag flips the SAME viewer to a bar with Marketplace', async () => {
+    // Only `appListings` moves. Without this arm the absence above would be satisfied by
+    // a component that renders nothing for anyone.
+    mocks.flags = { appBlocks: false, appListings: true, appBlocksAuthor: true };
+    mocks.user = { id: 7, username: 'author', isModerator: false };
+    await renderSubNav();
+
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    expect(tab('Marketplace').element().getAttribute('href')).toBe('/apps');
+    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+  });
+
+  test('🔴 the external-only cohort is admitted too (appListingsPublicExternal)', async () => {
+    // The third disjunct of `hasAppsStoreAccess`. It is REACHABILITY only — the server's
+    // `StoreVisibilityScope` decides what they actually see — but if this gate refused
+    // them, `/apps` would be structurally unreachable for a catalog the server would
+    // happily serve. A MOD is used so `canBuild` supplies the second tab: `appBlocks` is
+    // off here, so the summary query is disabled and cannot supply one, and a bar of one
+    // tab would collapse and tell us nothing about the Marketplace row.
+    mocks.flags = { appBlocks: false, appListings: false, appListingsPublicExternal: true };
+    mocks.user = { id: 1, username: 'mod', isModerator: true }; // mod ⇒ canBuild
+    await renderSubNav();
+
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+  });
+});
+
+/**
+ * 🔴 THE <2-TAB COLLAPSE, DRIVEN THROUGH THE CONTAINER — UNCHANGED FROM `main` FOR
+ * EVERY COHORT THAT CANNOT BUILD.
+ *
+ * An `appListings`-only non-author (and a logged-out viewer with no capability)
+ * qualifies for Marketplace ALONE and the collapse drops the whole bar. "Build" is gated
+ * on `context.canBuild` = `canAccessAppsBuild`, so it does NOT lift these cohorts over
+ * the floor — which is the point: `/apps/build` `notFound`s them, so a tab into it would
+ * be a tab into a 404. Pinned here so a later widening of that predicate is visible in a
+ * diff rather than discovered on staging.
  */
 describe('AppsSubNav — the collapse still hides the bar for a one-tab viewer', () => {
   test('🔴 appListings-only NON-author, no get-started → no bar at all', async () => {
@@ -237,11 +299,11 @@ describe('AppsSubNav — the collapse still hides the bar for a one-tab viewer',
     // proves the absence above came from the predicates and not from a stuck render.
     mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
     await renderSubNav();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    await expect.element(tab('Build')).toBeInTheDocument();
   });
 
   test('🔴 …and the get-started capability is what lifts that same viewer over the floor', async () => {
-    // Identical to the first arm above except for ONE flag. Making "Build apps"
+    // Identical to the first arm above except for ONE flag. Making "Build"
     // unconditional makes the first arm fail; removing the tab makes this one fail.
     mocks.flags = {
       appListings: true,
@@ -252,92 +314,112 @@ describe('AppsSubNav — the collapse still hides the bar for a one-tab viewer',
     mocks.user = { id: 8, username: 'tester', isModerator: false };
     await renderSubNav();
 
-    await expect.element(tab('Build apps')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
+    await expect.element(tab('Build')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
   });
 
-  test('a logged-out viewer with the store flag lit gets no bar (Marketplace alone)', async () => {
-    mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: true };
+  test('a logged-out viewer with the store flag and no build capability gets no bar', async () => {
+    mocks.flags = { appListings: true, appBlocks: false, appBlocksAuthor: false };
     mocks.user = null;
     await renderSubNav();
 
-    // A logged-out viewer resolves to `NO_CAPABILITIES.isAuthor`, so Create is gone and
-    // Marketplace is all that qualifies — the collapse then removes the bar.
+    // No capability term holds, so `canBuild` is false and Marketplace is all that
+    // qualifies — the collapse then removes the bar. (The summary query is disabled for
+    // an anon viewer anyway; that half is pinned in the last describe.)
     expect(renderedTabs()).toEqual([]);
-    expect(tab('Create').elements()).toHaveLength(0);
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
   });
 });
 
 /**
- * 🔴 THE GET-STARTED HALF OF THE BAR GATE — `hasAppsStoreAccess(features) ||
- * features.appBlocksGetStarted`.
+ * 🔴 THE CONTAINER GATE IS `hasAppsStoreAccess` ALONE — THE `|| appBlocksGetStarted` TERM
+ * IS GONE, AND ONE COHORT'S BEHAVIOUR DELIBERATELY CHANGED.
  *
- * WHY THE SECOND TERM EXISTS: the bar now carries a "Build apps" tab pointing at
- * `/apps/get-started`, and that page's own gate (`resolveGetStartedAccess`) is
- * `appBlocksGetStarted` ALONE — it does not consult any store flag. On a store-only
- * gate the container returns `null` for exactly the cohort the tab was added for, so
- * the tab would be invisible to them on the one page they can load. Reverting the gate
- * to `if (!hasAppsStoreAccess(features)) return null` fails the first test below.
+ * WHAT IT USED TO DO: the bar carried a "Build apps" tab pointing at `/apps/get-started`,
+ * whose own gate (`resolveGetStartedAccess`) was `appBlocksGetStarted` ALONE and consulted
+ * no store flag. A store-less holder of that flag could genuinely load that page, so the
+ * gate carried a second term to let them see the tab.
  *
- * 🔴 THE GATE AND THE TAB READ THE SAME FLAG, and both halves are pinned below. The
- * gate is an OR, so it admits viewers who hold the STORE flags without
- * `appBlocksGetStarted`; the "Build apps" tab is `visible: (_s, c) => c.canGetStarted`,
- * so those viewers are admitted to the bar and NOT offered the tab. An unconditional
- * tab would hand that cohort — `app-dev-testers` today, every moderator after the kill
- * switch is thrown — a tab whose page answers `notFound`.
+ * WHY IT IS GONE, AND WHY THAT IS A NO-OP RATHER THAN A REGRESSION: `/apps/get-started` no
+ * longer exists (it 301s to `/apps/build`), and `/apps/build`'s gate —
+ * `canAccessAppsBuild` — has `hasAppsStoreAccess` as a HARD AND. So this cohort has no
+ * `/apps/*` destination at all now:
+ *   • Build       — `canBuild` is false without store access;
+ *   • Marketplace — `canSeeStore` is false, and `/apps` would 404 them anyway (that tab
+ *                   was the KNOWN exposure this change closed);
+ *   • Installed / Invites / Revenue / Review — driven by `getNavSummary`, whose `enabled`
+ *                   requires `appBlocks`, itself one of the store disjuncts.
+ * Every row is unreachable for them, so the `< 2` collapse would return `null` a moment
+ * later regardless — the gate just gets there first. The old bar was two tabs into two
+ * pages they could not load.
  *
- * The `enabled:` predicate on `getNavSummary` is deliberately NOT widened with it (see
- * the block at the end of this file) — for a get-started-only viewer it stays false,
- * which is both correct and free.
+ * ⚠️ THE JUSTIFICATION FOR KEEPING THE TERM WAS DRAFTED AND WAS WRONG — recorded because
+ * it is the plausible-sounding reason someone will re-add it: "Invites keys on
+ * `c.isAuthor`, so an author with no store flags would lose their invite tab." That
+ * author does not HAVE an invite tab — `hasPendingInvites` comes from a query gated on
+ * `appBlocks`, so it is false for them either way.
  */
-describe('AppsSubNav — the bar gate admits the get-started cohort', () => {
-  test('🔴 appBlocksGetStarted ONLY (no store flag) → the bar AND the Build apps tab render', async () => {
+describe('AppsSubNav — the container gate is store access ALONE (the get-started term is gone)', () => {
+  test('🔴 BEHAVIOUR CHANGE: appBlocksGetStarted ONLY (no store flag) → NO BAR AT ALL', async () => {
+    // Before the consolidation this exact viewer got a two-tab bar
+    // (["Build apps", "Marketplace"]). Restoring `|| features.appBlocksGetStarted` to the
+    // container gate fails HERE.
     mocks.flags = { appBlocksGetStarted: true, appListings: false, appBlocks: false };
+    mocks.user = { id: 9, username: 'builder', isModerator: false };
+    await renderSubNav(); // barrier awaited inside — absence below is a real observation
+
+    expect(renderedTabs()).toEqual([]);
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+    expect(tab('Build').elements()).toHaveLength(0);
+    expect(tab('Marketplace').elements()).toHaveLength(0);
+  });
+
+  test('🔴 DISCRIMINATING CONTROL: add a store flag to that same viewer and the bar appears', async () => {
+    // ONE flag moves. This is what makes the absence above attributable to the store gate
+    // rather than to the get-started flag being ignored altogether — and it is also the
+    // proof that `canBuild`'s get-started disjunct still works, since this viewer is a
+    // non-author whose ONLY route to `/apps/build` is that term.
+    mocks.flags = { appBlocksGetStarted: true, appListings: true, appBlocks: false };
     mocks.user = { id: 9, username: 'builder', isModerator: false };
     await renderSubNav();
 
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    await expect.element(tab('Build apps')).toBeInTheDocument();
-    expect(tab('Build apps').element().getAttribute('href')).toBe('/apps/get-started');
-    // Non-author, no store flag, summary query disabled ⇒ exactly the two always-on tabs.
-    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
+    await expect.element(tab('Build')).toBeInTheDocument();
+    expect(tab('Build').element().getAttribute('href')).toBe('/apps/build');
+    // Non-author, `appBlocks` off ⇒ summary query disabled ⇒ exactly the two frozen tabs.
+    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
   });
 
-  test('🔴 store access but NO appBlocksGetStarted → a bar with NO Build apps tab', async () => {
-    // The pre-existing cohort, and the one the tab predicate exists for: they hold
-    // `appBlocks`/`appListings` (so the OR gate admits them — removing the store term,
-    // or turning the OR into an AND, fails here rather than only in the case above) but
-    // `/apps/get-started` answers `notFound` for them, so the tab must be absent.
-    // An AUTHOR, so the bar clears the `< 2` floor on Marketplace + Create and this is
-    // an assertion about the TAB rather than about the bar.
+  test('🔴 store access but NO build capability → a bar with NO Build tab', async () => {
+    // The mirror of the control above, and the one the ROW predicate exists for: this
+    // viewer holds a store flag (so the gate admits them) but neither capability term, so
+    // `/apps/build` answers `notFound` for them and the tab must be absent. Given ONE
+    // install so the bar clears the `< 2` floor — this is an assertion about the TAB
+    // rather than about the bar.
     mocks.flags = {
-      appListings: true,
-      appBlocks: false,
-      appBlocksAuthor: true,
+      appListings: false,
+      appBlocks: true,
+      appBlocksAuthor: false,
       appBlocksGetStarted: false,
     };
     mocks.user = { id: 8, username: 'tester', isModerator: false };
+    mocks.navSummary = {
+      ...ALL_TRUE_SUMMARY,
+      hasSubmissions: false,
+      hasApprovedApps: false,
+      isReviewer: false,
+      hasEditableApps: false,
+      hasPendingInvites: false,
+    };
     await renderSubNav();
 
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
-    expect(tab('Build apps').elements()).toHaveLength(0);
-  });
-
-  test('BOTH the store flags and appBlocksGetStarted → Build apps AND Marketplace', async () => {
-    // The cohort a Flipt widening produces, and the positive control for the pair
-    // above: the same reader that saw no "Build apps" there does see one here.
-    mocks.flags = { appListings: true, appBlocks: false, appBlocksGetStarted: true };
-    mocks.user = { id: 8, username: 'tester', isModerator: false };
-    await renderSubNav();
-
-    await expect.element(tab('Build apps')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build apps', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    expect(tab('Build').elements()).toHaveLength(0);
   });
 
   test('NEITHER store access NOR appBlocksGetStarted → no bar (the gate is still a gate)', async () => {
@@ -347,19 +429,6 @@ describe('AppsSubNav — the bar gate admits the get-started cohort', () => {
 
     expect(renderedTabs()).toEqual([]);
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
-  });
-
-  test('the get-started term does NOT enable the summary query', async () => {
-    // `getNavSummary` is `protectedProcedure.use(enforceAppBlocksFlag)`; widening the
-    // bar gate must not widen the query gate, or every get-started-only viewer buys a
-    // round-trip to a guaranteed all-false answer.
-    mocks.flags = { appBlocksGetStarted: true, appListings: false, appBlocks: false };
-    mocks.user = { id: 9, username: 'builder', isModerator: false };
-    await renderSubNav();
-
-    await expect.element(tab('Build apps')).toBeInTheDocument();
-    expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // the hook did run
-    expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
   });
 });
 
@@ -385,7 +454,7 @@ describe('AppsSubNav — the getNavSummary query gate stays on appBlocks', () =>
     await expect.element(tab('Marketplace')).toBeInTheDocument();
     expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // the hook did run
     expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
-    for (const name of ['Installed', 'My apps', 'Revenue', 'Review']) {
+    for (const name of ['Installed', 'Invites', 'Revenue', 'Review']) {
       expect(tab(name).elements()).toHaveLength(0);
     }
   });
@@ -403,6 +472,23 @@ describe('AppsSubNav — the getNavSummary query gate stays on appBlocks', () =>
     mocks.user = null;
     await renderSubNav();
 
+    expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
+  });
+
+  test('🔴 the get-started cohort does NOT enable the query — the hook still runs before the gate', async () => {
+    // Two claims, and the second is the non-obvious one. (a) Widening the BAR gate must
+    // never widen the QUERY gate; the term is gone now, but the hook is still called for
+    // this viewer because `useQuery` runs ABOVE the `return null` — React would break the
+    // rules of hooks otherwise — so `enabled` is the only thing keeping the round-trip
+    // from happening. (b) That is why `navSummaryEnabled` is non-empty here at all
+    // despite the container rendering nothing; asserting the count first is what stops
+    // `every(... === false)` from passing vacuously over an empty array.
+    mocks.flags = { appBlocksGetStarted: true, appListings: false, appBlocks: false };
+    mocks.user = { id: 9, username: 'builder', isModerator: false };
+    await renderSubNav();
+
+    expect(renderedTabs()).toEqual([]); // the store gate returned null
+    expect(mocks.navSummaryEnabled.length).toBeGreaterThan(0); // …but the hook did run
     expect(mocks.navSummaryEnabled.every((e) => e === false)).toBe(true);
   });
 });

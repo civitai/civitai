@@ -24,9 +24,14 @@ import {
  * `appListing` branch. This is that branch, as its own notification type.
  *
  * What is asserted here, and why each shape:
- *   - the WHOLE resolved URL, never a substring. The destination is the owner's `/apps/mine`
- *     submissions view, NOT the public listing page: that page gates on `hasAppsStoreAccess`
- *     and, measured against prod, 404s for one of the four current listing owners.
+ *   - the WHOLE resolved URL, never a substring. The destination is the owner's submissions
+ *     view at `OWNER_SUBMISSIONS_URL` (`/apps/build`), NOT the public listing page.
+ *     ⚠️ THE REASON THAT USED TO BE GIVEN HERE IS VOID AND IS NOT REPLACED: it named
+ *     `/apps/mine` and argued the public page's `hasAppsStoreAccess` gate excluded owners
+ *     the chosen destination admitted. `/apps/mine` is now a 301 and `/apps/build` gates on
+ *     `canAccessAppsBuild`, which REQUIRES `hasAppsStoreAccess` — so the measurement no
+ *     longer separates the two destinations. See `comment.notifications.ts`'s
+ *     `new-app-listing-comment` note for what still picks it.
  *   - the WHOLE normalised SQL statement via `toMatchInlineSnapshot`, because a fragment
  *     assertion is satisfied by semantically inverted SQL — an appended `AND 1 = 0`, an
  *     `OR TRUE` bolted onto the self-notify guard, or swapped `notBlockedBetween` arguments all
@@ -89,7 +94,7 @@ const message = (over: Record<string, unknown> = {}) =>
 
 describe('new-app-listing-comment — the owner finally gets notified', () => {
   it('links to the owner submissions view (WHOLE url)', () => {
-    expect(message()?.url).toBe('/apps/mine');
+    expect(message()?.url).toBe('/apps/build');
   });
 
   it('names the listing in the copy the owner reads', () => {
@@ -97,25 +102,37 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
   });
 
   it('🔴 does NOT deep-link to the public listing page, which 404s for most owners', () => {
-    // The regression this guards is a measured one, not a hypothetical. `/apps/store-preview/<slug>`
-    // gates on `hasAppsStoreAccess` (moderators OR app-dev-testers); of the 4 current listing
-    // owners in prod, one is in NEITHER cohort, so the deep link 404s for the person being
-    // notified. Asserted as a NEGATIVE because the failure mode is "someone helpfully makes the
-    // link more specific" — which reads as an improvement in review.
+    // The regression this guards is a measured one, not a hypothetical.
+    // `/apps/store-preview/<slug>` gates on `hasAppsStoreAccess` (moderators OR
+    // app-dev-testers); measured on prod 2026-08-20, of the 4 listing owners then, one was
+    // in NEITHER cohort, so the deep link 404s for the person being notified.
+    //
+    // ⚠️ THAT MEASUREMENT NO LONGER SEPARATES THE TWO DESTINATIONS. `/apps/build` gates on
+    // `canAccessAppsBuild` = `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) ||
+    // appBlocksGetStarted)`, so it rules the chosen destination out for that owner too — its
+    // admitted cohort is a strict SUBSET, not a superset. THE COHORT ARGUMENT IS VOID AND IS
+    // NOT REPLACED BY ANOTHER ONE; `comment.notifications.ts` records what still picks this
+    // destination (content, not reachability).
+    //
+    // Asserted as a NEGATIVE because the failure mode is "someone helpfully makes the link
+    // more specific" — which reads as an improvement in review.
     expect(message()?.url).not.toContain('/apps/store-preview');
-    expect(message({ appListingSlug: 'anything' })?.url).toBe('/apps/mine');
+    expect(message({ appListingSlug: 'anything' })?.url).toBe('/apps/build');
   });
 
   it('shares the destination constant with the other owner-facing listing notifications', () => {
-    // A RELATIONSHIP: a route rename must move all five together, so this compares against a
-    // sibling processor's RENDERED url rather than against the string '/apps/mine'.
+    // A RELATIONSHIP: a route rename must move every importer of `OWNER_SUBMISSIONS_URL`
+    // together, so this compares against a sibling processor's RENDERED url rather than
+    // against the string '/apps/build'. Deliberately count-free — the constant's own note in
+    // `app-listing.notifications.ts` records that a stated total here said "all five" until a
+    // sixth processor landed; enumerate them from the constant instead.
     //
     // 🔴 ON ITS OWN THIS ASSERTION IS TAUTOLOGICAL, and saying so is the point. Both sides read
     // the same `OWNER_SUBMISSIONS_URL`, so changing that constant to '/apps/other' drifts them
     // together and this test still passes (verified). What it proves is only "these two agree" —
     // never "they agree on the RIGHT value".
     //
-    // The three literal `toBe('/apps/mine')` assertions above are what pin the value; this pins
+    // The three literal `toBe('/apps/build')` assertions above are what pin the value; this pins
     // that the sharing is real and not a coincidence of two matching literals. The PAIR is the
     // guard. Do not "simplify" either half away: drop the literals and a wrong route passes; drop
     // this and a duplicated literal drifts silently.
@@ -127,14 +144,14 @@ describe('new-app-listing-comment — the owner finally gets notified', () => {
     });
     expect(message()?.url).toBe(sibling?.url);
     // Anchors the shared value, so this test cannot pass while both sides drift.
-    expect(sibling?.url).toBe('/apps/mine');
+    expect(sibling?.url).toBe('/apps/build');
   });
 
   it('the url is independent of the slug entirely (no slug-shaped failure modes left)', () => {
     // With a static destination there is no `/apps/store-preview/undefined` to render, so the
     // whole class of missing-slug broken links is gone rather than merely guarded.
     for (const appListingSlug of [undefined, null, '', 'a b/c']) {
-      expect(message({ appListingSlug })?.url).toBe('/apps/mine');
+      expect(message({ appListingSlug })?.url).toBe('/apps/build');
     }
   });
 });
