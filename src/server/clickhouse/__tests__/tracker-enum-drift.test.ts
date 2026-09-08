@@ -469,9 +469,14 @@ describe('tracker enum drift (reactions + reports)', () => {
         `scores every reaction -1; moving the cutoff lets a user farm their own score. ` +
         `Neither touches the IN list, so the set-equality check below stays green under both ` +
         `— which is why this assertion exists and why a substring check is not enough.\n` +
-        `The expected text is EXPECTED_MV_SELECT in this file, transcribed from a ` +
-        `SHOW CREATE TABLE read; the same pre-image is recorded in the migration's section 4 ` +
-        `header. If production has legitimately moved, re-read it, update BOTH, and say why.`
+        `The expected text is EXPECTED_MV_SELECT in this file. 🔴 It is the POST-image — the ` +
+        `live view WITH 'Post_Create' added. The migration's section 4 header records the ` +
+        `PRE-image, WITHOUT it, and that copy is the rollback text. They are deliberately ` +
+        `different strings; never sync one from the other. Once section 4 is applied a fresh ` +
+        `SHOW CREATE TABLE returns the POST-image, so pasting that read into the section 4 ` +
+        `header overwrites the rollback text with the state it exists to undo. If production ` +
+        `has legitimately moved: update EXPECTED_MV_SELECT from the read, derive the ` +
+        `pre-image by removing 'Post_Create' from it, and say why in the commit.`
     ).toBe(normalizeSql(EXPECTED_MV_SELECT));
   });
 
