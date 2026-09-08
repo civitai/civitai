@@ -26,6 +26,7 @@
     cardFromPrice,
     isCustom,
     labelNoun,
+    labelOptions,
     newRun,
     nextRunId,
     recommendedCardFor,
@@ -121,7 +122,7 @@
   }
 
   function pickBase(card: ModelCard) {
-    if (multi && card.label !== labelMode) return; // label-type lock
+    if (multi && !labelOptions(card).includes(labelMode)) return; // label-type lock
     runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
   }
 
@@ -292,7 +293,7 @@
       >
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
-          {@const disabled = multi && !selected && card.label !== labelMode}
+          {@const disabled = multi && !selected && !labelOptions(card).includes(labelMode)}
           {@const isRecommended = card.type === recommendedType}
           {@const cardPrice = price(card.type)}
           <button

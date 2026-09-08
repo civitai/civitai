@@ -26,7 +26,7 @@
     ToggleGroup,
     ToggleGroupItem,
   } from '@civitai/ui/components/ui/toggle-group/index.js';
-  import { loraTypeById } from '$lib/data/trainingModels';
+  import { loraTypeById, type LabelType } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
@@ -37,7 +37,7 @@
     estimatedTotal,
     isTrainable,
     isTriggerTag,
-    labelNoun,
+    labelOptions,
     runCard,
     tagsHaveTrigger,
     type Img,
@@ -52,6 +52,7 @@
     prices,
     images = $bindable([]),
     trigger = $bindable(''),
+    labelMode = $bindable('tag'),
     reuseItems = [],
     onContinue,
     onBack,
@@ -61,6 +62,9 @@
     prices: Record<string, number>;
     images: Img[];
     trigger: string;
+    /** The chosen dataset label format — owned by the flow. Fixed to the model's format for single-format
+     *  models; user-selectable for a `bothLabels` model (e.g. Anima). */
+    labelMode: LabelType;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: { air: string; caption: string; name: string; previewUrl: string }[];
     onContinue: () => void;
@@ -79,9 +83,24 @@
   // A dataset has one label type; SelectStep's label-type lock guarantees every run in a multi-run
   // selection shares run[0]'s, so run[0] is representative of the whole dataset.
   const primaryCard = $derived(runCard(selection.runs[0]!));
-  const labelMode = $derived(primaryCard.label);
-  const noun = $derived(labelNoun(primaryCard));
+  const noun = $derived(labelMode === 'tag' ? 'tags' : 'captions');
   const media = $derived(selection.media);
+  // The model can train on either format → offer the choice. Single-run only: a multi-run sweep's runs were
+  // locked to one format in Select, so mid-flow switching there could desync them.
+  const canChooseLabel = $derived(labelOptions(primaryCard).length > 1 && selection.runs.length === 1);
+
+  // Switching format re-labels from scratch — tags and captions aren't interchangeable, so clear every
+  // image's label and re-run auto-label in the new mode. (No-op for models that can't switch.)
+  function switchLabelMode(next: LabelType) {
+    if (next === labelMode) return;
+    labelMode = next;
+    for (const img of images) {
+      img.tags = [];
+      img.caption = '';
+      img.labelTried = false;
+    }
+    void ensureLabeling();
+  }
 
   const uploadedCount = $derived(images.filter(isTrainable).length);
   // The dataset-aware estimate — the same figure the Review step shows at its defaults (each run scaled by
@@ -519,20 +538,46 @@
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div class="min-w-0">
         <div class="mb-4 flex items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
-          <span class="grid h-8 w-8 place-items-center rounded bg-primary/15 text-primary">
+          <span class="grid h-8 w-8 shrink-0 place-items-center rounded bg-primary/15 text-primary">
             {#if labelMode === 'tag'}<IconTag size={16} stroke={2} />{:else}<IconFileText
                 size={16}
                 stroke={2}
               />{/if}
           </span>
-          <div>
-            <div class="text-sm font-bold text-dark-0">Will be auto-labeled as {noun} · free</div>
+          <div class="min-w-0">
+            <div class="text-sm font-bold text-dark-0">Auto-labeled as {noun} · free</div>
             <div class="font-mono text-[11px] text-dark-2">
               {labelMode === 'tag'
                 ? `${primaryCard.name} trains on booru-style tags`
-                : `${primaryCard.name} learns from natural-language captions`} — chosen automatically
+                : `${primaryCard.name} learns from natural-language captions`}{canChooseLabel
+                ? ' — switch the format below'
+                : ' — chosen automatically'}
             </div>
           </div>
+          {#if canChooseLabel}
+            <div class="ml-auto shrink-0">
+              <ToggleGroup
+                type="single"
+                value={labelMode}
+                onValueChange={(v) => {
+                  if (v === 'tag' || v === 'caption') switchLabelMode(v);
+                }}
+                variant="outline"
+                size="sm"
+              >
+                <ToggleGroupItem value="tag" aria-label="Label with tags" disabled={labelingActive}>
+                  Tags
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="caption"
+                  aria-label="Label with captions"
+                  disabled={labelingActive}
+                >
+                  Captions
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          {/if}
         </div>
 
         <div

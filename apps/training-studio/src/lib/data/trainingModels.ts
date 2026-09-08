@@ -58,7 +58,11 @@ export interface ModelCard {
   name: string;
   code: string;
   media: Media;
+  /** The dataset label format this model's auto-labeler defaults to. */
   label: LabelType;
+  /** True when the model can train on EITHER tags or captions — the Data step then offers a choice,
+   *  defaulting to `label`. Most models are single-format. */
+  bothLabels?: boolean;
   description: string;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
@@ -233,7 +237,8 @@ export const MODEL_CARDS: ModelCard[] = [
     name: 'Anima',
     code: 'AN',
     media: 'image',
-    label: 'caption',
+    label: 'tag',
+    bothLabels: true,
     description: "CircleStone Labs' Anima image model (Base v1.0).",
     versions: [
       {

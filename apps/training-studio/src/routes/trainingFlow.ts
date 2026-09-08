@@ -32,6 +32,12 @@ export function labelNoun(card: ModelCard): 'tags' | 'captions' {
   return card.label === 'tag' ? 'tags' : 'captions';
 }
 
+/** The label formats a card can train on — both for a `bothLabels` model (the Data step offers a choice),
+ *  else just its single `label`. `card.label` is always the default (first). */
+export function labelOptions(card: ModelCard): LabelType[] {
+  return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
+}
+
 // Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
 // prepended to a label that doesn't already contain it, and highlighted in place where it does. Matching
 // is case-insensitive.
@@ -264,9 +270,10 @@ export function buildTrainingRuns(
   name: string,
   launched: LaunchedRun[],
   prompts: string[],
-  currencies: string[]
+  currencies: string[],
+  labelMode: LabelType
 ): TrainingRunPayload[] {
-  const mode = runCard(selection.runs[0]!).label;
+  const mode = labelMode;
   const items = images
     .filter((i) => i.status === 'uploaded' && !!i.blobId)
     .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));

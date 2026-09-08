@@ -9,6 +9,7 @@
   import {
     buildTrainingRuns,
     isTrainable,
+    labelOptions,
     labelString,
     runCard,
     type Img,
@@ -16,7 +17,7 @@
     type Selection,
   } from './trainingFlow';
   import { postTraining } from '$lib/train';
-  import type { FromPrices } from '$lib/data/trainingModels';
+  import type { FromPrices, LabelType } from '$lib/data/trainingModels';
 
   let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
 
@@ -28,9 +29,11 @@
 
   let step = $state(1);
   let selection = $state<Selection | null>(null);
-  // Dataset + trigger are owned here so they survive Back/Continue between steps.
+  // Dataset + trigger + label mode are owned here so they survive Back/Continue between steps. `labelMode`
+  // defaults to the chosen model's default label and is only user-changeable for a `bothLabels` model.
   let images = $state<Img[]>([]);
   let trigger = $state('');
+  let labelMode = $state<LabelType>('tag');
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
@@ -53,10 +56,9 @@
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
     if (!selection) return [];
-    const mode = runCard(selection.runs[0]!).label;
     return images
       .filter(isTrainable)
-      .map((i) => labelString(i, mode))
+      .map((i) => labelString(i, labelMode))
       .filter((l) => l.length > 0);
   });
 
@@ -81,7 +83,16 @@
     currencies: string[]
   ) {
     if (!selection) return;
-    const runs = buildTrainingRuns(selection, images, trigger, name, launched, prompts, currencies);
+    const runs = buildTrainingRuns(
+      selection,
+      images,
+      trigger,
+      name,
+      launched,
+      prompts,
+      currencies,
+      labelMode
+    );
     const ids = await postTraining(runs);
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
@@ -131,6 +142,11 @@
       initial={selection}
       onContinue={(sel) => {
         selection = sel;
+        // Reset the label mode to the model's default only when the current choice isn't valid for it —
+        // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
+        // single-format model snaps to its format.
+        const card = runCard(sel.runs[0]!);
+        if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
         step = 2;
       }}
     />
@@ -141,6 +157,7 @@
       {reuseItems}
       bind:images
       bind:trigger
+      bind:labelMode
       onContinue={() => (step = 3)}
       onBack={() => (step = 1)}
     />
