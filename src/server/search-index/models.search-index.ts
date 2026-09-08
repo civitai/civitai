@@ -1,10 +1,8 @@
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import {
-  type BaseModel,
-  isBaseModelGenerationSupported,
-} from '~/shared/constants/basemodel.constants';
+import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
@@ -35,7 +33,6 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -259,11 +256,13 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const { files, ...restVersion } = version;
 
-      const canGenerate = modelVersions.some(
-        (x) =>
-          x.generationCoverage?.covered &&
-          !isGenerationDisabled(x.flags) &&
-          isBaseModelGenerationSupported(x.baseModel, model.type)
+      const canGenerate = modelVersions.some((x) =>
+        isGenerationEligible({
+          covered: x.generationCoverage?.covered,
+          baseModel: x.baseModel,
+          modelType: model.type,
+          flags: x.flags,
+        })
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
@@ -311,10 +310,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            canGenerate:
-              generationCoverage?.covered &&
-              !isGenerationDisabled(x.flags) &&
-              isBaseModelGenerationSupported(x.baseModel, model.type),
+            canGenerate: isGenerationEligible({
+              covered: generationCoverage?.covered,
+              baseModel: x.baseModel,
+              modelType: model.type,
+              flags: x.flags,
+            }),
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,
           })

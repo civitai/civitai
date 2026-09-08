@@ -49,9 +49,8 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelVersionToAir } from '~/server/utils/resource-air';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -1896,17 +1895,11 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
     const versionInfo = await Promise.all(
       mvInfo.map(async (v) => {
         try {
-          const primaryFile = getPrimaryFile(
-            v.files as { type: string; metadata: BasicFileMetadata }[]
-          );
           const md = await getModelClient({
             token: env.ORCHESTRATOR_ACCESS_TOKEN,
-            air: stringifyAIR({
-              baseModel: v.baseModel,
-              type: v.model.type,
-              modelId: v.model.id,
-              id: v.id,
-              fileType: primaryFile?.type,
+            air: modelVersionToAir({
+              ...v,
+              files: v.files as { type: string; metadata: BasicFileMetadata }[],
             }),
           });
           if (!md || !!md.error)

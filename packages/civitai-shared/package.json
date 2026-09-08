@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./media-key": "./src/media-key.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
+    "./generation-eligibility": "./src/generation-eligibility.ts",
     "./clickhouse-ip-filters": "./src/clickhouse-ip-filters.ts",
     "./lazy": "./src/lazy.ts",
     "./type-guards": "./src/type-guards.ts",

@@ -1,11 +1,18 @@
 # Paid Model Loading
 
-**Status:** not started on the site side. The orchestrator can download and report; it cannot yet
-charge or guarantee residency.
-**Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, and the
+**Status:** Phase A (server plumbing plus a mod-only test page) is built behind the `resourceLoad`
+flag; no public surface exists. The orchestrator can download and report; it cannot yet charge or
+guarantee residency. State of the work: [checklist](paid-model-loading-checklist.md).
+**Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, the
 `civitai-orchestration` source at `9306e7333` — **which is deployed**, so everything described as
-built below is live.
+built below is live — and Koen's answers in DM, 2026-09-04 and 2026-09-07.
+
+🔴 **`civitai-orchestration` is not the whole system.** Resource *residency* lives in a second
+repo, `civitai-spine-controller`. Reading only the orchestrator produced a confident, wrong
+conclusion here once already (see What it is), so "verified against source" in this document means
+verified against the orchestrator unless it says otherwise.
 **Tracking:** ClickUp C2–C14, `Synced Team`.
+**Coverage model and audit:** [paid-model-loading-coverage.md](paid-model-loading-coverage.md).
 
 ---
 
@@ -15,11 +22,22 @@ Any model on the site becomes generatable. If the model is not resident in the g
 cluster, the user pays to load it in, and — as pitched — we guarantee it stays resident for
 **48 hours**. The orchestrator sets the price, scaled by model size.
 
-🔴 **Two halves of that sentence are not built.** Verified against orchestrator source
-(`civitai-orchestration` @ `9306e7333`): there is **no residency mechanism at all** — nothing pins a
-prepared resource, so it is evicted like any other — and **the cost function returns a hardcoded
-zero**, so there is no size-scaled price to show. The download machinery is real and working; the
-product wrapped around it is not. See [Orchestrator state](paid-model-loading-checklist.md#orchestrator-state--verified-against-source).
+**Residency exists.** Koen, 2026-09-04: the spine controllers check with each other before evicting
+a resource and refuse to evict anything less than 48h old **unless another spine controller has it**.
+`PrepareResourceJob` gets the resource into the DC and that eviction policy guards its lifetime
+from then on — the code is `ClusterAwareEvictionPolicy.cs` in `civitai-spine-controller`.
+`PinModelJob`, which an earlier reading of this document called the intended primitive, is
+**legacy — Koen: "don't even look at it."**
+
+The "unless another controller has it" clause is benign: Justin, 2026-09-08 — it means the model is
+still downloaded on our servers and available for generation. The copy may move; availability does
+not lapse. **So the surfaces promise the 48 hours as originally pitched.**
+
+⚠️ Nobody on the site side has read that policy — the repo is private to us here — and nothing
+exposes when a given resource's window ends.
+
+🔴 **The price half is still missing.** The cost function returns a hardcoded zero, so there is no
+size-scaled price to show. See [Orchestrator state](paid-model-loading-checklist.md#orchestrator-state--verified-against-source).
 
 This replaces auctions as the mechanism for getting a checkpoint into the generator.
 
@@ -117,9 +135,11 @@ roughly a thousand generations to accounts that did not make them.
 
 - `GET /v2/resources/{air}` already has a caller —
   [`getModelClient`](../../src/server/services/orchestrator/models.ts).
-- **AIR construction from a model version already exists twice**, in `bustOrchestratorModelCache`
-  and in `modelVersionResourceCache`, and both include `fileType` from the primary file. Extract
-  it rather than writing a third copy.
+- **AIR construction from a model version** is `modelVersionToAir`
+  ([resource-air.ts](../../src/server/utils/resource-air.ts)), extracted this phase from the copies
+  in `bustOrchestratorModelCache` and `modelVersionResourceCache`, both now repointed at it. It
+  includes `fileType` from the primary file **only when the caller loaded files** — a caller that
+  resolves files and one that does not are asking about two different AIRs.
 - ⚠️ [`modelVersionResourceCache`](../../src/server/redis/caches.ts) already fetches the whole
   `ResourceInfo` per version — and caches it for **a day**, then throws `availability` away.
   Availability must be read fresh. Do not reach for that cache because it looks like it already
@@ -134,10 +154,10 @@ Same shape as image generation: workflow → our endpoint → signals service �
 ⚠️ `SignalMessages.SchedulerDownload = 'scheduler:download'` already exists and is **not** this
 feature — it is the generation-history export. Do not reuse or shadow it.
 
-**Sending.** The site has no topic-broadcast helper today. Per-user sends exist
-([orchestrator.utils.ts](../../src/server/orchestrator/orchestrator.utils.ts)) and hit
-`${SIGNALS_ENDPOINT}/users/{userId}/signals/{message}`. Topic sends hit
-`${SIGNALS_ENDPOINT}/groups/{topic}/signals/{message}` — chat does this today
+**Sending.** Per-user sends and the topic broadcast both live in
+[orchestrator.utils.ts](../../src/server/orchestrator/orchestrator.utils.ts): per-user hits
+`${SIGNALS_ENDPOINT}/users/{userId}/signals/{message}`, and `sendSignalToTopic` hits
+`${SIGNALS_ENDPOINT}/groups/{topic}/signals/{message}` — the same shape chat uses
 ([chat.service.ts](../../src/server/services/chat.service.ts)). Route all of it through
 [`withSignals()`](../../src/server/signals/wrapper.ts); an unwrapped fetch to the signals service
 is the exact shape behind the 2026-05-30 event-loop cascade.
@@ -158,9 +178,14 @@ agreed to. A new `SignalMessages` entry is all that is needed on top.
 subscribers per topic and joins/leaves the group automatically.
 `useSignalConnection(message, cb)` receives.
 
-**Client persistence.** What the user is waiting on lives in `localStorage`. On load: poll
-`GET /v2/resources/{air}` first; if complete, drop it; if not, resubscribe and carry on. That is
-the whole reconnect story — the design as discussed has no server-side "my loads" record.
+**Client persistence.** What a browser is *watching* lives in `localStorage`, drained on every page
+load (see Decided). That is not the record of a purchase: the orchestrator holds that, as workflows
+tagged `resource-load` queryable with the buyer's token.
+
+⚠️ **Progress for this feature is NOT a topic broadcast.** It goes to `/users/{userId}/signals/`,
+because the orchestrator posts its event body straight through and that body names the paying user.
+The topic convention below is still how the site subscribes to a model version generally — it is
+just not how load progress is delivered.
 
 ---
 
@@ -171,13 +196,16 @@ Site-side only, deliberately. Anyone can go straight to the orchestrator; the co
 
 | Tier | Loads per day |
 | --- | --- |
-| Free | 0 |
+| Free | 0 — refused by `assertCanRequestLoad` before the limiter is reached |
 | Bronze | 3 |
-| Silver | 5–6 |
-| Gold | 10 |
+| Silver | 6 |
+| Gold / Founder | 10 |
 
-Free started at 1; Koen suggested members-only to start; Justin settled on 0. These are
-deliberately low and meant to be raised.
+On top of the daily ladder there is a flat, tier-independent **3 per hour** — burst protection for
+the cluster, not an entitlement, so no plan buys its way out of it.
+
+Free started at 1; Koen suggested members-only to start; Justin settled on 0. Silver was left at
+5–6 on the call and shipped as 6. These are deliberately low and meant to be raised.
 
 The mechanism is the existing `rateLimit()` tRPC middleware
 ([middleware.trpc.ts:151](../../src/server/middleware.trpc.ts#L151)). Four properties of it decide
@@ -186,7 +214,9 @@ whether the cap actually holds:
 1. **A tier ladder composes correctly.** Per period the *highest* matching limit wins, so
    declaring all four tiers with `userReq` predicates and letting a gold user match several of
    them yields 10, not 3.
-2. **`limit: 0` short-circuits immediately**, so free = 0 works with no special case.
+2. **`limit: 0` is not the member gate.** It short-circuits cleanly, but the middleware returns
+   early for moderators and in dev/test/preview, so on a preview build nothing else would stand
+   between a free account and a free load. `assertCanRequestLoad()` in the router is the gate.
 3. **It is off by one.** The check is `relevantAttempts > limit`, so a limit of 3 permits 4.
    Either accept it and write the numbers down as "3 means 4", or fix the comparison — but that
    comparison is shared with every other limiter in the app, so fixing it changes them all.
@@ -204,46 +234,43 @@ button.
 
 ---
 
-## "Select any model" — what it actually costs
+## "Select any model" — the coverage change
 
-The premise of the feature is that the generator stops being restricted to a curated set. No task
-covers that change, and it is the largest single piece of work in the feature.
+The premise of the feature is that the generator stops being restricted to a curated set. As of
+2026-09-08 this is scoped and decided; the full model, the audit and every measured number live in
+[paid-model-loading-coverage.md](paid-model-loading-coverage.md). In short:
 
-`GenerationCoverage` is **a database view, not a table** — there is no `covered` boolean to flip.
-Read the live definition with
-`SELECT pg_get_viewdef('public."GenerationCoverage"'::regclass, true)`. It computes coverage from,
-among other things:
+- **`CoveredCheckpoint` goes away.** It is the auction's residency proxy, it has four uses and all
+  four are generation, and dropping it widens covered checkpoints by roughly two orders of magnitude
+  ([the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)).
+- **`EcosystemCheckpoints` stays.** It is the generator's default model per ecosystem — 62 of the 63
+  checkpoint defaults are covered through it and none through `CoveredCheckpoint`. Removing it would
+  strip the default model from half the supported ecosystems.
+- **`GenerationBaseModel` stays as the gate.** It marks the base models where the orchestrator has
+  extended checkpoint/diffuser support, i.e. where community models can run.
+- **Diffusers becomes loadable**; Core ML and ONNX stay excluded.
+- **File-less models never touch the loader**, and "file-less" means *no loadable file*, not *no file
+  row* — 36 API models carry a `Training Data` archive and would otherwise read as loadable.
 
-- `m."allowCommercialUse" && ARRAY['RentCivit']` — a **licence** gate
-- an eligible, scanned `ModelFile` of an accepted type and format
-- `mv."baseModel" IN (SELECT "baseModel" FROM "GenerationBaseModel")` — a base-model allowlist
-- and then, **for checkpoints only**, `mv.id IN (SELECT version_id FROM "CoveredCheckpoint")`
+The licence gate survives all of this: **zero covered versions lack `RentCivit`**, and the purchase
+path refuses anything not in coverage, which inherits the rule rather than restating it.
 
-Three things follow, and they change the shape of the work:
-
-1. 🔴 **The licence gate is a money problem, and nobody raised it.** A model whose creator has not
-   granted `RentCivit` is deliberately not generatable on-site. Taking payment to load such a model
-   into the cluster sells something the licence forbids. Whatever replaces the coverage gate has to
-   keep this one, or the feature has to refuse those models explicitly.
-2. **LoRAs and checkpoints are not the same job.** LoRA, TextualInversion, VAE, LoCon, DoRA and
-   Upscaler need no `CoveredCheckpoint` membership at all — they are already covered once they pass
-   the licence, scan and base-model gates. They are simply not *resident*, which is exactly the
-   problem paid loading solves. **Checkpoints** are the ones gated behind the curated list. A LoRA-
-   first v1 needs no view change; a checkpoint v1 needs one.
-3. **`GenerationBaseModel` and `getCanAuctionForGeneration()` already encode which ecosystems can
-   reach the generator.** That is the site-side twin of the orchestrator's `unsupported` status.
-   Whichever one disagrees with the other is a bug users will find by paying for it.
+**Loading is for checkpoints.** Size is the reason the loader exists and LoRAs do not have it
+(Justin, 2026-09-08). Earlier drafts of these docs recommended a LoRA-first v1 on the grounds that it
+needed no view change; that was solving the wrong problem and has been removed.
 
 ## Auctions
 
 Paid loading replaces auctions *as a way into the cluster*. It does not replace what auctions
 also do.
 
-🔴 **The two are mechanically incompatible, not just conceptually.** `CoveredCheckpoint` is
-populated by [handle-auctions.ts](../../src/server/jobs/handle-auctions.ts) — auction winners plus
-the top weekly earners — and the same job **deletes every row not in that set** on each cycle. A
-checkpoint someone paid to load would therefore lose its coverage at the next auction run. Paid
-loading cannot ship for checkpoints while that job still owns the table.
+🔴 **The two were mechanically incompatible.** `CoveredCheckpoint` is populated by
+[handle-auctions.ts](../../src/server/jobs/handle-auctions.ts) — auction winners plus the top weekly
+earners — and the same job **deletes every row not in that set** on each cycle, so a checkpoint
+someone paid to load would lose its coverage at the next auction run.
+
+**Resolved 2026-09-08:** the table stops gating generation entirely, so the conflict goes with it.
+Whether `handle-auctions.ts` keeps writing rows nothing reads is a cleanup question, not a blocker.
 
 Auctions have carried double duty since inception: choosing the week's checkpoints **and**
 promoting content into Featured spaces. That conflation is already a known problem with its own
@@ -263,18 +290,21 @@ modal, model version details, the app header, and a product tour. C11 should not
 
 ## Open questions
 
-These came out of reading the contract and the code, not out of the call. None has an owner.
+These came out of reading the contract and the code, not out of the call. Each is restated with an
+owner and a closing condition in
+[paid-model-loading-decisions.md](paid-model-loading-decisions.md) — the register to read before
+deciding anything.
 
-1. **"Select any model" is not in any task**, and C6 assumes it is already done. See the coverage
-   section above for what it involves — including the licence gate, which is the part with a
-   refund attached.
-2. **What happens when a paid load fails or never finishes?** Bandwidth was measured at ~10 KB/s
-   with LoRAs taking four hours, which Koen read as an unstable tunnel into the data centre.
-   Koen: "we got to be prepared for us not giving any hard guarantees about when it's going to be
-   available." A refund path is implied and unscoped.
-3. **The 48-hour guarantee does not exist yet**, on the site or in the orchestrator. Nothing pins a
-   prepared resource and nothing records an expiry, so there is no countdown to design until Koen
-   builds retention. Until then the surfaces must not promise it.
+1. ✅ **"Select any model"** — decided 2026-09-08, and scoped as Phase 1.6 in the checklist. See
+   [coverage](paid-model-loading-coverage.md).
+2. **A failed load is refunded** (Justin, 2026-09-08) — but *by whom* is unconfirmed. Justin expects
+   the orchestrator to be doing it; nothing has ever exercised that path, because a prepare has
+   never been charged. It is [K3](paid-model-loading-decisions.md#k3-does-the-orchestrator-refund-a-failed-prepare)
+   and it has to be answered with pricing, not after. Bandwidth was measured at ~10 KB/s with LoRAs
+   taking four hours, and `PrepareResourceJob` gives up at 24h, so this is not a rare path.
+3. **Nothing exposes when a resource's 48h window ends.** The spine controllers enforce residency,
+   but no API reports an expiry, so there is no countdown to design even though we now promise the
+   duration.
 4. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
    irrelevant checkpoints and starves the popular ones. The answers on record are that popular
    models stay resident because workers keep them, plus the rate limits, plus Koen's
@@ -292,12 +322,35 @@ These came out of reading the contract and the code, not out of the call. None h
 - Rate limits are site-side, not orchestrator-side.
 - Pay-to-boost queue position is out for v1.
 - Load state in search is deferred.
-- Client keeps in-flight loads in `localStorage`, polls the resource endpoint on refresh, and
-  resubscribes if still downloading.
+- A browser keeps what it is **watching** in `localStorage` and drains that queue on every page
+  load — finished loads raise a toast that must be dismissed, then leave; items that can no longer
+  finish leave; the rest stay subscribed. Items expire at 48h so every one has an exit.
+- The durable record of a **purchased** load is the orchestrator's, not ours: workflows tagged
+  `resource-load`, queried with the buyer's token. Not `localStorage`, not Redis.
+- Progress signals go to the **buyer's own channel**, never to a model-version group — the payload
+  carries `workflowId`, which names the paying user.
+- Bystanders do not get live progress. They get told when the load is ready, on their next visit.
+- Reaching someone who does not come back — real API-level notifications — is a **Phase 2** goal.
+  A different device or a cleared browser getting nothing is accepted.
 - Progress shows in three places: navbar, model version page (below Create), and the generator for
   the selected resource.
-- A bystander on the model page can subscribe to someone else's in-flight load and get the
-  notification.
+- A bystander on the model page can subscribe to someone else's in-flight load and be told when it
+  is ready. Load state and the queue are **public reads** — everyone sees them, not only the buyer.
+- `PinModelJob` is legacy and is not part of this feature (Koen, 2026-09-04).
+- The surfaces promise the **48 hours as pitched**. A copy may move between spine controllers inside
+  the window; availability does not lapse (Justin, 2026-09-08).
+- **Loading is for checkpoints.** LoRAs are not large enough to need it.
+- **`CoveredCheckpoint` stops gating generation**; `EcosystemCheckpoints` and `GenerationBaseModel`
+  stay. Coverage means *allowed to generate*; residency is the orchestrator's axis.
+- **Only base models in `GenerationBaseModel` are loadable.** Everything else is out of scope for v1.
+- A checkpoint needs a **correct model file** to be loadable; file-less API models never are.
+- A load that never finishes is **refunded**.
+- The purchase path refuses anything **not in `GenerationCoverageNext`** (composed with ecosystem
+  type support by `isGenerationEligible`), which is how the `RentCivit` rule is enforced without
+  restating it. Gating on the live view would refuse every load worth making, since it still requires
+  `CoveredCheckpoint`.
+- The daily cap must also cover the implicit path — a generation submitted against a non-resident
+  resource — or it is decorative. Same quota, not a second one.
 - Free tier gets 0 per day at launch.
 - Rate limits stay site-side only; the orchestrator accepts unlimited prepares from a user token.
 - Concurrent prepares of the same resource are not a concern and need no special handling.
