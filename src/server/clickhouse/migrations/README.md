@@ -3,6 +3,26 @@
 These are applied **manually**. Nothing auto-runs DDL here (same policy as the Postgres
 migrations).
 
+## 🔴 This applies to EVERY enum column the tracker writes, not just `actions.type`
+
+The rest of this file is written around `actions.type` because that is where the trap was
+first measured. **The mechanism is not specific to that column**, and reading it as if it
+were is what let three other columns drift unnoticed until 2026-09-07:
+
+| column               | missing value(s)             | found                                            |
+| -------------------- | ---------------------------- | ------------------------------------------------ |
+| `reactions.nsfw`     | `Blocked`                    | 7 of 10 rejections in a 2h38m window, real users |
+| `reports.reason`     | `Spam`, `StickerPlacement`   | same sweep                                       |
+| `reactions.type`     | `Post_Create`, `Post_Delete` | same sweep                                       |
+| `reports.entityType` | `challenge` + 3 more         | while writing the guard below                    |
+
+`__tests__/tracker-enum-drift.test.ts` now checks each of those columns against its
+app-side domain, and enforces the same `POST-APPLY:` marker on any migration that widens
+one. `2026-09-07-reaction-report-enum-widening.sql` is the worked example — read its
+section 3/4 pair before widening `reactions.type` again: that column has a dependent
+materialized view whose scoring list must be widened in the same operation, and applying
+one without the other turns dropped rows into wrongly-signed rows.
+
 ## 🔴 Widening `actions.type` is a TWO-STEP operation. The `ALTER` alone is inert.
 
 **Apply the DDL, then restart the tracker.** Skipping the restart ships a feature that
@@ -76,13 +96,15 @@ everything in between.** A `min(time)` of far-future-relative-to-the-migration i
 
 ## The `POST-APPLY:` marker is enforced
 
-Every migration that widens `actions.type` must carry this line verbatim:
+Every migration that widens `actions.type`, or any of the `reactions`/`reports` enum columns
+listed at the top of this file, must carry this line verbatim:
 
 ```
 -- POST-APPLY: restart civitai-clickhouse-tracker by pod delete, then confirm with a real event.
 ```
 
-`__tests__/action-type-enum-drift.test.ts` fails without it. It is pinned as an exact string
+`__tests__/action-type-enum-drift.test.ts` and `__tests__/tracker-enum-drift.test.ts` fail
+without it — they pin the same constant. It is pinned as an exact string
 rather than matched loosely on purpose: a guard that accepts any sentence mentioning "restart"
 is walkable by rewording, and the whole point is that the next person copying an existing
 migration inherits the step rather than inheriting only the parts that look important.

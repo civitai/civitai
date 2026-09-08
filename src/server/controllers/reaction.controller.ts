@@ -23,7 +23,29 @@ import { dbRead } from '../db/client';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 
-async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
+/**
+ * The exact payload `Tracker.reaction` accepts.
+ *
+ * 🔴 THIS ANNOTATION IS THE GUARD, NOT DOCUMENTATION. Every `type` below is built as
+ * `` `<Entity>_${action}` ``, and a template-literal expression is inferred as plain
+ * `string` unless something contextually types it. Without this return type the switch
+ * produced `string`, the call site laundered it through `as ReactionType`, and the
+ * `Post_*` arm — a value `reactions.type` does not carry — type-checked for as long as
+ * it has existed while the tracker dropped every row it produced client-side. Do not
+ * re-add a cast at the call site; fix the union or the branch instead.
+ */
+type ReactionTrackerEvent = {
+  type: ReactionType;
+  entityId: number;
+  ownerId: number;
+  reaction: ReviewReactions;
+  nsfw: NsfwLevelDeprecated;
+};
+
+async function getTrackerEvent(
+  input: ToggleReactionInput,
+  result: 'removed' | 'created'
+): Promise<ReactionTrackerEvent | undefined> {
   const shared = {
     entityId: input.entityId,
     reaction: input.reaction,
@@ -232,12 +254,7 @@ export const toggleReactionHandler = async ({
     });
     const trackerEvent = result === 'noop' ? undefined : await getTrackerEvent(input, result);
     if (trackerEvent) {
-      await ctx.track
-        .reaction({
-          ...trackerEvent,
-          type: trackerEvent.type as ReactionType,
-        })
-        .catch(handleLogError);
+      await ctx.track.reaction(trackerEvent).catch(handleLogError);
     }
 
     if (input.entityType === 'image' && result !== 'noop') {

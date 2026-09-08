@@ -20,6 +20,7 @@ import type {
 } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import type { ReportEntity } from '~/shared/utils/report-helpers';
 import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
@@ -93,24 +94,44 @@ export type ModelActivty =
   | 'PermanentDelete'
   | 'Transfer';
 export type ResourceReviewType = 'Create' | 'Delete' | 'Exclude' | 'Include' | 'Update';
-export type ReactionType =
-  | 'Image_Create'
-  | 'Image_Delete'
-  | 'Comment_Create'
-  | 'Comment_Delete'
-  | 'CommentV2_Create'
-  | 'CommentV2_Delete'
-  | 'Review_Create'
-  | 'Review_Delete'
-  | 'Question_Create'
-  | 'Question_Delete'
-  | 'Answer_Create'
-  | 'Answer_Delete'
-  | 'BountyEntry_Create'
-  | 'BountyEntry_Delete'
-  | 'Article_Create'
-  | 'Article_Delete';
-export type ReportType = 'Create' | 'StatusChange';
+/**
+ * The `reactions.type` Enum8, in index order.
+ *
+ * 🔴 A runtime array rather than a bare union ON PURPOSE, and the order is the column's
+ * index order. `__tests__/tracker-enum-drift.test.ts` enumerates this at runtime and
+ * checks every member against the migrations that define the column — a union cannot be
+ * enumerated, so as a union this domain was structurally unguardable and drifted unseen.
+ *
+ * 🔴 `Post_Create`/`Post_Delete` are NOT YET in the production column: they need
+ * `migrations/2026-09-07-reaction-report-enum-widening.sql`, whose reactions.type section
+ * is COUPLED to a `reactions_owner_scores_mv` change in the same file. Applying the column
+ * widening without the view turns every post reaction into a -1 on the owner's score.
+ */
+export const ReactionType = [
+  'Image_Create',
+  'Image_Delete',
+  'Comment_Create',
+  'Comment_Delete',
+  'CommentV2_Create',
+  'CommentV2_Delete',
+  'Review_Create',
+  'Review_Delete',
+  'Question_Create',
+  'Question_Delete',
+  'Answer_Create',
+  'Answer_Delete',
+  'BountyEntry_Create',
+  'BountyEntry_Delete',
+  'Article_Create',
+  'Article_Delete',
+  'Post_Create',
+  'Post_Delete',
+] as const;
+export type ReactionType = (typeof ReactionType)[number];
+
+/** The `reports.type` Enum8. Runtime array for the same reason as `ReactionType` above. */
+export const ReportType = ['Create', 'StatusChange'] as const;
+export type ReportType = (typeof ReportType)[number];
 export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete' | 'Notify';
 export type TagEngagementType = 'Hide' | 'Allow';
 export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
@@ -825,9 +846,18 @@ export class Tracker {
     return this.track('prohibitedRequests', values);
   }
 
+  /**
+   * 🔴 `entityType` is `ReportEntity`, not `string`. It was `string`, which is the same
+   * type-laundering this change removes from the reaction path: a bare `string` here means
+   * every value the app can invent type-checks against a column that is an Enum8 of a fixed
+   * set of names, and the tracker rejects anything outside it CLIENT-SIDE, silently. The
+   * drift guard names `ReportEntity` as the source of truth for `reports.entityType`; the
+   * parameter has to agree with the guard or the guard is checking a domain the code does not
+   * actually constrain.
+   */
   public report(values: {
     type: ReportType;
-    entityType: string;
+    entityType: ReportEntity;
     entityId: number;
     reason: ReportReason;
     status: ReportStatus;
