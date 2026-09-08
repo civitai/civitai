@@ -2,12 +2,17 @@
 --
 -- Apply this MANUALLY. We do not auto-run DDL (same policy as the Postgres migrations).
 --
--- 🔴 THIS FILE IS PART "ALREADY APPLIED", PART "STILL TO APPLY". Read the section headers.
--- Sections 1, 2 and 5 were applied by hand — 1 and 2 on 2026-09-07, 5 on 2026-09-08 — and are
+-- 🔴 EVERY SECTION IN THIS FILE IS NOW APPLIED. It is a history record, not a work list:
+-- sections 1 and 2 on 2026-09-07, section 5 on 2026-09-08T04:04:14Z, and the coupled
+-- 3+4 pair on 2026-09-08T18:08:24Z/:25Z. Re-applying any of them is a no-op. They are
 -- recorded here so the history exists in the repo and so the drift guard can see the
--- definitions. Sections 3 and 4 have NOT been applied. The sections are numbered in the order
--- they were WRITTEN, not the order they were applied, so the numbering is not a running order:
--- each section header carries its own status and that is the only thing to trust here.
+-- definitions. The sections are numbered in the order they were WRITTEN, not the order they
+-- were applied, so the numbering is not a running order: each section header carries its own
+-- status and that is the only thing to trust here.
+--
+-- 🔴 "APPLIED" IS NOT "SAFE TO EDIT". The ordering constraint in section 3 and the
+-- whole-statement warning in section 4 govern any REVERT just as they governed the apply,
+-- and a revert of one half alone is the corruption this file exists to prevent.
 --
 -- WHY THIS FILE EXISTS AT ALL. The enum-drift guard in this directory's sibling test only
 -- ever covered `actions.type`. Every other enum column the tracker writes was unchecked,
@@ -88,7 +93,17 @@ ALTER TABLE default.reports
 
 
 -- =====================================================================================
--- 3. reactions.type — ⚠️ NOT YET APPLIED. Adds 'Post_Create' = 17, 'Post_Delete' = 18.
+-- 3. reactions.type — ✅ APPLIED TO PRODUCTION 2026-09-08T18:08:24Z, with section 4 at
+--    18:08:25Z — one second later — and the tracker pods replaced at 18:09:09Z and
+--    18:09:32Z. Adds 'Post_Create' = 17, 'Post_Delete' = 18.
+--
+--    The POST-APPLY gap query below returned 0: no post reaction landed between the two
+--    statements, so no owner score was decremented and none needs repair.
+--
+--    Recorded here for history; re-applying it is a no-op. 🔴 The warning below is NOT
+--    historical trivia — it still governs any REVERT, and it is the reason this section
+--    cannot be reverted on its own. See the rollback bundle and, in particular, its
+--    ORDER, at <talos-infra>/claudedocs/clickhouse-enum-widening-2026-09-07/rollback-reaction-type.sql
 --
 -- 🔴🔴 SECTIONS 3 AND 4 ARE ONE OPERATION. APPLY BOTH, IN THIS ORDER, IN ONE SITTING.
 --
@@ -143,7 +158,15 @@ ALTER TABLE default.reactions
 
 
 -- =====================================================================================
--- 4. reactions_owner_scores_mv — ⚠️ NOT YET APPLIED. THE OTHER HALF OF SECTION 3.
+-- 4. reactions_owner_scores_mv — ✅ APPLIED TO PRODUCTION 2026-09-08T18:08:25Z.
+--    THE OTHER HALF OF SECTION 3.
+--
+--    Verified by diffing the WHOLE statement against the pre-image recorded below, not by
+--    reading the IN list: removing the single added 'Post_Create' from the live post-image
+--    reproduces that pre-image character-for-character once whitespace is collapsed. The
+--    multiIf arms, the 2024-04-27 cutoff, the FROM and the GROUP BY are provably unchanged.
+--
+--    Recorded here for history; re-applying it is a no-op.
 --
 --    Adds 'Post_Create' to the +1 list. Everything not in this list scores -1, which is
 --    why this cannot lag behind section 3 by even one deploy.
