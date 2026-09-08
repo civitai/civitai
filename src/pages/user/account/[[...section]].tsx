@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router';
-import React from 'react';
+import React, { useEffect } from 'react';
 
 import { AccountLayout } from '~/components/Account/AccountLayout';
 import { AccountPane, accountPaneCopy } from '~/components/Account/AccountPanes';
@@ -16,6 +16,13 @@ export default function Account() {
 
   const segments = router.query.section;
   const slug = Array.isArray(segments) ? segments[0] : segments;
+
+  // A sub-path only means anything while the shell is on. After a rollback, bookmarks made during
+  // the ramp would otherwise render the whole legacy page under a URL promising one section.
+  useEffect(() => {
+    if (features.accountSettingsV2 || !router.isReady || !slug) return;
+    router.replace('/user/account');
+  }, [features.accountSettingsV2, router.isReady, slug, router]);
 
   const content = () => {
     if (!features.accountSettingsV2) return <LegacyAccountPage />;
