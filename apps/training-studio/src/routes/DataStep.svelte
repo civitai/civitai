@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { IconSparkles } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { loraTypeById } from '$lib/data/trainingModels';
@@ -398,7 +399,7 @@
           <div class="flex items-center gap-2">
             {#if unlabeled.length > 0 || labelRun}
               <Button size="xs" onclick={ensureLabeling} disabled={labelRun != null || unlabeled.length === 0}>
-                {#if labelRun}✨ Labeling… {labelRun.done}/{labelRun.total}{:else}✨ Auto-label {unlabeled.length}{/if}
+                <IconSparkles size={13} stroke={2} class="mr-1 inline" />{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
               </Button>
             {/if}
             <Button variant="outline" size="xs" onclick={() => fileInput.click()}>＋ Add more</Button>
@@ -472,7 +473,9 @@
                     {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
                   </div>
                 {:else if img.labeling}
-                  <div class="font-mono text-[11px] text-primary">✨ labeling…</div>
+                  <div class="flex items-center justify-center gap-1 font-mono text-[11px] text-primary">
+                    <IconSparkles size={12} stroke={2} /> labeling…
+                  </div>
                 {:else if img.tags.length === 0 && !img.caption}
                   <button
                     type="button"

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { IconSparkles } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -99,7 +100,9 @@
               <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
               <div class="flex items-center gap-1">
                 <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
-                  {editing.labeling ? '✨ labeling…' : '✨ Re-run'}
+                  <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
+                    ? 'labeling…'
+                    : 'Re-run'}
                 </Button>
                 {#if editing.tags.length > 0}
                   <Button variant="ghost" size="xs" onclick={clearTags}>Clear all</Button>
@@ -188,7 +191,9 @@
             <div class="mb-2 flex items-center justify-between gap-2">
               <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
               <Button variant="ghost" size="xs" onclick={() => onRelabel(editing.id)} disabled={editing.labeling}>
-                {editing.labeling ? '✨ labeling…' : '✨ Re-run'}
+                <IconSparkles size={12} stroke={2} class="mr-1 inline" />{editing.labeling
+                  ? 'labeling…'
+                  : 'Re-run'}
               </Button>
             </div>
             <Textarea bind:value={editing.caption} rows={6} placeholder="Describe the image…" />
