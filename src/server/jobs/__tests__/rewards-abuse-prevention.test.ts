@@ -69,7 +69,13 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
     const result = await rewardsAbusePrevention.run().result;
 
     expect(chQuery).toHaveBeenCalledTimes(1); // detection query ran
-    expect(result).toEqual({ usersDisabled: 0 });
+    expect(result).toEqual({
+      dryRun: false,
+      usersDisabled: 0,
+      wouldDisable: 0,
+      ipsFlagged: 0,
+      sample: [],
+    });
   });
 
   it('treats a Buffer config reply (sentinel mode) as valid JSON', async () => {
@@ -78,7 +84,13 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
     const result = await rewardsAbusePrevention.run().result;
 
     expect(chQuery).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ usersDisabled: 0 });
+    expect(result).toEqual({
+      dryRun: false,
+      usersDisabled: 0,
+      wouldDisable: 0,
+      ipsFlagged: 0,
+      sample: [],
+    });
   });
 
   it('SKIPS the run (no destructive detection) when sysRedis is DOWN (hGet throws)', async () => {
@@ -104,6 +116,8 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
 
 const sqlOf = () => (chQuery.mock.calls[0]?.[0] as string) ?? '';
 type DryRunReport = {
+  dryRun: boolean;
+  usersDisabled: number;
   wouldDisable: number;
   ipsFlagged: number;
   sample: { ip: string; user_count: number; awarded: number; user_ids: number[] }[];
@@ -195,7 +209,22 @@ describe('rewards-abuse-prevention — dry run', () => {
 
     expect(dbQueryRawUnsafe).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ usersDisabled: 3 });
+    expect(result).toMatchObject({ dryRun: false, usersDisabled: 3 });
+  });
+
+  it('reports what it found on the live path too, not only in a dry run', async () => {
+    chQuery.mockResolvedValue(abusers);
+    dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    const result = (await runWith({ require_exclusive_ip: true })) as DryRunReport;
+
+    // The fields that say WHAT was found have to survive the switch to enforcing, or a live run
+    // that disables nobody cannot be told from one that found nothing.
+    expect(result.ipsFlagged).toBe(1);
+    expect(result.wouldDisable).toBe(3);
+    expect(result.sample).toEqual([
+      { ip: '203.0.113.7', user_count: 3, awarded: 300, user_ids: [1, 2, 3] },
+    ]);
   });
   it('hands back the flagged clusters, not just a count', async () => {
     chQuery.mockResolvedValue(abusers);

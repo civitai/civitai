@@ -84,21 +84,22 @@ export const rewardsAbusePrevention = createJob(
 
     const usersToDisable = abusers?.map((abuser) => abuser.user_ids).flat() ?? [];
 
-    if (abuseLimits.dryRun) {
-      return {
-        dryRun: true as const,
-        usersDisabled: 0,
-        wouldDisable: new Set(usersToDisable).size,
-        ipsFlagged: abusers?.length ?? 0,
-        sample:
-          abusers?.slice(0, REPORT_SAMPLE_SIZE).map(({ ip, user_count, awarded, user_ids }) => ({
-            ip,
-            user_count,
-            awarded,
-            user_ids,
-          })) ?? [],
-      };
-    }
+    // What it found, reported the same way whether or not it acted on it. A live run that disables
+    // nobody is otherwise indistinguishable from a run that found nothing.
+    const found = {
+      dryRun: abuseLimits.dryRun,
+      wouldDisable: new Set(usersToDisable).size,
+      ipsFlagged: abusers?.length ?? 0,
+      sample:
+        abusers?.slice(0, REPORT_SAMPLE_SIZE).map(({ ip, user_count, awarded, user_ids }) => ({
+          ip,
+          user_count,
+          awarded,
+          user_ids,
+        })) ?? [],
+    };
+
+    if (abuseLimits.dryRun) return { ...found, usersDisabled: 0 };
 
     let usersDisabled = 0;
     const tasks = chunk(usersToDisable, 500).map((chunk) => async () => {
@@ -133,9 +134,7 @@ export const rewardsAbusePrevention = createJob(
     });
     await limitConcurrency(tasks, 3);
 
-    return {
-      usersDisabled,
-    };
+    return { ...found, usersDisabled };
   }
 );
 
