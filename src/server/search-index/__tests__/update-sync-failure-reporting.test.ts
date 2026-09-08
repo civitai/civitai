@@ -72,6 +72,54 @@ describe('updateSync :: failure reporting', () => {
     expect(result.failedIds).toBe(7);
   }, 30_000);
 
+  it('counts only the ids of the batches that failed, not every id in the run', async () => {
+    // Deliberately pairwise-distinct, and distinct from every constant the assertions name:
+    // 30 items / chunk 8 => 4 batches sized 8, 8, 8, 6. Failing the FIRST and the LAST gives
+    // failedTasks 2 and failedIds 14 — a number that is not the item count (30), not the batch
+    // count (4), not the chunk size (8), and not `failedTasks * chunkSize` (16). Every "close
+    // enough" way of deriving it lands on a different value.
+    const ITEM_COUNT = 30;
+    const CHUNK_SIZE = 8;
+    const FIRST_ID_OF_FAILING_HEAD_BATCH = 1;
+    const FIRST_ID_OF_FAILING_TAIL_BATCH = 25;
+
+    const pushed: number[] = [];
+    const pullData = vi.fn(async (_ctx, batch) => {
+      if (batch.type !== 'update') return [];
+      const ids = batch.ids as number[];
+      if (
+        ids.includes(FIRST_ID_OF_FAILING_HEAD_BATCH) ||
+        ids.includes(FIRST_ID_OF_FAILING_TAIL_BATCH)
+      ) {
+        throw statementTimeout();
+      }
+      return ids;
+    });
+    const pushData = vi.fn(async (_ctx: unknown, data: number[]) => {
+      pushed.push(...data);
+    });
+
+    const index = buildIndex({ pullData, pushData, updateSyncChunkSize: CHUNK_SIZE });
+
+    const result = await index.updateSync(updateItems(ITEM_COUNT));
+
+    expect(result).toEqual({
+      indexName: 'test_index',
+      totalTasks: 4,
+      failedTasks: 2,
+      failedIds: 14,
+    });
+    // A partial failure, not a total one: strictly fewer than every batch, and strictly fewer
+    // than every id.
+    expect(result.failedTasks).toBeLessThan(result.totalTasks);
+    expect(result.failedIds).toBeLessThan(ITEM_COUNT);
+    // The batches that did not fail were still written — 16 ids, the complement of the 14.
+    expect(pushData).toHaveBeenCalledTimes(2);
+    expect(pushed.sort((a, b) => a - b)).toEqual([
+      9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+    ]);
+  }, 30_000);
+
   it('reports zero failures when every batch succeeds', async () => {
     const pushData = vi.fn().mockResolvedValue(undefined);
     const index = buildIndex({ pushData, updateSyncChunkSize: 300 });
@@ -127,6 +175,43 @@ describe('updateSync :: per-index chunk size', () => {
     // three above — the chunk size is what moved.
     expect(result.totalTasks).toBe(1);
     expect(pulledIdCounts(pullData)).toEqual([ITEM_COUNT]);
+  });
+
+  // `chunk(xs, 0)` and `chunk(xs, -1)` both return [] in lodash, so an unclamped chunk size would
+  // queue zero tasks and return `{ totalTasks: 0, failedTasks: 0 }` — a clean result for a run
+  // that indexed nothing.
+  it.each([
+    { configured: 0, label: 'zero' },
+    { configured: -5, label: 'negative' },
+  ])(
+    'still indexes every item when the chunk size is $label',
+    async ({ configured }) => {
+      const pullData = vi.fn(async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []));
+      const pushData = vi.fn().mockResolvedValue(undefined);
+      const index = buildIndex({ pullData, pushData, updateSyncChunkSize: configured });
+
+      const result = await index.updateSync(updateItems(ITEM_COUNT));
+
+      expect(index.updateSyncChunkSize).toBeGreaterThanOrEqual(1);
+      // One id per batch is the floor, so 60 items produce 60 tasks — the point is that it is not 0.
+      expect(result.totalTasks).toBe(ITEM_COUNT);
+      expect(result.failedTasks).toBe(0);
+      expect(pushData).toHaveBeenCalledTimes(ITEM_COUNT);
+      expect(pulledIdCounts(pullData)).toEqual(Array.from({ length: ITEM_COUNT }, () => 1));
+    },
+    30_000
+  );
+
+  it('rounds a fractional chunk size down to a whole number of ids', async () => {
+    const pullData = vi.fn(async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []));
+    const index = buildIndex({ pullData, updateSyncChunkSize: 7.9 });
+
+    expect(index.updateSyncChunkSize).toBe(7);
+
+    const result = await index.updateSync(updateItems(ITEM_COUNT));
+    // 60 / 7 => 8 full batches of 7 plus a final 4.
+    expect(result.totalTasks).toBe(9);
+    expect(pulledIdCounts(pullData).sort((a, b) => b - a)).toEqual([7, 7, 7, 7, 7, 7, 7, 7, 4]);
   });
 
   it('keeps the collections index well below the default', () => {

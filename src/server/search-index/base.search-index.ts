@@ -204,8 +204,16 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     jobName,
     partial,
     queues,
-    updateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
+    updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
   } = processor;
+
+  // `chunk(xs, 0)` and `chunk(xs, -1)` both return `[]`, so a processor configured with a
+  // non-positive chunk size would queue zero tasks, write nothing to the index, and still report
+  // `totalTasks: 0, failedTasks: 0` — the silent success this reporting exists to remove. Clamp to
+  // at least one id per batch, and fall back to the default for a non-numeric value.
+  const updateSyncChunkSize = Number.isFinite(configuredUpdateSyncChunkSize)
+    ? Math.max(1, Math.floor(configuredUpdateSyncChunkSize))
+    : DEFAULT_UPDATE_SYNC_CHUNK_SIZE;
 
   return {
     indexName,

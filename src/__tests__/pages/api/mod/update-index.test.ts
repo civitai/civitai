@@ -1,10 +1,37 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { updateSync, processQueues } = vi.hoisted(() => ({
-  updateSync: vi.fn(),
-  processQueues: vi.fn().mockResolvedValue(undefined),
-}));
+/**
+ * One mock per export, each with its OWN spies. Sharing a single object across all nine made the
+ * lookup table in the handler unobservable: any index could be mapped to any other and every
+ * assertion still passed.
+ */
+const { indexMocks } = vi.hoisted(() => {
+  const exportNames = [
+    'modelsSearchIndex',
+    'usersSearchIndex',
+    'imagesSearchIndex',
+    'articlesSearchIndex',
+    'imagesMetricsSearchIndex',
+    'collectionsSearchIndex',
+    'bountiesSearchIndex',
+    'toolsSearchIndex',
+    'comicsSearchIndex',
+  ] as const;
+
+  type ExportName = (typeof exportNames)[number];
+  const mocks = {} as Record<
+    ExportName,
+    { updateSync: ReturnType<typeof vi.fn>; processQueues: ReturnType<typeof vi.fn> }
+  >;
+  for (const name of exportNames) {
+    mocks[name] = { updateSync: vi.fn(), processQueues: vi.fn() };
+  }
+  return { indexMocks: mocks };
+});
+
+type IndexExportName = keyof typeof indexMocks;
+const indexExportNames = Object.keys(indexMocks) as IndexExportName[];
 
 // ModEndpoint wraps the handler in mod-auth; the handler itself is what is under test.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -16,23 +43,40 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 // The real index objects open a Meilisearch client and hit the database at module load.
-vi.mock('~/server/search-index', () => {
-  const index = { updateSync, processQueues };
-  return {
-    modelsSearchIndex: index,
-    usersSearchIndex: index,
-    imagesSearchIndex: index,
-    articlesSearchIndex: index,
-    imagesMetricsSearchIndex: index,
-    collectionsSearchIndex: index,
-    bountiesSearchIndex: index,
-    toolsSearchIndex: index,
-    comicsSearchIndex: index,
-  };
-});
+vi.mock('~/server/search-index', () => indexMocks);
 
-import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  METRICS_IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import handler from '~/pages/api/mod/update-index';
+
+/**
+ * The routing this file pins: every `index` query value and the module export that must handle
+ * it. Written out by hand rather than derived from the handler, so a copy-paste slip in the
+ * handler's lookup table disagrees with it instead of being mirrored by it.
+ */
+const expectedRouting: Array<{ index: string; exportName: IndexExportName }> = [
+  { index: MODELS_SEARCH_INDEX, exportName: 'modelsSearchIndex' },
+  { index: USERS_SEARCH_INDEX, exportName: 'usersSearchIndex' },
+  { index: IMAGES_SEARCH_INDEX, exportName: 'imagesSearchIndex' },
+  { index: ARTICLES_SEARCH_INDEX, exportName: 'articlesSearchIndex' },
+  { index: METRICS_IMAGES_SEARCH_INDEX, exportName: 'imagesMetricsSearchIndex' },
+  { index: COLLECTIONS_SEARCH_INDEX, exportName: 'collectionsSearchIndex' },
+  { index: BOUNTIES_SEARCH_INDEX, exportName: 'bountiesSearchIndex' },
+  { index: TOOLS_SEARCH_INDEX, exportName: 'toolsSearchIndex' },
+  { index: COMICS_SEARCH_INDEX, exportName: 'comicsSearchIndex' },
+];
+
+const updateSync = indexMocks.collectionsSearchIndex.updateSync;
+const processQueues = indexMocks.collectionsSearchIndex.processQueues;
 
 const runRequest = async (query: Record<string, string>) => {
   const req = {
@@ -60,7 +104,15 @@ const runRequest = async (query: Record<string, string>) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  processQueues.mockResolvedValue(undefined);
+  for (const name of indexExportNames) {
+    indexMocks[name].processQueues.mockResolvedValue(undefined);
+    indexMocks[name].updateSync.mockResolvedValue({
+      indexName: name,
+      totalTasks: 1,
+      failedTasks: 0,
+      failedIds: 0,
+    });
+  }
 });
 
 describe('/api/mod/update-index', () => {
@@ -119,6 +171,36 @@ describe('/api/mod/update-index', () => {
       { id: 7, action: 'Update' },
       { id: 8, action: 'Update' },
     ]);
+  });
+
+  describe.each(expectedRouting)('index routing :: $index', ({ index, exportName }) => {
+    it(`sends updateSync to ${exportName} and to no other index`, async () => {
+      await runRequest({ index, updateIds: '7,8' });
+
+      expect(
+        indexMocks[exportName].updateSync,
+        `index "${index}" should have been routed to ${exportName}`
+      ).toHaveBeenCalledTimes(1);
+
+      const misrouted = indexExportNames.filter(
+        (name) => name !== exportName && indexMocks[name].updateSync.mock.calls.length > 0
+      );
+      expect(misrouted, `index "${index}" was ALSO routed to: ${misrouted.join(', ')}`).toEqual([]);
+    });
+
+    it(`sends processQueues to ${exportName} and to no other index`, async () => {
+      await runRequest({ index, processQueues: 'update' });
+
+      expect(
+        indexMocks[exportName].processQueues,
+        `index "${index}" should have been routed to ${exportName}`
+      ).toHaveBeenCalledTimes(1);
+
+      const misrouted = indexExportNames.filter(
+        (name) => name !== exportName && indexMocks[name].processQueues.mock.calls.length > 0
+      );
+      expect(misrouted, `index "${index}" was ALSO routed to: ${misrouted.join(', ')}`).toEqual([]);
+    });
   });
 
   it('still returns 200 for a processQueues run, which reports no sync result', async () => {

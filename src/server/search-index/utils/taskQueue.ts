@@ -51,6 +51,23 @@ export type OnCompleteTask = BaseTask & {
 
 type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
+/**
+ * What is retained about a task that exhausted its retries.
+ *
+ * Deliberately NOT the `Task` itself: a push task carries `data` (an entire transformed batch,
+ * up to a processor's document batch size) and any multi-step pull task carries `currentData`.
+ * Holding the task object would keep those payloads alive for the whole life of the queue —
+ * which, on a degraded backend where many batches fail, is a large amount of memory retained for
+ * the sake of a number. Only the fields a caller actually reports on are kept.
+ */
+export type FailedTaskRecord = {
+  type: Task['type'];
+  /** Source ids this task was responsible for; none of them reached the index. */
+  idCount: number;
+  /** Attempts made before giving up. */
+  retries: number;
+};
+
 const MAX_QUEUE_SIZE_DEFAULT = 50;
 const RETRY_TIMEOUT = 1000;
 
@@ -60,8 +77,11 @@ export class TaskQueue {
   processing: Set<Task>;
   stats: Record<TaskStatus, number>;
   maxQueueSize: number;
-  /** Tasks that exhausted their retries. Kept so a caller can report what was NOT indexed. */
-  failedTasks: Task[];
+  /**
+   * Summaries of the tasks that exhausted their retries, kept so a caller can report what was NOT
+   * indexed. Summaries rather than tasks — see `FailedTaskRecord`.
+   */
+  failedTasks: FailedTaskRecord[];
   /**
    * Tasks that are between "failed" and "back on a queue" — see `failTask`. Counted by
    * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
@@ -98,7 +118,7 @@ export class TaskQueue {
 
   /** Number of source ids belonging to tasks that permanently failed. */
   get failedIdCount(): number {
-    return this.failedTasks.reduce((acc, task) => acc + (task.idCount ?? 0), 0);
+    return this.failedTasks.reduce((acc, record) => acc + record.idCount, 0);
   }
 
   async waitForQueueCapacity(queue: Task[]): Promise<void> {
@@ -173,7 +193,13 @@ export class TaskQueue {
       return;
     }
 
-    this.failedTasks.push(task);
+    // Summarise rather than retain: the task (and its `data`/`currentData` payload) becomes
+    // garbage as soon as this returns.
+    this.failedTasks.push({
+      type: task.type,
+      idCount: task.idCount ?? 0,
+      retries: task.retries,
+    });
     this.updateTaskStatus(task, 'failed');
   }
 
