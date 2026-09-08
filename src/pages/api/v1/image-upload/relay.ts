@@ -1,6 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isProd } from '~/env/other';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
+import {
+  recordImageUploadRelay,
+  type ImageUploadRelayOutcome,
+} from '~/server/prom/image-upload-relay.metrics';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
@@ -151,14 +155,48 @@ export function __resetInFlightForTest() {
   inFlight = 0;
 }
 
+/**
+ * The route. Thin on purpose: everything that decides the response lives in
+ * `runRelay`, and this wrapper's only extra job is to emit the usage counter.
+ *
+ * 🔴 THE SPLIT IS THE GUARD, not decoration. A successful relay is otherwise
+ * INVISIBLE in production — a 200 here is filtered out of the access-log stream,
+ * traces are head-sampled well below this route's event rate, and the media-location
+ * registry records the same backend for a relayed and a direct upload. So the counter
+ * is the only evidence this fallback ever rescues anyone, and "someone remembers to
+ * add a `recordImageUploadRelay(...)` beside each of the ten `res.status(...)` calls"
+ * is not a mechanism. Having `runRelay` RETURN its outcome makes the emit happen
+ * exactly once per invocation by construction, and makes a newly-added branch that
+ * settles the response without naming an outcome a COMPILE error (its return type is a
+ * closed union with no `undefined` in it) rather than a silently uncounted path.
+ *
+ * The `catch` is what extends that guarantee to the unexpected: without it, a throw
+ * from `runRelay` would be the one way out of this handler that records nothing. The
+ * error is re-thrown unchanged so the framework still handles it exactly as before —
+ * this wrapper observes, it does not intervene.
+ */
 export default async function imageUploadRelay(req: NextApiRequest, res: NextApiResponse) {
   // 5xx attribution, matching the direct presign route.
   instrumentApiResponse(req, res);
 
+  let outcome: ImageUploadRelayOutcome;
+  try {
+    outcome = await runRelay(req, res);
+  } catch (e) {
+    recordImageUploadRelay('handler_error');
+    throw e;
+  }
+  recordImageUploadRelay(outcome);
+}
+
+async function runRelay(
+  req: NextApiRequest,
+  res: NextApiResponse
+): Promise<ImageUploadRelayOutcome> {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'Method not allowed' });
-    return;
+    return 'method_not_allowed';
   }
 
   // CSRF guard. This raw route bypasses the tRPC pipeline, so it never gets
@@ -190,14 +228,14 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
   // bearer client ever needs the fallback.
   if (isProd && !isAllowedOriginRequest(req)) {
     res.status(403).json({ error: 'Cross-origin request blocked' });
-    return;
+    return 'forbidden_origin';
   }
 
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
   if (!userId || session.user?.bannedAt) {
     res.status(401).json({ error: 'Unauthorized' });
-    return;
+    return 'unauthorized';
   }
 
   // 🔴 Bound the memory this route can hold at once. It buffers whole, and
@@ -216,7 +254,7 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
     // was fine, there was no capacity for it right now.
     res.setHeader('Retry-After', String(RELAY_RETRY_AFTER_SECONDS));
     res.status(429).json({ error: 'Upload fallback is busy' });
-    return;
+    return 'busy';
   }
 
   inFlight += 1;
@@ -229,15 +267,21 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
         // The 413 / 400 was already written by `readCappedBody` — see the notes there.
         // 🔴 Returning here is what skips the store write: neither a refused nor an
         // incomplete body may reach `uploadImageBufferToStore`.
-        return;
+        //
+        // The two share a status family but NOT an outcome: `too_large` means we
+        // refused the request, `truncated` means we could not trust what arrived. They
+        // are separated here for the same reason they are separate error classes —
+        // folding them would let a truncation regression hide inside the size-limit
+        // count, which is exactly the confusion the 413/400 split exists to prevent.
+        return e instanceof PayloadTooLargeError ? 'too_large' : 'truncated';
       }
       res.status(400).json({ error: 'Failed to read upload body' });
-      return;
+      return 'read_error';
     }
 
     if (body.length === 0) {
       res.status(400).json({ error: 'Empty upload body' });
-      return;
+      return 'empty';
     }
 
     const contentTypeHeader = req.headers['content-type'];
@@ -248,6 +292,11 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
       // calls the same value `id` in its response, so keep the wire shape identical.
       const { key } = await uploadImageBufferToStore(body, { contentType });
       res.status(200).json({ id: key });
+      // 🔴 The ONLY path that returns `success`, and it is AFTER the store write
+      // resolved. A relay that answered 200 without the bytes landing would be the
+      // corruption this route's other guards exist to prevent, so the counter must
+      // never be able to claim a rescue the store did not perform.
+      return 'success';
     } catch (e) {
       // 🔴 NOT `error.message`. This path's errors come from the AWS SDK's
       // PutObjectCommand, whose messages carry bucket names, endpoint hostnames,
@@ -257,6 +306,7 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
       // the wire body, logs the real cause, and maps a client disconnect to 499 so it
       // stays out of the 5xx SLO.
       handleEndpointError(res, e);
+      return 'store_error';
     }
   } finally {
     // `finally`, not a tail decrement: every early `return` above is inside the try,

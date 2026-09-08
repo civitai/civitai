@@ -76,6 +76,17 @@ import handler, {
   __getInFlightForTest,
   __resetInFlightForTest,
 } from '~/pages/api/v1/image-upload/relay';
+// 🔴 DELIBERATELY NOT MOCKED. The usage counter is the only production evidence that
+// this fallback ever works, so the cases below drive the REAL emitter and read the real
+// prom registry. A mock here would assert that the route called a function, which is
+// the weaker claim — it cannot see a wrong label, a folded series, or a registration on
+// a registry nothing scrapes.
+import client from 'prom-client';
+import {
+  IMAGE_UPLOAD_RELAY_METRIC,
+  IMAGE_UPLOAD_RELAY_OUTCOMES,
+  __resetImageUploadRelayMetricsForTest,
+} from '~/server/prom/image-upload-relay.metrics';
 
 /** Records the order in which the handler wrote a status vs destroyed the request. */
 type Trace = string[];
@@ -182,6 +193,9 @@ beforeEach(() => {
   // A case that leaves a slot held would otherwise make the NEXT case fail for an
   // unrelated reason — measured as a false cascading failure during round-2 mutation.
   __resetInFlightForTest();
+  // The counter is module-scoped and process-wide; without this every case inherits
+  // the previous one's counts and the "and only that outcome" assertions go vacuous.
+  __resetImageUploadRelayMetricsForTest();
   prodFlag.value = false;
   mockGetServerAuthSession.mockResolvedValue(authed);
   mockUploadImageBufferToStore.mockResolvedValue({
@@ -541,5 +555,216 @@ describe('image-upload relay', () => {
     expect(wire).not.toContain('EXAMPLE-BUCKET');
     expect(wire).not.toContain('s3.example.invalid');
     expect(wire).not.toContain('REQ-123');
+  });
+
+  // -------------------------------------------------------------------------
+  // Usage counter
+  // -------------------------------------------------------------------------
+  //
+  // WHY THESE EXIST. A successful relay is INVISIBLE in production: a 200 is filtered
+  // out of the access-log stream (it logs 4xx/5xx or >5s only), traces are head-sampled
+  // at 0.1 against an event rate of a handful over months, and the media-location
+  // registry records the same backend for a relayed and a direct upload. So the route
+  // shipped with no way to answer "did this ever help anyone?", and
+  // `civitai_app_http_errors_total` — already wired here — only counts status >= 500.
+  //
+  // These are NEW-FEATURE tests, not regression guards: there is no revision of this
+  // route at which the counter existed and was broken. They are written to be killed by
+  // the mutations that matter — a deleted increment, a hardcoded label, a branch that
+  // settles the response without naming an outcome, a double count.
+  describe('usage counter', () => {
+    type MetricJSON = { values: { value: number; labels: Record<string, string> }[] };
+
+    async function series(): Promise<Record<string, number>> {
+      const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as
+        | { get: () => Promise<MetricJSON> }
+        | undefined;
+      if (!metric) return {};
+      const data = await metric.get();
+      return Object.fromEntries(data.values.map((v) => [v.labels.outcome, v.value]));
+    }
+
+    /**
+     * Assert the handler recorded EXACTLY the given outcome, once.
+     *
+     * 🔴 The "and nothing else" half is load-bearing. A mutant that hardcodes the label
+     * — `recordImageUploadRelay('success')` everywhere — still increments something on
+     * every branch, so a test that only checked its own outcome had moved would pass
+     * against it on the success case and produce a counter that always reads 100%
+     * success. Reading the WHOLE series set is what discriminates.
+     */
+    async function expectOnly(outcome: string) {
+      const s = await series();
+      expect(s[outcome], `expected outcome=${outcome} to be 1`).toBe(1);
+      const nonZero = Object.entries(s)
+        .filter(([, v]) => v !== 0)
+        .map(([k]) => k);
+      expect(nonZero).toEqual([outcome]);
+    }
+
+    it('counts a SUCCESSFUL relay — the outcome nothing else in production can see', async () => {
+      await handler(makeReq([Buffer.from('image-bytes')]), makeRes());
+      await expectOnly('success');
+    });
+
+    it('does not count success when the store write threw', async () => {
+      // The pairing that matters: a counter that cannot separate these is worse than
+      // none, because it would report the outage as a rescue.
+      mockUploadImageBufferToStore.mockRejectedValue(new Error('store down'));
+      const res = makeRes();
+      await handler(makeReq([Buffer.from('bytes')]), res);
+      expect(res.statusCode).toBe(500);
+      await expectOnly('store_error');
+    });
+
+    it('counts a 413 as too_large', async () => {
+      const half = Math.floor(MAX_RELAY_BYTES / 2) + 1;
+      await handler(makeReq([Buffer.alloc(half), Buffer.alloc(half)]), makeRes());
+      await expectOnly('too_large');
+    });
+
+    it('counts a pre-read 413 (declared Content-Length over the cap) as too_large', async () => {
+      // Same outcome by a different route through readCappedBody — the declared-length
+      // refusal, which never reads a byte.
+      await handler(makeReq([Buffer.from('a')], { contentLength: MAX_RELAY_BYTES + 1 }), makeRes());
+      await expectOnly('too_large');
+    });
+
+    it('counts a short body as truncated, NOT as too_large', async () => {
+      // 🔴 The two share neither a status nor a meaning, and folding them would let a
+      // truncation regression — the defect that stored corrupt images and answered 200
+      // — hide inside the size-limit count.
+      const res = makeRes();
+      await handler(makeReq([Buffer.from('abcd')], { contentLength: 10 }), res);
+      expect(res.statusCode).toBe(400);
+      await expectOnly('truncated');
+    });
+
+    it('counts an empty body as empty', async () => {
+      await handler(makeReq([Buffer.alloc(0)]), makeRes());
+      await expectOnly('empty');
+    });
+
+    it('counts a body-read failure as read_error', async () => {
+      // A stream that errors mid-read — neither of the two typed rejections, so it
+      // falls to the generic 400 branch.
+      const req = decorate(
+        Readable.from(
+          (function* () {
+            yield Buffer.from('ab');
+            throw new Error('socket died');
+          })()
+        ) as unknown as NextApiRequest
+      );
+      const res = makeRes();
+      await handler(req, res);
+      expect(res.statusCode).toBe(400);
+      await expectOnly('read_error');
+    });
+
+    it('counts an unauthenticated caller as unauthorized', async () => {
+      mockGetServerAuthSession.mockResolvedValue(null);
+      await handler(makeReq([Buffer.from('bytes')]), makeRes());
+      await expectOnly('unauthorized');
+    });
+
+    it('counts a production cross-origin reject as forbidden_origin', async () => {
+      prodFlag.value = true;
+      mockIsAllowedOriginRequest.mockReturnValue(false);
+      await handler(makeReq([Buffer.from('bytes')]), makeRes());
+      await expectOnly('forbidden_origin');
+    });
+
+    it('counts a non-POST as method_not_allowed', async () => {
+      await handler(makeReq([Buffer.from('bytes')], { method: 'GET' }), makeRes());
+      await expectOnly('method_not_allowed');
+    });
+
+    it('counts a shed request as busy, separately from the relays holding the slots', async () => {
+      let release: () => void = () => undefined;
+      mockUploadImageBufferToStore.mockImplementation(
+        () =>
+          new Promise((r) => {
+            const prev = release;
+            release = () => {
+              prev();
+              // Only `key` is read by the route; the rest of the store's return value
+              // is deliberately not restated here.
+              r({ key: 'server-minted-uuid' });
+            };
+          })
+      );
+      const held = Array.from({ length: MAX_CONCURRENT_RELAYS }, () =>
+        handler(makeReq([Buffer.from('bytes')]), makeRes())
+      );
+      await new Promise((r) => setTimeout(r, 10));
+
+      const shedRes = makeRes();
+      await handler(makeReq([Buffer.from('bytes')]), shedRes);
+      expect(shedRes.statusCode).toBe(429);
+      // The shed is counted the moment it happens; the held relays have not settled.
+      expect((await series()).busy).toBe(1);
+      expect((await series()).success).toBe(0);
+
+      release();
+      await Promise.all(held);
+      const s = await series();
+      expect(s.busy).toBe(1);
+      expect(s.success).toBe(MAX_CONCURRENT_RELAYS);
+    });
+
+    it('counts an unexpected throw as handler_error and RE-THROWS it unchanged', async () => {
+      // The branch that makes "one increment per invocation" hold unconditionally.
+      // Re-throwing matters as much as counting: this wrapper observes the route, it
+      // must not start swallowing errors the framework used to see.
+      const boom = new Error('session lookup exploded');
+      mockGetServerAuthSession.mockRejectedValue(boom);
+      await expect(handler(makeReq([Buffer.from('bytes')]), makeRes())).rejects.toBe(boom);
+      await expectOnly('handler_error');
+    });
+
+    it('records EXACTLY ONE outcome per invocation, across every branch', async () => {
+      // 🔴 THE SEAM GUARD, and the reason the response logic returns an outcome instead
+      // of ten hand-placed emit calls. Per-branch cases above prove each branch counts
+      // SOMETHING; this proves the route as a whole neither double-counts nor drops a
+      // count — the two failures that would make `sum(...)` stop being the route's
+      // request count and quietly corrupt every ratio read off it.
+      const invocations: Array<() => Promise<unknown>> = [
+        () => handler(makeReq([Buffer.from('bytes')]), makeRes()),
+        () => handler(makeReq([Buffer.from('bytes')], { method: 'PUT' }), makeRes()),
+        () => handler(makeReq([Buffer.alloc(0)]), makeRes()),
+        () => handler(makeReq([Buffer.from('abcd')], { contentLength: 99 }), makeRes()),
+        () =>
+          handler(makeReq([Buffer.from('a')], { contentLength: MAX_RELAY_BYTES + 1 }), makeRes()),
+        () => handler(makeReq([Buffer.from('bytes'), Buffer.from('more')]), makeRes()),
+      ];
+      for (const run of invocations) await run();
+
+      const s = await series();
+      const total = Object.values(s).reduce((a, b) => a + b, 0);
+      expect(total).toBe(invocations.length);
+      // Several distinct branches ran, so a mutant that emits one constant label is not
+      // merely counted right — it is visibly wrong here too.
+      expect(Object.values(s).filter((v) => v > 0).length).toBeGreaterThan(1);
+    });
+
+    it('exposes every outcome series from the first scrape, before any relay happens', async () => {
+      // 🔴 prom-client materialises a child only on its first inc(). This route fires a
+      // handful of times across the whole fleet, so on nearly every pod the true reading
+      // is all-zeros — and an ABSENT series reads in PromQL as `no data`, which is
+      // indistinguishable from "the instrument was never wired". That ambiguity is the
+      // thing this counter exists to remove, so the zeros have to be emitted.
+      //
+      // Registration is driven here by importing the module, which is what `/api/metrics`
+      // does explicitly (`ensureRegisterImageUploadRelayMetrics()`); this asserts the
+      // module half. Nothing has relayed in this case.
+      const { ensureRegisterImageUploadRelayMetrics } = await import(
+        '~/server/prom/image-upload-relay.metrics'
+      );
+      ensureRegisterImageUploadRelayMetrics();
+      const s = await series();
+      expect(Object.keys(s).sort()).toEqual([...IMAGE_UPLOAD_RELAY_OUTCOMES].sort());
+      expect(Object.values(s).every((v) => v === 0)).toBe(true);
+    });
   });
 });
