@@ -26,6 +26,7 @@ import {
   getArticles,
   setArticleOfficial,
   getArticleScanStatus,
+  isArticleProcessing,
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
@@ -89,6 +90,13 @@ export const articleRouter = router({
         isModerator: ctx.user?.isModerator,
       })
     ),
+  // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
+  // per-image blocked/error detail. This answers only "come back in a minute" for a viewer
+  // `getById` just refused, so it must not distinguish Blocked from never-existed.
+  isProcessing: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getByIdSchema)
+    .query(({ input }) => isArticleProcessing(input)),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)
