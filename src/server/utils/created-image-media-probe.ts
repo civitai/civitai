@@ -17,10 +17,20 @@ import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
  * rows had a key an upload endpoint had signed 2.0–23.3s before the row was written, with
  * zero bytes ever stored — a real upload attempt that failed silently down that path.
  *
- * 🔴 A CLIENT FIX CANNOT CLOSE THIS AND THIS ONE CAN. The hook only protects sessions that
- * have loaded the new bundle, and it is one of several producers. Every `Image` row in the
- * app goes through `createImage`, so a check here covers every producer the moment it
- * deploys — including the ones nobody has enumerated.
+ * 🔴 WHAT THIS COVERS, STATED EXACTLY: `Image` rows written through `createImage`. That is
+ * the widest single funnel — post images, model-version and collection paths, comics, cover
+ * images, thumbnails — and it reaches every session regardless of which bundle it loaded,
+ * which a client-side fix cannot. It is NOT every `Image` row: five write paths reach the
+ * table directly and are enumerated at the call site in `~/server/services/image.service`
+ * (`createImage`), the highest-risk being `linkArticleContentImages`, which materialises
+ * TipTap article content — fed by the same resolves-on-a-refused-PUT hook described above —
+ * inside a `dbWrite.$transaction`, where `local-rules/no-io-in-transaction` is what makes
+ * adding a HEAD a separate change rather than an extra argument.
+ *
+ * An earlier version of this comment claimed the funnel was total ("every `Image` row … so
+ * a check here covers every producer … including the ones nobody has enumerated"). It is
+ * not, and nothing here establishes whether this half or the client half leaves more rows
+ * uncovered — both are partial in different directions.
  *
  * 🔴 OBSERVE-ONLY. This module answers a question; it does not act on the answer. The
  * caller logs the verdict and continues. Rejecting an image creation is a NEW failure mode
@@ -90,6 +100,17 @@ export type CreatedImageMediaVerdict =
  * rather than picked afresh, so the two probes against this same store cannot drift apart.
  * An abort surfaces as an `AbortError`, which is not a not-found shape, so it lands on
  * `unknown` like any other unreachable-bucket outcome.
+ *
+ * 🔴 THIS BOUNDS EACH NETWORK ATTEMPT, NOT WALL-CLOCK TIME. `~/utils/s3-utils` records the
+ * mechanism on `checkFileExists` and `headObject`: the signal is shared by every retry
+ * attempt, but the SDK sleeps BETWEEN attempts on a plain, non-abort-aware timer, so a
+ * deadline landing mid-backoff lets that sleep run to completion and only the next attempt
+ * short-circuits. Worst case per call is therefore this budget plus one backoff, not 2s.
+ * `getB2ImageS3Client` (`~/utils/s3-utils`) sets neither `maxAttempts` nor a
+ * request-handler timeout, so the backoff length is whatever the SDK default schedule
+ * produces — s3-utils records one measurement against the installed SDK, a 300ms budget
+ * with a ~5s backoff in flight returning in ~4.7s. The consequence for the callers that
+ * loop is sized at the `createImage` call site.
  */
 export const CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS = 2000;
 

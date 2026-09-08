@@ -6118,11 +6118,38 @@ export async function createImage({
   /**
    * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
    *
-   * Every `Image` row in the app goes through here: `addPostImage`, the post-with-images
-   * handler, model-version and collection paths, comics, cover images, thumbnails. The
-   * check belongs at this one funnel and nowhere else — four copies of a predicate is a
-   * predicate that is wrong at three of them — and it cannot live in the zod schema
-   * because it needs IO.
+   * `createImage` is the widest single funnel for `Image` rows — `addPostImage`, the
+   * post-with-images handler, model-version and collection paths, comics, cover images,
+   * thumbnails all arrive here — and the check belongs at that one funnel rather than at
+   * each caller, because a predicate open-coded at N sites is wrong at N-1 of them. It
+   * cannot live in the zod schema, because it needs IO.
+   *
+   * 🔴 IT IS NOT EVERY `Image` ROW, AND THIS COMMENT USED TO CLAIM IT WAS. Five write
+   * paths reach the `Image` table without passing through here, so their rows appear in
+   * neither the numerator nor the denominator of anything this emits:
+   *   1. `article.service.ts` `linkArticleContentImages` (`tx.image.createManyAndReturn`)
+   *   2. `createEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
+   *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
+   *
+   * 🔴 The article path is the highest-risk of those, because it is fed by the exact hook
+   * defect this change describes: the TipTap editor nodes (`TipTap/EdgeMediaNode.tsx`,
+   * `libs/tiptap/extensions/CustomImage.tsx`) write the upload's key into article content
+   * on a promise that RESOLVES even when the PUT was refused, and that content is then
+   * materialised into rows by `linkArticleContentImages` — unprobed.
+   *
+   * 🔴 EXTENDING THE PROBE TO IT IS A SEPARATE CHANGE, and the reason is structural, not
+   * scheduling: `linkArticleContentImages` does its `createManyAndReturn` INSIDE a
+   * `dbWrite.$transaction` callback, and this repo has a lint rule
+   * (`local-rules/no-io-in-transaction`) whose whole purpose is to keep network IO out of
+   * that callback, because it burns the transaction's timeout budget. Adding a HEAD there
+   * means restructuring the transaction first.
+   *
+   * So the honest scope of what follows is: every `Image` row written through
+   * `createImage`. Both halves of this change are partial — the client half only reaches
+   * sessions that have loaded the new bundle, this half only reaches this funnel — and
+   * nothing here establishes which of the two leaves more rows uncovered.
    *
    * 🔴 OBSERVE-ONLY, BY CONSTRUCTION AND NOT BY A FLAG. The verdict is logged and then
    * dropped; nothing below branches on it. Rejecting here would be a new failure mode on
@@ -6130,6 +6157,22 @@ export async function createImage({
    * `absent` rate accumulate against a real denominator first. Enforcement is a separate
    * change gated on the measurement this emits — which is also why there is no env var to
    * flip: an unused enforcement branch is an untested one.
+   *
+   * 🔴 COST, AND THE LOOPS THAT MULTIPLY IT. One HEAD per call. Most callers are
+   * single-image, but TWO `comics.router.ts` procedures call this once per input item:
+   * `bulkCreatePanels` (`panels` capped at 20 by its zod schema) and `addReferenceImages`
+   * (`images` capped at 10). Both loops are sequential, so they add up to 20 and up to 10
+   * sequential probes respectively.
+   *
+   * 🔴 Size the DEGRADED case, not the healthy one: as documented on
+   * `CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS`, the 2s budget bounds each network attempt but
+   * not wall-clock time, so per-call worst case is the budget plus one non-abort-aware SDK
+   * backoff. Against a degraded store the added cost of a full bulk import is therefore 20
+   * of those, not 20 × 2s. Both loops are already N sequential IO round-trips per item (a
+   * DB write plus an ingestion call), so this is a proportional addition to an existing
+   * sequential-IO path rather than a new failure class — but "proportional" is a claim
+   * about shape, not about the absolute number, and the absolute number is unbounded until
+   * `getB2ImageS3Client` sets a `maxAttempts`.
    */
   const mediaVerdict = await probeCreatedImageMedia(image.url);
 
@@ -6146,6 +6189,26 @@ export async function createImage({
    * the `absent` count until a NON-ZERO `present` count proves the probe reaches the store
    * at all, and `unknown` is a small share of `present + absent + unknown`.
    *
+   * 🔴 BUT A NON-ZERO `present` IS NOT SUFFICIENT ON ITS OWN, AND AN EARLIER VERSION OF
+   * THIS COMMENT SAID IT WAS. `present` proves the credential can read an object that
+   * EXISTS; it does not prove that a key which does NOT exist comes back as a 404 rather
+   * than a 403. `isNotFoundError` in `~/utils/s3-utils` accepts only `NotFound`,
+   * `NoSuchKey` and a 404 status, so under a 403-on-missing credential every real defect
+   * would land on `unknown` and `absent` would sit at zero — while the `present` control
+   * above reads perfectly healthy.
+   *
+   * That specific hazard was MEASURED rather than reasoned about, on 2026-09-08, by
+   * issuing HeadObject against the production image bucket with the production upload
+   * credential: a key that does not exist answered `name=NotFound`,
+   * `$metadata.httpStatusCode=404` (and a key that does exist returned its
+   * `ContentLength`, as the positive control). So `absent` IS reachable and the counter is
+   * not structurally pinned at zero.
+   *
+   * 🔴 That measurement is contingent on the credential it was taken with. A key rotation,
+   * a permissions change, or a move to a different bucket can reintroduce the hazard
+   * silently — the symptom is `absent` going to zero while `present` stays healthy. If you
+   * see that shape, re-take the measurement before concluding the defect is gone.
+   *
    * `url` is logged only for a PROBED verdict, where `isProbeableMediaKey` has already
    * accepted the value and it is therefore a 36-character uuid — not a filename and not
    * PII. It is the field that makes an `absent` verdict actionable: settling "real defect
@@ -6160,6 +6223,20 @@ export async function createImage({
    *
    * 🔴 NOT AWAITED, AND CONTAINED. Telemetry must never be able to change this call's
    * outcome, nor sit on a user-facing mutation's latency budget.
+   *
+   * 🔴 THIS LINE IS TEMPORARY, AND HERE IS WHAT ENDS IT. It is unsampled — one line per
+   * `createImage` call — which is the only shape that gives the `absent` count a
+   * denominator, and also the reason it must not live here indefinitely.
+   *
+   * CLOSING CONDITION: a merged PR that reads the `present` / `absent` / `unknown` counts
+   * for `create-image-media-verify`, quotes those three numbers in its body, and then
+   * either (a) adds the enforcement branch this measurement exists to size, or (b) deletes
+   * this call outright because the rate does not justify one. Either way that PR removes
+   * or samples down this `logToAxiom`.
+   *
+   * MECHANICAL CHECK THAT IT IS CLOSED: the string `create-image-media-verify` no longer
+   * appears in this file. Until then, an unread counter is the failure mode — if you are
+   * reading this and no such PR exists, the counts are already in the log; read them.
    */
   void logToAxiom({
     type: 'info',

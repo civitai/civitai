@@ -137,4 +137,32 @@ describe('probeCreatedImageMedia', () => {
     // value that would outlive a user-facing request has to fail here.
     expect(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS).toBe(2000);
   });
+
+  it('hands the store a signal carrying THAT budget, not merely some signal', async () => {
+    /**
+     * 🔴 THE CONSTANT AND THE DELIVERED BUDGET ARE TWO DIFFERENT CLAIMS, and the tests
+     * above pin only the first two-thirds of them: one asserts the constant is 2000,
+     * another asserts that `options.abortSignal instanceof AbortSignal`. Neither can see a
+     * probe that declares a 2s budget and then bounds the actual request with something
+     * else. Measured: mutating the call to `AbortSignal.timeout(600000)` left all 24 probe
+     * tests green — a 10-minute deadline on a user-facing mutation, invisible.
+     *
+     * So assert the number that reaches `AbortSignal.timeout`, and assert it against a
+     * LITERAL rather than re-reading the constant: a mutant that moves the constant AND the
+     * call site together still has to fail here, which re-reading the constant could not
+     * catch.
+     */
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      await probeCreatedImageMedia(KEY, deps({ status: 'present', size: 1 }));
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0]).toBe(2000);
+      // And the two claims agree — so raising the constant alone is caught by the test
+      // above, and raising only the delivered value is caught by the assertion above this.
+      expect(spy.mock.calls[0][0]).toBe(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

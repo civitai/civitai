@@ -76,7 +76,10 @@ describe('createImage — media existence probe (observe-only)', () => {
 
       // 🔴 One line on EVERY call, whatever the verdict — the `absent` count is only a rate
       // if the same log carries its own denominator, and `present` is the positive control
-      // that separates "no defects" from "the probe never reached the store".
+      // that separates "no defects" from "the probe never reached the store". `present` is
+      // NOT sufficient on its own: it proves the credential can read an object that exists,
+      // not that a MISSING key answers 404 rather than 403. That half was measured against
+      // the real bucket rather than reasoned about — see the call site in `image.service`.
       expect(verifyLine()).toMatchObject({ verdict, userId: USER_ID, postId: POST_ID });
     }
   );

@@ -188,11 +188,12 @@ describe('useCFImageUpload — the tracked file must not lie about a refused PUT
      * 🔴 THE REMAINING HALF OF THE DEFECT, PINNED RATHER THAN FIXED. `uploadToCF` still
      * RESOLVES on a refused PUT, handing the caller a media key with nothing behind it —
      * which is how an `Image` row gets written for media that never landed. Making it
-     * reject is the follow-up, and it is not a one-line change: 11 of 24 call sites do not
-     * catch, and `ImageUpload`'s uncaught `Promise.all` would propagate local `blob:` URLs
-     * into `onChange` as image values. Asserting the current behaviour makes that follow-up
-     * a deliberate edit to this expectation instead of a silent drift, and the observe-only
-     * probe in `createImage` covers the exposure server-side meanwhile.
+     * reject is the follow-up, and it is not a one-line change: 14 of the 32 direct call
+     * sites do not catch, and `ImageUpload`'s uncaught `Promise.all` would propagate local
+     * `blob:` URLs into `onChange` as image values. Asserting the current behaviour makes
+     * that follow-up a deliberate edit to this expectation instead of a silent drift, and
+     * the observe-only probe in `createImage` covers the `createImage` funnel server-side
+     * meanwhile — not every `Image` row; see that call site for the paths it misses.
      */
     expect(settled.error).toBeUndefined();
     expect(settled.value).toEqual({
