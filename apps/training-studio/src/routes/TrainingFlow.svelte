@@ -128,6 +128,7 @@
   {#if step === 1}
     <SelectStep
       {prices}
+      initial={selection}
       onContinue={(sel) => {
         selection = sel;
         step = 2;

@@ -9,6 +9,7 @@
     IconX,
     IconArrowRight,
   } from '@tabler/icons-svelte';
+  import { untrack } from 'svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import {
     CUSTOM_MODEL_SURCHARGE,
@@ -36,8 +37,17 @@
   } from './trainingFlow';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
 
-  let { onContinue, prices }: { onContinue: (sel: Selection) => void; prices: Record<string, number> } =
-    $props();
+  let {
+    onContinue,
+    prices,
+    initial = null,
+  }: {
+    onContinue: (sel: Selection) => void;
+    prices: Record<string, number>;
+    /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
+     *  remount doesn't lose the chosen model(s). */
+    initial?: Selection | null;
+  } = $props();
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
@@ -45,11 +55,15 @@
     return cardFromPrice(prices, cardType, custom);
   }
 
-  let media = $state<Media>('image');
-  let loraType = $state('character');
-  let runs = $state<Run[]>([newRun(recommendedCardFor('character', 'image'))]);
+  // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the
+  // intentional one-time capture — the flow remounts this step, so a fresh mount re-seeds from the latest.
+  let media = $state<Media>(untrack(() => initial?.media ?? 'image'));
+  let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
+  let runs = $state<Run[]>(
+    untrack(() => (initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image'))]))
+  );
   let focus = $state(0);
-  let sweepOpen = $state(false);
+  let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
 
   const types = $derived(typesForMedia(media));
   const type = $derived(types.find((t) => t.id === loraType) ?? types[0]!);
