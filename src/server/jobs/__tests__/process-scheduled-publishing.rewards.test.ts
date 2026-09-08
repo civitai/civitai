@@ -7,6 +7,8 @@ const {
   mockSetLastRun,
   mockProcessEngagement,
   mockCreateNotification,
+  mockQueueImageSearchIndexUpdate,
+  mockRefreshImageVideoCounts,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -14,6 +16,8 @@ const {
   mockSetLastRun: vi.fn(),
   mockProcessEngagement: vi.fn(),
   mockCreateNotification: vi.fn(),
+  mockQueueImageSearchIndexUpdate: vi.fn(),
+  mockRefreshImageVideoCounts: vi.fn(),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -27,9 +31,11 @@ vi.mock('~/server/rewards/active/firstDailyPost.reward', () => ({
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
-  userImageVideoCountCaches: { refresh: vi.fn() },
+  userImageVideoCountCaches: { refresh: mockRefreshImageVideoCounts },
 }));
-vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+vi.mock('~/server/services/image.service', () => ({
+  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
+}));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -47,6 +53,7 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -199,6 +206,51 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', message: expect.stringContaining('row limit') })
     );
+  });
+});
+
+describe('processScheduledPublishing :: search index reindex', () => {
+  // A standalone scheduled post goes live when the clock passes publishedAt, with no
+  // write anywhere. images_v6 gates on `p."publishedAt" <= NOW()` at pull time, so the
+  // enqueue updatePost fired at schedule time was rejected as future-dated, and
+  // Image.updatedAt never moves afterwards for the delta scan to re-derive it. If this
+  // sweep skips them the image is absent from site search permanently.
+  it('reindexes standalone scheduled posts on the day they go live', async () => {
+    stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 900 }]);
+    await runJob();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [900],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  });
+
+  it('reindexes both publish paths in one pass, deduped', async () => {
+    stubReads({ scheduled: [{ id: 1, userId: 10 }], newlyLive: [{ id: 2, userId: 20 }] });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 901 }]);
+    await runJob();
+    expect(mockDbWrite.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { postId: { in: [1, 2] } } })
+    );
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not enqueue when the published posts carry no images', async () => {
+    stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
+    await runJob();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
+  });
+
+  // The count refresh compensates for this job publishing via raw SQL instead of
+  // updatePost, so it belongs to the posts this job actually flips. The sweep half was
+  // published by something else, which already refreshed. Widening it to `publishedPosts`
+  // would refresh up to REWARD_SWEEP_LIMIT users every minute.
+  it('keeps the count refresh to the posts this job flips', async () => {
+    stubReads({ newlyLive: [{ id: 2, userId: 20 }] });
+    mockDbWrite.image.findMany.mockResolvedValue([{ id: 902 }]);
+    await runJob();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
+    expect(mockRefreshImageVideoCounts).not.toHaveBeenCalled();
   });
 });
 
