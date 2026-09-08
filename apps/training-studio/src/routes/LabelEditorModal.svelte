@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconSparkles } from '@tabler/icons-svelte';
+  import { IconSparkles, IconX } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -141,7 +141,7 @@
                     onclick={() => removeTag(t)}
                     class="grid h-5 w-5 place-items-center rounded text-dark-1 hover:bg-red-500/20 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
-                    ✕
+                    <IconX size={12} stroke={2} />
                   </button>
                 </span>
               {/each}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
+  import { IconAlertTriangle, IconCheck } from '@tabler/icons-svelte';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import type { TrainingDetailEpoch } from '$lib/data/trainingRows';
 
@@ -293,7 +294,7 @@
         {:else if status === 'error'}
           <div class="absolute inset-0 grid place-items-center px-6 text-center">
             <div>
-              <div class="text-3xl">⚠️</div>
+              <IconAlertTriangle size={30} stroke={2} class="mx-auto text-dark-2" />
               <p class="mt-2 text-sm text-white">This sample could not be loaded.</p>
               <p class="mt-1 text-[11px] text-dark-2">
                 Sample media is removed 30 days after training completes.
@@ -358,9 +359,9 @@
           onclick={copyPrompt}
           aria-label={copied ? 'Copied' : 'Copy prompt'}
           title={copied ? 'Copied' : 'Copy prompt'}
-          class="shrink-0 rounded px-2 py-1 font-mono text-[11px] text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
+          class="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
         >
-          {copied ? '✓ Copied' : 'Copy'}
+          {#if copied}<IconCheck size={12} stroke={2.5} />Copied{:else}Copy{/if}
         </button>
       {/if}
     </div>

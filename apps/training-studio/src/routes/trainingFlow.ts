@@ -4,6 +4,7 @@ import {
   MODEL_CARDS,
   cardByType,
   cardsForMedia,
+  loraTypeById,
   type LabelType,
   type Media,
   type ModelCard,
@@ -169,6 +170,74 @@ export function runCost(fromPrice: number | undefined, run: Run, steps: number):
   if (fromPrice == null) return null;
   const base = Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
   return base + (isCustom(run) ? CUSTOM_MODEL_SURCHARGE : 0);
+}
+
+// Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same cost,
+// so fall back to the SDXL "from" quote when the orchestrator hasn't priced them directly.
+const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' };
+
+/** Buzz spent per sample image generated during training. Matches the Review step's `SAMPLE_RATE`. */
+export const SAMPLE_RATE = 30;
+/** The Review step seeds this many sample prompts by default (before the user edits them). */
+export const DEFAULT_SAMPLE_PROMPTS = 3;
+
+/** The orchestrator's "from" quote for a card at the default step budget (Pony/Illustrious fall back to
+ *  SDXL), WITHOUT the custom surcharge — the raw base `runCost` scales. `undefined` when unpriced. */
+export function cardBaseQuote(
+  prices: Record<string, number>,
+  cardType: string
+): number | undefined {
+  const alias = PRICE_ALIAS[cardType];
+  return prices[cardType] ?? (alias ? prices[alias] : undefined);
+}
+
+/** The "from" Buzz quote for one model card, plus the flat custom-model surcharge; null when unpriced
+ *  (callers show a muted em-dash). Single source of truth for the "from" floor shown on Select. */
+export function cardFromPrice(
+  prices: Record<string, number>,
+  cardType: string,
+  custom: boolean
+): number | null {
+  const base = cardBaseQuote(prices, cardType);
+  if (base == null) return null;
+  return base + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
+}
+
+/** Sum the "from" floor across a selection's runs; null if any run is unpriced. Used on Select, where no
+ *  dataset exists yet — for a dataset-aware estimate use `estimatedTotal`. */
+export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
+  let sum = 0;
+  for (const run of runs) {
+    const runPrice = cardFromPrice(prices, run.cardType, isCustom(run));
+    if (runPrice == null) return null;
+    sum += runPrice;
+  }
+  return sum;
+}
+
+/** The default step budget for a lora type given the dataset size — each image "seen" ~N times, floored at
+ *  200. Dataset size drives the price through this. Shared with the Review step's default. */
+export function defaultStepsFor(loraTypeId: string, imageCount: number): number {
+  return Math.max(200, imageCount * loraTypeById(loraTypeId).seen);
+}
+
+/** The dataset-aware price estimate for a selection — the same figure the Review step shows at its defaults:
+ *  each run's cost scaled by the image-count-derived step budget, plus the sample images. `null` if any run
+ *  is unpriced. This is what Data and Review both price against so the number doesn't jump between steps. */
+export function estimatedTotal(
+  prices: Record<string, number>,
+  selection: Selection,
+  imageCount: number,
+  samplePrompts: number = DEFAULT_SAMPLE_PROMPTS
+): number | null {
+  const steps = defaultStepsFor(selection.loraType, imageCount);
+  let sum = 0;
+  for (const run of selection.runs) {
+    const cost = runCost(cardBaseQuote(prices, run.cardType), run, steps);
+    if (cost == null) return null;
+    sum += cost;
+  }
+  return sum + samplePrompts * SAMPLE_RATE;
 }
 
 /** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption

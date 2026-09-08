@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { invalidate } from '$app/navigation';
+  import { invalidate, goto } from '$app/navigation';
+  import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
   import { WORKFLOW_UPDATE_SIGNAL } from '$lib/signal-events';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -11,6 +12,10 @@
     IconAlertTriangle,
     IconStarFilled,
     IconDownload,
+    IconPhoto,
+    IconArchive,
+    IconRepeat,
+    IconArrowLeft,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
@@ -146,6 +151,79 @@
   // fix is teaching the on-site generator to accept a raw AIR/URL, done main-app-side.)
   const publishTarget = $derived(newestFirst.find((e) => e.modelUrl) ?? null);
 
+  // Dataset images resolve through the authenticated proxy (a blob key / unsigned civitai URL isn't directly
+  // viewable). An already-viewable absolute URL (the dev-preview stand-ins) is used as-is.
+  function datasetSrc(air: string): string {
+    const isAbsolute = air.startsWith('http://') || air.startsWith('https://');
+    if (isAbsolute && !air.includes('/v2/consumer/blobs/') && !air.includes('civitai')) return air;
+    return `/api/dataset-blob?air=${encodeURIComponent(air)}&workflowId=${encodeURIComponent(d.workflowId)}`;
+  }
+
+  const MIME_EXT: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+  };
+  // The blob's own extension (the air ends in one, e.g. `…-0.png`), falling back to the fetched mime.
+  function fileExt(air: string, mime: string): string {
+    const fromAir = air.split('?')[0].split('.').pop();
+    if (fromAir && /^[a-z0-9]{2,4}$/i.test(fromAir) && fromAir.length <= 4) return fromAir.toLowerCase();
+    return MIME_EXT[mime] ?? 'png';
+  }
+  function slug(s: string): string {
+    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dataset';
+  }
+
+  // Download the training data as a standard LoRA-layout zip: each image plus a same-named .txt caption,
+  // so it round-trips with the Data step's "Import .zip" and works in other trainers.
+  let downloading = $state(false);
+  async function downloadDataset() {
+    if (downloading || !d.dataset.length) return;
+    downloading = true;
+    try {
+      const zip = new JSZip();
+      const pad = Math.max(2, String(d.dataset.length).length);
+      await Promise.all(
+        d.dataset.map(async (item, i) => {
+          const res = await fetch(datasetSrc(item.air));
+          if (!res.ok) return;
+          const blob = await res.blob();
+          const base = String(i + 1).padStart(pad, '0');
+          zip.file(`${base}.${fileExt(item.air, blob.type)}`, blob);
+          if (item.caption.trim()) zip.file(`${base}.txt`, item.caption.trim());
+        })
+      );
+      const out = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(out);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${slug(d.name)}-dataset.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      downloading = false;
+    }
+  }
+
+  // Start a new training pre-loaded with this run's dataset. We reuse the blob airs directly (already
+  // uploaded + scanned — no re-upload), handed to the new flow via sessionStorage; the flow pre-fills the
+  // Data step once a model is picked. Captions come along; the user re-picks the model.
+  function reuseDataset() {
+    const payload = d.dataset.map((item, i) => ({
+      air: item.air,
+      caption: item.caption,
+      name: `image ${i + 1}`,
+      previewUrl: datasetSrc(item.air),
+    }));
+    sessionStorage.setItem('ts:reuse-dataset', JSON.stringify(payload));
+    void goto('/new');
+  }
+
   function openPublish() {
     if (!publishTarget) return;
     window.location.assign(
@@ -182,11 +260,11 @@
 <AppHeader username={data.username} image={data.image} logoutUrl={data.logoutUrl} buzz={data.buzz} />
 
 <section class="flex flex-col gap-6">
-  <a href="/" class="font-mono text-xs text-dark-2 transition-colors hover:text-white">
-    ← My trainings
+  <a href="/" class="inline-flex items-center gap-1 font-mono text-xs text-dark-2 transition-colors hover:text-white">
+    <IconArrowLeft size={13} stroke={2} />My trainings
   </a>
 
-  <header class="rounded-md border border-dark-4 bg-dark-6 p-5">
+  <header class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <div class="flex flex-wrap items-start gap-4">
       <ModelCodeBadge code={d.code} size="lg" />
       <div class="min-w-0 flex-1">
@@ -262,7 +340,7 @@
   </header>
 
   {#if d.state === 'training'}
-    <div class="rounded-md border border-dark-4 bg-dark-6 p-4">
+    <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
       <div class="mb-2 flex items-center justify-between text-sm">
         <span class="flex items-center gap-2 font-semibold text-dark-0">
           <span class="h-2 w-2 animate-pulse rounded-full bg-primary"></span>
@@ -293,7 +371,7 @@
   {/if}
 
   {#if d.state === 'failed'}
-    <div class="rounded-md border border-red-500/20 bg-red-500/5 p-8 text-center">
+    <div class="rounded-xl border border-red-500/20 bg-red-500/5 p-8 text-center">
       <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>
       <p class="mx-auto mt-1 max-w-md text-sm text-dark-2">
@@ -302,7 +380,7 @@
       </p>
     </div>
   {:else if d.epochs.length === 0}
-    <div class="rounded-md border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
+    <div class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
       {#if d.state === 'training'}
         <div class="flex items-center justify-center gap-2 text-sm font-medium text-primary">
           <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-primary"></span>
@@ -334,7 +412,7 @@
     {/if}
 
     {#if showCompare}
-      <div class="rounded-md border border-dark-4 bg-dark-6 p-5">
+      <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <p class="mb-4 text-[11px] text-dark-2">
           Each prompt across every checkpoint — scan a row to see how a sample evolved. Click a checkpoint
           to open and download it.
@@ -389,7 +467,7 @@
         </div>
       </div>
     {:else if featured}
-      <div class="rounded-md border border-dark-4 bg-dark-6 p-5">
+      <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <div class="mb-4 flex flex-wrap items-center gap-3">
           <div class="flex items-baseline gap-2">
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
@@ -486,7 +564,7 @@
       {/if}
     {/if}
 
-    <div class="flex flex-wrap items-center gap-3 rounded-md border border-dark-4 bg-dark-7 px-4 py-3">
+    <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-7 px-4 py-3">
       <div class="flex flex-wrap gap-2">
         <Button size="sm" disabled={!publishTarget} onclick={openPublish}>
           Publish a model page
@@ -494,13 +572,74 @@
       </div>
       <p class="m-0 font-mono text-[11px] text-dark-2">
         {#if publishTarget}
-          Uses the ★ recommended checkpoint (epoch {publishTarget.number}) — opens on Civitai to name it,
+          Uses the <IconStarFilled size={11} class="inline text-buzz" /> recommended checkpoint (epoch {publishTarget.number}) — opens on Civitai to name it,
           set visibility, and finish, where you can pick a different epoch.
         {:else}
           Available once a checkpoint with downloadable weights is ready.
         {/if}
       </p>
     </div>
+  {/if}
+
+  {#if d.dataset.length}
+    <!-- Below the epochs — the results are the point; the dataset is a reference. Open while training (when
+         there are no epochs yet), collapsed once finished; lazy images in a closed <details> don't load. -->
+    <details open={d.state === 'training'} class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
+      <summary
+        class="flex cursor-pointer select-none items-center gap-2 px-5 py-3 text-sm font-semibold text-dark-0 hover:bg-dark-5/40 [&::-webkit-details-marker]:hidden"
+      >
+        <IconPhoto size={16} stroke={2} class="text-dark-2" />
+        Training data
+        <span class="font-mono text-[11px] font-normal text-dark-2">
+          {d.dataset.length} image{d.dataset.length === 1 ? '' : 's'}
+        </span>
+        <span class="ml-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            onclick={(e) => {
+              e.preventDefault();
+              reuseDataset();
+            }}
+            class="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            title="Start a new training with this dataset"
+          >
+            <IconRepeat size={13} stroke={2} />Train again
+          </button>
+          <button
+            type="button"
+            onclick={(e) => {
+              e.preventDefault();
+              void downloadDataset();
+            }}
+            disabled={downloading}
+            class="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-dark-1 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            title="Download images + captions as a .zip"
+          >
+            <IconArchive size={13} stroke={2} />{downloading ? 'Zipping…' : 'Download'}
+          </button>
+        </span>
+      </summary>
+      <div class="grid grid-cols-3 gap-3 border-t border-dark-4 p-5 sm:grid-cols-4 md:grid-cols-6">
+        {#each d.dataset as item, i (item.air + i)}
+          <figure class="m-0 flex flex-col gap-1">
+            <img
+              src={datasetSrc(item.air)}
+              alt={item.caption || `dataset image ${i + 1}`}
+              loading="lazy"
+              class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
+            />
+            {#if item.caption}
+              <figcaption
+                class="line-clamp-2 font-mono text-[10px] leading-snug text-dark-2"
+                title={item.caption}
+              >
+                {item.caption}
+              </figcaption>
+            {/if}
+          </figure>
+        {/each}
+      </div>
+    </details>
   {/if}
 </section>
 

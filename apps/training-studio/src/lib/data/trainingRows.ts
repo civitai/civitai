@@ -99,6 +99,9 @@ interface TrainingStepInput {
   triggerWord?: string;
   /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
   samples?: { prompts?: string[] };
+  /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
+   *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
+  trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
 }
 interface TrainingStepOutput {
   epochs?: Array<{
@@ -214,6 +217,13 @@ export interface TrainingDetailEpoch {
   modelUrl?: string;
 }
 
+/** One dataset image the run trained on: the blob reference (resolved to a viewable URL through the
+ *  dataset-blob proxy) and the caption/tags it was labeled with. */
+export interface DatasetItem {
+  air: string;
+  caption: string;
+}
+
 /** A single training run's detail, for the Open screen. */
 export interface TrainingDetail {
   workflowId: string;
@@ -236,6 +246,8 @@ export interface TrainingDetail {
   /** Only epochs that have actually produced content (a sample or downloadable weights). A still-training
    *  run's not-yet-produced epochs are excluded, so the page shows a processing state rather than empty cards. */
   epochs: TrainingDetailEpoch[];
+  /** The images the run trained on, with their captions. Empty for runs whose dataset isn't blob-backed. */
+  dataset: DatasetItem[];
 }
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
@@ -278,6 +290,12 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     .filter((e) => typeof e.traceUrl === 'string' && !e.model?.available)
     .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))[0]?.traceUrl;
 
+  const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
+    .filter(
+      (i): i is { air: string; caption?: string } => typeof i.air === 'string' && i.air.length > 0
+    )
+    .map((i) => ({ air: i.air, caption: i.caption ?? '' }));
+
   return {
     workflowId: w.id,
     name,
@@ -291,6 +309,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     progress,
     liveTraceUrl: liveTraceUrl ?? undefined,
     epochs,
+    dataset,
   };
 }
 
@@ -361,5 +380,10 @@ export const SAMPLE_DETAIL: TrainingDetail = {
       n === 8 && i === 1 ? null : `https://picsum.photos/seed/ts-${n}-${i}/400`
     ),
     modelUrl: '#',
+  })),
+  // Preview dataset: picsum stand-ins keyed to bogus airs (the proxy is never hit in dev preview).
+  dataset: [0, 1, 2, 3, 4, 5].map((i) => ({
+    air: `https://picsum.photos/seed/ts-ds-${i}/300`,
+    caption: `1girl, sample tag ${i + 1}, studio lighting`,
   })),
 };

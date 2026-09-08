@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { IconBoltFilled } from '@tabler/icons-svelte';
+  import {
+    IconBoltFilled,
+    IconSettings,
+    IconChevronUp,
+    IconChevronDown,
+    IconAlertTriangle,
+    IconCheck,
+    IconX,
+    IconArrowLeft,
+  } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -8,6 +17,9 @@
   import { loraTypeById, typesForMedia, type FromPrices } from '$lib/data/trainingModels';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import {
+    SAMPLE_RATE,
+    cardBaseQuote,
+    defaultStepsFor,
     isCustom,
     runCard,
     runCost,
@@ -49,14 +61,13 @@
   let startError = $state('');
 
 
-  const SAMPLE_RATE = 30;
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
   // ai-toolkit's supported set — no `cosine_with_restarts` (the orchestrator rejects it).
   const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
   const seenFor = (id: string) => loraTypeById(id).seen;
-  const defaultSteps = (id: string) => Math.max(200, imageCount * seenFor(id));
+  const defaultSteps = (id: string) => defaultStepsFor(id, imageCount);
 
   // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
   // selection gets a fresh component. untrack documents the intentional one-time capture.
@@ -100,7 +111,7 @@
   // Per-run cost from the model's live quote; `null` for any run the orchestrator couldn't price, which
   // makes the whole total `null` (shown as "—") rather than a total quietly missing a run.
   const runCostAt = (i: number) =>
-    runCost(prices[selection.runs[i]!.cardType], selection.runs[i]!, params[i]!.steps);
+    runCost(cardBaseQuote(prices, selection.runs[i]!.cardType), selection.runs[i]!, params[i]!.steps);
   const runTotal = $derived.by(() => {
     let sum = 0;
     for (let i = 0; i < selection.runs.length; i++) {
@@ -171,7 +182,7 @@
       </p>
     </div>
 
-    <div class="rounded-md border border-dark-4 bg-dark-6 p-4">
+    <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
       <label for="training-name" class="block text-sm font-semibold text-dark-0">Name your LoRA</label>
       <Input
         id="training-name"
@@ -201,7 +212,7 @@
     <div class="flex flex-col gap-3">
       {#each selection.runs as run, i (run.id)}
         {@const card = runCard(run)}
-        <div class="overflow-hidden rounded-md border border-dark-4">
+        <div class="overflow-hidden rounded-xl border border-dark-4">
           <div class="flex flex-wrap items-center gap-3 bg-dark-6 px-4 py-3">
             <ModelCodeBadge code={card.code} size="sm" />
             <div>
@@ -217,7 +228,11 @@
                   ? 'border-primary/50 bg-primary/10 text-primary'
                   : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
               >
-                ⚙ Advanced settings <span class="text-[10px]">{openAdv === i ? '▲' : '▼'}</span>
+                <IconSettings size={13} stroke={2} />Advanced settings
+                {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                    size={12}
+                    stroke={2}
+                  />{/if}
               </button>
             </div>
             <div class="ml-auto flex flex-col">
@@ -233,16 +248,20 @@
             </span>
           </div>
 
-          <div class="bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-buzz' : 'text-emerald-400'}">
-            {low(i) ? '⚠️ ' : '✓ '}each image seen ~{seen(i)}× ({low(i)
+          <div class="flex items-center gap-1 bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-buzz' : 'text-emerald-400'}">
+            {#if low(i)}<IconAlertTriangle size={13} stroke={2} class="shrink-0" />{:else}<IconCheck
+                size={13}
+                stroke={2}
+                class="shrink-0"
+              />{/if}each image seen ~{seen(i)}× ({low(i)
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}`})
           </div>
 
           {#if openAdv === i}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
-              <div class="mb-2 font-mono text-[11px] uppercase tracking-wider text-primary">
-                ⚙ Advanced training settings
+              <div class="mb-2 flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider text-primary">
+                <IconSettings size={12} stroke={2} />Advanced training settings
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
@@ -306,13 +325,13 @@
       <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">
         Sample prompts <span class="lowercase text-dark-2">· the test images generated as it trains</span>
       </div>
-      <div class="rounded-md border border-dark-4 bg-dark-6 p-4">
+      <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <div class="flex flex-col gap-2">
           {#each prompts as p, i (p.id)}
             <div class="flex items-center gap-2">
               <Input bind:value={prompts[i]!.text} class="flex-1" />
               {#if prompts.length > 1}
-                <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}>✕</Button>
+                <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
               {/if}
             </div>
           {/each}
@@ -327,7 +346,7 @@
     </div>
   </div>
 
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-md border border-dark-4 bg-dark-6 p-5">
+  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Final price</h3>
     {#each selection.runs as run, i (run.id)}
       {@const costLabel = runCostLabel(i)}
@@ -377,6 +396,8 @@
 </div>
 
 <div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
-  <Button variant="outline" onclick={onBack}>← Back</Button>
-  <span class="font-mono text-xs text-dark-2">This is the one moment we submit to the orchestrator</span>
+  <Button variant="outline" onclick={onBack}>
+    <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
+  </Button>
+  <span class="font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
 </div>

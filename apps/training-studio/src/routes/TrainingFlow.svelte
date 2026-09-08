@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { goto } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
@@ -29,6 +31,22 @@
   // Dataset + trigger are owned here so they survive Back/Continue between steps.
   let images = $state<Img[]>([]);
   let trigger = $state('');
+
+  // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
+  // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
+  // DataStep materializes these once a model is picked (the label type depends on the selection).
+  let reuseItems = $state<{ air: string; caption: string; name: string; previewUrl: string }[]>([]);
+  onMount(() => {
+    try {
+      const raw = sessionStorage.getItem('ts:reuse-dataset');
+      if (raw) {
+        reuseItems = JSON.parse(raw);
+        sessionStorage.removeItem('ts:reuse-dataset');
+      }
+    } catch {
+      // Malformed hand-off — ignore and start empty.
+    }
+  });
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
   const trainableCount = $derived(images.filter(isTrainable).length);
 
@@ -90,7 +108,7 @@
                   ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400'
                   : 'border-dark-4 text-dark-2'}"
             >
-              {state === 'done' ? '✓' : s.n}
+              {#if state === 'done'}<IconCheck size={13} stroke={3} />{:else}{s.n}{/if}
             </span>
             <span class="text-sm font-semibold {state === 'active' ? 'text-dark-0' : 'text-dark-2'}">
               {s.label}
@@ -102,7 +120,9 @@
         </div>
       {/each}
     </nav>
-    <Button variant="outline" size="sm" onclick={onExit}>☰ My trainings</Button>
+    <Button variant="outline" size="sm" onclick={onExit}>
+      <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
+    </Button>
   </div>
 
   {#if step === 1}
@@ -114,7 +134,15 @@
       }}
     />
   {:else if step === 2 && selection}
-    <DataStep {selection} bind:images bind:trigger onContinue={() => (step = 3)} onBack={() => (step = 1)} />
+    <DataStep
+      {selection}
+      {prices}
+      {reuseItems}
+      bind:images
+      bind:trigger
+      onContinue={() => (step = 3)}
+      onBack={() => (step = 1)}
+    />
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}

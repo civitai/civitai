@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { IconBoltFilled } from '@tabler/icons-svelte';
+  import {
+    IconBoltFilled,
+    IconStarFilled,
+    IconCheck,
+    IconStack2,
+    IconMinus,
+    IconPlus,
+    IconX,
+    IconArrowRight,
+  } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import {
     CUSTOM_MODEL_SURCHARGE,
@@ -13,6 +22,7 @@
   import {
     CUSTOM_VERSION_KEY,
     MAX_RUNS,
+    cardFromPrice,
     isCustom,
     labelNoun,
     newRun,
@@ -20,6 +30,7 @@
     recommendedCardFor,
     runCard,
     runVersionLabel,
+    selectionFromTotal,
     type Run,
     type Selection,
   } from './trainingFlow';
@@ -28,17 +39,10 @@
   let { onContinue, prices }: { onContinue: (sel: Selection) => void; prices: Record<string, number> } =
     $props();
 
-  // The "from" price for a card: a real orchestrator quote when we have one, plus the flat custom-model
-  // surcharge. Partial — a model the orchestrator couldn't quote is absent, and we return null rather than
-  // inventing a number (the caller shows a muted em-dash).
-  // Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same
-  // cost, so fall back to the SDXL "from" quote when the orchestrator hasn't priced them directly.
-  const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' };
+  // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
+  // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
   function price(cardType: string, custom = false): number | null {
-    const alias = PRICE_ALIAS[cardType];
-    const base = prices[cardType] ?? (alias ? prices[alias] : undefined);
-    if (base == null) return null;
-    return base + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
+    return cardFromPrice(prices, cardType, custom);
   }
 
   let media = $state<Media>('image');
@@ -80,17 +84,8 @@
   const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
   const labelMode = $derived(runCard(primary).label);
   const labelModeNoun = $derived(labelNoun(runCard(primary)));
-  // Sum the quotes we have; if any selected run is unpriced the total is partial, so surface null and let
-  // the summary show "—" rather than a total that's quietly missing a model.
-  const total = $derived.by(() => {
-    let sum = 0;
-    for (const r of runs) {
-      const runPrice = price(r.cardType, isCustom(r));
-      if (runPrice == null) return null;
-      sum += runPrice;
-    }
-    return sum;
-  });
+  // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
+  const total = $derived(selectionFromTotal(prices, runs));
 
   function pickMedia(m: Media) {
     if (m === media) return;
@@ -193,11 +188,13 @@
          labeled rows rather than a dropdown or a quiet segmented strip that would under-sell them. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">Media</div>
+        <div id="media-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
+          Media
+        </div>
         <div
           class="flex min-w-0 flex-1 flex-wrap gap-2"
           role="radiogroup"
-          aria-label="Media type"
+          aria-labelledby="media-group-label"
           tabindex="-1"
           onkeydown={radioKeydown}
         >
@@ -223,11 +220,13 @@
       </div>
 
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">Type</div>
+        <div id="type-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
+          Type
+        </div>
         <div
           class="flex min-w-0 flex-1 flex-wrap gap-2"
           role="radiogroup"
-          aria-label="LoRA type"
+          aria-labelledby="type-group-label"
           tabindex="-1"
           onkeydown={radioKeydown}
         >
@@ -263,7 +262,7 @@
       </div>
       {#if recommendedCard}
         <p class="mb-3 text-[12.5px] leading-snug text-dark-1">
-          <span class="text-buzz">★</span>
+          <IconStarFilled size={12} class="mr-0.5 inline text-buzz" />
           We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
           {type.name.toLowerCase()}
           {media} LoRA — or pick any below.
@@ -309,13 +308,13 @@
                 <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
               </div>
               {#if isRecommended}
-                <span class="shrink-0 rounded bg-primary px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-primary-foreground">
-                  ★ Recommended
+                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-primary-foreground">
+                  <IconStarFilled size={8} />Recommended
                 </span>
               {/if}
               {#if selected}
-                <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                  ✓
+                <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+                  <IconCheck size={11} stroke={3} />
                 </span>
               {/if}
             </div>
@@ -338,7 +337,7 @@
                   title={`${card.versions.length} versions`}
                   class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-[9px] leading-none text-dark-2"
                 >
-                  <span class="text-[10px] leading-none">⧉</span>
+                  <IconStack2 size={10} stroke={2} />
                   {card.versions.length}
                 </span>
               {/if}
@@ -351,14 +350,16 @@
         <button
           type="button"
           onclick={() => (showAllModels = !showAllModels)}
-          class="mt-2 w-full rounded-md border border-dashed border-dark-4 py-2 font-mono text-[11px] text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
+          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 py-2 font-mono text-[11px] text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
         >
-          {modelsExpanded
-            ? '− Show fewer models'
-            : `+ Show ${otherCards.length} more models (${otherCards
-                .slice(0, 3)
-                .map((c) => c.name)
-                .join(', ')}…)`}
+          {#if modelsExpanded}
+            <IconMinus size={12} stroke={2} />Show fewer models
+          {:else}
+            <IconPlus size={12} stroke={2} />Show {otherCards.length} more models ({otherCards
+              .slice(0, 3)
+              .map((c) => c.name)
+              .join(', ')}…)
+          {/if}
         </button>
       {/if}
 
@@ -423,14 +424,16 @@
     </div>
 
     <!-- multi-run sweep (advanced): train several models / versions at once -->
-    <div class="rounded-md border border-dark-4 bg-dark-6/40">
+    <div class="rounded-xl border border-dark-4 bg-dark-6/40">
       {#if !sweepOpen && !multi}
         <button
           type="button"
           onclick={openSweep}
           class="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition hover:bg-dark-6"
         >
-          <span class="text-sm font-semibold text-dark-1">+ Train an additional model</span>
+          <span class="inline-flex items-center gap-1 text-sm font-semibold text-dark-1">
+            <IconPlus size={14} stroke={2} />Train an additional model
+          </span>
           <span class="font-mono text-[11px] text-dark-2">same dataset · another model or settings</span>
         </button>
       {:else}
@@ -476,14 +479,16 @@
                     onclick={() => removeRun(ri)}
                     class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
                   >
-                    ✕
+                    <IconX size={14} stroke={2} />
                   </button>
                 {/if}
               </div>
-              <div class="mt-2.5 flex flex-wrap gap-2">
+              <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
                 {#each versionsFor(card) as v (v.key)}
                   <button
                     type="button"
+                    role="radio"
+                    aria-checked={r.versionKey === v.key}
                     onclick={() => pickVersion(ri, v.key)}
                     class="rounded border px-3 py-1.5 text-left transition
                       {r.versionKey === v.key
@@ -521,7 +526,7 @@
   </div>
 
   <!-- summary -->
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-md border border-dark-4 bg-dark-6 p-5">
+  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">{media}</span>
@@ -549,7 +554,9 @@
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
       final price after your data &amp; settings
     </div>
-    <Button class="mt-4 w-full" onclick={() => onContinue({ media, loraType, runs })}>Continue to Data →</Button>
+    <Button class="mt-4 w-full" onclick={() => onContinue({ media, loraType, runs })}>
+      Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
+    </Button>
     <p
       class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-[11px] text-dark-2"
     >

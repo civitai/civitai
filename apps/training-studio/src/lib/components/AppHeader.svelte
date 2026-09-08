@@ -23,6 +23,26 @@
   const buzz = $derived((browser && buzzBalance.value) || initialBuzz);
   // The chosen primary account's balance (yellow or green); blue (generation) is always available too.
   const primaryBalance = $derived(buzz ? (buzzMode.value === 'green' ? buzz.green : buzz.yellow) : 0);
+
+  // The account menu is a native <details>; give it the menu dismissal users expect — Escape and a click
+  // outside — which <details> doesn't do on its own.
+  let menuOpen = $state(false);
+  let menuEl = $state<HTMLDetailsElement | null>(null);
+  $effect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') menuOpen = false;
+    };
+    const onPointer = (e: PointerEvent) => {
+      if (menuEl && !menuEl.contains(e.target as Node)) menuOpen = false;
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  });
 </script>
 
 <header class="mb-6 flex items-center justify-between gap-3">
@@ -58,7 +78,7 @@
       </button>
     {/if}
     {#if username}
-      <details class="relative">
+      <details class="relative" bind:open={menuOpen} bind:this={menuEl}>
         <summary
           class="flex cursor-pointer list-none items-center gap-2 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-dark-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden"
         >

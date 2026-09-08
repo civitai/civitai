@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { IconAlertTriangle, IconPlus } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
@@ -19,18 +20,20 @@
         something new.
       </p>
     </div>
-    <Button onclick={onNew}>+ New training</Button>
+    <Button onclick={onNew}><IconPlus size={15} stroke={2} class="mr-1.5 inline" />New training</Button>
   </div>
 
   {#if rows.length === 0}
-    <div class="rounded-md border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
+    <div class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
       <p class="text-sm text-dark-2">No trainings yet.</p>
-      <Button class="mt-3" onclick={onNew}>+ Start your first training</Button>
+      <Button class="mt-3" onclick={onNew}>
+        <IconPlus size={15} stroke={2} class="mr-1.5 inline" />Start your first training
+      </Button>
     </div>
   {:else}
   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {#each rows as r (r.workflowId ?? r.name)}
-      <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
+      <div class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
         <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">
           <ModelCodeBadge code={r.code} size="lg" />
           <div class="min-w-0">
@@ -44,7 +47,14 @@
 
         <div class="p-3.5">
           {#if r.state === 'training'}
-            <div class="h-1.5 overflow-hidden rounded-full bg-dark-7">
+            <div
+              class="h-1.5 overflow-hidden rounded-full bg-dark-7"
+              role="progressbar"
+              aria-label="Training progress"
+              aria-valuenow={r.progressPct > 0 ? r.progressPct : undefined}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               {#if r.progressPct > 0}
                 <div class="h-full bg-buzz" style={`width:${r.progressPct}%`}></div>
               {:else}
@@ -56,7 +66,7 @@
             <div
               class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-[11px] text-dark-2"
             >
-              <span>⚠️</span> This run didn't complete.
+              <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
             </div>
           {:else if r.sampleUrls.length > 0}
             <SampleGrid urls={r.sampleUrls} cols={4} />

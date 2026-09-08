@@ -1,8 +1,31 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import JSZip from 'jszip';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconSparkles } from '@tabler/icons-svelte';
+  import {
+    IconSparkles,
+    IconArchive,
+    IconUpload,
+    IconPhoto,
+    IconTag,
+    IconFileText,
+    IconCheck,
+    IconAlertTriangle,
+    IconPlus,
+    IconMusic,
+    IconRefresh,
+    IconPencil,
+    IconX,
+    IconArrowLeft,
+    IconArrowRight,
+    IconBoltFilled,
+  } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
+  import {
+    ToggleGroup,
+    ToggleGroupItem,
+  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { loraTypeById } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
@@ -10,6 +33,8 @@
   import {
     blobAirFromUrl,
     captionTriggerHit,
+    defaultStepsFor,
+    estimatedTotal,
     isTrainable,
     isTriggerTag,
     labelNoun,
@@ -24,17 +49,31 @@
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
   let {
     selection,
+    prices,
     images = $bindable([]),
     trigger = $bindable(''),
+    reuseItems = [],
     onContinue,
     onBack,
   }: {
     selection: Selection;
+    /** Live "from" quotes per card type — keeps the running price visible during upload. */
+    prices: Record<string, number>;
     images: Img[];
     trigger: string;
+    /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
+    reuseItems?: { air: string; caption: string; name: string; previewUrl: string }[];
     onContinue: () => void;
     onBack: () => void;
   } = $props();
+
+  // Seed a reused dataset once on mount (dedup in addFromBlobs makes a Back/Continue remount a no-op).
+  onMount(() => {
+    if (reuseItems.length)
+      addFromBlobs(
+        reuseItems.map((r) => ({ blobId: r.air, url: r.previewUrl, name: r.name, caption: r.caption }))
+      );
+  });
 
   const type = $derived(loraTypeById(selection.loraType));
   // A dataset has one label type; SelectStep's label-type lock guarantees every run in a multi-run
@@ -45,6 +84,12 @@
   const media = $derived(selection.media);
 
   const uploadedCount = $derived(images.filter(isTrainable).length);
+  // The dataset-aware estimate — the same figure the Review step shows at its defaults (each run scaled by
+  // the image-count-derived step budget, plus samples). Climbs as images upload, so the dataset's effect on
+  // price is visible here rather than only at Review. Null (unpriced) hides the badge. `estSteps` surfaces
+  // WHY the number moves.
+  const estTotal = $derived(estimatedTotal(prices, selection, uploadedCount));
+  const estSteps = $derived(defaultStepsFor(selection.loraType, uploadedCount));
   const busy = $derived(images.some((i) => i.status === 'uploading'));
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
   // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
@@ -61,6 +106,20 @@
   );
   const canContinue = $derived(uploadedCount > 0 && !busy && !labelingActive && allLabeled);
   const enough = $derived(uploadedCount >= type.minImg);
+
+  // Filter the tile grid so a single unlabeled image in a big dataset is findable. Partitions ALL images by
+  // whether they carry a label (tags or caption), so a blocked/erroring tile with no label surfaces under
+  // "Unlabeled" too — it's a problem tile the user needs to see.
+  let filter = $state<'all' | 'labeled' | 'unlabeled'>('all');
+  const labeledTotal = $derived(images.filter(isLabeled).length);
+  const unlabeledTotal = $derived(images.length - labeledTotal);
+  const shownImages = $derived(
+    filter === 'labeled'
+      ? images.filter(isLabeled)
+      : filter === 'unlabeled'
+        ? images.filter((i) => !isLabeled(i))
+        : images
+  );
 
   let seq = 0;
   let dragging = $state(false);
@@ -148,6 +207,81 @@
     });
     images = [...images, ...added];
     void ensureLabeling();
+  }
+
+  const MEDIA_EXT: Record<string, Set<string>> = {
+    image: new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']),
+    video: new Set(['mp4', 'webm', 'mov', 'mkv']),
+    audio: new Set(['mp3', 'wav', 'flac', 'ogg', 'm4a']),
+  };
+  function mimeFor(ext: string): string {
+    return `${media}/${ext === 'jpg' ? 'jpeg' : ext}`;
+  }
+
+  // Import a dataset .zip (round-trips with the detail page's Download): each media file becomes an
+  // uploaded + scanned tile; a same-named `.txt` supplies its caption (standard LoRA layout). Captioned
+  // images are pre-labeled and skip auto-label; un-captioned ones still get it.
+  let importing = $state(false);
+  let zipInput: HTMLInputElement;
+  async function importZip(file: File) {
+    if (importing) return;
+    importing = true;
+    try {
+      const zip = await JSZip.loadAsync(file);
+      const captions = new Map<string, string>();
+      const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
+        [];
+      for (const entry of Object.values(zip.files)) {
+        if (entry.dir) continue;
+        const name = entry.name.split('/').pop() ?? entry.name;
+        if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
+        const dot = name.lastIndexOf('.');
+        const base = dot >= 0 ? name.slice(0, dot) : name;
+        const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+        if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
+        else if (MEDIA_EXT[media]?.has(ext)) mediaFiles.push({ name, base, ext, entry });
+      }
+      const entries = await Promise.all(
+        mediaFiles.map(async (m) => ({
+          file: new File([await m.entry.async('blob')], m.name, { type: mimeFor(m.ext) }),
+          caption: captions.get(m.base) ?? '',
+        }))
+      );
+      await addImported(entries);
+    } finally {
+      importing = false;
+    }
+  }
+
+  // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
+  // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
+  async function addImported(entries: { file: File; caption: string }[]) {
+    if (entries.length === 0) return;
+    const isTag = labelMode === 'tag';
+    const added: Img[] = entries.map((e) => {
+      const label = e.caption.trim();
+      return {
+        id: ++seq,
+        file: e.file,
+        name: e.file.name,
+        previewUrl: URL.createObjectURL(e.file),
+        mediaType: media,
+        status: 'uploading' as const,
+        progress: 0,
+        tags: isTag && label ? label.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        caption: !isTag ? label : '',
+        labelTried: label ? true : undefined,
+      };
+    });
+    images = [...images, ...added];
+    await pool(added, 4, (img) => uploadOne(img.id, img.file!));
+    void ensureLabeling();
+  }
+  function onPickZip(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) void importZip(file);
+    input.value = '';
   }
 
   function remove(id: number) {
@@ -297,18 +431,38 @@
 {/snippet}
 
 <div class="flex flex-col gap-5">
-  <div>
-    <h2 class="m-0 text-xl font-semibold text-white">Add your data</h2>
-    <p class="mt-1 text-sm text-dark-2">
-      Drop your files — they upload and get scanned as you go. We'll auto-label them as
-      <strong class="text-dark-0">{noun}</strong> for free.
-    </p>
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h2 class="m-0 text-xl font-semibold text-white">Add your data</h2>
+      <p class="mt-1 text-sm text-dark-2">
+        Drop your files — they upload and get scanned as you go. We'll auto-label them as
+        <strong class="text-dark-0">{noun}</strong> for free.
+      </p>
+    </div>
+    {#if estTotal != null}
+      <div class="shrink-0 rounded-xl border border-dark-4 bg-dark-6 px-4 py-2 text-right">
+        <div class="font-mono text-[10px] uppercase tracking-wider text-dark-2">Estimated price</div>
+        <div class="font-mono text-lg font-bold leading-tight text-buzz">
+          <IconBoltFilled size={15} stroke={2} class="mb-0.5 inline" />{estTotal.toLocaleString()}
+        </div>
+        <div class="mt-0.5 font-mono text-[10px] text-dark-2">
+          {uploadedCount} image{uploadedCount === 1 ? '' : 's'} · ~{estSteps.toLocaleString()} steps · adjust
+          at Review
+        </div>
+      </div>
+    {/if}
   </div>
 
   <div class="flex flex-wrap gap-2.5">
-    <Button variant="outline" onclick={() => fileInput.click()}>⬆ Upload files</Button>
-    <Button variant="outline" onclick={() => (genPickerOpen = true)}>🖼 From my generations</Button>
-    <Button variant="outline" disabled title="Coming soon">♻ Reuse a dataset</Button>
+    <Button variant="outline" onclick={() => fileInput.click()}>
+      <IconUpload size={15} stroke={2} class="mr-1.5 inline" />Upload files
+    </Button>
+    <Button variant="outline" onclick={() => (genPickerOpen = true)}>
+      <IconPhoto size={15} stroke={2} class="mr-1.5 inline" />From my generations
+    </Button>
+    <Button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
+      <IconArchive size={15} stroke={2} class="mr-1.5 inline" />{importing ? 'Importing…' : 'Import .zip'}
+    </Button>
   </div>
 
   <input
@@ -318,6 +472,13 @@
     accept={`${media}/*`}
     class="hidden"
     onchange={onPick}
+  />
+  <input
+    bind:this={zipInput}
+    type="file"
+    accept=".zip,application/zip"
+    class="hidden"
+    onchange={onPickZip}
   />
 
   {#if images.length === 0}
@@ -330,7 +491,7 @@
       }}
       ondragleave={() => (dragging = false)}
       ondrop={onDrop}
-      class="rounded-md border-2 border-dashed p-9 text-center transition
+      class="rounded-xl border-2 border-dashed p-9 text-center transition
         {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
     >
       <svg
@@ -357,9 +518,12 @@
   {:else}
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div class="min-w-0">
-        <div class="mb-4 flex items-center gap-3 rounded-md border border-dark-4 bg-dark-6 px-4 py-3">
-          <span class="grid h-8 w-8 place-items-center rounded bg-primary/15 text-base">
-            {labelMode === 'tag' ? '🏷️' : '📝'}
+        <div class="mb-4 flex items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
+          <span class="grid h-8 w-8 place-items-center rounded bg-primary/15 text-primary">
+            {#if labelMode === 'tag'}<IconTag size={16} stroke={2} />{:else}<IconFileText
+                size={16}
+                stroke={2}
+              />{/if}
           </span>
           <div>
             <div class="text-sm font-bold text-dark-0">Will be auto-labeled as {noun} · free</div>
@@ -378,10 +542,11 @@
             : 'border-buzz/30 bg-buzz/10 text-buzz'}"
         >
           {#if enough}
-            ✓ {uploadedCount} uploaded — good for a {type.name.toLowerCase()} (we recommend ≥{type.minImg}).
+            <IconCheck size={15} stroke={2} class="mr-1 inline shrink-0" />{uploadedCount} uploaded — good
+            for a {type.name.toLowerCase()} (we recommend ≥{type.minImg}).
           {:else}
-            ⚠️ {uploadedCount} uploaded. We recommend at least {type.minImg} for a
-            {type.name.toLowerCase()} — add more.
+            <IconAlertTriangle size={15} stroke={2} class="mr-1 inline shrink-0" />{uploadedCount} uploaded.
+            We recommend at least {type.minImg} for a {type.name.toLowerCase()} — add more.
           {/if}
         </div>
 
@@ -402,40 +567,81 @@
                 <IconSparkles size={13} stroke={2} class="mr-1 inline" />{#if labelRun}Labeling… {labelRun.done}/{labelRun.total}{:else}Auto-label {unlabeled.length}{/if}
               </Button>
             {/if}
-            <Button variant="outline" size="xs" onclick={() => fileInput.click()}>＋ Add more</Button>
+            <Button variant="outline" size="xs" onclick={() => fileInput.click()}>
+              <IconPlus size={13} stroke={2} class="mr-1 inline" />Add more
+            </Button>
           </div>
         </div>
 
+        <div class="mb-3">
+          <ToggleGroup
+            type="single"
+            value={filter}
+            onValueChange={(v) => {
+              if (v === 'all' || v === 'labeled' || v === 'unlabeled') filter = v;
+            }}
+            variant="outline"
+            size="sm"
+            class="self-start"
+          >
+            <ToggleGroupItem value="all" aria-label="Show all images">All {images.length}</ToggleGroupItem>
+            <ToggleGroupItem value="labeled" aria-label="Show labeled images">
+              Labeled {labeledTotal}
+            </ToggleGroupItem>
+            <ToggleGroupItem value="unlabeled" aria-label="Show unlabeled images">
+              Unlabeled <span class={unlabeledTotal > 0 ? 'ml-1 font-semibold text-dark-0' : 'ml-1'}
+                >{unlabeledTotal}</span
+              >
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+
+        {#if shownImages.length === 0}
+          <div
+            class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-8 text-center font-mono text-[11px] text-dark-2"
+          >
+            {filter === 'unlabeled'
+              ? 'No unlabeled images — every image has a label.'
+              : filter === 'labeled'
+                ? 'No labeled images yet.'
+                : 'No images.'}
+          </div>
+        {/if}
+
         <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-          {#each images as img (img.id)}
+          {#each shownImages as img (img.id)}
             <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
               <div class="relative aspect-square bg-dark-7">
                 {#if img.mediaType === 'image'}
-                  <img src={img.previewUrl} alt="" class="h-full w-full object-cover" />
+                  <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
                 {:else if img.mediaType === 'video'}
                   <!-- svelte-ignore a11y_media_has_caption -->
                   <video src={img.previewUrl} muted class="h-full w-full object-cover"></video>
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-1 p-2 text-center">
-                    <span class="text-2xl">🎵</span>
+                    <IconMusic size={24} stroke={2} class="text-dark-2" />
                     <span class="line-clamp-2 break-all font-mono text-[10px] text-dark-2">{img.name}</span>
                   </div>
                 {/if}
 
                 {#if img.status === 'uploading'}
                   <div class="absolute inset-0 grid place-items-center bg-black/50">
-                    <span class="font-mono text-[11px] text-white">⬆ {Math.round(img.progress * 100)}%</span>
+                    <span class="flex items-center gap-1 font-mono text-[11px] text-white">
+                      <IconUpload size={12} stroke={2} />{Math.round(img.progress * 100)}%
+                    </span>
                   </div>
                   <div class="absolute bottom-0 left-0 h-1 bg-primary transition-[width]" style:width="{img.progress * 100}%"></div>
                 {:else if img.status === 'blocked'}
                   <div class="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-red-950/70 p-2 text-center">
-                    <span class="text-lg">⚠️</span>
+                    <IconAlertTriangle size={18} stroke={2} class="text-red-200" />
                     <span class="font-mono text-[10px] leading-tight text-red-200">{img.message}</span>
                   </div>
                 {:else if img.status === 'error'}
                   <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 p-2 text-center">
                     <span class="font-mono text-[10px] leading-tight text-buzz">{img.message}</span>
-                    <Button variant="outline" size="xs" onclick={() => retry(img.id)}>↻ Retry</Button>
+                    <Button variant="outline" size="xs" onclick={() => retry(img.id)}>
+                      <IconRefresh size={12} stroke={2} class="mr-1 inline" />Retry
+                    </Button>
                   </div>
                 {/if}
 
@@ -445,24 +651,24 @@
                       type="button"
                       aria-label="Edit label"
                       onclick={() => openEditor(img.id)}
-                      class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-xs text-white hover:bg-primary"
+                      class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-white hover:bg-primary"
                     >
-                      ✎
+                      <IconPencil size={13} stroke={2} />
                     </button>
                   {/if}
                   <button
                     type="button"
                     aria-label="Remove"
                     onclick={() => remove(img.id)}
-                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-xs text-white hover:bg-red-500"
+                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-white hover:bg-red-500"
                   >
-                    ✕
+                    <IconX size={13} stroke={2} />
                   </button>
                 </div>
 
                 {#if img.status === 'uploaded'}
-                  <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-[10px] font-bold text-white">
-                    ✓
+                  <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-white">
+                    <IconCheck size={12} stroke={3} />
                   </span>
                 {/if}
               </div>
@@ -480,9 +686,9 @@
                   <button
                     type="button"
                     onclick={() => openEditor(img.id)}
-                    class="font-mono text-[11px] text-dark-2 hover:text-primary"
+                    class="inline-flex items-center gap-1 font-mono text-[11px] text-dark-2 hover:text-primary"
                   >
-                    ＋ add label
+                    <IconPlus size={12} stroke={2} />add label
                   </button>
                 {:else if labelMode === 'tag'}
                   {@render triggerTags(img.tags, 4)}
@@ -495,7 +701,7 @@
         </div>
       </div>
 
-      <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-md border border-dark-4 bg-dark-6 p-5">
+      <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
           <Tooltip.Provider>
@@ -523,14 +729,34 @@
   {/if}
 
   <div class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
-    <Button variant="outline" onclick={onBack}>← Back</Button>
+    <Button variant="outline" onclick={onBack}>
+      <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
+    </Button>
     <div class="flex items-center gap-3">
       {#if uploadedCount > 0 && !busy && !allLabeled}
-        <span class="font-mono text-xs text-buzz">
-          {uploadedCount - labeledCount} unlabeled — label every image to continue
-        </span>
+        <button
+          id="continue-blocked-reason"
+          type="button"
+          onclick={() => (filter = 'unlabeled')}
+          class="font-mono text-xs text-buzz underline decoration-dotted underline-offset-2 transition-colors hover:text-buzz/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          {uploadedCount - labeledCount} unlabeled — show {uploadedCount - labeledCount === 1
+            ? 'it'
+            : 'them'}
+        </button>
       {/if}
-      <Button disabled={!canContinue} onclick={onContinue}>Continue to Review →</Button>
+      <Button
+        disabled={!canContinue}
+        onclick={onContinue}
+        title={!canContinue && uploadedCount > 0 && !allLabeled
+          ? 'Label every image to continue'
+          : undefined}
+        aria-describedby={!canContinue && uploadedCount > 0 && !allLabeled
+          ? 'continue-blocked-reason'
+          : undefined}
+      >
+        Continue to review<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
+      </Button>
     </div>
   </div>
 </div>

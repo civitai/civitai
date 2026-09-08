@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { SvelteSet } from 'svelte/reactivity';
+  import { IconMusic, IconCheck } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -92,7 +93,7 @@
           </div>
         {:else}
           <div class="mb-2 flex items-center justify-between gap-2 text-xs text-dark-2">
-            <span>{selected.size} of {items.length} selected · shift-click for a range</span>
+            <span aria-live="polite">{selected.size} of {items.length} selected · shift-click for a range</span>
             <div class="flex gap-1">
               <Button variant="ghost" size="xs" onclick={() => selectAll(items)}>Select all</Button>
               <Button variant="ghost" size="xs" onclick={clear} disabled={selected.size === 0}>Clear</Button>
@@ -103,6 +104,8 @@
                tiles overlap into strips. Fixed rows size the tracks; the tile stretches to fill the cell. -->
           <div
             class="grid max-h-[60vh] select-none grid-cols-[repeat(auto-fill,128px)] justify-center gap-2.5 overflow-y-auto p-0.5 [grid-auto-rows:128px]"
+            role="group"
+            aria-label="Your generations"
           >
             {#each items as item, index (item.blobId)}
               {@const isSelected = selected.has(item.blobId)}
@@ -110,6 +113,7 @@
                 role="button"
                 tabindex="0"
                 aria-pressed={isSelected}
+                aria-label={`${media} ${index + 1}`}
                 onclick={(e) => pick(e, index, items)}
                 onkeydown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -125,15 +129,17 @@
                   <!-- svelte-ignore a11y_media_has_caption -->
                   <video src={item.url} muted playsinline class="h-full w-full object-cover"></video>
                 {:else if media === 'audio'}
-                  <span class="flex h-full w-full items-center justify-center text-2xl text-dark-2">🎵</span>
+                  <span class="flex h-full w-full items-center justify-center text-dark-2">
+                    <IconMusic size={26} stroke={2} />
+                  </span>
                 {:else}
                   <img src={item.previewUrl} alt="" loading="lazy" class="h-full w-full object-cover" />
                 {/if}
                 {#if isSelected}
                   <span
-                    class="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-primary text-[11px] font-bold text-black"
+                    class="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-primary text-black"
                   >
-                    ✓
+                    <IconCheck size={12} stroke={3} />
                   </span>
                 {/if}
               </div>

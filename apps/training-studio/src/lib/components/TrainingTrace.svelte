@@ -134,7 +134,7 @@
   });
 </script>
 
-<div class="overflow-hidden rounded-md border border-dark-4 bg-dark-7">
+<div class="overflow-hidden rounded-xl border border-dark-4 bg-dark-7">
   <div class="flex items-center gap-2 border-b border-dark-4 px-4 py-2.5">
     <span class="h-2 w-2 animate-pulse rounded-full bg-primary"></span>
     <span class="text-sm font-semibold text-dark-0">Live progress</span>
@@ -147,7 +147,10 @@
 
   <div class="px-4 py-3">
     {#if !started}
-      <div class="font-mono text-[11px] text-dark-2">Waiting for the trainer to start streaming…</div>
+      <div class="flex items-center gap-2 text-sm text-dark-1">
+        <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-dark-2"></span>
+        Trainer is starting up — the live feed begins with the first training step.
+      </div>
     {:else if phase === 'training' && step !== null && maxSteps}
       <div class="mb-1.5 flex items-baseline justify-between gap-2 text-sm">
         <span class="text-dark-1">step {step.toLocaleString()} / {maxSteps.toLocaleString()}</span>
