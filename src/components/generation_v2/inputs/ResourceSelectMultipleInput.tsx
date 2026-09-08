@@ -31,6 +31,7 @@ import type {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { ResourceSelectRole } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useResourceDataContext } from './ResourceDataProvider';
 import {
   ResourceItemContent,
@@ -71,6 +72,12 @@ export interface ResourceSelectMultipleInputProps
   options?: ResourceSelectOptions;
   /** Source context for resource selection */
   selectSource?: ResourceSelectSource;
+  /**
+   * Which job the picker is doing. `resource` turns the modal multi-select and
+   * badges each card for compatibility. Omit for the historical one-at-a-time
+   * behaviour.
+   */
+  role?: ResourceSelectRole;
   /** Whether the input is disabled */
   disabled?: boolean;
   /** Resource type to filter by */
@@ -170,6 +177,7 @@ export function ResourceSelectMultipleInput({
   modalTitle,
   options = {},
   selectSource = 'generation',
+  role,
   disabled,
   resourceType,
   hideButton = false,
@@ -299,11 +307,17 @@ export function ResourceSelectMultipleInput({
         // Cast existing values since they should be hydrated by now
         onChange?.([...(value as ResourceSelectValue[]), resource]);
       },
+      onSelectMultiple:
+        role === 'resource'
+          ? (resources) => onChange?.([...(value as ResourceSelectValue[]), ...resources])
+          : undefined,
+      limit: limit !== undefined ? Math.max(limit - value.length, 0) : undefined,
       options: {
         ...resolvedOptions,
         excludeIds: [...(resolvedOptions.excludeIds ?? []), ...resourceIds],
       },
       selectSource,
+      role,
     });
   };
 
