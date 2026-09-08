@@ -97,7 +97,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           return { data: mocks.navSummary, isFetched: mocks.isFetched };
         },
       },
-      withdrawPublishRequest: { useMutation: () => ({ mutate: () => undefined, isPending: false }) },
+      withdrawPublishRequest: {
+        useMutation: () => ({ mutate: () => undefined, isPending: false }),
+      },
     },
     // `MyAppsBody` — mounted by the workbench state. Held in its loading branch; this
     // suite is about WHICH screen renders, not about the table's contents.
@@ -360,9 +362,7 @@ describe('AppsBuildBody — the view event is unchanged by the skeleton', () => 
       watcher.stop();
     }
 
-    expect(watcher.sightings, 'state B was painted during the mount→settle transition').toEqual(
-      []
-    );
+    expect(watcher.sightings, 'state B was painted during the mount→settle transition').toEqual([]);
     expect(mocks.tracked).toEqual([
       { type: 'AppsBuild_Action', details: { action: 'view', state: 'workbench' } },
     ]);
