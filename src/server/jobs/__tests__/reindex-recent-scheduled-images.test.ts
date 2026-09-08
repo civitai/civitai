@@ -23,9 +23,9 @@ const mockDbRead = dbMock.dbRead;
 
 type JobResult = { reindexed: number; lastId: number; done: boolean };
 const runJob = (query: Record<string, string> = {}) =>
-  (reindexRecentScheduledImages as unknown as (ctx: { req?: NextApiRequest }) => Promise<JobResult>)(
-    { req: { query } as unknown as NextApiRequest }
-  );
+  (
+    reindexRecentScheduledImages as unknown as (ctx: { req?: NextApiRequest }) => Promise<JobResult>
+  )({ req: { query } as unknown as NextApiRequest });
 
 const rows = (...ids: number[]) => ids.map((id) => ({ id }));
 

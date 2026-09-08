@@ -74,7 +74,9 @@ export const reindexRecentScheduledImages = createJob(
 
     const lastId = images[images.length - 1].id;
     console.log(
-      `reindex-recent-scheduled-images :: reindexing ${images.length} images since ${since.toISOString()}`,
+      `reindex-recent-scheduled-images :: reindexing ${
+        images.length
+      } images since ${since.toISOString()}`,
       { indexes, afterId, lastId }
     );
 
