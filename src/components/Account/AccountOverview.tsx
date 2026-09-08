@@ -1,9 +1,8 @@
-import { Alert, Badge, Button, Card, Text } from '@mantine/core';
+import { Alert, Button, Card, Text } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconArrowUpRight,
   IconBell,
-  IconBolt,
   IconCreditCard,
   IconEye,
   IconKey,
@@ -15,52 +14,51 @@ import React from 'react';
 
 import { accountSections, getAccountSectionHref } from '~/components/Account/account-sections';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
 function StatTile({
   label,
-  value,
+  href,
   icon,
-  tone = 'default',
+  children,
 }: {
   label: string;
-  value: string;
+  href: string;
   icon: React.ReactNode;
-  tone?: 'default' | 'warning' | 'success';
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md bg-gray-1 p-3 dark:bg-dark-5">
-      <Text size="xs" fw={600} tt="uppercase" c="dimmed" className="tracking-wide">
-        {label}
-      </Text>
+    <NextLink
+      href={href}
+      className="flex flex-col gap-1 rounded-md bg-gray-1 p-3 no-underline transition-colors hover:bg-gray-2 dark:bg-dark-5 dark:hover:bg-dark-4"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <Text size="xs" fw={600} tt="uppercase" c="dimmed" className="tracking-wide">
+          {label}
+        </Text>
+        <IconArrowUpRight size={13} className="text-gray-6 dark:text-dark-2" />
+      </div>
       <div className="flex items-center gap-1.5">
         {icon}
-        <Text
-          size="lg"
-          fw={700}
-          tt="capitalize"
-          c={tone === 'warning' ? 'yellow.6' : tone === 'success' ? 'teal.6' : undefined}
-        >
-          {value}
-        </Text>
+        {children}
       </div>
-    </div>
+    </NextLink>
   );
 }
 
-const quickLinkIcons: Record<string, React.ReactNode> = {
-  notifications: <IconBell size={18} />,
-  content: <IconEye size={18} />,
-  billing: <IconCreditCard size={18} />,
-  security: <IconKey size={18} />,
-};
+const quickLinks: { id: string; icon: React.ReactNode }[] = [
+  { id: 'notifications', icon: <IconBell size={18} /> },
+  { id: 'content', icon: <IconEye size={18} /> },
+  { id: 'billing', icon: <IconCreditCard size={18} /> },
+  { id: 'security', icon: <IconKey size={18} /> },
+];
 
 export function AccountOverview() {
   const currentUser = useCurrentUser();
@@ -75,16 +73,15 @@ export function AccountOverview() {
   const emailVerified = !!currentUser.emailVerified;
   const activeStrikes = strikeSummary?.activeStrikes ?? 0;
   const score = creatorScoreFromMeta(currentUser.meta);
+  const funded = (buzz?.accounts ?? []).filter((account) => account.balance > 0);
 
   return (
     <>
       {!emailVerified && (
         <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="Verify your email">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Text size="sm">
-              Until you do, you can&apos;t publish models, withdraw Buzz, or recover the account.
-            </Text>
-          </div>
+          <Text size="sm">
+            Until you do, you can&apos;t publish models, withdraw Buzz, or recover the account.
+          </Text>
         </Alert>
       )}
 
@@ -92,20 +89,9 @@ export function AccountOverview() {
         <div className="flex flex-wrap items-center gap-4">
           <UserAvatar user={currentUser} size="lg" />
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <Text size="xl" fw={700}>
-                {currentUser.username}
-              </Text>
-              {currentUser.tier ? (
-                <Badge color="yellow" tt="capitalize">
-                  {currentUser.tier}
-                </Badge>
-              ) : (
-                <Badge color="gray" variant="light">
-                  Free
-                </Badge>
-              )}
-            </div>
+            <Text size="xl" fw={700}>
+              {currentUser.username}
+            </Text>
             <Text size="sm" c="dimmed">
               {currentUser.email}
               {currentUser.createdAt && ` · Member since ${formatDate(currentUser.createdAt)}`}
@@ -120,49 +106,88 @@ export function AccountOverview() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile
           label="Membership"
-          value={currentUser.tier ? currentUser.tier : 'Free'}
+          href="/pricing"
           icon={<IconUserCircle size={16} className="text-yellow-6" />}
-        />
+        >
+          <Text size="lg" fw={700} tt="capitalize">
+            {currentUser.tier ?? 'Free'}
+          </Text>
+        </StatTile>
+
         <StatTile
           label="Buzz balance"
-          value={abbreviateNumber(buzz?.total ?? 0)}
-          icon={<IconBolt size={16} className="text-yellow-6" />}
-        />
+          href="/user/buzz-dashboard"
+          icon={<CurrencyIcon currency="BUZZ" size={16} />}
+        >
+          <div className="flex min-w-0 flex-col">
+            <Text size="lg" fw={700}>
+              {(buzz?.total ?? 0).toLocaleString()}
+            </Text>
+            {funded.length > 1 && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {funded.map((account) => (
+                  <div key={account.type} className="flex items-center gap-0.5">
+                    <CurrencyIcon currency="BUZZ" type={account.type} size={11} />
+                    <Text size="xs" c="dimmed">
+                      {account.balance.toLocaleString()}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </StatTile>
+
         <StatTile
           label={features.strikes ? 'Account standing' : 'Creator score'}
-          value={
-            features.strikes && activeStrikes > 0
-              ? `${activeStrikes} strike${activeStrikes === 1 ? '' : 's'}`
-              : abbreviateNumber(score)
+          href={getAccountSectionHref(
+            accountSections.find((section) => section.id === 'profile') ?? accountSections[0]
+          )}
+          icon={
+            <IconShieldCheck
+              size={16}
+              className={activeStrikes > 0 ? 'text-yellow-6' : 'text-teal-6'}
+            />
           }
-          icon={<IconShieldCheck size={16} className="text-teal-6" />}
-          tone={activeStrikes > 0 ? 'warning' : 'default'}
-        />
+        >
+          <Text size="lg" fw={700} c={activeStrikes > 0 ? 'yellow.6' : undefined}>
+            {features.strikes && activeStrikes > 0
+              ? `${activeStrikes} strike${activeStrikes === 1 ? '' : 's'}`
+              : score.toLocaleString()}
+          </Text>
+        </StatTile>
+
         <StatTile
           label="Email"
-          value={emailVerified ? 'Verified' : 'Unverified'}
-          icon={<IconMailCheck size={16} className={emailVerified ? 'text-teal-6' : 'text-yellow-6'} />}
-          tone={emailVerified ? 'success' : 'warning'}
-        />
+          href={getAccountSectionHref(
+            accountSections.find((section) => section.id === 'profile') ?? accountSections[0]
+          )}
+          icon={
+            <IconMailCheck
+              size={16}
+              className={emailVerified ? 'text-teal-6' : 'text-yellow-6'}
+            />
+          }
+        >
+          <Text size="lg" fw={700} c={emailVerified ? 'teal.6' : 'yellow.6'}>
+            {emailVerified ? 'Verified' : 'Unverified'}
+          </Text>
+        </StatTile>
       </div>
 
       <Text fw={600} mt="xs">
         Jump to
       </Text>
       <div className="grid gap-3 md:grid-cols-2">
-        {['notifications', 'content', 'billing', 'security'].map((id) => {
+        {quickLinks.map(({ id, icon }) => {
           const section = accountSections.find((item) => item.id === id);
           if (!section) return null;
           return (
-            <NextLink
-              key={id}
-              href={getAccountSectionHref(section)}
-              className="no-underline"
-            >
+            <NextLink key={id} href={getAccountSectionHref(section)} className="no-underline">
               <Card withBorder padding="md" className="h-full">
                 <div className="flex items-center gap-3">
                   <div className="flex size-9 items-center justify-center rounded bg-blue-1 text-blue-6 dark:bg-blue-8/25">
-                    {quickLinkIcons[id]}
+                    {icon}
                   </div>
                   <div className="flex min-w-0 flex-1 flex-col">
                     <Text size="sm" fw={600}>

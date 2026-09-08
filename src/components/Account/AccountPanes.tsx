@@ -40,39 +40,15 @@ function TwoColumn({ left, right }: { left: React.ReactNode; right: React.ReactN
   );
 }
 
-export const accountPaneCopy: Record<string, { title: string; description?: string }> = {
-  overview: {
-    title: 'Overview',
-    description: 'Your account at a glance. Jump straight to whatever you came here to change.',
-  },
-  profile: {
-    title: 'Profile & Account',
-    description: 'Who you are on Civitai, how people reach you, and the state of your account.',
-  },
-  preferences: {
-    title: 'Preferences',
-    description: 'How media plays, which file formats you get by default, and the small comforts.',
-  },
-  notifications: {
-    title: 'Notifications',
-    description: 'Grouped by category. Open the one you came for; the rest stay collapsed.',
-  },
-  content: {
-    title: 'Content & Browsing',
-    description: 'What you are willing to see, and whose work you would rather not.',
-  },
-  creator: {
-    title: 'Creator',
-    description: 'What the public sees about your work, and what you let others place on it.',
-  },
-  billing: {
-    title: 'Membership & Billing',
-    description: 'Your plan, how you pay for it, and how you get paid.',
-  },
-  security: {
-    title: 'Security & Apps',
-    description: 'How you sign in, and everything holding a key to your account.',
-  },
+export const accountPaneCopy: Record<string, { title: string }> = {
+  overview: { title: 'Overview' },
+  profile: { title: 'Profile & Account' },
+  preferences: { title: 'Preferences' },
+  notifications: { title: 'Notifications' },
+  content: { title: 'Content & Browsing' },
+  creator: { title: 'Creator' },
+  billing: { title: 'Membership & Billing' },
+  security: { title: 'Security & Apps' },
 };
 
 export function AccountPane({ sectionId }: { sectionId: string }) {
