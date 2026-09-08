@@ -421,6 +421,26 @@ export default defineNextConfig(
           destination: '/apps/build',
           statusCode: 301,
         },
+        // ── `/apps/installed` → `/apps/activity` ───────────────────────────────────
+        // The page was renamed when it stopped being an installs surface: it now opens
+        // on the activity feed, and its gate widened from `appBlocks` (the model-slot
+        // flag) to `appBlocks || appBlocksPages`, so a viewer whose only app usage is a
+        // full-page app reaches it. The page component is MOVED (`installed.tsx` →
+        // `activity.tsx`), not stubbed — same reason as the three rules above.
+        //
+        // 🔴 `statusCode: 301`, matching its neighbours and for the same reason: Next
+        // maps `permanent: true` to 308, and these are GET-only pages whose inbound
+        // links are bookmarks and search results. The two keys are mutually exclusive
+        // in Next's schema.
+        //
+        // Next preserves the query string across a redirect, so an inbound
+        // `/apps/installed?tab=permissions` keeps its `?tab=` — which only became a
+        // meaningful statement when the tabs went URL-backed in the same change.
+        {
+          source: '/apps/installed',
+          destination: '/apps/activity',
+          statusCode: 301,
+        },
         {
           source: '/api/download/training-data/:modelVersionId',
           destination: '/api/download/models/:modelVersionId?type=Training%20Data',

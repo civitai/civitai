@@ -141,7 +141,7 @@ async function renderSubNav() {
 // hidden until after mount. `Invites` is included and is the strongest of the four: it
 // reads BOTH the summary and `context.isAuthor`, so a mutant that lifted it out of the
 // deferral would leak an author-only tab into the SSR set.
-const CONDITIONAL = ['Installed', 'Invites', 'Revenue', 'Review'] as const;
+const CONDITIONAL = ['Activity', 'Invites', 'Revenue', 'Review'] as const;
 
 beforeEach(() => {
   mocks.isClient = false;
@@ -162,7 +162,7 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     // The two capability-driven tabs render — their inputs are SSR-frozen.
     await expect.element(tab('Build')).toBeInTheDocument();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
 
     // The conditional tabs MUST NOT render pre-mount — this is what keeps the first
     // client paint identical to the SSR HTML (the fix). Before the fix, the query
@@ -176,15 +176,15 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     mocks.isClient = true; // after mount / hydration has matched
     await renderSubNav();
 
-    for (const name of ['Build', 'Marketplace', ...CONDITIONAL]) {
+    for (const name of ['Marketplace', 'Build', ...CONDITIONAL]) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
     expect(renderedTabs()).toEqual([
-      'Build',
       'Marketplace',
-      'Installed',
+      'Activity',
       'Invites',
       'Revenue',
+      'Build',
       'Review',
     ]);
   });
@@ -195,7 +195,7 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     await renderSubNav();
 
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
     for (const name of CONDITIONAL) {
       expect(tab(name).elements()).toHaveLength(0);
     }
@@ -224,7 +224,7 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     };
     await renderSubNav();
     await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
     for (const retired of ['My apps', 'My submissions', 'Create', 'Build apps']) {
       expect(tab(retired).elements(), `a tab named "${retired}" is rendered`).toHaveLength(0);
     }
@@ -285,7 +285,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.navSummary = undefined;
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('NON-AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
@@ -294,7 +294,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // the prod condition that broke hydration
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('AUTHOR, server render (no query data) → Build + Marketplace', async () => {
@@ -303,7 +303,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.navSummary = undefined;
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('AUTHOR, first client paint (query data PRESENT, invites pending) → the identical set', async () => {
@@ -315,7 +315,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     // Non-empty on BOTH sides of the pair: the capability gates applied on the first
     // paint (Build is here pre-mount) while the summary gate did NOT — including the
     // author-only `Invites`, whose summary flag is true in this fixture.
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
     expect(tab('Invites').elements()).toHaveLength(0);
   });
 
@@ -326,8 +326,8 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.isClient = true;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
     await renderSubNav();
-    await expect.element(tab('Installed')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace', 'Installed', 'Revenue', 'Review']);
+    await expect.element(tab('Activity')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
     // Invites is the one tab the author gate removes — this viewer has a pending invite
     // in the summary and still must not get it.
     expect(renderedTabs()).not.toContain('Invites');
@@ -417,7 +417,7 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // hasPendingInvites: true
     await renderSubNav();
     await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace', 'Installed', 'Revenue', 'Review']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
     expect(tab('Invites').elements()).toHaveLength(0);
   });
 
@@ -441,7 +441,7 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
     mocks.navSummary = undefined;
     await renderSubNav();
     await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 });
 
@@ -481,7 +481,7 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity']);
   });
 
   test('🔴 …and so is appBlocksGetStarted, on the OTHERWISE IDENTICAL viewer', async () => {
@@ -493,6 +493,6 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Build', 'Marketplace']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 });

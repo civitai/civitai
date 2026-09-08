@@ -20,6 +20,13 @@ const m = vi.hoisted(() => ({
   scopeSpy: undefined as unknown as ReturnType<typeof vi.fn>,
 }));
 
+// 🔴 `AppActivityPanel`'s `When` column renders `DaysFromNow`, which reads
+// `useIsClient()` from `IsClientProvider` and THROWS outside that provider
+// ('missing IsClientContext'). `renderWithProviders` supplies Mantine + a QueryClient
+// only, so the hook is stubbed here rather than the whole app shell being mounted.
+// `true` is the post-mount value, which is the state every assertion below is about.
+vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
+
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => m.user,
 }));
@@ -156,7 +163,7 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
 
   test('whole-account panel (installed page, no appBlockId) does NOT pass an appBlockId filter — unchanged behaviour', async () => {
     // The shared AppActivityPanel rendered without an appBlockId (the
-    // /apps/installed "Recent activity" tab) must keep fetching the whole-account
+    // /apps/activity "Recent activity" tab) must keep fetching the whole-account
     // feed — neither query carries an appBlockId.
     renderWithProviders(<AppActivityPanel />);
     // Await the rendered empty state so the query hooks have run before asserting.

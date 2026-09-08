@@ -12,7 +12,7 @@ import { trpc } from '~/utils/trpc';
  *
  *   1. The JWT scopes they've granted THIS app (`blocks.listMyScopeGrants`,
  *      filtered to this app, rendered via the shared `BlockScopeList` — the same
- *      component the /apps/installed "Apps & permissions" tab uses).
+ *      component the /apps/activity "Apps & permissions" tab uses).
  *   2. A per-app action audit timeline (`AppActivityPanel` with the `appBlockId`
  *      drill-down — Buzz attribution + scope-gated call audit interleaved).
  *

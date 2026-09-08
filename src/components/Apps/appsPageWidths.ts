@@ -135,7 +135,7 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * The narrowest column a `/apps/*` CARD LIST may be laid out in before it starts
  * putting cards SIDE BY SIDE instead of stretching each one across the container.
  *
- * 🔴 THIS EXISTS FOR `/apps/installed`, AND FOR ONE MEASURED DEFECT. That page is a
+ * 🔴 THIS EXISTS FOR `/apps/activity`, AND FOR ONE MEASURED DEFECT. That page is a
  * `Stack` of full-width cards whose header rows are
  * `<Group justify="space-between" wrap="nowrap">` — content on the left, the control
  * that acts on it on the right. Raising the container to 2560 therefore moved the
@@ -209,7 +209,7 @@ export const APPS_CARD_LIST_GAP = 16;
  * ✅ THE SIBLING ROUTES NOW SPEND IT — this note used to say they did not. Every route
  * in {@link APPS_FULL_MEASURE_PAGES} lays out at up to 2528px of content, and the
  * surplus goes into COLUMN WIDTHS rather than padding: the tables carry a proportional
- * `<colgroup>` whose PRIMARY column takes the slack, and `/apps/installed`'s card list
+ * `<colgroup>` whose PRIMARY column takes the slack, and `/apps/activity`'s card list
  * steps to a second grid column. Both mechanisms live in
  * `~/components/Apps/appsWideLayout` — read {@link APPS_CARD_LIST_MIN_COLUMN} for the
  * measured 640px dead-gap defect the card half fixes.
@@ -387,8 +387,8 @@ export type AppsMeasuredRoute = keyof typeof APPS_PAGE_MEASURES;
  */
 export const APPS_FULL_MEASURE_PAGES = [
   '/apps',
+  '/apps/activity',
   '/apps/build',
-  '/apps/installed',
   '/apps/revenue',
   '/apps/review',
   '/apps/review/[publishRequestId]',

@@ -13,7 +13,10 @@ import {
 import { IconHistory } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
-import { formatDate } from '~/utils/date-helpers';
+import { getListingDetailHref } from '~/components/Apps/appListingCardView';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 import {
   describeBlockAction,
@@ -23,10 +26,11 @@ import {
 
 /**
  * Shared per-viewer app-activity timeline. Extracted from
- * `src/pages/apps/installed.tsx` (W5 v0.5) so the same interleaved feed can be
- * reused both there (whole-account view) AND on the run-frame "Permissions &
- * activity" drawer scoped to a single app (`appBlockId`). DRY: the humanise
- * helpers + row shape live here, in one tested place, instead of duplicated.
+ * `src/pages/apps/activity.tsx` (W5 v0.5, when that page was `/apps/installed`) so
+ * the same interleaved feed can be reused both there (whole-account view) AND on the
+ * run-frame "Permissions & activity" drawer scoped to a single app (`appBlockId`).
+ * DRY: the humanise helpers + row shape live here, in one tested place, instead of
+ * duplicated.
  *
  * Two cursor-paginated tRPC queries — `blocks.listMyAppActivity` (Buzz
  * attribution) + `blocks.listMyScopeInvocations` (scope-gated call audit) —
@@ -37,7 +41,7 @@ import {
  * fetch + client filter would under-report this app's Buzz behind other apps'
  * rows on page 1). A client-side `item.appBlockId` check is kept as cheap
  * belt-and-suspenders. When `appBlockId` is omitted the feed is whole-account —
- * exactly the /apps/installed behaviour, unchanged.
+ * exactly the /apps/activity behaviour, unchanged.
  *
  * `enabled` gates the queries: pass `false` for an anonymous viewer (these
  * procedures are `protectedProcedure`, so firing them unauthenticated just
@@ -153,6 +157,58 @@ export function humaniseScopeEndpoint(
   }
   if (endpoint === 'user-settings:write') return '';
   return endpoint;
+}
+
+/**
+ * The `App` cell's name — a LINK to the app's store detail for a viewer who can open
+ * it, and the pre-change plain `<Text>` for everyone else.
+ *
+ * 🔴 THE GATE IS `hasAppsStoreAccess`, AND IT IS NOT OPTIONAL POLISH. The destination
+ * `/apps/store-preview/<slug>` `getServerSideProps`-gates on exactly this predicate
+ * (via `resolveAppsPageAccess`) and returns `notFound`, and `appListings.getAppDetail`
+ * resolves a `StoreVisibilityScope` of `none` and throws NOT_FOUND. An ungated link is
+ * therefore a 404 affordance — the defect class civitai#4668 shipped and civitai#4685
+ * exists to prevent. This is `AppNameCrumb`'s solution copied rather than re-derived;
+ * see that file for the full argument.
+ *
+ * 🔴 IT READS THE FLAGS THROUGH `useOptionalFeatureFlags`, NOT `useFeatureFlags`, AND
+ * THAT IS A FAIL-CLOSED DECISION. `useFeatureFlags` THROWS outside its provider. This
+ * panel is mounted from `/apps/activity` AND from the run-frame's permissions drawer,
+ * and it is rendered in isolation under test; making it throw would turn "flags are
+ * unavailable here" into a crashed panel. The optional hook returns `null` there, and
+ * `hasAppsStoreAccess(null)` is `false` — so the absence of flags removes the link
+ * instead of granting it.
+ *
+ * The `href` comes from the CANONICAL `getListingDetailHref`, never a concatenation
+ * here: one function owns the store-detail path (and its `encodeURIComponent`), so a
+ * route change cannot leave this call site pointing at the old one.
+ */
+export function ActivityAppName({ name, slug }: { name: string; slug: string }) {
+  const features = useOptionalFeatureFlags();
+  const canSeeStore = hasAppsStoreAccess(features);
+
+  // Ineligible viewer (or no slug on the row): the pre-change static text, with the
+  // same testid so nothing downstream has to branch on the gate.
+  if (!canSeeStore || !slug) {
+    return (
+      <Text size="sm" fw={500} className="truncate" data-testid="app-activity-app-name">
+        {name}
+      </Text>
+    );
+  }
+
+  return (
+    <Anchor
+      component={Link}
+      href={getListingDetailHref(slug)}
+      size="sm"
+      fw={500}
+      className="truncate"
+      data-testid="app-activity-app-name"
+    >
+      {name}
+    </Anchor>
+  );
 }
 
 function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
@@ -380,15 +436,23 @@ export function AppActivityPanel({
           {items.map((item) => (
             <Table.Tr key={item.id}>
               <Table.Td>
+                {/* 🔴 RELATIVE, WITH THE ABSOLUTE STAMP KEPT IN THE TOOLTIP. "20m ago"
+                    is what a reader of an audit feed actually wants — the question is
+                    "was this just now?", not "what wall-clock minute was it?" — and the
+                    exact instant is one hover away, unchanged from before.
+                    `DaysFromNow` renders a `<time datetime>` (so the machine-readable
+                    instant is in the DOM too) and returns `null` until `useIsClient`
+                    goes true, which is what keeps a relative string from being
+                    server-rendered and then hydrating to a different one. */}
                 <Tooltip label={item.createdAt.toString()}>
-                  <Text size="xs">{formatDate(item.createdAt, 'YYYY-MM-DD HH:mm')}</Text>
+                  <Text size="xs">
+                    <DaysFromNow date={item.createdAt} />
+                  </Text>
                 </Tooltip>
               </Table.Td>
               <Table.Td>
                 <Group gap={6} wrap="nowrap">
-                  <Text size="sm" fw={500} className="truncate">
-                    {item.appName}
-                  </Text>
+                  <ActivityAppName name={item.appName} slug={item.appSlug} />
                   <Badge size="xs" variant="outline">
                     {item.appSlug}
                   </Badge>

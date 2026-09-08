@@ -623,14 +623,14 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
     for (const s of twoShaped) expect(s.ledgerRefs.length).toBe(2);
   });
 
-  test('🔴 /apps/installed uses the card GRID *on the installed-apps list*, and no longer caps its body', () => {
+  test('🔴 /apps/activity uses the card GRID *on the installed-apps list*, and no longer caps its body', () => {
     // 🔴 THE testId IS LOAD-BEARING, NOT DECORATION. This asserted `/<AppsCardGrid\b/`
     // over the whole file, and the same change added two OTHER `AppsCardGrid` call sites
     // to it (the grants tab and the hidden tab) — so the guard stopped being able to see
     // the case it exists for. Measured: reverting ONLY the installed-apps list to
     // `<Stack gap="md">`, i.e. undoing the headline fix on the one route whose 640px
     // defect was measured, passed unit 124/124 and geometry 27/27.
-    const src = codeOf('src/pages/apps/installed.tsx');
+    const src = codeOf('src/pages/apps/activity.tsx');
     expect(src).toMatch(/<AppsCardGrid\s+testId="apps-installed-apps-grid"/);
     // The other two lists are grids as well, named individually for the same reason.
     expect(src).toMatch(/<AppsCardGrid\s+testId="apps-installed-grants-grid"/);
@@ -712,7 +712,7 @@ describe('appsCardGridColumnsAt — the auto-fill ladder', () => {
   test('🔴 the Hidden tab really does pass its own gap', () => {
     // The other half: the equivalence above is about numbers, this is about the call site
     // the numbers are for. Deleting the prop is what the arithmetic cannot see.
-    const src = codeOf('src/pages/apps/installed.tsx');
+    const src = codeOf('src/pages/apps/activity.tsx');
     expect(src).toMatch(/<AppsCardGrid\s+testId="apps-installed-hidden-grid"\s+gap=\{12\}/);
   });
 

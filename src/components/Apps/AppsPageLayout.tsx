@@ -44,7 +44,7 @@ import {
  * Which flag depends on the surface, and the two are NOT interchangeable: the
  * STORE surfaces (`/apps`, `/apps/store-preview/<slug>`) gate on the shared
  * `hasAppsStoreAccess` predicate (`appListings || appBlocks`), while the block-
- * RUNTIME surfaces (`/apps/installed`, `/apps/review`, `/apps/my-submissions`,
+ * RUNTIME surfaces (`/apps/activity`, `/apps/review`, `/apps/my-submissions`,
  * `/apps/revenue`) gate on `appBlocks` alone because they need the runtime, not
  * just the catalog.
  */

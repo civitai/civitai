@@ -412,7 +412,7 @@ export const appsStorageRouter = router({
       ).catch(() => {});
       // User-facing audit: unify the W4 storage feed into the same Activity
       // tab that surfaces workflow + scope events. Axiom log above stays
-      // for ops/debug visibility; this row populates /apps/installed.
+      // for ops/debug visibility; this row populates /apps/activity.
       void (async () => {
         const { recordScopeInvocation } = await import(
           '~/server/services/blocks/user-app-surface.service'

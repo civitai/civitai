@@ -8,7 +8,7 @@ import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope
  * (`/apps/submit`, `/apps/my-submissions`, `/apps/revenue`, and the
  * per-app `/apps/[appBlockId]/revenue`). These are the surfaces for people
  * who BUILD and earn from apps, as opposed to the consumer surfaces
- * (`/apps`, `/apps/installed`) which any user with `features.appBlocks`
+ * (`/apps`, `/apps/activity`) which any user with `features.appBlocks`
  * can use.
  *
  * Today = moderators only (pre-GA). This mirrors the existing `/apps/submit`
@@ -237,10 +237,13 @@ export type AppsStoreFeatureFlags =
  * driven against one fake Flipt config —
  * `server/services/__tests__/app-blocks-flag.external-scope.seam.test.ts`.
  *
- * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/installed`,
+ * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/activity`,
  * `/apps/review`, `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`
- * and the `blocks.*` tRPC procedures gate on `appBlocks` alone, on purpose —
- * they need the runtime, not just the catalog. Widening them is a product
+ * and the `blocks.*` tRPC procedures gate on the RUNTIME flags, on purpose —
+ * they need the runtime, not just the catalog. (`/apps/activity` is the one that
+ * takes `appBlocks || appBlocksPages` rather than `appBlocks` alone; see
+ * {@link canAccessAppsActivity} for why the page flag is a second disjunct there
+ * and nowhere else.) Widening them is a product
  * decision, not a mechanical alignment; do not sweep them into this predicate.
  * The external-only cohort in particular must NOT reach them: they hold neither
  * `appBlocks` nor `appListings`, and adding this third term here leaves those
@@ -250,6 +253,56 @@ export type AppsStoreFeatureFlags =
  */
 export function hasAppsStoreAccess(features: AppsStoreFeatureFlags): boolean {
   return !!features?.appListings || !!features?.appBlocks || !!features?.appListingsPublicExternal;
+}
+
+/**
+ * The flag shape {@link canAccessAppsActivity} needs — the two App-Blocks RUNTIME
+ * flags. Derived from `FeatureAccess` (type-only import) so a rename at GA breaks
+ * here at compile time rather than silently degrading the gate to one term.
+ */
+export type AppsActivityFeatureFlags =
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appBlocksPages'>>
+  | null
+  | undefined;
+
+/**
+ * App Blocks — the `/apps/activity` (per-viewer app ACTIVITY) surface gate:
+ * `appBlocks || appBlocksPages`.
+ *
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach /apps/activity", consumed
+ * by the page's SSR resolver (`~/components/Apps/resolveActivityPageAccess`) and
+ * by the page body's client-side re-check. Two callers, one function — the
+ * shared-predicate pattern {@link canAccessAppsBuild} exists for, and for the same
+ * recorded reason: a tab or a body gate written separately from its page's SSR gate
+ * WILL drift (#3899, PR #4668).
+ *
+ * 🔴 THE SECOND DISJUNCT IS THE WHOLE POINT OF THE `/apps/installed` → `/apps/activity`
+ * RENAME. The page used to gate on `appBlocks` alone, which is the SLOT flag — it
+ * governs the `BlockSlot` mount on model pages. Someone who has only ever run a
+ * FULL-PAGE app (`/apps/run/<slug>`, gated on `appBlocksPages`) has app activity —
+ * generations, scope-gated API calls, Buzz spends — and no slot install at all.
+ * Calling the page "Activity" while refusing them is the dishonest half of the rename.
+ *
+ * 🔴 IT IS NOT `hasAppsStoreAccess`. That predicate governs the CATALOG (`/apps`,
+ * the listing detail) and carries `appListingsPublicExternal`, the external-only
+ * cohort that holds neither runtime flag. This page reads `blocks.*` procedures, all
+ * of which gate on the runtime — so widening it to the store predicate would admit a
+ * cohort to a page whose every query answers all-false.
+ *
+ * ⚠️ SCOPE: this gates the PAGE. The `Installs` TAB inside it stays on
+ * `features.appBlocks` alone, because that tab's content (slot subscriptions /
+ * per-model installs) is what the slot flag governs — a tab's predicate is its
+ * content's own gate, restated. See `pages/apps/activity.tsx`.
+ *
+ * Neither flag is `toggleable: true` in `feature-flags.service.ts`, so
+ * `computeUserFeatureFlagsOverlay` never emits them and the client value cannot move
+ * between the SSR gate and the first client paint — which is what lets one predicate
+ * serve both without a hydration hazard.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ */
+export function canAccessAppsActivity(features: AppsActivityFeatureFlags): boolean {
+  return !!features?.appBlocks || !!features?.appBlocksPages;
 }
 
 /**

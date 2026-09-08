@@ -18,7 +18,7 @@ afterEach(() => {
  * Viewer-local "Hide app block" persistence. A model owner's block shows to
  * every viewer; hiding it is a per-viewer, per-instance localStorage flag that
  * never touches the server. BlockSlotClient filters hidden instances out before
- * mount; the /apps/installed "Hidden" tab restores them.
+ * mount; the /apps/activity "Hidden" tab restores them.
  */
 describe('hiddenBlocks', () => {
   it('nothing is hidden by default', () => {

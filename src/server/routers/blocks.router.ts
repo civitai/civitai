@@ -2389,14 +2389,14 @@ export const blocksRouter = router({
   }),
 
   /**
-   * W5 v0 — reflection surface for /apps/installed. One row per app the
+   * W5 v0 — reflection surface for /apps/activity. One row per app the
    * current user has either installed on a model OR subscribed to. Counts
    * + scope intersections derived from existing tables (no grant schema
    * yet — that's W5 v1). See user-app-surface.service.ts for shape.
    */
   // GA-relax (gotcha #66, manage-page half): own-data reflection query scoped
   // to ctx.user.id. moderator→protected + the appBlocks flag below. The
-  // /apps/installed page already gates per-user on features.appBlocks, so the
+  // /apps/activity page already gates per-user on features.appBlocks, so the
   // old moderator gate just broke this tab for non-mods on flag-public surfaces.
   listMyScopeGrants: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
@@ -2408,7 +2408,7 @@ export const blocksRouter = router({
   /**
    * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
    * current user is the spender (NOT the app owner). Powers the activity
-   * panel on /apps/installed so users can audit what apps have spent
+   * panel on /apps/activity so users can audit what apps have spent
    * Buzz on their behalf.
    *
    * Cursor pagination by id (createdAt desc, id desc tiebreak); cap 100
@@ -2452,7 +2452,7 @@ export const blocksRouter = router({
    *
    * Identifying the target row by the subscription's `id` (not the
    * blockInstanceId) — blanket subscriptions don't have a blockInstance
-   * Id, and the management UI on /apps/installed reads `id` off the
+   * Id, and the management UI on /apps/activity reads `id` off the
    * SubscriptionRecord directly.
    */
   // GA-relax (gotcha #66): own-data management action. moderator→protected +
@@ -2579,7 +2579,7 @@ export const blocksRouter = router({
 
   /**
    * Lists every user-subscription row (both scopes) for the current viewer.
-   * Used by the management UI at /apps/installed. The app_block row is
+   * Used by the management UI at /apps/activity. The app_block row is
    * denormalised onto each subscription so the UI can render block name,
    * icon, and target slot without a second round-trip.
    */
@@ -4641,7 +4641,7 @@ export const blocksRouter = router({
       if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
       // Log the workflow submission to the per-user activity feed so
-      // /apps/installed → Activity shows "this app ran a workflow on
+      // /apps/activity → Activity shows "this app ran a workflow on
       // your behalf at time T". Without this, generations that spend
       // existing balance (the common case) leave NO trace anywhere —
       // block_buzz_attribution only covers Buzz PURCHASES from inside

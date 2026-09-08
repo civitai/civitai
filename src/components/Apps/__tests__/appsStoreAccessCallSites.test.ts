@@ -83,10 +83,13 @@ const SRC = path.resolve(__dirname, '../../..');
  *
  * ── NOT in this ledger, on purpose ──────────────────────────────────────────
  *
- * 1. The block-RUNTIME surfaces (`/apps/installed`, `/apps/review`,
- *    `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`) gate on
- *    `appBlocks` ALONE because they need the runtime, not just the catalog.
- *    Sweeping them in here would be a silent access widening.
+ * 1. The block-RUNTIME surfaces (`/apps/activity`, `/apps/review`,
+ *    `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`) gate on the
+ *    RUNTIME flags because they need the runtime, not just the catalog.
+ *    Sweeping them in here would be a silent access widening. (`/apps/activity`
+ *    takes `appBlocks || appBlocksPages` via `canAccessAppsActivity` rather than
+ *    `appBlocks` alone — a second RUNTIME flag, not the store predicate, so the
+ *    distinction this paragraph draws is unaffected.)
  *
  * 2. The user-menu entry is IN the ledger now (#3907, resolved), and its module
  *    lives outside `components/Apps` — `components/AppLayout/AppHeader/
@@ -106,6 +109,15 @@ const SRC = path.resolve(__dirname, '../../..');
  */
 const STORE_GATE_SITES = [
   'components/AppLayout/AppHeader/appsNavVisibility.ts',
+  // 🔴 THE `App` COLUMN'S NAME LINK ON `/apps/activity`. It points at
+  // `/apps/store-preview/<slug>`, which `getServerSideProps`-gates on
+  // `resolveAppsPageAccess` and answers `notFound` for — so an UNGATED link there is a
+  // 404 affordance, the #4668 defect class. The panel renders a plain `<Text>` instead
+  // for an ineligible viewer, and reads the flags through `useOptionalFeatureFlags` so
+  // the absence of a provider fails CLOSED. Note this file is NOT a store SURFACE: its
+  // own page gate is `canAccessAppsActivity`, and only this one affordance inside it is
+  // store-gated.
+  'components/Apps/AppActivityPanel.tsx',
   'components/Apps/AppListingsMarketplaceBody.tsx',
   'components/Apps/AppsSubNav.tsx',
   'components/Apps/RelatedListings.tsx',
@@ -366,19 +378,43 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     expect(masked).not.toContain('any other installs');
   });
 
-  it('🔴 the real installed.tsx keeps its post-apostrophe code visible', () => {
+  it('🔴 the real activity.tsx keeps its post-apostrophe code visible', () => {
     // Anchored on the FILE that broke it, not a fixture: a synthetic case can be
     // fixed while the real one still desyncs (different JSX nesting, entities…).
-    const raw = read('pages/apps/installed.tsx');
-    const masked = maskNonCode(raw, 'installed.tsx');
+    // 🔴 THE FILE MOVED, THE ANCHOR DID NOT: this was `pages/apps/installed.tsx` until
+    // the `/apps/activity` rename. Same file, same apostrophe, same trigger — repointed
+    // rather than deleted, because the defect it pins is about THIS file's JSX.
+    const raw = read('pages/apps/activity.tsx');
+    const masked = maskNonCode(raw, 'activity.tsx');
     expect(raw).toMatch(/app's/); // the trigger is still present upstream
-    // Both live gates sit AFTER it (~line 460 and ~500) and must remain readable.
+    // The live gate sits AFTER it and must remain readable.
     expect(masked.match(/features\.appBlocks/g) ?? []).toHaveLength(
       (raw.match(/features\.appBlocks/g) ?? []).length
     );
     // Blanking must be bounded: the file cannot be mostly spaces.
-    const blanked = masked.split('').filter((c) => c === ' ').length;
-    expect(blanked / masked.length).toBeLessThan(0.55);
+    //
+    // 🔴 THE BOUND MOVED 0.55 → 0.65, AND THE OLD NUMBER WAS NOT A MARGIN — IT WAS A
+    // COINCIDENCE. Measured on `origin/main`'s copy of this file the ratio was 0.5486
+    // against a 0.55 bound, i.e. 0.0014 of headroom: adding a few lines of DOCUMENTATION
+    // to the page (or one longer JSX string, which masks as blanks too) tripped it, which
+    // is a fact about comment density and nothing to do with the masker. Measured here
+    // after the `/apps/activity` rename: 0.5648.
+    //
+    // The re-cut bound is still discriminating, and the control below is what proves it
+    // rather than asserting it: the defect this test exists for — a phantom string opened
+    // by the ASCII apostrophe running to EOF — blanks the whole tail of the file and lands
+    // far above 0.65.
+    const spaceRatio = (text: string) =>
+      text.split('').filter((c) => c === ' ').length / text.length;
+    expect(spaceRatio(masked)).toBeLessThan(0.65);
+
+    // 🔴 NEGATIVE CONTROL, ON THE REAL FILE: a bound nobody has watched fire is a claim
+    // about a number. Reproduce the historical desync — everything after the apostrophe
+    // blanked — and confirm it exceeds the bound the live value passes.
+    const apostrophe = raw.indexOf("app's");
+    expect(apostrophe, 'the trigger moved; re-point this control').toBeGreaterThan(-1);
+    const desynced = raw.slice(0, apostrophe) + raw.slice(apostrophe).replace(/[^\n]/g, ' ');
+    expect(spaceRatio(desynced)).toBeGreaterThan(0.65);
   });
 
   it('nested quotes, templates and regex literals do not desync it either', () => {

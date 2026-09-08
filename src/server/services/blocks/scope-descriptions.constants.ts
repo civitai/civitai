@@ -3,7 +3,7 @@
  *
  * Shared by:
  *   - /apps/review (mod-facing manifest viewer)
- *   - /apps/installed (viewer-facing "what does this app claim" section)
+ *   - /apps/activity (viewer-facing "what does this app claim" section)
  *
  * Unknown scope/slot ids render as bare chips without a description —
  * keeping this map a soft contract means new scopes ship without breaking

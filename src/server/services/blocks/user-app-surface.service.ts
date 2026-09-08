@@ -1,5 +1,5 @@
 /**
- * W5 v0 — reflection surface for /apps/installed.
+ * W5 v0 — reflection surface for /apps/activity.
  *
  * Provides the two read-only views the v0 ships:
  *   - `listMyScopeGrants`: aggregates per-app, "what JWT scopes does this
@@ -64,7 +64,7 @@ export type ScopeGrantSurface = {
  * for "what an app can do today" shouldn't surface installs the user
  * has explicitly toggled off. Subscriptions are included regardless of
  * the enabled flag because the row IS the user's claim of intent (the
- * toggle on `/apps/installed` already lets them turn it off).
+ * toggle on `/apps/activity` already lets them turn it off).
  */
 export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurface[]> {
   // Post kill_per_model_installs: every install — blanket OR per-model-
@@ -278,7 +278,7 @@ export async function listMyAppActivity({
  * `setSubscriptionPinnedVersion` is the write path that replaces the
  * removed `setInstallPinnedVersion`.
  *
- * The /apps/installed surface uses `BlockRegistry.listUserSubscriptions`
+ * The /apps/activity surface uses `BlockRegistry.listUserSubscriptions`
  * for the read side (it already returns availableVersions + pinned model
  * names + slotId / pinnedVersion on each row), so there is no separate
  * "list my model installs" call anymore.
@@ -390,7 +390,7 @@ export async function listMyScopeInvocations(opts: {
     appBlock: { blockId: string; manifest: unknown } | null;
   };
   const rows = (await dbRead.blockScopeInvocation.findMany({
-    // This is the BLOCK-token activity feed (/apps/installed). Unified scope-usage
+    // This is the BLOCK-token activity feed (/apps/activity). Unified scope-usage
     // audit: EXTERNAL-OAuth invocations now share this table but carry a NULL
     // `appBlockId` (+ `source = 'external-oauth'`); exclude them here so they don't
     // leak into a block-semantic UI. But NOT every null-`appBlockId` row is
