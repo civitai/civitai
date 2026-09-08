@@ -139,6 +139,32 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       -- Private models are a creator's own workspace rather than an abandoned
       -- publish attempt, and are never publicly discoverable, so the abandoned-
       -- draft rationale does not apply to them at all.
+      --
+      -- CONSEQUENCE, decided deliberately rather than overlooked: this job is the
+      -- ONLY reaper of Deleted models anywhere in src/server/jobs, so a model that
+      -- is BOTH Deleted AND Private is reapable by NOTHING. Those rows, their
+      -- ModelVersion/ModelFile children, their storage-resolver file_locations
+      -- entries, and the S3 objects those keep whitelisted against the
+      -- dereference-quarantine sweep all persist indefinitely. deleteModelById
+      -- sets status/deletedAt and never touches availability, while
+      -- privateModelFromTraining sets availability to Private permanently, so the
+      -- combination is reachable by ordinary use.
+      --
+      -- Measured 2026-09-06: 179 Private models across Draft and Deleted (117
+      -- Deleted+Private, 62 Draft+Private), of which 24 would become reapable if
+      -- this term were narrowed to exclude only Private Drafts.
+      --
+      -- That narrowing was proposed and REJECTED: this job's recent history is
+      -- about having destroyed too much (it reaped models whose weights and
+      -- training data were days old, because Model.updatedAt is the reap clock and
+      -- almost nothing bumps it), and re-enabling an irreversible cascade for 24
+      -- abandoned private models is not worth it. Treat Deleted+Private as an
+      -- accepted permanent retention class. If that ever changes, the population is
+      -- the query above, not a guess.
+      --
+      -- NOTE: this comment lives inside a tagged template, so it must never contain
+      -- a backtick. An earlier draft used markdown-style backticks and terminated
+      -- the template, which tsc reported as a cascade of unrelated syntax errors.
       AND m."availability" != 'Private'::"Availability"
       AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv
                        WHERE mv."modelId" = m.id
