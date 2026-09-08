@@ -11,6 +11,7 @@ import {
   createBoundedArchive,
   MAX_PENDING_ARCHIVE_ENTRIES,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
+  zipEntryNameForUrl,
 } from '~/server/utils/archive-helpers';
 
 /**
@@ -234,5 +235,89 @@ describe('createBoundedArchive', () => {
   it('defaults to a bound well below the entry counts that caused the incident', () => {
     expect(MAX_PENDING_ARCHIVE_ENTRIES).toBeGreaterThan(0);
     expect(MAX_PENDING_ARCHIVE_ENTRIES).toBeLessThan(ENTRY_COUNT);
+  });
+});
+
+describe('zipEntryNameForUrl', () => {
+  /**
+   * Why this exists: `createBoundedArchive` deliberately latches archive errors and rethrows
+   * them from `finalize()` instead of letting a bad entry be swallowed. That is the right call
+   * for evidence — but it turns an unnameable URL into a report that can never be archived and
+   * is retried on every hourly run forever. `archiver` rejects an empty entry name with
+   * `ENTRYNAMEREQUIRED`, and the basename expression the caller used reduces some legitimate
+   * URL shapes to `''`.
+   */
+  const legacyBasename = (url: string) => url.split('/').reverse()[0].split('?')[0];
+
+  it.each([
+    'https://example.invalid/blob-7.jpeg',
+    'https://example.invalid/a/b/c/d.webp',
+    'https://example.invalid/blob-7.jpeg?width=450&fit=cover',
+    'https://example.invalid/a?x=/not-a-path',
+    'blob-7.jpeg',
+  ])('leaves a nameable URL byte-identical to the previous expression: %s', (url) => {
+    const previous = legacyBasename(url);
+    expect(previous.length).toBeGreaterThan(0);
+    expect(zipEntryNameForUrl(url, 3)).toBe(previous);
+  });
+
+  it.each([
+    ['https://example.invalid/blob/', 'unnamed-4-blob'],
+    ['https://example.invalid/a/b/', 'unnamed-4-a_b'],
+    ['https://example.invalid/?x=1', 'unnamed-4'],
+    ['https://example.invalid/', 'unnamed-4'],
+    ['https://example.invalid/blob/?x=1#frag', 'unnamed-4-blob'],
+  ])('gives an unnameable URL a non-empty name instead: %s', (url, expected) => {
+    // The precondition, asserted rather than assumed: without this the test proves nothing.
+    expect(legacyBasename(url)).toBe('');
+    expect(zipEntryNameForUrl(url, 4)).toBe(expected);
+  });
+
+  it('never returns an empty name for any of the shapes above', () => {
+    const urls = [
+      'https://example.invalid/blob/',
+      'https://example.invalid/?x=1',
+      'https://example.invalid/',
+      'https://example.invalid/#f',
+      '',
+      '?',
+      '/',
+    ];
+    for (const [i, url] of urls.entries())
+      expect(zipEntryNameForUrl(url, i).length).toBeGreaterThan(0);
+  });
+
+  it('keeps names distinct when several URLs in one batch are unnameable', () => {
+    const names = ['https://example.invalid/', 'https://example.invalid/?a=1'].map((url, i) =>
+      zipEntryNameForUrl(url, i)
+    );
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('REGRESSION: archiver accepts the fallback name and rejects the empty one it replaces', async () => {
+    // Both arms run against the real archiver, so this is a claim about archiver's behaviour
+    // rather than about our reading of its docs.
+    const badUrl = 'https://example.invalid/blob/';
+
+    const rejected = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
+    rejected.pipe(slowSink(0));
+    const rejectedBounded = createBoundedArchive({ archive: rejected, maxPendingEntries: BOUND });
+    await rejectedBounded.append(entryBuffer(0), { name: legacyBasename(badUrl) });
+    await expect(rejectedBounded.finalize()).rejects.toThrow(/entry name/i);
+
+    const accepted = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
+    const outPath = path.join(tmpDir, 'fallback-name.zip');
+    const output = fs.createWriteStream(outPath);
+    accepted.pipe(output);
+    const acceptedBounded = createBoundedArchive({
+      archive: accepted,
+      output,
+      maxPendingEntries: BOUND,
+    });
+    await acceptedBounded.append(entryBuffer(0), { name: zipEntryNameForUrl(badUrl, 0) });
+    await expect(acceptedBounded.finalize()).resolves.toBeUndefined();
+
+    const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
+    expect(Object.keys(zip.files)).toEqual(['unnamed-0-blob']);
   });
 });

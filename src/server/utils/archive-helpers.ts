@@ -19,8 +19,46 @@ export const MEDIA_ARCHIVE_COMPRESSION_LEVEL = 1;
  * Default ceiling on entries that have been handed to the archiver but not yet compressed and
  * written out. Each pending entry pins its whole source buffer in memory, so this is the knob
  * that converts "memory grows with the number of files" into "memory is constant".
+ *
+ * ⚠️ It is NOT the whole peak, and reading it as "8 image-sizes" understates the constant by
+ * roughly 5×. At the CSAM call sites the appender runs behind a `p-limit(10)`, and each of
+ * those 10 slots holds its own `blob`, `arrayBuffer` and `buffer` for the whole time it is
+ * parked inside `append()` waiting for a slot here. So the realistic peak is about
+ * `8 + 3 × 10 = 38` image-sizes, not 8.
+ *
+ * That is the point regardless: 38 is a CONSTANT, set by the two concurrency caps. The defect
+ * being fixed is that the peak previously scaled with how many images the account had.
  */
 export const MAX_PENDING_ARCHIVE_ENTRIES = 8;
+
+/**
+ * Zip entry name for a media URL, guaranteed non-empty.
+ *
+ * `archiver` rejects an entry with an empty name (`ENTRYNAMEREQUIRED`), and since the error
+ * handling in `createBoundedArchive` latches archive errors and rethrows them from `finalize()`,
+ * one such URL now fails the whole report rather than being silently dropped. That is the right
+ * default for evidence — see the file header — but an unnameable URL is not a reason to make a
+ * report permanently unarchivable, and it is a shape the orchestrator can legitimately produce:
+ * `https://host/blob/` and `https://host/?x` both reduce to `''` under the basename expression.
+ *
+ * The basename expression is evaluated FIRST and returned verbatim whenever it is non-empty, so
+ * every URL that already produced a usable name keeps byte-identical naming. The fallback only
+ * runs where the old code would have produced `''`.
+ */
+export function zipEntryNameForUrl(url: string, index: number): string {
+  const basename = url.split('/').reverse()[0].split('?')[0];
+  if (basename.length) return basename;
+
+  // Nothing usable at the end of the path — keep whatever provenance the path still carries so
+  // the entry is traceable back to its source, and fall back to the position in the batch when
+  // even that is empty. `index` makes the name unique within one archive.
+  const path = url
+    .split('?')[0]
+    .split('#')[0]
+    .replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
+  const slug = path.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
+  return slug.length ? `unnamed-${index}-${slug}` : `unnamed-${index}`;
+}
 
 export type BoundedArchive = {
   /**
@@ -75,9 +113,14 @@ export function createBoundedArchive({
   let failure: Error | undefined;
   const waiters: Array<() => void> = [];
 
-  // Only releases as many waiters as there are free slots. Each released waiter re-checks the
-  // ceiling before incrementing, and the increment is synchronous with that check, so no two
-  // waiters can claim the same slot.
+  // Releases EVERY waiter whenever at least one slot is free — it does not hand out one wake-up
+  // per free slot. `pending` is only incremented once a woken waiter actually resumes, which
+  // happens on a later microtask, so the `pending < maxPendingEntries` test below is still true
+  // for the second and subsequent iterations of this loop and the whole queue drains.
+  //
+  // The bound is upheld anyway, by the `while` re-check in `append()`: a woken waiter that finds
+  // no free slot simply parks again. That re-check is the actual guard — a maintainer who
+  // "optimises" it into an `if` on the strength of this loop's name would break the bound.
   const releaseWaiters = () => {
     while (waiters.length > 0 && (failure !== undefined || pending < maxPendingEntries)) {
       waiters.shift()?.();

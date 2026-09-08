@@ -42,7 +42,10 @@ import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
   createBoundedArchive,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
+  zipEntryNameForUrl,
 } from '~/server/utils/archive-helpers';
+import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
+import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { logToAxiom } from '~/server/logging/client';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -203,11 +206,18 @@ export async function getCsamsToReport() {
 export async function getCsamsToArchive() {
   const data = await dbRead.csamReport.findMany({
     where: { reportSentAt: { not: null }, archivedAt: null },
-    // Without an explicit order Postgres is free to return these in any order, so a single report
-    // that kills the job mid-run can sit at the front of every batch and starve everything behind
-    // it indefinitely — the per-report try/catch in `process-csam` does not help, because the
-    // process does not survive to reach the next iteration. Oldest-first at least guarantees the
-    // backlog drains in a fixed, auditable order once a blocking report is dealt with.
+    // Deterministic batch order, for auditability: without an ORDER BY, Postgres may return
+    // these in any order, and it may return a DIFFERENT order run to run, so the sequence in
+    // which evidence bundles were built is unreproducible from the data alone.
+    //
+    // 🔴 This does NOT fix head-of-line blocking, and reads as if it does if you skim it. A
+    // report that fails on every attempt is by construction among the OLDEST rows still
+    // matching this filter, so `createdAt asc` pins it to the head of every run — the ordering
+    // makes the blocking deterministic rather than curing it. Per-report failure isolation is
+    // deliberately out of scope here: `process-csam` already wraps each report in its own
+    // try/catch, which is enough for a report that merely throws, and nothing short of a
+    // circuit breaker (skip a report after N consecutive failures) helps for one that kills
+    // the process. That has not been built.
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
   return data as unknown as CsamReportProps[];
@@ -1100,11 +1110,67 @@ function uploadStream({
       // console.dir('upload finished', { depth: null });
       resolve();
     } catch (e) {
-      // console.log(e);
-      reject();
+      // Rejecting with a real Error, not the bare `reject()` this used to do. An `undefined`
+      // rejection value reaches the caller's `catch (e)` and then blows up on `e.message` with
+      // a TypeError raised INSIDE the catch block — which escapes the per-report try/catch in
+      // `process-csam` and abandons every remaining report in that batch. The original is kept
+      // as `cause` so nothing about the S3 failure is lost.
+      reject(
+        new Error(`failed to upload ${filename} for user ${userId}`, {
+          cause: e,
+        })
+      );
     }
   });
 }
+
+/**
+ * Rows fetched per round-trip by the cursor-paged scans that feed an evidence bundle.
+ *
+ * The number is a round-trip/latency trade, not a correctness one: any positive value produces
+ * the same rows in the same order. It only has to be small enough that one page of full `Image`
+ * rows is comfortably resident, which is the whole reason the scans are paged.
+ *
+ * Exported so the tests can size their fixtures to cross a real page boundary. A test that
+ * hardcodes 500 goes green-and-vacuous the day this number is raised — it would be measuring a
+ * single-page scan while claiming to measure a multi-page one.
+ */
+export const ARCHIVE_SCAN_PAGE_SIZE = 500;
+
+/**
+ * Keyset-pages a `findMany` over an ascending integer primary key, yielding one page at a time.
+ *
+ * Keyset rather than `skip`/`offset` because offset paging over a large table both degrades
+ * quadratically and can skip or duplicate rows if the underlying set shifts between pages. With
+ * `id > cursor ORDER BY id ASC` every row appears exactly once, and the pages concatenate to
+ * exactly the row set a single unpaged `findMany` with the same `where` would have returned.
+ *
+ * Lazy: the first query is not issued until the generator is first pulled from. Callers below
+ * depend on that.
+ */
+async function* scanPagesById<T extends { id: number }>(
+  fetchPage: (args: { afterId: number | undefined; take: number }) => Promise<T[]>,
+  pageSize: number = ARCHIVE_SCAN_PAGE_SIZE
+): AsyncGenerator<T[], void, undefined> {
+  let afterId: number | undefined;
+  for (;;) {
+    const rows = await fetchPage({ afterId, take: pageSize });
+    if (!rows.length) return;
+    yield rows;
+    // A short page is the last page: there is no id greater than the one we just read.
+    if (rows.length < pageSize) return;
+    afterId = rows[rows.length - 1].id;
+  }
+}
+
+/** Flattens paged rows into a per-row async iterable. Also lazy. */
+async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, void, undefined> {
+  for await (const page of pages) for (const row of page) yield row;
+}
+
+/** Serialises `bigint` columns (e.g. `Image.pHash`) as strings — `JSON.stringify` throws on them. */
+const bigintReplacer: JsonReplacer = (_key, value) =>
+  typeof value === 'bigint' ? value.toString() : value;
 
 export async function archiveCsamDataForReport(data: CsamReportProps) {
   const { userId } = data;
@@ -1135,7 +1201,31 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     createDir(dir);
   }
 
-  const images = await dbRead.image.findMany({ where: { userId } });
+  /**
+   * A fresh keyset-paged scan of every image the reported user owns.
+   *
+   * This replaces a single `dbRead.image.findMany({ where: { userId } })` whose result array was
+   * shared by `archiveBaseReportData` and `archiveImages`. Two callers therefore now run two
+   * scans instead of sharing one snapshot. That is a deliberate trade and it does not weaken the
+   * bundle: the archive step already tolerates listing an image in `data.json` that is absent
+   * from `images.zip`, because `fetchBlob` returning null makes it skip the entry silently
+   * (`if (!blob) return;` below). What it buys is that neither caller ever holds more than one
+   * page of full `Image` rows.
+   *
+   * The `where`/column selection is unchanged — same filter, no `select`, so every column still
+   * lands in the bundle. Only the ORDER is new, and it was previously unspecified (i.e. whatever
+   * the query plan produced, not stable run to run), so nothing that was deterministic became
+   * less so.
+   */
+  const scanUserImages = () =>
+    scanPagesById(({ afterId, take }) =>
+      dbRead.image.findMany({
+        where: { userId, ...(afterId !== undefined ? { id: { gt: afterId } } : {}) },
+        orderBy: { id: 'asc' },
+        take,
+      })
+    );
+
   try {
     await archiveBaseReportData();
 
@@ -1180,35 +1270,92 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     throw e;
   }
 
-  // writes a json file of user data to disk before uploading
+  /**
+   * Writes the base evidence bundle to disk, then uploads it.
+   *
+   * 🔴 WHAT IS IN THE BUNDLE IS UNCHANGED. Same five properties in the same order, same queries
+   * with the same `where` clauses and no `select`, same bigint replacer — this only changes HOW
+   * the identical document is produced. `json-stream-helpers.test.ts` pins the byte-identity
+   * against `JSON.stringify`.
+   *
+   * Why it had to change: the previous shape loaded every `Image`, `Model` and `ModelVersion`
+   * row the reported user owns into three arrays and rendered them with one `JSON.stringify`.
+   * That has two ceilings. The soft one is memory — rows and rendered string resident together.
+   * The hard one is that `JSON.stringify` returns a single JavaScript string, and a JS string
+   * cannot exceed V8's maximum length — 536,870,888 characters on 64-bit
+   * (`require('buffer').constants.MAX_STRING_LENGTH`). Past that it throws
+   * `RangeError: Invalid string length`, which no amount of memory or retrying fixes. A report
+   * whose bundle crosses that line can never be archived.
+   */
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
     const user = await getReportedUser(userId);
-    const models = await dbRead.model.findMany({ where: { userId } });
-    const modelVersions = await dbRead.modelVersion.findMany({
-      where: { modelId: { in: models.map((x) => x.id) } },
-    });
+
+    // Model IDs are accumulated because `modelVersions` is filtered by them, exactly as before.
+    // Only the 4-byte ids are kept; the model ROWS stream through without being retained.
+    const modelIds: number[] = [];
+    let modelScanComplete = false;
+
+    async function* streamModels() {
+      const pages = scanPagesById(({ afterId, take }) =>
+        dbRead.model.findMany({
+          where: { userId, ...(afterId !== undefined ? { id: { gt: afterId } } : {}) },
+          orderBy: { id: 'asc' },
+          take,
+        })
+      );
+      for await (const model of flattenPages(pages)) {
+        modelIds.push(model.id);
+        yield model;
+      }
+      modelScanComplete = true;
+    }
+
+    async function* streamModelVersions() {
+      // 🔴 ORDERING INVARIANT. `modelIds` is filled by `streamModels` above, so this generator
+      // must not issue its first query until that one has been drained. It does not, because
+      // `writeJsonObject` serialises entries strictly in order and fully drains each iterable
+      // before starting the next, and because an async generator body does not run until it is
+      // first pulled from. Both of those are load-bearing and neither is locally visible, so
+      // the invariant is asserted rather than assumed: silently reading a half-filled `modelIds`
+      // would drop model versions from a CSAM evidence bundle with nothing to indicate it.
+      if (!modelScanComplete)
+        throw new Error(
+          'archiveBaseReportData: model versions were streamed before the model scan finished — ' +
+            'modelIds is incomplete and the bundle would be missing evidence'
+        );
+      const pages = scanPagesById(({ afterId, take }) =>
+        dbRead.modelVersion.findMany({
+          where: {
+            // A COPY, not the live array. `modelIds` is still being appended to by the generator
+            // above at the moment this closure is built, so passing the reference would make the
+            // filter's contents depend on exactly when the query layer reads it — the kind of
+            // coupling that is correct today and silently wrong after any reordering. It also
+            // made an assertion in the test suite vacuous: the recorded call argument mutated
+            // after the fact, so a scan that ran with an EMPTY id set read back as complete.
+            modelId: { in: [...modelIds] },
+            ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+          },
+          orderBy: { id: 'asc' },
+          take,
+        })
+      );
+      yield* flattenPages(pages);
+    }
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
-    await fsAsync.writeFile(
-      outPath,
-      JSON.stringify(
-        {
-          user,
-          reportId,
-          models,
-          modelVersions,
-          images,
-        },
-        (key, value) => {
-          if (typeof value === 'bigint') {
-            return value.toString();
-          }
-          return value;
-        }
-      )
-    );
+    await writeJsonObject({
+      sink: fs.createWriteStream(outPath),
+      replacer: bigintReplacer,
+      entries: [
+        ['user', { value: user }],
+        ['reportId', { value: reportId }],
+        ['models', { items: streamModels() }],
+        ['modelVersions', { items: streamModelVersions() }],
+        ['images', { items: flattenPages(scanUserImages()) }],
+      ],
+    });
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
@@ -1232,27 +1379,35 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     // concurrency limiter
     const maxWidth = MAX_POST_IMAGES_WIDTH;
     const limit = plimit(10);
-    await Promise.all(
-      images.map((image) => {
-        return limit(async () => {
-          const width = image.width ?? maxWidth;
-          const blob = await fetchBlob(
-            getEdgeUrl(image.url, { type: image.type, width: width < maxWidth ? width : maxWidth })
-          );
-          if (!blob) return;
-          const arrayBuffer = await blob.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
+    // Paged rather than `images.map(...)` over one array of every row the user owns: the row set
+    // is unbounded, and materialising it was half of the memory problem this file exists to fix.
+    // Concurrency within a page is unchanged (10); pages are processed in order.
+    for await (const page of scanUserImages()) {
+      await Promise.all(
+        page.map((image) => {
+          return limit(async () => {
+            const width = image.width ?? maxWidth;
+            const blob = await fetchBlob(
+              getEdgeUrl(image.url, {
+                type: image.type,
+                width: width < maxWidth ? width : maxWidth,
+              })
+            );
+            if (!blob) return;
+            const arrayBuffer = await blob.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
 
-          const imageName = image.name
-            ? image.name.substring(0, image.name.lastIndexOf('.'))
-            : image.url;
-          const name = imageName.length ? imageName : image.url;
-          const filename = `${name}.${blob.type.split('/').pop() as string}`;
+            const imageName = image.name
+              ? image.name.substring(0, image.name.lastIndexOf('.'))
+              : image.url;
+            const name = imageName.length ? imageName : image.url;
+            const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
-          await boundedArchive.append(buffer, { name: filename });
-        });
-      })
-    );
+            await boundedArchive.append(buffer, { name: filename });
+          });
+        })
+      );
+    }
     // Awaited: the read stream below opens a truncated (or absent) file otherwise.
     await boundedArchive.finalize();
 
@@ -1282,7 +1437,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     // concurrency limiter
     const limit = plimit(10);
     await Promise.all(
-      imageUrls.map((url) => {
+      imageUrls.map((url, index) => {
         return limit(async () => {
           const blob = await fetchBlob(url);
           if (!blob) return;
@@ -1290,7 +1445,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             const arrayBuffer = await blob.arrayBuffer();
             const buffer = Buffer.from(arrayBuffer);
 
-            const imageName = url.split('/').reverse()[0].split('?')[0];
+            const imageName = zipEntryNameForUrl(url, index);
 
             await boundedArchive.append(buffer, { name: imageName });
           } catch (e) {
