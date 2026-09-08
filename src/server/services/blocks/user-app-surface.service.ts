@@ -14,6 +14,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -216,27 +217,6 @@ export type AppActivityPage = {
 };
 
 const APP_ACTIVITY_MAX_LIMIT = 100;
-
-/**
- * 🔴 THE ONE DEFINITION OF "a scope invocation that COUNTS as app activity", exported so
- * `blocks.getNavSummary`'s `hasActivity` probe can import it instead of keeping a second copy.
- *
- * An `app-block` row has `appBlockId`; a synthetic dev-tunnel row has `syntheticAppId`; an
- * EXTERNAL-OAUTH row has NEITHER, and must be excluded — otherwise an external-OAuth-only
- * viewer is handed an Activity tab over a feed that says "No activity yet".
- *
- * 🔴 WHY THIS IS EXPORTED RATHER THAN WRITTEN TWICE. It was written twice, and an audit
- * DEMONSTRATED the drift rather than arguing it: tightening the FEED's clause and updating the
- * feed's own test literal — exactly what someone making that change would do — left BOTH
- * sides' suites green (65/65) while the probe silently over-matched. Each test asserted its own
- * side against a hand-copied literal, so neither could see the other move. That is the
- * "docstring names a RELATIONSHIP, body inspects one SIDE" defect. One export closes it: a
- * future edit here moves the probe by construction, and `__tests__/scopeActivityPredicate.test.ts`
- * pins that both call sites read THIS symbol rather than re-spelling it.
- */
-export const GLOBAL_SCOPE_ACTIVITY_OR: { OR: Array<Record<string, { not: null }>> } = {
-  OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }],
-};
 
 /**
  * Paginated, viewer-scoped activity feed. Walks `block_buzz_attribution`

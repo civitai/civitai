@@ -1,4 +1,4 @@
-import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/user-app-surface.service';
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {

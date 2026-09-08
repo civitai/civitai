@@ -1,3 +1,4 @@
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -493,6 +494,16 @@ describe('listMyScopeInvocations', () => {
     const { listMyScopeInvocations } = await import('../user-app-surface.service');
     await listMyScopeInvocations({ userId: 42 });
     const arg = mockDbRead.blockScopeInvocation.findMany.mock.calls[0][0];
+    // 🔴 IDENTITY FIRST — the feed's half of the guard the probe now carries. `toEqual`
+    // against the literal below cannot distinguish "spread the shared constant" from
+    // "re-spelled the same clause here", and an audit walked exactly that ambiguity on the
+    // probe side (67/67 green over a divergent copy). `toBe` on the array reference can only
+    // pass if what reached Prisma IS the exported object.
+    expect(
+      arg.where.OR,
+      'the feed did not pass the SHARED predicate to Prisma — it re-spelled its own copy'
+    ).toBe(GLOBAL_SCOPE_ACTIVITY_OR.OR);
+
     expect(arg.where).toEqual({
       userId: 42,
       // app-block row (appBlockId set) → matched by predicate 1;
@@ -509,7 +520,12 @@ describe('listMyScopeInvocations', () => {
     const { listMyScopeInvocations } = await import('../user-app-surface.service');
     // A pre-approval dev-tunnel invocation: no AppBlock row, synthetic ref set.
     mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([
-      invocationRow({ id: 7n, appBlockId: null, appBlock: null, syntheticAppId: 'ephemeral-my-app' }),
+      invocationRow({
+        id: 7n,
+        appBlockId: null,
+        appBlock: null,
+        syntheticAppId: 'ephemeral-my-app',
+      }),
     ]);
     const result = await listMyScopeInvocations({ userId: 42 });
     // The mapper returns the row (does not crash on a null appBlockId) — it is
@@ -544,9 +560,7 @@ describe('listMyScopeInvocations', () => {
   it('emits a nextCursor when the page is full and silently ignores a malformed inbound cursor', async () => {
     const { listMyScopeInvocations } = await import('../user-app-surface.service');
     // 1 more row than limit → hasNext + nextCursor is the last visible id.
-    const rows = Array.from({ length: 3 }, (_, i) =>
-      invocationRow({ id: BigInt(100 - i) })
-    );
+    const rows = Array.from({ length: 3 }, (_, i) => invocationRow({ id: BigInt(100 - i) }));
     mockDbRead.blockScopeInvocation.findMany.mockResolvedValue(rows);
     const result = await listMyScopeInvocations({
       userId: 42,

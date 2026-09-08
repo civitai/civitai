@@ -1,3 +1,4 @@
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
@@ -323,6 +324,23 @@ describe('getNavSummary — hasActivity (page-app activity, no installs)', () =>
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await caller.getNavSummary();
     const where = mockDbRead.blockScopeInvocation.findFirst.mock.calls[0][0].where;
+
+    // 🔴 IDENTITY, NOT EQUALITY — and that distinction is the whole guard. An audit WALKED the
+    // previous version of this check: it replaced the spread with a differently-spelled
+    // divergent predicate, left the `GLOBAL_SCOPE_ACTIVITY_OR` mention alive in a comment, and
+    // updated this test's own literal — the edit a developer making that change would make —
+    // and every suite stayed green (67/67) while the probe and the feed silently diverged.
+    // A `toEqual` against a literal cannot tell "read the shared constant" from "re-spelled
+    // the same clause"; `toBe` on the array reference can only pass if the object the router
+    // handed Prisma IS the exported one. That makes the single-sourcing structural instead of
+    // spelled — the exact upgrade this ladder keeps having to make.
+    expect(
+      where.OR,
+      'the probe did not pass the SHARED predicate to Prisma — it re-spelled its own copy'
+    ).toBe(GLOBAL_SCOPE_ACTIVITY_OR.OR);
+
+    // …and the shared constant still means what the feed needs. Kept as a second, cheap
+    // assertion so a change to the constant itself is not invisible here.
     expect(where.OR).toEqual([{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }]);
   });
 
