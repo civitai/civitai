@@ -1422,6 +1422,9 @@ importers:
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui
+      '@tabler/icons-svelte':
+        specifier: ^3.44.0
+        version: 3.44.0(svelte@5.56.3(@typescript-eslint/types@8.60.1))
       kysely:
         specifier: ^0.28.7
         version: 0.28.17

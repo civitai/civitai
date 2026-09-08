@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconBolt, IconChevronDown } from '@tabler/icons-svelte';
   import { getEdgeUrl } from '$lib/edge-url';
 
   let {
@@ -37,9 +38,10 @@
     {#if buzzTotal !== null}
       <span
         class="inline-flex items-center gap-1 rounded-full bg-[#f59f00]/15 px-2.5 py-1 font-mono text-sm font-semibold text-[#f59f00]"
-        title="Purchased ⚡{buzz?.yellow.toLocaleString()} · Generation ⚡{buzz?.blue.toLocaleString()}"
+        title="Purchased {buzz?.yellow.toLocaleString()} · Generation {buzz?.blue.toLocaleString()}"
       >
-        ⚡ {buzzTotal.toLocaleString()}
+        <IconBolt size={15} stroke={2.5} />
+        {buzzTotal.toLocaleString()}
       </span>
     {/if}
     {#if username}
@@ -57,7 +59,7 @@
             </span>
           {/if}
           <span class="hidden text-sm text-dark-0 sm:inline">{username}</span>
-          <span aria-hidden="true" class="text-[10px] text-dark-2">▾</span>
+          <IconChevronDown size={14} stroke={2} class="text-dark-2" />
         </summary>
         <div
           class="absolute right-0 z-20 mt-2 min-w-[180px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
