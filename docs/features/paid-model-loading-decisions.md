@@ -29,7 +29,10 @@ The coverage model those answers produced — and the audit behind it — is
 ## Who needs to answer what
 
 Every open item carries a **`@dev:`** block with the question stated in one line and a space to
-answer in place. Search the file for `@dev:` to jump between them, or take just your own row:
+answer in place. Search the file for `@dev:` to jump between them, or take just your own row.
+
+Justin's six questions were asked on a separate page, which has served its purpose and is gone —
+his answers are quoted verbatim in §1 and §2 below.
 
 | Who | Items |
 | --- | --- |
