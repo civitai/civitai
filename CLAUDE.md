@@ -211,9 +211,10 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 30 live in
+Several repo conventions are enforced by tests, not by eslint. 31 live in
 `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
 `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
+`no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and the pair is composed only in `isGenerationEligible`),
 `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-job-kind-on-remix-mint` (the remix provenance mint must sign `kind: 'mint'` — a `job`
@@ -247,7 +248,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 35 files today.
+`test:lint-rules` names 36 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact

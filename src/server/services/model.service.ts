@@ -1,3 +1,4 @@
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -14,11 +15,7 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import {
-  type BaseModel,
-  DEPRECATED_BASE_MODELS,
-  isBaseModelGenerationSupported,
-} from '~/shared/constants/basemodel.constants';
+import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
@@ -1632,10 +1629,12 @@ export const getModelsWithImagesAndModelVersions = async ({
           (input.user || input.username || includeDrafts);
         if (!filteredImages.length && !showImageless) return null;
 
-        const canGenerate =
-          !!version?.covered &&
-          !isGenerationDisabled(version.flags) &&
-          isBaseModelGenerationSupported(version.baseModel, model.type);
+        const canGenerate = isGenerationEligible({
+          covered: version?.covered,
+          baseModel: version?.baseModel ?? '',
+          modelType: model.type,
+          flags: version?.flags ?? 0,
+        });
 
         const isOwner = isMod || model.user.id === user?.id;
         const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>

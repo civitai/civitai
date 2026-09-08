@@ -11,41 +11,25 @@ while reading the contract and the code; they have no ClickUp task and no owner 
 
 ---
 
-## Phase 0 — decisions, and what each one still gates
+## Phase 0 — decisions, all now made
 
-Four decisions; one is now settled. The orchestrator questions behind them are answered and
-recorded below.
+**Closed 2026-09-08.** Every Phase 0 decision has an answer; none of them gates work any more. They
+are kept, with the answers and who gave them, in
+[paid-model-loading-decisions.md](paid-model-loading-decisions.md) §1–§2. The coverage model they
+produced, and the production audit behind it, is
+[paid-model-loading-coverage.md](paid-model-loading-coverage.md).
 
-Phase 1 turned out **not** to be gated on these — the plumbing is built and none of it depends on
-an answer. What is still gated is the purchase path (the licence gate) and C6 (the "select any
-model" question). Every open item here is restated with an owner and a closing condition in
-[paid-model-loading-decisions.md](paid-model-loading-decisions.md).
-
-- [ ] **C14 — decide: standalone demo client, mod-only launch, or straight into the platform.**
-      Justin owns it. Gates C5–C8. ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
-      *Closes when:* Justin states the choice in the task.
-- [ ] 🔴 **What we can honestly sell.** Reopened 2026-09-07: this was settled as "promise nothing"
-      on the premise that residency did not exist, and that premise was false —
-      [it does](#residency--in-a-repo-this-list-does-not-read), enforced by the spine controllers.
-      What is open now is narrower and better: the policy declines to evict inside 48h *unless
-      another controller has a copy*, so "we keep it for 48 hours" and "it stays reachable for 48
-      hours" are not the same promise. Decision
-      [1.3](paid-model-loading-decisions.md#13--what-the-surfaces-may-promise-now-that-residency-exists).
-      *Closes when:* the CTA copy is written and someone named signs it off.
-- [ ] **Decide "select any model", and decide it as two questions.** `GenerationCoverage` is a
-      **view**, not a flag. LoRAs/TI/VAE/LoCon/DoRA are already covered once licensed and scanned —
-      they are merely not resident, which is the thing paid loading fixes, and need **no view
-      change**. Checkpoints additionally require membership in `CoveredCheckpoint`, which the
-      weekly auction job owns and prunes. A **LoRA-first v1 avoids both the view change and the
-      auction entanglement** and is the obvious smallest slice.
-      *Closes when:* a decision is written into paid-model-loading.md and a task exists if a
-      checkpoint path is in scope.
-- [ ] 🔴 **Decide what happens to models without a `RentCivit` licence.** The coverage view
-      excludes them on purpose; charging to load one sells what the licence forbids. Refuse them at
-      the CTA, or get a product decision. No task, no owner, and the failure mode is a refund plus
-      a creator complaint.
-      *Closes when:* the purchase path either refuses them or a named person signs off that it
-      should not.
+- [x] **C14 — demo client, mod-only, or platform.** Start with the mod test page, which already
+      exists (Phase 1.5). ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
+- [x] **What we can honestly sell.** The 48 hours as originally pitched. A copy may move between
+      spine controllers inside the window; availability does not lapse.
+- [x] **"Select any model".** Checkpoints only — size is why the loader exists and LoRAs do not have
+      it. `CoveredCheckpoint` stops gating generation; `EcosystemCheckpoints` and
+      `GenerationBaseModel` stay. **The earlier LoRA-first recommendation in these docs was wrong**
+      and has been removed.
+- [x] 🔴 **Models without a `RentCivit` licence.** Refuse. Implemented as "refuse anything not in
+      `GenerationCoverage`" — the same set today (**zero covered versions lack the licence**), and it
+      inherits the rule instead of restating it.
 
 Not blocking site work, but blocking **launch**:
 
@@ -66,33 +50,36 @@ Already done, verified:
 No user-visible surface. Everything in Phase 2 and 3 sits on this, and it is testable on its own
 against a real download.
 
-- [ ] **C4 — the endpoint the orchestrator hits when a download starts/progresses.**
-      ([868ktt58f](https://app.clickup.com/t/868ktt58f)) Not built, and it may not need to be: the
-      load submit points its callback straight at the signals **group** URL for
-      `model-version:<id>`, so progress fans out with no hop through us. Build the endpoint only if
-      C9 (the completion notification) survives scoping — that is the one thing the direct route
-      cannot do.
+- [x] **C4 — the endpoint the orchestrator hits when a download starts/progresses.** **Closed as
+      "not now"** — see [2.4](paid-model-loading-decisions.md#24--the-c4-webhook--not-now). Both its
+      reasons went away: C9 is Phase 2, and bystanders need notification rather than live progress.
+      Reopens with Phase 2, which needs a server-side moment to send from.
+      ([868ktt58f](https://app.clickup.com/t/868ktt58f))
 - [x] **Topic broadcast helper.** `sendSignalToTopic(topic, message, data)` in
-      `src/server/orchestrator/orchestrator.utils.ts`, wrapped in `withSignals()`. Unused so far —
-      the callback URL covers progress; this is for the server-side sends C9 will need.
-- [x] **New `SignalMessages` entry** — `ResourceLoadUpdate = 'resource-load:update'`, on the
-      existing `SignalTopic.ModelVersion`. No collision with `SchedulerDownload`.
+      `src/server/orchestrator/orchestrator.utils.ts`, wrapped in `withSignals()`. ⚠️ **Still unused,
+      and no longer has a planned caller** — load progress is per-user now, and C4 is closed. It is
+      here for whatever Phase 2 needs; delete it if Phase 2 does not want it.
+- [x] **New `SignalMessages` entry** — `ResourceLoadUpdate = 'resource-load:update'`, delivered on
+      the **user's own channel**, not a topic. No collision with `SchedulerDownload`.
 - [x] **Extract versionId → AIR.** `modelVersionToAir` in `src/server/utils/resource-air.ts`;
       `bustOrchestratorModelCache` and `modelVersionResourceCache` both repointed at it.
       `fileType` comes from the primary file when the caller loaded files, and the two existing
       callers keep the AIRs they had.
 - [x] **Server-side resource-state read.** `getResourceLoadState(versionIds)` and
       `getResourceLoadQueue({cursor, take})` in `src/server/services/resource-load.service.ts`,
-      exposed as `resourceLoad.getState` / `resourceLoad.getQueue` (both public). The queue read
+      exposed as `resourceLoad.getState` / `resourceLoad.getQueue` (both `publicProcedure`,
+      flag-gated until C5 — see the amplification note in the router). The queue read
       goes through a new `queryResourcesClient` wrapper beside `getModelClient`, so the SDK stays
       in `services/orchestrator/models.ts`.
   - [x] fresh, uncached — `modelVersionResourceCache` is not reused
   - [x] a status this build does not know is reported as `unknown`, not folded into one of the four
 - [x] **Service tests** — `src/server/services/__tests__/resource-load.service.test.ts`: AIR
       construction, `queuePosition` on `unavailable`, the `unknown` fallback, unresolvable queue
-      rows, all three pre-submit refusals, owner-check propagation, priced vs unpriced.
-- [ ] **The purchase path.** `resourceLoad.estimate` (whatIf) and `resourceLoad.submit` exist and
-      work; what is missing is a price to show and a licence gate.
+      rows, four pre-submit refusals (not generatable, no weight file, unscanned file, no such
+      version), the progress URL going to `/users/` and never `/groups/`, owner-check propagation,
+      priced vs unpriced. Not yet pinned: the `unsupported` and already-`available` refusals.
+- [ ] **The purchase path.** `resourceLoad.estimate` (whatIf) and `resourceLoad.submit` exist, are
+      gated, and work; what is missing is a price to show.
   - [x] 🔴 `assertWorkflowOwner` on the submit result
   - [x] refuse when `status === 'unsupported'`, and when we could not read the status at all
   - [x] refuse (without charging) when already `available`
@@ -101,8 +88,9 @@ against a real download.
         can render "free" as a quote. Still blocked on C2 for a real number.
   - [ ] surface the orchestrator's own `CanGenerate` rejection cleanly — `PrepareResourceInput`
         throws a ValidationException before any charge
-  - [ ] 🔴 refuse when the model lacks a `RentCivit` licence (see Phase 0). **Not implemented** —
-        the submit path will currently take a load for a model whose creator did not grant it.
+  - [x] 🔴 refuse when the model lacks a `RentCivit` licence — implemented as `resolveLoadable`'s
+        `!eligible` refusal: coverage (`GenerationCoverageNext`) composed with ecosystem type support
+        by `isGenerationEligible`, on both `estimate` and `submit`.
 - [ ] **C10 — per-tier daily rate limits.** ([868ktt5aq](https://app.clickup.com/t/868ktt5aq))
   - [x] 🔴 the free row is an **unconditional catch-all** and `founder` has its own row
   - [x] `onlyCountSuccess: true`, so a refused purchase does not burn a slot
@@ -122,11 +110,82 @@ against a real download.
 Not in the build plan; asked for while building Phase A so the plumbing could be driven end to end
 before any of Phase 2 exists.
 
-- [x] **`/moderator/resource-load`** — enter a model version id, get the estimate, then submit;
-      below it, the live queue polled every 15s. `requireModerator` plus the `resourceLoad`
-      feature flag.
+- [x] **`/moderator/resource-load`** — `requireModerator` plus the `resourceLoad` flag.
+  - [x] enter a model version id and see it resolved **before** committing: name, AIR, size,
+        availability, and whether it is generatable / has weights
+  - [x] the estimate button is disabled with the reason shown, rather than failing on submit
   - [x] the estimate names itself as unpriced while the orchestrator quotes zero
+  - [x] a "Waiting on" list from the persisted store, with live progress and "Stop watching"
+  - [x] the cluster queue, polled every 15s, preferring live signal progress where there is any
+  - [x] live progress over the buyer's own signals channel
   - ⚠️ moderators are exempt from `rateLimit()`, so this page exercises none of C10
+- [x] **Tracking and notification** — `src/store/resource-load.store.ts` (persisted, self-draining,
+      48h ceiling) and `ResourceLoadDrain` mounted in `AppHeader` for any signed-in user with the
+      `resourceLoad` flag, so a finished load is reported wherever they land next. Toasts require
+      dismissal. See
+      [1.5](paid-model-loading-decisions.md#15--notification-is-a-toast-on-return-real-notifications-are-phase-2).
+- [ ] **Nothing outside this page can start watching yet.** The store supports `kind: 'watching'`
+      and the drain reports it, but the button that creates one is C5 on the model version page. So
+      bystander notification is built and unreachable.
+
+---
+
+## Phase 1.6 — the coverage change
+
+Created by the Phase 0 answers on 2026-09-08. Nothing here is written yet. The rule, the audit and
+every measured number are in [paid-model-loading-coverage.md](paid-model-loading-coverage.md).
+
+- [x] **A new coverage view alongside `GenerationCoverage`** —
+      `packages/civitai-db-schema/prisma/migrations/20260908120000_generation_coverage_next/migration.sql`,
+      creating `GenerationCoverageNext`. **Applied to production 2026-09-08.** 🔴 Not named
+      `GenerationCoverage2`: that view already exists in production as a stale earlier experiment, and
+      `CREATE OR REPLACE` on the name would have silently overwritten it. Deliberately not added to
+      `schema.full.prisma` — the cutover replaces `GenerationCoverage`'s own body with this one and
+      drops this view, so the Prisma model never changes. Three branches: no-loadable-file (covered, never loaded), in
+      `EcosystemCheckpoints` with a loadable file, and checkpoint on a `GenerationBaseModel` base
+      model with a loadable file. The LORA/TI/VAE/LoCon/DoRA/Upscaler branch is unchanged.
+  - [x] drop the `CoveredCheckpoint` conjunct, and allow `Diffusers` while keeping Core ML and ONNX
+        excluded — [the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)
+  - [ ] 🔴 keep `EcosystemCheckpoints` — 62 of 63 checkpoint defaults depend on it
+  - [x] diffed against production 2026-09-08 — nothing loses coverage; [the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)
+- [ ] **Set `usageControl = 'ExternalGeneration'` on the 36 mislabelled API versions.** All
+      published, none POI, coverage preserved 36/36. Mod-only to set via the app, so it is a direct
+      DB write.
+- [x] **One derivation of `canGenerate`.** `isGenerationEligible` in
+      `packages/civitai-shared/src/generation-eligibility.ts`, with all four call sites repointed
+      and `no-divergent-can-generate-derivation` keeping `isBaseModelGenerationSupported` out of
+      `src/`. Coverage alone over-reports by **736 versions**; see
+      [coverage](paid-model-loading-coverage.md#covered-is-not-cangenerate).
+- [x] **Gate the load CTA on `isGenerationEligible` AND "has a loadable file"** — not on `covered`,
+      not on `usageControl`, and not on "has any file". Done on the mod page and enforced
+      server-side in `resolveLoadable`; re-check when C5/C6 add public CTAs.
+- [x] **Refuse anything not in coverage** on `estimate` and `submit` (this is the `RentCivit` gate) —
+      `resolveLoadable`, reading `GenerationCoverageNext`.
+- [x] **Audit every existing reader of `covered`.** 23 files, classified in
+      [coverage](paid-model-loading-coverage.md#the-covered-readers-audit). Findings below are what
+      it produced.
+- [ ] 🔴 **The shared rate-limit key on the generation submit path, and C2 pricing, must land BEFORE
+      the SITE'S GENERATION GATE reads the new view** — `generation.service`, `resource-data.redis`,
+      the search index. Widening those makes tens of thousands more versions generatable, and a
+      generation submitted against a non-resident one triggers an implicit prepare — free today, and
+      uncapped, because C10 only guards `resourceLoad.submit`.
+      Two callers already read `GenerationCoverageNext` and are deliberately outside that rule:
+      `resource-load.service` (the purchase path — flag-gated, and the widened set is the point) and
+      `/api/v1/model-versions/mini/[id]` (read by the orchestrator for `CanGenerate`; no site code
+      calls it, so it widens what the orchestrator accepts without changing what a user sees).
+- [ ] **Decide what search shows.** The index derives `canGenerate` from `covered`, so the swap
+      advertises tens of thousands more models as generatable with no way to say "needs loading
+      first". Load
+      state in search was deferred; this is the surface that deferral now collides with.
+- [x] **Check the public API field.** `/api/v1/model-versions/mini/[id]` now selects `covered` from
+      `GenerationCoverageNext` — done 2026-09-08, because the orchestrator reads it for `CanGenerate`
+      and on the live view refused every load worth making (verified on version 3040959).
+      ⚠️ The field's meaning changed for third-party consumers, unflagged and unannounced. Decide
+      whether that needs an announcement.
+- [ ] **Look at the pool consumers** — daily-challenge model selection, App Blocks workflow service,
+      the model-list filters in `model.service.ts` and `caches.ts`.
+- [ ] **Delete `getCheckpointGenerationCoverage`** with `CoveredCheckpoint` — zero callers.
+- [ ] **Decide what happens to `handle-auctions.ts`** once nothing reads the rows it writes.
 
 ---
 
@@ -145,7 +204,9 @@ the platform second.
   - [ ] not loaded → offer the paid load at the size-based price
   - [ ] downloading → auto-subscribe and show progress inline for the selected resource
   - [ ] loaded → unchanged
-  - [ ] depends on the "select any model" decision from Phase 0
+  - [x] the "select any model" decision is made — checkpoints only, coverage rule in
+        [coverage](paid-model-loading-coverage.md). C6 now depends on **Phase 1.6** landing, not on a
+        decision.
 - [ ] **C7 — navbar indicator.** ([868ktt59j](https://app.clickup.com/t/868ktt59j))
   - [ ] mirror [`UploadTracker`](../../src/components/Resource/UploadTracker.tsx) — same
         `Indicator` + `Popover` shape, mounted next to it in `AppHeader`
@@ -178,9 +239,9 @@ the platform second.
 - [ ] **C11 — retire auctions.** ([868ktt5b2](https://app.clickup.com/t/868ktt5b2)) Do not scope
       until 868gtq1kt (splitting featuring out of auctions) has an answer — auctions do two jobs
       and paid loading replaces one. ~89 files under `src/`.
-  - [ ] 🔴 whoever ends up owning `CoveredCheckpoint` must be settled **before** a checkpoint ships
-        as paid-loadable: `handle-auctions.ts` deletes every row outside the weekly winner set, so
-        it would silently un-cover anything someone paid for.
+  - [x] the `CoveredCheckpoint` conflict is resolved by removing it from coverage (Phase 1.6), so
+        the auction job can no longer un-cover a paid checkpoint. What remains is deciding whether
+        that job should keep writing rows nothing reads.
 
 ---
 
@@ -268,11 +329,9 @@ This records Koen's answer (DM, 2026-09-04) rather than source we read.
 
 ### Still worth asking Koen
 
-**Both answered, 2026-09-04 and 2026-09-07.** Residency exists and is enforced by the spine
-controllers ([above](#residency--in-a-repo-this-list-does-not-read)); `step:preparing` was missing
-from the spec by accident — a 2024 change with no comment — and Koen has since added the missing
-event types back. `step:*` stays the correct subscription either way. C2 (pricing) is the only
-thing still with him.
+**Nothing.** Both were answered 2026-09-04 and 2026-09-07 — see
+[Residency](#residency--in-a-repo-this-list-does-not-read) above. C2 pricing is the only thing still
+with him.
 
 ## Not in v1, on the record
 
@@ -281,7 +340,7 @@ thing still with him.
 - Any hard guarantee on when a model becomes available. Bandwidth into the data centre was ~10
   KB/s at the time of the call; LoRAs took four hours. Promise nothing about *arrival* — a separate
   question from how long it stays once it arrives, which is
-  [1.3](paid-model-loading-decisions.md#13--what-the-surfaces-may-promise-now-that-residency-exists).
+  [1.3](paid-model-loading-decisions.md#13--what-we-promise--the-original-48-hours).
 
 ---
 
@@ -289,7 +348,9 @@ thing still with him.
 
 Real work with no task and no owner. Listed so they are decided rather than discovered.
 
-- [ ] **Refund path** for a load that fails or never completes. Open decision —
-      [1.2](paid-model-loading-decisions.md#12-what-happens-when-a-load-fails-or-never-finishes).
+- [ ] **Refund path** for a load that fails or never completes. Decided: refund
+      ([1.2](paid-model-loading-decisions.md#12--a-load-that-never-finishes--refund)). Open is
+      *whose* — [K3](paid-model-loading-decisions.md#k3-does-the-orchestrator-refund-a-failed-prepare)
+      asks Koen whether the orchestrator already does it.
 - [ ] **Residency display.** Residency is real, but no API reports when a resource's 48h window
       ends, so there is nothing to count down from. Needs an orchestrator ask before it is work.

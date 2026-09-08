@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
@@ -19,6 +21,23 @@ import { BuzzTypes } from '~/shared/constants/buzz.constants';
 
 const PREPARE_STEP_NAME = 'prepare-resource';
 
+/**
+ * A file the cluster can serve as weights. Mirrors the coverage view's accepted types minus its
+ * `trainingResults` disjunct — a training archive is not a weight. Core ML and ONNX are
+ * inference-runtime formats.
+ */
+const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
+const UNLOADABLE_FORMATS = ['Core ML', 'ONNX'];
+
+function hasLoadableFile(files: VersionForAir['files']) {
+  return files.some(
+    (f) =>
+      !!f.scannedAt &&
+      LOADABLE_FILE_TYPES.includes(f.type) &&
+      !UNLOADABLE_FORMATS.includes(String(f.metadata?.format ?? ''))
+  );
+}
+
 /** Each state fetch is an orchestrator grain call, so keep the fan-out bounded. */
 const STATE_FETCH_CONCURRENCY = 10;
 
@@ -31,14 +50,19 @@ export type ResourceLoadState = {
   /** Bytes, as the orchestrator reports it. Absent when the resource is unknown to it. */
   size?: number;
   availability: ResourceLoadAvailability;
+  /** Coverage alone over-reports; see docs/features/paid-model-loading-coverage.md. */
+  eligible: boolean;
+  /** Whether there is a weight file to download. False for external/API models. */
+  loadable: boolean;
 };
 
 type VersionForAir = {
   id: number;
   name: string;
   baseModel: string;
+  flags: number;
   model: { id: number; name: string; type: ModelType };
-  files: { type: string; metadata: BasicFileMetadata }[];
+  files: { type: string; scannedAt: Date | null; metadata: BasicFileMetadata }[];
 };
 
 async function getVersionsForAir(modelVersionIds: number[]) {
@@ -48,10 +72,26 @@ async function getVersionsForAir(modelVersionIds: number[]) {
       id: true,
       name: true,
       baseModel: true,
+      flags: true,
       model: { select: { id: true, name: true, type: true } },
-      files: { select: { type: true, metadata: true } },
+      files: { select: { type: true, scannedAt: true, metadata: true } },
     },
   })) as VersionForAir[];
+}
+
+/**
+ * The live view still gates checkpoints on `CoveredCheckpoint` — the weekly auction's residency
+ * proxy — so it reports exactly the community checkpoints this feature exists to load as NOT
+ * covered. Gating on it would refuse every load worth making. The two converge when the staged view
+ * replaces the live one.
+ */
+async function getNextCoveredVersionIds(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return new Set<number>();
+  const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
+    SELECT "modelVersionId" FROM "GenerationCoverageNext"
+    WHERE "modelVersionId" IN (${Prisma.join(modelVersionIds)})
+  `;
+  return new Set(rows.map((r) => r.modelVersionId));
 }
 
 function parseAvailability(availability: unknown): ResourceLoadAvailability {
@@ -71,6 +111,8 @@ export async function getResourceLoadState(
   const versions = await getVersionsForAir(modelVersionIds);
   if (!versions.length) return [];
 
+  const coveredIds = await getNextCoveredVersionIds(versions.map((v) => v.id));
+
   const results: ResourceLoadState[] = [];
   const tasks = versions.map((version) => async () => {
     const air = modelVersionToAir(version);
@@ -80,6 +122,13 @@ export async function getResourceLoadState(
       air,
       name: version.name,
       modelName: version.model.name,
+      eligible: isGenerationEligible({
+        covered: coveredIds.has(version.id),
+        baseModel: version.baseModel,
+        modelType: version.model.type,
+        flags: version.flags,
+      }),
+      loadable: hasLoadableFile(version.files),
     };
 
     const response = await getModelClient({ token: env.ORCHESTRATOR_ACCESS_TOKEN, air });
@@ -145,6 +194,15 @@ async function resolveLoadable(modelVersionId: number) {
   const [state] = await getResourceLoadState([modelVersionId]);
   if (!state) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
 
+  if (!state.eligible)
+    throw throwBadRequestError(
+      'This resource cannot be generated with on the site, so loading it would buy nothing.'
+    );
+  if (!state.loadable)
+    throw throwBadRequestError(
+      'This resource has no model file to load — it runs through an external provider.'
+    );
+
   const { status } = state.availability;
   if (status === 'unsupported')
     throw throwBadRequestError('The generation cluster cannot host this resource.');
@@ -206,7 +264,7 @@ export async function submitResourceLoad({
     token,
     body: {
       steps: [prepareResourceStep(state.air)],
-      callbacks: getResourceLoadCallbacks(modelVersionId),
+      callbacks: getResourceLoadCallbacks(userId),
       tags: ['resource-load'],
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: BuzzTypes.toOrchestratorType(currencies),

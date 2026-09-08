@@ -48,3 +48,29 @@ export const resourceLoadVersionSchema = z.object({
 export type GetResourceLoadStateInput = z.infer<typeof getResourceLoadStateSchema>;
 export type GetResourceLoadQueueInput = z.infer<typeof getResourceLoadQueueSchema>;
 export type ResourceLoadVersionInput = z.infer<typeof resourceLoadVersionSchema>;
+
+/**
+ * What arrives on the buyer's user channel as `resource-load:update`.
+ *
+ * The orchestrator posts its `WorkflowStepEvent` straight to signals — we are not in the path — so
+ * this is that shape, narrowed to what a progress UI needs. Only a `preparing` step carries
+ * `preparation`; every other status arrives here too and is ignored.
+ */
+export const resourceLoadSignalSchema = z.object({
+  workflowId: z.string().nullish(),
+  name: z.string().nullish(),
+  status: z.string().nullish(),
+  preparation: z
+    .object({
+      /** AIR of the resource holding the step back — the only thing identifying WHICH load this is. */
+      resource: z.string(),
+      /** Downloads ahead of this one. Zero means it is transferring now. */
+      queuePosition: z.number(),
+      /** 0..1, null while still queued. */
+      progress: z.number().nullish(),
+      etaSeconds: z.number().nullish(),
+    })
+    .nullish(),
+});
+
+export type ResourceLoadSignal = z.infer<typeof resourceLoadSignalSchema>;

@@ -145,7 +145,17 @@ export default MixedAuthEndpoint(async function handler(
         (m."availability" = 'Private')
 
       ) AS "checkPermission",
-      (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      -- 🔴 GenerationCoverageNext, not GenerationCoverage. This endpoint is what the ORCHESTRATOR
+      -- reads to decide whether a resource can generate, and prepareResource refuses anything it
+      -- believes cannot -- so on the live view paid model loading cannot load the very checkpoints
+      -- it exists for. Verified 2026-09-08 on version 3040959: covered by the new view, not by the
+      -- live one, and the estimate failed with the orchestrator's "not enabled for generation".
+      --
+      -- No site code calls this endpoint, and the site's own generator gates on
+      -- GenerationCoverage through resource-data/generation.service -- so this widens what the
+      -- orchestrator will accept without changing what a user sees on the site.
+      -- See docs/features/paid-model-loading-coverage.md.
+      (SELECT covered FROM "GenerationCoverageNext" WHERE "modelVersionId" = mv.id) AS "covered",
       mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE

@@ -1,6 +1,6 @@
 import type { WorkflowCallback } from '@civitai/client';
 import { env } from '~/env/server';
-import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import { SignalMessages } from '~/server/common/enums';
 import { withSignals } from '~/server/signals/wrapper';
 
 export function getOrchestratorCallbacks(userId: number): Array<WorkflowCallback> | undefined {
@@ -26,15 +26,19 @@ export function getWorkflowCallbacks(userId: number): Array<WorkflowCallback> | 
   ];
 }
 
-/** `step:*` because the orchestrator's callback-type enum has no `step:preparing` — the wildcard is
- *  the only way to receive a download's progress. */
-export function getResourceLoadCallbacks(
-  modelVersionId: number
-): Array<WorkflowCallback> | undefined {
+/**
+ * Progress goes to the buyer's user channel, not a model-version group: a `WorkflowStepEvent`
+ * carries `workflowId`, which the orchestrator names `<userId>-<timestamp>` (see
+ * `workflowOwnerId`), so a broadcast would tell every watcher who paid. Showing a load to
+ * bystanders needs a server-side hop to strip identity first.
+ *
+ * `step:*` because the orchestrator's callback-type enum has no `step:preparing`.
+ */
+export function getResourceLoadCallbacks(userId: number): Array<WorkflowCallback> | undefined {
   if (!env.SIGNALS_ENDPOINT) return;
   return [
     {
-      url: `${env.SIGNALS_ENDPOINT}/groups/${SignalTopic.ModelVersion}:${modelVersionId}/signals/${SignalMessages.ResourceLoadUpdate}`,
+      url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.ResourceLoadUpdate}`,
       type: ['step:*'],
     },
   ];

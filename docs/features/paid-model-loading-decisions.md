@@ -7,6 +7,7 @@ Companion to:
 - [paid-model-loading.md](paid-model-loading.md) — the contract, and the decisions already made
 - [paid-model-loading-build-plan.md](paid-model-loading-build-plan.md) — files, procedures, order
 - [paid-model-loading-checklist.md](paid-model-loading-checklist.md) — the state of the work
+- [paid-model-loading-coverage.md](paid-model-loading-coverage.md) — the coverage model and its audit
 
 This file holds no implementation detail. Each entry says what is being decided, what turns on it,
 what the options are, and — following the repo's rule for anything filed as work — **who decides**
@@ -18,9 +19,12 @@ Only genuinely open questions live here. Anything already answered belongs in
 work rather than a judgement belongs in the checklist — see [Not decisions](#not-decisions-tracked-elsewhere)
 at the end for the two big ones people keep mistaking for open questions.
 
-**Nothing here blocks Phase A**, which is built. §1 blocks launch, §2 blocks specific build work,
-§3 is already implemented one way and needs ratifying or reversing, and §4 is for Koen — where both
-of his questions are now answered, and one of the answers reopened a decision we thought settled.
+**Nothing here blocks Phase A**, which is built. §1 and most of §2 were answered by Justin on
+2026-09-08 and are kept, with their answers, because each changed what gets built. What remains open
+is two build questions, the Phase A ratifications, and one new question for Koen.
+
+The coverage model those answers produced — and the audit behind it — is
+[paid-model-loading-coverage.md](paid-model-loading-coverage.md).
 
 ## Who needs to answer what
 
@@ -29,9 +33,9 @@ answer in place. Search the file for `@dev:` to jump between them, or take just 
 
 | Who | Items |
 | --- | --- |
-| **Justin** | [1.1](#11--models-without-a-rentcivit-licence) licence gate · [1.2](#12-what-happens-when-a-load-fails-or-never-finishes) refund path · [1.3](#13--what-the-surfaces-may-promise-now-that-residency-exists) what we promise · [2.1](#21-c14--demo-client-mod-only-or-straight-into-the-platform) C14 · [2.2](#22-select-any-model--and-it-is-two-questions-not-one) select any model · [2.3](#23--who-owns-coveredcheckpoint) `CoveredCheckpoint` |
-| **Koen** | nothing open — K1 and K2 [answered](#answered-2026-09-04-and-2026-09-07); C2 (pricing) is still his to build |
-| **Briant / team** | [2.4](#24-whether-to-build-the-c4-webhook-at-all) C4 webhook · [2.5](#25-the-rate-limit-numbers-are-off-by-one) off-by-one · [3.1](#31-a-fifth-state-unknown)–[3.3](#33-which-buzz-account-pays) ratify Phase A |
+| **Justin** | nothing open — all six [answered 2026-09-08](#1-blocks-launch) |
+| **Koen** | [K3](#k3-does-the-orchestrator-refund-a-failed-prepare) refund on a failed prepare; C2 (pricing) is still his to build |
+| **Briant / team** | [2.4](#24--the-c4-webhook--not-now) C4 webhook · [2.5](#25-the-rate-limit-numbers-are-off-by-one) off-by-one · [2.6](#26-the-17-base-model-gap-between-the-constants-and-generationbasemodel) constants gap · [3.1](#31-a-fifth-state-unknown)–[3.3](#33-which-buzz-account-pays) ratify Phase A |
 
 Answering in place is enough — nothing here needs a meeting. An item with no answer after review is
 one we will ship a default for, and each entry says what that default would be.
@@ -40,168 +44,143 @@ one we will ship a default for, and each entry says what that default would be.
 
 ## 1. Blocks launch
 
-### 1.1 🔴 Models without a `RentCivit` licence
+**1.1–1.3 answered by Justin, 2026-09-08**; 1.4–1.6 were decided in code while building. All six are
+kept with their answers because each changed what gets built; the work they created is in the
+[checklist](paid-model-loading-checklist.md).
 
-**The decision:** whether the purchase path refuses them.
+### 1.1 ✅ Models without a `RentCivit` licence — refuse
 
-**What turns on it:** `GenerationCoverage` excludes these models deliberately — the creator did not
-grant on-site generation. Taking payment to load one sells what the licence forbids. The failure
-mode is a refund *plus* a creator complaint, which is the expensive pair.
+> **Justin:** "Do we currently allow on-site generation for models without a `RentCivit` license?
+> I'm assuming that we don't. We should be refusing if `RentCivit` is false"
 
-**Not implemented.** `submit` will currently accept a load for such a model. This is the only gap in
-the built code that is a policy question rather than missing work.
+Correct on the main path, and confirmed in the data: **zero covered versions lack `RentCivit`** —
+measured branch by branch and end-to-end against the view.
 
-**Options:** refuse at the CTA and at `submit`; or get a product decision that loading is not
-"generating" and the licence does not reach it.
+**Implement as: refuse anything not in `GenerationCoverage`**, rather than testing the licence
+directly. The two select the same set today, but the view also carries the two branches that skip the
+licence check, so gating on coverage inherits the rule instead of keeping a second opinion of it.
+Detail in [coverage](paid-model-loading-coverage.md#the-licence-gate).
 
-**Recommendation:** refuse, unless someone senior signs the opposite in writing. It is three lines
-of service code once the answer exists.
+### 1.2 ✅ A load that never finishes — refund
 
-**Owner:** Justin (Briant may take it) — no ClickUp task yet.
-**Closes when:** the purchase path refuses unlicensed models, or a named person signs off that it
-should not.
+> **Justin:** "refund failed loads, though this should be occurring via the orchestrator"
 
-> **@dev: Justin** — Do we refuse to sell a load for a model whose creator did not grant `RentCivit`?
-> A yes costs three lines of code; a no needs your name on it, because the licence says otherwise.
->
-> _Answer:_
+⚠️ **The second clause is an assumption, not a confirmed behaviour.** `CalculateCost` returns zero
+today, so no prepare has ever been charged and no refund path has ever run. Whether the orchestrator
+refunds a failed or timed-out `prepareResource` is [K3](#k3-does-the-orchestrator-refund-a-failed-prepare),
+and it has to be answered before pricing goes live — not after.
 
-### 1.2 What happens when a load fails or never finishes
+### 1.3 ✅ What we promise — the original 48 hours
 
-**The decision:** whether there is a refund path, and who runs it.
+> **Justin:** "'another controller has it' means that the model is still downloaded on our servers
+> and available for generation. I think the original promise should suffice."
 
-**What turns on it:** bandwidth was measured at ~10 KB/s with LoRAs taking four hours, and
-`PrepareResourceJob` has a 24-hour `MaxTimeout` — so a large checkpoint can plausibly hit the
-ceiling and never complete. Koen on the call: "we got to be prepared for us not giving any hard
-guarantees about when it's going to be available."
+That reading makes the eviction caveat benign: the copy can move, the availability does not. So the
+48-hour promise as originally pitched is what the surfaces say. This closes the question reopened on
+2026-09-07 when Koen's answer showed residency exists after all.
 
-No task, no owner, and it only becomes visible once money is real — so it is due at C2, not before.
+### 1.4 ✅ Progress signals go to the buyer, not to a topic
 
-**Owner:** Justin — no ClickUp task yet.
-**Closes when:** a refund path exists, or a named person accepts that failed loads are not refunded
-and the surfaces say so before purchase.
+**Decided 2026-09-08**, and it corrects a design these docs recorded.
 
-> **@dev: Justin** — A load that never finishes: refund, or say up front that we do not refund?
-> Not urgent until C2 makes the money real, but it decides what the CTA has to say before purchase.
->
-> _Answer:_
+The load callback used to point at the `model-version:<id>` signals **group**, so anyone watching
+the model received progress. 🔴 That leaks: the orchestrator posts its `WorkflowStepEvent` straight
+to the signals service — we are not in the path and cannot rewrite it — and `workflowId` is
+`<userId>-<timestamp>` (see `workflowOwnerId`). A group broadcast would tell everyone watching a
+model **who paid for the load**.
 
-### 1.3 🔴 What the surfaces may promise, now that residency exists
+Callbacks now target `/users/{userId}/signals/`. Pinned by a test asserting the URL contains
+`/users/` and not `/groups/`.
 
-**The decision:** what the CTA says a paid load buys.
+Consequence: bystanders get no **live** progress. They are told when it is ready instead — see 1.5.
 
-**Reopened 2026-09-07.** This was settled as "promise a load, never a duration", on the premise that
-no residency mechanism existed. That premise was false — it lives in `civitai-spine-controller`,
-which nothing on the site side had read. The old answer is therefore not safe to keep by default: it
-was right about a world we are not in.
+### 1.5 ✅ Notification is a toast on return; real notifications are Phase 2
 
-**What turns on it:** the policy refuses to evict a resource less than 48h old **unless another
-spine controller has a copy**. So the honest sentence is closer to *"it stays reachable in the
-cluster for 48 hours"* than *"we hold your copy for 48 hours"* — and for a user who paid, the
-difference only shows up on the day it bites.
+**Decided 2026-09-08.**
 
-Two things nobody on the site side can currently check: we have not read the policy (private repo),
-and **no API reports when a given resource's window ends**, so we cannot show a countdown even if we
-promised one.
+A browser keeps what it is waiting on in `localStorage` — loads it requested and loads it chose to
+watch. The queue **drains on every page load**: finished ones raise a toast that must be dismissed
+and are removed, ones that can no longer finish are removed, and the rest stay subscribed. The drain
+is mounted app-wide, so a finished load is reported wherever the user lands next.
 
-**Options:** promise the 48 hours as pitched; promise reachability without a duration; or promise
-the duration with the caveat stated in the CTA.
+🔴 **A ceiling is what makes "it always drains" true.** Done / gone / still-loading does not cover a
+load that FAILED or one that finished and was then evicted — both read back as `unavailable`, which
+is indistinguishable from "queued". Without a deadline such an item is re-subscribed forever. Items
+expire at 48h, matching the residency policy.
 
-**Recommendation:** ask Koen to confirm the user-visible consequence of the "unless another
-controller has it" branch before writing any of the three. It is one question and it decides the
-sentence.
+**Accepted limits:** this reaches someone only when they return, in that browser. A different device
+or a cleared browser gets nothing, and that is fine (Justin, 2026-09-08). Reaching a user who does
+not come back is the **Phase 2** goal — API-level notifications, for users who want them.
 
-**Owner:** Justin — no ClickUp task yet.
-**Closes when:** the CTA copy is written and someone named signs it off.
+### 1.6 ✅ There is a durable record of a purchased load, and it is not ours
 
-> **@dev: Justin** — Residency turned out to exist (see §4). What do we tell a buyer they are
-> getting: "48 hours", "loaded and kept available", or "48 hours, usually"? Worth one confirmation
-> from Koen on the eviction caveat first.
->
-> _Answer:_
+**Decided 2026-09-08.** `submitResourceLoad` tags every load `resource-load`, and
+`queryWorkflows({ token, tags })` returns that user's workflows — durable, cross-device, no site-side
+storage. So `localStorage` is **not** the record of what someone bought; it is one browser's list of
+what it is watching.
+
+Redis was considered and rejected as the home for this: something that must survive hours and drive
+a notification should not sit somewhere evictable.
+
+⚠️ Not yet built as a procedure (`getMyLoads`), and one unknown remains — **how long the
+orchestrator retains a completed workflow**, which bounds how far back such a list can look. Worth
+asking Koen alongside [K3](#k3-does-the-orchestrator-refund-a-failed-prepare).
 
 ---
 
 ## 2. Blocks specific build work
 
-### 2.1 C14 — demo client, mod-only, or straight into the platform
+### 2.1 ✅ C14 — start with the mod test page
 
-**Gates:** C5–C8, the three real surfaces.
+> **Justin:** "We are going to start with the test page I asked for. The page that allows me, a mod,
+> to request a model to be loaded and see what models are loaded and get status updates as a model is
+> loading. This should already be documented."
 
-Justin's counter to a full platform rollout is a small standalone first-party app driving Koen's API
-end to end, or a mod-only launch. **The mod test page at `/moderator/resource-load` is the cheap
-version of the third option and already exists** — it drives estimate, submit and the live queue
-against the real orchestrator. That may narrow the question rather than answer it.
+It is built and documented — `/moderator/resource-load`, Phase 1.5 in the checklist. So C14 is
+answered by something that already exists: no standalone demo client, no platform rollout yet.
 
-**Owner:** Justin ([868ktt5bz](https://app.clickup.com/t/868ktt5bz)).
-**Closes when:** Justin states the choice in the task.
+### 2.2 ✅ Checkpoints only — **not** LoRA-first
 
-> **@dev: Justin** — Demo client, mod-only, or straight into the platform? Worth looking at
-> `/moderator/resource-load` first — it already drives the real orchestrator end to end, which may
-> be the demo you were asking for rather than an argument for building a separate app.
->
-> _Answer:_
+> **Justin:** "model loading only applies to checkpoints. Checkpoints have this separate loading
+> system due to the size of the models. Loras typically aren't large enough to worry about."
 
-### 2.2 "Select any model" — and it is two questions, not one
+🔴 **This reverses the recommendation these docs carried.** The LoRA-first argument — that LoRAs need
+no view change and are therefore the smallest slice — was solving the wrong problem: size is the
+reason the loader exists, and LoRAs do not have it. Every "LoRA-first" recommendation in this
+document set was wrong and has been removed.
 
-**Gates:** C6 (the generator), and nothing else. Phase A and the rest of Phase B do not touch it.
+Consequence: 2.3 is not optional, it is the critical path.
 
-`GenerationCoverage` is a **view**, not a flag, so there is no `covered` boolean to set.
+### 2.3 ✅ `CoveredCheckpoint` goes away
 
-- **LoRA / TextualInversion / VAE / LoCon / DoRA / Upscaler** are already covered once licensed and
-  scanned. They are merely not *resident* — exactly the problem paid loading solves. **No view
-  change.**
-- **Checkpoints** additionally require membership in `CoveredCheckpoint`, which the weekly auction
-  job owns and prunes (see 2.3).
+> **Justin:** "In theory, coveredCheckpoint shouldn't affect generation going forward. If
+> CoveredCheckpoint is only used for generation, then CoveredCheckpoint should go away. […] So,
+> canGenerate for checkpoint models should no longer be conditional on CoveredCheckpoint from the
+> auction system."
 
-**Recommendation:** LoRA-first v1. It avoids both the view change and the auction entanglement, and
-it is the only slice that can ship without settling 2.3.
+The conditional holds: `CoveredCheckpoint` has four uses and all four are generation, one of which
+is dead code. Removing it widens covered checkpoints by roughly two orders of magnitude —
+[the numbers](paid-model-loading-coverage.md#what-changes-in-numbers).
 
-**Owner:** Justin — no ClickUp task yet.
-**Closes when:** the choice is written into paid-model-loading.md, and a task exists if a checkpoint
-path is in scope.
+⚠️ The audit that followed found the neighbouring table is the opposite case: **`EcosystemCheckpoints`
+must stay**, because 62 of 63 checkpoint defaults are covered through it and none through
+`CoveredCheckpoint`. See [coverage](paid-model-loading-coverage.md#the-two-tables-do-opposite-jobs).
 
-> **@dev: Justin** — LoRA-first, or checkpoints in v1 too? Checkpoints drag in a view change and the
-> auction entanglement in 2.3; LoRAs need neither and are already the resources people cannot
-> generate with today.
->
-> _Answer:_
+### 2.4 ✅ The C4 webhook — not now
 
-### 2.3 🔴 Who owns `CoveredCheckpoint`
+**Closed 2026-09-08: no.** Both reasons to build it went away on the same day.
 
-**Gates:** any checkpoint shipping as paid-loadable. Follows directly from 2.2.
+It existed to do two things a direct-to-signals callback cannot: fire the completion notification
+(C9), and let a bystander see a load without disclosing who paid for it. C9 is now a **Phase 2**
+goal, and bystanders **do not need live progress** — they need to be told when it is ready, which
+the localStorage drain does by asking `getState` on their next visit. Neither needs a hop.
 
-`handle-auctions.ts` deletes every row outside the weekly winner set on each cycle, so a checkpoint
-someone paid to load loses its coverage at the next auction run — silently.
+Not building it also avoids an endpoint that would fire every 10 seconds per in-flight download
+across the whole cluster.
 
-**Owner:** Justin — no ClickUp task yet, and entangled with 868gtq1kt (splitting featuring out of
-auctions).
-**Closes when:** ownership of the table is settled, before — not after — a checkpoint is offered.
-
-> **@dev: Justin** — Only if 2.2 lets checkpoints in. Who owns `CoveredCheckpoint` once paid loading
-> can put rows in it? As it stands the weekly auction job deletes anything it did not put there, so a
-> paid checkpoint silently loses coverage.
->
-> _Answer:_
-
-### 2.4 Whether to build the C4 webhook at all
-
-**The decision:** whether progress needs a server-side hop. Contingent on C9 being scoped.
-
-The load submit points its callback straight at the signals **group** URL for `model-version:<id>`,
-so progress already fans out with no endpoint of ours in the path. The only things a webhook would
-add are the completion notification (C9) and resolving AIR → version id once instead of per client.
-
-**Recommendation:** build it if and only if C9 survives scoping. Otherwise it is a hop that does
-nothing.
-
-**Owner:** whoever scopes C9.
-**Closes when:** C9 is scoped in or out.
-
-> **@dev:** Is C9 (the completion notification) in scope? That is the whole question — if yes we need
-> the webhook, if no it does nothing.
->
-> _Answer:_
+⚠️ **It comes back with Phase 2.** A real notification has to be sent from somewhere, and that
+somewhere is a server-side moment this feature does not otherwise have. Reopen this rather than
+inventing a second mechanism.
 
 ### 2.5 The rate-limit numbers are off by one
 
@@ -223,6 +202,27 @@ is already documented beside the limiter, so only the renumber option is still o
 
 > **@dev:** 2/5/9 for true caps of 3/6/10, or keep 3/6/10 and accept that they permit one more?
 > Default if nobody minds: keep them and write it down.
+>
+> _Answer:_
+
+### 2.6 The 17-base-model gap between the constants and `GenerationBaseModel`
+
+**The decision:** whether `basemodel.constants.ts` or the database is wrong.
+
+17 base models declare generation support in the constants and have no `GenerationBaseModel` row;
+5 rows exist in the table that the constants do not declare. The 17 are generatable today **only**
+because `EcosystemCheckpoints` covers their default model — the allowlist never learned about them,
+and the other table quietly compensated. Full lists in
+[coverage](paid-model-loading-coverage.md#basemodelconstantsts--generationbasemodel-disagree).
+
+**What turns on it:** nothing for paid loading, which gates on `GenerationBaseModel` either way. It
+matters because the two sources of truth disagree and nothing detects it — a guard-shaped problem.
+
+**Owner:** unowned.
+**Closes when:** the rows are added, or the constants stop claiming generation support, or a test
+pins the two together.
+
+> **@dev:** Worth fixing now, or filing? It predates paid loading and does not block it.
 >
 > _Answer:_
 
@@ -279,6 +279,23 @@ from 2026-09-01, on a neighbouring topic, for whoever chases it: *"The whole pri
 orchestrator is one big mess with many features hacked on top of other features, that makes me
 irrationally reluctant to touch it, but I do agree with your reasoning, will put it on my list."*
 
+### K3 Does the orchestrator refund a failed prepare?
+
+Justin decided a load that never finishes is refunded, and expects the orchestrator to be doing it
+("though this should be occurring via the orchestrator"). Nothing confirms that: `CalculateCost`
+returns zero, so no prepare has ever been charged and no refund has ever been exercised.
+`PrepareResourceJob` has a 24-hour `MaxTimeout`, and at the bandwidth measured on the lab call a
+large checkpoint can plausibly reach it.
+
+**What turns on it:** whether the refund is the orchestrator's or ours. If ours, it is unscoped work
+that has to land with pricing rather than after it.
+
+> **@dev: Koen** — When a `prepareResource` step fails or hits its 24h timeout, does the charge get
+> refunded automatically, or does the consumer have to reverse it? Same conversation as C2, since
+> neither can be observed until a prepare actually costs something.
+>
+> _Answer:_
+
 ### Answered, 2026-09-04 and 2026-09-07
 
 Kept as a record because both answers changed what this document says.
@@ -289,7 +306,7 @@ controllers check with each other before evicting a resource and refuse to evict
 and that policy guards its lifetime from then on — `ClusterAwareEvictionPolicy.cs` in
 `civitai-spine-controller`. **`PinModelJob` is legacy: "don't even look at it."** This register had
 it as the intended primitive, which was wrong. What the answer opens rather than closes is
-[1.3](#13--what-the-surfaces-may-promise-now-that-residency-exists).
+[1.3](#13--what-we-promise--the-original-48-hours).
 
 **K2 — is `step:preparing` unadvertised on purpose?** No. Koen: the intent was that `preparing` and
 `scheduled` are step statuses and never workflow statuses, but their absence from the callback enum
@@ -303,4 +320,4 @@ the types.
 
 - **C2 — pricing and charging.** Koen's, and not a config toggle — see [§4](#c2--pricing).
 - **Residency.** Built, and not ours — the spine controllers enforce it. What is ours is the copy
-  question, [1.3](#13--what-the-surfaces-may-promise-now-that-residency-exists).
+  question, [1.3](#13--what-we-promise--the-original-48-hours).

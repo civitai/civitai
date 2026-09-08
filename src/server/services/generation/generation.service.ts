@@ -1,3 +1,4 @@
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
@@ -63,7 +64,6 @@ import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
   ecosystemById,
-  isBaseModelGenerationSupported,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
@@ -990,8 +990,7 @@ export function getResourceCanGenerate({
  *   - `Wildcards`-type versions: gated on a visible System-kind `WildcardSet`
  *     (one batched query via `getVisibleSystemWildcardSetIdsByVersionId`),
  *     since their baseModel isn't on the generation-supported list.
- *   - Everything else: the standard `getResourceCanGenerate` +
- *     `isBaseModelGenerationSupported` pair.
+ *   - Everything else: the standard `getResourceCanGenerate` + `isGenerationEligible` pair.
  *
  * Reads the disable-generation flag off each version's `flags` and fetches
  * `ecosystemConfig` internally so call sites don't have to thread them through.
@@ -1083,7 +1082,13 @@ export async function resolveCanGenerateForVersions(
           },
           user: ctx.user,
           hiddenGates,
-        }) && isBaseModelGenerationSupported(gate.baseModel, gate.modelType);
+        }) &&
+        isGenerationEligible({
+          covered: gate.covered,
+          baseModel: gate.baseModel,
+          modelType: gate.modelType,
+          flags: gate.flags,
+        });
       result.set(key, { canGenerate });
     }
   }
@@ -1380,19 +1385,43 @@ const EMPTY_HASH = 'e3b0c44298fc';
  * -- see that function's header for the incident. Change both together.
  */
 const RESOURCE_ROLES = new Set([
-  'model', 'checkpoint', 'refinermodel',
-  'lora', 'lycoris', 'locon', 'dora',
-  'embed', 'embedding', 'textualinversion', 'used_embeddings',
+  'model',
+  'checkpoint',
+  'refinermodel',
+  'lora',
+  'lycoris',
+  'locon',
+  'dora',
+  'embed',
+  'embedding',
+  'textualinversion',
+  'used_embeddings',
   'hypernet',
 ]);
 const COMPONENT_ROLES = new Set([
-  'vae', 'refinervae', 'clip', 'clipvision', 'cliplmodel', 'unet',
-  'textencoder', 'text_encoder', 'upscaler', 'controlnet',
-  'qwenmodel', 'llamamodel', 'txxlmodel', 'seedvrmodel',
+  'vae',
+  'refinervae',
+  'clip',
+  'clipvision',
+  'cliplmodel',
+  'unet',
+  'textencoder',
+  'text_encoder',
+  'upscaler',
+  'controlnet',
+  'qwenmodel',
+  'llamamodel',
+  'txxlmodel',
+  'seedvrmodel',
 ]);
 const NON_RESOURCE_FILE_TYPES = [
-  'Training Data', 'Archive', 'Config', 'Workflow',
-  'VAE', 'Text Encoder', 'CLIPVision',
+  'Training Data',
+  'Archive',
+  'Config',
+  'Workflow',
+  'VAE',
+  'Text Encoder',
+  'CLIPVision',
 ];
 
 /** A role we cannot read is not a role we can reject -- see the hashes branch in the SQL. */

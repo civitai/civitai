@@ -35,8 +35,9 @@ const version = {
   id: 501,
   name: 'v1',
   baseModel: 'SDXL 1.0',
+  flags: 0,
   model: { id: 42, name: 'Test Model', type: 'LORA' },
-  files: [{ type: 'Model', metadata: { format: 'SafeTensor' } }],
+  files: [{ type: 'Model', scannedAt: new Date(), metadata: { format: 'SafeTensor' } }],
 };
 
 const versionAir = 'urn:air:sdxl:lora:civitai:42@501';
@@ -65,6 +66,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   installAirCodec();
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version]);
+  // The GenerationCoverageNext lookup — covered by default.
+  dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501 }]);
 });
 
 describe('getResourceLoadState', () => {
@@ -146,6 +149,47 @@ describe('the purchase path refuses before it submits', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it('refuses a resource the site cannot generate with, whatever the cluster says', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]); // not in GenerationCoverageNext
+
+    await expect(
+      submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
+    ).rejects.toThrow(/cannot be generated with/);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a resource with no weight file — an external API model', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        ...version,
+        // What the 36 mislabelled API versions carried: an archive, not weights.
+        files: [{ type: 'Training Data', scannedAt: new Date(), metadata: { format: 'Other' } }],
+      },
+    ]);
+
+    await expect(
+      submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
+    ).rejects.toThrow(/no model file to load/);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unscanned file — scanning is what makes a weight servable', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        ...version,
+        files: [{ type: 'Model', scannedAt: null, metadata: { format: 'SafeTensor' } }],
+      },
+    ]);
+
+    await expect(
+      submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
+    ).rejects.toThrow(/no model file to load/);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('refuses a version that does not exist', async () => {
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
 
@@ -176,6 +220,22 @@ describe('submitResourceLoad', () => {
     expect(args.body.steps).toEqual([
       { $type: 'prepareResource', name: 'prepare-resource', input: { resource: versionAir } },
     ]);
+  });
+
+  it('sends progress to the buyer, not to a model-version topic', async () => {
+    // The payload carries workflowId, which the orchestrator names `<userId>-<timestamp>`. A group
+    // broadcast would tell everyone watching the model version who paid for the load.
+    await submitResourceLoad({
+      modelVersionId: 501,
+      userId: 7,
+      token: 'user-token',
+      currencies: [],
+    });
+
+    const [args] = submitWorkflow.mock.calls[0];
+    const urls = (args.body.callbacks ?? []).map((c: { url: string }) => c.url);
+    expect(urls.join(' ')).toContain('/users/7/signals/');
+    expect(urls.join(' ')).not.toContain('/groups/');
   });
 
   it('checks who the orchestrator attributed the workflow to', async () => {

@@ -6,13 +6,14 @@ build them in.
 Companion to:
 
 - [paid-model-loading.md](paid-model-loading.md) — the contract and the decisions
+- [paid-model-loading-coverage.md](paid-model-loading-coverage.md) — the coverage model and its audit
 - [paid-model-loading-checklist.md](paid-model-loading-checklist.md) — the state of the work and the
   verified orchestrator state
 - [paid-model-loading-decisions.md](paid-model-loading-decisions.md) — every open decision, with an
   owner and a closing condition
 
-Names below were proposals when this was written. §1, §2, §6 and §3's callback builders are now
-built and the names here are the ones in the code; §3's webhook, §4 and §5 are still proposals. The
+Names below were proposals when this was written. §1, §2, §4, §6 and §3's callback builders are now
+built and the names here are the ones in the code; §3's webhook and §5 are still proposals. The
 [checklist](paid-model-loading-checklist.md) holds the per-item state.
 
 ---
@@ -99,19 +100,30 @@ user still sees a price rather than a dead button.
 **The rate limit** (C10), on `submit`:
 
 ```ts
-rateLimit(
-  [
-    // The catch-all MUST be first and unconditional — see below.
-    { limit: 0,  period: CacheTTL.day, errorMessage: 'Loading models is a member benefit.' },
-    { limit: 3,  period: CacheTTL.day, userReq: (u) => u.tier === 'bronze' },
-    { limit: 6,  period: CacheTTL.day, userReq: (u) => u.tier === 'silver' },
-    { limit: 10, period: CacheTTL.day, userReq: (u) => u.tier === 'gold' },
-    { limit: 10, period: CacheTTL.day, userReq: (u) => u.tier === 'founder' },
-  ],
-  undefined,
-  { onlyCountSuccess: true, sharedKey: 'resource-load:submit' }
-)
+// resourceLoadRateLimits, exported from resource-load.router.ts
+[
+  // The daily catch-all MUST be unconditional — see below.
+  { limit: 0,  period: CacheTTL.day, errorMessage: 'Loading models is a member benefit.' },
+  { limit: 3,  period: CacheTTL.day, userReq: (u) => u.tier === 'bronze' },
+  { limit: 6,  period: CacheTTL.day, userReq: (u) => u.tier === 'silver' },
+  { limit: 10, period: CacheTTL.day, userReq: (u) => u.tier === 'gold' },
+  { limit: 10, period: CacheTTL.day, userReq: (u) => u.tier === 'founder' },
+  // Burst protection, and deliberately NOT tier-scaled.
+  { limit: RESOURCE_LOAD_HOURLY_LIMIT, period: CacheTTL.hour,
+    errorMessage: 'You can only queue a few model loads an hour. Try again shortly.' },
+]
+// ...passed with { onlyCountSuccess: true, sharedKey: 'resource-load:submit' }
 ```
+
+**Two windows, two different things.** Daily rows are **entitlement** — what a plan includes. The
+hourly row is the **cluster's**, so it is flat: no plan buys its way out of burst protection. The
+middleware keeps one list of attempt timestamps per key and filters it per rule, so both windows
+compose on the same `sharedKey`.
+
+🔴 **The member gate is not the `limit: 0` row.** `assertCanRequestLoad(ctx.user)` runs inside both
+`estimate` and `submit`, because `rateLimit()` short-circuits entirely for moderators AND in
+dev/test/preview — so on a preview build that row would already have returned before it refused
+anyone. The gate is the entitlement; the limiter is the quota.
 
 🔴 **`userTiers` is `['free', 'founder', 'bronze', 'silver', 'gold']` — the call's table omits
 `founder`, and an unmatched tier is not "the strictest limit", it is *no limit at all*.** When no row
@@ -136,30 +148,35 @@ decorative.
 
 ## 3. Server — receiving progress
 
-### `src/pages/api/webhooks/resource-load.ts` — new
+### `src/pages/api/webhooks/resource-load.ts` — **not built, closed 2026-09-08**
 
-`WebhookEndpoint`-guarded. Receives the orchestrator's `step:*` callbacks for a load workflow and
-fans out to the signal topic.
+Both reasons for a server-side hop went away — see
+[2.4](paid-model-loading-decisions.md#24--the-c4-webhook--not-now). C9 is Phase 2, and bystanders
+need to be *told when it is ready* rather than watch it progress, which the localStorage drain does
+by asking `getState` on their next page load.
 
-Verified about the payload: a preparing step publishes `WorkflowStepEvent` with `status: preparing`
-and `preparation { resource, queuePosition, progress, etaSeconds }`, refreshed every 10s and
-deduplicated at 1% progress.
+🔴 **And a group broadcast turned out to be unsafe anyway.** The orchestrator posts its
+`WorkflowStepEvent` straight through, and `workflowId` is `<userId>-<timestamp>` — broadcasting it
+to a model-version topic would disclose who paid. Progress goes to `/users/{userId}/signals/`
+instead. Stripping identity for a topic is the one thing this endpoint would still be good for, and
+it is what Phase 2 reopens it to do.
 
-⚠️ **This endpoint may not be needed at all.** `WorkflowCallback.url` is an arbitrary string, and
-generation points it straight at the signals service. If we point ours at a signals *group* URL
-(`/groups/model-version:{id}/signals/{message}`), the fan-out happens without us.
-
-That is the route the load submit took, so this endpoint is **not built**. Build it if and only if
-C9 (the completion notification) survives scoping — that, plus resolving AIR → version id once
-instead of per client, is all a server-side hop would add. Tracked as
-[2.4](paid-model-loading-decisions.md#24-whether-to-build-the-c4-webhook-at-all).
+Payload, for whoever builds it then: a preparing step publishes `WorkflowStepEvent` with
+`status: preparing` and `preparation { resource, queuePosition, progress, etaSeconds }`, refreshed
+every 10s and deduplicated at 1% progress.
 
 ### `src/server/orchestrator/orchestrator.utils.ts` — edit
 
-`getResourceLoadCallbacks(modelVersionId)` builds a `step:*` callback pointed at the signals group
-URL for `model-version:<id>`, so progress fans out with no hop through us. `sendSignalToTopic(topic,
-message, data)` is the topic-broadcast helper the site lacked — that one is wrapped in
-`withSignals()`; it is unused until C9 needs a server-side send.
+`getResourceLoadCallbacks(userId)` builds a `step:*` callback pointed at
+`${SIGNALS_ENDPOINT}/users/{userId}/signals/{ResourceLoadUpdate}` — the **buyer's own channel**.
+🔴 Never a `model-version:<id>` group: the orchestrator posts the `WorkflowStepEvent` straight
+through and its `workflowId` is `<userId>-<timestamp>`, so a broadcast names the payer
+([1.4](paid-model-loading-decisions.md#14--progress-signals-go-to-the-buyer-not-to-a-topic)). Pinned
+by a test asserting the URL contains `/users/` and not `/groups/`.
+
+`sendSignalToTopic(topic, message, data)` is the topic-broadcast helper the site lacked, wrapped in
+`withSignals()`. It has **no caller and no planned one** — load progress is per-user and C4 is
+closed. It is here for whatever Phase 2 needs; delete it if Phase 2 does not want it.
 
 ### `src/server/common/enums.ts` — edit
 
@@ -175,23 +192,38 @@ Reuse the existing `SignalTopic.ModelVersion`; no new topic constant. ⚠️ Do 
 
 ## 4. Client — shared state
 
-### `src/store/resource-load.store.ts` — new
+### `src/store/resource-load.store.ts` — **built**
 
-Zustand, `localStorage`-persisted. Holds what this user is waiting on: `{ versionId, name, startedAt }[]`.
+Zustand, `localStorage`-persisted: `{ modelVersionId, modelId, name, modelName, requestedAt, kind }`,
+where `kind` is `requested` (paid) or `watching` (bystander).
 
-On mount: poll `resourceLoad.getState` for everything in the store, drop what is `available`,
-resubscribe to the rest. This is the reconnect story Justin walked through, and it is the whole
-reason the navbar survives a refresh.
+A queue that drains, not a history. `resourceLoadDrainVerdict` — pure, so the rules are testable
+without a browser or a two-day wait — decides per item on each page load: `available` completes
+(toast, then remove), a missing version is dropped, `loading` or queued-with-a-position is kept, and
+anything else is dropped because nothing is in flight for it.
 
-### `src/components/ResourceLoad/resource-load.utils.ts` — new
+🔴 **Every item must be able to leave.** A failed load and one that finished and was evicted both
+read back as `unavailable`, indistinguishable from "queued", so without a deadline they are
+re-subscribed forever. Items expire at 48h, matching the residency policy — but a load that
+completes *after* the ceiling still reports, because expiry must not swallow good news.
 
-- `useResourceLoadState(versionId)` — query + topic subscription, the hook every surface uses
-- `useResourceLoadPurchase()` — mutation + confirmation modal + error mapping
-- `useTrackedResourceLoads()` — the store, for the navbar
+This is not the record of a purchase. That is the orchestrator's — see
+[1.6](paid-model-loading-decisions.md#16--there-is-a-durable-record-of-a-purchased-load-and-it-is-not-ours).
 
-The topic subscription is one line, because
+### `src/components/ResourceLoad/resource-load.utils.ts` — **built**
+
+- `toResourceLoadProgress(raw)` — narrows an untrusted signal payload
+- `useResourceLoadProgress()` — subscribes to `ResourceLoadUpdate` on the user's own channel
+- `useDrainTrackedResourceLoads()` — runs `resourceLoadDrainVerdict` over the store on each page load
+- `ResourceLoadDrain` — the mount point for that drain, rendered in `AppHeader`
+
+⚠️ Progress is **not** a topic subscription.
 [model-version.utils.ts:152](../../src/components/Model/ModelVersions/model-version.utils.ts#L152)
-already subscribes model pages to `model-version:<id>`.
+subscribes model pages to `model-version:<id>`, which stays the convention for model-version signals
+generally — it is just not how load progress arrives
+([1.4](paid-model-loading-decisions.md#14--progress-signals-go-to-the-buyer-not-to-a-topic)).
+
+Still to build for C5–C7: the state hook and the purchase mutation/modal.
 
 ---
 
@@ -227,14 +259,19 @@ else paid for.
 - resident → unchanged
 - unsupported → not selectable
 
-⚠️ **Depends on the "select any model" decision.** Today selection is gated on
-`GenerationCoverage`, and this task assumes that gate has moved. A LoRA-first v1 needs no view
-change; checkpoints do. That decision is Phase 0 in the checklist and it is not made yet.
+**The "select any model" decision is made (2026-09-08): checkpoints only.** Selection is gated on
+`GenerationCoverage`, and the gate moves in Phase 1.6 — a new view that drops `CoveredCheckpoint`,
+keeps `EcosystemCheckpoints`, and allows Diffusers. See
+[coverage](paid-model-loading-coverage.md). This task depends on that view existing, not on a
+decision.
+
+⚠️ Offer the load only where a load is possible: the resource needs a **loadable file** and a base
+model in `GenerationBaseModel`. File-less API models are covered but must never show a CTA.
 
 ### C7 — navbar
 
 **`src/components/ResourceLoad/ResourceLoadTracker.tsx`** — new. Mounted in
-[AppHeader.tsx](../../src/components/AppLayout/AppHeader/AppHeader.tsx#L104) next to `UploadTracker`,
+[AppHeader.tsx](../../src/components/AppLayout/AppHeader/AppHeader.tsx#L105) next to `UploadTracker`,
 inside the same `currentUser &&` block.
 
 Copy `UploadTracker`'s shape exactly — `Indicator` with a count, `Popover`, a stacked list with
@@ -281,8 +318,12 @@ pins the default toggle state — read it before choosing `toggleable`.
 ## 6. Feature flag
 
 `src/server/services/feature-flags.service.ts` — `resourceLoad: ['mod', 'granted']`, the cheap
-version of C14's "ship it mod-only initially". It gates `estimate`, `submit` and the mod page;
-`getState` and `getQueue` are deliberately **not** gated, because load state is a public read.
+version of C14's "ship it mod-only initially". It gates **all four procedures** and the mod page.
+
+`getState` and `getQueue` are `publicProcedure` because load state is a decided public read, but they
+stay flag-gated until C5 puts it on the model page: `getState` takes up to 100 version ids and makes
+one uncached orchestrator grain call per id, so ungated it is an unauthenticated amplifier — one
+request, a hundred grain calls, repeatable by anyone. Give it a cache or a cap when you relax it.
 
 ⚠️ A mod-only launch **exercises none of the rate limiting** — `rateLimit()` short-circuits for
 moderators. Do not read a quiet mod rollout as evidence the caps work.
@@ -302,13 +343,14 @@ non-purchase states, `ResourceLoadTracker`, the queue page. All of this shows re
 triggered by anything, including a generation. **No purchase path yet, so nothing depends on
 pricing** — which is the piece blocked on Koen.
 
-**Phase C — the purchase. Server half built:** `estimate` + `submit`, the rate limit,
-`assertWorkflowOwner`. Outstanding: the CTA, the `RentCivit` licence refusal
-([1.1](paid-model-loading-decisions.md#11--models-without-a-rentcivit-licence)), and 🔴 C2 —
+**Phase C — the purchase. Server half built:** `estimate` + `submit`, the member gate, the daily and
+hourly rate limits, `assertWorkflowOwner`, and the coverage refusal that carries the `RentCivit` rule
+([1.1](paid-model-loading-decisions.md#11--models-without-a-rentcivit-licence--refuse)).
+Outstanding: the CTA, surfacing the orchestrator's own `CanGenerate` rejection cleanly, and 🔴 C2 —
 `CalculateCost` returns a hardcoded zero, so `whatIf` still has no number to show.
 
-**Phase D — the rest.** C9 notification, then C11 auctions retirement (blocked on 868gtq1kt, and on
-`CoveredCheckpoint` ownership).
+**Phase D — the rest.** C9 notification, then C11 auctions retirement (blocked on 868gtq1kt).
+`CoveredCheckpoint` ownership is no longer part of it — Phase 1.6 removes the table from coverage.
 
 The useful consequence: **Phases A and B are real, shippable work that needs nothing from Koen.**
 They also produce the demo C14 is asking for — a working view of the experience, driven by live
