@@ -50,10 +50,14 @@ export const rewardsAbusePrevention = createJob(
 
     // Exclusivity has to count the users the type filter would have hidden, which costs a
     // whole-day scan — so it moves the filter out of the WHERE only when it is switched on.
+    //
+    // Exact, not `uniq`: the having-clause compares these two counts for EQUALITY, and an
+    // equality between two HyperLogLog estimates is unstable on exactly the boundary the test
+    // lives on.
     const exclusivity = abuseLimits.require_exclusive_ip
       ? {
           where: '',
-          select: `uniqIf(be.toUserId, ${matched}) as user_count, uniq(be.toUserId) as ip_user_count, sumIf(awardAmount, ${matched}) as awarded`,
+          select: `uniqExactIf(be.toUserId, ${matched}) as user_count, uniqExact(be.toUserId) as ip_user_count, sumIf(awardAmount, ${matched}) as awarded`,
           having: 'AND ip_user_count = user_count',
         }
       : {
