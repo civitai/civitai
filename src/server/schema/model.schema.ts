@@ -236,9 +236,9 @@ export const modelUpsertSchema = z.object({
     .looseObject({
       showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
-      hideBuzz: z.boolean().optional(),
-      hideDownloads: z.boolean().optional(),
-      hideGenerations: z.boolean().optional(),
+      hideBuzz: z.boolean().nullish(),
+      hideDownloads: z.boolean().nullish(),
+      hideGenerations: z.boolean().nullish(),
     })
     .transform((val) => val as ModelMeta | null)
     .nullish(),
@@ -358,9 +358,9 @@ export type ModelMeta = Partial<{
   minorHashAccepted: { at: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
-  hideBuzz: boolean;
-  hideDownloads: boolean;
-  hideGenerations: boolean;
+  hideBuzz: boolean | null;
+  hideDownloads: boolean | null;
+  hideGenerations: boolean | null;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
