@@ -131,19 +131,45 @@ describe('recordImageUploadRelay', () => {
   it('never throws — a metrics failure must not break the upload it is observing', async () => {
     // This route runs only AFTER the user's direct upload has already failed. An
     // exception escaping the emitter would turn the rescue into the outage.
+    //
+    // 🔴 REGISTER FIRST, then read the handle. The handle comes off the registry, so
+    // reading it before the counter exists yields `undefined` and the case dies on the
+    // stub setup rather than on its own claim. Written the other way round it passed
+    // only because an earlier test in this file had already registered the counter —
+    // i.e. by file ordering, not by construction. Verified: run alone
+    // (`-t "never throws"`) the old order failed with
+    // `TypeError: Cannot read properties of undefined (reading 'inc')`.
+    ensureRegisterImageUploadRelayMetrics();
     const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as {
       inc: (labels: Record<string, string>, value?: number) => void;
     };
-    ensureRegisterImageUploadRelayMetrics();
     const realInc = metric.inc;
-    metric.inc = () => {
-      throw new Error('registry exploded');
+
+    // 🔴 Throw from the FINAL increment, not from the seeding pass. A stub that throws
+    // on EVERY `inc` fires on `seedAllSeries`'s first call — inside
+    // `ensureRegisterImageUploadRelayMetrics()` — and never reaches
+    // `imageUploadRelayTotal.inc({ outcome })`, so it only proves the try/catch swallows
+    // *a* throw from somewhere in the emit path. The guard's actual claim is about the
+    // increment. Seeding always passes a second argument (0) and the real increment
+    // never does, which is what discriminates the two call sites.
+    let finalIncAttempts = 0;
+    metric.inc = (labels: Record<string, string>, value?: number) => {
+      if (value === undefined) {
+        finalIncAttempts += 1;
+        throw new Error('registry exploded');
+      }
+      realInc.call(metric, labels, value);
     };
     try {
       expect(() => recordImageUploadRelay('success')).not.toThrow();
+      // Positive control: without this, a stub that was never reached at all would let
+      // the case pass as "the error was swallowed" having thrown nothing.
+      expect(finalIncAttempts, 'the final inc({ outcome }) must have been reached').toBe(1);
     } finally {
       metric.inc = realInc;
     }
+    // And the throw must not have left a phantom count behind.
+    expect((await seriesFromRegistry()).success).toBe(0);
   });
 });
 

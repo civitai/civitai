@@ -561,8 +561,8 @@ describe('image-upload relay', () => {
   // Usage counter
   // -------------------------------------------------------------------------
   //
-  // WHY THESE EXIST. A successful relay is INVISIBLE in production: a 200 is filtered
-  // out of the access-log stream (it logs 4xx/5xx or >5s only), traces are head-sampled
+  // WHY THESE EXIST. A successful relay is INVISIBLE in production: our request-log
+  // stream does not retain fast 2xx responses, traces are head-sampled
   // at 0.1 against an event rate of a handful over months, and the media-location
   // registry records the same backend for a relayed and a direct upload. So the route
   // shipped with no way to answer "did this ever help anyone?", and

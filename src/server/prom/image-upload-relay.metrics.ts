@@ -5,10 +5,10 @@
 // and a SUCCESSFUL relay is currently invisible. Three independent reasons, each
 // verified against the code that produces the signal:
 //
-//  * The ingress access log is filtered to `4xx/5xx OR >5s`, so a fast 200 is never
-//    written. The rejection branches (413/400/401/403/429) DO appear there, which
-//    means today's only signal is biased entirely toward failure — the one outcome
-//    that matters most is the one it cannot show.
+//  * Our request-log stream does not retain fast 2xx responses, so a successful relay
+//    leaves no record in it. The rejection branches (413/400/401/403/429) DO appear
+//    there, which means today's only signal is biased entirely toward failure — the
+//    one outcome that matters most is the one it cannot show.
 //  * OTEL traces are head-sampled at 0.1 (`instrumentation.node.ts`), and this is a
 //    rare event. At a handful of relays over months, "sampled zero" and "never
 //    happened" are the same observation, indefinitely.
@@ -23,17 +23,38 @@
 // WHAT ONE INCREMENT MEANS: exactly one invocation of the relay route handler, at the
 // outcome it settled on. The handler records once per call, structurally — see
 // `relay.ts`, where the response logic returns an outcome and the exported handler is
-// the only thing that emits it. So `sum(civitai_image_upload_relay_total)` is the
-// route's request count and `…{outcome="success"}` is the number of uploads it
-// actually rescued.
+// the only thing that emits it.
 //
-// 🔴 ALERTING / READING: use `max_over_time(...[window])` or `sum(...)`, NOT `rate()`
-// on a per-pod child. This is a RARE counter spread over a large pod fleet: a pod that
-// relays once creates its child series at 1 and never touches it again, so `rate()` /
-// `increase()` over that child is structurally 0 and a threshold keyed on it silently
-// never fires — the counter would look healthy precisely because the event is rare,
-// which is the ambiguity it exists to remove. (Same reasoning as
-// `~/server/metrics/generation-model-substitution.metrics.ts`.)
+// 🔴 HOW TO READ IT. Two different questions, two different queries, and only one of
+// them is a bare `sum()`:
+//
+//  * "Is the relay being used RIGHT NOW?" -> `sum(civitai_image_upload_relay_total)`.
+//    That is an instant vector, so it is a LIVE-POD-ONLY reading. prom-client counters
+//    live in the Node heap and die with the process, and processes here are replaced
+//    routinely — every deploy, and every scale-down — so every term in that sum is
+//    bounded by the age of the pods currently up. A relay that rescued someone on
+//    Monday reads 0 on Tuesday. Use `sum()` only where an instantaneous reading is
+//    genuinely what you want.
+//
+//  * "Has this fallback EVER helped anyone?" — the question this metric exists to
+//    settle — ->
+//      `sum(increase(civitai_image_upload_relay_total{outcome="success"}[30d]))`
+//    or, equivalently for a counter that only ever steps up,
+//      `sum(max_over_time(civitai_image_upload_relay_total{outcome="success"}[30d]))`.
+//    Both aggregate over every child series that existed anywhere in the range,
+//    including pods long since replaced, so they survive the churn a bare `sum()`
+//    cannot. Widen the range to the period you are actually asking about; Prometheus
+//    retention is the real ceiling on how far back the answer goes.
+//
+// 🔴 ALERTING: key an alert on the RANGE form above, not on `rate()` over a single
+// per-pod child — a handful of events spread across a large fleet is a vanishingly
+// small per-second number and a threshold on it is unreadable. Note that `increase()`
+// itself is fine here, and specifically BECAUSE of the seeding below plus its caller in
+// `src/pages/api/metrics.ts`: every child is materialised at 0 on a pod's first scrape,
+// so a later relay is a visible 0 -> 1 delta rather than a series that springs into
+// existence already at 1 and never moves again. That is the failure the neighbouring
+// `~/server/metrics/generation-model-substitution.metrics.ts` documents for the
+// unseeded case — do not "simplify" an alert by removing the seeding or its call.
 //
 // 🔴 CARDINALITY: ONE label over a code-owned union of 11 values, declared once below.
 // 11 series, TOTAL, per pod — a fixed bound that no traffic can move. Deliberately NO
@@ -88,9 +109,19 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
    *  status already distinguishes them and splitting the label would buy a series
    *  whose only reader is the same dashboard panel). */
   'store_error',
-  /** The response logic threw where nothing expected it to. Should be a permanent
-   *  zero; a non-zero here is a bug in the route, not a property of the traffic. Its
-   *  presence is what makes "one increment per invocation" hold unconditionally. */
+  /** The invocation threw without ever naming an outcome — the wrapper's `catch` in
+   *  `relay.ts` records this and re-throws unchanged. Its presence is what makes "one
+   *  increment per invocation" hold unconditionally, and it is expected to stay at 0.
+   *
+   *  🔴 A non-zero is NOT necessarily a defect in THIS route. `runRelay` awaits three
+   *  things outside its inner `try` — the origin guard, `getServerAuthSession`, and the
+   *  in-flight bookkeeping — and the auth lookup is the one with a network dependency.
+   *  `~/server/auth/get-server-auth-session.ts` fail-softs `getHubSession` and
+   *  `getLegacySession` with `.catch(() => null)`, but awaits
+   *  `getSessionFromBearerToken(token)` and `maybeRollHubCookie(...)` UNGUARDED — the
+   *  latter a network write to the auth hub. So an auth-hub incident drives this
+   *  counter non-zero for a reason that has nothing to do with the relay. Check the
+   *  auth dependency's own health before reading a non-zero as a bug in `relay.ts`. */
   'handler_error',
 ] as const;
 
@@ -108,7 +139,7 @@ const HELP =
   'Invocations of the FALLBACK image-upload relay route, by terminal outcome. ' +
   'The relay exists for clients that cannot reach the storage host directly, so a ' +
   'non-zero success count is the only evidence that fallback is rescuing real uploads: ' +
-  'a relayed 200 is filtered out of the access-log stream, traces are head-sampled, and ' +
+  'a relayed 200 is not retained in the request-log stream, traces are head-sampled, and ' +
   'the media-location registry records the same backend for relayed and direct uploads. ' +
   'Exactly one increment per handler invocation. ' +
   'outcome: success = bytes stored and a key returned; method_not_allowed = not a POST; ' +
@@ -117,8 +148,11 @@ const HELP =
   'truncated = body ended short of its declared Content-Length (400, never stored); ' +
   'empty = zero-length body (400); read_error = reading the body threw (400); ' +
   'store_error = the store write threw (500, or 499 on a client disconnect); ' +
-  'handler_error = the route itself threw where it should not — expected to stay 0. ' +
-  'RARE per-pod counter: read with sum()/max_over_time(), not rate() on a single child.';
+  'handler_error = the invocation threw without naming an outcome — expected to stay 0, ' +
+  'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
+  'RARE per-pod counter, and prom-client counts die with the pod: for "has it ever helped?" ' +
+  'read sum(increase(...[30d])) or sum(max_over_time(...[30d])); a bare sum() only sees pods ' +
+  'that are alive right now. Do not alert on rate() of a single child.';
 
 /**
  * Seed all 11 series at 0.

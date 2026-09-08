@@ -160,15 +160,21 @@ export function __resetInFlightForTest() {
  * `runRelay`, and this wrapper's only extra job is to emit the usage counter.
  *
  * 🔴 THE SPLIT IS THE GUARD, not decoration. A successful relay is otherwise
- * INVISIBLE in production — a 200 here is filtered out of the access-log stream,
+ * INVISIBLE in production — our request-log stream does not retain fast 2xx responses,
  * traces are head-sampled well below this route's event rate, and the media-location
  * registry records the same backend for a relayed and a direct upload. So the counter
  * is the only evidence this fallback ever rescues anyone, and "someone remembers to
  * add a `recordImageUploadRelay(...)` beside each of the ten `res.status(...)` calls"
  * is not a mechanism. Having `runRelay` RETURN its outcome makes the emit happen
  * exactly once per invocation by construction, and makes a newly-added branch that
- * settles the response without naming an outcome a COMPILE error (its return type is a
- * closed union with no `undefined` in it) rather than a silently uncounted path.
+ * RETURNS without naming an outcome a COMPILE error (the return type is a closed union
+ * with no `undefined` in it) rather than a silently uncounted path.
+ *
+ * ⚠ RETURNING is the whole of what the compiler checks — "settles the response" is not.
+ * A branch that writes a response and falls through — `if (bad) { res.status(400).json(…); }`
+ * with no `return` — compiles fine, double-writes the response, and gets counted under
+ * whatever outcome control eventually reaches. The type closes the uncounted-EXIT hole,
+ * not the missing-`return` one; that one is still on review.
  *
  * The `catch` is what extends that guarantee to the unexpected: without it, a throw
  * from `runRelay` would be the one way out of this handler that records nothing. The
