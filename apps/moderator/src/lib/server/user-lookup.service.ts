@@ -769,46 +769,72 @@ export type UserSubscription = {
   currency: string | null;
 };
 
-// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design, and
-// referrals deliberately add a `referral` row that can outlast a paid one. Ordering by period end alone
-// would report the referral grant as the user's plan, so filter to the paid subscription the main app
-// treats as canonical and surface `buzzType` regardless.
-const PAID_BUZZ_TYPE = 'yellow';
+// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design. A paid
+// colour row and the two membership variants (`buzzPurchase`, `referral`) can coexist and disagree, so
+// the panel has to pick one to speak for. Source of truth for these two strings:
+// src/shared/utils/buzz-membership.ts (BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) and referral.service.ts.
+const BUZZ_PURCHASE_TYPE = 'buzzPurchase';
+const REFERRAL_TYPE = 'referral';
 
-export async function getSubscription(userId: number): Promise<UserSubscription | null> {
-  const select = [
-    'p.name as productName',
-    'p.provider',
-    'cs.status',
-    'cs.buzzType',
-    'cs.cancelAtPeriodEnd',
-    'cs.canceledAt',
-    'cs.currentPeriodEnd',
-    // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
-    // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
-    'pr.interval',
-    'pr.unitAmount',
-    'pr.currency',
-  ] as const;
+// A `buzzType` that names a subscription KIND rather than a Buzz colour is a perks-only variant; every
+// other value is a paid/canonical membership row.
+const isCanonicalRow = (buzzType: string | null) =>
+  buzzType !== BUZZ_PURCHASE_TYPE && buzzType !== REFERRAL_TYPE;
 
-  const paid = await dbRead
+// Live = the statuses the main app counts as a real membership (subscriptions.service.ts uses
+// `['active','trialing']` and excludes past_due/unpaid as failed) AND the period has not ended — status
+// alone is not liveness, since a lapsed row keeps `status = 'active'` until something reconciles it. A
+// past_due/unpaid paid row must NOT outrank an active variant, or it re-hides a working membership.
+const LIVE_STATUSES = new Set(['active', 'trialing']);
+const isLiveRow = (row: UserSubscription, now: Date) =>
+  LIVE_STATUSES.has(row.status) && row.currentPeriodEnd != null && row.currentPeriodEnd > now;
+
+// Which of several coexisting rows the panel shows. NOT a product ruling on "is this user a member" —
+// that shared cross-surface precedence is ticket item 1, still awaiting a decision. This only orders the
+// display so an active membership is never hidden behind a lapsed one: a live paid row wins (keeping a
+// longer-dated referral grant from outranking it), then any live variant (the buzz-bought case the
+// panel used to drop), then a lapsed paid row, then whatever is most recent.
+function displayPriority(row: UserSubscription, now: Date) {
+  const live = isLiveRow(row, now);
+  const canonical = isCanonicalRow(row.buzzType);
+  if (live && canonical) return 3;
+  if (live) return 2;
+  if (canonical) return 1;
+  return 0;
+}
+
+export async function getSubscription(
+  userId: number,
+  now = new Date()
+): Promise<UserSubscription | null> {
+  const rows = (await dbRead
     .selectFrom('CustomerSubscription as cs')
     .leftJoin('Product as p', 'p.id', 'cs.productId')
     .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
-    .select(select)
+    .select([
+      'p.name as productName',
+      'p.provider',
+      'cs.status',
+      'cs.buzzType',
+      'cs.cancelAtPeriodEnd',
+      'cs.canceledAt',
+      'cs.currentPeriodEnd',
+      // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
+      // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
+      'pr.interval',
+      'pr.unitAmount',
+      'pr.currency',
+    ])
     .where('cs.userId', '=', userId)
-    .where('cs.buzzType', '=', PAID_BUZZ_TYPE)
-    .executeTakeFirst();
-  if (paid) return paid as UserSubscription;
+    .execute()) as UserSubscription[];
 
-  // No paid row — show whatever they do have rather than nothing, with buzzType visible.
-  const other = await dbRead
-    .selectFrom('CustomerSubscription as cs')
-    .leftJoin('Product as p', 'p.id', 'cs.productId')
-    .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
-    .select(select)
-    .where('cs.userId', '=', userId)
-    .orderBy('cs.currentPeriodEnd', 'desc')
-    .executeTakeFirst();
-  return (other as UserSubscription | undefined) ?? null;
+  if (rows.length === 0) return null;
+
+  return rows.reduce((best, row) => {
+    const byPriority = displayPriority(row, now) - displayPriority(best, now);
+    if (byPriority !== 0) return byPriority > 0 ? row : best;
+    return (row.currentPeriodEnd?.getTime() ?? 0) > (best.currentPeriodEnd?.getTime() ?? 0)
+      ? row
+      : best;
+  });
 }
