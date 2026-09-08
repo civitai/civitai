@@ -112,7 +112,7 @@
 
             {#if triggerText && !tagsHaveTrigger(trigger, editing.tags)}
               <div class="mb-2 flex items-center gap-2 text-[11px] text-dark-2">
-                <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-2 py-0.5 font-mono text-[#f59f00]">
+                <span class="rounded border border-buzz/30 bg-buzz/10 px-2 py-0.5 font-mono text-buzz">
                   {triggerText}
                 </span>
                 <span class="font-mono">auto-prepended to every tag</span>
@@ -131,7 +131,7 @@
                     trigger,
                     t
                   )
-                    ? 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
+                    ? 'border-buzz/30 bg-buzz/10 text-buzz'
                     : 'border-dark-4 bg-dark-6 text-dark-0'}"
                 >
                   {t}
@@ -201,9 +201,9 @@
               {#if !triggerText}
                 No trigger word set.
               {:else if captionTriggerHit(trigger, editing.caption)}
-                Trigger <span class="text-[#f59f00]">{triggerText}</span> is highlighted where it appears.
+                Trigger <span class="text-buzz">{triggerText}</span> is highlighted where it appears.
               {:else}
-                Trigger <span class="text-[#f59f00]">{triggerText}</span> is prepended automatically.
+                Trigger <span class="text-buzz">{triggerText}</span> is prepended automatically.
               {/if}
             </p>
           </div>

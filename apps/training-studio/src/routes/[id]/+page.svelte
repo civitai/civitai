@@ -335,7 +335,7 @@
                 }}
                 class="flex items-center justify-center gap-1 rounded border px-1.5 py-1 text-[11px] font-semibold transition-colors {epoch ===
                 recommended
-                  ? 'border-[#f59f00]/30 text-[#f59f00] hover:bg-[#f59f00]/10'
+                  ? 'border-buzz/30 text-buzz hover:bg-buzz/10'
                   : 'border-dark-4 text-dark-0 hover:border-dark-2 hover:bg-dark-5'}"
                 title="Open epoch {epoch.number}"
               >
@@ -376,7 +376,7 @@
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
             {#if featured === recommended}
               <span
-                class="rounded bg-[#f59f00]/15 px-2 py-0.5 text-[10px] font-semibold text-[#f59f00]"
+                class="rounded bg-buzz/15 px-2 py-0.5 text-[10px] font-semibold text-buzz"
               >
 <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
               </span>
@@ -445,7 +445,7 @@
                 <div class="mb-2.5 flex items-center gap-2">
                   <span class="text-sm font-bold text-dark-0">Epoch {epoch.number}</span>
                   {#if epoch === recommended}
-                    <IconStarFilled size={12} class="text-[#f59f00]" />
+                    <IconStarFilled size={12} class="text-buzz" />
 
                   {/if}
                   <span class="ml-auto font-mono text-[10px] text-dark-2">

@@ -257,14 +257,14 @@
 {#snippet triggerTags(tags: string[], limit: number)}
   <div class="flex flex-wrap gap-1">
     {#if triggerText && !tagsHaveTrigger(trigger, tags)}
-      <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-1.5 py-0.5 font-mono text-[10px] text-[#f59f00]">
+      <span class="rounded border border-buzz/30 bg-buzz/10 px-1.5 py-0.5 font-mono text-[10px] text-buzz">
         {triggerText}
       </span>
     {/if}
     {#each tags.slice(0, limit) as t (t)}
       <span
         class="rounded border px-1.5 py-0.5 font-mono text-[10px] {isTriggerTag(trigger, t)
-          ? 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
+          ? 'border-buzz/30 bg-buzz/10 text-buzz'
           : 'border-dark-4 bg-dark-7 text-dark-2'}"
       >
         {t}
@@ -277,7 +277,7 @@
         !tags.slice(0, limit).some((t) => isTriggerTag(trigger, t))}
       <span
         class="rounded px-1.5 py-0.5 font-mono text-[10px] {triggerHidden
-          ? 'border border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
+          ? 'border border-buzz/30 bg-buzz/10 text-buzz'
           : 'text-dark-2'}"
         title={triggerHidden ? `includes the trigger word "${triggerText}"` : undefined}
       >
@@ -290,8 +290,8 @@
 {#snippet triggerCaption(caption: string)}
   {@const hit = captionTriggerHit(trigger, caption)}
   <div class="line-clamp-3 text-[11px] leading-snug text-dark-2">
-    {#if hit}{hit.before}<span class="font-semibold text-[#f59f00]">{hit.match}</span>{hit.after}{:else}{#if triggerText}<span
-          class="font-semibold text-[#f59f00]">{triggerText}</span
+    {#if hit}{hit.before}<span class="font-semibold text-buzz">{hit.match}</span>{hit.after}{:else}{#if triggerText}<span
+          class="font-semibold text-buzz">{triggerText}</span
         >, {/if}{caption}{/if}
   </div>
 {/snippet}
@@ -375,7 +375,7 @@
           class="mb-4 flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm
             {enough
             ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
-            : 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'}"
+            : 'border-buzz/30 bg-buzz/10 text-buzz'}"
         >
           {#if enough}
             ✓ {uploadedCount} uploaded — good for a {type.name.toLowerCase()} (we recommend ≥{type.minImg}).
@@ -434,7 +434,7 @@
                   </div>
                 {:else if img.status === 'error'}
                   <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 p-2 text-center">
-                    <span class="font-mono text-[10px] leading-tight text-[#f59f00]">{img.message}</span>
+                    <span class="font-mono text-[10px] leading-tight text-buzz">{img.message}</span>
                     <Button variant="outline" size="xs" onclick={() => retry(img.id)}>↻ Retry</Button>
                   </div>
                 {/if}
@@ -515,7 +515,7 @@
         </div>
         <Input bind:value={trigger} placeholder="optional, e.g. my_character" class="mt-2 font-mono" />
         <p class="mt-2 text-[12px] leading-snug text-dark-2">
-          Prepended to each label when missing, and <span class="text-[#f59f00]">highlighted</span> where
+          Prepended to each label when missing, and <span class="text-buzz">highlighted</span> where
           it already appears. Leave blank to skip.
         </p>
       </aside>
@@ -526,7 +526,7 @@
     <Button variant="outline" onclick={onBack}>← Back</Button>
     <div class="flex items-center gap-3">
       {#if uploadedCount > 0 && !busy && !allLabeled}
-        <span class="font-mono text-xs text-[#f59f00]">
+        <span class="font-mono text-xs text-buzz">
           {uploadedCount - labeledCount} unlabeled — label every image to continue
         </span>
       {/if}

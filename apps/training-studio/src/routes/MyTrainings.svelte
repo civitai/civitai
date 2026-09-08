@@ -46,9 +46,9 @@
           {#if r.state === 'training'}
             <div class="h-1.5 overflow-hidden rounded-full bg-dark-7">
               {#if r.progressPct > 0}
-                <div class="h-full bg-[#f59f00]" style={`width:${r.progressPct}%`}></div>
+                <div class="h-full bg-buzz" style={`width:${r.progressPct}%`}></div>
               {:else}
-                <div class="h-full w-1/3 animate-pulse bg-[#f59f00]/60"></div>
+                <div class="h-full w-1/3 animate-pulse bg-buzz/60"></div>
               {/if}
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>

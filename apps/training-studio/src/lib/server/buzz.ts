@@ -11,22 +11,18 @@ export function getBuzz(): BuzzClient {
   return client;
 }
 
-/** The user's spendable buzz for the header pill: yellow (purchased) + blue (generation). `total` sums the
- *  service's response directly (robust to its account-key casing, since only these two types are asked
- *  for); yellow/blue are best-effort for the tooltip. Returns null on any failure so a buzz-service blip
- *  never breaks the page — the header just omits the balance. */
+/** The user's spendable buzz per account — yellow (purchased), green (membership), blue (generation) — for
+ *  the header. Best-effort key mapping (the service keys by API type); returns null on any failure so a
+ *  buzz-service blip never breaks the page — the header just omits the balance. */
 export async function getSpendableBuzz(
   userId: number
-): Promise<{ total: number; yellow: number; blue: number } | null> {
+): Promise<{ yellow: number; green: number; blue: number } | null> {
   try {
-    const accounts = await getBuzz().getUserAccounts(userId, ['yellow', 'blue']);
-    const total = Object.values(accounts).reduce(
-      (sum, v) => sum + (typeof v === 'number' ? v : 0),
-      0
-    );
+    const accounts = await getBuzz().getUserAccounts(userId, ['yellow', 'green', 'blue']);
     const yellow = accounts['User'] ?? accounts['user'] ?? accounts['yellow'] ?? 0;
+    const green = accounts['Green'] ?? accounts['green'] ?? 0;
     const blue = accounts['Generation'] ?? accounts['generation'] ?? accounts['blue'] ?? 0;
-    return { total, yellow, blue };
+    return { yellow, green, blue };
   } catch {
     return null;
   }

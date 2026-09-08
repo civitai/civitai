@@ -5,6 +5,16 @@
 /* Tailwind v4 skips node_modules — point it at the shared component package so its classes aren't purged. */
 @source '../../../packages/civitai-ui/src/lib';
 
+/* Themeable Buzz color: `text-buzz` / `bg-buzz/15` etc. across the app resolve to this var, so the global
+   Buzz-type toggle (yellow ⇄ green) recolors every Buzz/price surface at once by swapping the var. Default
+   is gold (yellow buzz); `.buzz-green` on <html> flips it to green. */
+@theme {
+  --color-buzz: #f59f00;
+}
+html.buzz-green {
+  --color-buzz: #3bd671;
+}
+
 /* Civitai's brand accent is blue — the shared theme's `--primary` is a near-white accent, so override it
    here (the app is always `.dark`). Buzz/price stays gold: that's the literal `#f59f00`, not `--primary`,
    so it's unaffected. Unlayered on purpose so it wins over the theme's layered `.dark`. */

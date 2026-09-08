@@ -172,7 +172,7 @@
      tile renders its own gold badge inline.) -->
 {#snippet priceTag(amount: number | null, size: string)}
   {#if amount != null}
-    <span class="whitespace-nowrap font-mono {size} text-[#f59f00]">from ⚡{amount.toLocaleString()}</span>
+    <span class="whitespace-nowrap font-mono {size} text-buzz">from ⚡{amount.toLocaleString()}</span>
   {:else}
     <span class="whitespace-nowrap font-mono {size} text-dark-2">—</span>
   {/if}
@@ -261,7 +261,7 @@
       </div>
       {#if recommendedCard}
         <p class="mb-3 text-[12.5px] leading-snug text-dark-1">
-          <span class="text-[#f59f00]">★</span>
+          <span class="text-buzz">★</span>
           We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
           {type.name.toLowerCase()}
           {media} LoRA — or pick any below.
@@ -323,7 +323,7 @@
             <div class="mt-2 flex items-center gap-2">
               {#if cardPrice != null}
                 <span
-                  class="inline-flex items-center whitespace-nowrap rounded border border-[#f59f00]/25 bg-[#f59f00]/[0.08] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#f59f00]"
+                  class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
                 >
                   from ⚡{cardPrice.toLocaleString()}
                 </span>
@@ -400,7 +400,7 @@
                   <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
                   {#if v.surcharge}
                     <div
-                      class="mt-0.5 inline-flex rounded bg-[#f59f00]/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#f59f00]"
+                      class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
                     >
                       +⚡{v.surcharge.toLocaleString()}
                     </div>
@@ -486,7 +486,7 @@
                     <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
                     {#if v.surcharge}
                       <div
-                        class="mt-0.5 inline-flex rounded bg-[#f59f00]/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#f59f00]"
+                        class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
                       >
                         +⚡{v.surcharge.toLocaleString()}
                       </div>
@@ -531,7 +531,7 @@
     <div class="mt-3.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm text-dark-2">Starting at</span>
       {#if total != null}
-        <span class="font-mono text-2xl font-bold text-[#f59f00]">⚡ {total.toLocaleString()}</span>
+        <span class="font-mono text-2xl font-bold text-buzz">⚡ {total.toLocaleString()}</span>
       {:else}
         <span class="font-mono text-2xl font-bold text-dark-2">—</span>
       {/if}
@@ -546,7 +546,7 @@
       <svg
         viewBox="0 0 24 24"
         fill="none"
-        stroke="#f59f00"
+        stroke="var(--color-buzz)"
         stroke-width="2"
         stroke-linecap="round"
         stroke-linejoin="round"

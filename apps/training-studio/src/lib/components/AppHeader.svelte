@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { IconBolt, IconChevronDown } from '@tabler/icons-svelte';
+  import { IconBoltFilled, IconChevronDown } from '@tabler/icons-svelte';
   import { getEdgeUrl } from '$lib/edge-url';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
 
   let {
     username,
@@ -11,11 +12,12 @@
     username?: string;
     image?: string;
     logoutUrl?: string | null;
-    buzz?: { total: number; yellow: number; blue: number } | null;
+    buzz?: { yellow: number; green: number; blue: number } | null;
   } = $props();
 
   const avatarUrl = $derived(getEdgeUrl(image));
-  const buzzTotal = $derived(buzz ? buzz.total : null);
+  // The chosen primary account's balance (yellow or green); blue (generation) is always available too.
+  const primaryBalance = $derived(buzz ? (buzzMode.value === 'green' ? buzz.green : buzz.yellow) : 0);
 </script>
 
 <header class="mb-6 flex items-center justify-between gap-3">
@@ -35,14 +37,20 @@
     <a href="/" class="font-mono text-sm text-dark-2 transition-colors hover:text-white">
       My trainings
     </a>
-    {#if buzzTotal !== null}
-      <span
-        class="inline-flex items-center gap-1 rounded-full bg-[#f59f00]/15 px-2.5 py-1 font-mono text-sm font-semibold text-[#f59f00]"
-        title="Purchased {buzz?.yellow.toLocaleString()} · Generation {buzz?.blue.toLocaleString()}"
+    {#if buzz}
+      <button
+        type="button"
+        onclick={() => buzzMode.toggle()}
+        title={`Yellow ${buzz.yellow.toLocaleString()} · Green ${buzz.green.toLocaleString()} · Blue ${buzz.blue.toLocaleString()} (generation) — click to switch primary Buzz`}
+        class="inline-flex items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25"
       >
-        <IconBolt size={15} stroke={2.5} />
-        {buzzTotal.toLocaleString()}
-      </span>
+        <IconBoltFilled size={15} />
+        {primaryBalance.toLocaleString()}
+        <span class="text-[10px] font-normal capitalize opacity-70">{buzzMode.value}</span>
+        <span class="ml-1 border-l border-current/20 pl-1.5 text-[11px] font-normal text-dark-1">
+          +{buzz.blue.toLocaleString()} gen
+        </span>
+      </button>
     {/if}
     {#if username}
       <details class="relative">
