@@ -53,8 +53,7 @@ export const rewardsAbusePrevention = createJob(
     //
     // Exact, not `uniq`: the having-clause compares these two counts for EQUALITY, and an
     // equality between two HyperLogLog estimates is unstable on exactly the boundary the test
-    // lives on. Measured on one day's data, the approximate form returned 130 IPs and then 48
-    // minutes apart; the exact form returned 48 three times.
+    // lives on.
     const exclusivity = abuseLimits.require_exclusive_ip
       ? {
           where: '',
