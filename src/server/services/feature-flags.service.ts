@@ -121,6 +121,13 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // The two-pane /user/account shell. `availability: []` = DARK and fails CLOSED, so the Flipt
+  // `account-settings-v2` rollout is the only on-switch and OFF serves the legacy single-column
+  // page byte-identically. NOT `['public']`: that reads true whenever the Flipt key is missing or
+  // Flipt is unreachable, which would cut every user over during an outage — and this page is the
+  // landing target for Stripe and Tipalti `return_url`s, so a bad cutover strands payout onboarding
+  // rather than merely looking wrong. Instant rollback = set the threshold to 0.
+  accountSettingsV2: { availability: [], fliptKey: 'account-settings-v2' },
   // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
   // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
   // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
