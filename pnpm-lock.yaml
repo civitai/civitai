@@ -1416,6 +1416,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
+      '@civitai/flipt':
+        specifier: workspace:*
+        version: link:../../packages/civitai-flipt
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
