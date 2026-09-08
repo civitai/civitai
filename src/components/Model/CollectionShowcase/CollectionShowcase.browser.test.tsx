@@ -20,13 +20,11 @@ type Overrides = Partial<ReturnType<typeof useModelShowcaseCollection>>;
 function showcaseState(overrides: Overrides = {}) {
   return {
     items: [],
+    collection: { id: 7, itemCount: 2145 },
     isLoading: false,
     isError: false,
     hasNextPage: true,
-    fetchNextPage: vi.fn(),
-    isFetching: false,
     isRefetching: false,
-    pageCount: 1,
     refetch: vi.fn(),
     ...overrides,
   };
@@ -58,35 +56,24 @@ beforeEach(() => {
   useModelShowcaseCollection.mockReset();
 });
 
-describe('CollectionShowcase auto-loading', () => {
-  test('below the page cap it keeps the in-view loader', async () => {
-    useModelShowcaseCollection.mockReturnValue(showcaseState({ items: [item(1)], pageCount: 4 }));
+describe('CollectionShowcase overflow', () => {
+  test('a collection with more items hands off to the collection page', async () => {
+    useModelShowcaseCollection.mockReturnValue(showcaseState({ items: [item(1)] }));
+    render();
+
+    const link = page.getByRole('link', { name: /View all 2,145 models/ });
+    await expect.element(link).toBeInTheDocument();
+    await expect.element(link).toHaveAttribute('href', '/collections/7');
+  });
+
+  test('a collection that fits shows no hand-off', async () => {
+    useModelShowcaseCollection.mockReturnValue(
+      showcaseState({ items: [item(1)], hasNextPage: false })
+    );
     render();
 
     await expect.element(page.getByText('Model 1')).toBeInTheDocument();
-    expect(page.getByRole('button', { name: 'Load more' }).elements()).toHaveLength(0);
-  });
-
-  test('at the page cap it stops auto-loading and offers a manual Load more', async () => {
-    const fetchNextPage = vi.fn();
-    useModelShowcaseCollection.mockReturnValue(
-      showcaseState({ items: [item(1)], pageCount: 5, fetchNextPage })
-    );
-    render();
-
-    const button = page.getByRole('button', { name: 'Load more' });
-    await expect.element(button).toBeInTheDocument();
-    await button.click();
-    expect(fetchNextPage).toHaveBeenCalledTimes(1);
-  });
-
-  test('a failed fetch stops auto-loading rather than retrying on a timer', async () => {
-    useModelShowcaseCollection.mockReturnValue(
-      showcaseState({ items: [item(1)], pageCount: 1, isError: true })
-    );
-    render();
-
-    await expect.element(page.getByRole('button', { name: 'Load more' })).toBeInTheDocument();
+    expect(page.getByRole('link', { name: /View all/ }).elements()).toHaveLength(0);
   });
 });
 
@@ -94,7 +81,7 @@ describe('CollectionShowcase error state', () => {
   test('an errored first page reads as a failure, not as an empty collection', async () => {
     const refetch = vi.fn();
     useModelShowcaseCollection.mockReturnValue(
-      showcaseState({ items: [], pageCount: 0, isError: true, refetch })
+      showcaseState({ items: [], isError: true, refetch })
     );
     render();
 
