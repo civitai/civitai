@@ -222,6 +222,14 @@ const SUB_NAV_LINKS: SubNavLink[] = [
    * `appBlocksPages` WITHOUT `appBlocks` still gets an all-false summary and no tab.
    * Closing that means moving the procedure's own gate, which is a wider blast radius
    * than this row (every flag on the summary would widen with it).
+  // ⚠️ …AND THAT RESIDUAL IS NARROWER THAN THE SENTENCE ABOVE IMPLIES — corrected after an
+  // audit, because as written it invites a future widening of a `blocks.*` flag gate to
+  // close a gap that is effectively EMPTY. That cohort is refused by `/apps/run` itself
+  // (`[[...path]].tsx` requires BOTH `appBlocks` and `appBlocksPages`) and cannot install
+  // (slot installs are `appBlocks`-gated), so going forward they can generate NO activity
+  // at all: an all-false summary is the CORRECT tab set for them, not a deprivation. The
+  // only way they hold rows is a historical `appBlocks` grant since revoked. Do not widen
+  // the procedure's gate for this.
    */
   {
     href: '/apps/activity',

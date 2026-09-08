@@ -1,3 +1,4 @@
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/user-app-surface.service';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
@@ -2653,7 +2654,10 @@ export const blocksRouter = router({
         dbRead.blockScopeInvocation.findFirst({
           where: {
             userId: user.id,
-            OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }],
+            // 🔴 IMPORTED, NEVER RE-SPELLED — see GLOBAL_SCOPE_ACTIVITY_OR. A second copy of
+            // this OR is the exact drift an audit demonstrated: tighten the feed, update the
+            // feed's own literal, and both suites stay green while this probe over-matches.
+            ...GLOBAL_SCOPE_ACTIVITY_OR,
           },
           select: { id: true },
         }),

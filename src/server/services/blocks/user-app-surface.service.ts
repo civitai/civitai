@@ -117,9 +117,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   for (const row of subs) {
     if (!row.appBlock) continue;
     const isPinned =
-      row.slotId !== null &&
-      Array.isArray(row.targetModelIds) &&
-      row.targetModelIds.length > 0;
+      row.slotId !== null && Array.isArray(row.targetModelIds) && row.targetModelIds.length > 0;
     const existing = byAppBlock.get(row.appBlockId);
     if (existing) {
       if (isPinned) existing.modelInstallCount += row.targetModelIds.length;
@@ -218,6 +216,27 @@ export type AppActivityPage = {
 };
 
 const APP_ACTIVITY_MAX_LIMIT = 100;
+
+/**
+ * 🔴 THE ONE DEFINITION OF "a scope invocation that COUNTS as app activity", exported so
+ * `blocks.getNavSummary`'s `hasActivity` probe can import it instead of keeping a second copy.
+ *
+ * An `app-block` row has `appBlockId`; a synthetic dev-tunnel row has `syntheticAppId`; an
+ * EXTERNAL-OAUTH row has NEITHER, and must be excluded — otherwise an external-OAuth-only
+ * viewer is handed an Activity tab over a feed that says "No activity yet".
+ *
+ * 🔴 WHY THIS IS EXPORTED RATHER THAN WRITTEN TWICE. It was written twice, and an audit
+ * DEMONSTRATED the drift rather than arguing it: tightening the FEED's clause and updating the
+ * feed's own test literal — exactly what someone making that change would do — left BOTH
+ * sides' suites green (65/65) while the probe silently over-matched. Each test asserted its own
+ * side against a hand-copied literal, so neither could see the other move. That is the
+ * "docstring names a RELATIONSHIP, body inspects one SIDE" defect. One export closes it: a
+ * future edit here moves the probe by construction, and `__tests__/scopeActivityPredicate.test.ts`
+ * pins that both call sites read THIS symbol rather than re-spelling it.
+ */
+export const GLOBAL_SCOPE_ACTIVITY_OR: { OR: Array<Record<string, { not: null }>> } = {
+  OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }],
+};
 
 /**
  * Paginated, viewer-scoped activity feed. Walks `block_buzz_attribution`
@@ -448,9 +467,7 @@ export async function listMyScopeInvocations(opts: {
     // client types (CI-regenerated; may lag locally).
     where: {
       userId: opts.userId,
-      ...(opts.appBlockId
-        ? { appBlockId: opts.appBlockId }
-        : { OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }] }),
+      ...(opts.appBlockId ? { appBlockId: opts.appBlockId } : GLOBAL_SCOPE_ACTIVITY_OR),
     } as unknown as Prisma.BlockScopeInvocationWhereInput,
     orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
     take: cappedLimit + 1,
@@ -471,9 +488,7 @@ export async function listMyScopeInvocations(opts: {
   const hasNext = rows.length > cappedLimit;
   const visible = hasNext ? rows.slice(0, cappedLimit) : rows;
   const nextCursor =
-    hasNext && visible.length > 0
-      ? visible[visible.length - 1]!.id.toString()
-      : null;
+    hasNext && visible.length > 0 ? visible[visible.length - 1]!.id.toString() : null;
 
   const items: ScopeInvocationItem[] = visible.map((r) => {
     const manifest = (r.appBlock?.manifest ?? {}) as { name?: unknown };
@@ -600,15 +615,18 @@ export async function recordScopeInvocation(opts: {
     // an FK violation so a deleted REAL app on the normal path keeps the historical
     // "log, no row" behaviour (never mislabelled synthetic).
     const isFkViolation =
-      typeof err === 'object' &&
-      err !== null &&
-      (err as { code?: unknown }).code === 'P2003';
+      typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2003';
     // Gate the synthetic path on a SYNTHETIC-id PREFIX, not merely `dev && P2003`.
     // A dev token can carry a REAL `apb_<ulid>` appBlockId whose AppBlock row was
     // deleted between mint and spend — that FK-fails too, but it is NOT synthetic,
     // so it must keep the historical "log, no row" behaviour (never mislabelled
     // `synthetic_app_id = <real id>`). Only a genuine synthetic namespace retries.
-    if (opts.dev && isFkViolation && opts.appBlockId != null && isSyntheticAppBlockId(opts.appBlockId)) {
+    if (
+      opts.dev &&
+      isFkViolation &&
+      opts.appBlockId != null &&
+      isSyntheticAppBlockId(opts.appBlockId)
+    ) {
       try {
         // `appBlockId: null` + `syntheticAppId` require the schema change in this
         // PR (BlockScopeInvocation.appBlockId → nullable, + synthetic_app_id).
