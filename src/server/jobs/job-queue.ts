@@ -3,7 +3,11 @@ import dayjs from '~/shared/utils/dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import {
+  collectionsSearchIndex,
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+} from '~/server/search-index';
 import {
   getNsfwLevelRelatedEntities,
   updateCollectionsNsfwLevels,
@@ -175,7 +179,23 @@ const updateNsfwLevelsCollectionsJob = createJob(
       // Smaller batch size for more granular processing
       await Limiter({ batchSize: 20, limit: 3 }).process(collectionIds, async (batchIds) => {
         try {
+          // Every id in the batch, not just the ones `updateCollectionsNsfwLevels`
+          // returns — it returns only collections whose level actually moved
+          // (`AND c."nsfwLevel" != c2."nsfwLevel"`), which removing an item rarely does.
+          // The queue row is the signal that membership changed; the level change is a
+          // rare side effect of it, and gating on it left documents stale.
+          //
+          // Ahead of the recompute, not after it: the recompute is two EXISTS
+          // subqueries over four LEFT JOINs per collection and collections of ~191k
+          // items exist, so it can time out — and a batch that fails deterministically
+          // would otherwise never tell the index about any of its 20 collections. On
+          // retry the duplicate costs nothing; the queue is a Redis set.
+          await collectionsSearchIndex.queueUpdate(
+            batchIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+          );
+
           await updateCollectionsNsfwLevels(batchIds);
+
           await dbWrite.jobQueue.deleteMany({
             where: {
               type: JobQueueType.UpdateNsfwLevel,

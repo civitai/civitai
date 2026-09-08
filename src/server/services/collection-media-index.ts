@@ -102,6 +102,15 @@ const DEFAULT_COLLECTION_CAP = 10_000;
 const ENQUEUE_BATCH_SIZE = 500;
 
 /**
+ * Caps the post's image-id lookup, and is NOT the collection cap. These ids are
+ * interpolated into seven or eight legs downstream, so `DEFAULT_COLLECTION_CAP` worth of
+ * them would blow past Postgres's 65,535 bind-parameter ceiling — and that throw is
+ * caught as "resolved nothing", silently losing all six image routes. A post holds at
+ * most `POST_IMAGE_LIMIT` images, so this is far above any real post.
+ */
+export const POST_IMAGE_LOOKUP_CAP = 1_000;
+
+/**
  * `truncated` says only THAT the cap was reached, never by how much.
  *
  * Every lookup stops at `LIMIT cap + 1`, so the largest overflow any of them can
@@ -394,4 +403,142 @@ export async function enqueueCollectionRebuild({
     }).catch(() => undefined);
 
   return { queued: collectionIds.length, truncated };
+}
+
+/**
+ * Collections whose document is affected by hard-deleting a post.
+ *
+ * Not just the post's own item row. `deletePost` raw-`DELETE`s the post's images inside
+ * its transaction instead of calling `deleteImageById`, so the image-side enqueue never
+ * fires for them; images it declines to delete survive with `postId` nulled
+ * (`Image.postId` is `ON DELETE SET NULL`), dropping them from the `postItemImage` and
+ * `modelItemImage` CTEs.
+ *
+ * The image ids are resolved ONCE and handed to `getCollectionIdsForImages` as bound
+ * literals rather than re-derived per leg. A repeated
+ * `SELECT id FROM "Image" WHERE "postId" = $1` estimates 148 rows at every occurrence,
+ * and the planner then merge-joins the whole of `Collection_imageId_idx` for the cover
+ * leg and sequentially scans `Model3D` for the thumbnail leg — two of the seven stop
+ * being index probes, on the primary, on a user-facing delete.
+ *
+ * Resolve BEFORE the delete: `CollectionItem.postId` cascades and the images go with it.
+ */
+export async function getCollectionIdsForPostCascade({
+  postId,
+  source = 'post-delete',
+  cap = DEFAULT_COLLECTION_CAP,
+}: {
+  postId: number;
+  source?: string;
+  cap?: number;
+}): Promise<CollectionsToRebuild> {
+  // Independent of each other, so one round trip instead of two on a user-facing
+  // delete. Each swallows its own failure: the membership leg does not need the image
+  // ids, and losing one must not cost the other.
+  const [images, own] = await Promise.all([
+    (async (): Promise<{ ids: number[]; truncated: boolean }> => {
+      try {
+        const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+          SELECT i.id FROM "Image" i
+          WHERE i."postId" = ${postId}
+          LIMIT ${POST_IMAGE_LOOKUP_CAP + 1}
+        `;
+        // Truncating here under-resolves all six image routes. Reporting it as a clean
+        // result would leave stale documents with nothing to say anything was dropped.
+        if (rows.length > POST_IMAGE_LOOKUP_CAP) {
+          logToAxiom({
+            type: 'warning',
+            name: 'collection-media-index-post-images-truncated',
+            message: `${source}: post ${postId} has more than ${POST_IMAGE_LOOKUP_CAP} images; collections reached only through the images past that point are not being re-indexed.`,
+            source,
+            postId,
+            cap: POST_IMAGE_LOOKUP_CAP,
+          }).catch(() => undefined);
+        }
+        return {
+          ids: rows.slice(0, POST_IMAGE_LOOKUP_CAP).map((r) => r.id),
+          truncated: rows.length > POST_IMAGE_LOOKUP_CAP,
+        };
+      } catch (error) {
+        logFailure(
+          'collection-media-index-post-images-failed',
+          source,
+          `could not list the images of post ${postId}; resolving its own membership only`,
+          error
+        );
+        return { ids: [], truncated: false };
+      }
+    })(),
+    (async (): Promise<CollectionsToRebuild> => {
+      try {
+        const rows = await dbWrite.$queryRaw<{ collectionId: number }[]>`
+          SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."postId" = ${postId}
+          LIMIT ${cap + 1}
+        `;
+        return applyCap(rows, cap);
+      } catch (error) {
+        logFailure(
+          'collection-media-index-resolve-failed',
+          source,
+          `failed to resolve collections for post ${postId}`,
+          error
+        );
+        return EMPTY;
+      }
+    })(),
+  ]);
+
+  const viaImages = images.ids.length
+    ? await getCollectionIdsForImages({ imageIds: images.ids, source, cap })
+    : EMPTY;
+
+  const merged = [...new Set([...own.collectionIds, ...viaImages.collectionIds])];
+  return {
+    collectionIds: merged.slice(0, cap),
+    truncated: own.truncated || viaImages.truncated || images.truncated || merged.length > cap,
+  };
+}
+
+/**
+ * Collections holding an article as an item.
+ *
+ * Buys latency, not coverage: `CollectionItem.articleId` is `ON DELETE CASCADE`, and an
+ * RI cascade fires the `CollectionItem` row trigger, so `update-nsfw-levels-collections`
+ * would reach every one of these within a few minutes anyway. Kept so an article delete
+ * is reflected immediately; do not defend it as load-bearing. (`getCollectionIdsForPostCascade`
+ * IS load-bearing — its model, model3d, article-cover, collection-cover and avatar legs
+ * involve no `CollectionItem` change, so the trigger cannot see them.)
+ *
+ * Only the one leg: the article's cover and content images are removed through
+ * `deleteImageById`, which resolves and enqueues on its own. What nothing observes is
+ * `CollectionItem.articleId` cascading when the Article row goes — and it goes FIRST,
+ * so by the time `deleteImageById` runs, the image path's article leg
+ * (`WHERE a."coverId" IN (…)`) can no longer match. Resolve before the transaction.
+ */
+export async function getCollectionIdsForArticle({
+  articleId,
+  source = 'article-delete',
+  cap = DEFAULT_COLLECTION_CAP,
+}: {
+  articleId: number;
+  source?: string;
+  cap?: number;
+}): Promise<CollectionsToRebuild> {
+  try {
+    const rows = await dbWrite.$queryRaw<{ collectionId: number }[]>`
+      SELECT DISTINCT ci."collectionId" FROM "CollectionItem" ci
+      WHERE ci."articleId" = ${articleId}
+      LIMIT ${cap + 1}
+    `;
+    return applyCap(rows, cap);
+  } catch (error) {
+    logFailure(
+      'collection-media-index-resolve-failed',
+      source,
+      `failed to resolve collections for article ${articleId}`,
+      error
+    );
+    return EMPTY;
+  }
 }
