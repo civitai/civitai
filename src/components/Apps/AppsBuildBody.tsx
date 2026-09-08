@@ -15,6 +15,7 @@ import {
   CLI_INSTALL_NPM,
   CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
+import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
@@ -52,8 +53,18 @@ const CREATE_FLOW_HREF = '/apps/submit';
  * author for one frame. `blocks.getNavSummary` is genuinely client-only (tRPC runs
  * `ssr: false`), so its two booleans are absent on the server render; using them
  * un-deferred is the tab-set hydration mismatch (#418/#425) that bailed hydration of the
- * entire `/apps` root once already. So an author renders `first-app` on the server and on
- * the first client paint, and settles to `workbench` after mount if they have anything.
+ * entire `/apps` root once already.
+ *
+ * 🔴 SO AN AUTHOR'S FIRST PAINT IS A SKELETON, NOT A STATE — AND THAT SENTENCE IS THE FIX.
+ * This paragraph used to end "an author renders `first-app` on the server and on the first
+ * client paint, and settles to `workbench` after mount if they have anything", which was an
+ * accurate description of a BUG: `resolveAppsBuildState` reads an unresolved summary
+ * (all-false) as `first-app`, so every author who HAS apps was shown "Ship your first app"
+ * and then swapped. The deferral above is still exactly right — the summary genuinely
+ * cannot be known on the server — but the answer to "what do we render while we do not
+ * know" is `AppsBuildBodySkeleton`, not a guess. Server and first client paint are still
+ * byte-identical, which is all hydration asks; they are now identical to each OTHER and to
+ * nothing the viewer will be told is their state.
  */
 export function AppsBuildBody() {
   const currentUser = useCurrentUser();
@@ -72,8 +83,14 @@ export function AppsBuildBody() {
   // answer. All-false is also the CORRECT summary for such a viewer: the workbench they
   // would resolve to reads `appListings.listMine`, and its Withdraw action carries
   // `enforceAppBlocksFlag` too.
+  // 🔴 HOISTED OUT OF THE OPTIONS OBJECT SO THE WAIT CAN READ IT, AND THAT IS THE WHOLE
+  // REASON IT IS A NAMED CONST. `isFetched` NEVER goes true for a query that never ran, so
+  // "wait until fetched" would wait FOREVER for a viewer whose `enabled` is false — see
+  // `settled` below, where that would have been a permanent skeleton.
+  const summaryEnabled = !!features.appBlocks && !!currentUser && isAuthor;
+
   const { data: summary, isFetched } = trpc.blocks.getNavSummary.useQuery(undefined, {
-    enabled: !!features.appBlocks && !!currentUser && isAuthor,
+    enabled: summaryEnabled,
     staleTime: 60_000,
   });
 
@@ -108,8 +125,23 @@ export function AppsBuildBody() {
   // nothing in the data reveals. They are also the population most worth seeing. (This
   // paragraph is the correction to a comment that already claimed "resolves or errors"
   // while the code only handled "resolves" — the claim was written first and was wrong.)
+  //
+  // 🔴 `summaryEnabled`, NOT `isAuthor`, IS WHAT DECIDES WHETHER THERE IS ANYTHING TO WAIT
+  // FOR — and that is a correction to this predicate, not a restatement of it. It read
+  // `!isAuthor || (isClient && isFetched)`, which is `false` FOREVER for an author whose
+  // query is disabled: `appBlocks` is store-runtime access while the PAGE gate is
+  // `hasAppsStoreAccess` (`appListings || appBlocks || appListingsPublicExternal`), so an
+  // author holding `appListings` alone reaches this page with the query switched off. Under
+  // the old spelling they posted no `view` at all — the same silently-truncated denominator
+  // the paragraph above rejects for the error cohort — and once `settled` also gates the
+  // RENDER they would have sat under the skeleton permanently. The all-false summary is
+  // that viewer's CORRECT and FINAL answer (see the `enabled` note above), so they settle
+  // immediately, on the first paint, exactly like a non-author. A non-author is still
+  // covered: `summaryEnabled` includes `isAuthor`, so it is false for them and `pending` is
+  // false, which is why there is no separate `!isAuthor ||` term any more.
   const viewed = useRef(false);
-  const settled = !isAuthor || (isClient && isFetched);
+  const summaryPending = summaryEnabled && !(isClient && isFetched);
+  const settled = !summaryPending;
   useEffect(() => {
     if (viewed.current || !settled) return;
     viewed.current = true;
@@ -118,6 +150,25 @@ export function AppsBuildBody() {
 
   const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
+
+  // 🔴 THE UNSETTLED WINDOW RENDERS NEITHER B NOR C, AND THAT IS THE BUG FIX. `state` is
+  // computed from an all-false summary until `getNavSummary` lands, and
+  // `resolveAppsBuildState` reads all-false as `first-app` — so every author who HAS apps
+  // used to be shown "Ship your first app" on the server render and on the first client
+  // paint, then swapped to their workbench. Wrong screen, every visit. The skeleton commits
+  // to neither; see `AppsBuildBodySkeleton` for why it deliberately mirrors neither.
+  //
+  // 🔴 IT IS THE SAME `settled` THE `view` EVENT USES, ON PURPOSE. Two predicates here is
+  // how the analytics start describing a screen nobody saw: a render gate that let B through
+  // early, or a view gate that fired under the skeleton, would each re-open exactly the
+  // phantom-`first-app` inflation the effect above exists to prevent. One boolean, both
+  // consumers.
+  //
+  // 🔴 AND IT CANNOT SWALLOW STATE A. `settled` is derived from `summaryPending`, which is
+  // `false` whenever the query is not enabled — and it is never enabled for a non-author. So
+  // the pitch, the only PUBLIC-facing and deliberately-indexable state, still renders on the
+  // server with no loading frame in front of it.
+  if (!settled) return <AppsBuildBodySkeleton />;
 
   if (state === 'workbench') {
     return (

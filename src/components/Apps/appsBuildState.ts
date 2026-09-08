@@ -33,6 +33,14 @@
  * resolves to `pitch` identically on both sides, and an author resolves to `first-app`
  * on both sides and may then move to `workbench` after mount. The state can only ever
  * settle FORWARD, never from workbench back to pitch.
+ *
+ * 🔴 THAT PRE-SETTLE `first-app` IS NOT RENDERED, AND THIS FUNCTION IS NOT WHAT STOPS IT.
+ * Reading all-false as `first-app` is correct ARITHMETIC and was a live wrong-screen bug at
+ * the CALL SITE, which used to render whatever this returned from the very first paint — so
+ * every author with apps saw "Ship your first app" flash. `AppsBuildBody` now renders
+ * `AppsBuildBodySkeleton` until its summary query has settled and only then consults this
+ * function, so do not "fix" the branch below by inventing an `unknown` state: the caller
+ * knows whether it has an answer and this pure function deliberately does not.
  */
 export const APPS_BUILD_STATES = ['pitch', 'first-app', 'workbench'] as const;
 
