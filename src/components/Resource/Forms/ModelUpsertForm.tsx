@@ -47,7 +47,7 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TagSort } from '~/server/common/enums';
-import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import type { ModelMeta, ModelUpsertInput } from '~/server/schema/model.schema';
 import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
@@ -154,6 +154,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   // form before `model` arrived.
   const initialModel = useRef(model).current;
   const { grandfatheredType, initialType, replacedType } = resolveModelTypeDefaults(initialModel);
+  const initialMeta = model?.meta as ModelMeta | null | undefined;
   const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
@@ -177,6 +178,14 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
     attestation: !!model?.id,
     availability: model?.availability ?? Availability.Public,
+    // A model whose `meta` is null predates the metric-privacy feature. Left null, RHF's `get`
+    // returns null (not the default) for every `meta.*` path and the three switches submit null.
+    meta: {
+      ...(initialMeta ?? {}),
+      hideBuzz: initialMeta?.hideBuzz ?? false,
+      hideDownloads: initialMeta?.hideDownloads ?? false,
+      hideGenerations: initialMeta?.hideGenerations ?? false,
+    },
   };
 
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
