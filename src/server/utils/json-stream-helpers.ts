@@ -91,9 +91,9 @@ export async function* serializeJsonObject(
  * `pipeline` also settles the question the caller actually cares about — this file is read back
  * with `fs.createReadStream` and uploaded immediately. It ends the sink and does not resolve
  * until the sink has closed, not merely finished, for a Writable with `autoDestroy` (the default,
- * and what `fs.createWriteStream` is). Measured on node v24.19.0 and v26.8.0, over 20 rounds of a
- * 4 MB document: `'close'` had already fired and the file was byte-complete every time `pipeline`
- * resolved. "the file is complete the instant writeJsonObject resolves" pins that as an outcome.
+ * and what `fs.createWriteStream` is). Measured on node v24.19.0 (the pinned toolchain) and again
+ * on a node 26 host, over 20 rounds of a 4 MB document: `'close'` had already fired and the file
+ * was byte-complete every time `pipeline` resolved. "the file is complete the instant writeJsonObject resolves" pins that as an outcome.
  *
  * 🔴 Do NOT add a second `await` on the sink's `'close'` here. A previous revision did, under a
  * comment asserting that `pipeline` gave no such guarantee. That assertion was false — and the

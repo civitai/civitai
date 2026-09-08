@@ -1201,8 +1201,9 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
  *   bounded appender caps the backlog at `MAX_PENDING_ARCHIVE_ENTRIES`, which drains far too
  *   fast to observe without a timing-dependent assertion. Its effect was measured separately on
  *   an UNBOUNDED queue, where it is unmissable: with the sink destroyed and no `abort()`, the
- *   archiver went on to deflate all 60 of 60 queued entries; with `abort()`, 0. So it does real
- *   work — it is just bounded work here, and it is recorded as untested rather than as covered.
+ *   archiver went on to deflate all 60 of 60 queued entries; with `abort()` it stopped dead —
+ *   0 further entries on node 26, 1 on node 24 (whichever was already in flight). So it does
+ *   real work; it is just bounded work here, recorded as untested rather than as covered.
  */
 function closeArchiveOnFailure(archive: Archiver, output: fs.WriteStream) {
   archive.abort();
@@ -1379,8 +1380,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           where: {
             // A COPY of `modelIds`, not the live array.
             //
-            // NOT because of a production race. The ordering invariant asserted a dozen lines
-            // above means this closure is only ever built after `streamModels` has been drained,
+            // NOT because of a production race. The ordering invariant asserted at the top of
+            // `streamModelVersions` means this closure is only ever built after `streamModels`
+            // has been drained,
             // so `modelIds` is already complete and nothing appends to it while these pages are
             // fetched. An earlier revision of this comment claimed the array was "still being
             // appended to" here; that was wrong, and the invariant directly above it says so.
