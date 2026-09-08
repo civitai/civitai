@@ -690,21 +690,36 @@ export const getCivitaiEvents = async () => {
 };
 
 /**
- * Does the article exist as a published article for anyone, regardless of ingestion state?
+ * Ingestion state of an article that is published for everyone, or null if it is not published at
+ * all. Callers apply their own policy to it — the two that exist disagree, deliberately.
  *
- * `getArticleById` additionally requires `ingestion = Scanned` for non-owners, so editing a live
- * article (which sets `Rescan`) makes it throw NOT_FOUND to the public for the length of the scan
- * — minutes, or longer when a scan is stranded. SSR uses this to tell "nobody can ever see this"
- * apart from "temporarily unrenderable", so only the first becomes a 404.
+ * `getArticleById` additionally requires `ingestion = Scanned` for non-owners, so a published
+ * article throws NOT_FOUND to the public until its images finish scanning. An edit to a live
+ * article re-enters that window (upsert sets `Rescan`), so it is not publish-only.
+ *
+ * SSR asks "could this ever render?" and holds its 200 for anything that might still resolve,
+ * because a 404 on an indexed URL is not a state to enter transiently. The viewer-facing
+ * procedure asks the narrower "is it resolving right now?" — `Error` may recover on a retry but
+ * has no bounded wait to promise a reader, and `Blocked` never resolves.
  */
-export const isArticlePublished = async (id: number) => {
+export const getPublishedArticleIngestion = async (
+  id: number
+): Promise<ArticleIngestionStatus | null> => {
   const db = await getDbWithoutLag('article', id);
   const article = await db.article.findFirst({
     where: { id, publishedAt: { not: null }, status: ArticleStatus.Published },
-    select: { id: true },
+    select: { ingestion: true },
   });
 
-  return !!article;
+  return article?.ingestion ?? null;
+};
+
+/** Is the article inside the transient scan window that hides it from non-owners? */
+export const isArticleProcessing = async ({ id }: GetByIdInput) => {
+  const ingestion = await getPublishedArticleIngestion(id);
+  return (
+    ingestion === ArticleIngestionStatus.Pending || ingestion === ArticleIngestionStatus.Rescan
+  );
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
