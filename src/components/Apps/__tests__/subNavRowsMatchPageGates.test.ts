@@ -14,7 +14,7 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  *   • Marketplace → `/apps`       vs `resolveAppsPageAccess`
  *   • Build       → `/apps/build` vs `resolveBuildPageAccess`
  * Those are the two whose visibility is a FLAG decision, and therefore the two that can
- * drift from a page gate. The remaining four (Installed / Invites / Revenue / Review) key
+ * drift from a page gate. The remaining four (Activity / Invites / Revenue / Review) key
  * off `getNavSummary` DATA — `s.hasInstalls`, `s.isReviewer`, … — which is a server answer
  * about this user, not a rule restated at the row, so there is no second copy to disagree
  * with. They are covered by the `no row is unconditionally visible` check below, which is
