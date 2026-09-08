@@ -124,7 +124,7 @@ const MV_QUERY_RE =
  * and would need revisiting if one were ever added. It rewrites NOTHING except whitespace and
  * those three punctuation marks — digits, signs and identifiers are untouched — so both
  * mutations above survive normalisation and fail the comparison rather than being normalised
- * away. That is not reasoning: it is the M-A/M-B result recorded in the PR.
+ * away. That is not reasoning about the regex: it is the measured M11/M12 result in the PR.
  */
 const normalizeSql = (sql: string) =>
   sql
