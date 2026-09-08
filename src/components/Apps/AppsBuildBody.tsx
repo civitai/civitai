@@ -15,11 +15,16 @@ import {
   CLI_INSTALL_NPM,
   CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
+import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
-import { resolveAppsBuildState, type AppsBuildState } from '~/components/Apps/appsBuildState';
+import {
+  resolveAppsBuildSettled,
+  resolveAppsBuildState,
+  type AppsBuildState,
+} from '~/components/Apps/appsBuildState';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -52,8 +57,21 @@ const CREATE_FLOW_HREF = '/apps/submit';
  * author for one frame. `blocks.getNavSummary` is genuinely client-only (tRPC runs
  * `ssr: false`), so its two booleans are absent on the server render; using them
  * un-deferred is the tab-set hydration mismatch (#418/#425) that bailed hydration of the
- * entire `/apps` root once already. So an author renders `first-app` on the server and on
- * the first client paint, and settles to `workbench` after mount if they have anything.
+ * entire `/apps` root once already.
+ *
+ * 🔴 SO THE FIRST PAINT OF AN AUTHOR *WHOSE SUMMARY QUERY RUNS* IS A SKELETON, NOT A STATE —
+ * AND THAT SENTENCE IS THE FIX. The qualifier is load-bearing and this line lacked it for two
+ * rounds: an author without `appBlocks` (admitted by `appListings`) has no query to wait for,
+ * settles on the first paint, and renders state B permanently. See the `enabled` retraction.
+ * This paragraph used to end "an author renders `first-app` on the server and on the first
+ * client paint, and settles to `workbench` after mount if they have anything", which was an
+ * accurate description of a BUG: `resolveAppsBuildState` reads an unresolved summary
+ * (all-false) as `first-app`, so every author who HAS apps was shown "Ship your first app"
+ * and then swapped. The deferral above is still exactly right — the summary genuinely
+ * cannot be known on the server — but the answer to "what do we render while we do not
+ * know" is `AppsBuildBodySkeleton`, not a guess. Server and first client paint are still
+ * byte-identical, which is all hydration asks; they are now identical to each OTHER and to
+ * nothing the viewer will be told is their state.
  */
 export function AppsBuildBody() {
   const currentUser = useCurrentUser();
@@ -68,12 +86,36 @@ export function AppsBuildBody() {
   // 🔴 THE `enabled` GATE MIRRORS THE PROCEDURE, NOT THE PAGE — the same rule `AppsSubNav`
   // documents. `blocks.getNavSummary` is `protectedProcedure.use(enforceAppBlocksFlag)`,
   // so without `appBlocks` or without a session it short-circuits to an all-false summary
-  // having read nothing; asking anyway would buy a guaranteed round-trip to a guaranteed
-  // answer. All-false is also the CORRECT summary for such a viewer: the workbench they
-  // would resolve to reads `appListings.listMine`, and its Withdraw action carries
-  // `enforceAppBlocksFlag` too.
+  // having read nothing (`enforceAppBlocksFlag` returns `next({ ctx: { _appBlocksDisabled: true } })`
+  // for a QUERY rather than throwing); asking anyway would buy a guaranteed round-trip to a
+  // guaranteed answer. That is the whole justification, and it is about this query only.
+  //
+  // 🔴 THE SECOND HALF OF THIS COMMENT WAS FALSE AND IS RETRACTED — DO NOT RE-DERIVE IT. It
+  // read: "All-false is also the CORRECT summary for such a viewer: the workbench they would
+  // resolve to reads `appListings.listMine`, and its Withdraw action carries
+  // `enforceAppBlocksFlag` too." The Withdraw half is right; the `listMine` half is not.
+  // `appListings.listMine` is `appDeveloperProcedure` = `protectedProcedure.use(
+  // hasAppBlocksAuthor)` (`~/server/trpc`), so it gates on **`appBlocksAuthor`**, not
+  // `appBlocks` — and every viewer in this cohort holds `appBlocksAuthor` by construction,
+  // because that is what made `isAuthor` true. So `listMine` SUCCEEDS for them and their
+  // workbench would have rendered.
+  //
+  // 🔴 SO THE HONEST STATEMENT IS NARROWER: all-false is the only answer this query CAN give
+  // them, not a true description of their account. A viewer holding `app-listings` but not
+  // `app-blocks-enabled` reaches this page (the page gate is `hasAppsStoreAccess`, a
+  // three-flag OR) and is shown "Ship your first app" PERMANENTLY even when they own apps.
+  // That is PRE-EXISTING — it predates the skeleton and this change does not alter that
+  // render — and fixing it means widening what the SUMMARY can answer, which is a server
+  // change to a `blocks.*` procedure and deliberately out of scope here. Recorded rather
+  // than papered over, because the retracted sentence above is what made it look handled.
+  // 🔴 HOISTED OUT OF THE OPTIONS OBJECT SO THE WAIT CAN READ IT, AND THAT IS THE WHOLE
+  // REASON IT IS A NAMED CONST. `isFetched` NEVER goes true for a query that never ran, so
+  // "wait until fetched" would wait FOREVER for a viewer whose `enabled` is false — see
+  // `settled` below, where that would have been a permanent skeleton.
+  const summaryEnabled = !!features.appBlocks && !!currentUser && isAuthor;
+
   const { data: summary, isFetched } = trpc.blocks.getNavSummary.useQuery(undefined, {
-    enabled: !!features.appBlocks && !!currentUser && isAuthor,
+    enabled: summaryEnabled,
     staleTime: 60_000,
   });
 
@@ -108,8 +150,37 @@ export function AppsBuildBody() {
   // nothing in the data reveals. They are also the population most worth seeing. (This
   // paragraph is the correction to a comment that already claimed "resolves or errors"
   // while the code only handled "resolves" — the claim was written first and was wrong.)
+  //
+  // 🔴 `summaryEnabled`, NOT `isAuthor`, IS WHAT DECIDES WHETHER THERE IS ANYTHING TO WAIT
+  // FOR — and that is a correction to this predicate, not a restatement of it. It read
+  // `!isAuthor || (isClient && isFetched)`, which is `false` FOREVER for an author whose
+  // query is disabled: `appBlocks` is store-runtime access while the PAGE gate is
+  // `hasAppsStoreAccess` (`appListings || appBlocks || appListingsPublicExternal`), so an
+  // author holding `appListings` alone reaches this page with the query switched off. Under
+  // the old spelling they posted no `view` at all — the same silently-truncated denominator
+  // the paragraph above rejects for the error cohort — and once `settled` also gates the
+  // RENDER they would have sat under the skeleton permanently. So they settle immediately,
+  // on the first paint, exactly like a non-author. A non-author is still covered:
+  // `summaryEnabled` includes `isAuthor`, so it is false for them too.
+  //
+  // ⚠️ SETTLING THEM IS THE LEAST-WRONG OPTION, NOT A CLAIM THAT THEY ARE SHOWN THE RIGHT
+  // SCREEN. An earlier draft of this paragraph said the all-false summary was "that viewer's
+  // CORRECT and FINAL answer" and cited the `enabled` note above; that note's second half was
+  // false and is now retracted there. FINAL is true — no further answer is coming. CORRECT is
+  // not: that cohort can own apps, and is shown state B regardless. Unchanged by this commit
+  // and out of scope for it; see the retraction above for the mechanism.
+  //
+  // 🔴 THE PREDICATE IS `resolveAppsBuildSettled`, IN `./appsBuildState`, so its truth table
+  // can be pinned in the `unit` tier — the browser project that renders THIS file is
+  // report-only everywhere. ⚠️ That is catch-after-landing, NOT block-before-merge: nothing
+  // in this repo blocks a merge on a check (`unit` is `continue-on-error` on a pull request
+  // and `main` requires no status checks). An earlier version of this comment claimed `unit`
+  // was "the BLOCKING tier"; it is not. See `resolveAppsBuildSettled` for the measured detail.
+  // Do not re-inline this expression — and note that nothing ENFORCES that instruction: the
+  // sibling predicates here carry call-site ledger tests, this one deliberately does not,
+  // because a ledger would inherit exactly the same non-enforcement.
   const viewed = useRef(false);
-  const settled = !isAuthor || (isClient && isFetched);
+  const settled = resolveAppsBuildSettled({ summaryEnabled, isClient, isFetched });
   useEffect(() => {
     if (viewed.current || !settled) return;
     viewed.current = true;
@@ -118,6 +189,37 @@ export function AppsBuildBody() {
 
   const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
+
+  // 🔴 THE UNSETTLED WINDOW RENDERS NEITHER B NOR C, AND THAT IS THE BUG FIX. `state` is
+  // computed from an all-false summary until `getNavSummary` lands, and
+  // `resolveAppsBuildState` reads all-false as `first-app` — so every author who HAS apps
+  // used to be shown "Ship your first app" on the server render and on the first client
+  // paint, then swapped to their workbench. Wrong screen, every visit. The skeleton commits
+  // to neither; see `AppsBuildBodySkeleton` for why it deliberately mirrors neither.
+  //
+  // 🔴 IT IS THE SAME `settled` THE `view` EVENT USES, ON PURPOSE. Two predicates here is
+  // how the analytics start describing a screen nobody saw: a render gate that let B through
+  // early, or a view gate that fired under the skeleton, would each re-open exactly the
+  // phantom-`first-app` inflation the effect above exists to prevent. One boolean, both
+  // consumers.
+  //
+  // 🔴 AND IT CANNOT SWALLOW STATE A. `resolveAppsBuildSettled` answers `true` whenever the
+  // query is not enabled — and it is never enabled for a non-author. So the pitch, the only
+  // PUBLIC-facing and deliberately-indexable state, still renders on the server with no
+  // loading frame in front of it.
+  //
+  // ⚠️ THE FAILURE MODE THIS BUYS, STATED RATHER THAN DISCOVERED LATER: for an author whose
+  // query is ENABLED, nothing bounds the wait. If `getNavSummary` never settles — the client
+  // bundle fails to mount, a hang with no rejection — this renders the skeleton indefinitely,
+  // where the old code rendered state B: the wrong screen, but one carrying three copyable
+  // CLI commands and a live `/apps/submit` CTA. There is no timeout to lean on: the tRPC
+  // links set no `AbortSignal`, and `queryRetry` only fires on a REJECTION, not on a hang. It
+  // is accepted rather than fixed because it needs an already-broken client, and a
+  // settle-deadline fallback would put a SECOND predicate in front of the render — the exact
+  // two-predicate split the paragraph above exists to prevent. If it ever shows up in RUM,
+  // the fix is a deadline inside `resolveAppsBuildSettled`, where both consumers still read
+  // one boolean.
+  if (!settled) return <AppsBuildBodySkeleton />;
 
   if (state === 'workbench') {
     return (

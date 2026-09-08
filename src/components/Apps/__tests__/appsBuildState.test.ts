@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   APPS_BUILD_STATES,
+  resolveAppsBuildSettled,
   resolveAppsBuildState,
   type AppsBuildState,
 } from '~/components/Apps/appsBuildState';
@@ -59,13 +60,32 @@ describe('resolveAppsBuildState — the full input table', () => {
   });
 });
 
-describe('🔴 the SSR / first-paint default', () => {
+describe('🔴 the pre-settle default the CALLER no longer renders', () => {
   /**
    * `blocks.getNavSummary` runs client-only (tRPC is configured `ssr: false`), so on the
-   * server render and the first client paint BOTH summary booleans are false. What the
-   * function returns for that input is therefore what the server HTML contains — and it
-   * has to be a state that is CORRECT for the viewer, not merely a placeholder, because
-   * a non-author never gets a second render to correct it.
+   * server render and the first client paint BOTH summary booleans are false, and this
+   * function answers `first-app` for an author.
+   *
+   * 🔴 THAT IS NO LONGER WHAT THE SERVER HTML CONTAINS **FOR AN AUTHOR WHOSE SUMMARY QUERY IS
+   * ENABLED**, AND THIS BLOCK USED TO SAY IT WAS — WITHOUT THE QUALIFIER, WHICH WAS ALSO
+   * WRONG. Its docstring read "What the function returns for that input is therefore what the
+   * server HTML contains", and its second case was named "an author renders first-app with no
+   * summary"; the first correction then over-swung to a bare "an author's server HTML is the
+   * skeleton". Both absolutes are false, in opposite directions. `AppsBuildBody` gates the
+   * render on `resolveAppsBuildSettled`, which answers `true` — settled, render a state — the
+   * moment the query is not enabled. So an author WITHOUT `appBlocks` (admitted to the page by
+   * `appListings`) still has state B in their server HTML, permanently; only an author whose
+   * query actually runs gets the skeleton. The PR's own browser spec pins that cohort
+   * (`author whose summary query is DISABLED settles immediately — no permanent skeleton`).
+   *
+   * Corrected HERE and not only in `appsBuildState.ts` because a maintainer reading a green
+   * `unit` run reads this file, while the module's prose sits beside a browser spec no gate
+   * runs at all. ⚠️ That is a readership argument, not an enforcement one — see
+   * `resolveAppsBuildSettled` for why "the tier CI blocks on" was itself a false claim.
+   *
+   * What the cases below still pin is the ARITHMETIC, which is unchanged and correct: for a
+   * NON-author it is also still the rendered answer, because a non-author is settled from
+   * the first paint and never gets a second render.
    */
   it('a non-author renders pitch with no summary — and never moves off it', () => {
     expect(
@@ -73,7 +93,7 @@ describe('🔴 the SSR / first-paint default', () => {
     ).toBe('pitch');
   });
 
-  it('an author renders first-app with no summary, and may settle FORWARD to workbench', () => {
+  it('an author RESOLVES to first-app with no summary (not rendered), and settles FORWARD to workbench', () => {
     const preMount = resolveAppsBuildState({
       isAuthor: true,
       hasEditableApps: false,
@@ -153,5 +173,119 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
       'request_access',
       'view',
     ]);
+  });
+});
+
+/**
+ * `resolveAppsBuildSettled` — the WHOLE truth table, in the `unit` tier.
+ *
+ * (That summary line read "in the tier CI blocks on" for one round, eight lines above the
+ * paragraph explaining that these rows block nothing. A summary line is what a hurried reader
+ * takes away, so it was the worst surviving copy of the claim. Nothing here blocks; see below.)
+ *
+ * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF IS OBSERVED NOWHERE. `/apps/build`'s
+ * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which
+ * `.github/workflows/lint.yml` states plainly is UNGATED: no selector there matches it
+ * (`unit*`, `@civitai/*`, `app:*`) and its only CI home is the report-only
+ * `preview / component-tests`.
+ *
+ * ⚠️ THESE ROWS DO NOT "BLOCK" ANYTHING EITHER, AND SAYING THEY DID WAS THIS FILE'S OWN
+ * SECOND FALSE CLAIM. The sentence here read "these eight rows are what actually blocks a
+ * regression", two lines under the criterion "a guard that can only report is not a guard
+ * against the next PR" — which this suite then failed. `unit` is `continue-on-error` on a
+ * pull request (`lint.yml:405`) and `main` requires no status checks at all, so no check in
+ * this repository prevents a merge. What these rows buy is that `unit` DOES run on
+ * `push: [main]` without that flag, so the regression reds the `main` build after it lands
+ * rather than going unobserved. Weaker than blocking, stronger than the browser tier, and
+ * worth having on those terms — not on the ones first written here.
+ *
+ * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an
+ * author whose `getNavSummary` is DISABLED (`appBlocks` off while the page gate,
+ * `hasAppsStoreAccess`, admitted them on `appListings`). `isFetched` never goes true for a
+ * query that never ran, so the obvious spelling — `!isAuthor || (isClient && isFetched)` —
+ * answers `false` for them FOREVER and the caller renders a PERMANENT skeleton. It must
+ * answer `true`.
+ */
+describe('resolveAppsBuildSettled — the full input table', () => {
+  const table: Array<{
+    summaryEnabled: boolean;
+    isClient: boolean;
+    isFetched: boolean;
+    expected: boolean;
+    why: string;
+  }> = [
+    // The query never runs: nothing is coming, so it is settled on the FIRST paint —
+    // server render included. All four combinations, so no row can be satisfied by an
+    // implementation that happens to read `isClient` or `isFetched` in this branch.
+    {
+      summaryEnabled: false,
+      isClient: false,
+      isFetched: false,
+      expected: true,
+      why: 'disabled, pre-mount — the permanent-skeleton row',
+    },
+    {
+      summaryEnabled: false,
+      isClient: false,
+      isFetched: true,
+      expected: true,
+      why: 'disabled, pre-mount, stale isFetched must not matter',
+    },
+    {
+      summaryEnabled: false,
+      isClient: true,
+      isFetched: false,
+      expected: true,
+      why: 'disabled, post-mount',
+    },
+    {
+      summaryEnabled: false,
+      isClient: true,
+      isFetched: true,
+      expected: true,
+      why: 'disabled, post-mount, fetched',
+    },
+    // The query runs: settled only once it has actually answered, on the CLIENT.
+    {
+      summaryEnabled: true,
+      isClient: false,
+      isFetched: false,
+      expected: false,
+      why: 'server render — the summary cannot exist yet',
+    },
+    {
+      summaryEnabled: true,
+      isClient: false,
+      isFetched: true,
+      expected: false,
+      why: 'pre-mount with a fetched query — COMBINATORIAL, not reachable: isClient flips once app-wide, so isClient=false implies an empty tRPC cache',
+    },
+    {
+      summaryEnabled: true,
+      isClient: true,
+      isFetched: false,
+      expected: false,
+      why: 'mounted, still in flight — the window the skeleton covers',
+    },
+    {
+      summaryEnabled: true,
+      isClient: true,
+      isFetched: true,
+      expected: true,
+      why: 'answered (success OR error)',
+    },
+  ];
+
+  it.each(table)('$why → $expected', ({ summaryEnabled, isClient, isFetched, expected }) => {
+    expect(resolveAppsBuildSettled({ summaryEnabled, isClient, isFetched })).toBe(expected);
+  });
+
+  it('the table is EXHAUSTIVE over its three booleans, and both verdicts occur', () => {
+    // Without this, a row could be dropped in a refactor and the suite would stay green over
+    // a predicate nobody checks at that input. 2^3 = 8 distinct combinations.
+    const seen = new Set(table.map((r) => `${r.summaryEnabled}|${r.isClient}|${r.isFetched}`));
+    expect(seen.size).toBe(8);
+    // …and it is not a table of one answer, which `toBe(expected)` alone would not catch.
+    expect(new Set(table.map((r) => r.expected))).toEqual(new Set([true, false]));
   });
 });
