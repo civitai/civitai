@@ -3,9 +3,11 @@
 -- Apply this MANUALLY. We do not auto-run DDL (same policy as the Postgres migrations).
 --
 -- 🔴 THIS FILE IS PART "ALREADY APPLIED", PART "STILL TO APPLY". Read the section headers.
--- Sections 1 and 2 were applied by hand on 2026-09-07 and are recorded here so the history
--- exists in the repo and so the drift guard can see the definitions. Sections 3, 4 and 5
--- have NOT been applied.
+-- Sections 1, 2 and 5 were applied by hand — 1 and 2 on 2026-09-07, 5 on 2026-09-08 — and are
+-- recorded here so the history exists in the repo and so the drift guard can see the
+-- definitions. Sections 3 and 4 have NOT been applied. The sections are numbered in the order
+-- they were WRITTEN, not the order they were applied, so the numbering is not a running order:
+-- each section header carries its own status and that is the only thing to trust here.
 --
 -- WHY THIS FILE EXISTS AT ALL. The enum-drift guard in this directory's sibling test only
 -- ever covered `actions.type`. Every other enum column the tracker writes was unchecked,
@@ -35,7 +37,8 @@
 -- must be restarted so it re-reads the column schema, or the ALTER verifies perfectly and
 -- the value still collects ZERO rows. See ./README.md — this has shipped broken twice.
 --
--- Every section below appends at an unused index, which is a metadata-only ALTER: no data
+-- Every ENUM section below (1, 2, 3, 5 — section 4 is a MODIFY QUERY, not a column change)
+-- appends at an unused index, which is a metadata-only ALTER: no data
 -- is rewritten and no mutation is scheduled. `MODIFY COLUMN` REPLACES the whole enum
 -- definition, so each statement restates every existing value at exactly the index it
 -- already has. Do NOT renumber or rename an existing value; that WOULD rewrite the table
@@ -99,6 +102,21 @@ ALTER TABLE default.reports
 --
 --    If you apply only one of the two, apply NEITHER. Dropping post reactions for another
 --    day is strictly better than corrupting owner scores for an hour.
+--
+-- 🔴 "IN ONE SITTING" IS NOT, BY ITSELF, PROTECTION — the window is opened by a pod restart
+--    you do not control. The tracker builds its serializers from the schema it reads at
+--    connect time, so the moment any tracker pod restarts after section 3 lands it starts
+--    ACCEPTING 'Post_Create', with section 4 still unapplied. That deployment has been
+--    observed replacing its pods on its own, with no human action, on the order of every few
+--    hours — so the interval between the two statements is a live risk window, not a
+--    formality, and working quickly narrows it rather than closing it.
+--
+--    Rows that land in that window are scored -1 by the old view body, and a materialized
+--    view does NOT backfill: section 4 changes what is computed from the moment it is applied
+--    and repairs nothing already written to `reactions_owner_scores`. So apply section 4
+--    IMMEDIATELY after section 3 — and afterwards run the window query in the POST-APPLY
+--    block at the foot of this file to find out whether anything landed in between. That
+--    query is the only way to learn it happened; nothing alerts on it.
 -- =====================================================================================
 
 ALTER TABLE default.reactions
@@ -128,12 +146,45 @@ ALTER TABLE default.reactions
 -- 4. reactions_owner_scores_mv — ⚠️ NOT YET APPLIED. THE OTHER HALF OF SECTION 3.
 --
 --    Adds 'Post_Create' to the +1 list. Everything not in this list scores -1, which is
---    why this cannot lag behind section 3 by even one deploy. The rest of the query —
---    the target table, the 2024-04-27 self-reaction cutoff, the GROUP BY — is restated
---    byte-for-byte from the live definition; MODIFY QUERY replaces the whole SELECT.
+--    why this cannot lag behind section 3 by even one deploy.
 --
 --    'Post_Delete' is deliberately NOT added: a delete is a -1, which is what the
 --    fall-through arm already gives it. Only the '*_Create' half of a pair belongs here.
+--
+-- 🔴 MODIFY QUERY REPLACES THE WHOLE SELECT, AND THIS VIEW MAINTAINS EVERY USER'S ALL-TIME
+--    REACTION SCORE. `reactions_owner_scores` is read by `getReactionTasks` in
+--    src/server/metrics/user.metrics.ts, which is where the number reaches users. So an edit
+--    ANYWHERE in the statement below — the multiIf arms, the 2024-04-27 self-reaction cutoff,
+--    the FROM, the GROUP BY — silently rewrites that score for everyone, and nothing about
+--    applying it would look wrong. Two concrete examples, both of which leave the IN list
+--    untouched and so pass any check that only reads the IN list: swapping the multiIf arms
+--    (`, 1, -1)` -> `, -1, 1)`) scores every reaction -1; moving the cutoff forward disables
+--    the self-reaction exclusion, so a user can farm their own score.
+--
+--    The rest of the query is therefore NOT a claim to take on trust. It is the live
+--    definition, recorded below, and `tracker-enum-drift.test.ts` pins the whole statement
+--    (whitespace-normalised) against that pre-image plus the one added value.
+--
+-- 🔴 THE LIVE PRE-IMAGE — read verbatim from production with
+--    `SHOW CREATE TABLE default.reactions_owner_scores_mv` on 2026-09-08, i.e. after
+--    sections 1, 2 and 5 were applied and while sections 3 and 4 are still unapplied:
+--
+--      CREATE MATERIALIZED VIEW default.reactions_owner_scores_mv TO default.reactions_owner_scores
+--      (
+--          `ownerId` Int32,
+--          `score` Int64
+--      )
+--      AS SELECT
+--          ownerId,
+--          sum(multiIf((type IN ('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')), 1, -1)) AS score
+--      FROM default.reactions
+--      WHERE (time < parseDateTimeBestEffort('2024-04-27')) OR (userId != ownerId)
+--      GROUP BY ownerId
+--
+--    TO ROLL BACK: re-run the MODIFY QUERY below with 'Post_Create' removed from the IN list
+--    and nothing else changed — that is exactly the SELECT above. 🔴 Roll back ONLY together
+--    with reverting section 3; a narrowed view against a widened column is the sign-inversion
+--    corruption described in section 3, arrived at from the other direction.
 -- =====================================================================================
 
 ALTER TABLE default.reactions_owner_scores_mv
@@ -157,14 +208,26 @@ ALTER TABLE default.reactions_owner_scores_mv
 
 
 -- =====================================================================================
--- 5. reports.entityType — ⚠️ NOT YET APPLIED. A FOURTH GAP, found by the new guard.
+-- 5. reports.entityType — ✅ APPLIED TO PRODUCTION 2026-09-08T04:04:14Z. A FOURTH GAP,
+--    found by the new guard, and applied by hand AFTER this file was first written — which
+--    is why it sits below sections 3 and 4 and is nonetheless already live.
 --
 --    The report form accepts every member of the ReportEntity enum
---    (src/shared/utils/report-helpers.ts), but the column stops at 'chat' = 12. Reports
---    filed against a challenge, a comic project, a 3D model or a 3D-model review are
---    therefore dropped by the tracker today, exactly like the three gaps above. The
---    report itself is written to Postgres normally — only the ClickHouse analytics row
---    is lost — so this is under-reporting in moderation analytics, not lost moderation.
+--    (src/shared/utils/report-helpers.ts), but the column stopped at 'chat' = 12. Reports
+--    filed against a challenge, a comic project, a 3D model or a 3D-model review were
+--    therefore dropped by the tracker, exactly like the three gaps above. The COLUMN half of
+--    that was closed at 2026-09-08T04:04:14Z; see the restart caveat below before reading
+--    that as the end of the loss. The report itself is written to Postgres normally — only
+--    the ClickHouse analytics row was lost — so this was under-reporting in moderation
+--    analytics, not lost moderation.
+--
+--    ⚠️ THE TRACKER-RESTART HALF IS NOT RECORDED HERE. Sections 1 and 2 note the restart
+--    explicitly because it was observed; for this section it was not, so treat 'is the
+--    tracker actually writing these four values' as OPEN until the entityType positive
+--    control in the POST-APPLY block below returns non-zero. The DDL landing is not the
+--    same claim — that is this whole file's point.
+--
+--    Recorded here for history; re-applying it is a no-op.
 --
 --    Independent of sections 3 and 4: no materialized view reads `reports`.
 -- =====================================================================================
@@ -204,8 +267,33 @@ ALTER TABLE default.reports
 --     -- `entityType` must show 13..16 added, with 1..12 unchanged.
 --
 --   SHOW CREATE TABLE default.reactions_owner_scores_mv;
---     -- the IN list must contain 'Post_Create'. 🔴 If section 3 is live and this is not,
---     -- STOP: post reactions are actively decrementing owner scores.
+--     -- 🔴 DIFF THE WHOLE STATEMENT against the pre-image recorded in section 4's header.
+--     -- Checking that the IN list contains 'Post_Create' is NOT sufficient and must not be
+--     -- what you do here: MODIFY QUERY replaced the entire SELECT, so a swapped multiIf sign
+--     -- or a moved 2024-04-27 cutoff passes that check while changing every user's all-time
+--     -- reaction score. The ONLY difference from the pre-image you should see is one added
+--     -- element at the end of the IN list:
+--     --     ..., 'Article_Create', 'Post_Create')), 1, -1)) AS score
+--     -- Everything else — `multiIf(..., 1, -1)`, `parseDateTimeBestEffort('2024-04-27')`,
+--     -- `userId != ownerId`, `FROM default.reactions`, `GROUP BY ownerId` — must be
+--     -- character-identical ONCE WHITESPACE IS COLLAPSED. ClickHouse re-renders the statement
+--     -- from its own parse rather than echoing what you sent, so its layout will not match
+--     -- what you pasted; that difference is expected and is the only one that is.
+--     -- 🔴 If section 3 is live and this is not, STOP: post reactions are actively
+--     -- decrementing owner scores.
+--
+--   Did any post reaction land in the gap between section 3 and section 4? Those rows scored
+--   -1, and a materialized view does not backfill, so section 4 does NOT repair them:
+--
+--   SELECT count() FROM default.reactions
+--   WHERE type = 'Post_Create' AND time < '<the UTC instant section 4 was applied>';
+--     -- Write the instant down when you run section 4 rather than reconstructing it later.
+--     -- Non-zero means that many post reactions were scored -1 where they should have scored
+--     -- +1, so each affected owner's all-time score is low by 2 per such reaction.
+--     -- `reactions_owner_scores` is an aggregate with no source of truth to rebuild from, so
+--     -- record the count and the affected ownerIds rather than assuming it washes out.
+--     -- 'Post_Delete' is deliberately excluded: it scores -1 under both the old and the new
+--     -- view body, so it cannot be mis-scored.
 --
 -- Positive control, AFTER the tracker has been restarted — react to a post, then:
 --
@@ -219,3 +307,22 @@ ALTER TABLE default.reports
 --   WHERE nsfw = 'Blocked' AND time > now() - INTERVAL 1 DAY;
 --     -- non-zero since 2026-09-07 confirms section 1 is landing rows rather than merely
 --     -- existing in the schema.
+--
+--   Section 5's positive control — the one that decides whether the tracker restart half of
+--   that section ever happened. The DDL landed 2026-09-08T04:04:14Z; a restart was NOT
+--   recorded, and until this returns rows the four widened values are still capable of being
+--   rejected client-side by pods that connected before the ALTER:
+--
+--   SELECT entityType, count() FROM default.reports
+--   WHERE entityType IN ('challenge', 'comicProject', 'model3d', 'model3dReview')
+--   GROUP BY entityType;
+--     -- No time predicate is needed and none is used: the column could not REPRESENT these
+--     -- four values before 2026-09-08T04:04:14Z, so any row carrying one necessarily postdates
+--     -- the ALTER. (Written this way deliberately — this file has not verified what the
+--     -- `reports` table's timestamp column is called.)
+--     -- 🔴 A zero here is ambiguous and must not be read as "fixed": it is equally consistent
+--     -- with "the tracker was never restarted" and with "nobody has reported one of these
+--     -- four entity types yet". Nobody has measured how often these four are reported, so
+--     -- there is no basis for treating a zero as surprising. To settle it, file one report
+--     -- against a challenge yourself and re-run — that converts an absence, which cannot
+--     -- distinguish those two causes, into a real positive control, which can.

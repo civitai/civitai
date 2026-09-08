@@ -36,6 +36,11 @@ import { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/pris
  *
  * Containment, not equality: a column is allowed to be WIDER than the app domain
  * (`reactions.nsfw` carries 'Undefined', which no app value maps to). Narrower is the defect.
+ *
+ * 🔴 WHAT THIS FILE STRUCTURALLY CANNOT SEE: it reads migration TEXT, never ClickHouse. A
+ * green means "a migration in this directory STATES the value", never "the live column
+ * accepts it". See the comment on `effectiveArms` below — the gap is live right now, not
+ * hypothetical.
  */
 
 const MIGRATIONS_DIR = path.resolve(__dirname, '../migrations');
@@ -90,20 +95,80 @@ const enumBlocks: EnumBlock[] = sqlFiles.flatMap(({ name, raw }) =>
 );
 
 /**
- * The `reactions_owner_scores_mv` +1 list. Parsed, not substring-matched, because the
- * property that matters is set equality against the column's '*_Create' values — see the
- * coupling test at the bottom of this file for why that is not cosmetic.
+ * The `reactions_owner_scores_mv` MODIFY QUERY. Captured WHOLE, not just its IN list.
+ *
+ * 🔴 THE IN LIST IS THE LEAST DANGEROUS PART OF THIS STATEMENT. `MODIFY QUERY` replaces the
+ * ENTIRE SELECT of a live view that maintains every user's all-time reaction score
+ * (`reactions_owner_scores`, read by `getReactionTasks` in src/server/metrics/user.metrics.ts).
+ * Two edits that leave the IN list untouched, and so pass a parser that reads only the IN list:
+ *
+ *   * swapping the multiIf arms, `, 1, -1)` -> `, -1, 1)`, scores EVERY reaction -1;
+ *   * moving `parseDateTimeBestEffort('2024-04-27')` forward disables the self-reaction
+ *     exclusion, so a user can farm their own score.
+ *
+ * Both were applied as mutations against the IN-list-only version of this guard and the suite
+ * stayed fully green. That is why the whole normalised statement is pinned below.
  */
 const MV_QUERY_RE =
   /ALTER\s+TABLE\s+default\.reactions_owner_scores_mv\s+MODIFY\s+QUERY([\s\S]*?);/gi;
 
+/**
+ * Canonical form for comparing two spellings of one statement: collapse whitespace runs to a
+ * single space, then drop spaces adjacent to `(`, `)` and `,`. That reconciles the migration's
+ * one-arm-per-line layout with ClickHouse's own single-line rendering, so the pre-image can be
+ * recorded here as production printed it rather than reformatted to match the migration.
+ *
+ * This is a blunt normaliser and it does NOT respect quoted literals — a literal containing
+ * whitespace, a paren or a comma would be rewritten. No literal in this statement contains
+ * any of those (they are `'<Type>_Create'` names and one `'2024-04-27'`), so it is safe here
+ * and would need revisiting if one were ever added. It rewrites NOTHING except whitespace and
+ * those three punctuation marks — digits, signs and identifiers are untouched — so both
+ * mutations above survive normalisation and fail the comparison rather than being normalised
+ * away. That is not reasoning: it is the M-A/M-B result recorded in the PR.
+ */
+const normalizeSql = (sql: string) =>
+  sql
+    .replace(/\s+/g, ' ')
+    .replace(/ *([(),]) */g, '$1')
+    .trim();
+
+/**
+ * The live `reactions_owner_scores_mv` SELECT, as read from production with
+ * `SHOW CREATE TABLE` on 2026-09-08 (reproduced verbatim in the section 4 header of
+ * ../migrations/2026-09-07-reaction-report-enum-widening.sql), with `'Post_Create'` appended
+ * to the IN list and NOTHING else changed. That single added value is the entire intended
+ * delta of section 4.
+ *
+ * Written in ClickHouse's own rendering rather than the migration's layout, on purpose: this
+ * is a transcription of production plus one reviewed edit, not a copy of the statement it
+ * checks, and it should be readable as such.
+ *
+ * 🔴 Do NOT edit this to make a failing migration pass. A disagreement means either the
+ * migration is rewriting the view in a way nobody reviewed, or production has moved and the
+ * pre-image in the migration is stale. Both are findings. Re-read `SHOW CREATE TABLE`, update
+ * this constant and the migration's pre-image together, and say why.
+ */
+const EXPECTED_MV_SELECT = `
+  SELECT
+      ownerId,
+      sum(multiIf((type IN ('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create', 'Post_Create')), 1, -1)) AS score
+  FROM default.reactions
+  WHERE (time < parseDateTimeBestEffort('2024-04-27')) OR (userId != ownerId)
+  GROUP BY ownerId
+`;
+
 const mvBlocks = sqlFiles.flatMap(({ name, raw }) =>
   [...stripComments(raw).matchAll(MV_QUERY_RE)].map((m) => {
-    const inList = /type\s+IN\s*\(([^)]*)\)/i.exec(m[1]);
+    // 🔴 ALL `type IN (...)` occurrences, not the first. `plusOne` is parsed from the first
+    // one, so a second would decide part of the +1 semantics without ever being checked;
+    // `inListCount` is asserted to be exactly 1 so that stays impossible rather than silent.
+    const inLists = [...m[1].matchAll(/type\s+IN\s*\(([^)]*)\)/gi)];
     return {
       file: name,
+      body: m[1],
+      inListCount: inLists.length,
       plusOne: new Set<string>(
-        inList ? [...inList[1].matchAll(/'([A-Za-z0-9_]+)'/g)].map((a) => a[1]) : []
+        inLists[0] ? [...inLists[0][1].matchAll(/'([A-Za-z0-9_]+)'/g)].map((a) => a[1]) : []
       ),
     };
   })
@@ -238,7 +303,26 @@ const COLUMNS: readonly ColumnSpec[] = [
   },
 ];
 
-/** Effective definition: the newest migration that states the column, else the baseline. */
+/**
+ * Effective definition: the newest migration that states the column, else the baseline.
+ *
+ * 🔴 STATED PLAINLY, BECAUSE EVERY FAILURE MESSAGE BELOW READS LIKE A CLAIM ABOUT PRODUCTION
+ * AND IS NOT ONE. `lastBlockFor` returns the newest migration that STATES the column —
+ * applied or not. Nothing in this file connects to ClickHouse, so it cannot distinguish an
+ * applied migration from a file somebody merely wrote. "the column" in the messages below
+ * means "the column as this repo describes it".
+ *
+ * That is not a theoretical gap. At the time of writing, `reactions.type` gains 'Post_Create'
+ * in the 2026-09-07 migration, section 3 of which is UNAPPLIED — so production rejects that
+ * value client-side, on every post reaction, while this suite is fully green. The guard is
+ * green on the very defect it was written for.
+ *
+ * So: this catches "the app gained a value and nobody wrote a migration". It does NOT catch
+ * "a migration was written and never run", and nothing here can be strengthened to catch it,
+ * because the evidence lives in a system this test does not talk to. The only things that
+ * close that half are applying the DDL and running the positive-control queries in the
+ * migration's POST-APPLY block. Do not read a green here as either of those having happened.
+ */
 const effectiveArms = (spec: ColumnSpec) => lastBlockFor(spec.column)?.arms ?? spec.baseline;
 
 describe('tracker enum drift (reactions + reports)', () => {
@@ -278,6 +362,16 @@ describe('tracker enum drift (reactions + reports)', () => {
         1
       );
       expect(mvBlocks[mvBlocks.length - 1].plusOne.size).toBeGreaterThan(0);
+    });
+
+    it('derives the +1 list from exactly one type IN (...) list', () => {
+      const mv = mvBlocks[mvBlocks.length - 1];
+      expect(
+        mv.inListCount,
+        `${mv.file}: the MODIFY QUERY contains ${mv.inListCount} \`type IN (...)\` lists. ` +
+          `The +1 set is parsed from the FIRST one, so with any other number the coupling ` +
+          `check below is reasoning about part of the statement while the rest goes unread.`
+      ).toBe(1);
     });
   });
 
@@ -349,6 +443,36 @@ describe('tracker enum drift (reactions + reports)', () => {
         `${block.file}: ${block.column} reuses an index — two names would collapse onto one value`
       ).toBe(indices.length);
     }
+  });
+
+  /**
+   * 🔴 THE WHOLE STATEMENT, NOT THE IN LIST. The coupling test below pins the +1 list against
+   * `reactions.type`, which is the right property for that one list and says nothing at all
+   * about everything else `MODIFY QUERY` replaces: the multiIf arms, the WHERE, the FROM, the
+   * GROUP BY.
+   *
+   * Measured: inverting the multiIf arms and moving the self-reaction cutoff to 2099, together,
+   * fail THIS assertion and nothing else — every other test in this file, the coupling test
+   * included, stays green under both. Before this assertion existed that was the whole result:
+   * a fully green suite over a statement that silently rewrites every user's all-time score.
+   */
+  it('reactions_owner_scores_mv MODIFY QUERY is the live view plus exactly the one added value', () => {
+    const mv = mvBlocks[mvBlocks.length - 1];
+    expect(
+      normalizeSql(mv.body),
+      `${mv.file}: the reactions_owner_scores_mv MODIFY QUERY does not match the live view ` +
+        `definition with 'Post_Create' added and nothing else changed.\n` +
+        `MODIFY QUERY replaces the WHOLE SELECT of a live view maintaining every user's ` +
+        `all-time reaction score, so an edit anywhere in it — the multiIf arms, the ` +
+        `2024-04-27 self-reaction cutoff, the FROM, the GROUP BY — rewrites that score for ` +
+        `everyone, with nothing about applying it looking wrong. Inverting the multiIf arms ` +
+        `scores every reaction -1; moving the cutoff lets a user farm their own score. ` +
+        `Neither touches the IN list, so the set-equality check below stays green under both ` +
+        `— which is why this assertion exists and why a substring check is not enough.\n` +
+        `The expected text is EXPECTED_MV_SELECT in this file, transcribed from a ` +
+        `SHOW CREATE TABLE read; the same pre-image is recorded in the migration's section 4 ` +
+        `header. If production has legitimately moved, re-read it, update BOTH, and say why.`
+    ).toBe(normalizeSql(EXPECTED_MV_SELECT));
   });
 
   /**

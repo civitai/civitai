@@ -20,6 +20,7 @@ import type {
 } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import type { ReportEntity } from '~/shared/utils/report-helpers';
 import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
@@ -833,9 +834,18 @@ export class Tracker {
     return this.track('prohibitedRequests', values);
   }
 
+  /**
+   * 🔴 `entityType` is `ReportEntity`, not `string`. It was `string`, which is the same
+   * type-laundering this change removes from the reaction path: a bare `string` here means
+   * every value the app can invent type-checks against a column that is an Enum8 of a fixed
+   * set of names, and the tracker rejects anything outside it CLIENT-SIDE, silently. The
+   * drift guard names `ReportEntity` as the source of truth for `reports.entityType`; the
+   * parameter has to agree with the guard or the guard is checking a domain the code does not
+   * actually constrain.
+   */
   public report(values: {
     type: ReportType;
-    entityType: string;
+    entityType: ReportEntity;
     entityId: number;
     reason: ReportReason;
     status: ReportStatus;
