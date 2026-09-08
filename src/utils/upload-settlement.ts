@@ -52,11 +52,36 @@ export function attachUploadSettlement(
     // reads as protection and stops the next person looking for the real one.
     let relayPending = false;
 
+    // 🔴 REACHABLE, unlike the latch described above — do not delete it as another one.
+    // `abort()` dispatches `abort` and THEN `loadend`, so once `loadend` reports a
+    // non-2xx as an error (below), a user cancel would be overwritten with a failure.
+    // `keeps a user cancel reported as aborted, not errored` fails without this.
+    //
+    // ⚠ ONE HONEST QUALIFICATION, so this guard is not over-trusted: as of this change
+    // NOTHING IN PRODUCTION TRIGGERS IT. `useCFImageUpload` exposes `abort` on each
+    // tracked file, but no consumer of that hook calls it — checked by enumerating every
+    // non-test file that calls `useCFImageUpload` and grepping each for `abort`; the only
+    // hit is `IterativeImageEditor`'s `handleAbort`, which cancels a GENERATION, not an
+    // upload. The `abort` path is pre-existing and unwired. Keep the guard: it is
+    // reachable by this module's own contract, it is what the cancel test exercises, and
+    // wiring a cancel button is a UI change away from making it live. But do not read its
+    // presence as evidence that cancel is a supported flow today.
+    let aborted = false;
+
     xhr.addEventListener('loadend', () => {
       // A relay is in flight and owns settlement.
       if (relayPending) return;
-      const success = xhr.readyState === 4 && xhr.status === 200;
+      // A cancel already settled this; see the flag's comment.
+      if (aborted) return;
+      // 🔴 2xx, not `=== 200`. A store answering 201/204 stored the object; treating
+      // that as failure is the same defect in the other direction.
+      const success = xhr.readyState === 4 && xhr.status >= 200 && xhr.status < 300;
+      // 🔴 A non-2xx `loadend` means we REACHED the backend and it refused us. Before
+      // this branch existed no callback fired at all, so the tracked file kept its
+      // `uploading` status forever — a refused upload that renders as still in flight,
+      // and which permanently disabled any submit gated on that status.
       if (success) callbacks.onSuccess();
+      else callbacks.onError();
       resolve({ kind: 'direct', success });
     });
 
@@ -83,6 +108,7 @@ export function attachUploadSettlement(
     });
 
     xhr.addEventListener('abort', () => {
+      aborted = true;
       callbacks.onAborted();
       reject(new Error('Upload canceled'));
     });

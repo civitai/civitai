@@ -254,6 +254,7 @@ import {
   sanitizeProvenance,
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
+import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 
 const {
   cacheHitRequestsTotal,
@@ -6114,6 +6115,167 @@ export async function createImage({
    */
   verifiedSourceImageIds?: number[] | null;
 }) {
+  /**
+   * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
+   *
+   * `createImage` is the widest single funnel for `Image` rows — `addPostImage`, the
+   * post-with-images handler, model-version and collection paths, comics, cover images,
+   * thumbnails all arrive here — and the check belongs at that one funnel rather than at
+   * each caller, because a predicate open-coded at N sites is wrong at N-1 of them. It
+   * cannot live in the zod schema, because it needs IO.
+   *
+   * 🔴 IT IS NOT EVERY `Image` ROW, AND THIS COMMENT USED TO CLAIM IT WAS. Six write
+   * paths reach the `Image` table without passing through here, so their rows appear in
+   * neither the numerator nor the denominator of anything this emits:
+   *   1. `article.service.ts` `linkArticleContentImages` (`tx.image.createManyAndReturn`)
+   *   2. `createEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
+   *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
+   *   6. `jobs/daily-challenge-processing.ts` `duplicateImage` — a raw
+   *      `INSERT INTO "Image" (…) SELECT … FROM "Image" i WHERE i.id = …` that re-owns an
+   *      existing row's columns (`url` first among them) to another user, for the
+   *      challenge cover.
+   *
+   * 🔴 THIS LIST SAID FIVE UNTIL A ROUND-2 AUDIT FOUND (6), so treat it as a claim that
+   * has already been wrong once. The population it asserts over is: every
+   * `.image.(create|createMany|createManyAndReturn|upsert)` call and every raw
+   * `INSERT INTO "Image"` under `src/`, excluding test files. Re-derive it, do not trust
+   * it — and note that (6) is the LOWER-risk shape of the two kinds here: its `url` is
+   * copied from a row that already exists rather than freshly minted from a client
+   * upload, so it can propagate an existing defective key but cannot create a new one.
+   * (1)–(5) all take their `url` from their INPUT rather than from an existing `Image`
+   * row, so those are where a brand-new orphan key can enter. That is a claim about the
+   * SHAPE of each write, not a ranking — nothing here has measured a per-path rate.
+   *
+   * 🔴 The article path is the highest-risk of those, because it is fed by the exact hook
+   * defect this change describes: the TipTap editor nodes (`TipTap/EdgeMediaNode.tsx`,
+   * `libs/tiptap/extensions/CustomImage.tsx`) write the upload's key into article content
+   * on a promise that RESOLVES even when the PUT was refused, and that content is then
+   * materialised into rows by `linkArticleContentImages` — unprobed.
+   *
+   * 🔴 EXTENDING THE PROBE TO IT IS A SEPARATE CHANGE, and the reason is structural, not
+   * scheduling: `linkArticleContentImages` does its `createManyAndReturn` INSIDE a
+   * `dbWrite.$transaction` callback, and this repo has a lint rule
+   * (`local-rules/no-io-in-transaction`) whose whole purpose is to keep network IO out of
+   * that callback, because it burns the transaction's timeout budget. Adding a HEAD there
+   * means restructuring the transaction first.
+   *
+   * So the honest scope of what follows is: every `Image` row written through
+   * `createImage`. Both halves of this change are partial — the client half only reaches
+   * sessions that have loaded the new bundle, this half only reaches this funnel — and
+   * nothing here establishes which of the two leaves more rows uncovered.
+   *
+   * 🔴 OBSERVE-ONLY, BY CONSTRUCTION AND NOT BY A FLAG. The verdict is logged and then
+   * dropped; nothing below branches on it. Rejecting here would be a new failure mode on
+   * a working user-facing path, and the only honest way to size that is to let the
+   * `absent` rate accumulate against a real denominator first. Enforcement is a separate
+   * change gated on the measurement this emits — which is also why there is no env var to
+   * flip: an unused enforcement branch is an untested one.
+   *
+   * 🔴 COST, AND THE LOOPS THAT MULTIPLY IT. One HEAD per call. Most callers are
+   * single-image, but TWO `comics.router.ts` procedures call this once per input item:
+   * `bulkCreatePanels` (`panels` capped at 20 by its zod schema) and `addReferenceImages`
+   * (`images` capped at 10). Both loops are sequential, so they add up to 20 and up to 10
+   * sequential probes respectively.
+   *
+   * 🔴 Size the DEGRADED case, not the healthy one — and it is now an ACTUAL NUMBER. An
+   * earlier version of this comment ended "the absolute number is unbounded until
+   * `getB2ImageS3Client` sets a `maxAttempts`", which was true and is the defect this
+   * paragraph used to describe: an abort signal bounds each network ATTEMPT, and the SDK's
+   * between-attempt sleep is not abort-aware, so a degraded store could add tens of seconds
+   * to a 20-item import and blow the request budget — telemetry becoming a new failure mode
+   * on a working path.
+   *
+   * That is closed, and NOT by changing `getB2ImageS3Client`: that factory is shared with
+   * the live upload-completion endpoints, which want their retries. The probe was given its
+   * own `maxAttempts: 1` client (`getImageUploadProbeBackend`), and
+   * `probeCreatedImageMedia` additionally races itself against
+   * `CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS` so the bound holds without trusting the SDK.
+   * Worst case is therefore 3s per call: 60s added to a 20-item `bulkCreatePanels` and 30s
+   * to a 10-item `addReferenceImages` — bounded, and only while the store is degraded.
+   *
+   * Both loops are already N sequential IO round-trips per item (a DB write plus an
+   * ingestion call), so this remains a proportional addition to an existing sequential-IO
+   * path. If those worst cases are judged too large, the lever is the deadline constant or
+   * making these two routers probe concurrently — not removing the bound.
+   */
+  const mediaVerdict = await probeCreatedImageMedia(image.url);
+
+  /**
+   * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
+   * one line per `createImage` call means the denominator is "image creations", which is
+   * the population the historical 10-in-a-sample figure was measured against. A log
+   * emitted only on the bad verdict counts a numerator against nothing.
+   *
+   * 🔴 THE POSITIVE CONTROL IS `present`, AND IT IS WHY THIS IS NOT A ONE-FIELD LOG. A
+   * probe that can never answer emits zero `absent` verdicts, and "zero absent" is exactly
+   * what a clean result looks like. `getImageUploadBackend()` throws without credentials
+   * and a rotated key answers 403 — both land on `unknown`, both look clean. Do not read
+   * the `absent` count until a NON-ZERO `present` count proves the probe reaches the store
+   * at all, and `unknown` is a small share of `present + absent + unknown`.
+   *
+   * 🔴 BUT A NON-ZERO `present` IS NOT SUFFICIENT ON ITS OWN, AND AN EARLIER VERSION OF
+   * THIS COMMENT SAID IT WAS. `present` proves the credential can read an object that
+   * EXISTS; it does not prove that a key which does NOT exist comes back as a 404 rather
+   * than a 403. `isNotFoundError` in `~/utils/s3-utils` accepts only `NotFound`,
+   * `NoSuchKey` and a 404 status, so under a 403-on-missing credential every real defect
+   * would land on `unknown` and `absent` would sit at zero — while the `present` control
+   * above reads perfectly healthy.
+   *
+   * That specific hazard was MEASURED rather than reasoned about, on 2026-09-08, by
+   * issuing HeadObject against the production image bucket with the production upload
+   * credential: a key that does not exist answered `name=NotFound`,
+   * `$metadata.httpStatusCode=404` (and a key that does exist returned its
+   * `ContentLength`, as the positive control). So `absent` IS reachable and the counter is
+   * not structurally pinned at zero.
+   *
+   * 🔴 That measurement is contingent on the credential it was taken with. A key rotation,
+   * a permissions change, or a move to a different bucket can reintroduce the hazard
+   * silently — the symptom is `absent` going to zero while `present` stays healthy. If you
+   * see that shape, re-take the measurement before concluding the defect is gone.
+   *
+   * `url` is logged only for a PROBED verdict, where `isProbeableMediaKey` has already
+   * accepted the value and it is therefore a 36-character uuid — not a filename and not
+   * PII. It is the field that makes an `absent` verdict actionable: settling "real defect
+   * or false verdict" means taking a key and HEADing the store by hand, and there is
+   * nothing else to look up (`postId` is null on most non-post paths, and `userId` alone
+   * selects thousands of rows). `not-applicable` is by definition the arbitrary
+   * caller-supplied strings that FAILED that predicate, so those are omitted rather than
+   * shipped to a log sink.
+   *
+   * There is deliberately no image id — the row does not exist yet, which is the whole
+   * reason the check sits here.
+   *
+   * 🔴 NOT AWAITED, AND CONTAINED. Telemetry must never be able to change this call's
+   * outcome, nor sit on a user-facing mutation's latency budget.
+   *
+   * 🔴 THIS LINE IS TEMPORARY, AND HERE IS WHAT ENDS IT. It is unsampled — one line per
+   * `createImage` call — which is the only shape that gives the `absent` count a
+   * denominator, and also the reason it must not live here indefinitely.
+   *
+   * CLOSING CONDITION: a merged PR that reads the `present` / `absent` / `unknown` counts
+   * for `create-image-media-verify`, quotes those three numbers in its body, and then
+   * either (a) adds the enforcement branch this measurement exists to size, or (b) deletes
+   * this call outright because the rate does not justify one. Either way that PR removes
+   * or samples down this `logToAxiom`.
+   *
+   * MECHANICAL CHECK THAT IT IS CLOSED: the string `create-image-media-verify` no longer
+   * appears in this file. Until then, an unread counter is the failure mode — if you are
+   * reading this and no such PR exists, the counts are already in the log; read them.
+   */
+  void logToAxiom({
+    type: 'info',
+    name: 'create-image-media-verify',
+    message: 'createImage media existence probe',
+    verdict: mediaVerdict,
+    url: mediaVerdict === 'not-applicable' ? null : image.url,
+    userId: image.userId,
+    postId: image.postId ?? null,
+  }).catch(() => {
+    // swallow — best-effort logging must never break the creation it is observing
+  });
+
   const meta = sanitizeProvenance(
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
