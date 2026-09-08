@@ -146,6 +146,46 @@ line2`,
     const expected = JSON.stringify({ xs: [1, 2, 3] });
     expect(await collect([['xs', { items: [1, 2, 3] }]])).toBe(expected);
   });
+
+  it('separates an items entry from whatever follows it', async () => {
+    /**
+     * The comma between an array property and the next property is produced by the `items`
+     * branch's own `wroteEntry = true`, and nothing else pins it: the CSAM bundle happens to put
+     * two `value` entries before its three arrays, so the first `items` entry is never the one
+     * that has to set the flag. The helper is exported with a byte-identity contract though, and
+     * without that assignment the output is `{"xs":[1]"ys":2}` — not merely a different
+     * document, an unparseable one. A single-element array is deliberate: with more elements the
+     * inner `first` flag masks nothing, but it is also the shape the existing items-first test
+     * already uses, and it is the shape that stays silent.
+     */
+    for (const [entries, expected] of [
+      [
+        [
+          ['xs', { items: [1] }],
+          ['ys', { value: 2 }],
+        ],
+        JSON.stringify({ xs: [1], ys: 2 }),
+      ],
+      [
+        [
+          ['xs', { items: [1] }],
+          ['ys', { items: [2] }],
+        ],
+        JSON.stringify({ xs: [1], ys: [2] }),
+      ],
+      [
+        [
+          ['xs', { items: [] }],
+          ['ys', { value: 2 }],
+        ],
+        JSON.stringify({ xs: [], ys: 2 }),
+      ],
+    ] as ReadonlyArray<readonly [ReadonlyArray<readonly [string, JsonObjectEntry]>, string]>) {
+      const streamed = await collect(entries);
+      expect(streamed).toBe(expected);
+      expect(() => JSON.parse(streamed)).not.toThrow();
+    }
+  });
 });
 
 /**
@@ -263,6 +303,42 @@ describe('writeJsonObject error handling', () => {
     ).rejects.toThrow('synthetic sink failure');
   });
 
+  it('resolves for a sink that never emits close, rather than waiting on one', async () => {
+    /**
+     * Regression guard for a line that was REMOVED. `writeJsonObject` used to `await` the sink's
+     * `'close'` on top of `pipeline`, under a comment claiming `pipeline` resolving was no
+     * promise that the file was whole. Measured false: `pipeline` ends the sink and then waits
+     * on it via `stream.finished`, which for an `autoDestroy` writable — the default, and what
+     * `fs.createWriteStream` is — already means `'close'`. ("the file is complete the instant
+     * writeJsonObject resolves" above is the outcome half of that.)
+     *
+     * And the extra await was not free. This signature accepts any `Writable`, and one built
+     * with `autoDestroy: false` never emits `'close'` at all, so the second await hung forever.
+     * Re-adding it makes this test report `HUNG`.
+     */
+    const chunks: Buffer[] = [];
+    const sink = new Writable({
+      autoDestroy: false,
+      write(chunk, _enc, cb) {
+        chunks.push(Buffer.from(chunk as Buffer));
+        cb();
+      },
+    });
+    // The precondition, asserted rather than assumed: this sink really does withhold 'close'.
+    let closed = false;
+    sink.once('close', () => (closed = true));
+
+    const raced = await Promise.race([
+      writeJsonObject({ sink, entries: [['xs', { items: asStream([1, 2, 3]) }]] }).then(
+        () => 'resolved' as const
+      ),
+      new Promise<'HUNG'>((resolve) => setTimeout(() => resolve('HUNG'), 500)),
+    ]);
+
+    expect({ raced, closed }).toEqual({ raced: 'resolved', closed: false });
+    expect(Buffer.concat(chunks).toString('utf8')).toBe(JSON.stringify({ xs: [1, 2, 3] }));
+  });
+
   it('propagates a failure raised mid-scan by the row source', async () => {
     async function* failing() {
       yield { id: 1 };
@@ -272,6 +348,12 @@ describe('writeJsonObject error handling', () => {
     await expect(
       writeJsonObject({ sink, entries: [['images', { items: failing() }]] })
     ).rejects.toThrow('synthetic scan failure');
+
+    // `pipeline` destroys the sink on the error path, but the underlying `open()` can still be in
+    // flight — and it is the `open` that creates the file. Left dangling, that file can appear
+    // under `tmpDir` after `afterAll` has begun removing it, which surfaces as an `ENOTEMPTY`
+    // failure of the suite rather than of any test. Observed once under parallel load.
+    if (!sink.closed) await new Promise((resolve) => sink.once('close', resolve));
   });
 });
 

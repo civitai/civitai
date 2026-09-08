@@ -353,6 +353,71 @@ describe('archiveCsamDataForReport (Image report)', () => {
     expect(imageArchive!.peakOutstanding).toBeLessThanOrEqual(MAX_PENDING_ARCHIVE_ENTRIES);
   });
 
+  it('closes the archive and its file descriptor when a page fetch fails mid-archive', async () => {
+    /**
+     * Paging pulls DB rows *inside* the archiver's lifetime. The pre-change code fetched every
+     * row before any archiver existed, so a `dbRead` failure could not strand one — this is a
+     * leak trigger the new shape introduced. On the failure path `finalize()` never runs, so
+     * without an explicit release the archiver keeps its queued source buffers and the write
+     * stream keeps its fd, while the caller's error handler removes the directory underneath it.
+     */
+    const PAGE_SIZE = ARCHIVE_SCAN_PAGE_SIZE;
+    const TOTAL = PAGE_SIZE + 3;
+    const rows = Array.from({ length: TOTAL }, (_, i) => ({
+      id: i + 1,
+      url: `image-uuid-${i}`,
+      name: `picture-${i}.jpeg`,
+      type: 'image',
+      width: 1024,
+      userId: report.userId,
+    }));
+
+    seedDb();
+    // Two scans run: the bundle's, then `archiveImages`'. Only the second one fails, and only on
+    // its second page — so the archiver is already open and holding entries when it happens.
+    let scanIndex = 0;
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } }; take?: number } = {}) => {
+        const after = args.where?.id?.gt;
+        if (after === undefined) scanIndex++;
+        if (scanIndex === 2 && after !== undefined) throw new Error('synthetic page-2 db failure');
+        return rows.filter((row) => row.id > (after ?? 0)).slice(0, args.take ?? rows.length);
+      }
+    );
+    mockFetchBlob = async () => fakeBlob(8);
+
+    const realCreateWriteStream = fs.createWriteStream;
+    const created: fs.WriteStream[] = [];
+    const spy = vi.spyOn(fs, 'createWriteStream').mockImplementation(((
+      target: fs.PathLike,
+      options?: unknown
+    ) => {
+      const stream = realCreateWriteStream(target as never, options as never);
+      created.push(stream);
+      return stream;
+    }) as typeof fs.createWriteStream);
+
+    try {
+      await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+        'synthetic page-2 db failure'
+      );
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Positive control first: a "nothing was leaked" reading is indistinguishable from a probe
+    // that never saw the stream. The zip's sink must have been created, and the archiver must
+    // have received entries from page 1 before the failure.
+    const zipSinks = created.filter((stream) => String(stream.path).endsWith('.zip'));
+    expect(zipSinks, 'the zip sink was never observed — the spy is wired to nothing').toHaveLength(
+      1
+    );
+    expect(probes.find((p) => p.appended > 0)?.appended).toBe(PAGE_SIZE);
+
+    // The regression: the sink is released rather than left open on a file that is being deleted.
+    expect(zipSinks[0].destroyed).toBe(true);
+  });
+
   // INVARIANT GUARD, not regression coverage: this pins a deliberate decision rather than a
   // behaviour the bug violated. Level 9 deflate on already-compressed image bytes is what made
   // the compressor the bottleneck; with backpressure in place it is no longer a memory hazard,
@@ -423,6 +488,41 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
         })),
       },
     ];
+  });
+
+  it('closes the archive and its file descriptor when a download fails', async () => {
+    // The second call site of the same release. `archiveImages` covers the DB trigger this
+    // change introduced; here the trigger is a `fetchBlob` rejection, which escapes the inner
+    // per-entry `catch` because it happens before it. Both paths skip `finalize()`, so both
+    // need the archive aborted and the sink's fd closed before the caller deletes the directory.
+    mockFetchBlob = async () => {
+      throw new Error('synthetic download failure');
+    };
+
+    const realCreateWriteStream = fs.createWriteStream;
+    const created: fs.WriteStream[] = [];
+    const spy = vi.spyOn(fs, 'createWriteStream').mockImplementation(((
+      target: fs.PathLike,
+      options?: unknown
+    ) => {
+      const stream = realCreateWriteStream(target as never, options as never);
+      created.push(stream);
+      return stream;
+    }) as typeof fs.createWriteStream);
+
+    try {
+      await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+        'synthetic download failure'
+      );
+    } finally {
+      spy.mockRestore();
+    }
+
+    const zipSinks = created.filter((stream) => String(stream.path).endsWith('.zip'));
+    expect(zipSinks, 'the zip sink was never observed — the spy is wired to nothing').toHaveLength(
+      1
+    );
+    expect(zipSinks[0].destroyed).toBe(true);
   });
 
   it('holds a bounded number of generated-image buffers', async () => {

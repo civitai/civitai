@@ -88,10 +88,20 @@ export async function* serializeJsonObject(
  * mark. `pipeline` supplies the backpressure — the generator is only pulled from as fast as the
  * sink drains — and destroys the sink on error rather than leaving a half-written file open.
  *
- * The sink is additionally awaited to `'close'`. `pipeline` resolving is not on its own a
- * promise that a subsequent `fs.createReadStream(path)` sees every byte, and this file is read
- * back and uploaded immediately after being written. The listener is registered BEFORE
- * `pipeline` runs so the event cannot be missed if it has already fired by the time we await.
+ * `pipeline` also settles the question the caller actually cares about — this file is read back
+ * with `fs.createReadStream` and uploaded immediately — because it ends the sink and then waits
+ * on it via `stream.finished`, which for a Writable with `autoDestroy` (the default, and what
+ * `fs.createWriteStream` is) means waiting for `'close'`, not merely `'finish'`. So the file is
+ * whole the instant this resolves, which is pinned as an outcome by "the file is complete the
+ * instant writeJsonObject resolves".
+ *
+ * 🔴 Do NOT add a second `await` on the sink's `'close'` here. A previous revision did, under a
+ * comment asserting that `pipeline` gave no such guarantee. That assertion was false — and the
+ * extra await was not harmless belt-and-braces: for a sink constructed with `autoDestroy: false`,
+ * which this signature accepts, `'close'` never fires at all and `writeJsonObject` hangs forever.
+ * `archive-helpers.ts` does need its own `'close'` wait and that is not an inconsistency to
+ * "unify": what it awaits is archiver's `finalize()`, which resolves when the zip module ends and
+ * knows nothing about the sink.
  */
 export async function writeJsonObject({
   sink,
@@ -102,9 +112,5 @@ export async function writeJsonObject({
   entries: Iterable<readonly [string, JsonObjectEntry]>;
   replacer?: JsonReplacer;
 }): Promise<void> {
-  const closed = new Promise<void>((resolve) => {
-    sink.once('close', () => resolve());
-  });
   await pipeline(serializeJsonObject(entries, replacer), sink);
-  await closed;
 }

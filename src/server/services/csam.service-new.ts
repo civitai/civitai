@@ -16,6 +16,7 @@ import { env } from '~/env/server';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
+import type { Archiver } from 'archiver';
 import stream, { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import * as z from 'zod';
@@ -1145,6 +1146,18 @@ export const ARCHIVE_SCAN_PAGE_SIZE = 500;
  * `id > cursor ORDER BY id ASC` every row appears exactly once, and the pages concatenate to
  * exactly the row set a single unpaged `findMany` with the same `where` would have returned.
  *
+ * ⚠️ PRECONDITION, and it does not hold uniformly across the three tables this is used on:
+ * keyset paging is only *cheap* where an index can serve `WHERE <filter> AND id > $cursor
+ * ORDER BY id ASC`. Read off `packages/civitai-db-schema/prisma/schema.full.prisma`, `Image`
+ * carries `@@index([userId, id])`, so the one genuinely large scan here — every image the
+ * reported user owns — is served directly. `Model` has no `userId` index at all, and
+ * `ModelVersion`'s only `modelId` index is a HASH index, which can answer equality but cannot
+ * serve a range or an ordering. Those two scans have the primary key available for the cursor
+ * and the ordering but nothing indexed for the filter. That is accepted rather than fixed here,
+ * because a user's model and model-version counts are small next to their image count and the
+ * point of this change is the memory ceiling, not latency. It is NOT a claim about the plan the
+ * planner actually chooses — no `EXPLAIN` was run.
+ *
  * Lazy: the first query is not issued until the generator is first pulled from. Callers below
  * depend on that.
  */
@@ -1166,6 +1179,34 @@ async function* scanPagesById<T extends { id: number }>(
 /** Flattens paged rows into a per-row async iterable. Also lazy. */
 async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, void, undefined> {
   for await (const page of pages) for (const row of page) yield row;
+}
+
+/**
+ * Releases an archive and its sink after a failure that skipped `finalize()`.
+ *
+ * On the happy path `finalize()` ends the archive and waits for the sink to close, so nothing is
+ * left open. On a throw neither happens: the archiver keeps its queued source buffers and the
+ * write stream keeps its file descriptor, while the caller's error handler removes the directory
+ * that file lives in. Both calls are no-ops once the object has reached a terminal state
+ * (`Archiver#abort` returns early if already aborted or finalized, and `destroy()` on a destroyed
+ * stream does nothing), so this is safe from any failure point.
+ *
+ * ⚠️ The two calls have different evidence behind them, and the difference is worth keeping:
+ *
+ * - `output.destroy()` is the file descriptor, and it is what the tests observe. Both
+ *   "closes the archive and its file descriptor …" cases fail with `expected false to be true`
+ *   when it is removed.
+ * - `archive.abort()` is the queued source buffers, and NO test distinguishes it — removing it
+ *   leaves all 64 tests across the four files green, and that is expected rather than a gap: the
+ *   bounded appender caps the backlog at `MAX_PENDING_ARCHIVE_ENTRIES`, which drains far too
+ *   fast to observe without a timing-dependent assertion. Its effect was measured separately on
+ *   an UNBOUNDED queue, where it is unmissable: with the sink destroyed and no `abort()`, the
+ *   archiver went on to deflate all 60 of 60 queued entries; with `abort()`, 0. So it does real
+ *   work — it is just bounded work here, and it is recorded as untested rather than as covered.
+ */
+function closeArchiveOnFailure(archive: Archiver, output: fs.WriteStream) {
+  archive.abort();
+  output.destroy();
 }
 
 /** Serialises `bigint` columns (e.g. `Image.pHash`) as strings — `JSON.stringify` throws on them. */
@@ -1273,10 +1314,18 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   /**
    * Writes the base evidence bundle to disk, then uploads it.
    *
-   * 🔴 WHAT IS IN THE BUNDLE IS UNCHANGED. Same five properties in the same order, same queries
-   * with the same `where` clauses and no `select`, same bigint replacer — this only changes HOW
-   * the identical document is produced. `json-stream-helpers.test.ts` pins the byte-identity
-   * against `JSON.stringify`.
+   * 🔴 WHAT EVIDENCE IS IN THE BUNDLE IS UNCHANGED: the same five properties in the same order,
+   * the same `where` clauses with no `select` so every column still lands in it, and the same
+   * bigint replacer. `json-stream-helpers.test.ts` pins the serialiser's byte-identity against
+   * `JSON.stringify` — note that is a claim about the SERIALISER, over one fixed row order.
+   *
+   * Two things ARE different, and neither adds or removes a row. The queries now also carry
+   * `orderBy: { id: 'asc' }`, `take` and an `id > cursor` predicate, because they are paged. And
+   * as a consequence of that ordering, array element order is now `id ASC` where it was
+   * previously whatever the query plan happened to produce — so against real data this writes a
+   * document that is set-identical to the old one but NOT byte-identical to it. Making the order
+   * deterministic is an improvement for an evidence artefact, but it is a change, and anything
+   * that diffs two bundles across this commit will see it.
    *
    * Why it had to change: the previous shape loaded every `Image`, `Model` and `ModelVersion`
    * row the reported user owns into three arrays and rendered them with one `JSON.stringify`.
@@ -1328,12 +1377,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       const pages = scanPagesById(({ afterId, take }) =>
         dbRead.modelVersion.findMany({
           where: {
-            // A COPY, not the live array. `modelIds` is still being appended to by the generator
-            // above at the moment this closure is built, so passing the reference would make the
-            // filter's contents depend on exactly when the query layer reads it — the kind of
-            // coupling that is correct today and silently wrong after any reordering. It also
-            // made an assertion in the test suite vacuous: the recorded call argument mutated
-            // after the fact, so a scan that ran with an EMPTY id set read back as complete.
+            // A COPY of `modelIds`, not the live array.
+            //
+            // NOT because of a production race. The ordering invariant asserted a dozen lines
+            // above means this closure is only ever built after `streamModels` has been drained,
+            // so `modelIds` is already complete and nothing appends to it while these pages are
+            // fetched. An earlier revision of this comment claimed the array was "still being
+            // appended to" here; that was wrong, and the invariant directly above it says so.
+            //
+            // What the copy does buy, measured rather than reasoned: it is what lets the
+            // "filters model versions by the COMPLETE set of model ids" test observe the hazard
+            // the invariant names. Against a live reference the recorded call argument keeps
+            // mutating after the call, so it reads back as complete even for a scan that ran on
+            // an empty id set. Removing the invariant and reversing the entry order — i.e. the
+            // hazard, made reachable — fails that test with `expected [] to have a length of
+            // 501` against this copy, and passes vacuously against a reference.
             modelId: { in: [...modelIds] },
             ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
           },
@@ -1379,37 +1437,52 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     // concurrency limiter
     const maxWidth = MAX_POST_IMAGES_WIDTH;
     const limit = plimit(10);
-    // Paged rather than `images.map(...)` over one array of every row the user owns: the row set
-    // is unbounded, and materialising it was half of the memory problem this file exists to fix.
-    // Concurrency within a page is unchanged (10); pages are processed in order.
-    for await (const page of scanUserImages()) {
-      await Promise.all(
-        page.map((image) => {
-          return limit(async () => {
-            const width = image.width ?? maxWidth;
-            const blob = await fetchBlob(
-              getEdgeUrl(image.url, {
-                type: image.type,
-                width: width < maxWidth ? width : maxWidth,
-              })
-            );
-            if (!blob) return;
-            const arrayBuffer = await blob.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
+    try {
+      // Paged rather than `images.map(...)` over one array of every row the user owns: the row
+      // set is unbounded, and materialising it was half of the memory problem this file exists
+      // to fix. Concurrency within a page is unchanged (10); pages are processed in order.
+      for await (const page of scanUserImages()) {
+        await Promise.all(
+          page.map((image) => {
+            return limit(async () => {
+              const width = image.width ?? maxWidth;
+              const blob = await fetchBlob(
+                getEdgeUrl(image.url, {
+                  type: image.type,
+                  width: width < maxWidth ? width : maxWidth,
+                })
+              );
+              if (!blob) return;
+              const arrayBuffer = await blob.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
 
-            const imageName = image.name
-              ? image.name.substring(0, image.name.lastIndexOf('.'))
-              : image.url;
-            const name = imageName.length ? imageName : image.url;
-            const filename = `${name}.${blob.type.split('/').pop() as string}`;
+              const imageName = image.name
+                ? image.name.substring(0, image.name.lastIndexOf('.'))
+                : image.url;
+              const name = imageName.length ? imageName : image.url;
+              const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
-            await boundedArchive.append(buffer, { name: filename });
-          });
-        })
-      );
+              await boundedArchive.append(buffer, { name: filename });
+            });
+          })
+        );
+      }
+      // Awaited: the read stream below opens a truncated (or absent) file otherwise.
+      await boundedArchive.finalize();
+    } catch (e) {
+      // Nothing past this point runs, and the caller's `catch` then `rmSync`s `reportDirs.images`
+      // out from under a write stream that is still open on a file inside it. Release the
+      // archiver's queued sources and the sink's fd before letting the error out.
+      //
+      // Two things can land here. `fetchBlob`/`append` could already throw before this change.
+      // The DB read is new: paging pulls rows *inside* the archiver's lifetime, where the
+      // previous code fetched every row before any archiver existed, so a `dbRead` failure on
+      // page 2 or later is a trigger the old shape did not have. `abort()` is a documented no-op
+      // once the archive is aborted or finalized, and `destroy()` on a closed stream likewise, so
+      // this is safe whichever of them got furthest.
+      closeArchiveOnFailure(archive, output);
+      throw e;
     }
-    // Awaited: the read stream below opens a truncated (or absent) file otherwise.
-    await boundedArchive.finalize();
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
@@ -1436,26 +1509,34 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     // concurrency limiter
     const limit = plimit(10);
-    await Promise.all(
-      imageUrls.map((url, index) => {
-        return limit(async () => {
-          const blob = await fetchBlob(url);
-          if (!blob) return;
-          try {
-            const arrayBuffer = await blob.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
+    try {
+      await Promise.all(
+        imageUrls.map((url, index) => {
+          return limit(async () => {
+            const blob = await fetchBlob(url);
+            if (!blob) return;
+            try {
+              const arrayBuffer = await blob.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
 
-            const imageName = zipEntryNameForUrl(url, index);
+              const imageName = zipEntryNameForUrl(url, index);
 
-            await boundedArchive.append(buffer, { name: imageName });
-          } catch (e) {
-            //
-          }
-        });
-      })
-    );
-    // Awaited: the read stream below opens a truncated (or absent) file otherwise.
-    await boundedArchive.finalize();
+              await boundedArchive.append(buffer, { name: imageName });
+            } catch (e) {
+              //
+            }
+          });
+        })
+      );
+      // Awaited: the read stream below opens a truncated (or absent) file otherwise.
+      await boundedArchive.finalize();
+    } catch (e) {
+      // Same reasoning as `archiveImages` above. Note the inner `catch (e) {}` only covers the
+      // buffer/append step, so a `fetchBlob` rejection still reaches here, as does the error
+      // `finalize()` rethrows after the archiver has latched one.
+      closeArchiveOnFailure(archive, output);
+      throw e;
+    }
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'generated-images.zip' });

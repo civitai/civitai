@@ -1,4 +1,6 @@
 import archiver from 'archiver';
+import type { Archiver } from 'archiver';
+import { EventEmitter } from 'events';
 import fs from 'fs';
 import JSZip from 'jszip';
 import os from 'os';
@@ -218,6 +220,54 @@ describe('createBoundedArchive', () => {
       'synthetic archive failure'
     );
     await expect(bounded.finalize()).rejects.toThrow('synthetic archive failure');
+  });
+
+  it('settles EVERY parked append when the archiver errors — the error event fires only once', async () => {
+    /**
+     * The failure path is the reason `releaseWaiters` loops. `archiver` emits `error` at most
+     * once, so that single event is the only wake-up a parked `append()` will ever get: nothing
+     * drains the waiter queue afterwards, because `entry` stops firing too. Released one at a
+     * time, every append past the first would hang forever — and in `archiveImages` a hung append
+     * wedges the `Promise.all` over a page, so the whole report neither archives nor rejects.
+     *
+     * A stub rather than the real archiver, deliberately: it must NEVER emit `entry`, so the
+     * success path cannot release anyone and this measures the failure path alone.
+     */
+    const stub = new EventEmitter() as unknown as Archiver;
+    (stub as unknown as { append: () => void }).append = () => undefined;
+
+    const bounded = createBoundedArchive({ archive: stub, maxPendingEntries: 2 });
+
+    const outcomes: string[] = [];
+    const appends = [0, 1, 2, 3, 4].map((i) =>
+      bounded
+        .append(entryBuffer(i), { name: `entry-${i}.bin` })
+        .then(() => outcomes.push(`resolved-${i}`))
+        .catch((e: Error) => outcomes.push(`rejected-${i}: ${e.message}`))
+    );
+
+    // The precondition, asserted rather than assumed: two appends hold the slots and the other
+    // three are parked. Without that this test would prove nothing about the waiter queue.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(bounded.pendingEntries).toBe(2);
+    expect(outcomes).toHaveLength(2);
+
+    stub.emit('error', new Error('synthetic archive failure'));
+
+    // Raced rather than plain-awaited so the failure mode reads as `HUNG` instead of as a 5 s
+    // suite timeout with no indication of which promise never settled.
+    const raced = await Promise.race([
+      Promise.all(appends).then(() => 'all-settled' as const),
+      new Promise<'HUNG'>((resolve) => setTimeout(() => resolve('HUNG'), 500)),
+    ]);
+
+    expect({ raced, settled: outcomes.length }).toEqual({ raced: 'all-settled', settled: 5 });
+    // And they settle as rejections carrying the archiver's error, not as silent resolutions.
+    expect(outcomes.filter((o) => o.includes('rejected'))).toEqual([
+      'rejected-2: synthetic archive failure',
+      'rejected-3: synthetic archive failure',
+      'rejected-4: synthetic archive failure',
+    ]);
   });
 
   it('rejects a nonsensical bound rather than silently running unbounded', () => {

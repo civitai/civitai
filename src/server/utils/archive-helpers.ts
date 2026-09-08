@@ -36,9 +36,10 @@ export const MAX_PENDING_ARCHIVE_ENTRIES = 8;
  *
  * `archiver` rejects an entry with an empty name (`ENTRYNAMEREQUIRED`), and since the error
  * handling in `createBoundedArchive` latches archive errors and rethrows them from `finalize()`,
- * one such URL now fails the whole report rather than being silently dropped. That is the right
- * default for evidence — see the file header — but an unnameable URL is not a reason to make a
- * report permanently unarchivable, and it is a shape the orchestrator can legitimately produce:
+ * one such URL now fails the whole report rather than being silently dropped. Failing loudly is
+ * the right default here — a dropped entry means a piece of evidence is missing from an archive
+ * nobody will re-derive — but an unnameable URL is not a reason to make a report permanently
+ * unarchivable, and it is a shape the orchestrator can legitimately produce:
  * `https://host/blob/` and `https://host/?x` both reduce to `''` under the basename expression.
  *
  * The basename expression is evaluated FIRST and returned verbatim whenever it is non-empty, so
@@ -98,7 +99,14 @@ export function createBoundedArchive({
   maxPendingEntries = MAX_PENDING_ARCHIVE_ENTRIES,
 }: {
   archive: Archiver;
-  /** The sink `archive` is piped to. Awaited on `finalize` so the bytes are actually on disk. */
+  /**
+   * The sink `archive` is piped to, awaited to `'close'` on `finalize` so the bytes are really on
+   * disk — archiver's own `finalize()` resolves when the zip module ends, measurably before the
+   * sink has flushed. Unlike `writeJsonObject`, nothing else here waits on the sink, so this wait
+   * is load-bearing rather than redundant. It does require a sink that emits `'close'`: both call
+   * sites pass `fs.createWriteStream`, which does; a Writable built with `autoDestroy: false`
+   * never emits it and would hang here.
+   */
   output?: Writable;
   maxPendingEntries?: number;
 }): BoundedArchive {
@@ -113,14 +121,23 @@ export function createBoundedArchive({
   let failure: Error | undefined;
   const waiters: Array<() => void> = [];
 
-  // Releases EVERY waiter whenever at least one slot is free — it does not hand out one wake-up
-  // per free slot. `pending` is only incremented once a woken waiter actually resumes, which
-  // happens on a later microtask, so the `pending < maxPendingEntries` test below is still true
-  // for the second and subsequent iterations of this loop and the whole queue drains.
+  // 🔴 The `while` is load-bearing on the FAILURE path and must not be narrowed to an `if`.
   //
-  // The bound is upheld anyway, by the `while` re-check in `append()`: a woken waiter that finds
-  // no free slot simply parks again. That re-check is the actual guard — a maintainer who
-  // "optimises" it into an `if` on the strength of this loop's name would break the bound.
+  // `archiver` emits `error` at most ONCE, and that single event is the only wake-up every
+  // waiter parked in `append()` will ever get — nothing drains them afterwards, because `entry`
+  // stops firing too. Draining the whole queue here is therefore what makes each parked append
+  // settle. As an `if`, one `error` releases exactly one waiter and the rest hang forever: in
+  // `archiveImages` that wedges the `Promise.all` over a page, so `archiveCsamDataForReport`
+  // never settles for that report — no archive, no rejection, and nothing logged. Pinned by
+  // "settles EVERY parked append when the archiver errors" in `archive-helpers.test.ts`, which
+  // fails with `raced: 'HUNG', settled: 3` against the `if`.
+  //
+  // On the SUCCESS path the loop over-releases rather than handing out one wake-up per free
+  // slot: `pending` is only incremented once a woken waiter actually resumes, on a later
+  // microtask, so `pending < maxPendingEntries` is still true on the second and subsequent
+  // iterations. That is harmless because `append()` re-checks the bound in its own `while` and a
+  // waiter that finds no free slot simply parks again. Both loops are needed — this one to
+  // settle everything on failure, that one to uphold the bound on success.
   const releaseWaiters = () => {
     while (waiters.length > 0 && (failure !== undefined || pending < maxPendingEntries)) {
       waiters.shift()?.();
