@@ -3,7 +3,8 @@ import { describe, it, expect, vi } from 'vitest';
 // is a ~4800-line module whose cold transform would otherwise be charged to the first
 // test's timeout budget rather than to collection.
 import { getModelsRaw, getPermanentPaidAccessModelIds } from '~/server/services/model.service';
-import { getGatedModelIds } from '~/server/services/paid-access.service';
+import { queryGatedModelIds } from '~/server/services/paid-access.service';
+import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -110,7 +111,6 @@ describe('getPermanentPaidAccessModelIds', () => {
 // its field list from the schema instead of naming paidAccess. Same invariant, and it
 // also covers the next field someone declares on z.coerce.boolean().
 
-
 /**
  * `hidePaid` is the only filter here whose polarity is load-bearing: every other clause in this file
  * narrows the result to something, and this one removes. Swap NOT EXISTS for EXISTS and the feed
@@ -126,8 +126,9 @@ describe('getModelsRaw — hidePaid filter', () => {
     const sql = await sqlFor({ hidePaid: true });
     expect(sql).toMatch(/NOT\s+EXISTS\s*\(\s*SELECT 1 FROM "PaidAccess"/);
     // Without the correlation the subquery is uncorrelated: one gate anywhere hides every model.
-    expect(sql).toContain('AND pamv."modelId" = m.id');
-    expect(sql).toContain(`AND pamv.status = 'Published'::"ModelStatus"`);
+    expect(sql).toContain('AND mv."modelId" = m.id');
+    expect(sql).toContain(`mv.status = 'Published'::"ModelStatus"`);
+    expect(sql).toContain(`pa."entityType" = 'ModelVersion'`);
   });
 
   it('uses the live-gate predicate, not the permanent discriminator', async () => {
@@ -135,11 +136,15 @@ describe('getModelsRaw — hidePaid filter', () => {
     // Same translation of isPaidAccessActive the badge uses. `timeframeDays IS NULL` here would
     // hide permanent gates only and leave live timed windows visible under a "hide paid" filter.
     expect(sql).toContain('AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())');
-    expect(sql).not.toContain('"timeframeDays" IS NULL');
+    // The whole column, not the `IS NULL` spelling: `not.toContain('"timeframeDays" IS NULL')` is
+    // satisfied by `IS NOT NULL`, and appending that clause silently stops Hide Paid hiding permanent
+    // gates while the badge keeps calling them Paid. Measured green across this whole file before the
+    // assertion was widened.
+    expect(sql).not.toContain('"timeframeDays"');
   });
 
-  it('emits nothing when the flag is off', async () => {
-    const sql = await sqlFor({});
+  it.each([{}, { hidePaid: false }])('emits nothing when the flag is off (%o)', async (input) => {
+    const sql = await sqlFor(input);
     expect(sql).not.toMatch(/NOT\s+EXISTS\s*\(\s*SELECT 1 FROM "PaidAccess"/);
   });
 });
@@ -149,14 +154,20 @@ describe('getModelsRaw — hidePaid filter', () => {
  * they are two queries answering one question, so a divergence here is invisible on the feed and
  * visible only as a filter that disagrees with the label.
  */
-describe('getGatedModelIds', () => {
+describe('queryGatedModelIds', () => {
   it('selects every LIVE gate, timed or permanent, on published versions', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
-    await getGatedModelIds();
+    await queryGatedModelIds();
 
-    const sql = (dbMock.dbRead.$queryRaw.mock.calls.at(-1)?.[0] as unknown as string[]).join('');
-    expect(sql).toContain('(pa."endsAt" IS NULL OR pa."endsAt" > NOW())');
-    expect(sql).not.toContain('"timeframeDays"');
-    expect(sql).toContain(`mv.status = 'Published'::"ModelStatus"`);
+    // `.at(-1)` is load-bearing: there is no global clearMocks, so calls accumulate across the file.
+    const call = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
+    const strings = (call?.[0] as unknown as string[]).join('');
+
+    // The predicate is INTERPOLATED now, so it lives in the values, not in the template strings —
+    // `.join('')` splices straight past it. Assert the surrounding statement here and the identity of
+    // what was spliced in; what the fragment SAYS is pinned once, in its own test.
+    expect(strings).toContain('SELECT DISTINCT mv."modelId"');
+    expect(strings).toContain('JOIN "ModelVersion" mv ON mv.id = pa."entityId"');
+    expect(call?.[1]).toBe(paidAccessLiveSql);
   });
 });

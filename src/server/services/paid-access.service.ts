@@ -23,8 +23,13 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { createCachedObject } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   assertPricingAllowed,
@@ -661,6 +666,8 @@ export async function getPublicPaidAccessForModelVersions(
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
   if (entityIds.length) await paidAccessCache(entityType).bust(entityIds);
+  // The whole-set cache below has no per-entity key to bust, so it goes with every gate write.
+  await bustGatedModelIdsCache();
 }
 
 /**
@@ -806,9 +813,7 @@ export async function getModelPaidAccessGates(
     SELECT mv."modelId", MAX(pa."endsAt") AS deadline
     FROM "PaidAccess" pa
     JOIN "ModelVersion" mv ON mv.id = pa."entityId"
-    WHERE pa."entityType" = 'ModelVersion'
-      AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
-      AND mv.status = 'Published'::"ModelStatus"
+    WHERE ${paidAccessLiveSql}
       AND mv."modelId" IN (${Prisma.join(modelIds)})
     GROUP BY mv."modelId"
   `;
@@ -828,14 +833,34 @@ export async function getModelPaidAccessGates(
  * different rule from the one that labels them is the divergence 868m1r2u7 exists to close, one layer
  * up: a card reading Paid that the hide filter leaves on screen.
  */
-export async function getGatedModelIds(): Promise<number[]> {
+const GATED_MODEL_IDS_CACHE_KEY = `${REDIS_KEYS.CACHES.PAID_ACCESS}:GatedModelIds:v1` as const;
+
+/**
+ * The query itself, uncached. Separate from the cached entry point below so a test can observe the
+ * statement — through `fetchThroughCache` the origin never runs under a mocked redis, and the
+ * assertion would be over a lock failure rather than over SQL.
+ */
+export async function queryGatedModelIds(): Promise<number[]> {
   const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
     SELECT DISTINCT mv."modelId"
     FROM "PaidAccess" pa
     JOIN "ModelVersion" mv ON mv.id = pa."entityId"
-    WHERE pa."entityType" = 'ModelVersion'
-      AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
-      AND mv.status = 'Published'::"ModelStatus"
+    WHERE ${paidAccessLiveSql}
   `;
   return rows.map((r) => Number(r.modelId));
+}
+
+export async function getGatedModelIds(): Promise<number[]> {
+  return fetchThroughCache(
+    GATED_MODEL_IDS_CACHE_KEY,
+    queryGatedModelIds,
+    // Short, and load-bearing rather than conventional: this set decays with the wall clock as timed
+    // windows cross `endsAt`, so bust-on-write alone would keep an expired gate hidden until the next
+    // edit to some unrelated version.
+    { ttl: CacheTTL.xs }
+  );
+}
+
+export async function bustGatedModelIdsCache() {
+  await bustFetchThroughCache(GATED_MODEL_IDS_CACHE_KEY);
 }
