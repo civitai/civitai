@@ -1152,8 +1152,10 @@ export const ARCHIVE_SCAN_PAGE_SIZE = 500;
  * carries `@@index([userId, id])`, so the one genuinely large scan here — every image the
  * reported user owns — is served directly. `Model` has no `userId` index at all, and
  * `ModelVersion`'s only `modelId` index is a HASH index, which can answer equality but cannot
- * serve a range or an ordering. Those two scans have the primary key available for the cursor
- * and the ordering but nothing indexed for the filter. That is accepted rather than fixed here,
+ * serve a range or an ordering. So the two are not in the same position: `Model` has nothing
+ * indexed for its filter at all, while `ModelVersion`'s hash index CAN serve its `modelId IN
+ * (…)` equality filter — what it cannot serve is the ordering. Both have the primary key
+ * available for the cursor and the ordering. That is accepted rather than fixed here,
  * because a user's model and model-version counts are small next to their image count and the
  * point of this change is the memory ceiling, not latency. It is NOT a claim about the plan the
  * planner actually chooses — no `EXPLAIN` was run.

@@ -222,7 +222,7 @@ describe('createBoundedArchive', () => {
     await expect(bounded.finalize()).rejects.toThrow('synthetic archive failure');
   });
 
-  it('settles EVERY parked append when the archiver errors — the error event fires only once', async () => {
+  it('settles EVERY parked append when the archiver errors — even if that error is the last event it emits', async () => {
     /**
      * The failure path is the reason `releaseWaiters` loops. `releaseWaiters` runs on `entry` and
      * on `error` only, and once a failure is latched `append()` rejects immediately, so no new
