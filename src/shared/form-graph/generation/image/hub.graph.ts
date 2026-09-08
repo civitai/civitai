@@ -125,10 +125,13 @@ export const imageHub = defineGraph<RootCtx>()
       enhancedCompatibility !== true;
     const step = isDraft ? 4 : bogoActive ? 2 : 1;
     // draft's 4-step quantity gets its own bucket (v1's conditional group);
-    // everywhere else quantity is global
+    // everywhere else quantity is global — so a stored value below bogo's
+    // step floor must be corrected, or it fails min(step) and dead-submits
     return {
       ...quantityDef({ max: _ext.limits.maxQuantity, step }),
       scope: isDraft ? rootScope(_ext.workflow) : rootScope(),
+      correct: (v: number) =>
+        v < step ? { value: step, reason: 'quantity_step_floor' } : undefined,
     };
   })
   // interactive model picks reconcile selectors the same way the parse boundary does

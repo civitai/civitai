@@ -107,3 +107,19 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
     expect((s.resources as { id: number }[]).map((r) => r.id).sort()).toEqual([1, 2]);
   });
 });
+
+describe('replay null params (QueueItem shape)', () => {
+  it('null params are dropped, not written as trusted values that poison validate', () => {
+    const store = makeStore();
+    store.set({ workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'x' });
+    applyGenerationData(store, {
+      runType: 'replay',
+      params: { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: null, images: null },
+      resources: [],
+    } as never);
+
+    expect(store.getField('seed')?.error).toBeUndefined();
+    const result = store.validate();
+    expect(result.success).toBe(true);
+  });
+});

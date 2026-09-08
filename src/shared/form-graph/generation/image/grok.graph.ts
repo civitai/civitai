@@ -37,11 +37,18 @@ export const grokImage = defineGraph<FamilyExt>({ scope: familyScope })
   .use(grokHead)
   .field(
     'images',
-    workflowScoped(({ model, _ext }) =>
-      _ext.workflow === 'img2img:edit'
-        ? imagesDef({ max: isGrokV2(modelIdOf(model)) ? 3 : 7 })
-        : null
-    )
+    workflowScoped(({ model, _ext }) => {
+      if (_ext.workflow !== 'img2img:edit') return null;
+      const max = isGrokV2(modelIdOf(model)) ? 3 : 7;
+      return {
+        ...imagesDef({ max }),
+        // v1.x allows 7; a v2 switch truncates instead of failing max(3)
+        correct: (value: unknown) =>
+          Array.isArray(value) && value.length > max
+            ? { value: value.slice(0, max), reason: 'image_limit' }
+            : undefined,
+      };
+    })
   )
   .field('aspectRatio', ({ _ext }) =>
     _ext.workflow !== 'img2img:edit'

@@ -291,8 +291,13 @@ const shared = defineGraph<FamilyExt>()
     })
   )
   .field('seed', SEED)
-  // every version has a resolution — only the option set is version-specific
-  .field('resolution', ({ _ext }) => RESOLUTION_BY_VERSION[versionOf(_ext.ecosystem)])
+  // every version has a resolution — only the option set is version-specific;
+  // scoped per version so a pick absent from another version's set (5B's 580p,
+  // 2.5's 1080p) can't ride into the shared family bucket and fail validate
+  .field('resolution', ({ _ext }) => {
+    const version = versionOf(_ext.ecosystem);
+    return { ...RESOLUTION_BY_VERSION[version], scope: version };
+  })
   // THE two-facts split: the selection stays in `ecosystem` (hub field,
   // shadowed off the wire by this emit); the backend target is derived where
   // its inputs exist and carries the wire name. Only v2.1 consults resolution.
@@ -328,7 +333,9 @@ const shared = defineGraph<FamilyExt>()
 const v21 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_21(resolution) : null))
-  .field('duration', DURATION_WAN)
+  // duration option sets differ per version in the shared family bucket —
+  // scoped so 2.5's 10s pick can't fail 2.1/2.2's enum ('wan' shared: same def)
+  .field('duration', { ...DURATION_WAN, scope: 'wan' })
   .field('resources', ({ backendEcosystem, _ext }) =>
     resourcesDef({ ecosystem: backendEcosystem, limit: _ext.limits.maxResources })
   )
@@ -342,7 +349,9 @@ const v22 = defineGraph<FamilyExt>({ scope: familyScope })
     noImages(images) ? (_ext.flags?.wan22MultiStep ? AR_22_MULTISTEP : AR_25)(resolution) : null
   )
   .field('shift', SHIFT)
-  .field('duration', ({ _ext }) => (_ext.flags?.wan22MultiStep === true ? DURATION_WAN : null))
+  .field('duration', ({ _ext }) =>
+    _ext.flags?.wan22MultiStep === true ? { ...DURATION_WAN, scope: 'wan' } : null
+  )
   .field('interpolatorModel', ({ _ext }) =>
     _ext.flags?.wan22MultiStep !== true ? INTERPOLATOR : null
   )
@@ -366,7 +375,7 @@ const v25 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_25(resolution) : null))
-  .field('duration', DURATION_25);
+  .field('duration', { ...DURATION_25, scope: 'v2.5' });
 
 const v27 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)

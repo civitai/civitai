@@ -14,7 +14,7 @@ import {
   workflowScoped,
   sliderDef,
 } from '../defs';
-import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
+import { familyScope, makeTextBlock, perModelScope, type FamilyExt } from '../shared';
 
 /**
  * Seedance (ByteDance), ported from `seedance-graph.ts`. No resources, no
@@ -77,12 +77,15 @@ export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
       defaultModelId: seedanceVersionIds['v2-mini'],
     })
   )
-  .field('resolution', ({ model }) =>
-    enumDef({
+  // per-model memory: v2's 1080p pick must not ride onto versions whose
+  // option set lacks it (trusted values skip the input remap and fail validate)
+  .field('resolution', ({ model }) => ({
+    ...enumDef({
       options: model?.id === seedanceVersionIds.v2 ? seedanceResolutionsV2 : seedanceResolutions,
       default: '720p',
-    })
-  )
+    }),
+    scope: perModelScope({ model }),
+  }))
   // aspect-ratio dimensions scale with the selected resolution
   .field('aspectRatio', ({ resolution }) =>
     aspectRatioDef({
@@ -90,9 +93,10 @@ export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
       default: '16:9',
     })
   )
-  .field('duration', ({ model }) =>
-    sliderDef({ min: 4, max: model?.id === seedanceVersionIds['v2.5'] ? 30 : 15, default: 5 })
-  )
+  .field('duration', ({ model }) => ({
+    ...sliderDef({ min: 4, max: model?.id === seedanceVersionIds['v2.5'] ? 30 : 15, default: 5 }),
+    scope: perModelScope({ model }),
+  }))
   .field('generateAudio', boolDef(false))
   .field('seed', SEED)
   .use(makeTextBlock({ negativePrompt: false }));

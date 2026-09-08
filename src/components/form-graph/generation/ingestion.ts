@@ -183,15 +183,22 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
       ? isWorkflowAvailable(resolvedWorkflow, remixEco.id)
       : !remixEcosystemKey;
 
-    const remixValues = {
-      ...paramsWithoutOutputSettings,
-      ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
-      workflow: resolvedWorkflow,
-      model: split.model,
-      upscaler: split.upscaler,
-      resources: split.resources,
-      vae: split.vae,
-    };
+    // v1 parity: a null param means "clear" (QueueItem replays send
+    // `seed: null`, txt2img ones `images: null`). The reset below already
+    // clears everything, and a null written through set() is a TRUSTED value
+    // stored verbatim — it fails the output schema at validate() and the
+    // submit button dies silently. Drop nulls instead of writing them.
+    const remixValues = Object.fromEntries(
+      Object.entries({
+        ...paramsWithoutOutputSettings,
+        ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
+        workflow: resolvedWorkflow,
+        model: split.model,
+        upscaler: split.upscaler,
+        resources: split.resources,
+        vae: split.vae,
+      }).filter(([, value]) => value !== null)
+    );
 
     if (!ecosystemSupportsWorkflow && remixEcosystemKey) {
       openCompatibilityConfirmModal({
