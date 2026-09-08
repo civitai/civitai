@@ -137,10 +137,15 @@ export const articleRouter = router({
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
     .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
-  getScanStatus: publicProcedure
+  // Author-facing scan detail: per-image URLs, `blockedFor` moderation labels, scan failure
+  // reasons and the article's text-moderation verdict, for any id including an unpublished
+  // draft. Same guard as its `rescan` sibling, which takes the same input — every caller is
+  // the author's own editor or their article page behind `isOwner`.
+  getScanStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
+    .use(isOwnerOrModerator)
     .query(({ input }) => getArticleScanStatus(input)),
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
