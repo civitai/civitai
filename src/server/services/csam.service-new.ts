@@ -39,6 +39,10 @@ import {
   IPEventName,
 } from '@civitai/cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import {
+  createBoundedArchive,
+  MEDIA_ARCHIVE_COMPRESSION_LEVEL,
+} from '~/server/utils/archive-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { logToAxiom } from '~/server/logging/client';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -199,6 +203,12 @@ export async function getCsamsToReport() {
 export async function getCsamsToArchive() {
   const data = await dbRead.csamReport.findMany({
     where: { reportSentAt: { not: null }, archivedAt: null },
+    // Without an explicit order Postgres is free to return these in any order, so a single report
+    // that kills the job mid-run can sit at the front of every batch and starve everything behind
+    // it indefinitely — the per-report try/catch in `process-csam` does not help, because the
+    // process does not survive to reach the next iteration. Oldest-first at least guarantees the
+    // backlog drains in a fixed, auditable order once a blocking report is dealt with.
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
   return data as unknown as CsamReportProps[];
 }
@@ -1210,14 +1220,14 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const outPath = `${reportDirs.images}/${userId}_images.zip`;
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
     const output = fs.createWriteStream(outPath);
 
-    archive.on('error', function (err) {
-      throw err;
-    });
-
     archive.pipe(output);
+
+    // Bounds the number of downloaded-but-not-yet-compressed images held in memory. Without it,
+    // every image a user owns is buffered at once and memory tracks total downloaded bytes.
+    const boundedArchive = createBoundedArchive({ archive, output });
 
     // concurrency limiter
     const maxWidth = MAX_POST_IMAGES_WIDTH;
@@ -1239,11 +1249,12 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           const name = imageName.length ? imageName : image.url;
           const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
-          archive.append(buffer, { name: filename });
+          await boundedArchive.append(buffer, { name: filename });
         });
       })
     );
-    archive.finalize();
+    // Awaited: the read stream below opens a truncated (or absent) file otherwise.
+    await boundedArchive.finalize();
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
@@ -1260,14 +1271,13 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const outPath = `${reportDirs.generatedImages}/${userId}_generated-images.zip`;
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
     const output = fs.createWriteStream(outPath);
 
-    archive.on('error', function (err) {
-      throw err;
-    });
-
     archive.pipe(output);
+
+    // Same unbounded-append hazard as archiveImages above.
+    const boundedArchive = createBoundedArchive({ archive, output });
 
     // concurrency limiter
     const limit = plimit(10);
@@ -1282,14 +1292,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
             const imageName = url.split('/').reverse()[0].split('?')[0];
 
-            archive.append(buffer, { name: imageName });
+            await boundedArchive.append(buffer, { name: imageName });
           } catch (e) {
             //
           }
         });
       })
     );
-    archive.finalize();
+    // Awaited: the read stream below opens a truncated (or absent) file otherwise.
+    await boundedArchive.finalize();
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'generated-images.zip' });
