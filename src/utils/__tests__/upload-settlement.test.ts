@@ -54,8 +54,25 @@ class StubXhr implements SettlementXhr {
     this.fire('loadend');
   }
 
+  /**
+   * A user cancel: `abort` then `loadend`, same dispatch.
+   *
+   * 🔴 The `loadend` is not decoration. This stub used to fire `abort` alone, which is
+   * NOT what the browser does — per the XHR spec's request-error steps an `abort` at
+   * the XHR object is followed by `loadend` at the XHR object in the same dispatch,
+   * exactly as `error` is. While the non-2xx `loadend` branch called nothing, the
+   * difference was invisible; it stops being invisible the moment that branch reports
+   * an error, because an aborted request arrives at `loadend` with `status === 0`.
+   *
+   * `readyState` is 4 during these events: `abort()` runs the request-error steps
+   * (which set state to DONE and fire the events) and only afterwards resets state to
+   * UNSENT. `status` is 0 because the response is a network error.
+   */
   userAbort() {
+    this.readyState = 4;
+    this.status = 0;
     this.fire('abort');
+    this.fire('loadend');
   }
 }
 
@@ -194,5 +211,84 @@ describe('attachUploadSettlement', () => {
     await expect(settled).rejects.toThrow('Upload canceled');
     expect(cb.onAborted).toHaveBeenCalledTimes(1);
     expect(relay).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // The refused-PUT half. XHR's `error` event is NETWORK-only, so a PUT that reaches
+  // the store and is REFUSED — an expired presign (403), a malformed request (400), a
+  // store that is briefly unavailable (503) — completes normally and lands on
+  // `loadend`. That branch reported nothing at all, so the tracked file went on
+  // asserting `uploading` forever: `ImageUpload` renders `status === 'error'` (a badge
+  // it never got to show) and `ChallengeSubmitModal` both renders it AND gates its
+  // submit on `status === 'uploading'`, so a refused PUT there wedges the submit
+  // button with a spinner that can never clear.
+  // ---------------------------------------------------------------------------
+
+  it.each([201, 204])('treats a %i as the successful PUT it is', async (status) => {
+    // The store answers 200 to this PUT today, so `=== 200` was not WRONG in
+    // production — it was brittle. A 201 or 204 is a successful PUT by any reading,
+    // and badging one as a failure would put an error on an upload that worked.
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.finishedWithStatus(status);
+
+    await expect(settled).resolves.toEqual({ kind: 'direct', success: true });
+    expect(cb.onSuccess).toHaveBeenCalledTimes(1);
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(relay).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 403, 500, 503])('reports a refused %i to the caller', async (status) => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.finishedWithStatus(status);
+
+    expect(cb.onError).toHaveBeenCalledTimes(1);
+    expect(cb.onSuccess).not.toHaveBeenCalled();
+    /**
+     * 🔴 THE REMAINING HALF OF THE DEFECT, PINNED RATHER THAN FIXED. Settlement still
+     * RESOLVES on a refused PUT, so the caller is still handed a media key with
+     * nothing behind it — which is how an `Image` row gets written for media that
+     * never landed. Making it reject is the follow-up, and it is not a one-line
+     * change: most `uploadToCF` call sites do not catch, so a rejection would surface
+     * uncaught in a number of them, including a bulk `Promise.all` in `ImageUpload`
+     * that would additionally propagate local `blob:` URLs into `onChange` as image
+     * values. Asserting the current behaviour makes that follow-up a deliberate edit
+     * to this expectation rather than a silent drift.
+     */
+    await expect(settled).resolves.toEqual({ kind: 'direct', success: false });
+  });
+
+  /**
+   * 🔴 REACHABLE ONLY BECAUSE OF THE CASE ABOVE, WHICH IS WHY THE GUARD IS NOT INERT.
+   * `abort` is followed by `loadend` in the same dispatch, and an aborted request
+   * arrives there with `status === 0`. While the non-2xx branch called nothing, that
+   * second dispatch was harmless; now that it reports an error, it would overwrite the
+   * user's `aborted` status with `error` — a cancel rendered as a failure.
+   *
+   * Watched to fail: with the `aborted` flag deleted from `attachUploadSettlement`
+   * this case fails with
+   *   AssertionError: expected "spy" to not be called at all, but actually been
+   *   called 1 times
+   * on the `onError` expectation, while every other case in this file stays green.
+   */
+  it('keeps a user cancel reported as aborted, not errored', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.userAbort();
+
+    await expect(settled).rejects.toThrow('Upload canceled');
+    expect(cb.onAborted).toHaveBeenCalledTimes(1);
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(cb.onSuccess).not.toHaveBeenCalled();
   });
 });

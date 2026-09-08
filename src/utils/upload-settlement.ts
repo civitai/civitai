@@ -52,11 +52,26 @@ export function attachUploadSettlement(
     // reads as protection and stops the next person looking for the real one.
     let relayPending = false;
 
+    // 🔴 REACHABLE, unlike the latch described above — do not delete it as another one.
+    // `abort()` dispatches `abort` and THEN `loadend`, so once `loadend` reports a
+    // non-2xx as an error (below), a user cancel would be overwritten with a failure.
+    // `keeps a user cancel reported as aborted, not errored` fails without this.
+    let aborted = false;
+
     xhr.addEventListener('loadend', () => {
       // A relay is in flight and owns settlement.
       if (relayPending) return;
-      const success = xhr.readyState === 4 && xhr.status === 200;
+      // A cancel already settled this; see the flag's comment.
+      if (aborted) return;
+      // 🔴 2xx, not `=== 200`. A store answering 201/204 stored the object; treating
+      // that as failure is the same defect in the other direction.
+      const success = xhr.readyState === 4 && xhr.status >= 200 && xhr.status < 300;
+      // 🔴 A non-2xx `loadend` means we REACHED the backend and it refused us. Before
+      // this branch existed no callback fired at all, so the tracked file kept its
+      // `uploading` status forever — a refused upload that renders as still in flight,
+      // and which permanently disabled any submit gated on that status.
       if (success) callbacks.onSuccess();
+      else callbacks.onError();
       resolve({ kind: 'direct', success });
     });
 
@@ -83,6 +98,7 @@ export function attachUploadSettlement(
     });
 
     xhr.addEventListener('abort', () => {
+      aborted = true;
       callbacks.onAborted();
       reject(new Error('Upload canceled'));
     });
