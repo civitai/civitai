@@ -2,6 +2,7 @@ import { chunk } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
+import { resolveDatabaseEnvironment } from '~/env/database-target';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
@@ -99,9 +100,15 @@ export const rewardsAbusePrevention = createJob(
         })) ?? [],
     };
 
-    if (abuseLimits.dryRun) return { ...found, usersDisabled: 0 };
+    const runId = uuid();
+
+    if (abuseLimits.dryRun) {
+      await logDecisions({ runId, abusers, abuseLimits, disabled: new Set(), usersDisabled: 0 });
+      return { ...found, usersDisabled: 0 };
+    }
 
     let usersDisabled = 0;
+    const disabled = new Set<number>();
     const tasks = chunk(usersToDisable, 500).map((chunk) => async () => {
       const affected = await dbWrite.$queryRawUnsafe<{ id: number }[]>(`
         UPDATE "User" u
@@ -130,13 +137,101 @@ export const rewardsAbusePrevention = createJob(
           url: '/articles/5799',
         },
       });
+      for (const user of affected) disabled.add(user.id);
       usersDisabled += affected.length;
     });
     await limitConcurrency(tasks, 3);
 
+    await logDecisions({ runId, abusers, abuseLimits, disabled, usersDisabled });
+
     return { ...found, usersDisabled };
   }
 );
+
+/**
+ * One row per flagged IP, plus the config that flagged it, so reviewing a threshold is a query
+ * rather than a re-run against live data.
+ *
+ * Never throws. The accounts have already been disabled by the time this runs, and losing the
+ * audit trail is worse than losing it silently is bad — but failing the job here would leave the
+ * database changed and the run reported as failed, which is the worse of the two.
+ */
+async function logDecisions({
+  runId,
+  abusers,
+  abuseLimits,
+  disabled,
+  usersDisabled,
+}: {
+  runId: string;
+  abusers: Abuser[] | undefined;
+  abuseLimits: AbuseLimits;
+  disabled: Set<number>;
+  usersDisabled: number;
+}) {
+  const time = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const config = {
+    env: resolveDatabaseEnvironment(),
+    dryRun: abuseLimits.dryRun ? 1 : 0,
+    awardTypes: abuseLimits.award_types,
+    awardTypePrefixes: abuseLimits.award_type_prefixes,
+    awardedThreshold: abuseLimits.awarded,
+    userCountThreshold: abuseLimits.user_count,
+    maxUserCount: abuseLimits.max_user_count ?? null,
+    requireExclusiveIp: abuseLimits.require_exclusive_ip ? 1 : 0,
+    config: JSON.stringify(abuseLimits),
+  };
+
+  const rows = (abusers ?? []).map((abuser) => ({
+    time,
+    runId,
+    ...config,
+    ip: abuser.ip,
+    userIds: abuser.user_ids,
+    userCount: abuser.user_count,
+    ipUserCount: abuser.ip_user_count ?? abuser.user_count,
+    awarded: abuser.awarded,
+    disabledUserIds: abuser.user_ids.filter((id) => disabled.has(id)),
+    usersDisabled,
+  }));
+
+  // A run that flagged nothing still writes one row, with an empty `ip`. Without it, a quiet
+  // night and a night the job never ran are the same absence — the shape that hid a 79-hour
+  // outage in auto-feature-images.
+  if (!rows.length)
+    rows.push({
+      time,
+      runId,
+      ...config,
+      ip: '',
+      userIds: [],
+      userCount: 0,
+      ipUserCount: 0,
+      awarded: 0,
+      disabledUserIds: [],
+      usersDisabled: 0,
+    });
+
+  try {
+    await clickhouse?.insert({
+      table: 'rewards_abuse_decisions',
+      values: rows,
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    const { logToAxiom } = await import('~/server/logging/client');
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'rewards-abuse-decisions-log-failed',
+        message: (error as Error)?.message,
+        runId,
+        rows: rows.length,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+}
 
 // `encouragement` writes one buzzEvent type per entity kind (`encouragement:image`,
 // `:comment`, `:article`, …), so an exact-match list silently stops covering the family
