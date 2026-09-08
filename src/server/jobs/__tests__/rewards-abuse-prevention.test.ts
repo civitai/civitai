@@ -166,7 +166,12 @@ describe('rewards-abuse-prevention — detection shape', () => {
 
     const sql = sqlOf();
     expect(sql).toContain('ip_user_count = user_count');
-    expect(sql).toContain("uniqIf(be.toUserId, startsWith(be.type, 'encouragement:'))");
+    expect(sql).toContain("uniqExactIf(be.toUserId, startsWith(be.type, 'encouragement:'))");
+    // Exact on BOTH sides: the having-clause compares them for equality, and an equality
+    // between two HyperLogLog estimates flips on the boundary the test lives on.
+    expect(sql).toContain('uniqExact(be.toUserId) as ip_user_count');
+    expect(sql).not.toMatch(/uniqIf\(/);
+    expect(sql).not.toMatch(/uniq\(be\.toUserId\) as ip_user_count/);
     // The type filter has to leave the WHERE, or the users it hides are the ones
     // exclusivity exists to count.
     expect(sql).not.toContain('AND startsWith');
