@@ -125,8 +125,15 @@ describe('AppsBuildBodySkeleton — the server render', () => {
     // 🔴 AND EVERY ANCESTOR — WITHOUT THIS THE NARROWING ABOVE BLINDS THE GUARD. MEASURED:
     // wrapping the component in `<div aria-busy="true">` SURVIVES the scoped assertion alone
     // (4 passed) and dies here. Everything before the region's opening tag is its ancestors
-    // and their preceding siblings — over-broad by exactly the siblings, which is the right
-    // direction to err for a suppression check.
+    // and their preceding siblings AND those siblings' whole subtrees — over-broad by exactly
+    // that, which is the right direction to err for a suppression check. (An earlier draft
+    // said "by exactly the siblings", which understated it: the slice is raw markup, so a
+    // sibling's descendants are inside it too.)
+    //
+    // ⚠️ SCOPE, STATED SO IT IS NOT OVER-READ: this spec renders `AppsBuildBodySkeleton`
+    // ALONE, so "every ancestor" means every ancestor INSIDE this component. A busy ancestor
+    // contributed by the page layout or `AppsPageLayout` is out of this test's reach and is
+    // guarded nowhere.
     //
     // ⚠️ WHY AN ANCESTOR IS WORTH GUARDING IS NOT A CLAIM I HAVE VERIFIED, AND AN EARLIER
     // DRAFT OF THIS COMMENT ASSERTED IT AS FACT ("ARIA treats `aria-busy` on an element
@@ -143,8 +150,20 @@ describe('AppsBuildBodySkeleton — the server render', () => {
     // just EXCLUDED, not the case you kept. The previous round re-ran the region mutation,
     // watched it still die, and called the narrowing safe — it had only re-tested the half
     // that was never at risk.
+    // 🔴 THIS ASSERTION NEEDS ITS OWN POSITIVE CONTROL, AND THE `role="status"` LINE ABOVE IS
+    // NOT IT. That line proves the DOCUMENT is non-empty; it says nothing about the SLICE. If
+    // `region.index` were ever 0 the slice is `''` and `not.toContain` passes for free — the
+    // precise vacuous-absence hazard the comment above warns about, reintroduced one assertion
+    // later. Measured today: `region.index` is 882 and the slice holds MantineProvider's
+    // `<style data-mantine-styles>` preamble, so it is non-vacuous — but nothing would say so
+    // if Mantine stopped emitting that.
+    const beforeRegion = html.slice(0, region?.index ?? 0);
     expect(
-      html.slice(0, region?.index ?? 0),
+      beforeRegion.length,
+      'the ancestor slice is empty — the assertion below is vacuous'
+    ).toBeGreaterThan(0);
+    expect(
+      beforeRegion,
       'an ANCESTOR of the live region is marked busy, which suppresses it'
     ).not.toContain('aria-busy');
   });
