@@ -53,8 +53,8 @@ export type AppsBuildState = (typeof APPS_BUILD_STATES)[number];
  * IS WEAKER THAN THE ONE THAT WAS HERE FIRST, WHICH SAID "THE ONLY TIER ANYTHING BLOCKS ON".
  * **NOTHING in this repo blocks a merge on a check.** `unit` is report-only on a pull request
  * (`continue-on-error: ${{ github.event_name == 'pull_request' }}`,
- * `.github/workflows/lint.yml:405`, with the deliberate "FLIP TO BLOCKING once…" note at
- * `:357`), and `main` carries branch protection with **no required status checks** at all
+ * `.github/workflows/lint.yml:405`, with the deliberate "REPORT-ONLY to start" /
+ * "FLIP TO BLOCKING once…" note at `:357-365`), and `main` carries branch protection with **no required status checks** at all
  * (`required_status_checks: null`, read live from the API, and stated at `lint.yml:600`).
  *
  * What the move DOES buy, and it is real: the `component` project is report-only

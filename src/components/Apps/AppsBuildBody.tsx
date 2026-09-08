@@ -59,7 +59,10 @@ const CREATE_FLOW_HREF = '/apps/submit';
  * un-deferred is the tab-set hydration mismatch (#418/#425) that bailed hydration of the
  * entire `/apps` root once already.
  *
- * 🔴 SO AN AUTHOR'S FIRST PAINT IS A SKELETON, NOT A STATE — AND THAT SENTENCE IS THE FIX.
+ * 🔴 SO THE FIRST PAINT OF AN AUTHOR *WHOSE SUMMARY QUERY RUNS* IS A SKELETON, NOT A STATE —
+ * AND THAT SENTENCE IS THE FIX. The qualifier is load-bearing and this line lacked it for two
+ * rounds: an author without `appBlocks` (admitted by `appListings`) has no query to wait for,
+ * settles on the first paint, and renders state B permanently. See the `enabled` retraction.
  * This paragraph used to end "an author renders `first-app` on the server and on the first
  * client paint, and settles to `workbench` after mount if they have anything", which was an
  * accurate description of a BUG: `resolveAppsBuildState` reads an unresolved summary
@@ -83,7 +86,7 @@ export function AppsBuildBody() {
   // 🔴 THE `enabled` GATE MIRRORS THE PROCEDURE, NOT THE PAGE — the same rule `AppsSubNav`
   // documents. `blocks.getNavSummary` is `protectedProcedure.use(enforceAppBlocksFlag)`,
   // so without `appBlocks` or without a session it short-circuits to an all-false summary
-  // having read nothing (`enforceAppBlocksFlag` returns `next({ _appBlocksDisabled: true })`
+  // having read nothing (`enforceAppBlocksFlag` returns `next({ ctx: { _appBlocksDisabled: true } })`
   // for a QUERY rather than throwing); asking anyway would buy a guaranteed round-trip to a
   // guaranteed answer. That is the whole justification, and it is about this query only.
   //

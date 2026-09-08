@@ -177,7 +177,11 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
 });
 
 /**
- * `resolveAppsBuildSettled` — the WHOLE truth table, in the tier CI blocks on.
+ * `resolveAppsBuildSettled` — the WHOLE truth table, in the `unit` tier.
+ *
+ * (That summary line read "in the tier CI blocks on" for one round, eight lines above the
+ * paragraph explaining that these rows block nothing. A summary line is what a hurried reader
+ * takes away, so it was the worst surviving copy of the claim. Nothing here blocks; see below.)
  *
  * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF IS OBSERVED NOWHERE. `/apps/build`'s
  * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which

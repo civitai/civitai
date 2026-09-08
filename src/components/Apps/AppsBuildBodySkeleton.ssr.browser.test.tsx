@@ -8,8 +8,9 @@ import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
  * `/apps/build` — WHAT THE SERVER ACTUALLY EMITS FOR THE LOADING STATE.
  *
  * 🔴 THIS GUARD IS EARNED BY THE CHANGE THAT ADDED IT, not copied for symmetry. Before
- * clawgate #530 an author's server render was state B; it is now this skeleton, on EVERY
- * author's every visit. So any markup defect in it is a defect in production's SSR HTML,
+ * clawgate #530 an author's server render was state B; it is now this skeleton for every author
+ * WHOSE SUMMARY QUERY RUNS. (Not every author: one without `appBlocks` settles immediately and
+ * still gets state B — the qualifier is the same one `AppsBuildBody` carries.) So any markup defect in it is a defect in production's SSR HTML,
  * and the two things most worth pinning are exactly the two the store skeleton shipped
  * broken and had to be corrected for (see `AppListingCardSkeleton.ssr.browser.test.tsx`,
  * whose header records both):
@@ -106,8 +107,9 @@ describe('AppsBuildBodySkeleton — the server render', () => {
     // 🔴 ORDER IS DELIBERATE: the FIRST assertion is the positive control for the SECOND.
     // `not.toContain` passes for free against an empty string or a scanner wired to nothing,
     // so on its own it would prove that `aria-busy` is absent from a document this test never
-    // read. `role="status"` is an ATTRIBUTE on the SAME element, found by the SAME matcher —
-    // so a green first line is what makes the second line an observation.
+    // read. `role="status"` is an ATTRIBUTE on the SAME element, so a green first line is what
+    // makes the absence assertions below observations. (The scoped checks use a regex rather
+    // than `toContain`, and carry their own `not.toBeNull()` control on the match.)
     expect(html).toContain('role="status"');
 
     // 🔴 SCOPED TO THE LIVE REGION'S OWN TAG, NOT THE WHOLE DOCUMENT — and that is a
@@ -118,7 +120,24 @@ describe('AppsBuildBodySkeleton — the server render', () => {
     // defect, and gets deleted the first time it does.
     const region = html.match(/<[^>]*role="status"[^>]*>/);
     expect(region, 'no element carries role="status"').not.toBeNull();
-    expect(region?.[0]).not.toContain('aria-busy');
+    expect(region?.[0], 'the live region itself is marked busy').not.toContain('aria-busy');
+
+    // 🔴 AND EVERY ANCESTOR — WITHOUT THIS THE NARROWING ABOVE BLINDS THE GUARD. ARIA treats
+    // `aria-busy` on an element CONTAINING a live region as the same instruction to withhold
+    // its announcements, so an ancestor suppresses this region exactly as the region itself
+    // would. MEASURED: wrapping the component in `<div aria-busy="true">` SURVIVES the scoped
+    // assertion alone (4 passed) and dies here. Everything before the region's opening tag is
+    // its ancestors and their preceding siblings — over-broad by exactly the siblings, which
+    // is the right direction to err for a suppression check.
+    //
+    // 🔴 THE LESSON, BECAUSE IT COST A ROUND: when you NARROW a guard, mutate the case you
+    // just EXCLUDED, not the case you kept. The previous round re-ran the region mutation,
+    // watched it still die, and called the narrowing safe — it had only re-tested the half
+    // that was never at risk.
+    expect(
+      html.slice(0, region?.index ?? 0),
+      'an ANCESTOR of the live region is marked busy, which suppresses it'
+    ).not.toContain('aria-busy');
   });
 
   test('🔴 no <div> descends from a <p> — the hydration-mismatch shape', () => {
