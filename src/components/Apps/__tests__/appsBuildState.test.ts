@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   APPS_BUILD_STATES,
+  resolveAppsBuildSettled,
   resolveAppsBuildState,
   type AppsBuildState,
 } from '~/components/Apps/appsBuildState';
@@ -59,13 +60,25 @@ describe('resolveAppsBuildState — the full input table', () => {
   });
 });
 
-describe('🔴 the SSR / first-paint default', () => {
+describe('🔴 the pre-settle default the CALLER no longer renders', () => {
   /**
    * `blocks.getNavSummary` runs client-only (tRPC is configured `ssr: false`), so on the
-   * server render and the first client paint BOTH summary booleans are false. What the
-   * function returns for that input is therefore what the server HTML contains — and it
-   * has to be a state that is CORRECT for the viewer, not merely a placeholder, because
-   * a non-author never gets a second render to correct it.
+   * server render and the first client paint BOTH summary booleans are false, and this
+   * function answers `first-app` for an author.
+   *
+   * 🔴 THAT IS NO LONGER WHAT THE SERVER HTML CONTAINS, AND THIS BLOCK USED TO SAY IT WAS.
+   * Its docstring read "What the function returns for that input is therefore what the
+   * server HTML contains", and its second case was named "an author renders first-app with
+   * no summary". Both were true when written and both are now FALSE at the call site:
+   * `AppsBuildBody` gates the render on `resolveAppsBuildSettled` and emits
+   * `AppsBuildBodySkeleton` for the whole unsettled window, so an author's server HTML is
+   * the skeleton. Corrected here rather than only in `appsBuildState.ts`, because THIS tier
+   * is the one CI blocks on — a maintainer who reads a green `unit` run reads this file, and
+   * the corrected prose in the module lives next to a browser spec no gate runs.
+   *
+   * What the cases below still pin is the ARITHMETIC, which is unchanged and correct: for a
+   * NON-author it is also still the rendered answer, because a non-author is settled from
+   * the first paint and never gets a second render.
    */
   it('a non-author renders pitch with no summary — and never moves off it', () => {
     expect(
@@ -73,7 +86,7 @@ describe('🔴 the SSR / first-paint default', () => {
     ).toBe('pitch');
   });
 
-  it('an author renders first-app with no summary, and may settle FORWARD to workbench', () => {
+  it('an author RESOLVES to first-app with no summary (not rendered), and settles FORWARD to workbench', () => {
     const preMount = resolveAppsBuildState({
       isAuthor: true,
       hasEditableApps: false,
@@ -153,5 +166,107 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
       'request_access',
       'view',
     ]);
+  });
+});
+
+/**
+ * `resolveAppsBuildSettled` — the WHOLE truth table, in the tier CI blocks on.
+ *
+ * 🔴 THIS SUITE EXISTS BECAUSE THE RENDERED PROOF CANNOT FAIL A BUILD. `/apps/build`'s
+ * skeleton is guarded by `AppsBuildBody.browser.test.tsx`, in the `component` project — which
+ * `.github/workflows/lint.yml` states plainly is UNGATED: no selector there matches it
+ * (`unit*`, `@civitai/*`, `app:*`) and its only CI home is the report-only
+ * `preview / component-tests`. A guard that can only report is not a guard against the next
+ * PR. The browser spec stays as the evidence that the SCREEN is right; these eight rows are
+ * what actually blocks a regression in the predicate that decides it.
+ *
+ * 🔴 THE ROW THAT MATTERS IS `summaryEnabled: false` WITH `isFetched: false`. That is an
+ * author whose `getNavSummary` is DISABLED (`appBlocks` off while the page gate,
+ * `hasAppsStoreAccess`, admitted them on `appListings`). `isFetched` never goes true for a
+ * query that never ran, so the obvious spelling — `!isAuthor || (isClient && isFetched)` —
+ * answers `false` for them FOREVER and the caller renders a PERMANENT skeleton. It must
+ * answer `true`.
+ */
+describe('resolveAppsBuildSettled — the full input table', () => {
+  const table: Array<{
+    summaryEnabled: boolean;
+    isClient: boolean;
+    isFetched: boolean;
+    expected: boolean;
+    why: string;
+  }> = [
+    // The query never runs: nothing is coming, so it is settled on the FIRST paint —
+    // server render included. All four combinations, so no row can be satisfied by an
+    // implementation that happens to read `isClient` or `isFetched` in this branch.
+    {
+      summaryEnabled: false,
+      isClient: false,
+      isFetched: false,
+      expected: true,
+      why: 'disabled, pre-mount — the permanent-skeleton row',
+    },
+    {
+      summaryEnabled: false,
+      isClient: false,
+      isFetched: true,
+      expected: true,
+      why: 'disabled, pre-mount, stale isFetched must not matter',
+    },
+    {
+      summaryEnabled: false,
+      isClient: true,
+      isFetched: false,
+      expected: true,
+      why: 'disabled, post-mount',
+    },
+    {
+      summaryEnabled: false,
+      isClient: true,
+      isFetched: true,
+      expected: true,
+      why: 'disabled, post-mount, fetched',
+    },
+    // The query runs: settled only once it has actually answered, on the CLIENT.
+    {
+      summaryEnabled: true,
+      isClient: false,
+      isFetched: false,
+      expected: false,
+      why: 'server render — the summary cannot exist yet',
+    },
+    {
+      summaryEnabled: true,
+      isClient: false,
+      isFetched: true,
+      expected: false,
+      why: '🔴 pre-mount must NOT consult the query, or SSR and the first client paint diverge and hydration bails',
+    },
+    {
+      summaryEnabled: true,
+      isClient: true,
+      isFetched: false,
+      expected: false,
+      why: 'mounted, still in flight — the window the skeleton covers',
+    },
+    {
+      summaryEnabled: true,
+      isClient: true,
+      isFetched: true,
+      expected: true,
+      why: 'answered (success OR error)',
+    },
+  ];
+
+  it.each(table)('$why → $expected', ({ summaryEnabled, isClient, isFetched, expected }) => {
+    expect(resolveAppsBuildSettled({ summaryEnabled, isClient, isFetched })).toBe(expected);
+  });
+
+  it('the table is EXHAUSTIVE over its three booleans, and both verdicts occur', () => {
+    // Without this, a row could be dropped in a refactor and the suite would stay green over
+    // a predicate nobody checks at that input. 2^3 = 8 distinct combinations.
+    const seen = new Set(table.map((r) => `${r.summaryEnabled}|${r.isClient}|${r.isFetched}`));
+    expect(seen.size).toBe(8);
+    // …and it is not a table of one answer, which `toBe(expected)` alone would not catch.
+    expect(new Set(table.map((r) => r.expected))).toEqual(new Set([true, false]));
   });
 });

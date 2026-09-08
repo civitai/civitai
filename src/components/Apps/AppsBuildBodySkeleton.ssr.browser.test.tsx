@@ -86,6 +86,31 @@ describe('AppsBuildBodySkeleton — the server render', () => {
     expect([...html.matchAll(/mantine-Skeleton-root/g)].length).toBeGreaterThan(1);
   });
 
+  /**
+   * 🔴 THE A11Y CLAIM, ASSERTED RATHER THAN MERELY WRITTEN. The component's header claims "a
+   * `role="status"` region, not marked busy, with non-hidden text". Both halves were prose
+   * only until this test: the spec above asserts the testid, the sr-only string and the bar
+   * count, none of which would notice `role` being dropped or `aria-busy` being added.
+   *
+   * `aria-busy="true"` on a live region is the standard instruction to WITHHOLD announcements
+   * — and this region UNMOUNTS rather than clearing, so a busy flag here could never flip back
+   * to false and the loading state would announce nothing at all, in markup whose own comment
+   * claims it is the thing that announces. That exact defect shipped in the store skeleton.
+   *
+   * ⚠️ STILL NOT A SCREEN-READER TEST. It pins the two markup properties the claim rests on;
+   * whether a particular AT announces this is untested here and is not asserted anywhere.
+   */
+  test('🔴 the live region is announceable: role="status" present, aria-busy absent', () => {
+    const html = serverHtml(<AppsBuildBodySkeleton />);
+    // 🔴 ORDER IS DELIBERATE: the FIRST assertion is the positive control for the SECOND.
+    // `not.toContain` passes for free against an empty string or a scanner wired to nothing,
+    // so on its own it would prove that `aria-busy` is absent from a document this test never
+    // read. `role="status"` is an ATTRIBUTE on the SAME element, found by the SAME matcher —
+    // so a green first line is what makes the second line an observation.
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain('aria-busy');
+  });
+
   test('🔴 no <div> descends from a <p> — the hydration-mismatch shape', () => {
     expect(divsInsideParagraphs(serverHtml(<AppsBuildBodySkeleton />))).toBe(0);
   });

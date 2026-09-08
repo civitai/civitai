@@ -46,6 +46,38 @@ export const APPS_BUILD_STATES = ['pitch', 'first-app', 'workbench'] as const;
 
 export type AppsBuildState = (typeof APPS_BUILD_STATES)[number];
 
+/**
+ * Is the `/apps/build` state SETTLED — i.e. may the caller render a state at all?
+ *
+ * 🔴 THIS LIVES HERE, BESIDE `resolveAppsBuildState`, BECAUSE THE TIER THAT CAN TEST IT IS
+ * THE ONLY TIER ANYTHING BLOCKS ON. The rendered proof that an author no longer sees state B
+ * mid-load is a `component`-project browser spec, and that project is UNGATED — no selector in
+ * `.github/workflows/lint.yml` matches it (`unit*`, `@civitai/*`, `app:*`) and its only CI home
+ * is the report-only `preview / component-tests`. So a guard that lived only there could not
+ * fail a future PR. Keeping the predicate pure and out here puts its truth table in the
+ * BLOCKING `unit` tier; the browser spec stays as the rendered evidence.
+ *
+ * 🔴 `summaryEnabled`, NOT `isAuthor` — AND THAT IS THE WHOLE REASON THIS TAKES THREE INPUTS.
+ * `isFetched` never goes true for a query that never ran, so `!isAuthor || (isClient &&
+ * isFetched)` is `false` FOREVER for an author whose `getNavSummary` is disabled, and a caller
+ * that gates its RENDER on that never renders anything. See the call site for who that is.
+ *
+ * ⚠️ SETTLED MEANS "NO FURTHER ANSWER IS COMING", NEVER "THE ANSWER IS RIGHT". A viewer whose
+ * summary query is disabled settles immediately on an all-false summary — which is the only
+ * answer that query can give them, and is not necessarily a true description of their account.
+ * The call site documents the one cohort where those two come apart.
+ */
+export function resolveAppsBuildSettled(args: {
+  /** `!!features.appBlocks && !!currentUser && isAuthor` — the query's own `enabled`. */
+  summaryEnabled: boolean;
+  /** `useIsClient()` — false on the server AND on the first client paint. */
+  isClient: boolean;
+  /** the query's `isFetched`: true on success OR error, false while it has never run. */
+  isFetched: boolean;
+}): boolean {
+  return !args.summaryEnabled || (args.isClient && args.isFetched);
+}
+
 export function resolveAppsBuildState(args: {
   /** `isAppDeveloper(user, { appBlocksAuthor })` — SSR-frozen. */
   isAuthor: boolean;

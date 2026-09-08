@@ -13,10 +13,14 @@ import { Group, Paper, Skeleton, Stack, Text } from '@mantine/core';
  * They were shown the wrong screen, briefly, on every visit. A spinner would not fix that;
  * a state that asserts nothing about which screen is coming does.
  *
- * 🔴 SO THE DESIGN CONSTRAINT IS NEUTRALITY, NOT PARITY. The destination is unknown by
- * construction while this renders, so this must not look like either B or C — it reserves a
- * plausible block and nothing more. Do NOT "improve" it into a pixel-copy of the workbench
- * table: that would be the same defect one screen over, guessing C for an author headed to B.
+ * 🔴 SO THE DESIGN CONSTRAINT IS NEUTRALITY OF CONTENT, NOT OF GEOMETRY — and the distinction
+ * is the whole of it, because an earlier draft of this paragraph said "must not look like
+ * either B or C" and the header below plainly reserves C's shape. That absolute was wrong, not
+ * the header. What this must not do is present CONTENT that asserts a state: no "first app"
+ * copy, no app table, nothing a viewer could read as an answer. What it MAY do is reserve a
+ * band whose geometry matches the likelier destination, which is what the header row does.
+ * Do NOT go further and mock up the workbench TABLE: rows carry apparent content, and that
+ * would be the same defect one screen over, guessing C for an author headed to B.
  *
  * ⚠️ WHAT IT DOES **NOT** CLAIM. Not zero layout shift. The block below settles to either a
  * short empty-state or a paginated table, and no reservation can be right about both. The
