@@ -23,6 +23,7 @@ const SEEDABLE_FILTER_KEYS = [
   'availability',
   'supportsGeneration',
   'earlyAccess',
+  'hidePaid',
   'fromPlatform',
   'isFeatured',
 ] as const;

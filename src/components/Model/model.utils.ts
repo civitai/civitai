@@ -60,6 +60,7 @@ const modelQueryParamSchema = z
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
     paidAccess: booleanString().optional(),
+    hidePaid: booleanString().optional(),
     types: z
       .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),

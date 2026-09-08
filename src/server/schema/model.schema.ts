@@ -111,6 +111,8 @@ export const getAllModelsSchema = z.object({
   needsReview: booleanString().optional(),
   earlyAccess: booleanString().optional(),
   paidAccess: booleanString().optional(),
+  /** Exclude every model with a live paid gate, timed or permanent. */
+  hidePaid: booleanString().optional(),
   /** Models with a live scheduled sale on a permanent paid-access version. */
   onSale: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),

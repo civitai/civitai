@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
-const { mockBust, mockCacheFetch } = vi.hoisted(() => ({
+const { mockBust, mockBustFetchThrough, mockCacheFetch } = vi.hoisted(() => ({
   mockCacheFetch: vi.fn(async (_key: string, _ids: number[]) => ({} as Record<string, unknown>)),
   mockBust: vi.fn(),
+  mockBustFetchThrough: vi.fn(),
 }));
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, xs: 60 } }));
@@ -12,6 +13,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
     fetch: (ids: number[]) => mockCacheFetch(key, ids),
     bust: mockBust,
   }),
+  // The whole-set gated-model-id cache: `bustPaidAccessCache` drops it alongside the per-entity
+  // caches, because a set keyed by nothing has no entity id to bust.
+  fetchThroughCache: (_key: string, fn: () => unknown) => fn(),
+  bustFetchThroughCache: mockBustFetchThrough,
 }));
 
 import {

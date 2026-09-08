@@ -190,8 +190,10 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
+  getGatedModelIds,
   getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
+import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -387,6 +389,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     paidAccess,
+    hidePaid,
     onSale,
     supportsGeneration,
     fromPlatform,
@@ -770,6 +773,19 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
         WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
           AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL
+      )`
+    );
+  }
+  if (hidePaid) {
+    // NOT EXISTS rather than an id list: the gated set is ~3k models and grows ~2.5k/month, and this
+    // keeps the probe on PaidAccess_pkey. Measured 1.09ms -> 2.06ms on a p50 feed page; the planner
+    // places it above every other predicate, so it only sees rows that already survived them.
+    AND.push(
+      Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+        WHERE ${paidAccessLiveSql}
+          AND mv."modelId" = m.id
       )`
     );
   }
@@ -1257,6 +1273,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     needsReview,
     earlyAccess,
     paidAccess,
+    hidePaid,
     supportsGeneration,
     followed,
     collectionId,
@@ -1350,6 +1367,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
   if (paidAccess) {
     AND.push({ id: { in: await getPermanentPaidAccessModelIds() } });
+  }
+
+  if (hidePaid) {
+    AND.push({ id: { notIn: await getGatedModelIds() } });
   }
 
   if (supportsGeneration) {

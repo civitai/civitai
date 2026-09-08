@@ -125,9 +125,7 @@ const ModelCollection = ({
 }) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
-  const sort = isContestCollection
-    ? getRandom(contestModelSorts)
-    : query.sort ?? ModelSort.Newest;
+  const sort = isContestCollection ? getRandom(contestModelSorts) : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -139,6 +137,7 @@ const ModelCollection = ({
         browsingMode: undefined,
         status: undefined,
         earlyAccess: undefined,
+        hidePaid: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
@@ -382,9 +381,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
-  const sort = isContestCollection
-    ? getRandom(contestPostSorts)
-    : query.sort ?? PostSort.Newest;
+  const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
     ? {
