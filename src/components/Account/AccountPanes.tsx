@@ -23,7 +23,22 @@ import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentCo
 import { AccountOverview } from '~/components/Account/AccountOverview';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-const NotificationsCard = dynamic(() => import('~/components/Account/NotificationsCard'));
+const NotificationsPane = dynamic(() =>
+  import('~/components/Account/NotificationsPane').then((mod) => mod.NotificationsPane)
+);
+
+/**
+ * Two columns from `md` up, stacked below. Only for panes whose cards are already separate — a
+ * pane carrying one tall card (Preferences, Creator) gets nothing from this but a lopsided gap.
+ */
+function TwoColumn({ left, right }: { left: React.ReactNode; right: React.ReactNode }) {
+  return (
+    <div className="grid items-start gap-4 md:grid-cols-2">
+      <div className="flex flex-col gap-4">{left}</div>
+      <div className="flex flex-col gap-4">{right}</div>
+    </div>
+  );
+}
 
 export const accountPaneCopy: Record<string, { title: string; description?: string }> = {
   overview: {
@@ -40,7 +55,7 @@ export const accountPaneCopy: Record<string, { title: string; description?: stri
   },
   notifications: {
     title: 'Notifications',
-    description: 'Choose what reaches you, and whether it arrives on-site, by email, or both.',
+    description: 'Grouped by category. Open the one you came for; the rest stay collapsed.',
   },
   content: {
     title: 'Content & Browsing',
@@ -69,13 +84,21 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
 
     case 'profile':
       return (
-        <>
-          <ProfileCard />
-          <SocialProfileCard />
-          {features.strikes && <StrikesCard />}
-          <RefreshSessionCard />
-          <DeleteCard />
-        </>
+        <TwoColumn
+          left={
+            <>
+              <ProfileCard />
+              <SocialProfileCard />
+              <RefreshSessionCard />
+            </>
+          }
+          right={
+            <>
+              {features.strikes && <StrikesCard />}
+              <DeleteCard />
+            </>
+          }
+        />
       );
 
     case 'preferences':
@@ -87,14 +110,13 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
       );
 
     case 'notifications':
-      return <NotificationsCard />;
+      return <NotificationsPane />;
 
     case 'content':
-      return (
-        <>
-          {features.canViewNsfw && <ModerationCard />}
-          <ContentControlsCard />
-        </>
+      return features.canViewNsfw ? (
+        <TwoColumn left={<ModerationCard />} right={<ContentControlsCard />} />
+      ) : (
+        <ContentControlsCard />
       );
 
     case 'creator':
@@ -109,22 +131,38 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
 
     case 'billing':
       return (
-        <>
-          <SubscriptionCard />
-          <MembershipGiftsCard />
-          <PaymentMethodsCard />
-          <UserPaymentConfigurationCard />
-        </>
+        <TwoColumn
+          left={
+            <>
+              <SubscriptionCard />
+              <MembershipGiftsCard />
+            </>
+          }
+          right={
+            <>
+              <PaymentMethodsCard />
+              <UserPaymentConfigurationCard />
+            </>
+          }
+        />
       );
 
     case 'security':
       return (
-        <>
-          <AccountsCard />
-          {features.apiKeys && <ApiKeysCard />}
-          {features.oauthApps && <OAuthAppsCard />}
-          {features.oauthApps && <ConnectedAppsCard />}
-        </>
+        <TwoColumn
+          left={
+            <>
+              <AccountsCard />
+              {features.apiKeys && <ApiKeysCard />}
+            </>
+          }
+          right={
+            <>
+              {features.oauthApps && <OAuthAppsCard />}
+              {features.oauthApps && <ConnectedAppsCard />}
+            </>
+          }
+        />
       );
 
     default:
