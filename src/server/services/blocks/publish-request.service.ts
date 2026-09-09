@@ -3344,10 +3344,28 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // `await import('~/server/db/client')` at the top of this function) so the pure-helper
   // suites can load it without Prisma. `app-listing.service` imports both statically, so a
   // top-level import here would quietly undo that.
-  const { bustAppListingCatalogCache } = await import(
-    '~/server/services/blocks/app-listing.service'
-  );
-  await bustAppListingCatalogCache().catch(() => undefined);
+  //
+  // 🔴 THE `try` WRAPS THE IMPORT, NOT JUST THE CALL. `.catch()` on the call covers a
+  // rejected bust; it does nothing for a THROW out of `await import(...)` — a module-load
+  // failure anywhere in `app-listing.service`'s static graph (it pulls in Prisma, env and
+  // redis) would propagate out of `approveRequest` here, AFTER the DB writes, the build
+  // trigger and the notification have all committed. That is precisely the outcome the
+  // comment above forbids, arrived at from the import instead of from the call. Same
+  // posture as the notification step at the top of this block.
+  try {
+    const { bustAppListingCatalogCache } = await import(
+      '~/server/services/blocks/app-listing.service'
+    );
+    await bustAppListingCatalogCache();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] catalog cache bust failed (id=${params.publishRequestId}); ` +
+        `approve stands, the store grid self-corrects within CacheTTL.sm: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
 
   return {
     publishRequestId: request.id,

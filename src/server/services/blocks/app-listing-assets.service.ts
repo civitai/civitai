@@ -1267,11 +1267,17 @@ export async function setListingIcon(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
-  // Catalog bust: the card's `iconUrl` moved. AND the tx may have RAISED `content_rating`
-  // via `reDeriveContentRatingForModLiveEdit` — the `listingMatureFilter` axis the cached
-  // page is keyed on. That helper runs INSIDE the transaction, so its bust belongs here,
+  // Catalog bust: the tx may have RAISED `content_rating` via
+  // `reDeriveContentRatingForModLiveEdit` — the `listingMatureFilter` axis the cached page
+  // IS keyed on. That helper runs INSIDE the transaction, so its bust belongs here,
   // post-commit, at each of its three callers: a bust fired inside the tx would also fire
   // on a rollback.
+  //
+  // ⚠️ NOT because "the card's `iconUrl` moved" — that reason is wrong and the earlier
+  // version of this comment gave it. The cache holds `{id, sort_key}` ONLY; every
+  // projection field on the card (`iconUrl` included) comes from the LIVE hydration below
+  // it in `listAvailableListings`, so it can never be served stale. The rating is the
+  // whole reason this bust exists.
   await bustAppListingCatalogCache().catch(() => undefined);
 
   return { status: 'attached', iconId: validated.imageId, scanPending: validated.scanPending };
@@ -1296,8 +1302,8 @@ export async function setListingCover(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
-  // Catalog bust: the card's `coverUrl`, plus the same in-tx `content_rating` re-derive as
-  // the icon path above.
+  // Catalog bust: the same in-tx `content_rating` re-derive as the icon path above — that
+  // is the cached axis. (`coverUrl` is NOT: it is hydrated live, see the icon path's note.)
   await bustAppListingCatalogCache().catch(() => undefined);
 
   return { status: 'attached', coverId: validated.imageId, scanPending: validated.scanPending };

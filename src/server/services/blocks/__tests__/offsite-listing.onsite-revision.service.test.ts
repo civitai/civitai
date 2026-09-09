@@ -12,6 +12,11 @@ import {
   listApprovedOffsiteRequests,
   listRejectedOffsiteRequests,
 } from '~/server/services/blocks/offsite-listing.service';
+import { bustCacheTag } from '~/server/utils/cache-helpers';
+// Type-only, for the partial-mock spread below — a runtime `typeof import(...)` inside
+// the factory is an `import()` type annotation, which `consistent-type-imports` forbids.
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
+import { APP_LISTING_CATALOG_TAG } from '~/server/services/blocks/app-listing-cache.constants';
 
 /**
  * W13 — ONSITE listing-media revision CONSOLIDATION service tests.
@@ -81,6 +86,20 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
 const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+/**
+ * 🔴 PARTIAL mock — spread the REAL module and override ONE export.
+ *
+ * `offsite-listing.service` statically imports `app-listing.service`, which imports
+ * `queryCache` + `bustCacheTag` from here. A hand-written factory listing only those two
+ * would make this file fail to import the moment any other module in that graph reaches
+ * for a third export, and the failure would present as every case in this suite
+ * rejecting. Spreading `importOriginal()` cannot go stale that way — and the real module
+ * already loads fine in this suite today (it did before this mock existed).
+ */
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
+  bustCacheTag: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
 }));
@@ -283,6 +302,60 @@ describe('approveExternalRequest — OFFSITE revision approve is BYTE-IDENTICAL 
     expect(copy.data).toHaveProperty('contentRating');
     // The asset-floor derivation DID read Image levels (proves resolveApprovalContentRating ran).
     expect(mockWrite.image.findMany).toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 REGRESSION: THE REVISION-APPROVE PATH BUSTS THE `/apps` CATALOG CACHE (#529).
+ *
+ * `approveExternalRequest` `return`s into `applyApprovedRevision` for any listing with
+ * `revisionOfId != null` — i.e. EVERY approval of an edit to an already-live listing —
+ * and that `return` happens BEFORE the caller's own
+ * `await bustAppListingCatalogCache()`. When the cache shipped, the revision path had
+ * no bust of its own, so the whole class was uncovered.
+ *
+ * Its offsite branch writes onto the LIVE parent, and three of the columns it writes are
+ * axes of the CACHED keyset statement rather than of the live-hydrated card:
+ *   · `contentRating` — via `resolveApprovalContentRating`, which can RAISE it. A
+ *     `g`→`r` re-rating left un-busted keeps the newly-`r` cover in the cached SFW page
+ *     for the rest of the 180s TTL.
+ *   · `category` — the cached query filters `al.category`, so a move leaves the app in
+ *     the wrong filtered grid.
+ *   · `name` — the `sort='name'` sort key, cached as `sort_key`.
+ *
+ * Asserted BEHAVIOURALLY (the tag actually reaching `bustCacheTag`, through a real
+ * approve) rather than structurally: the sibling ledger suite
+ * `app-listing.catalog-bust-ledger.test.ts` pins the call SITE, and a structural check
+ * type-checks straight past a bust that passes the wrong tag.
+ */
+describe('🔴 approveExternalRequest — the REVISION branch busts the catalog cache', () => {
+  it('offsite revision approve busts with the catalog tag (the path that writes the parent scalars)', async () => {
+    stageRevisionApprove('offsite');
+    await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
+    expect(
+      bustCacheTag,
+      'the revision-approve path did not bust the /apps catalog cache. This branch ' +
+        'writes contentRating / category / name onto the LIVE parent and `return`s ' +
+        'before `approveExternalRequest`s own bust, so a g->r re-rating stays in the ' +
+        'cached SFW page for the whole CacheTTL.sm window.'
+    ).toHaveBeenCalledWith([APP_LISTING_CATALOG_TAG]);
+  });
+
+  it('onsite revision approve busts too (the rule is unconditional, not per-branch)', async () => {
+    stageRevisionApprove('onsite');
+    await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
+    expect(bustCacheTag).toHaveBeenCalledWith([APP_LISTING_CATALOG_TAG]);
+  });
+
+  /**
+   * 🔴 NEGATIVE CONTROL on the spy itself. `bustCacheTag` is asserted above by the call
+   * it receives; if the mock were wired to nothing it would also never be called by a
+   * path that legitimately does not bust — and both cases look identical from a passing
+   * assertion. Prove the spy starts CLEAN each case, so a hit above is genuinely caused
+   * by the approve and not left over from a previous one.
+   */
+  it('NEGATIVE CONTROL: the bust spy is clean before an approve runs', () => {
+    expect(bustCacheTag).not.toHaveBeenCalled();
   });
 });
 

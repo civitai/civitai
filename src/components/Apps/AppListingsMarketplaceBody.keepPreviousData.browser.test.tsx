@@ -42,6 +42,13 @@ import { describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+// 🔴 THE REAL CONSTANT, not a literal. The bound below is a claim about the SERVER's
+// TTL on `listAvailableListings`; hardcoding `180 * 1000` means lowering that TTL
+// leaves this guard passing while the property it names (client window strictly
+// shorter than server window) is false. `CacheTTL` is a pure const object and
+// `~/server/common/constants` is already imported by components + sibling browser
+// specs, so it loads here.
+import { CacheTTL } from '~/server/common/constants';
 
 function makeCard(id: string, name: string): ListingCard {
   return {
@@ -350,9 +357,10 @@ describe('🔴 a sort change re-orders the store without emptying it', () => {
    * providing none. This reads the object the COMPONENT passed.
    *
    * The bound is asserted, not just presence: the value must be a positive number and
-   * must stay STRICTLY BELOW the server's 180 000 ms TTL, so the client can never be
-   * the longer of the two staleness sources — a client window outliving the server TTL
-   * would make `bustAppListingCatalogCache()` invisible for the difference.
+   * must stay STRICTLY BELOW the server's TTL — DERIVED from `CacheTTL.sm`, the same
+   * constant the service passes — so the client can never be the longer of the two
+   * staleness sources. A client window outliving the server TTL would make
+   * `bustAppListingCatalogCache()` invisible for the difference.
    */
   test('the component supplies a staleTime, bounded below the server TTL', async () => {
     mocks.sort = 'top-rated';
@@ -368,11 +376,17 @@ describe('🔴 a sort change re-orders the store without emptying it', () => {
         'catalog on every remount and every window refocus (its default is 0). See #529.'
     ).toBe('number');
     expect(staleTime as number).toBeGreaterThan(0);
+    // `CacheTTL` is in SECONDS; react-query's `staleTime` is in MILLISECONDS.
+    const serverTtlMs = CacheTTL.sm * 1000;
+    // Positive control on the derivation itself: a `CacheTTL` that failed to load (or an
+    // `sm` renamed away) would give `NaN`, and `toBeLessThan(NaN)` fails loudly rather
+    // than passing — but pin the unit anyway so a seconds/ms mix-up cannot pass either.
+    expect(serverTtlMs).toBeGreaterThan(1000);
     expect(
       staleTime as number,
-      'the client staleTime is >= the server-side TTL (CacheTTL.sm, 180s) on ' +
+      `the client staleTime is >= the server-side TTL (CacheTTL.sm = ${CacheTTL.sm}s) on ` +
         '`listAvailableListings`. A client window longer than the server one makes the ' +
         'explicit catalog busts invisible for the difference.'
-    ).toBeLessThan(180 * 1000);
+    ).toBeLessThan(serverTtlMs);
   });
 });

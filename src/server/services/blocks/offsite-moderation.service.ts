@@ -978,7 +978,13 @@ export async function claimListing(opts: {
     }
   });
 
-  // Catalog bust: claim reassigns ownership, which moves the card's creator chip.
+  // Catalog bust: kept for the UNIFORM RULE (every listing-state mutation busts), not for a
+  // cached axis — stated honestly so nobody later reasons from a wrong premise. Claim moves
+  // `userId`, and the creator chip that renders from it is hydrated LIVE; the cache holds
+  // `{id, sort_key}` only, and no sort or filter here keys on ownership. So this bust is
+  // currently INERT. It costs one tag delete on a rare mod action and it means the rule is
+  // mechanical rather than a per-branch judgement a future ownership-aware sort could
+  // quietly fall outside of.
   await bustAppListingCatalogCache().catch(() => undefined);
 
   return { appListingId: input.appListingId, userId: input.targetUserId };

@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
@@ -3495,8 +3494,19 @@ export class BlockRegistry {
         featuredOrder: true,
       },
     });
-    // Catalog bust: `category` is a FILTER AXIS of the cached page, and a mod sets it here.
-    await bustAppListingCatalogCache().catch(() => undefined);
+    // 🔴 NO CATALOG BUST HERE, DELIBERATELY — and the reason is not "category doesn't
+    // matter", it is that this writes the WRONG TABLE for that cache. The `/apps` catalog
+    // statement filters `app_listings.category`; this function writes
+    // `app_blocks.category`. The two are synced in ONE direction and at ONE moment —
+    // `approveRequest` copies the block's curated scalars onto the listing on approve, and
+    // busts there. Nothing in the cached statement reads any column this function writes
+    // (`category`, `featured`, `featuredOrder`); of `app_blocks` it reads only
+    // `current_version_deployed_at`, via the deploy gate. A bust here was measured inert.
+    //
+    // If the catalog query ever grows a predicate over an `app_blocks` column this
+    // function writes, add the bust back — and add this function to the ledger in
+    // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`, which
+    // is what will fail and make that a deliberate decision rather than an omission.
 
     return {
       appBlockId: updated.id,

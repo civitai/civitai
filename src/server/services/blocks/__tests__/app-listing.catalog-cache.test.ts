@@ -22,28 +22,44 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     domain.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * WHY THIS ASSERTS ON THE DERIVED KEY, NOT ON WORDS IN THE SQL
+ * 🔴 THE TWO LEVELS THIS FILE GUARDS, AND WHY THE SECOND ONE EXISTS
  * ─────────────────────────────────────────────────────────────────────────────
- * The sibling suite `app-listing.public-scope.test.ts` already guards the SQL
- * TEXT (`al.kind = 'offsite'` present / absent). That is a guard on WORDS, and it
- * says nothing about the cache: two statements can differ in text and still be
- * asked to share an entry if the key is assembled by hand from a hand-listed set
- * of axes.
  *
- * `queryCache` does not assemble the key by hand. It builds it as
- * `[key, version, hashifyObject(query)].join(':')` over the WHOLE `Prisma.Sql` —
- * text and bound params — so every axis interpolated into the statement is in the
- * key BY CONSTRUCTION. This file pins exactly that property: it captures the
- * `Prisma.Sql` the service hands `queryCache` for each viewer shape, derives the
- * key the way `cache-helpers` derives it (with the REAL `hashifyObject`), and
- * asserts the keys are distinct.
+ * (1) DERIVED KEYS DIFFER. The sibling suite `app-listing.public-scope.test.ts`
+ *     already guards the SQL TEXT (`al.kind = 'offsite'` present / absent). That
+ *     is a guard on WORDS and says nothing about the cache: two statements can
+ *     differ in text and still be asked to share an entry. So this file captures
+ *     the `Prisma.Sql` the service hands `queryCache` for each viewer shape,
+ *     derives the key the way `cache-helpers` derives it (with the REAL
+ *     `hashifyObject`), and asserts the keys are distinct.
  *
- * Re-wording the SQL cannot satisfy this. Only actually making two viewer shapes
- * produce the same statement can — which is precisely the defect.
+ * (2) 🔴 THE BOUNDARY IS NOT HASH-DEPENDENT. Level (1) is necessary and NOT
+ *     sufficient, and an earlier revision of this file stopped there. "Distinct
+ *     statements ⇒ distinct keys" assumes `hashifyObject` is INJECTIVE. It is
+ *     not: `hashify` (`~/utils/string-helpers`) is a **32-bit** rolling hash,
+ *     `hash = (hash << 5) - hash + chr; hash |= 0`. It is linear, so a collision
+ *     against a chosen target is CONSTRUCTED algebraically — not brute-forced —
+ *     and the attacker has the bytes to do it with: `decodeListingCursor` slices
+ *     `cursorSortKey` and `cursorId` out of a lenient base64url decode as
+ *     arbitrary free strings (only `cursorMean` is range-validated) and the
+ *     router bounds `cursor` only by `z.string().max(128)`. Both land in the
+ *     hashed statement as bound params. Two statements differing exactly at the
+ *     scope predicate (`TRUE` vs `al.kind = 'offsite'`) collide on the identical
+ *     32-bit hash with six tuning characters placed in the cursor.
+ *
+ *     The service's answer is NOT to widen the hash (global blast radius — it
+ *     keys caches, DOM ids and de-dup across the codebase). It is to lift the two
+ *     SECURITY-BOUNDARY axes OUT of the hashed payload and into the literal `key`
+ *     string: `listAvailableAppListings:<scope>:<red|sfw>`. A hash collision can
+ *     then only ever mix two pages WITHIN one viewer class.
+ *
+ *     So the tests below assert on the key with its hash segment REMOVED. That is
+ *     the half of the key a collision cannot touch, and it is the only form of
+ *     this guard that a 32-bit hash cannot walk past.
  *
  * ⚠️ `redCapable` is a SECOND viewer-varying axis, and the reason the derived-key
- * form matters: a hand-written key naming `scope` would look complete and still
- * miss it. Nothing here enumerates axes.
+ * form matters at level (1): a hand-written key naming `scope` would look complete
+ * and still miss it. Nothing here enumerates axes.
  */
 
 /**
@@ -79,8 +95,12 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 }));
 
 import { hashifyObject } from '~/utils/string-helpers';
-import { listAvailableListings } from '../app-listing.service';
-import { APP_LISTING_CATALOG_TAG } from '../app-listing-cache.constants';
+import { bustCacheTag } from '~/server/utils/cache-helpers';
+import { bustAppListingCatalogCache, listAvailableListings } from '../app-listing.service';
+import {
+  APP_LISTING_CATALOG_TAG,
+  APP_LISTING_RECOMMEND_MEAN_TAG,
+} from '../app-listing-cache.constants';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 
 const BASE_INPUT = { kind: 'all', sort: 'newest', limit: 20 } as const;
@@ -109,6 +129,29 @@ function deriveKey(sql: unknown): string {
 async function keyFor(opts: { scope?: StoreVisibilityScope; redCapable?: boolean }) {
   await listAvailableListings({ ...BASE_INPUT }, opts);
   return deriveKey(lastCall().sql);
+}
+
+/**
+ * 🔴 The key WITHOUT its hash segment — i.e. everything a `hashifyObject` collision
+ * cannot change.
+ *
+ * `queryCache` puts the hash LAST (`[key, version, hash].join(':')`), so dropping the
+ * final `:`-segment leaves exactly the literal `key` + `version` the service chose.
+ * Two viewer shapes whose PREFIXES differ cannot be made to share a redis entry by any
+ * collision, however constructed; two whose prefixes are equal are separated only by a
+ * 32-bit hash over attacker-influenced bytes.
+ *
+ * `keyPrefixIsolatesTheHash` below is the positive control that this really is dropping
+ * the hash and nothing else.
+ */
+function keyPrefix(key: string): string {
+  const parts = key.split(':');
+  return parts.slice(0, -1).join(':');
+}
+
+/** Run the list path for one viewer shape and return the HASH-INDEPENDENT key prefix. */
+async function prefixFor(opts: { scope?: StoreVisibilityScope; redCapable?: boolean }) {
+  return keyPrefix(await keyFor(opts));
 }
 
 beforeEach(() => {
@@ -206,6 +249,141 @@ describe('/apps catalog cache — the key separates viewers', () => {
         base
       );
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🔴 LEVEL (2): THE BOUNDARY IS NOT HASH-DEPENDENT.
+  //
+  // Every assertion above this line is satisfied by "the two statements differ",
+  // which a 32-bit hash can undo. These are satisfied only by the boundary axes
+  // being LITERAL, UN-HASHED segments of the redis key.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * 🔴 POSITIVE CONTROL ON `keyPrefix` ITSELF, and it has to come first.
+   *
+   * `keyPrefix` claims to strip the hash and leave the literal part. If it stripped
+   * MORE than the hash — or if the hash were not the last segment — every prefix
+   * assertion below would be measuring something other than what it says.
+   *
+   * The discriminating case is a NON-boundary axis: `sort` is interpolated into the
+   * statement and is NOT in the literal key. So changing it MUST move the full key
+   * (it is hashed) and MUST NOT move the prefix (it is not literal). One case, both
+   * directions, and it fails if `keyPrefix` slices at the wrong place.
+   */
+  it('keyPrefixIsolatesTheHash: a non-boundary axis moves the key but NOT the prefix', async () => {
+    const base = await keyFor({ scope: 'full', redCapable: false });
+    await listAvailableListings({ ...BASE_INPUT, sort: 'name' } as never, {
+      scope: 'full',
+      redCapable: false,
+    });
+    const other = deriveKey(lastCall().sql);
+    expect(other, '`sort` is not in the hashed statement at all').not.toBe(base);
+    expect(
+      keyPrefix(other),
+      '`keyPrefix` is not isolating the hash segment: a purely-hashed axis moved the ' +
+        'prefix too, so every prefix assertion below is measuring the hash after all.'
+    ).toBe(keyPrefix(base));
+    // …and the prefix is a real, non-empty literal, not two empty strings. (Note this
+    // assertion stays TRUE with the boundary axes hashed — it is a control, not a guard;
+    // the guards are below.)
+    expect(keyPrefix(base).startsWith('listAvailableAppListings:')).toBe(true);
+  });
+
+  /**
+   * 🔴 THE HEADLINE GUARD. `scope` — the public/onsite security boundary — must be a
+   * LITERAL segment of the cache key, so no `hashifyObject` collision can cross it.
+   *
+   * WHY A HASH COLLISION IS REACHABLE HERE, not theoretical: `hashify` is a 32-bit
+   * linear rolling hash and `decodeListingCursor` admits `cursorSortKey` / `cursorId`
+   * as arbitrary free strings straight into the hashed statement as bound params. Six
+   * tuning characters in the cursor are enough to collide the `full` statement with
+   * the `public-external` one. If the scope lived only inside the hash, that collision
+   * would serve on-site apps into the anonymous `GET /api/v1/apps` response
+   * (civitai#3983, re-opened through the cache) — and the reverse direction is cache
+   * poisoning.
+   */
+  it('🔴 `scope` is a LITERAL key segment — a hash collision cannot cross the store-scope boundary', async () => {
+    const full = await prefixFor({ scope: 'full', redCapable: false });
+    const publicExternal = await prefixFor({ scope: 'public-external', redCapable: false });
+    expect(
+      publicExternal,
+      'the store SCOPE is not in the un-hashed part of the cache key, so `full` and ' +
+        '`public-external` are separated ONLY by a 32-bit hash over a statement whose ' +
+        'cursor bytes the caller supplies. That hash is constructible: a crafted cursor ' +
+        'serves the full catalog (on-site apps included) to an anonymous /api/v1/apps ' +
+        'caller. Put `scope` back into the `key` string passed to `queryCache`.'
+    ).not.toBe(full);
+  });
+
+  /**
+   * The maturity gate, same property. A cross-capability collision serves `r`/`x`
+   * listings onto a SFW host.
+   */
+  it('🔴 `redCapable` is a LITERAL key segment — a hash collision cannot cross the maturity gate', async () => {
+    const red = await prefixFor({ scope: 'full', redCapable: true });
+    const sfw = await prefixFor({ scope: 'full', redCapable: false });
+    expect(
+      sfw,
+      'the maturity capability is not in the un-hashed part of the cache key, so a ' +
+        'red-capable and a SFW-only host are separated ONLY by a constructible 32-bit ' +
+        'hash. Put `redCapable` back into the `key` string passed to `queryCache`.'
+    ).not.toBe(red);
+  });
+
+  /**
+   * All FIVE viewer classes, on the hash-independent prefix. `none` is included: the
+   * router short-circuits it, but it is the fail-closed scope and must not be able to
+   * share an entry with a scope that returns rows.
+   *
+   * Pairwise-distinct prefixes is the whole property this change buys — stated once,
+   * over the full product, so a key that folded two axes into one bit cannot satisfy
+   * the 1-D cases above and slip through here.
+   */
+  it('🔴 every (scope × redCapable) viewer class has a distinct HASH-INDEPENDENT prefix', async () => {
+    const shapes: { scope?: StoreVisibilityScope; redCapable: boolean }[] = [
+      { scope: 'full', redCapable: true },
+      { scope: 'full', redCapable: false },
+      { scope: 'public-external', redCapable: true },
+      { scope: 'public-external', redCapable: false },
+      { scope: undefined, redCapable: false }, // → narrowStoreScope → 'none'
+    ];
+    const prefixes: string[] = [];
+    for (const shape of shapes) prefixes.push(await prefixFor(shape));
+    // The prefix must carry MORE than `<key>:<version>` — i.e. the axes are actually in
+    // there, rather than the five shapes happening to differ for some other reason.
+    for (const p of prefixes) {
+      expect(
+        p.split(':').length,
+        `the cache-key prefix "${p}" is just <key>:<version> — no viewer axis is literal`
+      ).toBeGreaterThan(2);
+    }
+    expect(
+      new Set(prefixes).size,
+      'two viewer classes share a hash-independent cache-key prefix, so only a 32-bit ' +
+        `hash separates them: ${JSON.stringify(prefixes)}`
+    ).toBe(shapes.length);
+  });
+
+  /**
+   * 🔴 BEHAVIOURAL, NOT STRUCTURAL. `bustAppListingCatalogCache` is the single buster
+   * every mutation calls; the ledger suite proves the CALL SITES are complete, and a
+   * structural check type-checks straight past a buster that busts the WRONG TAG.
+   * There are two tags in `app-listing-cache.constants`, and swapping them would make
+   * every mutation appear to bust while the catalog entry survived its full TTL.
+   */
+  it('🔴 the buster busts the CATALOG tag, not the recommend-mean tag', async () => {
+    await bustAppListingCatalogCache();
+    expect(bustCacheTag).toHaveBeenCalledTimes(1);
+    expect(
+      bustCacheTag,
+      '`bustAppListingCatalogCache` did not pass the catalog tag. Every one of the ' +
+        'listing mutations calls it and would report success while the /apps grid ' +
+        'stayed stale for the whole TTL.'
+    ).toHaveBeenCalledWith([APP_LISTING_CATALOG_TAG]);
+    // Negative half: the two tags are genuinely different strings, so the assertion
+    // above is not vacuously true of both.
+    expect(APP_LISTING_CATALOG_TAG).not.toBe(APP_LISTING_RECOMMEND_MEAN_TAG);
   });
 
   it('the page is written with the catalog bust tag and the 180s TTL', async () => {

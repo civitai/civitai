@@ -1505,7 +1505,11 @@ export async function updateListing(opts: {
       // the `approved` trivial-only branch makes.
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
-      // Catalog bust: an in-place edit of card fields (tagline / description / category).
+      // Catalog bust: UNIFORM RULE, not a cached axis — this branch edits a `removed`
+      // (owner-unpublished) row, which the approved-only catalog query already excludes, so
+      // it is INERT today. Of the trivial fields it can write, only `category` is a cached
+      // axis at all (tagline/description are hydrated live); it becomes load-bearing the
+      // moment such a row is republished, and that path busts too.
       await bustAppListingCatalogCache().catch(() => undefined);
 
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
@@ -1523,7 +1527,9 @@ export async function updateListing(opts: {
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
-      // Catalog bust: an in-place edit of card fields (tagline / description / category).
+      // Catalog bust: UNIFORM RULE, not a cached axis — a `draft`/`pending` row is outside
+      // the approved-only catalog query, so this is INERT today. Same reasoning as the
+      // `removed` branch above.
       await bustAppListingCatalogCache().catch(() => undefined);
 
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
@@ -1542,7 +1548,10 @@ export async function updateListing(opts: {
         // false), so writing it is a harmless no-op.
         const data = buildListingPatchData(effectivePatch, patchOpts);
         await dbWrite.appListing.update({ where: { id: listingId }, data });
-        // Catalog bust: a trivial in-place edit of a LIVE listing — card fields move.
+        // Catalog bust: LOAD-BEARING. This is the one edit branch that writes a LIVE
+        // (approved) row, and `category` — trivial by the material/trivial split, cached by
+        // the `al.category` filter — is exactly what it can move. (`tagline`/`description`
+        // are hydrated live and could never be stale; only `category` needs this.)
         await bustAppListingCatalogCache().catch(() => undefined);
 
         return { listingId, status: listing.status, requiresReview: false, shadowId: null };
@@ -1586,8 +1595,13 @@ export async function updateListing(opts: {
         await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
       });
-      // Catalog bust: the MATERIAL half is staged on a shadow, but the beta half writes to
-      // the LIVE parent — and `isBeta` is a card field.
+      // Catalog bust: UNIFORM RULE, not a cached axis. The MATERIAL half is staged on a
+      // shadow (excluded from the catalog by both the approved-only and `revision_of_id IS
+      // NULL` filters), and the beta half writes `isBeta` to the LIVE parent — but the cache
+      // holds `{id, sort_key}` only and `isBeta` is a hydrated projection field, so it can
+      // never be served stale. INERT today; kept so the rule stays mechanical. (Note the
+      // asymmetry with `updateRevisionDraft`, which writes the same beta half to the same
+      // live parent and has NO bust — also correct, for the same reason.)
       await bustAppListingCatalogCache().catch(() => undefined);
 
       return { listingId, status: listing.status, requiresReview: true, shadowId };
@@ -3712,6 +3726,27 @@ async function applyApprovedRevision(opts: {
       where: { id: shadowId, revisionOfId: { not: null } },
     });
   });
+
+  // 🔴 Catalog bust. THIS PATH IS NOT COVERED BY THE ONE IN `approveExternalRequest` —
+  // that caller `return`s into this function BEFORE reaching its bust, and it does so
+  // for EVERY approval of an edit to an already-live listing (`revisionOfId != null`),
+  // not for some corner case.
+  //
+  // The offsite branch above writes onto the LIVE parent, and two of the columns it
+  // writes are axes of the CACHED statement, not merely of the live-hydrated card:
+  //   · `contentRating` — via `resolveApprovalContentRating`, which can RAISE it. A
+  //     `g`→`r` re-rating that is not busted leaves the newly-`r` listing sitting in
+  //     the cached SFW page (`listingMatureFilter`) for the rest of the TTL.
+  //   · `category` — the cached query filters on `al.category`, so a category move
+  //     leaves the app in the wrong filtered grid.
+  //   · `name` — the `sort='name'` sort key, cached as `sort_key`.
+  // The onsite branch is assets-only and touches none of those, but the bust is
+  // unconditional here for the same reason it is unconditional everywhere else: a
+  // per-branch judgement is the thing that goes stale.
+  //
+  // Post-commit and fire-and-forget, matching every sibling site — a cache-bus outage
+  // must never fail an approval that has already committed.
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { publishRequestId: request.id, listingId: parentId, slug: parent.slug };
 }

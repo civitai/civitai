@@ -725,23 +725,54 @@ export async function getGlobalRecommendMean(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 /**
- * The read-through cache for the `/apps` store's keyset id page.
+ * Build the read-through cache for the `/apps` store's keyset id page, for ONE
+ * viewer class.
  *
- * 🔴 WHY `queryCache` + A BUST TAG, AND NOT THE ALTERNATIVES.
+ * 🔴 THE TWO SECURITY-BOUNDARY AXES ARE LITERAL KEY SEGMENTS, NOT HASH INPUT.
  *
- * · **The key is `hashifyObject(Prisma.Sql)`** — `queryCache` builds it as
- *   `[key, version, hashifyObject(query)].join(':')` over the WHOLE statement,
- *   text and bound params (`~/server/utils/cache-helpers`). Every axis this page
- *   varies on — `kind`, `category`, `sort`, `cursor`, `limit`, the maturity gate
- *   `listingMatureFilter(redCapable)` and the store-scope gate
- *   `listingPublicVisibilityFilter(scope)` — is interpolated into that ONE
- *   statement, so **each is in the cache key BY CONSTRUCTION**. A hand-assembled
- *   key is a list someone has to keep complete; this one cannot omit an axis,
- *   because omitting it would mean the SQL did not depend on it either. That
- *   structural property is what makes it safe to cache a page whose contents are
- *   VIEWER-VARYING: `scope` (a public/onsite security boundary) and `redCapable`
- *   (a maturity gate) can never collide into one entry.
- *   `__tests__/app-listing.catalog-cache.test.ts` pins exactly that.
+ * `queryCache` builds its redis key as `[key, version, hashifyObject(query)]
+ * .join(':')` (`~/server/utils/cache-helpers`). `hashifyObject` → `hashify`
+ * (`~/utils/string-helpers`) is a **32-bit** rolling hash
+ * (`hash = (hash << 5) - hash + chr; hash |= 0`). It is neither injective nor
+ * one-way, and it is LINEAR — collisions against a chosen target are constructed
+ * algebraically, not brute-forced. An earlier revision of this code passed a
+ * single constant `key` and relied on "every axis is interpolated into the
+ * statement, so every axis is in the key". That reasoning silently assumes the
+ * hash is injective, and it is not.
+ *
+ * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
+ * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
+ * arbitrary free strings (only `cursorMean` is range-validated), the router
+ * validates `cursor` only as `z.string().max(128)`, and both land in this
+ * statement as bound params. That is enough tuning room to steer the 32-bit hash
+ * onto any target value.
+ *
+ * So the two axes that are SECURITY BOUNDARIES are lifted out of the hashed
+ * payload and into the `key` string itself:
+ *
+ *   · `scope` — `listingPublicVisibilityFilter`. `full` is the whole approved
+ *     catalog; `public-external` is offsite-only. That is the public/onsite
+ *     boundary (civitai#3983). A cross-scope collision would serve on-site apps
+ *     into the anonymous `GET /api/v1/apps` response, and the reverse direction
+ *     is cache poisoning.
+ *   · `redCapable` — `listingMatureFilter`. A cross-capability collision serves
+ *     `r`/`x` listings onto a SFW host.
+ *
+ * With both in the literal prefix, a hash collision can only ever mix two pages
+ * WITHIN one viewer class — the class boundary is no longer hash-dependent.
+ * `__tests__/app-listing.catalog-cache.test.ts` pins that the boundary lives in
+ * the un-hashed segments.
+ *
+ * The remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the
+ * hash. They are ordinary correctness, not a disclosure boundary: the worst a
+ * constructed collision buys there is the attacker's own page served back to
+ * themselves under a different filter, within their own viewer class.
+ *
+ * 🔴 DO NOT "FIX" THIS BY WIDENING `hashify` — it is used across the codebase for
+ * cache keys, DOM ids and de-dup, so changing its output is a global blast radius.
+ * The containment belongs here, at the one call site that has a security boundary.
+ *
+ * Why `queryCache` + a bust tag, and not the alternatives:
  *
  * · **NOT `fetchThroughCache`** — it takes no `tag` option, so `bustCacheTag`
  *   cannot drive it and a moderator's approve/delist would not be visible until
@@ -754,8 +785,18 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * · **NOT a generation counter** — a counter folded into the key leaves the old
  *   entries in redis to expire on their own, so a bust multiplies the keyspace
  *   instead of reclaiming it. The tag set holds the exact keys to delete.
+ *
+ * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
+ * is bounded at 6 (3 scopes × 2 capabilities) — every component is a closed enum,
+ * never a request-controlled string.
  */
-const listAvailableListingsCache = queryCache(dbRead, 'listAvailableAppListings', 'v1');
+function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
+  return queryCache(
+    dbRead,
+    `listAvailableAppListings:${scope}:${redCapable ? 'red' : 'sfw'}`,
+    'v1'
+  );
+}
 
 /**
  * Bust the `/apps` store catalog cache. THE one buster — every listing-state
@@ -819,15 +860,25 @@ export async function listAvailableListings(
   // a card's mutable projection fields are never served from two different ages.
   // `nextCursor` is derived from these (now cached) rows, same as there.
   //
+  // The cache is built PER VIEWER CLASS: `scope` and `redCapable` are literal segments
+  // of the redis key, deliberately outside the 32-bit `hashifyObject` of the statement.
+  // See {@link catalogPageCache} for why that is load-bearing rather than stylistic.
+  //
   // TTL = `CacheTTL.sm` (180s). The catalog is MOD-GATED and low-churn: rows enter and
   // leave only through moderator approve/delist/reject/purge or an owner
-  // unpublish/republish, and EVERY one of those paths calls
-  // `bustAppListingCatalogCache()` — so the TTL is not the freshness mechanism, it is
-  // the backstop for the one path that has no mutation to hang a bust on (a redis bus
-  // failure, or a row that ages into visibility). 180s keeps that backstop short enough
-  // that a missed bust is a blip rather than an outage, while still collapsing the
-  // burst of identical cold reads that a `/apps` page load produces.
-  const idRows = await listAvailableListingsCache<{ id: string; sort_key: string }[]>(
+  // unpublish/republish, and every one of those paths calls
+  // `bustAppListingCatalogCache()`.
+  //
+  // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
+  // no mutation to hang a bust on — chiefly a row that ages into visibility. It is NOT
+  // a redis-outage backstop: `queryCache` has no try/catch and no fail-open (unlike
+  // `fetchThroughCache`), so a redis outage does not degrade to a live DB read here, it
+  // throws — a 500 on `/apps` and on `GET /api/v1/apps`. That is the dependency this
+  // change accepts; the TTL does nothing about it. What 180s does buy is collapsing the
+  // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
+  // bust cannot stretch past.
+  const cacheable = catalogPageCache(scope, redCapable);
+  const idRows = await cacheable<{ id: string; sort_key: string }[]>(
     Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
