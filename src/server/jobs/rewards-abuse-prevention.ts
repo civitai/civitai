@@ -337,7 +337,9 @@ const abuseLimitsSchema = z
     user_count: z.number().default(10),
     max_user_count: z.number().optional(),
     require_exclusive_ip: z.boolean().default(false),
-    dryRun: z.boolean().default(false),
+    // Defaults to a dry run because the failure mode is asymmetric: a missing or half-written
+    // config should not be able to disable anyone. Enforcing is an explicit `dryRun: false`.
+    dryRun: z.boolean().default(true),
     excludedIps: sqlSafeToken.array().default(['1.1.1.1', '']), // "10.124.0.14","10.124.0.17","10.124.0.32","10.124.0.70","10.124.0.84","10.124.0.94"
     award_types: sqlSafeToken.array().default(['dailyBoost']),
     award_type_prefixes: sqlSafeToken.array().default([]),

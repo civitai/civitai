@@ -69,7 +69,7 @@ beforeEach(() => {
 describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-dependency)', () => {
   it('runs detection with a valid config (happy path)', async () => {
     hGet.mockResolvedValue(
-      JSON.stringify({ awarded: 5000, user_count: 5, award_types: ['dailyBoost'] })
+      JSON.stringify({ awarded: 5000, user_count: 5, award_types: ['dailyBoost'], dryRun: false })
     );
 
     const result = await rewardsAbusePrevention.run().result;
@@ -86,7 +86,9 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
   });
 
   it('treats a Buffer config reply (sentinel mode) as valid JSON', async () => {
-    hGet.mockResolvedValue(Buffer.from(JSON.stringify({ awarded: 5000, user_count: 5 }), 'utf8'));
+    hGet.mockResolvedValue(
+      Buffer.from(JSON.stringify({ awarded: 5000, user_count: 5, dryRun: false }), 'utf8')
+    );
 
     const result = await rewardsAbusePrevention.run().result;
 
@@ -193,6 +195,31 @@ describe('rewards-abuse-prevention — detection shape', () => {
     expect(outerWhereOf(sqlOf())).not.toContain('createdDate > subtractDays(now(), 1)');
   });
 
+  it('does not enforce on a config that never said to', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ award_types: ['dailyBoost'] }));
+    chQuery.mockResolvedValue([
+      { ip: '203.0.113.9', user_count: 3, ip_user_count: 3, awarded: 9000, user_ids: [1, 2, 3] },
+    ]);
+
+    const result = await rewardsAbusePrevention.run().result;
+
+    // A config that is missing, half-written or reverted must not be able to disable anyone.
+    expect(result).toMatchObject({ dryRun: true, usersDisabled: 0, wouldDisable: 3 });
+    expect(dbQueryRawUnsafe).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: an explicit dryRun false still enforces', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ award_types: ['dailyBoost'], dryRun: false }));
+    chQuery.mockResolvedValue([
+      { ip: '203.0.113.9', user_count: 3, ip_user_count: 3, awarded: 9000, user_ids: [1, 2, 3] },
+    ]);
+    dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    const result = await rewardsAbusePrevention.run().result;
+
+    expect(result).toMatchObject({ dryRun: false, usersDisabled: 3 });
+  });
+
   it('emits a cluster-size ceiling when max_user_count is set', async () => {
     await runWith({ max_user_count: 5 });
 
@@ -232,7 +259,7 @@ describe('rewards-abuse-prevention — dry run', () => {
     chQuery.mockResolvedValue(abusers);
     dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
 
-    const result = await runWith({ require_exclusive_ip: true });
+    const result = await runWith({ require_exclusive_ip: true, dryRun: false });
 
     expect(dbQueryRawUnsafe).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledTimes(1);
@@ -243,7 +270,7 @@ describe('rewards-abuse-prevention — dry run', () => {
     chQuery.mockResolvedValue(abusers);
     dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
 
-    const result = (await runWith({ require_exclusive_ip: true })) as DryRunReport;
+    const result = (await runWith({ require_exclusive_ip: true, dryRun: false })) as DryRunReport;
 
     // The fields that say WHAT was found have to survive the switch to enforcing, or a live run
     // that disables nobody cannot be told from one that found nothing.
@@ -360,7 +387,7 @@ describe('rewards-abuse-prevention — decision log', () => {
     // The flagged set is 1-4; the UPDATE skips 2 (Protected) and 4 (already ineligible).
     dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }, { id: 3 }]);
 
-    await runWith({});
+    await runWith({ dryRun: false });
 
     const values = rowsWritten().values;
     expect(values.map((v) => v.disabledUserIds)).toEqual([[1], [3]]);
@@ -386,7 +413,7 @@ describe('rewards-abuse-prevention — decision log', () => {
     dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }]);
     chInsert.mockRejectedValueOnce(new Error('clickhouse unreachable'));
 
-    const result = await runWith({});
+    const result = await runWith({ dryRun: false });
 
     // The accounts are already disabled by this point. Failing here would leave the database
     // changed and the run reported as failed.
@@ -398,7 +425,7 @@ describe('rewards-abuse-prevention — decision log', () => {
     chQuery.mockResolvedValue(twoClusters);
     dbQueryRawUnsafe.mockResolvedValue([{ id: 1 }]);
 
-    await runWith({});
+    await runWith({ dryRun: false });
 
     expect(chInsert).toHaveBeenCalledTimes(1);
     expect(logToAxiom).not.toHaveBeenCalled();
