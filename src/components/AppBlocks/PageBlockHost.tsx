@@ -720,14 +720,24 @@ export function PageBlockHost({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   /**
-   * The viewer dismissed the missing-permissions notice for this mount.
+   * Which app's missing-permissions notice the viewer dismissed.
    *
-   * Per-mount and deliberately NOT persisted: the notice is the only thing
+   * Not persisted across a page load, deliberately: the notice is the only thing
    * standing between "the app silently cannot do the thing" and the viewer, so a
-   * remembered dismissal would make the hole permanent again for exactly the
-   * people who have already met it once.
+   * remembered dismissal would make the hole permanent for exactly the people who
+   * have already met it once.
+   *
+   * 🔴 THE APP ID, NOT A BOOLEAN, AND THE BOOLEAN WAS A REAL BUG. This component
+   * is NOT remounted when the viewer moves between two `/apps/run/<slug>` pages —
+   * `_app.tsx` puts no `key` on `<Component>` and the run page renders this with
+   * none — and the chrome THIS component draws is itself that one-click path
+   * ("Recently run" items are `NextLink`s). So a bare flag meant dismissing app
+   * A's notice silently suppressed app B's for the rest of the SPA session, for
+   * apps the viewer had never seen it for. Found by audit; reproduced with a
+   * control (swap props to a second app: notice present without a prior dismiss,
+   * absent with one).
    */
-  const [consentNoticeDismissed, setConsentNoticeDismissed] = useState(false);
+  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1592,15 +1602,6 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
-  // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
-  // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
-  // the page money scope is enabled) asks the host to open the consent UI when
-  // the user clicks an action that needs that capability (e.g. Generate),
-  // instead of a prompt on load. Mirrors IframeHost's REQUEST_CONSENT handler
-  // exactly: we grant ONLY the missing set the MINT computed (`missingScopes` —
-  // server-known truth), NOT any scopes the block claims; the gate also pins
-  // status === 'ready' so a pre-handshake block can't pop a permission modal
-  // before any interaction (same posture as NAVIGATE). On grant we re-mint the
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -1612,6 +1613,13 @@ export function PageBlockHost({
   const openConsentModal = useCallback(
     (scopes: string[]) => {
       dialogStore.trigger({
+        // 🔴 A STABLE ID, BECAUSE `trigger` DEDUPES ON `id` AND NOTHING ELSE.
+        // Without one it falls back to `Date.now()` (dialogStore.ts:47), so two
+        // clicks in different milliseconds stack TWO consent modals. That was
+        // latent while the only caller was a message handler; the notice below is
+        // the first HUMAN-clickable trigger, which is what makes it reachable.
+        // Measured: two clicks 30ms apart → 2 dialogs.
+        id: `block-consent-${appBlockId}`,
         component: BlockConsentModal,
         props: {
           appBlockId,
@@ -1628,6 +1636,15 @@ export function PageBlockHost({
     [appBlockId, appName, onConsentGranted]
   );
 
+  // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
+  // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
+  // the page money scope is enabled) asks the host to open the consent UI when
+  // the user clicks an action that needs that capability (e.g. Generate),
+  // instead of a prompt on load. Mirrors IframeHost's REQUEST_CONSENT handler
+  // exactly: we grant ONLY the missing set the MINT computed (`missingScopes` —
+  // server-known truth), NOT any scopes the block claims; the gate also pins
+  // status === 'ready' so a pre-handshake block can't pop a permission modal
+  // before any interaction (same posture as NAVIGATE). On grant we re-mint the
   // token (onConsentGranted → useBlockToken.refresh); the new scopes flow to the
   // iframe via the TOKEN_REFRESH push above and the block retries — there is no
   // host→block reply (fire-and-forget).
@@ -4163,7 +4180,8 @@ export function PageBlockHost({
       // only when a block PULLED it, so any app that never sent REQUEST_CONSENT
       // was silently broken with no host-side signal to the viewer at all. The
       // notice rendered below the chrome is the backstop; this stays for
-      // debugging and for tests.
+      // debugging. ⚠️ NOT read by any test — an earlier draft of this comment
+      // said "and for tests", which was false: nothing asserts on it.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
       <AppBlockChrome
@@ -4209,7 +4227,8 @@ export function PageBlockHost({
           decides how it maps. A cast here would have compiled and silently
           disagreed with every other gate. (`pnpm typecheck` caught exactly that —
           the first version of this passed `status` raw.) */}
-      {!consentNoticeDismissed &&
+      {consentNoticeDismissedFor !== appBlockId &&
+        !reviewMode &&
         needsConsent &&
         resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []) != null && (
           <Box
@@ -4223,9 +4242,7 @@ export function PageBlockHost({
             }}
           >
             <Group justify="space-between" wrap="nowrap" gap="sm">
-              <Text size="sm">
-                {appName} is missing permissions it needs to work fully.
-              </Text>
+              <Text size="sm">{appName} is missing permissions it needs to work fully.</Text>
               <Group gap="xs" wrap="nowrap">
                 <Button
                   size="compact-sm"
@@ -4236,7 +4253,10 @@ export function PageBlockHost({
                     // TOKEN_REFRESH between the two can shrink the missing set,
                     // and granting a scope the viewer already has is a worse
                     // prompt than no prompt.
-                    const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
+                    const scopes = resolveRequestConsent(
+                      toHostGateStatus(status),
+                      missingScopes ?? []
+                    );
                     if (scopes != null) openConsentModal(scopes);
                   }}
                 >
@@ -4247,7 +4267,7 @@ export function PageBlockHost({
                   variant="subtle"
                   aria-label="Dismiss the missing-permissions notice"
                   data-testid="block-consent-notice-dismiss"
-                  onClick={() => setConsentNoticeDismissed(true)}
+                  onClick={() => setConsentNoticeDismissedFor(appBlockId)}
                 >
                   Dismiss
                 </Button>

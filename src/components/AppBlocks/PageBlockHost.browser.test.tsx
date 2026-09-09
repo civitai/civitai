@@ -1458,20 +1458,114 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
-  test('NEGATIVE CONTROL — nothing missing, no notice', async () => {
+  // 🔴 ONE VARIABLE EACH. The first version of this varied `missingScopes` AND
+  // `needsConsent` together, so it could not attribute the absence to either —
+  // and it left `needsConsent &&` in the render condition with no killing
+  // mutation at all. Audit finding; split.
+  test('NEGATIVE CONTROL — nothing missing (needsConsent still true), no notice', async () => {
     renderWithProviders(
-      <PageBlockHost
-        {...baseProps}
-        missingScopes={[]}
-        needsConsent={false}
-        onConsentGranted={vi.fn()}
-      />
+      <PageBlockHost {...baseProps} missingScopes={[]} onConsentGranted={vi.fn()} />
     );
     await driveToReady();
     // The positive cases above prove the notice CAN render after driveToReady,
     // so this zero is a reading rather than a silence.
     await new Promise((r) => setTimeout(r, 150));
     expect(noticeQuery()).toBeNull();
+  });
+
+  test('NEGATIVE CONTROL — needsConsent false alone suppresses it, even with a missing set', async () => {
+    // ⚠️ NOT A STATE THE MINT PRODUCES — it sets `needsConsent = missing.length > 0`,
+    // so the two always agree in production. This pins the PROP CONTRACT: the
+    // component branches on the server's own verdict rather than re-deriving it
+    // from the array, and without this case that term is unkillable.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={['ai:write:budgeted']}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
+  test('🔴 REVIEW MODE never shows it — a mod must not be able to grant scopes from the sandbox', async () => {
+    // The block-initiated path calls this guard absolute at the REQUEST_CONSENT
+    // handler ("never let untrusted review code pop a permission modal at the
+    // mod"). The notice had no such gate; it was unreachable in production ONLY
+    // because ReviewBlockPreviewHost hardcodes `missingScopes={[]}`. That is a
+    // caller-side accident, not a guard. Audit finding.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        reviewMode
+        surface="review-preview"
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 Review is IDEMPOTENT — two clicks open ONE modal, not two', async () => {
+    // `dialogStore.trigger` dedupes on `id` and nothing else; with none passed it
+    // falls back to `Date.now()`, so two clicks in different milliseconds stacked
+    // two consent modals. Latent while the only caller was a message handler —
+    // this notice is the first HUMAN-clickable trigger. Audit finding.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+
+    await page.getByTestId('block-consent-notice-review').click();
+    await page.getByTestId('block-consent-notice-review').click();
+
+    expect(useDialogStore.getState().dialogs).toHaveLength(1);
+  });
+
+  test('🔴 dismissal is PER APP — dismissing one app does not suppress the next', async () => {
+    // This component is NOT remounted when the viewer moves between two
+    // /apps/run/<slug> pages, and the chrome it renders is itself that one-click
+    // path. A bare boolean therefore suppressed the notice for apps the viewer
+    // had never seen it for — the exact hole this feature exists to close.
+    // Audit finding; reproduced with the control below.
+    //
+    // 🔴 A HARNESS, NOT `rerender` — and the harness is CLOSER to the real thing.
+    // `renderWithProviders` returns vitest-browser-react's handle, which exposes
+    // no `rerender`. Swapping props inside a parent that keeps the SAME element
+    // position is exactly what the SPA does: no `key`, so React reuses the
+    // instance and its state survives, which is the whole defect.
+    function TwoApps() {
+      const [second, setSecond] = useState(false);
+      return (
+        <>
+          <button type="button" data-testid="switch-app" onClick={() => setSecond(true)}>
+            switch
+          </button>
+          <PageBlockHost
+            {...baseProps}
+            appBlockId={second ? 'apb_second' : baseProps.appBlockId}
+            appName={second ? 'Second App' : baseProps.appName}
+            missingScopes={second ? ['buzz:read:self'] : baseProps.missingScopes}
+            onConsentGranted={vi.fn()}
+          />
+        </>
+      );
+    }
+    renderWithProviders(<TwoApps />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+
+    // CONTROL that the swap itself is what brings it back: before the fix this
+    // stayed null, because the latch was a bare boolean.
+    await page.getByTestId('switch-app').click();
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
   });
 
   test('not before BLOCK_READY — no notice over a still-loading block', async () => {
