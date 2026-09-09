@@ -357,11 +357,12 @@ export const processScheduledPublishing = createJob(
       );
     }
 
-    // Reindex the just-published posts' images so the metrics_images feed picks
-    // up their new sort position (GREATEST(publishedAt, scannedAt, createdAt)).
-    if (scheduledPosts.length) {
+    // Both halves, not just the posts this job flips: a standalone scheduled post goes live
+    // by the clock with no write, and images_v6 rejects a future-dated post at pull time —
+    // so the enqueue from schedule time never landed and this sweep is its only hook.
+    if (publishedPosts.length) {
       const images = await dbWrite.image.findMany({
-        where: { postId: { in: scheduledPosts.map((p) => p.id) } },
+        where: { postId: { in: publishedPosts.map((p) => p.id) } },
         select: { id: true },
       });
       if (images.length) {
@@ -370,6 +371,9 @@ export const processScheduledPublishing = createJob(
           action: SearchIndexUpdateQueueAction.Update,
         });
       }
+    }
+
+    if (scheduledPosts.length) {
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
       await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));

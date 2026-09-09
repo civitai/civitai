@@ -997,3 +997,330 @@ describe('redeemTokens — creator-membership cache invalidation', () => {
     expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 });
+
+// -----------------------------------------------------------------------------
+// Membership cosmetics are delivered by the referral grant ITSELF, in the grant's
+// own transaction. Do not remove these calls on the grounds that the 01:00 UTC
+// `unlock-prepaid-tokens` cron delivers the same rows — it does, up to ~25h later,
+// and that lag is the bug these tests pin (ClickUp 868m27t6f).
+// -----------------------------------------------------------------------------
+
+// deliverMonthlyCosmetics is the only $executeRaw on either path, but match on the
+// statement rather than the count so a future raw write here fails loudly instead of
+// silently satisfying the assertion. This pins the SQL text in
+// subscriptions.service.ts (`INSERT INTO "UserCosmetic"`): if a refactor there renames
+// the statement, these fail with an empty match rather than anything referral-shaped.
+// That module is loaded FOR REAL here, not mocked — mocking it would move the assertion
+// off the row being written and onto the fact that a function was called.
+const isCosmeticInsert = (call: any[]) => String(call[0]).includes('INSERT INTO "UserCosmetic"');
+
+const membershipCosmeticInserts = () =>
+  ((mockDbWrite.$executeRaw as any).mock.calls as any[][]).filter(isCosmeticInsert);
+
+// The userId filter is nested as Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`.
+const insertedForUserIds = (call: any[]) =>
+  call.slice(1).flatMap((value: any) => (Array.isArray(value?.values) ? value.values : []));
+
+describe('referral grant delivers membership cosmetics inline', () => {
+  const wireSuccessfulRedemption = () => {
+    (mockDbWrite.$queryRaw as any)
+      .mockResolvedValueOnce([{ id: 1, tokenAmount: 1 }])
+      .mockResolvedValueOnce([{ id: 'referral:42:1' }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+    mockDbWrite.customerSubscription.create.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_bronze',
+        defaultPriceId: 'price_bronze',
+        metadata: { tier: 'bronze', referralGrantable: true },
+      },
+    ]);
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralRedemption.create.mockResolvedValue({
+      id: 99,
+      createdAt: new Date(),
+      tokensSpent: 1,
+      rewardType: 'MembershipPerks',
+      metadata: {},
+    });
+  };
+
+  it('inserts the membership cosmetics for the redeeming user during redeemTokens', async () => {
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([42]);
+
+    // The delivery reads CustomerSubscription for an ACTIVE row, so it has to run after the
+    // row is written. Delivering first is not a weaker fix — the CTE matches nothing and the
+    // insert writes nothing, exactly as if `tx` had been dropped.
+    const subOrder = (mockDbWrite.customerSubscription.create as any).mock.invocationCallOrder;
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(subOrder).toHaveLength(1);
+    expect(insertOrder).toHaveLength(1);
+    expect(subOrder[0]).toBeLessThan(insertOrder[0]);
+  });
+
+  it('runs the insert inside the redemption transaction, before the redemption row is written', async () => {
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    // This proves ORDER, not transaction membership — the client-identity tests below
+    // are what pin the `tx`. What it uniquely catches is a delivery hoisted out of the
+    // $transaction callback entirely, which would land after the redemption row.
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    const redemptionOrder = (mockDbWrite.referralRedemption.create as any).mock.invocationCallOrder;
+    // Named before the comparison so a delivery that never ran reads as a missing
+    // call rather than a TypeError on undefined.
+    expect(insertOrder).toHaveLength(1);
+    expect(redemptionOrder).toHaveLength(1);
+    expect(insertOrder[0]).toBeLessThan(redemptionOrder[0]);
+  });
+
+  it('inserts the membership cosmetics when advanceReferralSubscriptions promotes a queued chunk', async () => {
+    const queueMeta = { referralQueue: [{ tier: 'silver', durationDays: 7 }] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_silver',
+        defaultPriceId: 'price_silver',
+        metadata: { tier: 'silver', referralGrantable: true },
+      },
+    ]);
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 1, canceled: 0 });
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([7]);
+
+    // Before the promoting update the row still carries the EXPIRED currentPeriodEnd, so a
+    // delivery hoisted above it matches nothing at all — not merely the older tier.
+    const updateOrder = (mockDbWrite.customerSubscription.update as any).mock.invocationCallOrder;
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(updateOrder).toHaveLength(1);
+    expect(insertOrder).toHaveLength(1);
+    expect(updateOrder[0]).toBeLessThan(insertOrder[0]);
+  });
+
+  it('delivers nothing when the sub is canceled with an empty queue', async () => {
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: { referralQueue: [] } },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: { referralQueue: [] },
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 0, canceled: 1 });
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  // The canonical $transaction mock hands the callback dbWrite ITSELF, so `tx` and the
+  // module client are the same object and no assertion can tell them apart. These two
+  // tests substitute a distinct client for the callback so the difference is observable.
+  // Without them, deleting `tx` from the delivery call is green here and a total
+  // regression in production: the subscription row is still uncommitted, so a delivery
+  // on a pooled connection reads no active sub and inserts nothing.
+  const withDistinctTxClient = () => {
+    const txExecuteRaw = vi.fn().mockResolvedValue(1);
+    const txClient = new Proxy(mockDbWrite as any, {
+      get: (target, prop) => (prop === '$executeRaw' ? txExecuteRaw : (target as any)[prop]),
+    });
+    (mockDbWrite.$transaction as any).mockImplementation(async (arg: any) =>
+      typeof arg === 'function' ? arg(txClient) : arg
+    );
+    return txExecuteRaw;
+  };
+
+  const insertsOn = (spy: ReturnType<typeof vi.fn>) =>
+    (spy.mock.calls as any[][]).filter(isCosmeticInsert);
+
+  it('delivers on the transaction client, not the module client, during redeemTokens', async () => {
+    const txExecuteRaw = withDistinctTxClient();
+    wireSuccessfulRedemption();
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(insertsOn(txExecuteRaw)).toHaveLength(1);
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  it('delivers on the transaction client when advanceReferralSubscriptions promotes a chunk', async () => {
+    const queueMeta = { referralQueue: [{ tier: 'silver', durationDays: 7 }] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    const txExecuteRaw = withDistinctTxClient();
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_silver',
+        defaultPriceId: 'price_silver',
+        metadata: { tier: 'silver', referralGrantable: true },
+      },
+    ]);
+
+    await advanceReferralSubscriptions();
+
+    expect(insertsOn(txExecuteRaw)).toHaveLength(1);
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  it('delivers on the update branch too, when the user already has a referral subscription', async () => {
+    // findUnique returning a row is what selects the update branch — the repeat or
+    // reactivating redeemer, whose tier can change and who therefore may be owed a
+    // cosmetic they do not hold yet.
+    wireSuccessfulRedemption();
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      id: 'referral:42:1',
+      status: 'canceled',
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+      metadata: {},
+      productId: 'prod_bronze',
+      product: { metadata: { tier: 'bronze' } },
+    });
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(mockDbWrite.customerSubscription.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.customerSubscription.create).not.toHaveBeenCalled();
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([42]);
+
+    const updateOrder = (mockDbWrite.customerSubscription.update as any).mock.invocationCallOrder;
+    const insertOrder = (mockDbWrite.$executeRaw as any).mock.invocationCallOrder;
+    expect(updateOrder).toHaveLength(1);
+    expect(insertOrder).toHaveLength(1);
+    expect(updateOrder[0]).toBeLessThan(insertOrder[0]);
+  });
+
+  it('delivers only for the promoted sub when a batch also contains one being canceled', async () => {
+    const promoted = { referralQueue: [{ tier: 'silver', durationDays: 7 }] };
+    const exhausted = { referralQueue: [] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: promoted },
+      { id: 'referral:8:1', userId: 8, metadata: exhausted },
+    ]);
+    (mockDbWrite.$queryRaw as any)
+      .mockResolvedValueOnce([
+        { id: 'referral:7:1', metadata: promoted, currentPeriodEnd: new Date(Date.now() - 1000) },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'referral:8:1', metadata: exhausted, currentPeriodEnd: new Date(Date.now() - 1000) },
+      ]);
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_silver',
+        defaultPriceId: 'price_silver',
+        metadata: { tier: 'silver', referralGrantable: true },
+      },
+    ]);
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 1, canceled: 1 });
+    const inserts = membershipCosmeticInserts();
+    expect(inserts).toHaveLength(1);
+    expect(insertedForUserIds(inserts[0])).toEqual([7]);
+  });
+
+  it('awaits the delivery before the transaction callback returns', async () => {
+    // A missing `await` is invisible to every other test here: deliverMonthlyCosmetics runs
+    // synchronously up to its own `await client.$executeRaw`, so the call is RECORDED either
+    // way. Only completion tells them apart. In production the un-awaited form lets Prisma
+    // commit and release the connection with the insert still in flight.
+    let settled = false;
+    const txExecuteRaw = withDistinctTxClient();
+    txExecuteRaw.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            settled = true;
+            resolve(1);
+          }, 0)
+        )
+    );
+    wireSuccessfulRedemption();
+
+    const pending = redeemTokens({ userId: 42, offerIndex: 0 });
+    await Promise.resolve();
+    await Promise.resolve();
+    // Negative control: if this is ever true, something between the commit and the return
+    // has started crossing a macrotask and the assertion below has stopped discriminating.
+    expect(settled).toBe(false);
+
+    await pending;
+
+    // Resolves on a macrotask, and everything redeemTokens does after the transaction is
+    // microtask-only — so this is false unless the delivery was actually awaited.
+    expect(settled).toBe(true);
+  });
+
+  it('delivers on the transaction client on the update branch too', async () => {
+    // The update branch carries the least test weight, which is why the client-identity
+    // property went uncovered here while it was pinned on the other two sites. Dropping
+    // `tx` HERE alone is the same silent regression: the reactivating redeemer — everyone
+    // redeeming a second time — gets nothing.
+    const txExecuteRaw = withDistinctTxClient();
+    wireSuccessfulRedemption();
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue({
+      id: 'referral:42:1',
+      status: 'canceled',
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+      metadata: {},
+      productId: 'prod_bronze',
+      product: { metadata: { tier: 'bronze' } },
+    });
+    mockDbWrite.customerSubscription.update.mockResolvedValue({});
+
+    await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(mockDbWrite.customerSubscription.update).toHaveBeenCalledTimes(1);
+    expect(insertsOn(txExecuteRaw)).toHaveLength(1);
+    expect(membershipCosmeticInserts()).toHaveLength(0);
+  });
+
+  it('lets a failed delivery roll the redemption back rather than swallowing it', async () => {
+    // Pins the "deliberately unguarded" decision at the call sites: wrapping any of them in
+    // try/catch passes every other test in this file. Tokens stay unspent and retryable.
+    wireSuccessfulRedemption();
+    (mockDbWrite.$executeRaw as any).mockRejectedValue(new Error('delivery exploded'));
+
+    await expect(redeemTokens({ userId: 42, offerIndex: 0 })).rejects.toThrow(/delivery exploded/);
+    expect(mockDbWrite.referralRedemption.create).not.toHaveBeenCalled();
+    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
+  });
+});

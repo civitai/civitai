@@ -71,15 +71,19 @@ describe('auditPromptServer — a whitelisted phrase stays whitelisted when acce
   // last consumer of the audited copy, so its argument IS that copy — which pins that exactly
   // the phrase was blanked. `resolves` alone stays green if a future strip swallows the whole
   // prompt, and an empty audited prompt short-circuits the detector into success for anything.
+  // The second argument is the OBSERVABILITY-ONLY `moderationSource` label. It is `undefined`
+  // here because these options declare none, which is the point: an undeclared caller must not
+  // be labelled `generate`. Asserted at full arity rather than relaxed to a first-argument
+  // check, so this still pins exactly what `moderatePrompt` is handed.
   it('allows the plain spelling (control — green with and without the fix)', async () => {
     await expect(auditPromptServer(optionsFor('emma stone portrait'))).resolves.toBeUndefined();
-    expect(mockModeratePrompt).toHaveBeenCalledWith(AUDITED);
+    expect(mockModeratePrompt).toHaveBeenCalledWith(AUDITED, undefined);
     expect(mockProhibited).not.toHaveBeenCalled();
   });
 
   it('allows the accented spelling', async () => {
     await expect(auditPromptServer(optionsFor('émma stone portrait'))).resolves.toBeUndefined();
-    expect(mockModeratePrompt).toHaveBeenCalledWith(AUDITED);
+    expect(mockModeratePrompt).toHaveBeenCalledWith(AUDITED, undefined);
     expect(mockProhibited).not.toHaveBeenCalled();
   });
 

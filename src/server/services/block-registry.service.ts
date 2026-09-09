@@ -12,10 +12,7 @@ import {
 } from '~/server/services/blocks/checkpoint.service';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
-import {
-  newBlockInstanceId,
-  newBlockUserSubscriptionId,
-} from '~/server/utils/app-block-ids';
+import { newBlockInstanceId, newBlockUserSubscriptionId } from '~/server/utils/app-block-ids';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -42,12 +39,12 @@ import {
   invalidateAppCapLimits,
   normalizeCapOverrideInput,
 } from '~/server/services/blocks/app-cap-limits.service';
-import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
+import {
+  toPublicBlockManifest,
+  toPublicScreenshots,
+} from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { isMatureContentRating } from '~/server/utils/server-domain';
-import { CacheTTL } from '~/server/common/constants';
-import { queryCache } from '~/server/utils/cache-helpers';
-import { BAYES_MIN_REVIEWS } from '~/server/services/appBlockReview.service';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -62,38 +59,40 @@ export const MAX_BLOCKS_PER_SLOT = 3;
 export const MARKETPLACE_SCOPES_SUMMARY_LIMIT = 3;
 
 /**
- * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` plus
- * the pinned Bayesian mean `m` as a base64url string so the next page resumes
- * strictly after it (the sort key is embedded so a paged scan stays stable even
- * when many rows share a sort value, e.g. install_count=0). Opaque to the
- * client. We use a unit-separator (\x1f) — a char that can't appear in any of
- * our sort keys (zero-padded digits, a fixed-width timestamp, or a lowercased
- * name) nor in an app_block id nor a numeric mean — so the split is unambiguous.
+ * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` as a
+ * base64url string so the next page resumes strictly after it (the sort key is
+ * embedded so a paged scan stays stable even when many rows share a sort value,
+ * e.g. install_count=0). Opaque to the client. We use a unit-separator (\x1f) —
+ * a char that can't appear in any of our sort keys (zero-padded digits, a
+ * fixed-width timestamp, or a lowercased name) nor in an app_block id — so the
+ * split is unambiguous.
  *
- * `m` PINNING (the `rating` sort): the sort key is computed from the global mean
- * `m`, which is read from a 1h cache that can expire/bust MID-PAGINATION. If
- * page 2 re-derived every row's key with a different `m` than page 1's cursor
- * was encoded with, the keyset boundary shifts and one row is silently skipped
- * or duplicated. So we PIN `m` into the cursor and reuse it for every page of a
- * paging session. Empty for sorts that don't use `m` (popular/newest/name).
+ * There used to be a THIRD field: the Bayesian mean `m` pinned across a paging
+ * session for the `rating` sort. That sort and the 5-star `app_block_reviews`
+ * table behind it are gone, so nothing pins a mean any more. The decoder still
+ * tolerates a stale 3-field cursor: it splits on the first two separators and
+ * ignores the trailing field.
+ *
+ * That tolerance is DEFENCE IN DEPTH, not a live back-compat path — do not cite
+ * it as the thing that keeps an in-flight page from 500ing, because the sort
+ * removal already closed that door upstream. A 3-field cursor was only ever
+ * minted by the `rating` sort, and a client resuming that view sends
+ * `sort: 'rating'` alongside it; `marketplaceSortSchema` no longer accepts that
+ * value, so zod rejects the input at the router boundary and this decoder is
+ * never reached. What the tolerant split actually buys is narrower: a replayed
+ * or hand-rolled 3-field cursor paired with a STILL-VALID sort resumes at the
+ * right `(sortKey, id)` tuple instead of seeking past a garbage id built by
+ * concatenating the dead mean onto it.
  */
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
-function encodeMarketplaceCursor(sortKey: string, id: string, pinnedMean?: number): string {
-  // Only the `rating` sort pins a mean; other sorts emit the legacy 2-field
-  // `sortKey␟id` cursor (no trailing separator) so their format is unchanged.
-  const body =
-    pinnedMean == null
-      ? `${sortKey}${CURSOR_SEPARATOR}${id}`
-      : `${sortKey}${CURSOR_SEPARATOR}${id}${CURSOR_SEPARATOR}${pinnedMean}`;
-  return Buffer.from(body, 'utf8').toString('base64url');
+function encodeMarketplaceCursor(sortKey: string, id: string): string {
+  return Buffer.from(`${sortKey}${CURSOR_SEPARATOR}${id}`, 'utf8').toString('base64url');
 }
 function decodeMarketplaceCursor(cursor: string | undefined): {
   cursorSortKey: string | null;
   cursorId: string | null;
-  /** The mean `m` pinned by the FIRST page of this session (null if absent). */
-  cursorMean: number | null;
 } {
-  const empty = { cursorSortKey: null, cursorId: null, cursorMean: null };
+  const empty = { cursorSortKey: null, cursorId: null };
   if (!cursor) return empty;
   let decoded: string;
   try {
@@ -102,121 +101,15 @@ function decodeMarketplaceCursor(cursor: string | undefined): {
     // Malformed cursor → treat as first page (fail-open to a safe default).
     return empty;
   }
-  // Split on the FIRST two separators: [sortKey, id, mean]. sortKey + id can't
-  // contain \x1f (zero-padded digits / timestamp / lowercased name / app id),
-  // so the first two indexOf hits are the field boundaries.
+  // Split on the FIRST two separators: [sortKey, id, <legacy mean, ignored>].
+  // sortKey + id can't contain \x1f (zero-padded digits / timestamp /
+  // lowercased name / app id), so the first two indexOf hits are the field
+  // boundaries.
   const sep1 = decoded.indexOf(CURSOR_SEPARATOR);
   if (sep1 < 0) return empty;
   const sep2 = decoded.indexOf(CURSOR_SEPARATOR, sep1 + 1);
-  // Legacy 2-field cursor (no pinned mean) — fail-open to an unpinned page.
   const cursorId = sep2 < 0 ? decoded.slice(sep1 + 1) : decoded.slice(sep1 + 1, sep2);
-  const meanField = sep2 < 0 ? '' : decoded.slice(sep2 + 1);
-  const meanNum = meanField === '' ? NaN : Number(meanField);
-  return {
-    cursorSortKey: decoded.slice(0, sep1),
-    cursorId,
-    cursorMean: Number.isFinite(meanNum) ? meanNum : null,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Marketplace reviews — aggregate SQL + Bayesian sort (F-E "marketplace").
-// ---------------------------------------------------------------------------
-
-/**
- * Correlated subquery: AVG(rating) over an app's AGGREGATE-ELIGIBLE reviews —
- * NOT mod-excluded AND NOT the app owner's own (self-review). NULL for a
- * 0-review app. The card number, the detail number, and the global-mean `m`
- * share this eligibility filter so they all agree (one source of truth).
- */
-const AVG_RATING_SUBQUERY = Prisma.sql`(
-  SELECT AVG(abr.rating)::float
-  FROM app_block_reviews abr
-  WHERE abr.app_block_id = ab.id
-    AND NOT abr.exclude
-    AND abr.user_id IS DISTINCT FROM oc."userId"
-)`;
-
-/** Correlated subquery: COUNT of aggregate-eligible reviews (same filter). */
-const REVIEW_COUNT_SUBQUERY = Prisma.sql`(
-  SELECT COUNT(*)::bigint
-  FROM app_block_reviews abr
-  WHERE abr.app_block_id = ab.id
-    AND NOT abr.exclude
-    AND abr.user_id IS DISTINCT FROM oc."userId"
-)`;
-
-/** Correlated subquery: SUM(rating) of aggregate-eligible reviews (same filter). */
-const SUM_RATING_SUBQUERY = Prisma.sql`(
-  SELECT COALESCE(SUM(abr.rating), 0)::float
-  FROM app_block_reviews abr
-  WHERE abr.app_block_id = ab.id
-    AND NOT abr.exclude
-    AND abr.user_id IS DISTINCT FROM oc."userId"
-)`;
-
-// Scale factor for encoding the [1,5] Bayesian score as a zero-padded sortable
-// integer string. score * 1e6 → 7 digits max (5_000_000), lpad to 9 for headroom.
-const BAYES_SCORE_SCALE = 1_000_000;
-const BAYES_SCORE_PAD = 9;
-const INSTALL_PAD = 20; // matches the `popular` sort's install-count padding
-
-/**
- * The Bayesian-shrinkage `rating` sort key, as a single zero-padded sortable
- * TEXT (the same fragment reused IDENTICALLY in SELECT, the keyset WHERE, and
- * ORDER BY — if it drifts, keyset pagination silently skips rows).
- *
- *   score = (C*m + SUM(rating)) / (C + n)
- *     n = aggregate-eligible review count, m = global mean (param), C = prior.
- *   0-review apps → score = m (mid-pack, not buried).
- *
- * Encoded DESC: lpad(round(score*SCALE)) so a plain TEXT DESC compare orders by
- * score. Tiebreaker concatenated: equal scores fall back to install_count
- * (lpad), then `ab.id` (the row-value keyset's final component). The whole key
- * is one TEXT so the keyset tuple `(sort_key, id)` is a correct total order.
- */
-function bayesianRatingSortKey(globalMean: number): Prisma.Sql {
-  // score = (C*m + SUM) / (C + n). C and m are server constants/params (safe).
-  const score = Prisma.sql`(
-    (${BAYES_MIN_REVIEWS}::float * ${globalMean}::float + ${SUM_RATING_SUBQUERY})
-    / (${BAYES_MIN_REVIEWS}::float + ${REVIEW_COUNT_SUBQUERY})
-  )`;
-  const installCount = Prisma.sql`(
-    SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus
-    WHERE bus.app_block_id = ab.id
-  )`;
-  // NB: cast the pad-length args to ::int. Prisma binds the JS number
-  // constants as bigint, and `lpad(text, bigint, unknown)` has no overload
-  // (the signature is `lpad(text, integer, text)`) → the whole query 500s at
-  // runtime with `function lpad(text, bigint, unknown) does not exist`. The
-  // unit tests only assert the SQL string shape (/lpad/), so this slipped past
-  // them and was caught by the preview smoke test hitting a real database.
-  return Prisma.sql`(
-    lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}::int, '0')
-    || lpad(${installCount}::text, ${INSTALL_PAD}::int, '0')
-  )`;
-}
-
-/**
- * The global mean rating `m` across ALL aggregate-eligible app reviews (NOT
- * exclude AND not self-review), cached 1h. Falls back to the neutral mid-scale
- * (3.0) when there are no reviews yet (the marketplace is dark/empty), so a
- * 0-review world still produces a sane, stable sort.
- */
-async function getGlobalMeanRating(): Promise<number> {
-  const cacheable = queryCache(dbRead, 'getGlobalMeanRating', 'v1');
-  const rows = await cacheable<{ mean: number | null }[]>(
-    Prisma.sql`
-      SELECT AVG(abr.rating)::float AS mean
-      FROM app_block_reviews abr
-      JOIN app_blocks ab ON ab.id = abr.app_block_id
-      JOIN "OauthClient" oc ON oc.id = ab.app_id
-      WHERE NOT abr.exclude
-        AND abr.user_id IS DISTINCT FROM oc."userId"
-    `,
-    { ttl: CacheTTL.hour, tag: ['app-rating:global-mean'] }
-  );
-  return rows[0]?.mean ?? 3.0;
+  return { cursorSortKey: decoded.slice(0, sep1), cursorId };
 }
 
 // Slot-reservation math lives in a client-safe module so the model-page SSR
@@ -473,6 +366,15 @@ export interface PageBlockSsr {
    *  column, set on approve). The SSR run-page gate 404s a mature (r/x) page app
    *  when the request host is not red-capable. NULL for pre-feature rows → SFW. */
   contentRating: string | null;
+  /** `manifest.bootSkeleton` — the app's shipped HTML paints its own boot state
+   *  (themed only if it also reads the BLOCK_INIT fragment; else a guess), so the run host stands its veil down and shows the iframe from mount.
+   *  Publisher-controlled and read from the APPROVED manifest snapshot, so it is
+   *  as trustworthy as the rest of that snapshot; the blast radius of a false
+   *  declaration is cosmetic — a blank iframe on that app's own page. 🔴 Nothing
+   *  validates it yet: no strict manifest schema rejects it and no build check
+   *  exists, so a declaration over an empty `#root` reaches production. A
+   *  platform-build check is planned (talos-infra). */
+  bootSkeleton: boolean;
 }
 
 /**
@@ -490,6 +392,11 @@ export interface DevPageBlockResolution {
   blockId: string;
   appId: string;
   status: string;
+  /** `manifest.bootSkeleton` — carried so the AUTHOR's dev tunnel renders the
+   *  same presentation a user will get. Without it the dev route showed the
+   *  host veil while production stood it down, i.e. the one surface an author
+   *  checks was the one that could not show them the feature. */
+  bootSkeleton: boolean;
   trustTier: 'unverified' | 'verified' | 'internal';
   name: string;
   pageTitle: string;
@@ -1344,9 +1251,7 @@ export class BlockRegistry {
     if (!pinned) return live;
     const manifest = (pinned.manifest ?? {}) as Record<string, unknown>;
     const scopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
-      ? ((manifest as { scopes: unknown[] }).scopes.filter(
-          (s): s is string => typeof s === 'string'
-        ))
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
       : [];
     return { manifest, approvedScopes: scopes };
   }
@@ -1954,9 +1859,10 @@ export class BlockRegistry {
     // gate on `typeof iframe.src === 'string'` was misleading (sandbox presence
     // has nothing to do with src being a string). Harmless before (src/sandbox
     // are written together) but wrong; gate on the field actually being read.
-    const sandbox = typeof iframe === 'object' && iframe !== null
-      ? (iframe as { sandbox?: unknown }).sandbox
-      : '';
+    const sandbox =
+      typeof iframe === 'object' && iframe !== null
+        ? (iframe as { sandbox?: unknown }).sandbox
+        : '';
     const page = (manifest.page ?? {}) as { title?: unknown; icon?: unknown };
     const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
     // #3/#6: surface the page's declared scopes so the host can compute the
@@ -1964,15 +1870,16 @@ export class BlockRegistry {
     // IframeHost. Money/spend scopes are rejected at mint for a page, so this is
     // effectively the consent-exempt ambient set (apps:storage:*) once approved.
     const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
-      ? ((manifest as { scopes: unknown[] }).scopes.filter(
-          (s): s is string => typeof s === 'string'
-        ))
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
       : [];
     return {
       appBlockId: ab.id,
       blockId: ab.blockId,
       appId: ab.appId,
       iframeSrc,
+      // STRICT `=== true`: the manifest is publisher JSON, so a truthy-but-not-
+      // boolean value ("false", 0, {}) must not enable a host behaviour change.
+      bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
       sandbox: typeof sandbox === 'string' ? sandbox : '',
       // #2: use the COLUMN (authoritative), never `manifest.trustTier`.
       trustTier:
@@ -2073,6 +1980,8 @@ export class BlockRegistry {
       pageTitle: typeof page.title === 'string' ? page.title : name,
       sandbox: typeof iframe.sandbox === 'string' ? iframe.sandbox : '',
       scopes: declaredScopes,
+      // Same strict `=== true` as the SSR projection: publisher JSON.
+      bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
     };
   }
@@ -2182,9 +2091,22 @@ export class BlockRegistry {
     // keyCanSpend=true) is identical; the runtime author-flag re-check + per-call /
     // per-session / per-day Buzz caps remain the actual spend gates.
     let ephemeralScopes: string[] = [];
+    // 🔴 READ FROM THE PENDING MANIFEST. The dev tunnel is where an author
+    // checks their own app BEFORE approval, so hardcoding `false` here made the
+    // one surface that exists to show them the feature the one surface that
+    // could not — they set the flag, opened /apps/dev/<blockId>, saw the host
+    // veil and would reasonably conclude it does nothing. `pending.manifest` is
+    // already selected and already read below for `scopes`; there was nothing
+    // to fetch.
+    let ephemeralBootSkeleton = false;
     const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
     if (pending) {
-      const pendingManifest = (pending.manifest ?? {}) as { scopes?: unknown };
+      const pendingManifest = (pending.manifest ?? {}) as {
+        scopes?: unknown;
+        bootSkeleton?: unknown;
+      };
+      // Same strict `=== true` as every other read of this field.
+      ephemeralBootSkeleton = pendingManifest.bootSkeleton === true;
       const declared = Array.isArray(pendingManifest.scopes)
         ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
@@ -2204,6 +2126,12 @@ export class BlockRegistry {
       appBlockId: `ephemeral-${blockId}`,
       blockId,
       appId: `ephemeral-${blockId}`,
+      // From the PENDING manifest when there is one (an author's submitted app,
+      // pre-approval — the case the dev tunnel exists for). A truly unclaimed
+      // slug has no manifest at all and stays false, which keeps the host veil:
+      // the safe side, since it shows SOMETHING rather than trusting an empty
+      // #root.
+      bootSkeleton: ephemeralBootSkeleton,
       status: 'ephemeral',
       trustTier: 'unverified',
       name: blockId,
@@ -2376,16 +2304,14 @@ export class BlockRegistry {
     manifest: Record<string, unknown>;
     approvedScopes: string[];
   }): Promise<void> {
-    const { recordScopeGrant, consentGatedScopes } = await import(
-      './blocks/scope-grant.service'
-    );
+    const { recordScopeGrant, consentGatedScopes } = await import('./blocks/scope-grant.service');
     // The app's effective scope set = manifest.scopes ∩ approvedScopes (the
     // moderator-approved snapshot is the ceiling). Grant only the consent-
     // gated subset of that — exempt scopes never need a grant.
     const manifestScopes = Array.isArray((opts.manifest as { scopes?: unknown }).scopes)
-      ? ((opts.manifest as { scopes: unknown[] }).scopes.filter(
+      ? (opts.manifest as { scopes: unknown[] }).scopes.filter(
           (s): s is string => typeof s === 'string'
-        ))
+        )
       : [];
     const approved = new Set(opts.approvedScopes ?? []);
     const effective = manifestScopes.filter((s) => approved.has(s));
@@ -2765,7 +2691,7 @@ export class BlockRegistry {
     //   (a) Render "Pinned to: <Model Name>" badges on the management UI
     //       for pinned subscriptions, without a second per-row round-trip.
     //   (b) List available approved versions per app for the version pin
-    //       Select on /apps/installed. Empty array when the app has no
+    //       Select on /apps/activity. Empty array when the app has no
     //       publish_request rows (pre-W1 hackathon apps).
     const pinnedModelIds = new Set<number>();
     for (const row of rows) {
@@ -2825,9 +2751,7 @@ export class BlockRegistry {
         row.targetModelIds && row.targetModelIds.length > 0 ? row.targetModelIds : null;
       const pinnedModelNames =
         targetIds !== null
-          ? Object.fromEntries(
-              targetIds.map((id) => [id, modelNameById.get(id) ?? `Model ${id}`])
-            )
+          ? Object.fromEntries(targetIds.map((id) => [id, modelNameById.get(id) ?? `Model ${id}`]))
           : null;
       return {
         id: row.id,
@@ -3035,10 +2959,7 @@ export class BlockRegistry {
    * the row doesn't exist (idempotent for retries) but raises authorization
    * when the row exists and belongs to someone else.
    */
-  static async deleteSubscription(opts: {
-    subscriptionId: string;
-    userId: number;
-  }): Promise<void> {
+  static async deleteSubscription(opts: { subscriptionId: string; userId: number }): Promise<void> {
     const existing = await dbWrite.blockUserSubscription.findUnique({
       where: { id: opts.subscriptionId },
       select: { userId: true },
@@ -3055,10 +2976,10 @@ export class BlockRegistry {
   /**
    * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]}),
    * a free-text ILIKE on the manifest name/blockId, and (F-E E3) a mod-assigned
-   * `category`. Sortable by `rating` (Bayesian-shrinkage avg rating desc — the
-   * DEFAULT; 0-review apps sit mid-pack at the global mean), `popular`
-   * (install_count desc), `newest` (current_version_deployed_at desc, falling
-   * back to created_at), or `name` (manifest name asc).
+   * `category`. Sortable by `popular` (install_count desc — the DEFAULT),
+   * `newest` (current_version_deployed_at desc, falling back to created_at), or
+   * `name` (manifest name asc). The former `rating` sort read the 5-star
+   * `app_block_reviews` table and went with it.
    *
    * Cursor: a deterministic keyset over `(sortKey, id)`. We always append
    * `ab.id ASC` as the final tiebreaker so the cursor is unambiguous; the
@@ -3098,8 +3019,6 @@ export class BlockRegistry {
       category: string | null;
       external_url: string | null;
       approved_scopes: string[] | null;
-      avg_rating: number | null;
-      review_count: bigint;
       // The raw stored screenshots jsonb (the SAME column getAppDetail reads) —
       // projected to a public cover URL below (first screenshot, opaque route).
       screenshots: unknown;
@@ -3107,18 +3026,15 @@ export class BlockRegistry {
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
     };
-    const slotFilter = slotId
-      ? `{"targets":[{"slotId":"${slotId}"}]}`
-      : null;
+    const slotFilter = slotId ? `{"targets":[{"slotId":"${slotId}"}]}` : null;
     const queryLike = query ? `%${query.toLowerCase()}%` : null;
     const categoryFilter = category ?? null;
 
-    // Keyset cursor of the last row of the prior page: `sortKey␟id`, or
-    // `sortKey␟id␟mean` for the `rating` sort. ␟ is CURSOR_SEPARATOR, the ASCII
-    // unit separator \x1f — NOT a NUL, which is what this comment used to claim.
-    // Split it back into (sortKey, id, mean) so the WHERE clause resumes after
-    // it and the `rating` sort reuses the SAME pinned mean across all pages.
-    const { cursorSortKey, cursorId, cursorMean } = decodeMarketplaceCursor(cursor);
+    // Keyset cursor of the last row of the prior page: `sortKey␟id`. ␟ is
+    // CURSOR_SEPARATOR, the ASCII unit separator \x1f — NOT a NUL, which is what
+    // this comment used to claim. Split it back into (sortKey, id) so the WHERE
+    // clause resumes after it.
+    const { cursorSortKey, cursorId } = decodeMarketplaceCursor(cursor);
 
     // The sort key is a TEXT expression chosen so a plain text comparison
     // orders rows correctly for the requested sort. The SAME expression is used
@@ -3133,27 +3049,17 @@ export class BlockRegistry {
     // less-than the cursor tuple); name ASC (resume strictly greater-than).
     // ab.id shares the sort_key direction so the row-value tuple comparison is
     // a correct, total keyset.
-    // `rating` (the default) needs the marketplace-wide Bayesian prior `m`
-    // (cheap, 1h-cached scalar) injected as a param. The other sorts ignore it.
-    // PIN `m` across a paging session: page 1 reads the 1h cache and encodes the
-    // value it used into nextCursor; pages 2..N decode that pinned `m` and reuse
-    // it (NOT a fresh cache read) so the sort key stays identical even if the
-    // cache expires/busts mid-pagination — otherwise the keyset boundary shifts
-    // and one row is silently skipped or duplicated. Cursorless first page only
-    // reads the cache. Other sorts don't use `m` (kept 0).
-    const globalMean =
-      sort === 'rating'
-        ? cursorMean ?? (await getGlobalMeanRating())
-        : 0;
+    // No sort here needs a Bayesian prior any more — the `rating` sort and the
+    // 5-star `app_block_reviews` table it read are gone. The cursor's third
+    // field (a pinned mean) is therefore never emitted; a legacy 3-field cursor
+    // still decodes, its mean is simply ignored.
     const sortKeyExpr =
-      sort === 'rating'
-        ? bayesianRatingSortKey(globalMean)
-        : sort === 'popular'
+      sort === 'popular'
         ? Prisma.sql`lpad((SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus WHERE bus.app_block_id = ab.id)::text, 20, '0')`
         : sort === 'newest'
         ? Prisma.sql`to_char(COALESCE(ab.current_version_deployed_at, ab.created_at) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`
         : Prisma.sql`LOWER(COALESCE(ab.manifest->>'name', ab.block_id))`;
-    const descending = sort === 'rating' || sort === 'popular' || sort === 'newest';
+    const descending = sort === 'popular' || sort === 'newest';
     const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
     const keysetCmp = descending ? Prisma.sql`<` : Prisma.sql`>`;
 
@@ -3176,10 +3082,6 @@ export class BlockRegistry {
         -- ranking. COUNT(DISTINCT user_id) makes the number mean "users".
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
-        -- Marketplace reviews: aggregate-eligible AVG + COUNT (excludes
-        -- mod-excluded + self-reviews). NULL avg = 0-review app.
-        ${AVG_RATING_SUBQUERY} AS avg_rating,
-        ${REVIEW_COUNT_SUBQUERY} AS review_count,
         -- The sort key for this row, as text, so the keyset cursor can carry it.
         ${sortKeyExpr} AS sort_key
       FROM app_blocks ab
@@ -3217,13 +3119,8 @@ export class BlockRegistry {
     `)) as Row[];
     const trimmed = rows.slice(0, limit);
     const last = trimmed[trimmed.length - 1];
-    // Pin `m` into the cursor for the `rating` sort so every subsequent page
-    // reuses page 1's mean (see globalMean above). Omitted for other sorts.
-    const pinnedMean = sort === 'rating' ? globalMean : undefined;
     const nextCursor =
-      rows.length > limit && last
-        ? encodeMarketplaceCursor(last.sort_key, last.id, pinnedMean)
-        : undefined;
+      rows.length > limit && last ? encodeMarketplaceCursor(last.sort_key, last.id) : undefined;
     return {
       // F-E E1 anon-exposure allowlist: project the raw stored manifest down to
       // the vetted PUBLIC subset (name/description/targets[].slotId) via
@@ -3255,9 +3152,6 @@ export class BlockRegistry {
               .filter((s): s is string => typeof s === 'string')
               .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
           : [],
-        // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review.
-        avgRating: r.avg_rating ?? null,
-        reviewCount: Number(r.review_count),
         // Card cover: the FIRST public screenshot URL (or NULL when the app
         // shipped none). Reuses the SAME toPublicScreenshots projection the
         // detail page uses — opaque gated route, never the raw MinIO key.
@@ -3313,8 +3207,6 @@ export class BlockRegistry {
       external_url: string | null;
       current_version_deployed_at: Date | null;
       install_count: bigint;
-      avg_rating: number | null;
-      review_count: bigint;
       // F-E E5: stored screenshot records ([{ key, index, ext, contentType }]),
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
@@ -3344,9 +3236,7 @@ export class BlockRegistry {
         ab.current_version_deployed_at,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count,
-        ${AVG_RATING_SUBQUERY} AS avg_rating,
-        ${REVIEW_COUNT_SUBQUERY} AS review_count
+         WHERE bus.app_block_id = ab.id) AS install_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       LEFT JOIN "User" u ON u.id = oc."userId"
@@ -3398,10 +3288,6 @@ export class BlockRegistry {
       contentRating: row.content_rating ?? null,
       version: row.version ?? null,
       installCount: Number(row.install_count),
-      // Marketplace reviews (aggregate-eligible — excludes mod-excluded +
-      // self-reviews). avgRating NULL = 0-review. Display-safe aggregates.
-      avgRating: row.avg_rating ?? null,
-      reviewCount: Number(row.review_count),
       // Already-public standalone origin (no token/scope). Same host the webhook
       // validates the submitted bundle's iframe.src against. For an external
       // (off-site) app this origin doesn't host anything — the client uses
@@ -3456,8 +3342,6 @@ export class BlockRegistry {
       category: string | null;
       external_url: string | null;
       approved_scopes: string[] | null;
-      avg_rating: number | null;
-      review_count: bigint;
       // Raw screenshots jsonb — projected to a public cover URL below (same as
       // listAvailable / getAppDetail).
       screenshots: unknown;
@@ -3474,9 +3358,7 @@ export class BlockRegistry {
         ab.approved_scopes,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count,
-        ${AVG_RATING_SUBQUERY} AS avg_rating,
-        ${REVIEW_COUNT_SUBQUERY} AS review_count
+         WHERE bus.app_block_id = ab.id) AS install_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
@@ -3497,7 +3379,7 @@ export class BlockRegistry {
                install_count DESC,
                ab.id ASC
       LIMIT ${limit}
-    ` ) as Row[];
+    `) as Row[];
     // Project to the SAME public allowlist as listAvailable (no widening).
     return rows.map((r) => ({
       id: r.id,
@@ -3513,8 +3395,6 @@ export class BlockRegistry {
             .filter((s): s is string => typeof s === 'string')
             .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
         : [],
-      avgRating: r.avg_rating ?? null,
-      reviewCount: Number(r.review_count),
       // Card cover: FIRST public screenshot URL (or NULL). Same projection as
       // listAvailable — no widening.
       coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
@@ -3571,17 +3451,12 @@ export class BlockRegistry {
    * Returns the updated MarketplaceMeta. Throws NOT_FOUND for a missing app and
    * BAD_REQUEST for an off-taxonomy category or featuring a non-approved app.
    */
-  static async setMarketplaceMeta(
-    input: SetMarketplaceMetaInput
-  ): Promise<MarketplaceMeta> {
+  static async setMarketplaceMeta(input: SetMarketplaceMetaInput): Promise<MarketplaceMeta> {
     const { appBlockId, category, featured, featuredOrder } = input;
 
     // Taxonomy belt (router already enums it; re-assert so no off-taxonomy value
     // can ever be written by any caller).
-    if (
-      category != null &&
-      !(MARKETPLACE_CATEGORIES as readonly string[]).includes(category)
-    ) {
+    if (category != null && !(MARKETPLACE_CATEGORIES as readonly string[]).includes(category)) {
       throwBadRequestError(`Unknown marketplace category: ${category}`);
     }
 
@@ -3594,9 +3469,7 @@ export class BlockRegistry {
     // Approved-only featuring: refuse to feature anything not approved (it would
     // otherwise appear in the anon-capable featured rail).
     if (featured === true && existing!.status !== 'approved') {
-      throwBadRequestError(
-        `Only an approved app can be featured (status="${existing!.status}").`
-      );
+      throwBadRequestError(`Only an approved app can be featured (status="${existing!.status}").`);
     }
 
     // Build the patch from ONLY the provided fields — an omitted (undefined)
@@ -3621,6 +3494,26 @@ export class BlockRegistry {
         featuredOrder: true,
       },
     });
+    // 🔴 NO CATALOG BUST HERE, DELIBERATELY — and the reason is not "category doesn't
+    // matter", it is that this writes the WRONG TABLE for that cache. The `/apps` catalog
+    // statement filters `app_listings.category`; this function writes
+    // `app_blocks.category`. The two are synced in ONE direction and at ONE moment —
+    // `approveRequest` copies the block's curated scalars onto the listing on approve, and
+    // busts there. Nothing in the cached statement reads any column this function writes
+    // (`category`, `featured`, `featuredOrder`); of `app_blocks` it reads only
+    // `current_version_deployed_at`, via the deploy gate. A bust here was measured inert.
+    //
+    // If the catalog query ever grows a predicate over an `app_blocks` column this
+    // function writes, add the bust back — and add the row
+    // `'src/server/services/block-registry.service.ts::BlockRegistry::setMarketplaceMeta'`
+    // to `LEDGER` in
+    // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`, which
+    // is what will fail and make that a deliberate decision rather than an omission.
+    // (That spelling is exact and verified: the ledger's attributor names class methods
+    // `Class::method`. An earlier version of it was anchored at column 0 and reported an
+    // added bust here as an unrelated top-level helper, which made this instruction
+    // unfollowable.)
+
     return {
       appBlockId: updated.id,
       status: updated.status,

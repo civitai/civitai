@@ -363,10 +363,14 @@ describe('🔴 blockRequestWhereForListing — the null-FK branch', () => {
   });
 
   /**
-   * 🔴 THE OWNER SCOPE IS NOT DECORATION. A rejected/withdrawn first version DELETES its
-   * draft listing to release the slug, so the same slug can later belong to someone else.
-   * An unscoped slug match would hand that new owner the previous applicant's rejection
-   * reason — which is why the branch carries BOTH clauses.
+   * 🔴 THE OWNER SCOPE IS NOT DECORATION. A first version that is WITHDRAWN deletes its draft
+   * listing to release the slug, and a mod `purgeListing` on an orphan draft does the same, so
+   * the slug can later belong to someone else. An unscoped slug match would hand that new
+   * owner the previous applicant's rejection reason — which is why the branch carries BOTH
+   * clauses.
+   *
+   * (A REJECT no longer releases the slug — clawgate #302 — but that shrinks the population
+   * this guard protects, it does not retire the guard: withdraw and purge still do.)
    */
   it('never emits a bare slug match', () => {
     const where = blockRequestWhereForListing({ ...ONSITE, appBlockId: null }) as Record<

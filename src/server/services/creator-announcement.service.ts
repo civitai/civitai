@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   AnnouncementMetaSchema,
@@ -8,8 +9,13 @@ import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.s
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { getAllServerHosts } from '~/server/utils/server-domain';
+import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -47,7 +53,7 @@ const creatorAnnouncementSelect = {
       hash: true,
     },
   },
-  user: { select: { id: true, username: true, image: true } },
+  user: { select: { id: true, username: true, image: true, deletedAt: true } },
   // `satisfies`, not `as const`: a standalone object literal gets no excess-property
   // check when it is passed to Prisma later, so a column that does not exist typechecks
   // clean and 500s at runtime on every read and write. This is the check that catches it.
@@ -71,6 +77,36 @@ function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement
     metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
     nsfwLevel: announcement.cover?.nsfwLevel ?? 0,
   };
+}
+
+/**
+ * Cosmetics and the profile-picture row are not columns on `User`, so the select cannot
+ * reach them; both already live in caches every other card-shaped surface reads, and the
+ * author set on one page of announcements is a handful of ids. Attached to the author here
+ * so a creator announcement renders with the same identity the rest of the site gives them
+ * — a byline that is only a name is what the reader has to tell apart from Civitai's own.
+ */
+async function withAuthorIdentity<T extends { user: { id: number } | null }>(
+  announcements: T[],
+  { hydrate }: { hydrate: boolean }
+) {
+  const userIds = hydrate
+    ? [...new Set(announcements.map((x) => x.user?.id).filter(isDefined))]
+    : [];
+  const [profilePictures, cosmetics] = userIds.length
+    ? await Promise.all([getProfilePicturesForUsers(userIds), getCosmeticsForUsers(userIds)])
+    : [{}, {}];
+
+  return announcements.map((announcement) => ({
+    ...announcement,
+    user: announcement.user
+      ? {
+          ...announcement.user,
+          profilePicture: profilePictures[announcement.user.id] ?? null,
+          cosmetics: cosmetics[announcement.user.id] ?? [],
+        }
+      : null,
+  }));
 }
 
 /**
@@ -123,7 +159,12 @@ export async function getCreatorAnnouncements({
     take: limit,
   });
 
-  return announcements.map(toCreatorAnnouncementDTO);
+  // `hydrate: false` — the profile carousel renders no byline (see `CreatorAnnouncement`'s
+  // `withAuthor`), so fetching the author's picture and cosmetics here would be two cache
+  // fan-outs and several KB per row, duplicated across rows that all share one author, for
+  // fields nothing reads. The FIELDS are still present so both queries have one DTO shape.
+  // If a byline is ever added to the profile, flip this — do not remove the argument.
+  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
 }
 
 /**
@@ -188,7 +229,10 @@ export async function getFollowedAnnouncements({
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  const items = announcements.slice(0, limit).map(toCreatorAnnouncementDTO);
+  const items = await withAuthorIdentity(
+    announcements.slice(0, limit).map(toCreatorAnnouncementDTO),
+    { hydrate: true }
+  );
 
   return {
     items,
@@ -306,6 +350,17 @@ export async function upsertCreatorAnnouncement({
 }: UpsertCreatorAnnouncementSchema & { userId: number; isModerator?: boolean }) {
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
 
+  // Push, not pull: this text is delivered to every follower rather than waiting to be visited.
+  //
+  // AFTER the ownership check, deliberately — same rule as the two creator-shop updates. The
+  // rejection names the matched entry, so running it first answers "does this text match the
+  // list" for a caller holding an id they do not own, in place of the authorization failure they
+  // should get. This is the router's only gate; the procedure passes straight through.
+  await throwOnBlockedUserContent(
+    [input.title, input.content, input.action?.linkText, input.action?.link],
+    { isModerator, surface: 'creatorAnnouncement' }
+  );
+
   // An announcement costs a slot when it starts notifying, not when it is created.
   // profileOnly rows notify nobody, so they are free — but flipping one to profileOnly:
   // false is the moment it gains an audience, and it must pay then. Checking only
@@ -385,7 +440,7 @@ export async function upsertCreatorAnnouncement({
   const allowance = await getAnnouncementAllowance(userId);
   if (!allowance.eligible)
     throw throwAuthorizationError(
-      `Announcements require a creator score of ${allowance.minScore.toLocaleString()}.`
+      `Broadcasting an announcement requires a creator score of ${allowance.minScore.toLocaleString()}.`
     );
 
   return dbWrite.$transaction(async (tx) => {
@@ -418,10 +473,10 @@ export async function upsertCreatorAnnouncement({
     if (spent >= allowance.limit)
       throw throwBadRequestError(
         allowance.nextAvailableAt
-          ? `You have used your ${
+          ? `You have used all ${
               allowance.limit
-            } announcement(s) for this period. Next available ${allowance.nextAvailableAt.toDateString()}.`
-          : 'You have used your announcements for this period.'
+            } of your broadcasts for this period. Next one ${allowance.nextAvailableAt.toDateString()}.`
+          : 'You have used all your broadcasts for this period.'
       );
 
     const announcement = existing
@@ -468,17 +523,28 @@ export async function toggleAnnouncementMute({
 }) {
   if (userId === creatorId) throw throwBadRequestError('You cannot mute yourself');
 
+  // `changed` says whether this call moved the row, and the caller records an analytics
+  // event only when it did. Without it a client that re-sends the state it is already in
+  // — a double-tap, a retry, a stale toggle — writes a second mute event for one muter,
+  // and the creator's chart counts people who never changed their mind.
+  //
+  // `createMany` with `skipDuplicates` rather than a read-then-create: it reports whether
+  // a row appeared, and two concurrent mutes cannot both believe they were first.
+  let changed: boolean;
   if (muted) {
-    await dbWrite.userAnnouncementMute.upsert({
-      where: { userId_creatorId: { userId, creatorId } },
-      create: { userId, creatorId },
-      update: {},
+    const { count } = await dbWrite.userAnnouncementMute.createMany({
+      data: { userId, creatorId },
+      skipDuplicates: true,
     });
+    changed = count > 0;
   } else {
-    await dbWrite.userAnnouncementMute.deleteMany({ where: { userId, creatorId } });
+    const { count } = await dbWrite.userAnnouncementMute.deleteMany({
+      where: { userId, creatorId },
+    });
+    changed = count > 0;
   }
 
-  return { muted };
+  return { muted, changed };
 }
 
 export async function isAnnouncementCreatorMuted({

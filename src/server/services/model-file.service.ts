@@ -172,6 +172,11 @@ export async function updateFile({
   isModerator,
   backend: _backend,
   s3Path: _s3Path,
+  // Ignored, not honoured: the lookup below authorizes the file you may EDIT, not a version you may
+  // move it to, so writing this would let an owner attach their file to anyone's model version. The
+  // upsert callers send the file's existing version, so dropping it changes nothing for them; the
+  // create branch still takes it from `modelFileCreateSchema`.
+  modelVersionId: _modelVersionId,
   ...inputData
 }: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
   const modelFile = await dbWrite.modelFile.findUnique({
@@ -208,9 +213,7 @@ export async function updateFile({
   // needs to know their write did NOT apply. Skip the cache bust too, since
   // we didn't change anything that would invalidate it.
   if (oldUrl && updateResult.count === 0) {
-    throw throwBadRequestError(
-      'ModelFile URL was modified concurrently; retry your update'
-    );
+    throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
   }
 
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
@@ -281,9 +284,7 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<
-    { modelVersionId: number; modelId: number; url: string }[]
-  >`
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number; url: string }[]>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
@@ -404,7 +405,11 @@ export async function restoreReplacedFile({ id }: { id: number }) {
 
   await dbWrite.modelFile.update({
     where: { id },
-    data: { replacedAt: null, visibility: priorVisibility, metadata: restMetadata as Prisma.InputJsonValue },
+    data: {
+      replacedAt: null,
+      visibility: priorVisibility,
+      metadata: restMetadata as Prisma.InputJsonValue,
+    },
   });
 
   await deleteFilesForModelVersionCache(file.modelVersionId);
@@ -517,7 +522,9 @@ function dedupeOptions(values: string[]) {
 function normalizeModelFileOptions(value: unknown): ModelFileOptions {
   const v = (value ?? {}) as Partial<Record<keyof ModelFileOptions, unknown>>;
   const pick = (input: unknown, fallback: string[]) => {
-    const list = Array.isArray(input) ? input.filter((x): x is string => typeof x === 'string') : [];
+    const list = Array.isArray(input)
+      ? input.filter((x): x is string => typeof x === 'string')
+      : [];
     const cleaned = dedupeOptions(list);
     return cleaned.length ? cleaned : fallback;
   };

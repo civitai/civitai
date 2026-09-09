@@ -21,8 +21,9 @@ into `/models` to manage monetization, `/earnings` for the full breakdown, `/lic
   definitions and the pending/settled distinction.
 - **Section link cards** (`card` + `button`) as entry points into `/models`, `/earnings`, `/licensing`, `/settings`.
 - **`skeleton`** for each card while server data resolves.
-- **No chart component exists in `@civitai/ui`** — a trend sparkline on the summary card would need a new primitive or
-  a raw SVG; flag this and default v1 to numbers-only. See [analytics.md](analytics.md) for the charted view.
+- **Sparkline** — `@civitai/ui` has a Chart.js `Chart` wrapper (**C1**), but dashboard charts are deferred:
+  low priority per Justin, and a reactions chart was tried and reverted (`implementation-checklist.md` → #4).
+  v1 is numbers-only. See [analytics.md](analytics.md) for the charted view.
 
 ## Data (reads) — `+page.server.ts`
 
@@ -82,5 +83,4 @@ pending ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
   v1 or fast-follow? Fallback if the MV isn't ready at launch.
 - **Overlap with `/earnings`** — what is *unique* to the dashboard vs a condensed preview of earnings? Risk of two
   places showing the same numbers that can drift.
-- **Sparkline** — worth adding a chart primitive to `@civitai/ui` for a trend line, or numbers-only in v1?
 - **New-creator empty state** — copy + which CTA (upload on main app vs set a fee on `/models`).

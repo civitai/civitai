@@ -266,9 +266,9 @@ separately everywhere else too.
 `pendingReviewCount` on `collection.getById`. The count is computed only for `manage` holders, and
 it is an exact `count` with **no cap and no mode exclusion** — resist adding either.
 
-The reason that is safe is not in `schema.full.prisma`. That file declares only
-`@@index([collectionId], type: Hash)` on `CollectionItem`, which would make a status-filtered count
-walk the whole collection. Production actually carries
+The reason that is safe is not in `schema.full.prisma`. The only `CollectionItem` index that file
+declares that a status-filtered count could use is `@@index([collectionId], type: Hash)`, which
+would make the count walk the whole collection. Production actually carries
 `CollectionItem_collectionId_status_covered` — a btree on `(collectionId, status, createdAt DESC)`
 — so the count is an index-only scan: measured at **0.5 ms / 4 buffers** on a 190k-item collection
 and **0.8 ms / 73 buffers** for a real 466-row review backlog. This is the same

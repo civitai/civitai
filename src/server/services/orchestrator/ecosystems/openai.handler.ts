@@ -2,12 +2,15 @@
  * OpenAI Ecosystem Handler
  *
  * Handles OpenAI workflows using imageGen step type.
- * Supports gpt-image-1, gpt-image-1.5, and gpt-image-2 models.
+ * Supports gpt-image-1, gpt-image-1.5, gpt-image-2 and the two gpt-image-2.5
+ * builds (flare, sunburst).
  *
- * gpt-image-2 has a distinct API shape vs the v1/v1.5 family:
+ * gpt-image-2 and 2.5 share an API shape that differs from the v1/v1.5 family:
  * - Uses numeric `width`/`height` instead of a `size` enum string
  * - No `background` (transparent toggle unsupported)
  * - No `seed` field
+ *
+ * The 2.5 builds differ from each other only in the `model` literal.
  */
 
 import type {
@@ -19,6 +22,12 @@ import type {
   OpenAiGpt2EditImageInput,
   ImageGenStepTemplate,
 } from '@civitai/client';
+import type {
+  OpenAiGpt25FlareCreateImageInput,
+  OpenAiGpt25FlareEditImageInput,
+  OpenAiGpt25SunburstCreateImageInput,
+  OpenAiGpt25SunburstEditImageInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { openaiVersionIds } from '~/shared/data-graph/generation/openai-graph';
@@ -29,16 +38,38 @@ type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: st
 type OpenAICtx = EcosystemGraphOutput & { ecosystem: 'OpenAI' };
 
 // Map from version ID to API model name
-type OpenAIModel = 'gpt-image-1' | 'gpt-image-1.5' | 'gpt-image-2';
+type OpenAIModel =
+  | 'gpt-image-1'
+  | 'gpt-image-1.5'
+  | 'gpt-image-2'
+  | 'gpt-image-2.5-flare'
+  | 'gpt-image-2.5-sunburst';
 const versionIdToModel = new Map<number, OpenAIModel>([
   [openaiVersionIds.v1, 'gpt-image-1'],
   [openaiVersionIds['v1.5'], 'gpt-image-1.5'],
   [openaiVersionIds.v2, 'gpt-image-2'],
+  [openaiVersionIds['v2.5-flare'], 'gpt-image-2.5-flare'],
+  [openaiVersionIds['v2.5-sunburst'], 'gpt-image-2.5-sunburst'],
 ]);
+
+const WIDTH_HEIGHT_MODELS: readonly OpenAIModel[] = [
+  'gpt-image-2',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+];
+
+type WidthHeightCreateInput =
+  | OpenAiGpt2CreateImageInput
+  | OpenAiGpt25FlareCreateImageInput
+  | OpenAiGpt25SunburstCreateImageInput;
+type WidthHeightEditInput =
+  | OpenAiGpt2EditImageInput
+  | OpenAiGpt25FlareEditImageInput
+  | OpenAiGpt25SunburstEditImageInput;
 
 /**
  * Creates imageGen input for OpenAI ecosystem.
- * Handles both createImage and editImage operations across GPT-1/1.5/2.
+ * Handles both createImage and editImage operations across GPT-1/1.5/2/2.5.
  */
 export const createOpenAIInput = defineHandler<OpenAICtx, [ImageGenStepTemplate]>((data) => {
   const quantity = Math.min(data.quantity ?? 1, 10);
@@ -54,12 +85,12 @@ export const createOpenAIInput = defineHandler<OpenAICtx, [ImageGenStepTemplate]
   const hasImages = !!data.images?.length;
 
   // ---------------------------------------------------------------------------
-  // GPT-Image-2: distinct input shape — width/height numbers, no background/seed
+  // GPT-Image-2 / 2.5: distinct input shape — width/height numbers, no background/seed
   // ---------------------------------------------------------------------------
-  if (model === 'gpt-image-2') {
-    const gpt2Base = {
+  if (WIDTH_HEIGHT_MODELS.includes(model)) {
+    const widthHeightBase = {
       engine: 'openai' as const,
-      model: 'gpt-image-2' as const,
+      model,
       prompt: data.prompt,
       quality: data.quality,
       quantity,
@@ -72,9 +103,9 @@ export const createOpenAIInput = defineHandler<OpenAICtx, [ImageGenStepTemplate]
         {
           $type: 'imageGen',
           input: removeEmpty({
-            ...gpt2Base,
+            ...widthHeightBase,
             operation: 'createImage',
-          }) as OpenAiGpt2CreateImageInput,
+          }) as WidthHeightCreateInput,
         },
       ];
     }
@@ -83,10 +114,10 @@ export const createOpenAIInput = defineHandler<OpenAICtx, [ImageGenStepTemplate]
       {
         $type: 'imageGen',
         input: removeEmpty({
-          ...gpt2Base,
+          ...widthHeightBase,
           operation: 'editImage',
           images: data.images?.map((x) => x.url) ?? [],
-        }) as OpenAiGpt2EditImageInput,
+        }) as WidthHeightEditInput,
       },
     ];
   }

@@ -5,6 +5,7 @@ import {
   MAX_REPOSITORY_URL_LENGTH,
 } from '~/server/schema/blocks/external-app.schema';
 import {
+  BETA_MESSAGE_MAX,
   OFFSITE_DESCRIPTION_MAX,
   approveExternalRequestSchema,
   rejectExternalRequestSchema,
@@ -328,5 +329,70 @@ describe('updateListingPatchSchema — sourceRepoUrl is NULLABLE-optional', () =
       }).success
     ).toBe(false);
     expect(updateListingPatchSchema.safeParse({ sourceRepoUrl: '' }).success).toBe(false);
+  });
+});
+
+describe('updateListingPatchSchema — the BETA pair (TRIVIAL, bounded, nullable-optional)', () => {
+  it('`isBeta` alone satisfies the at-least-one-field refine', () => {
+    const parsed = updateListingPatchSchema.safeParse({ isBeta: true });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.isBeta).toBe(true);
+  });
+
+  it('`isBeta: false` is accepted — turning beta OFF is an edit, not an empty patch', () => {
+    // 🔴 THE `.refine` USES `v !== undefined`, NOT TRUTHINESS. A refine written as
+    // `Object.values(p).some(Boolean)` would reject this and leave an author unable to
+    // clear the flag they set — the one edit they are most likely to want.
+    const parsed = updateListingPatchSchema.safeParse({ isBeta: false });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.isBeta).toBe(false);
+  });
+
+  it('an explicit NULL betaMessage is allowed — that is how the note is CLEARED', () => {
+    const parsed = updateListingPatchSchema.safeParse({ betaMessage: null });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.betaMessage).toBeNull();
+  });
+
+  it('OMITTED keys stay absent (an untouched field is not silently defaulted)', () => {
+    const parsed = updateListingPatchSchema.safeParse({ name: 'Renamed' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect('isBeta' in parsed.data).toBe(false);
+      expect('betaMessage' in parsed.data).toBe(false);
+    }
+  });
+
+  it('🔴 accepts a message of EXACTLY `BETA_MESSAGE_MAX` and rejects one character more', () => {
+    // The boundary, from both sides. A one-sided assertion passes on an off-by-one bound in
+    // whichever direction it does not test.
+    expect(
+      updateListingPatchSchema.safeParse({ betaMessage: 'x'.repeat(BETA_MESSAGE_MAX) }).success
+    ).toBe(true);
+    expect(
+      updateListingPatchSchema.safeParse({ betaMessage: 'x'.repeat(BETA_MESSAGE_MAX + 1) }).success
+    ).toBe(false);
+  });
+
+  it('an EMPTY betaMessage string is accepted (unlike sourceRepoUrl, which requires min 1)', () => {
+    // Deliberate asymmetry, pinned so it is not "tidied" into a `.min(1)`: an empty note is
+    // a meaningful instruction ("no note"), normalised to NULL by `buildListingPatchData`.
+    // A `.min(1)` here would force the client to send `null` for a cleared textarea, which
+    // is exactly the kind of shape mismatch that produces a silently-dropped edit.
+    expect(updateListingPatchSchema.safeParse({ betaMessage: '' }).success).toBe(true);
+  });
+
+  it('rejects a non-boolean isBeta (a string "true" must not slip through)', () => {
+    expect(updateListingPatchSchema.safeParse({ isBeta: 'true' }).success).toBe(false);
+  });
+
+  it('the bound is enforced HERE, at the request boundary — not only by the input maxLength', () => {
+    // 🔴 THE SAFETY CLAIM. `betaMessage` is unreviewed public copy, and a direct API or CLI
+    // caller never sees the form's `maxLength`. This is the enforcement point, so the
+    // rejection must come from the SCHEMA rather than from any UI.
+    const parsed = updateListingPatchSchema.safeParse({
+      betaMessage: 'x'.repeat(BETA_MESSAGE_MAX * 10),
+    });
+    expect(parsed.success).toBe(false);
   });
 });

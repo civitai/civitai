@@ -23,8 +23,13 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { createCachedObject } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   assertPricingAllowed,
@@ -661,6 +666,8 @@ export async function getPublicPaidAccessForModelVersions(
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
   if (entityIds.length) await paidAccessCache(entityType).bust(entityIds);
+  // The whole-set cache below has no per-entity key to bust, so it goes with every gate write.
+  await bustGatedModelIdsCache();
 }
 
 /**
@@ -778,4 +785,82 @@ export async function materializePaidAccessEndsAt(
     data: { endsAt: increaseDate(publishedAt, row.timeframeDays, 'days') },
   });
   await bustPaidAccessCache('ModelVersion', [versionId]);
+}
+
+export type ModelPaidAccessGate = {
+  /** End of a live timed window. Null for a gate with no end date. */
+  earlyAccessDeadline: Date | null;
+  /** Any live gate, timed or permanent — the model costs money right now. */
+  gated: boolean;
+};
+
+/**
+ * Model-level gate state for the card badge. The feed and the search-index build both call this, so
+ * the two surfaces cannot answer the question differently — they each held their own copy of this
+ * query until 868m1r2u7, which is how a badge ends up right in one place and missing in the other.
+ *
+ * The row predicate is `isPaidAccessActive` expressed in SQL: a gate is live when it has no end date
+ * or its end date is still ahead. Keying off `timeframeDays` instead would drop a timed gate whose
+ * `endsAt` was never materialized — 36 published versions on prod are in exactly that state, and
+ * they are paywalled.
+ */
+export async function getModelPaidAccessGates(
+  modelIds: number[]
+): Promise<Map<number, ModelPaidAccessGate>> {
+  if (!modelIds.length) return new Map();
+
+  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date | null }[]>`
+    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE ${paidAccessLiveSql}
+      AND mv."modelId" IN (${Prisma.join(modelIds)})
+    GROUP BY mv."modelId"
+  `;
+
+  // A row reaching here is live by the predicate, so its presence IS the gate. `deadline` stays
+  // separate because only a timed window has a clock to show.
+  return new Map(
+    rows.map((r) => [Number(r.modelId), { earlyAccessDeadline: r.deadline ?? null, gated: true }])
+  );
+}
+
+/**
+ * Every model with a live gate, unbounded. The batched `getModelPaidAccessGates` cannot serve this —
+ * the feed filter needs the whole set before it knows which models it is choosing between.
+ *
+ * The predicate is deliberately identical to the badge's. A filter that hides "paid" models using a
+ * different rule from the one that labels them is the divergence 868m1r2u7 exists to close, one layer
+ * up: a card reading Paid that the hide filter leaves on screen.
+ */
+const GATED_MODEL_IDS_CACHE_KEY = `${REDIS_KEYS.CACHES.PAID_ACCESS}:GatedModelIds:v1` as const;
+
+/**
+ * The query itself, uncached. Separate from the cached entry point below so a test can observe the
+ * statement — through `fetchThroughCache` the origin never runs under a mocked redis, and the
+ * assertion would be over a lock failure rather than over SQL.
+ */
+export async function queryGatedModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE ${paidAccessLiveSql}
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
+export async function getGatedModelIds(): Promise<number[]> {
+  return fetchThroughCache(
+    GATED_MODEL_IDS_CACHE_KEY,
+    queryGatedModelIds,
+    // Short, and load-bearing rather than conventional: this set decays with the wall clock as timed
+    // windows cross `endsAt`, so bust-on-write alone would keep an expired gate hidden until the next
+    // edit to some unrelated version.
+    { ttl: CacheTTL.xs }
+  );
+}
+
+export async function bustGatedModelIdsCache() {
+  await bustFetchThroughCache(GATED_MODEL_IDS_CACHE_KEY);
 }

@@ -88,10 +88,13 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const currentUser = useCurrentUser();
   const [page, setPage] = useState(1);
 
-  const { data: model3d } = trpc.model3d.getById.useQuery({ id }, { enabled: features.model3dFeed });
+  const { data: model3d } = trpc.model3d.getById.useQuery(
+    { id },
+    { enabled: !!features.model3dFeed }
+  );
   const { data: summary } = trpc.model3d.reviews.getSummary.useQuery(
     { model3dId: id },
-    { enabled: features.model3dFeed }
+    { enabled: !!features.model3dFeed }
   );
   const {
     data: reviewsData,
@@ -99,7 +102,7 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
     isFetching,
   } = trpc.model3d.reviews.getInfinite.useQuery(
     { model3dId: id, limit: PAGE_SIZE, page },
-    { enabled: features.model3dFeed, placeholderData: keepPreviousData }
+    { enabled: !!features.model3dFeed, placeholderData: keepPreviousData }
   );
 
   const reviews = reviewsData?.items ?? [];
@@ -284,11 +287,9 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
                             or any moderator. Server-side
                             `deleteModel3DReview` re-checks the same gate. */}
                         {(() => {
-                          const isAuthor =
-                            !!currentUser && currentUser.id === review.userId;
+                          const isAuthor = !!currentUser && currentUser.id === review.userId;
                           const isModerator = !!currentUser?.isModerator;
-                          const canReport =
-                            !!currentUser && !isAuthor && !isModerator;
+                          const canReport = !!currentUser && !isAuthor && !isModerator;
                           const canDelete = isAuthor || isModerator;
                           if (!canReport && !canDelete) return null;
                           return (
@@ -310,9 +311,7 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
                                     onClick={() => confirmDeleteReview(review.id)}
                                     disabled={deleteReviewMutation.isPending}
                                   >
-                                    {isAuthor && !isModerator
-                                      ? 'Delete'
-                                      : 'Remove'}
+                                    {isAuthor && !isModerator ? 'Delete' : 'Remove'}
                                   </Menu.Item>
                                 )}
                                 {canReport && (

@@ -12,7 +12,7 @@
  * civitai-team-only, so the admin scope is acceptable; v1 (W5 + W11)
  * tightens to per-user OAuth tokens.
  *
- * Network shape: civitai-web → forgejo-http.forgejo.svc.cluster.local:3000
+ * Network shape: civitai-web → <forgejo-service>.<namespace>.svc.cluster.local:3000
  * inside the cluster, or → https://forgejo.civitai.com from a PR-preview
  * env that doesn't have direct cluster DNS. FORGEJO_BASE_URL handles both.
  */

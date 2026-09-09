@@ -44,9 +44,12 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * NOTE ON REACH: this suite DOES run in CI — `pnpm run test:component`, surfaced
  * as the `preview / component-tests` commit status — but REPORT-ONLY, so a break
- * here is visible without blocking a merge. The gating half of this contract is
- * the source-scan guard in `__tests__/pageRunScrollContract.test.ts`. This file
- * is the empirical half, and it is the one that can see layout at all.
+ * here is visible without blocking a merge. The source-scan half of this contract
+ * is `__tests__/pageRunScrollContract.test.ts`, in the node `unit` project —
+ * report-only on a pull request too (`continue-on-error`), and an honest verdict
+ * on a push to `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE:
+ * `main` requires no status check at all in this repo. This file is the empirical
+ * half, and it is the one that can see layout at all.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -59,6 +62,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   // down to "0 tests collected".
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -120,6 +130,9 @@ const baseProps = {
   appName: 'Scroll Fit App',
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'scroll-fit-app',
@@ -425,10 +438,16 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
     });
   });
 
-  test('the DEFAULT is `viewport`, so the three non-page mounters are unchanged', async () => {
-    // The dev tunnel and the mod-review preview both sit inside a SCROLLING
-    // ancestor that does not bound their height; on `fill` they would collapse.
-    // Pinning the default here is what lets this change be page-only.
+  test('the DEFAULT is `viewport`, so a mounter that has not opted in is unchanged', async () => {
+    // The dev tunnel sits inside a SCROLLING ancestor that does not bound its
+    // height; on `fill` it would collapse to the floor. Pinning the default here
+    // is what keeps every `fill` opt-in a deliberate one.
+    //
+    // ⚠️ This comment used to name the mod-review preview alongside the dev
+    // tunnel, and that was the wrong reading of that surface: it is not in an
+    // unbounded scrolling ancestor, it is in a box that bounds its height and
+    // then clips (a 420px modal panel / a `100dvh − header` page box). It is on
+    // `fill` as of the fix for that; see `ReviewPreviewFit.browser.test.tsx`.
     const { containerHeight } = layoutChainHeights();
     renderWithProviders(
       <div style={{ height: `${containerHeight}px`, overflowY: 'auto' }}>

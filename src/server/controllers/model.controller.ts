@@ -72,6 +72,7 @@ import type {
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelSfwOnlyInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -112,6 +113,7 @@ import {
   publishPrivateModel,
   restoreModelById,
   setModelMinor,
+  setModelSfwOnly,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
@@ -1481,7 +1483,32 @@ export const setModelMinorHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    return await setModelMinor({ ...input, userId: ctx.user.id });
+    return await setModelMinor({
+      ...input,
+      userId: ctx.user.id,
+      tracker: ctx.track,
+      isModerator: ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setModelSfwOnlyHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetModelSfwOnlyInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await setModelSfwOnly({
+      ...input,
+      userId: ctx.user.id,
+      tracker: ctx.track,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -145,6 +145,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     description: null,
     category: 'utility',
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     // `null` deliberately — a creator mounts `SmartCreatorCard`, a live tRPC surface
@@ -155,6 +156,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     installCount: 4213,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
+    betaMessage: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     kindData: {

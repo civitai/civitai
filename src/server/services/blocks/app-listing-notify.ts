@@ -20,6 +20,10 @@ export type AppListingOwnerNotificationType =
   | 'app-listing-approved'
   | 'app-listing-rejected'
   | 'app-listing-hidden'
+  // Emitted ONLY by `purgeListing`'s on-site orphan-pre-approval-draft arm. The off-site
+  // arm deliberately stays silent: it is only reachable on an already-`removed` listing,
+  // i.e. after a `delistListing` that already notified. See the 🔴 note at the call site.
+  | 'app-listing-purged'
   | 'app-listing-reset-to-pending';
 
 export async function notifyAppListingOwner(opts: {

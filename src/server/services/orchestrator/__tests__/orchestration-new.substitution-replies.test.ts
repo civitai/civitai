@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * 🔴 THE THREE EDITS THAT ARE THE FEATURE (#3665), driven end to end.
@@ -102,7 +102,8 @@ vi.mock('@civitai/client', () => {
     SdCppSchedule SdxlAiToolkitTrainingInput SeedanceVideoGenInput SeedreamImageGenInput
     SeedreamVersion Sora2ImageToVideoInput Sora2TextToVideoInput SubmitWorkflowData
     TextToImageStep TextToImageStepTemplate TrainingOutput TrainingStep TrainingStepTemplate
-    TransactionInfo TransactionType TripoFalPolyGenInput UpdateWorkflowRequest
+    TransactionInfo TransactionType Trellis2ImageTo3dComfyPolyGenInput
+    TripoFalPolyGenInput UpdateWorkflowRequest
     Veo3VideoGenInput VideoBlob VideoEnhancementInput VideoEnhancementStepTemplate
     VideoGenStepTemplate VideoInterpolationStepTemplate VideoUpscalerStepTemplate
     ViduQ3VideoGenInput ViduVideoGenInput Wan21CivitaiVideoGenInput
@@ -144,9 +145,16 @@ vi.mock('@civitai/client', () => {
 // binding — referencing a plain `const` from one throws "Cannot access
 // 'submitWorkflow' before initialization", and that surfaces as `no tests`
 // rather than as a failure.
-const { submitWorkflow } = vi.hoisted(() => ({
+const { submitWorkflow, deleteWorkflow } = vi.hoisted(() => ({
+  // `deleteWorkflow` is reached only by assertWorkflowOwner's mismatch path; without it in the
+  // mock that path dies on a missing export instead of on its own assertion.
+  deleteWorkflow: vi.fn(async () => undefined),
   submitWorkflow: vi.fn(async ({ body }: { body: Record<string, unknown> }) => ({
-    id: 'wf-1',
+    // 🔴 The `<userId>-<timestamp>` shape is load-bearing, not decoration. `assertWorkflowOwner`
+    // runs on this reply and FAILS OPEN on an id with no numeric prefix, so the previous `wf-1`
+    // silently disabled that guard for every test in this file — including the happy path, which
+    // then asserted nothing about it. `1` matches `common.userId`.
+    id: '1-20260101000000000',
     status: 'succeeded',
     createdAt: new Date('2020-01-01T00:00:00Z'),
     steps: [],
@@ -157,7 +165,17 @@ const { submitWorkflow } = vi.hoisted(() => ({
     metadata: body.metadata,
   })),
 }));
-vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow }));
+vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow, deleteWorkflow }));
+// The one observable that separates "the owner guard ran and agreed" from "the owner guard fell
+// open". Without asserting on it, reverting the fixture id to a non-numeric prefix silently
+// disables the guard for every test here again, exactly as it was before.
+const { observeConsumerUnverifiable } = vi.hoisted(() => ({
+  observeConsumerUnverifiable: vi.fn(),
+}));
+vi.mock('~/server/orchestrator/orchestrator-identity-metrics', () => ({
+  observeConsumerMismatch: vi.fn(),
+  observeConsumerUnverifiable,
+}));
 
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -219,6 +237,7 @@ import {
 import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
 import { getWorkflowCapability } from '~/shared/data-graph/generation/workflow-capability';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 /** An id no ecosystem has ever heard of — #3665's own probe. */
 const UNRECOGNIZED_ID = 987654321;
@@ -287,6 +306,18 @@ describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => 
 });
 
 describe('generateFromGraph — reply + persistence (mutants G and H)', () => {
+  // 🔴 PIN THE MODE. `ORCHESTRATOR_MODE` derives from the schema's `.default('dev')`, and
+  // `assertWorkflowOwner` short-circuits in dev (every user shares the system token there). Left
+  // unpinned, the owner guard on this procedure's submit reply is disabled for the whole file and
+  // the mismatch case below is unreachable — the same silent-disable the `wf-1` fixture caused.
+  beforeEach(() => {
+    setEnv({ ORCHESTRATOR_MODE: 'prod' });
+    observeConsumerUnverifiable.mockClear();
+  });
+  afterAll(() => {
+    resetEnv();
+  });
+
   it('🔴 attaches the substitution to the submit reply', async () => {
     const result = (await generateFromGraph({
       input: input(UNRECOGNIZED_ID),
@@ -341,5 +372,36 @@ describe('generateFromGraph — reply + persistence (mutants G and H)', () => {
     const metadata = (body.metadata ?? {}) as Record<string, unknown>;
     expect(WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY in metadata).toBe(false);
     expect('modelSubstitutions' in result).toBe(false);
+    // The owner guard actually CHECKED this submit. `<userId>-<timestamp>` on the fixture is
+    // load-bearing: a non-numeric prefix makes the guard fail open, and every assertion above
+    // still passes while it silently does nothing.
+    expect(observeConsumerUnverifiable).not.toHaveBeenCalled();
+  });
+
+  // The guard's ONLY production call site. Its unit tests cover the function; this covers the
+  // wiring — deleting the `await assertWorkflowOwner(...)` line from generateFromGraph leaves
+  // every other test in the repo green.
+  it('REJECTS a submit the orchestrator attributed to another user, and tears it down', async () => {
+    submitWorkflow.mockClear();
+    deleteWorkflow.mockClear();
+    const strangersWorkflow = '2002-20260101000000000';
+    submitWorkflow.mockResolvedValueOnce({
+      id: strangersWorkflow,
+      status: 'succeeded',
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+      steps: [],
+      cost: { total: 60 },
+      transactions: { list: [] },
+      metadata: {},
+    });
+
+    await expect(
+      generateFromGraph({ input: input(QWEN_DEFAULT), externalCtx: ctx(), ...common } as never)
+    ).rejects.toThrow(/could not confirm who this generation belongs to/i);
+
+    expect(deleteWorkflow).toHaveBeenCalledTimes(1);
+    expect(deleteWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: strangersWorkflow, throwOnError: true })
+    );
   });
 });

@@ -607,13 +607,34 @@ function ReviewPreviewPanel({
         // runs reviewMode (read-only NACKs). The `?mr=` entry-token URL keeps its
         // pickReviewIframeSrc stabilization here; PageBlockHost's own iframe sets
         // referrerPolicy="no-referrer" so the entry token never leaks via Referer.
+        // 🔴 THE FLEX COLUMN IS LOAD-BEARING, not styling. This panel is the only
+        // thing that bounds the preview's height, and `ReviewBlockPreviewHost`
+        // now passes `fit="fill"` to `PageBlockHost` — which resolves against
+        // this box. As a plain block container it bounded the height for
+        // `overflow: hidden` (i.e. it CLIPPED) without giving the host anything
+        // to fill, so the host sat at its `FILL_MIN_HEIGHT_PX` floor and left the
+        // rest of the panel empty. Drop `display: flex` and that is what comes
+        // back — a short preview in a tall box, which reads as a styling nit
+        // rather than a regression.
         <div
           style={{
             width: '100%',
             height: 420,
+            display: 'flex',
+            flexDirection: 'column',
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
-            overflow: 'hidden',
+            // 🔴 `auto`, NOT `hidden` — the scroll container of last resort.
+            // `fit="fill"` floors the host at `FILL_MIN_HEIGHT_PX`, so on a
+            // narrow window (where the read-only banner above it wraps to two or
+            // three rows) the host can still be a few px taller than the panel.
+            // Under `overflow: hidden` that residue was unreachable, which is the
+            // same class of defect as the original bug in a much narrower window
+            // — and the reason the run page's wrapper carries this too. It does
+            // not fire at ordinary modal widths: 420 minus a one-row banner
+            // leaves ~382, comfortably above the floor. Still clips to the
+            // rounded border, which is what `hidden` was here for.
+            overflow: 'auto',
           }}
         >
           <ReviewBlockPreviewHost

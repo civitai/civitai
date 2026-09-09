@@ -11,6 +11,8 @@
   } from '$lib/monetization/paid-access';
   import {
     ACCEPTS_BLUE_BUZZ_HINT,
+    EARLY_ACCESS_NOT_COUNTED,
+    PRICING_SLOT_EXPLAINER,
     formatPricingAllowance,
     pricingAllowanceState,
     type CapTier,
@@ -63,7 +65,9 @@
         >Timed</span
       >
       <span class="text-sm font-semibold text-white">Early Access</span>
-      <span class="text-xs text-dark-2">Becomes free when the window ends.</span>
+      <span class="text-xs text-dark-2"
+        >Becomes free when the window ends. Uses no pricing slot.</span
+      >
     </button>
     <button
       type="button"
@@ -80,7 +84,7 @@
         >Permanent</span
       >
       <span class="text-sm font-semibold text-white">Paid Access</span>
-      <span class="text-xs text-dark-2">Always requires purchase.</span>
+      <span class="text-xs text-dark-2">Always requires purchase. Uses one pricing slot.</span>
     </button>
   </div>
   {#if ctx.timedBlockedReason}
@@ -91,8 +95,9 @@
       {#if ctx.permBlockedReason}
         {ctx.permBlockedReason}
       {:else}
-        You've used this month's monetization limit ({formatPricingAllowance(allowanceState)}) —
-        upgrade your membership to monetize more model versions.
+        You've priced every version this month's membership allows ({formatPricingAllowance(
+          allowanceState
+        )}). {PRICING_SLOT_EXPLAINER} Upgrade your membership to price more.
       {/if}
     </span>
   {/if}
@@ -123,7 +128,7 @@
   </label>
   <div class="text-xs text-dark-2">
     Early access {ctx.earlyAccessUsed} of {ctx.earlyAccessCap} active · up to {ctx.maxEarlyAccessDays}
-    day{ctx.maxEarlyAccessDays === 1 ? '' : 's'}
+    day{ctx.maxEarlyAccessDays === 1 ? '' : 's'} · {EARLY_ACCESS_NOT_COUNTED}
   </div>
 {/if}
 

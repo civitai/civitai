@@ -11,6 +11,17 @@ const { mockRefundUserChallengeFunds, mockQueueUpdate } = vi.hoisted(() => ({
   mockQueueUpdate: vi.fn(),
 }));
 
+const txClient = () => ({
+  challenge: mockDbWrite.challenge,
+  collection: mockDbWrite.collection,
+});
+
+// `$executeRaw` resolves 0 by default (db.mock), which ends the batch loop on its first pass.
+const detachCallIndex = () =>
+  mockDbWrite.$executeRaw.mock.calls.findIndex(([strings]: [string[]]) =>
+    strings.join('?').includes('UPDATE "Post"')
+  );
+
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
@@ -40,9 +51,7 @@ describe('deleteUserChallenge', () => {
     vi.clearAllMocks();
     mockDbRead.collectionItem.count.mockResolvedValue(0);
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
-    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
-      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
-    );
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(txClient()));
   });
 
   it('owner + Scheduled + 0 entries: claims, refunds and deletes', async () => {
@@ -133,9 +142,7 @@ describe('deleteChallenge (direct)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
-    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
-      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
-    );
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(txClient()));
   });
 
   it('already-Cancelled User challenge: re-refunds idempotently without re-claiming, then deletes', async () => {
@@ -149,12 +156,80 @@ describe('deleteChallenge (direct)', () => {
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
   });
 
-  it('fails atomically when collection deletion fails', async () => {
+  it('leaves the collection intact and retryable when its deletion fails', async () => {
     mockDbWrite.challenge.findUnique.mockResolvedValue(makeChallenge());
     mockDbWrite.collection.delete.mockRejectedValueOnce(new Error('collection delete failed'));
 
     await expect(deleteChallenge(1)).rejects.toThrow(/collection delete failed/i);
     expect(mockQueueUpdate).not.toHaveBeenCalled();
+
+    // The detach is outside the transaction on purpose, so it stays committed here. That is the
+    // retry-safety the helper's docstring claims: the posts have merely left a collection that
+    // still exists, and re-running the delete finishes the job.
+    expect(detachCallIndex()).toBeGreaterThanOrEqual(0);
+  });
+
+  it('detaches entrant posts before dropping the collection', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Cancelled })
+    );
+
+    await deleteChallenge(1);
+
+    // Order is the whole guarantee: dropping the collection first cascades away every entrant's
+    // post (see detachPostsFromCollection).
+    const detachIndex = detachCallIndex();
+    expect(detachIndex).toBeGreaterThanOrEqual(0);
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[detachIndex];
+
+    // The WHERE column, not just the UPDATE prefix: selecting on `id` instead of `collectionId`
+    // detaches one unrelated post and cascades every entrant's away.
+    expect(strings.join('?')).toMatch(
+      /UPDATE "Post" SET "collectionId" = NULL\s+WHERE id IN \(\s*SELECT id FROM "Post" WHERE "collectionId" = \?/
+    );
+    expect(values[0]).toBe(100);
+    // Indexed off the detach itself, not `[0]` — any other raw write on this path would otherwise
+    // be the call being ordered.
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[detachIndex]).toBeLessThan(
+      mockDbWrite.collection.delete.mock.invocationCallOrder[0]
+    );
+  });
+
+  it.each([['Completed'], ['Completing']])(
+    'refuses a %s challenge without force, so winner records survive',
+    async (status) => {
+      mockDbWrite.challenge.findUnique.mockResolvedValue(
+        makeChallenge({ status: ChallengeStatus[status as 'Completed' | 'Completing'] })
+      );
+
+      // `ChallengeWinner` cascades on the challenge row, and the prize Buzz is already spent.
+      await expect(deleteChallenge(1)).rejects.toThrow(/already awarded prizes/i);
+      expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
+      expect(mockDbWrite.collection.delete).not.toHaveBeenCalled();
+      // Nothing may run ahead of the guard either — a detached entrant post is not undone by the
+      // delete failing.
+      expect(detachCallIndex()).toBe(-1);
+    }
+  );
+
+  it('deletes a Completed challenge when force is passed', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Completed })
+    );
+
+    await deleteChallenge(1, { force: true });
+
+    expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    // A Completed pool was already paid out; refunding it would double-spend from account 0.
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
+  });
+
+  it('blocks an Active challenge even with force', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Active })
+    );
+    await expect(deleteChallenge(1, { force: true })).rejects.toThrow(/active/i);
+    expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
   });
 
   it('blocks deleting an Active challenge', async () => {

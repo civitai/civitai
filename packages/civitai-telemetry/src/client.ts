@@ -259,80 +259,6 @@ export const imagesFeedWithoutIndexCounter = registerCounter({
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
 });
 
-// Metrics for the BitDex publish re-emitter job (reemit-bitdex-ops): runs is the
-// liveness signal, images_emitted/runs tracks emission volume, and the duration
-// histogram guards the emit statement against getting slow.
-export const reemitAttemptsCounter = registerCounter({
-  name: 'reemit_attempts_total',
-  help: 'BitDex publish re-emitter runs that passed the enabled gate and attempted the emit (incremented before the emit — counts erroring runs too)',
-});
-export const reemitRunsCounter = registerCounter({
-  name: 'reemit_runs_total',
-  help: 'BitDex publish re-emitter runs that emitted SUCCESSFULLY (success-only; compare to reemit_attempts_total for the error rate)',
-});
-export const reemitErrorsCounter = registerCounter({
-  name: 'reemit_errors_total',
-  help: 'BitDex publish re-emitter emits that threw (e.g. a missing shared PG function) before rethrowing',
-});
-export const reemitPostsScannedCounter = registerCounter({
-  name: 'reemit_posts_scanned_total',
-  help: 'Distinct posts scanned by the BitDex publish re-emitter across all runs',
-});
-export const reemitImagesEmittedCounter = registerCounter({
-  name: 'reemit_images_emitted_total',
-  help: 'BitdexOps rows (per-image ops) written by the BitDex publish re-emitter across all runs',
-});
-export const reemitRunDurationHistogram = registerHistogram({
-  name: 'reemit_run_duration_seconds',
-  help: 'Wall-clock duration of the BitDex publish re-emitter INSERT...SELECT emit statement',
-  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-});
-export const reemitSkippedRateLimitCounter = registerCounter({
-  name: 'reemit_skipped_rate_limit_total',
-  help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
-});
-
-// The re-emitter's second scope: future-scheduled posts, which no trailing-past-window
-// scan can reach. Kept as separate series from the reemit_posts_scanned/images_emitted
-// pair above because this scan's volume is ~100x larger and steady — summing the two
-// would swamp the published-window emission signal.
-export const reemitScheduledPostsScannedCounter = registerCounter({
-  name: 'reemit_scheduled_posts_scanned_total',
-  help: 'Distinct future-scheduled posts (publishedAt > now()) scanned by the BitDex publish re-emitter across all runs',
-});
-export const reemitScheduledImagesEmittedCounter = registerCounter({
-  name: 'reemit_scheduled_images_emitted_total',
-  help: 'BitdexOps rows written by the BitDex publish re-emitter for images of future-scheduled posts across all runs',
-});
-
-// Metrics for the standing PG<->BitDex consistency audit (audit-bitdex-consistency).
-// checked_total is the liveness signal and the denominator; mismatch_total is the
-// alerting series. `stratum` is the sampled population, `kind` the failure mode —
-// both fixed low-cardinality enums (see MISMATCH_KINDS in the job).
-export const bitdexAuditCheckedCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_checked_total',
-  help: 'Images compared between PG and BitDex by the consistency audit, by sample stratum',
-  labelNames: ['stratum'] as const,
-});
-export const bitdexAuditMismatchCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_mismatch_total',
-  help: 'PG<->BitDex disagreements found by the consistency audit, by sample stratum and failure kind',
-  labelNames: ['stratum', 'kind'] as const,
-});
-export const bitdexAuditRunsCounter = registerCounter({
-  name: 'bitdex_audit_runs_total',
-  help: 'BitDex consistency audit runs that completed SUCCESSFULLY (success-only; the liveness signal behind a mismatch alert being trustworthy)',
-});
-export const bitdexAuditErrorsCounter = registerCounter({
-  name: 'bitdex_audit_errors_total',
-  help: 'BitDex consistency audit runs that threw (PG sample or BitDex fetch failed) before rethrowing',
-});
-export const bitdexAuditRunDurationHistogram = registerHistogram({
-  name: 'bitdex_audit_run_duration_seconds',
-  help: 'Wall-clock duration of a BitDex consistency audit run (both strata: PG sample + BitDex fetch + compare)',
-  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-});
-
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
   name: 'creator_comp_creators_paid_total',
@@ -432,6 +358,93 @@ export const redisCommandDuration = registerHistogram({
   labelNames: ['client'] as const,
   // Up to 30s to capture the parked-command tail that maps onto the Traefik 30s ceiling → 504.
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
+});
+
+// Duration of the brotli codec on the opt-in compressed `redis.packed` paths, by `op`
+// (compress | decompress) and `cache_name`.
+//
+// 🔴 WHAT A SAMPLE CONTAINS, because the name says "codec" and the number is wider than that. The
+// clock starts before the promisified call is enqueued and stops at the `await` CONTINUATION on the
+// JS thread, so a sample is threadpool queue wait + codec work + whatever event-loop delay sits
+// between the completion landing and the continuation running. Measured: a 50 ms main-thread block
+// held while a decompress is in flight yields a 50.79 ms sample — event-loop delay is absorbed ~1:1.
+// And the floor is dispatch, not codec: a 1-byte payload (no real codec work) round-trips in ~11 µs
+// p50 on one machine and ~22 µs on another, against a typical ~25-36 µs decompress — i.e. roughly
+// half or more of a typical sample is the hand-off, not brotli. Read the low buckets accordingly.
+//
+// WHY A SEPARATE HISTOGRAM. Two existing signals both LOOK like they cover this and neither does:
+//   - CPU profiles: the codec is `promisify(zlib.brotli*)`, i.e. it runs on the libuv threadpool.
+//     Threadpool work carries no JS stack, so no `brotli*` frame is ever sampled — a profile search
+//     returns zero, which reads as "the codec is free" rather than "the profiler cannot see it".
+//   - redis_command_duration_seconds: that observation closes when the redis round trip closes,
+//     while compress happens before the write and decompress after the read. Worse, it moves the
+//     WRONG WAY — a compressed payload is smaller on the wire, so turning compression on makes that
+//     histogram improve while adding codec cost it structurally cannot observe.
+// So this is the only signal that can answer "what does compression cost us".
+//
+// `cache_name` is the cache PREFIX (e.g. `packed:caches:image-meta`). It is chosen so cardinality
+// stays bounded by the small set of caches that opt into `compress`; callers with no bounded name
+// report 'unknown'.
+//
+// HOW FAR THE JOIN TO CACHE TRAFFIC GOES — it holds for ONE of the two consumers, so do not plan a
+// dashboard on it without checking which:
+//   - createCachedArray / createCachedObject DO join: the builder passes its `key` as this label
+//     AND passes the same `key` as `cache_name` to cacheHitCounter/cacheMissCounter, so the two
+//     label values are equal by construction.
+//   - fetchThroughCache does NOT join: it emits no hit/miss counters at all, so there is no
+//     cache-traffic series carrying this `cache_name` to join against. (The nearest counter a
+//     reader might reach for — the tensor-metadata in-process LRU — labels itself
+//     'tensor-metadata-full', a different value naming a different cache.) The label still earns
+//     its place there by separating one cache's codec cost from another's; it is simply not a join
+//     key today.
+//
+// BUCKETS — seconds, and the floor has to be MICROseconds, cut against measured values rather
+// than against a guess at the order of magnitude. Two earlier floors were both wrong, in the same
+// direction, for the same reason: they were placed at or just under where typical samples land,
+// which is precisely where a first edge must NOT be. Everything at or below the first edge is
+// indistinguishable — `histogram_quantile` cannot see inside bucket one — so a floor sitting in
+// the middle of the population reports a stable, plausible number that barely moves whatever the
+// codec does. 0.0005 was ~19x the typical decompress. 0.00002 (20us) looked far safer and was
+// still inside the population: measured over 48 real image-meta values pulled off the live cache
+// and timed through this exact `promisify(zlib.brotli*)` shape, 38.5% of decompress samples landed
+// AT OR BELOW 20us.
+//
+// What the measurements say, and what each end of the list is cut to:
+//   - DISPATCH FLOOR. A 1-byte payload through the same async shape costs p50 17.7us / p90 38.6us
+//     / p99 140.9us. That is threadpool round trip, not codec work, and nothing can be faster than
+//     it. So the first edge belongs BELOW it: 5us, chosen so bucket one means "impossibly fast —
+//     something is wrong with the instrument", not "typical".
+//   - DECOMPRESS, the overwhelming majority of samples by count: p50 21.9-30.2us, p90 41.9-66.2us,
+//     p99 182.7us. The 10-70us band therefore carries the readable quantiles and gets the finest
+//     edges in the list (1.33x-1.67x steps).
+//   - COMPRESS at q6: p50 111.6us, p90 216.3us, p99 3.8ms. The 100-250us band gets the same
+//     treatment; the ms decade covers its p99.
+//   - LARGE VALUES. tensor-metadata's ~335 KB blob is ~36 ms to compress in the worst case
+//     measured. Rare, but it is the tail the metric exists to show, so the list runs past it.
+// (Those are per-value codec timings and nothing else — no rate, no volume, is implied by them.)
+// ⚠️ Changing these edges resets every series' history — settle them before this ships.
+//
+// Exported so the resolution invariant can be checked mechanically rather than by eye. The guard
+// in ./__tests__/packed-codec-buckets.test.ts does NOT read this constant for its verdict — it
+// observes a sample and reads the `le` set back off the REGISTERED histogram, so editing `buckets:`
+// below without editing this list (or the reverse) fails. It pins four properties: the first edge
+// is below the measured dispatch floor, the measured common case is not swallowed by the first
+// bucket, the large-blob tail is covered, and the ORDERED SEQUENCE OF ADJACENT RATIOS is exactly
+// the one written out here. That last one is deliberately an equality and not a bound — see the
+// comment on EXPECTED_EDGE_RATIOS in that file for why a bound is the wrong shape of guard.
+export const PACKED_CODEC_DURATION_BUCKETS = [
+  // 5us -> 250us: the dispatch floor and the decompress/compress bulk, at 1.33x-2x.
+  0.000005, 0.00001, 0.000015, 0.00002, 0.00003, 0.00005, 0.000075, 0.0001, 0.00015, 0.00025,
+  // 0.5ms -> 1s: the compress p99 (~3.8ms), the ~36ms large-blob tail, and headroom above it,
+  // at the usual 1-2-5 decade steps.
+  0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1,
+] as const;
+
+export const packedCodecDuration = registerHistogram({
+  name: 'packed_codec_duration_seconds',
+  help: 'Brotli codec duration for compressed redis.packed values, by op and cache_name. Wall clock as the CALLER sees it, NOT CPU time: the clock stops at the await continuation on the JS thread, so a sample is libuv threadpool QUEUE WAIT + codec work + EVENT-LOOP DELAY before the completion is delivered (a blocked JS thread inflates it ~1:1 — a 50ms block measured 50.79ms). The threadpool round-trip floor is p50 17.7us / p90 38.6us even for a 1-byte payload, so the lowest buckets are dispatch overhead rather than codec time and the first edge (5us) sits below that floor deliberately: a sample in bucket one means the instrument, not the codec. A rise means the codec PATH got slower; it does NOT on its own mean brotli got more expensive. Invisible to CPU profiles (the codec runs off the JS stack) and not covered by redis_command_duration_seconds, which stops at the round trip.',
+  labelNames: ['op', 'cache_name'] as const,
+  buckets: [...PACKED_CODEC_DURATION_BUCKETS],
 });
 
 // SELF-HEAL reconnect counter. Incremented once each time an inflight-leak self-heal watchdog forces

@@ -1,43 +1,15 @@
-import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { encodeMetadata, ExifParser } from '~/utils/metadata';
-import {
-  createExifSegmentFromTags,
-  encodeUserCommentUTF16BE,
-  isEncoded,
-} from '~/utils/encoding-helpers';
+import { copyMetadata } from '@civitai/generation-metadata';
+import { fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { createImageElement, calculateAspectRatioFit } from '~/utils/image-utils';
 import type { Area } from 'react-easy-crop';
 
 async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | Blob | string) {
-  const image = src instanceof File || typeof src === 'string' ? src : blobToFile(src);
-  const parser = await ExifParser(image);
-  let userComment =
-    parser.exif.userComment && isEncoded(parser.exif.userComment)
-      ? parser.exif.userComment
-      : undefined;
-  if (!userComment) {
-    const meta = await parser.getMetadata();
-    if (Object.keys(meta).length > 0) {
-      userComment = encodeUserCommentUTF16BE(encodeMetadata(meta));
-    }
-  }
-  const dataUrl = canvas.toDataURL('image/jpeg');
-
-  const exifSegment = createExifSegmentFromTags({
-    artist: parser.exif.Artist,
-    userComment,
-    software: parser.exif.Software,
-  });
-  const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
-  const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2); // FFD8
-  const rest = Uint8Array.prototype.slice.call(jpegBytes, 2);
-  const newJpegBytes = new Uint8Array(soi.length + exifSegment.length + rest.length);
-
-  newJpegBytes.set(soi, 0);
-  newJpegBytes.set(exifSegment, soi.length);
-  newJpegBytes.set(rest, soi.length + exifSegment.length);
-
-  return new Blob([newJpegBytes], { type: 'image/jpeg' });
+  const stripped = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, 'image/jpeg')
+  );
+  if (!stripped) throw new Error('canvas.toBlob failed');
+  const restored = await copyMetadata(src, new Uint8Array(await stripped.arrayBuffer()));
+  return new Blob([restored as BlobPart], { type: 'image/jpeg' });
 }
 
 export function getRadianAngle(degreeValue: number) {

@@ -529,6 +529,100 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
     expect(() => assertStepInvariants('fixture-step', makeTextOutputFixtureStep())).not.toThrow();
   });
 
+  // ── 🔴 CLAUSE 8b — THE TOOL-CALL CONTAINMENT CLAUSE ────────────────────────
+  //
+  // `extractToolCalls` is published by `attachModeratedStepTextOutputs` onto a
+  // RELEASED verdict, and that verdict is computed over `extractText`'s strings.
+  // The gating is therefore sound only while every model-written string the
+  // tool-call surface can publish is ALSO reachable through `extractText`. This
+  // clause is what makes that a build failure rather than a review question.
+
+  /** A `'textOutput'` fixture whose reply is a tool call, with containment intact. */
+  function makeToolCallFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+    const ARGS = '{"query":"model wrote this"}';
+    const sample = {
+      $type: 'fixtureStep',
+      output: {
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'search', arguments: ARGS } },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    return makeTextOutputFixtureStep({
+      canonicalOutputFor: (): unknown => sample,
+      // Containment: the arguments string is returned HERE, so it is scanned.
+      extractText: () => [ARGS],
+      extractToolCalls: () => [
+        { id: 'call_1', type: 'function' as const, function: { name: 'search', arguments: ARGS } },
+      ],
+      ...overrides,
+    } as Partial<AnyBlockStep>);
+  }
+
+  it('the tool-call fixture PASSES unmutated — every 8b failure below is the mutation', () => {
+    // 🔴 REACHABILITY, same as the textOutput fixture's own control above.
+    expect(() => assertStepInvariants('fixture-step', makeToolCallFixtureStep())).not.toThrow();
+  });
+
+  it('🔴 rejects extractToolCalls publishing an arguments string extractText does NOT return', () => {
+    // The fail-open this clause exists for: the structured surface would reach
+    // the block on the strength of a scan that never read it.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeToolCallFixtureStep({
+          extractText: () => ['some unrelated prose'],
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/publishes an arguments string that extractText\(\) does not return/);
+  });
+
+  it('rejects a malformed tool call from extractToolCalls', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeToolCallFixtureStep({
+          extractToolCalls: () => [{ id: 'call_1', type: 'function' }],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/returned a malformed call/);
+  });
+
+  it('rejects extractToolCalls that returns a non-array', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeToolCallFixtureStep({
+          extractToolCalls: () => 'nope',
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractToolCalls\(\) returned a non-array/);
+  });
+
+  it('rejects extractToolCalls declared under a MEDIA posture (it would never be called)', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          moderationPosture: 'none',
+          extractToolCalls: () => [],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/declares extractToolCalls\(\) but moderationPosture 'none' publishes MEDIA/);
+  });
+
+  it('a textOutput entry declaring NO extractToolCalls still registers — the field is optional', () => {
+    // Forcing every text entry to declare a `() => []` stub would be exactly the
+    // vacuous declaration clause 8a rejects on the text axis.
+    expect(() => assertStepInvariants('fixture-step', makeTextOutputFixtureStep())).not.toThrow();
+  });
+
   it("rejects a 'textOutput' entry that declares NO extractText (a posture with no output)", () => {
     expect(() =>
       assertStepInvariants(

@@ -265,6 +265,17 @@ export function ThemeProvider({
         withCssVariables={false}
       >
         <StaticMantineCssVariables />
+        {/* NO INSET PROP HERE — deliberately. Mantine pins each notification
+            container 16px (`--mantine-spacing-md`) off the edge its position
+            names, which is inside both the notch and the home-indicator strip
+            once `viewport-fit=cover` is on. That is paid at the library seam,
+            by the `.mantine-Notifications-root[data-position…]` rules in
+            `src/styles/globals.css`, for two reasons a prop here cannot meet:
+            this is one of THREE `<Notifications />` in the tree (also
+            `ImageDetailByProps` and `bounties/[id]/entries/[entryId]`), and a
+            single `style` prop is spread onto all six position containers at
+            once, so it cannot be right for the `top-*` and `bottom-*` halves
+            simultaneously. Do not re-add one here. */}
         <Notifications />
         <DateLocaleProvider>{children}</DateLocaleProvider>
       </MantineProvider>

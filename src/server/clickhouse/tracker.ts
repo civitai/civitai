@@ -20,6 +20,7 @@ import type {
 } from '~/server/schema/track.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import type { ReportEntity } from '~/shared/utils/report-helpers';
 import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
@@ -53,6 +54,93 @@ export type TrackDelivery = { awaitDelivery?: boolean };
 
 /** Per attempt, so three of these plus the backoff is the worst case wait. */
 const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
+
+// 🔴 A NUMBER TOO BIG FOR ITS COLUMN DESTROYS THE WHOLE ROW, SILENTLY.
+//
+// A JS number is far wider than the ClickHouse columns these land in, and the tracker
+// rejects an out-of-range value CLIENT-side while serializing the batch — before
+// ClickHouse is ever asked. The POST is fire-and-forget and returns success, the app
+// logs nothing, and the row simply never exists. Nothing about it looks like an error.
+//
+// Measured on production 2026-09-08 by reading the rejected rows out of the tracker's
+// dead-letter queue: `pageViews` was the only table still losing rows, ALL of it to this
+// — 21 of 26 sampled rows carried a `duration` above the UInt32 ceiling (values of
+// 50–144 days in ms, from an accumulator that appears never to reset) and 5 carried
+// window dimensions above Int16 — widths to 183,800 px and heights to 211,900 px. (Those
+// two extremes come from DIFFERENT rows; no single row was 183,800 × 102,200, which is
+// how an earlier draft of this comment stated it.)
+//
+// ⚠️ THIS CLOSES THE NUMERIC-WIDTH HALF ONLY. A wrong-TYPE value destroys the row in
+// exactly the same silent way and is NOT addressed here: `/api/internal/ping` gives its
+// `JSON.parse(req.body)` result a type ANNOTATION and performs no runtime validation, so
+// `ads: "true"` (a string into a `Bool` column) is forwarded as-is and rejected
+// identically. Closing that needs a schema parse at the endpoint, not another clamp here.
+//
+// The corroborating tell, if you ever want to check another column for the same thing:
+// the live `duration` maximum sat at 4,264,810,774 — 99.3% of the UInt32 ceiling and
+// never above it. A maximum pinned just under a type bound is a silently clipped tail.
+//
+// WHY CLAMP RATHER THAN WIDEN THE COLUMN: `UInt32`→`UInt64` rewrites data on a table
+// taking ~55.7M rows/7d, to preserve values that are junk on their face.
+// WHY CLAMP RATHER THAN DROP THE ROW: the outlier is ONE metric on an otherwise-good row
+// — path, host, country and userId are all fine — so saturating that field keeps the
+// page view countable instead of discarding it.
+//
+// 🔴 CLAMPING CHANGES THE DISTRIBUTION OF ALL THREE CLAMPED COLUMNS, AND ANY AGGREGATE
+// OVER THEM — `duration`, `windowWidth` AND `windowHeight`, not just `duration`.
+// An earlier draft of this comment claimed saturation was "honest here, because the
+// stored distribution was ALREADY clipped at this bound, just by silent loss instead."
+// That is FALSE and is recorded here so nobody derives it again: dropping a row REMOVES
+// it from the distribution, clamping INSERTS it at the maximum. Truncation and
+// winsorization are different operations with different means.
+//
+// So each clamped column now has a SATURATION SENTINEL — a value that is a marker, not a
+// measurement. Any mean, percentile or max over these columns should exclude it:
+//   * `duration      = 4294967295`
+//   * `windowWidth   = 32767`
+//   * `windowHeight  = 32767`
+//
+// The leverage differs sharply by column, which is why `duration` is the one to worry
+// about first: a clamped `duration` is ~5.9 orders of magnitude above a typical page
+// duration (4.29e9 against a ~5e3 ms assumption — the direction survives any plausible
+// baseline: even at 30 s typical it is 5.1 OOM), so a handful of clamped rows per week
+// visibly moves `avg(duration)` over a ~55.7M-row/7d table. A clamped window is only ~17×
+// a typical 1920, so the same count barely moves that mean.
+//
+// It SHADOWS a diagnostic rather than destroying one — an earlier draft of this comment
+// said the just-under-the-bound signature "dies", and that was one step too strong. An
+// unfiltered `max()` now always returns the bound, so it stops being informative; but the
+// clamp is the identity on every value below the bound, so the real tail is unchanged in
+// storage and the SAME exclusion this block already mandates recovers it exactly:
+//   `max(duration) WHERE duration < 4294967295`
+// Count the sentinel for frequency, and use that filtered max for magnitude — the two
+// answer different questions, and the count alone will not tell you the tail is moving.
+//
+// No in-repo consumer reads any of the three clamped columns. Method, so it reproduces:
+// enumerate readers of the `pageViews` TABLE (`find … -print0 | xargs -0 grep pageViews`
+// — not a gitignore-blind `grep -r`), then check which columns each one selects; the
+// readers are `user-activity-rollup` (userId/time/country only) and two creator-studio
+// analytics files that mention the table only in prose. 🔴 Do NOT grep for the column
+// NAMES to re-derive this: `duration` alone appears in 271 non-test files across the
+// repo and none of the hits are about this table — an earlier draft implied that grep
+// and it does not reproduce. External dashboards were not enumerated, so this is a
+// property of the change, not a known impact.
+const UINT32_MAX = 4_294_967_295;
+const INT16_MAX = 32_767;
+
+/**
+ * Clamp a number into `[0, max]` so it cannot exceed its ClickHouse column.
+ *
+ * Non-finite input (NaN/±Infinity) and negatives collapse to 0: every field this guards
+ * is a duration or a pixel dimension, none of which can meaningfully be negative, and a
+ * non-integer would be rejected by an integer column just as an oversized one is.
+ */
+export function clampToColumn(value: number, max: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const truncated = Math.trunc(value);
+  if (truncated < 0) return 0;
+  return truncated > max ? max : truncated;
+}
 
 export type ViewType = (typeof VIEW_TYPES)[number];
 
@@ -93,24 +181,44 @@ export type ModelActivty =
   | 'PermanentDelete'
   | 'Transfer';
 export type ResourceReviewType = 'Create' | 'Delete' | 'Exclude' | 'Include' | 'Update';
-export type ReactionType =
-  | 'Image_Create'
-  | 'Image_Delete'
-  | 'Comment_Create'
-  | 'Comment_Delete'
-  | 'CommentV2_Create'
-  | 'CommentV2_Delete'
-  | 'Review_Create'
-  | 'Review_Delete'
-  | 'Question_Create'
-  | 'Question_Delete'
-  | 'Answer_Create'
-  | 'Answer_Delete'
-  | 'BountyEntry_Create'
-  | 'BountyEntry_Delete'
-  | 'Article_Create'
-  | 'Article_Delete';
-export type ReportType = 'Create' | 'StatusChange';
+/**
+ * The `reactions.type` Enum8, in index order.
+ *
+ * 🔴 A runtime array rather than a bare union ON PURPOSE, and the order is the column's
+ * index order. `__tests__/tracker-enum-drift.test.ts` enumerates this at runtime and
+ * checks every member against the migrations that define the column — a union cannot be
+ * enumerated, so as a union this domain was structurally unguardable and drifted unseen.
+ *
+ * 🔴 `Post_Create`/`Post_Delete` are NOT YET in the production column: they need
+ * `migrations/2026-09-07-reaction-report-enum-widening.sql`, whose reactions.type section
+ * is COUPLED to a `reactions_owner_scores_mv` change in the same file. Applying the column
+ * widening without the view turns every post reaction into a -1 on the owner's score.
+ */
+export const ReactionType = [
+  'Image_Create',
+  'Image_Delete',
+  'Comment_Create',
+  'Comment_Delete',
+  'CommentV2_Create',
+  'CommentV2_Delete',
+  'Review_Create',
+  'Review_Delete',
+  'Question_Create',
+  'Question_Delete',
+  'Answer_Create',
+  'Answer_Delete',
+  'BountyEntry_Create',
+  'BountyEntry_Delete',
+  'Article_Create',
+  'Article_Delete',
+  'Post_Create',
+  'Post_Delete',
+] as const;
+export type ReactionType = (typeof ReactionType)[number];
+
+/** The `reports.type` Enum8. Runtime array for the same reason as `ReactionType` above. */
+export const ReportType = ['Create', 'StatusChange'] as const;
+export type ReportType = (typeof ReportType)[number];
 export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete' | 'Notify';
 export type TagEngagementType = 'Hide' | 'Allow';
 export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
@@ -170,6 +278,37 @@ export const ActionType = [
   // (src/server/clickhouse/migrations/2026-08-21-feed-tag-bar-action.sql) must be
   // applied to prod BEFORE this deploys, or the bar ships blind.
   'Feed_TagBar_Click',
+  // Creator announcement analytics. Same Enum16 hazard as the line above: the widening
+  // migration (src/server/clickhouse/migrations/2026-09-04-announcement-click-action.sql)
+  // must be applied to prod BEFORE this deploys, or the Creator Studio page reads a
+  // permanent zero that looks exactly like "nobody clicked".
+  'Announcement_Click',
+  'Announcement_Mute',
+  'Announcement_Unmute',
+  // App store "plays" — one row per on-site app LAUNCH, emitted from the
+  // `/apps/run/<slug>` SSR resolver. Same Enum16 hazard as the two blocks above: the
+  // widening migration (src/server/clickhouse/migrations/2026-09-05-app-open-action.sql)
+  // must be applied to prod BEFORE this deploys, or the store's play count reads a
+  // permanent zero that looks exactly like "nobody opened it".
+  //
+  // 🔴 SERVER-ONLY, AND THAT IS THE WHOLE POINT OF THE TYPE. It is deliberately absent
+  // from `trackActionSchema` (see the note there), following `BuzzLimit_Set` and the
+  // announcement mute pair: that schema is what `/api/track/batch` accepts from a
+  // browser, so a client arm would let anyone inflate any app's play count by POSTing.
+  // A number printed on a public store card has to be one a script cannot manufacture.
+  'App_Open',
+  // The consolidated `/apps/build` developer funnel — ONE action type carrying its
+  // step in `details.action`, rather than four sibling enum values.
+  //
+  // 🔴 ONE TYPE, NOT FOUR, AND THE REASON IS THE ENUM RATHER THAN TIDINESS. Every value
+  // here costs a hand-applied `Enum16` widening on a live ClickHouse table (see
+  // migrations/2026-09-06-apps-build-action.sql), and a value the column does not carry
+  // is dropped SILENTLY at the tracker service — so the cheapest way to be wrong four
+  // times is to need four migrations. `details.action` is a `String` column at storage,
+  // so adding a fifth funnel step later is a zod change alone with no DDL at all.
+  // `Feed_TagBar_Click` is the existing precedent for a type whose `details` carries the
+  // discriminator (`action: 'select' | 'clear'`).
+  'AppsBuild_Action',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -581,23 +720,42 @@ export class Tracker {
     windowWidth: number;
     windowHeight: number;
   }) {
+    // The three clamped fields are destructured OUT of the spread rather than being
+    // overwritten after it. That is deliberate and load-bearing: with `...values` still
+    // carrying them, the clamp would depend on key ORDER — move the spread below these
+    // lines, or let a merge reorder them, and the raw values win again silently, which
+    // is the exact failure this guards. Destructuring makes the raw values unreachable
+    // here, so no reordering can reintroduce it. See clampToColumn above for why these
+    // three and not the rest.
+    const { duration, windowWidth, windowHeight, ...rest } = values;
     return this.send('pageViews', ({ session, actor }) => {
       return {
         userId: actor.userId,
         memberType: session?.user?.tier ?? 'undefined',
         ip: actor.ip,
-        ...values,
+        ...rest,
+        duration: clampToColumn(duration, UINT32_MAX),
+        windowWidth: clampToColumn(windowWidth, INT16_MAX),
+        windowHeight: clampToColumn(windowHeight, INT16_MAX),
       };
     });
   }
 
-  public action(values: { type: ActionType; details?: any }) {
+  // `skipActorMeta` drops `ip` and `userAgent`, keeping only `userId`. Reach for it when the
+  // event records a private judgement rather than an interaction: `actions` has no TTL, so a
+  // row outlives the state that produced it and an IP-stamped record of who disliked whom is
+  // not what a reversible, private product control should leave behind.
+  public action(values: { type: ActionType; details?: any }, options?: { skipActorMeta: boolean }) {
     const { details, ...rest } = values;
-    return this.track('actions', {
-      ...rest,
-      details:
-        details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
-    });
+    return this.track(
+      'actions',
+      {
+        ...rest,
+        details:
+          details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
+      },
+      options
+    );
   }
 
   public activity(activity: string) {
@@ -786,9 +944,18 @@ export class Tracker {
     return this.track('prohibitedRequests', values);
   }
 
+  /**
+   * 🔴 `entityType` is `ReportEntity`, not `string`. It was `string`, which is the same
+   * type-laundering this change removes from the reaction path: a bare `string` here means
+   * every value the app can invent type-checks against a column that is an Enum8 of a fixed
+   * set of names, and the tracker rejects anything outside it CLIENT-SIDE, silently. The
+   * drift guard names `ReportEntity` as the source of truth for `reports.entityType`; the
+   * parameter has to agree with the guard or the guard is checking a domain the code does not
+   * actually constrain.
+   */
   public report(values: {
     type: ReportType;
-    entityType: string;
+    entityType: ReportEntity;
     entityId: number;
     reason: ReportReason;
     status: ReportStatus;

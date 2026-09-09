@@ -1,6 +1,7 @@
 import {
   Alert,
   Button,
+  Checkbox,
   Group,
   Loader,
   Select,
@@ -231,7 +232,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         ? 'Sent for review — your current version stays live until a moderator re-approves.'
         : 'Your changes are saved.',
     });
-    void router.push('/apps/mine');
+    void router.push('/apps/build');
   }
 
   async function handleSave() {
@@ -270,8 +271,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         }
         if (!scalarChanged && !assetsDirty) {
           // Nothing to review — just return to the list.
-          showSuccessNotification({ title: 'No changes', message: 'Nothing to submit for review.' });
-          void router.push('/apps/mine');
+          showSuccessNotification({
+            title: 'No changes',
+            message: 'Nothing to submit for review.',
+          });
+          void router.push('/apps/build');
           return;
         }
         if (scalarChanged) {
@@ -342,9 +346,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           title="This app is unpublished"
           data-testid="apps-offsite-edit-material-locked-notice"
         >
-          <Text size="sm">
-            {materialBlockedReason}
-          </Text>
+          <Text size="sm">{materialBlockedReason}</Text>
         </Alert>
       )}
 
@@ -377,101 +379,102 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
 
       <Stepper active={active} onStepClick={setActive} size="sm">
         {showUrlStep ? (
-        <Stepper.Step
-          label="URL"
-          description="The link"
-          data-testid="apps-offsite-wizard-step-url"
-        >
-          <FadeIn>
-            <Stack gap="md" mt="md">
-              <TextInput
-                label="App URL"
-                description="Your app’s public https link — users open it from the listing."
-                placeholder="example.com/app"
-                value={values.externalUrl}
-                onChange={(e) => {
-                  setField('externalUrl', e.currentTarget.value);
-                  autofill.clearNote();
-                }}
-                onBlur={handleUrlBlur}
-                onKeyDown={handleUrlKeyDown}
-                error={errors.externalUrl}
-                maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
-                data-autofocus
-                data-testid="apps-offsite-edit-url"
-                // 🔴 MATERIAL. See `materialBlockedReason`. The `data-material-field` tag is
-                // what lets the ledger test walk `MATERIAL_LISTING_PATCH_FIELDS` and assert
-                // an input exists AND is disabled for every member — so a field added to
-                // that set with no input here turns the ledger red.
-                data-material-field="externalUrl"
-                disabled={materialBlocked}
-              />
-              {values.externalUrl.trim().length === 0 && (
-                <Alert
-                  color="yellow"
-                  variant="light"
-                  icon={<IconInfoCircle size={16} />}
-                  data-testid="apps-offsite-edit-url-prompt"
-                >
-                  <Text size="sm">
-                    This listing has no App URL. Adding one lets users open your app (and lets us
-                    suggest a name, description and images) — but it’s optional here.
-                  </Text>
-                </Alert>
-              )}
-              {/* The OG pull auto-fires when the URL changes to a valid https URL (blur,
+          <Stepper.Step
+            label="URL"
+            description="The link"
+            data-testid="apps-offsite-wizard-step-url"
+          >
+            <FadeIn>
+              <Stack gap="md" mt="md">
+                <TextInput
+                  label="App URL"
+                  description="Your app’s public https link — users open it from the listing."
+                  placeholder="example.com/app"
+                  value={values.externalUrl}
+                  onChange={(e) => {
+                    setField('externalUrl', e.currentTarget.value);
+                    autofill.clearNote();
+                  }}
+                  onBlur={handleUrlBlur}
+                  onKeyDown={handleUrlKeyDown}
+                  error={errors.externalUrl}
+                  maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
+                  data-autofocus
+                  data-testid="apps-offsite-edit-url"
+                  // 🔴 MATERIAL. See `materialBlockedReason`. The `data-material-field` tag is
+                  // what lets the ledger test walk `MATERIAL_LISTING_PATCH_FIELDS` and assert
+                  // an input exists AND is disabled for every member — so a field added to
+                  // that set with no input here turns the ledger red.
+                  data-material-field="externalUrl"
+                  disabled={materialBlocked}
+                />
+                {values.externalUrl.trim().length === 0 && (
+                  <Alert
+                    color="yellow"
+                    variant="light"
+                    icon={<IconInfoCircle size={16} />}
+                    data-testid="apps-offsite-edit-url-prompt"
+                  >
+                    <Text size="sm">
+                      This listing has no App URL. Adding one lets users open your app (and lets us
+                      suggest a name, description and images) — but it’s optional here.
+                    </Text>
+                  </Alert>
+                )}
+                {/* The OG pull auto-fires when the URL changes to a valid https URL (blur,
                   Enter, Next, or a debounced pause) — no manual button. A subtle inline
                   status reports loading / applied / partial / empty / error. The
                   assets-step "Re-pull from site" button is the manual retry. */}
-              {autofill.loading && (
-                <Group gap={6} data-testid="apps-offsite-edit-meta-loading">
-                  <Loader size={12} />
-                  <Text size="xs" c="dimmed">
-                    Looking for a name, description and images from your link…
+                {autofill.loading && (
+                  <Group gap={6} data-testid="apps-offsite-edit-meta-loading">
+                    <Loader size={12} />
+                    <Text size="xs" c="dimmed">
+                      Looking for a name, description and images from your link…
+                    </Text>
+                  </Group>
+                )}
+                {!autofill.loading && autofill.result?.status === 'error' && (
+                  <Text size="xs" c="red" data-testid="apps-offsite-edit-autofill-error">
+                    Couldn’t read that site’s details.
                   </Text>
+                )}
+                {!autofill.loading && autofill.result?.status === 'empty' && (
+                  <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-empty">
+                    {autofill.result.siteExposedNothing
+                      ? 'Your site didn’t expose a name, description, icon or cover to pull — add them manually.'
+                      : 'Nothing to autofill — your details and assets are already set.'}
+                  </Text>
+                )}
+                {!autofill.loading && autofill.result?.status === 'partial' && (
+                  <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-partial">
+                    Pulled what your link exposed —{' '}
+                    {describeMissingChannels(autofill.result.missing)}{' '}
+                    {(autofill.result.missing?.length ?? 0) > 1 ? 'were' : 'was'} not found; add{' '}
+                    {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check
+                    the Details and Assets steps for what we found.
+                  </Text>
+                )}
+                {!autofill.loading && autofill.result?.status === 'applied' && (
+                  <Alert
+                    color="grape"
+                    variant="light"
+                    icon={<IconSparkles size={16} />}
+                    data-testid="apps-offsite-edit-autofill-applied"
+                  >
+                    <Text size="sm">
+                      Pulled the latest details from your link — check the Details and Assets steps
+                      to review the name, description and the suggested icon/cover.
+                    </Text>
+                  </Alert>
+                )}
+                <Group justify="flex-end">
+                  <Button onClick={handleAdvanceFromUrl} data-testid="apps-offsite-wizard-next-url">
+                    Next
+                  </Button>
                 </Group>
-              )}
-              {!autofill.loading && autofill.result?.status === 'error' && (
-                <Text size="xs" c="red" data-testid="apps-offsite-edit-autofill-error">
-                  Couldn’t read that site’s details.
-                </Text>
-              )}
-              {!autofill.loading && autofill.result?.status === 'empty' && (
-                <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-empty">
-                  {autofill.result.siteExposedNothing
-                    ? 'Your site didn’t expose a name, description, icon or cover to pull — add them manually.'
-                    : 'Nothing to autofill — your details and assets are already set.'}
-                </Text>
-              )}
-              {!autofill.loading && autofill.result?.status === 'partial' && (
-                <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-partial">
-                  Pulled what your link exposed — {describeMissingChannels(autofill.result.missing)}{' '}
-                  {(autofill.result.missing?.length ?? 0) > 1 ? 'were' : 'was'} not found; add{' '}
-                  {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check the
-                  Details and Assets steps for what we found.
-                </Text>
-              )}
-              {!autofill.loading && autofill.result?.status === 'applied' && (
-                <Alert
-                  color="grape"
-                  variant="light"
-                  icon={<IconSparkles size={16} />}
-                  data-testid="apps-offsite-edit-autofill-applied"
-                >
-                  <Text size="sm">
-                    Pulled the latest details from your link — check the Details and Assets steps to
-                    review the name, description and the suggested icon/cover.
-                  </Text>
-                </Alert>
-              )}
-              <Group justify="flex-end">
-                <Button onClick={handleAdvanceFromUrl} data-testid="apps-offsite-wizard-next-url">
-                  Next
-                </Button>
-              </Group>
-            </Stack>
-          </FadeIn>
-        </Stepper.Step>
+              </Stack>
+            </FadeIn>
+          </Stepper.Step>
         ) : null}
 
         <Stepper.Step
@@ -481,130 +484,171 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           data-testid="apps-offsite-wizard-step-details"
         >
           <FadeIn>
-          <Stack gap="md" mt="md">
-            <TextInput
-              label="Name"
-              value={values.name}
-              onChange={(e) => setField('name', e.currentTarget.value)}
-              error={errors.name}
-              maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
-              required
-              data-testid="apps-offsite-edit-name"
-              // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
-              data-material-field="name"
-              disabled={materialBlocked}
-            />
+            <Stack gap="md" mt="md">
+              <TextInput
+                label="Name"
+                value={values.name}
+                onChange={(e) => setField('name', e.currentTarget.value)}
+                error={errors.name}
+                maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
+                required
+                data-testid="apps-offsite-edit-name"
+                // 🔴 MATERIAL — the listing's identity. See `materialBlockedReason`.
+                data-material-field="name"
+                disabled={materialBlocked}
+              />
 
-            <TextInput
-              label="Slug"
-              description="Your app's URL slug is fixed once created — it identifies the listing."
-              value={values.slug}
-              readOnly
-              disabled
-              rightSection={<IconLock size={14} />}
-              data-testid="apps-offsite-edit-slug"
-            />
+              <TextInput
+                label="Slug"
+                description="Your app's URL slug is fixed once created — it identifies the listing."
+                value={values.slug}
+                readOnly
+                disabled
+                rightSection={<IconLock size={14} />}
+                data-testid="apps-offsite-edit-slug"
+              />
 
-            <TextInput
-              label="Tagline"
-              description="A short one-liner (optional)."
-              value={values.tagline}
-              onChange={(e) => setField('tagline', e.currentTarget.value)}
-              error={errors.tagline}
-              maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
-            />
+              <TextInput
+                label="Tagline"
+                description="A short one-liner (optional)."
+                value={values.tagline}
+                onChange={(e) => setField('tagline', e.currentTarget.value)}
+                error={errors.tagline}
+                maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
+              />
 
-            <Textarea
-              label="Description"
-              description="What the app does (optional)."
-              autosize
-              minRows={3}
-              maxRows={8}
-              value={values.description}
-              onChange={(e) => setField('description', e.currentTarget.value)}
-              error={errors.description}
-              maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
-            />
+              <Textarea
+                label="Description"
+                description="What the app does (optional)."
+                autosize
+                minRows={3}
+                maxRows={8}
+                value={values.description}
+                onChange={(e) => setField('description', e.currentTarget.value)}
+                error={errors.description}
+                maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+              />
 
-            {/* Public source repository. The copy states the re-review consequence
+              {/* Public source repository. The copy states the re-review consequence
                 up front: this is a MATERIAL field, so on an approved listing changing
                 it stages a shadow revision and the change does not go live until a
                 moderator approves it. An author who is not told that reads the
                 unchanged live page afterwards as a bug. */}
-            <TextInput
-              label="Source repository"
-              description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
-              placeholder="https://github.com/your-org/your-app"
-              value={values.sourceRepoUrl}
-              onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
-              error={errors.sourceRepoUrl}
-              maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
-              data-testid="apps-offsite-edit-source-repo"
-              // 🔴 MATERIAL — a public outbound link a moderator approved. See
-              // `materialBlockedReason`.
-              data-material-field="sourceRepoUrl"
-              disabled={materialBlocked}
-            />
-
-            <Group grow align="flex-start">
-              <Select
-                label="Category"
-                placeholder="No category"
-                data={OFFSITE_CATEGORY_OPTIONS}
-                value={values.category}
-                onChange={(v: string | null) =>
-                  setField('category', (v as MarketplaceCategory) || null)
-                }
-                error={errors.category}
-                clearable
-                data-testid="apps-offsite-edit-category"
-              />
-              <Select
-                label="Content rating"
-                data={OFFSITE_CONTENT_RATING_OPTIONS}
-                value={values.contentRating}
-                onChange={(v: string | null) =>
-                  setField('contentRating', (v as OffsiteContentRating) || 'g')
-                }
-                error={errors.contentRating}
-                allowDeselect={false}
-                data-testid="apps-offsite-edit-rating"
-                // 🔴 MATERIAL, and the sharpest of the four: `contentRating` drives the
-                // public SFW filter (`content_rating NOT IN ('r','x')`), so an in-place
-                // change with no re-review would surface a mature listing to SFW users.
-                data-material-field="contentRating"
+              <TextInput
+                label="Source repository"
+                description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself — e.g. https://github.com/your-org/your-app. Changing this needs moderator re-review before it goes live.`}
+                placeholder="https://github.com/your-org/your-app"
+                value={values.sourceRepoUrl}
+                onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
+                error={errors.sourceRepoUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
+                data-testid="apps-offsite-edit-source-repo"
+                // 🔴 MATERIAL — a public outbound link a moderator approved. See
+                // `materialBlockedReason`.
+                data-material-field="sourceRepoUrl"
                 disabled={materialBlocked}
               />
-            </Group>
 
-            {/* 🔴 OFF-SITE ONLY. An on-site app is not an OAuth-connect integration —
+              {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
+                🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.
+                Both omissions are decisions, not oversights. That attribute is walked by a
+                ledger test over `MATERIAL_LISTING_PATCH_FIELDS`, and beta is deliberately
+                NOT in that set: an edit applies in place with no moderator re-review, the
+                same posture `tagline`/`description`/`category` beside it already have. So
+                tagging these inputs would make the ledger assert a disabled state the server
+                does not impose, and disabling them would withhold — in the repair state — a
+                field the server will happily accept. An author whose app is unpublished can
+                still say it is in beta.
+                🔴 NOT KIND-GATED EITHER, unlike the URL step and the scope disclosure above.
+                Beta is listing-native on both kinds (no manifest key sets or clears it), so
+                an on-site author edits it right here, in the same form, with no separate
+                surface to build or keep in step. */}
+              <Checkbox
+                label="This app is in beta"
+                description="Shows a Beta badge on your app's store card, its store page and its app page."
+                checked={values.isBeta}
+                onChange={(e) => setField('isBeta', e.currentTarget.checked)}
+                data-testid="apps-offsite-edit-is-beta"
+              />
+
+              {/* Only offered once the box is ticked — a note with no beta flag is dead text
+                the store will never render (both projections null it out when the flag is
+                off), so an input for it would be a promise the read path does not keep. */}
+              {values.isBeta && (
+                <Textarea
+                  label="Beta message"
+                  description={`An optional short note shown with the Beta badge on your app's store page — for example what still needs work (optional, up to ${OFFSITE_SUBMIT_LIMITS.betaMessageMax} characters).`}
+                  placeholder="Expect rough edges while we finish the export pipeline."
+                  autosize
+                  minRows={2}
+                  maxRows={4}
+                  value={values.betaMessage}
+                  onChange={(e) => setField('betaMessage', e.currentTarget.value)}
+                  error={errors.betaMessage}
+                  maxLength={OFFSITE_SUBMIT_LIMITS.betaMessageMax}
+                  data-testid="apps-offsite-edit-beta-message"
+                />
+              )}
+
+              <Group grow align="flex-start">
+                <Select
+                  label="Category"
+                  placeholder="No category"
+                  data={OFFSITE_CATEGORY_OPTIONS}
+                  value={values.category}
+                  onChange={(v: string | null) =>
+                    setField('category', (v as MarketplaceCategory) || null)
+                  }
+                  error={errors.category}
+                  clearable
+                  data-testid="apps-offsite-edit-category"
+                />
+                <Select
+                  label="Content rating"
+                  data={OFFSITE_CONTENT_RATING_OPTIONS}
+                  value={values.contentRating}
+                  onChange={(v: string | null) =>
+                    setField('contentRating', (v as OffsiteContentRating) || 'g')
+                  }
+                  error={errors.contentRating}
+                  allowDeselect={false}
+                  data-testid="apps-offsite-edit-rating"
+                  // 🔴 MATERIAL, and the sharpest of the four: `contentRating` drives the
+                  // public SFW filter (`content_rating NOT IN ('r','x')`), so an in-place
+                  // change with no re-review would surface a mature listing to SFW users.
+                  data-material-field="contentRating"
+                  disabled={materialBlocked}
+                />
+              </Group>
+
+              {/* 🔴 OFF-SITE ONLY. An on-site app is not an OAuth-connect integration —
                 there is no linked client whose scopes a user would be consenting to, so
                 the disclosure would be describing a grant that does not exist. */}
-            {showUrlStep && edit.connectClientId != null && (
-              <DerivedScopesDisclosure
-                requestedScopes={values.requestedScopes}
-                justifications={values.scopeJustifications}
-                onJustificationChange={handleJustificationChange}
-                // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
-                // A justification edit is trivial and saves fine on an unpublished listing
-                // while the scope masks agree; it is only unsaveable once they have DRIFTED,
-                // because the drifted mask then rides along on every patch and the server
-                // counts it as material.
-                disabled={saving || scopeLocked}
-                forceShowErrors={showScopeErrors}
-                intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
-              />
-            )}
+              {showUrlStep && edit.connectClientId != null && (
+                <DerivedScopesDisclosure
+                  requestedScopes={values.requestedScopes}
+                  justifications={values.scopeJustifications}
+                  onJustificationChange={handleJustificationChange}
+                  // 🔴 `scopeLocked`, NOT `materialBlocked` — see `scopeDisclosureLockedForEdit`.
+                  // A justification edit is trivial and saves fine on an unpublished listing
+                  // while the scope masks agree; it is only unsaveable once they have DRIFTED,
+                  // because the drifted mask then rides along on every patch and the server
+                  // counts it as material.
+                  disabled={saving || scopeLocked}
+                  forceShowErrors={showScopeErrors}
+                  intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
+                />
+              )}
 
-            <Group justify={showUrlStep ? 'space-between' : 'flex-end'}>
-              {showUrlStep ? (
-                <Button variant="default" onClick={() => setActive(STEP_URL)}>
-                  Back
-                </Button>
-              ) : null}
-              <Button onClick={() => setActive(STEP_ASSETS)}>Next</Button>
-            </Group>
-          </Stack>
+              <Group justify={showUrlStep ? 'space-between' : 'flex-end'}>
+                {showUrlStep ? (
+                  <Button variant="default" onClick={() => setActive(STEP_URL)}>
+                    Back
+                  </Button>
+                ) : null}
+                <Button onClick={() => setActive(STEP_ASSETS)}>Next</Button>
+              </Group>
+            </Stack>
           </FadeIn>
         </Stepper.Step>
 
@@ -650,11 +694,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   ) : (
                     <> — its owner unpublished it</>
                   )}
-                  . Image changes here save <b>immediately</b> and are <b>not</b> staged for
-                  review — they are not held until you press Save, and leaving this page does
-                  not undo them. They appear in the store when the app is republished. Media
-                  can be added while it is still scanning; it only appears once its scan
-                  finishes cleanly.
+                  . Image changes here save <b>immediately</b> and are <b>not</b> staged for review
+                  — they are not held until you press Save, and leaving this page does not undo
+                  them. They appear in the store when the app is republished. Media can be added
+                  while it is still scanning; it only appears once its scan finishes cleanly.
                 </Text>
               </Alert>
             )}
@@ -682,7 +725,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       </Stepper>
 
       <Group justify="space-between">
-        <Button variant="default" component={Link} href="/apps/mine" disabled={saving}>
+        <Button variant="default" component={Link} href="/apps/build" disabled={saving}>
           Cancel
         </Button>
         <Button

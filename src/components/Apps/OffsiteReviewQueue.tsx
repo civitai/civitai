@@ -1011,8 +1011,13 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
       <Text size="xs" c="dimmed">
         Listing preview — how it will appear in the store once approved.
       </Text>
+      {/* 🔴 `preview` — the SAME posture the detail body below it takes. Without it
+          this card offers a moderator (which every viewer of this queue is) the `⋮`
+          menu's live takedown actions against a listing that is NOT approved and
+          whose `id` may be the publish REQUEST's rather than an `AppListing`'s. See
+          `appListingDetailModActions.detailListingStatus`. */}
       <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
-        <AppListingCard card={card} />
+        <AppListingCard card={card} preview />
       </div>
       <Card withBorder p="md" data-testid="apps-listing-preview-detail">
         <AppListingDetailBody detail={detail} preview />
@@ -1225,7 +1230,8 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
 
       {parentPreviewQuery.data && (
         <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
-          <AppListingCard card={parentPreviewQuery.data.card} />
+          {/* `preview` — read-only drift comparison; no live action belongs on it. */}
+          <AppListingCard card={parentPreviewQuery.data.card} preview />
         </div>
       )}
     </Stack>
@@ -1343,6 +1349,12 @@ export function OffsiteReportsQueue() {
       ) : (
         <Card withBorder p={0}>
           <Table verticalSpacing="md" horizontalSpacing="md">
+            {/* 🔴 NO COLUMN LEDGER, DELIBERATELY — EXEMPT in `~/components/Apps/appsWideLayout`
+                as `no-surplus`. At 1200 this row's content wants App 240 + Reason 292 (to
+                reach its 260px details cap) + Reporter 94 + Reported 133 + Status 86 +
+                actions 414 = 1259px in 1168px of container, so SOMETHING is under-served
+                there whatever the split. Measured: every candidate ledger was either taller
+                than natural at 1200 or clipped the lineClamp-ed details harder. */}
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>App</Table.Th>
@@ -1385,16 +1397,30 @@ export function OffsiteReportsQueue() {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      <Text size="xs">{r.reporter?.username ?? `#${r.reporter?.id ?? '?'}`}</Text>
+                      {/* 🔴 `nowrap` — these three columns carry shrink-to-content shares, and
+                          a share below min-content only holds one line when min-content is the
+                          whole label. A username, a date and a status badge are each one
+                          token; wrapping them was what made these rows taller than the
+                          browser's own layout. */}
+                      <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
+                        {r.reporter?.username ?? `#${r.reporter?.id ?? '?'}`}
+                      </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap={4}>
+                      <Group gap={4} wrap="nowrap">
                         <IconClock size={14} />
-                        <Text size="xs">{formatDate(r.createdAt)}</Text>
+                        <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
+                          {formatDate(r.createdAt)}
+                        </Text>
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Badge size="sm" color={statusChip.color} variant="light">
+                      <Badge
+                        size="sm"
+                        color={statusChip.color}
+                        variant="light"
+                        style={{ whiteSpace: 'nowrap' }}
+                      >
                         {statusChip.label}
                       </Badge>
                     </Table.Td>
@@ -1574,8 +1600,9 @@ function ReportActionModal({
       destructive={destructive}
       destructiveWarning={
         <Text size="sm">
-          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-          (with the slug snapshot) is kept. This cannot be undone.
+          Purge PERMANENTLY deletes this listing and its screenshots + reports, and{' '}
+          <b>releases its store address for anyone else to claim</b>. The audit event (with the slug
+          snapshot) is kept. This cannot be undone.
         </Text>
       }
       extraSlot={

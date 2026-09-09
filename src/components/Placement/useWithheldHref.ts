@@ -1,5 +1,5 @@
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 
 /**
  * Where to send someone whose domain will not serve an image.
@@ -12,6 +12,7 @@ import { syncAccount } from '~/utils/sync-account';
  */
 export function useWithheldHref() {
   const domains = useServerDomains();
+  const syncAccount = useSyncAccount();
   /**
    * `search` is opt-in and empty by default: the remix queue has nothing to add,
    * and a param baked in here would ride onto its links too. It goes on before

@@ -26,7 +26,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -67,6 +67,7 @@ function ComicIteratePage() {
   const numericPanelId = panelId ? Number(panelId) : null;
   const numericPanelPosition = Number(panelPosition) || 0;
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   // ── Fetch project data for references + cost ──
   // Iterate.tsx only needs `baseModel`, `references`, and `name` — no
@@ -275,6 +276,7 @@ function ComicIteratePage() {
       imageUrl,
       width,
       height,
+      syncAccount,
     ]
   );
 

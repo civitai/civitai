@@ -8,7 +8,6 @@ import { createJob } from './job';
 const DEFAULT_STALE_DAYS = 5;
 const DEFAULT_MIN_RECENT_ITEMS = 3;
 const STATE_KEY = REDIS_KEYS.HOMEBLOCKS.FEATURED_COLLECTIONS_STATE;
-const LAST_PICKED_KEY = REDIS_KEYS.HOMEBLOCKS.FEATURED_COLLECTIONS_LAST_PICKED;
 
 export type FeaturedCollectionEntry = {
   recentCount: number;
@@ -40,18 +39,6 @@ export async function getFeaturedCollectionsState(): Promise<FeaturedCollections
 
 async function writeState(state: FeaturedCollectionsState) {
   await redis.set(STATE_KEY, JSON.stringify(state));
-}
-
-export async function getLastPickedId(): Promise<number | null> {
-  const raw = await redis.get(LAST_PICKED_KEY);
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-// Separate key (SET only) so concurrent hydration doesn't R-M-W the eligibility blob.
-export async function setLastPickedId(id: number) {
-  await redis.set(LAST_PICKED_KEY, String(id));
 }
 
 export async function computeFeaturedCollectionsState(): Promise<FeaturedCollectionsState | null> {

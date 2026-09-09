@@ -42,11 +42,13 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { GEN_BUZZ_KEY, GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -57,6 +59,7 @@ import {
   useGraphSubscriptions,
   MultiController,
 } from '~/libs/data-graph/react';
+import { useGenerationFormValue } from '~/components/Generate/useGenerationFormBridge';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -78,6 +81,8 @@ import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { isDefined } from '~/utils/type-guards';
 import {
   workflowConfigByKey,
   getEcosystemsForWorkflow,
@@ -212,11 +217,14 @@ export function BuzzTypeSelector({
   loading,
   error,
   onRetry,
+  tourTarget,
 }: {
   cost: number;
   loading: boolean;
   error?: boolean;
   onRetry?: () => void;
+  /** `data-tour` for the cost button. Only the generator's tour spotlights it. */
+  tourTarget?: string;
 }) {
   const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
   const buzzConfig = useBuzzCurrencyConfig(selectedType);
@@ -255,6 +263,7 @@ export function BuzzTypeSelector({
     return (
       <Tooltip label="Failed to estimate cost. Click to retry.">
         <Button
+          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className="h-full gap-1 px-2"
@@ -272,6 +281,7 @@ export function BuzzTypeSelector({
     <Menu position="top" withinPortal onChange={handleMenuOpen}>
       <Menu.Target>
         <Button
+          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className={clsx('h-full gap-1 px-2', showGlow && 'animate-buzz-glow')}
@@ -317,7 +327,13 @@ function ConnectedBuzzTypeSelector() {
   const { isLoading, isError, refetch } = useWhatIfContext();
   const cost = useTotalGenerationCost();
   return (
-    <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
+    <BuzzTypeSelector
+      cost={cost}
+      loading={isLoading}
+      error={isError}
+      onRetry={() => refetch()}
+      tourTarget={GEN_BUZZ_KEY}
+    />
   );
 }
 
@@ -336,12 +352,10 @@ function ConnectedBuzzTypeSelector() {
  */
 export function useSelfHostedBlock() {
   const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
-  const graph = useGraph<GenerationGraphTypes>();
-  // Subscribe to only `ecosystem` — not the whole graph — so prompt/seed/etc.
-  // edits (which fire the global watcher) don't needlessly re-render this.
-  const { ecosystem: selectedEcosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
-    ecosystem?: string;
-  };
+  // Subscribe to only `ecosystem` — not the whole form — so prompt/seed/etc.
+  // edits don't needlessly re-render this. Bridge-based: GenerationLayout
+  // renders in both form lanes.
+  const selectedEcosystem = useGenerationFormValue<string>('ecosystem');
   if (!selectedEcosystem)
     return { blockedEcosystem: undefined, state: undefined, message: undefined };
 
@@ -378,6 +392,7 @@ export function useSelfHostedBlock() {
 export function SelfHostedBlockedAlert() {
   const { blockedEcosystem, state, message } = useSelfHostedBlock();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   if (!blockedEcosystem) return null;
 
@@ -661,7 +676,7 @@ interface SubmitButtonProps {
 }
 
 function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) {
-  const { running, helpers } = useTourContext();
+  const { running, helpers, setBlockedTarget } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
@@ -676,6 +691,23 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   } = useQueryBuzz([selectedType]);
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
+  const canGenerate = useGenerationContext((state) => state.canGenerate);
+
+  const submitBlocked =
+    !canGenerate ||
+    isWhatIfLoading ||
+    isBuzzLoading ||
+    isError ||
+    !canEstimateCost ||
+    insufficientBuzz;
+
+  // This hideFooter step's only way forward is this button, so it needs Next back when
+  // the button is legitimately disabled — scoped to this step's own target so an unrelated
+  // hideFooter step doesn't inherit the block. See ToursProvider's blockedTarget doc.
+  useEffect(() => {
+    setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
+    return () => setBlockedTarget(null);
+  }, [running, submitBlocked, setBlockedTarget]);
 
   const handleClick = () => {
     if (running) helpers?.next();
@@ -685,14 +717,11 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   return (
     <GenerateButton
       type="button"
-      data-tour="gen:submit"
+      data-tour={GEN_SUBMIT_KEY}
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={
-        !running &&
-        (isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz)
-      }
+      disabled={submitBlocked}
       onClick={handleClick}
     />
   );
@@ -961,6 +990,7 @@ function QuantityFieldInner({
 function BlueBuzzMatureReminder() {
   const { variant, acknowledged } = useMembershipUpsell();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   if (variant !== 'blue-on-red' || !acknowledged) return null;
 
@@ -1279,6 +1309,19 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       }
     }
 
+    // Provenance tokens for whichever sources are still in the form.
+    //
+    // Deliberately NOT inside the `needsSourceMetadata` branch above: that gate is
+    // `enhancement === true`, and the workflows this matters most for — img2vid
+    // and img2img:edit, the two the Remix menu drives — are not enhancements. A
+    // token only exists for a source the user reached through a remix entry
+    // point, so reading the store for every image costs nothing when there is
+    // none, and collecting by CURRENT url is what drops a token whose image the
+    // user has since swapped out.
+    const sourceProvenance = (snapshot.images ?? [])
+      .map((img) => remixProvenanceStore.getToken(img.url))
+      .filter(isDefined);
+
     // Calculate total cost including tips
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
@@ -1303,6 +1346,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
       });

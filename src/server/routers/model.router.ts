@@ -34,6 +34,7 @@ import {
   restoreModelHandler,
   setModelCollectionShowcaseHandler,
   setModelMinorHandler,
+  setModelSfwOnlyHandler,
   toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
@@ -73,6 +74,7 @@ import {
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
   setModelMinorSchema,
+  setModelSfwOnlySchema,
   setModelOfficialSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
@@ -430,4 +432,5 @@ export const modelRouter = router({
       setModelOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
   setMinor: moderatorProcedure.input(setModelMinorSchema).mutation(setModelMinorHandler),
+  setSfwOnly: moderatorProcedure.input(setModelSfwOnlySchema).mutation(setModelSfwOnlyHandler),
 });

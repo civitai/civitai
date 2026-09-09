@@ -86,8 +86,7 @@ export interface MessageSpec {
 // InlineHost is a v1 STUB that throws on render and wires NO message bridge
 // (BlockHost never routes inline installs in v1 — `canUseInline` is always
 // false). So EVERY message is N/A for it today; the shared reason is below.
-export const INLINE_STUB =
-  'InlineHost is a v1 stub (throws on render, no message bridge in v1)';
+export const INLINE_STUB = 'InlineHost is a v1 stub (throws on render, no message bridge in v1)';
 
 export const INVENTORY = {
   // ── Lifecycle / fire-and-forget (no reply ⇒ unhandled never HANGS, but a
@@ -472,8 +471,11 @@ export const INVENTORY = {
   // REQUEST-style hang class + same host placement as SHARED_APPEND — the shared
   // datastore is a per-APP surface a model-slot block can also edit, so BOTH real
   // hosts wire it. Reply is the SHARED_WITHDRAW-style `{ ok, error? }` (NOT
-  // SHARED_APPEND's `{ key }`): the SDK's isValidSharedUpdateResult REQUIRES a
-  // boolean `ok`, so the error reply MUST carry `ok: false` or it's dropped.
+  // SHARED_APPEND's `{ key }`). The SDK's isValidSharedUpdateResult accepts an
+  // error reply whether or not it carries `ok` — every `{ ok, error }` validator
+  // early-accepts on a PRESENT `error`, so an error reply is never dropped. The
+  // hosts still send `ok: false` because it is the clearer signal, NOT because
+  // omitting it would hang.
   SHARED_UPDATE: {
     request: true,
     reply: 'SHARED_UPDATE_RESULT',
@@ -518,8 +520,10 @@ export const INVENTORY = {
   // User report of a posted shared row (Batch-D item 5) — the server procedure
   // `apps.shared.report` already exists; this is the postMessage seam. Same both-
   // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
-  // `{ ok, error? }`: the error path MUST carry `ok: false` or the SDK drops it →
-  // hang). Ahead of the published SDK dist union — forward-looking coverage.
+  // `{ ok, error? }`: the validator accepts an error reply with or without `ok`,
+  // and the hosts send `ok: false` because it is the clearer signal, not because
+  // omitting it would hang). Ahead of the published SDK dist union — forward-
+  // looking coverage.
   SHARED_REPORT: {
     request: true,
     reply: 'SHARED_REPORT_RESULT',
@@ -563,6 +567,39 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── Collection follow/unfollow (host bridge) ───────────────────────────────
+  // A block asks the HOST to follow/unfollow a collection as the logged-in
+  // viewer. Replaces the block's own `POST /api/v1/blocks/collections/[id]/follow`
+  // call (which stays live — this bridge does NOT retire it), so an app no longer
+  // needs the `collections:write:self` write scope for an on-site bookmark.
+  //
+  // 🔴 THIS IS A TIGHTENING, NOT A LOOSENING. ⚠️ An earlier copy of this comment
+  // said the dropped scope "was the viewer's consent step" — RETRACTED, it is
+  // false: `collections:write:self` is in `CONSENT_EXEMPT_SCOPES`
+  // (`src/server/services/blocks/scope-grant.service.ts`), so it mints without any
+  // prompt and no grant row is ever recorded. The HTTP path had ZERO prompts;
+  // both hosts now open a HOST-CHROME CONSENT CONFIRM and write only on the
+  // viewer's explicit click — the same boundary PUBLISH_GENERATION_OUTPUTS uses.
+  // What the bridge actually gives up is the manifest `scopes` DECLARATION, i.e.
+  // ex-ante reviewability (moderator review + the post-install permissions panel),
+  // traded for consent at the moment of action. Full reasoning, and why the
+  // confirm must not be "restored" into a scope gate, is in
+  // `collectionFollowGate.ts`, which both hosts share.
+  //
+  // BOTH real hosts: unlike the page-only affordances above, a collection follow
+  // is a plain on-site bookmark with no page-sized surface behind it — a model-
+  // slot block showing a collection has exactly the same reason to offer it.
+  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
+  // dist union (the SDK's `useCollectionFollow` hook is a co-requisite landing in
+  // civitai-app-starters) — forward-looking coverage, allowed by the one-
+  // directional compile-time gate.
+  SET_COLLECTION_FOLLOW: {
+    request: true,
+    reply: 'COLLECTION_FOLLOW_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**
@@ -589,6 +626,9 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // ─────────────────────────────────────────────────────────────────────────────
 type _SdkCovered = SdkBlockToParentType extends keyof typeof INVENTORY
   ? true
-  : ['INVENTORY missing published SDK message(s):', Exclude<SdkBlockToParentType, keyof typeof INVENTORY>];
+  : [
+      'INVENTORY missing published SDK message(s):',
+      Exclude<SdkBlockToParentType, keyof typeof INVENTORY>
+    ];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _sdkCovered: _SdkCovered = true;

@@ -20,16 +20,14 @@ export function getOrchestratorClient(): OrchestratorClient {
 }
 
 /**
- * Release (or refuse) an ambient "gate" job — the orchestrator's own hold on a paused workflow.
+ * Release (or refuse) the orchestrator's moderation gate on a paused workflow.
  *
  * Here rather than in the caller because the base URL and the credentials are this module's job: a
  * second reader of `ORCHESTRATOR_ACCESS_TOKEN` is how the app ended up with two different answers about
  * which env var counts (see `xguard-api.ts`, which also falls back to `ORCHESTRATOR_TOKEN`).
- *
- * WHICH job is the gate is the caller's knowledge, not ours.
  */
-export async function releaseAmbientJob(
-  gateId: string,
+export async function releaseModerationGate(
+  workflowId: string,
   approved: boolean
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const endpoint = env.ORCHESTRATOR_ENDPOINT;
@@ -38,8 +36,8 @@ export async function releaseAmbientJob(
 
   const base = endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
   try {
-    const res = await fetch(`${base}/v1/manager/ambientjobs/${gateId}`, {
-      method: 'PUT',
+    const res = await fetch(`${base}/v1/manager/workflows/${workflowId}/moderation-gate`, {
+      method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ approved }),
       signal: AbortSignal.timeout(30_000),

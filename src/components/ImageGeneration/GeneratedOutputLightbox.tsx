@@ -144,6 +144,10 @@ export default function GeneratedOutputLightbox({
           width: '100%',
           maxWidth: 450,
           zIndex: 10,
+          // `width: 100%` capped at 450 is full-bleed on every phone (390-430px),
+          // and this panel had no padding at all, so its controls were flush to
+          // the viewport bottom — which the cutout now sits inside.
+          paddingBottom: 'var(--safe-area-inset-bottom)',
         }}
       >
         {images?.[slide] && (

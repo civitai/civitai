@@ -10,13 +10,23 @@ import { updateUserById } from '~/server/services/user.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { dbRead } from '~/server/db/client';
 import type { UserMeta } from '~/server/schema/user.schema';
-import { PROTECTED_USER_IDS } from '~/server/services/user-restriction.service';
+import {
+  PROTECTED_USER_IDS,
+  unwiredRulingReason,
+} from '~/server/services/user-restriction.service';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * Uphold or overturn a generation restriction. The single write path for a
  * verdict — the moderator router and the service-facing overturn endpoint both
  * go through here so the membership and violation-count side effects can't drift.
+ *
+ * 🔴 Being the single write path is also why the type refusal lives here rather than at the routes.
+ * Everything below this line is generation-shaped — the notification types, the update source, the
+ * email wording, and `resetProhibitedRequestCount`, which wipes the account's real prompt-violation
+ * counter. Five callers reach it (the tRPC router, `/api/mod/restriction/resolve`, and
+ * `overturnPendingReviewMute`), and only one of them used to check. See `unwiredRulingReason`.
  */
 export async function resolveUserRestriction({
   userRestrictionId,
@@ -35,13 +45,28 @@ export async function resolveUserRestriction({
       id: true,
       userId: true,
       status: true,
+      // Read back rather than assumed: callers address the row by primary key, so none of them can
+      // tell what type it is, and the refusal below is the only thing that looks.
+      type: true,
       user: { select: { email: true, username: true } },
     },
   });
 
-  if (!restriction) throw new Error('Restriction record not found');
+  // 🔴 TRPCErrors, not bare `Error`s, and that is the difference between a moderator reading the
+  // reason and reading nothing. Both ruling surfaces post through `/api/mod/restriction/resolve`,
+  // whose `defineModeratorEndpoint` wrapper hands a thrown value to `handleEndpointError`. A
+  // non-TRPCError falls to its catch-all branch and reaches the wire as **500 "An unexpected error
+  // occurred"** — the retool panel then renders "Restriction ruling: An unexpected error occurred."
+  // and the whole point of the refusal is destroyed. A TRPCError keeps its status AND its message.
+  //
+  // All three are 4xx: each is a fact about the request, none is a server fault.
+  if (!restriction) throw throwNotFoundError('Restriction record not found');
+  // Checked BEFORE the already-resolved test and before any write: a row this path cannot rule on is
+  // not a row whose status is worth arguing about.
+  const unwired = unwiredRulingReason(restriction.type);
+  if (unwired) throw throwBadRequestError(unwired);
   if (restriction.status !== UserRestrictionStatus.Pending)
-    throw new Error('Restriction has already been resolved');
+    throw throwBadRequestError('Restriction has already been resolved');
 
   await dbWrite.userRestriction.update({
     where: { id: userRestrictionId },

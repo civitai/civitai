@@ -2,6 +2,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import type { TagChipRowItem } from '~/components/Tags/TagChipRow';
 import { TagChipRow } from '~/components/Tags/TagChipRow';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
@@ -15,10 +16,14 @@ type FeedTagBarFeed = 'images' | 'videos';
  * is an AND across tags, which lands on an empty feed for most pairs here, and it was
  * undiscoverable anyway.
  *
- * The `All` chip is not decoration — it is the only UI on these feeds that can widen a
- * `?tags=` deep link back out (`ActiveTagFilter`, written for that job, is mounted
- * nowhere; ClickUp 868kuq3jk). It clears whatever is in `?tags=`, including ids that are
- * not chips on this bar.
+ * The `All` chip is not decoration — it is what widens a `?tags=` deep link back out on
+ * these feeds. It clears whatever is in `?tags=`, including ids that are not chips on
+ * this bar.
+ *
+ * So `ActiveTagFilter` stands in wherever that chip is NOT on the page — the flag being
+ * off, and the chip row being held for its loading reservation, which is also the state a
+ * failed chip-list fetch leaves the bar in permanently. Neither may take the only escape
+ * hatch from a `?tags=` deep link with it (ClickUp 868kuq3jk).
  */
 export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   const { trackAction } = useTrackEvent();
@@ -33,7 +38,7 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
 
   // `!!` is load-bearing: FeatureAccess is sparse, so an off flag is `undefined` rather
   // than `false`, and react-query reads `enabled: undefined` as enabled.
-  const { data } = trpc.tag.getFeedTagBar.useQuery(undefined, {
+  const { data, isLoading: chipsLoading } = trpc.tag.getFeedTagBar.useQuery(undefined, {
     enabled: !!features.feedTagBar,
   });
   const { items: tags, loadingPreferences } = useApplyHiddenPreferences({
@@ -68,7 +73,19 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
     replace({ tags: [] });
   };
 
-  if (!features.feedTagBar) return null;
+  if (!features.feedTagBar) return <ActiveTagFilter tagIds={tagIds} />;
+
+  // Holding the row until preferences resolve keeps a tag the viewer has personally
+  // hidden from flashing as a chip: the chip list is edge-cached and the preferences are
+  // a per-user fetch, so the list usually wins the race. `TagChipRow` draws the height
+  // reservation and NO chips in that state — the All chip included.
+  const chipsHeld = loadingPreferences || !tags.length;
+
+  // SETTLED and still empty — a failed or empty chip fetch, which is permanent, not the
+  // in-flight state. `chipsHeld` alone would put the control on screen for every viewer's
+  // first paint (`loadingPreferences` is the preferences query's `isLoading`, true on
+  // mount for everyone) and take it away again a moment later.
+  const chipsGone = !chipsLoading && !loadingPreferences && !tags.length;
 
   return (
     <TagChipRow
@@ -76,10 +93,13 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
       activeId={activeId}
       onSelect={handleSelect}
       onClear={handleClear}
-      // Holding the row until preferences resolve keeps a tag the viewer has personally
-      // hidden from flashing as a chip: the chip list is edge-cached and the preferences
-      // are a per-user fetch, so the list usually wins the race.
-      loading={loadingPreferences || !tags.length}
+      loading={chipsHeld}
+      // Inside the reservation, so standing in for the chips costs no extra height.
+      // Uninstrumented on purpose: `Feed_TagBar_Click` measures the BAR, and the bar's
+      // fate is being decided on that series (868kv1b9m). Counting a press of a control
+      // that appears only when the bar has no chips would inflate the number the decision
+      // reads.
+      placeholder={chipsGone ? <ActiveTagFilter tagIds={tagIds} /> : null}
     />
   );
 }

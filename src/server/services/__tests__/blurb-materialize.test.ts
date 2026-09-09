@@ -25,7 +25,8 @@ const { expandBlurbs, reconcileBlurbReferences } = await import(
 beforeEach(() => {
   vi.clearAllMocks();
   isFlipt.mockResolvedValue(true);
-  dbRead.blurbReference.findMany.mockResolvedValue([]);
+  // Reconcile reads through the write client, not the replica.
+  dbWrite.blurbReference.findMany.mockResolvedValue([]);
 });
 
 // Narrows the discriminated result so `uses` is readable. Destructuring it straight off
@@ -248,30 +249,41 @@ describe('expandBlurbs', () => {
 
 describe('reconcileBlurbReferences', () => {
   it('removes rows for blurbs no longer present in the content', async () => {
-    dbRead.blurbReference.findMany.mockResolvedValue([{ blurbId: 5 }, { blurbId: 7 }]);
+    dbWrite.blurbReference.findMany.mockResolvedValue([{ blurbId: 5 }, { blurbId: 7 }]);
     await reconcileBlurbReferences({
       entityType: 'Article',
       entityId: 1,
       uses: [{ blurbId: 7, contentHash: 'h7' }],
+      tx: dbWrite,
     });
     expect(dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'Article', entityId: 1, blurbId: { in: [5] } },
     });
   });
 
-  it('upserts a row per current use', async () => {
+  it('writes every use in ONE statement, with the bind order the SQL expects', async () => {
+    // `$executeRaw` binds by POSITION, so a reordered interpolation still type-checks, still runs,
+    // and silently writes the entityId into the hash column.
     await reconcileBlurbReferences({
       entityType: 'Article',
       entityId: 1,
-      uses: [{ blurbId: 7, contentHash: 'h7' }],
+      uses: [
+        { blurbId: 7, contentHash: 'h7' },
+        { blurbId: 9, contentHash: 'h9' },
+      ],
+      tx: dbWrite,
     });
-    expect(dbWrite.blurbReference.upsert).toHaveBeenCalledTimes(1);
-    const call = dbWrite.blurbReference.upsert.mock.calls[0][0];
-    expect(call.where).toEqual({
-      blurbId_entityType_entityId: { blurbId: 7, entityType: 'Article', entityId: 1 },
-    });
-    expect(call.create.materializedHash).toBe('h7');
-    expect(call.update.materializedHash).toBe('h7');
+
+    expect(dbWrite.blurbReference.upsert).not.toHaveBeenCalled();
+    expect(dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+
+    const [, entityType, entityId, materializedAt, blurbIds, hashes] =
+      dbWrite.$executeRaw.mock.calls[0];
+    expect(entityType).toBe('Article');
+    expect(entityId).toBe(1);
+    expect(materializedAt).toBeInstanceOf(Date);
+    expect(blurbIds).toEqual([7, 9]);
+    expect(hashes).toEqual(['h7', 'h9']);
   });
 
   it('still deletes when uses is empty — the last blurb was removed from the content', async () => {
@@ -279,21 +291,22 @@ describe('reconcileBlurbReferences', () => {
     // `uses`. It would break exactly this: removing an entity's last blurb legitimately produces
     // an empty `uses` and MUST drop the rows. The flag-off case is handled at the call site,
     // which does not call this function at all.
-    dbRead.blurbReference.findMany.mockResolvedValue([{ blurbId: 5 }, { blurbId: 7 }]);
-    await reconcileBlurbReferences({ entityType: 'Article', entityId: 1, uses: [] });
+    dbWrite.blurbReference.findMany.mockResolvedValue([{ blurbId: 5 }, { blurbId: 7 }]);
+    await reconcileBlurbReferences({ entityType: 'Article', entityId: 1, uses: [], tx: dbWrite });
 
     expect(dbWrite.blurbReference.deleteMany).toHaveBeenCalledWith({
       where: { entityType: 'Article', entityId: 1, blurbId: { in: [5, 7] } },
     });
-    expect(dbWrite.blurbReference.upsert).not.toHaveBeenCalled();
+    expect(dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('skips the delete entirely when nothing needs removing', async () => {
-    dbRead.blurbReference.findMany.mockResolvedValue([{ blurbId: 7 }]);
+    dbWrite.blurbReference.findMany.mockResolvedValue([{ blurbId: 7 }]);
     await reconcileBlurbReferences({
       entityType: 'Article',
       entityId: 1,
       uses: [{ blurbId: 7, contentHash: 'h7' }],
+      tx: dbWrite,
     });
     expect(dbWrite.blurbReference.deleteMany).not.toHaveBeenCalled();
   });

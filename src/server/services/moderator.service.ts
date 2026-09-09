@@ -10,6 +10,8 @@ type ModelModActivity = {
     | 'moderateFlag'
     | 'setMinor'
     | 'unsetMinor'
+    | 'setSfwOnly'
+    | 'unsetSfwOnly'
     | 'setMinorAutoHash'
     | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch';
@@ -94,10 +96,19 @@ type ModActivity = {
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
-// not a unique index exists, so this survives the pending migration that drops ModActivity's
+// not a unique index exists, so this survives the migration that drops ModActivity's
 // (activity, entityType, entityId) unique index and makes the table append-only. Naming the target would
-// fail with 42P10 the moment that index goes; omitting the clause entirely would fail with 23505 until it
-// does. Do not add a target back.
+// fail with 42P10 once that index is gone; omitting the clause entirely would fail with 23505 while it is
+// still there. Do not add a target back.
+//
+// 🔴 The two databases disagree, and the clause is what makes both work. Production has the
+// `20260805120000_mod_activity_append_only` migration applied — no unique index, so nothing is ever
+// suppressed and a repeat action always gets its own row. `containers/db/docker-init/02_all_dll.sql` still
+// CREATES `ModActivity_activity_entityType_entityId_key`, so a database built from the local dump DOES
+// suppress the second row. Anything that reads this table as evidence differs between the two: notably
+// `MODERATOR_TAKEDOWN_ACTIVITIES` in `src/server/jobs/image-ingestion.ts`, where a suppressed row means a
+// takedown demoted to a delete-without-blob-retraction. That demotion is reproducible locally and cannot
+// happen in production — do not diagnose one from the other.
 export async function trackModActivity(userId: number, input: ModActivity) {
   if (!input.entityId) {
     await dbWrite.$executeRaw`

@@ -1,10 +1,8 @@
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import {
-  type BaseModel,
-  isBaseModelGenerationSupported,
-} from '~/shared/constants/basemodel.constants';
+import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
@@ -16,6 +14,7 @@ import type { RecommendedSettingsSchema } from '~/server/schema/model-version.sc
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -34,7 +33,6 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -98,6 +96,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'publishedAt',
     'locked',
     'earlyAccessDeadline',
+    'hasActivePaidAccess',
     'mode',
     'checkpointType',
     'availability',
@@ -235,20 +234,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
 
   const modelIds = models.map((m) => m.id);
-  const earlyAccessRows = modelIds.length
-    ? await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
-        SELECT mv."modelId", MAX(pa."endsAt") AS deadline
-        FROM "PaidAccess" pa
-        JOIN "ModelVersion" mv ON mv.id = pa."entityId"
-        WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
-          AND mv.status = 'Published'::"ModelStatus"
-          AND mv."modelId" IN (${Prisma.join(modelIds)})
-        GROUP BY mv."modelId"
-      `
-    : [];
-  const earlyAccessDeadlineMap = new Map<number, Date>(
-    earlyAccessRows.map((r) => [Number(r.modelId), r.deadline])
-  );
+  const paidAccessGates = await getModelPaidAccessGates(modelIds);
 
   const indexReadyRecords = models
     .map((modelRecord) => {
@@ -270,11 +256,13 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const { files, ...restVersion } = version;
 
-      const canGenerate = modelVersions.some(
-        (x) =>
-          x.generationCoverage?.covered &&
-          !isGenerationDisabled(x.flags) &&
-          isBaseModelGenerationSupported(x.baseModel, model.type)
+      const canGenerate = modelVersions.some((x) =>
+        isGenerationEligible({
+          covered: x.generationCoverage?.covered,
+          baseModel: x.baseModel,
+          modelType: model.type,
+          flags: x.flags,
+        })
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
@@ -291,7 +279,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
-        earlyAccessDeadline: earlyAccessDeadlineMap.get(model.id) ?? null,
+        earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
+        hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
@@ -321,10 +310,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            canGenerate:
-              generationCoverage?.covered &&
-              !isGenerationDisabled(x.flags) &&
-              isBaseModelGenerationSupported(x.baseModel, model.type),
+            canGenerate: isGenerationEligible({
+              covered: generationCoverage?.covered,
+              baseModel: x.baseModel,
+              modelType: model.type,
+              flags: x.flags,
+            }),
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,
           })
@@ -403,8 +394,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const modelImages = coveredVersionIds.flatMap((versionId) =>
         images.filter(
           (image) =>
-            image.modelVersionId === versionId &&
-            image.availability !== Availability.Unsearchable
+            image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
         )
       );
 

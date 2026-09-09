@@ -459,11 +459,11 @@
           {:else}
             <Alert.Title>Over this month's monetization limit</Alert.Title>
             <Alert.Description>
-              You can monetize {pricingSlotsRemaining} more model version{pricingSlotsRemaining === 1
+              You can monetize {pricingSlotsRemaining} more model version{pricingSlotsRemaining ===
+              1
                 ? ''
-                : 's'} this
-              month, but this selection would monetize {unpricedCount}. Deselect some, or the save
-              will be rejected. Versions you already monetize don't count.
+                : 's'} this month, but this selection would monetize {unpricedCount}. Deselect some,
+              or the save will be rejected. Versions you already monetize don't count.
             </Alert.Description>
           {/if}
         </Alert.Root>

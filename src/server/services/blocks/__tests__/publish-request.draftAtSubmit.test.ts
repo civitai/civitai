@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * W13 draft-at-submit — REJECT / WITHDRAW cleanup of the pre-approval on-site DRAFT
- * `AppListing`.
+ * W13 draft-at-submit — what REJECT and WITHDRAW each do to the pre-approval on-site
+ * DRAFT `AppListing`, and the fact that they DISAGREE.
  *
- * On reject or withdraw of a first-version on-site publish request, the draft listing
- * minted at submit must be DELETED (release the slug + drop unreviewed media),
- * mirroring the off-site `closeTerminalListing` draft branch: a status-guarded
- * `deleteMany({ status:'draft' })` — the DB FKs then cascade `AppListingScreenshot`
- * and SetNull the `Image` rows (verified structurally, not in this mock). Resolved BY
- * SLUG (the on-site request has no appListingId FK). A subsequent-version / legacy
- * pre-ship request has no such draft → the `deleteMany` is a harmless 0-row no-op.
+ * WITHDRAW deletes it (release the slug + drop unreviewed media), mirroring the off-site
+ * `closeTerminalListing` draft branch: a status-guarded `deleteMany({ status:'draft' })`
+ * — the DB FKs then cascade `AppListingScreenshot` and SetNull the `Image` rows (verified
+ * structurally, not in this mock). Resolved BY SLUG (the on-site request has no
+ * appListingId FK). A subsequent-version / legacy pre-ship request has no such draft → the
+ * `deleteMany` is a harmless 0-row no-op.
+ *
+ * REJECT does NOT — see the 🔴 block above that describe (clawgate #302). The deliberate,
+ * mod-initiated version of that delete now lives in `purgeListing`'s on-site orphan-draft
+ * arm (`offsite-moderation.service.ts`), covered by
+ * `offsite-moderation.service.purge-onsite-draft.test.ts`.
  *
  * DB fully mocked — only the reads/writes reject/withdraw make are stubbed.
  */
@@ -27,6 +31,9 @@ const { db } = vi.hoisted(() => {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       // the draft cleanup.
       deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      // Not used by either path today — stubbed so the reject block can assert the
+      // ABSENCE of a status flip (e.g. draft → removed) as well as of a delete.
+      updateMany: vi.fn(async () => ({ count: 0 })),
     },
     appReviewAgentReport: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -84,7 +91,26 @@ function draftDeleteCalls() {
   });
 }
 
-describe('rejectRequest — deletes the pre-approval draft (status-guarded, by slug)', () => {
+/**
+ * 🔴 REGRESSION — clawgate #302 / ClickUp 868kuam02.
+ *
+ * `rejectRequest` USED to call `deleteOnsiteDraftListingForSlug`. That made a
+ * first-version reject destructive in a way no reviewer could see or decline: rejecting a
+ * first-time developer over a fixable problem (the reported case was a missing screenshot)
+ * hard-deleted the store listing they had built AND released their slug. Reject is the only
+ * "please fix this" signal the review path has — there is no `changes-requested` outcome —
+ * so the destructive branch fired precisely on the cases it should not have.
+ *
+ * These tests are RED on the pre-change code: it deleted, so every "no delete" assertion
+ * below fails there.
+ *
+ * The invariant is a RELATIONSHIP, not a property of one function — reject and withdraw
+ * must DISAGREE. Withdraw is the developer abandoning their own submission (releasing the
+ * slug is what they asked for); reject is a moderator verdict on a submission the developer
+ * still wants. The `withdrawRequest` block below is the other half of this guard, and a
+ * mutant that restores the delete in `rejectRequest` is caught here while leaving it green.
+ */
+describe('rejectRequest — KEEPS the pre-approval draft (clawgate #302)', () => {
   beforeEach(() => {
     db.read.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'req_1',
@@ -97,7 +123,7 @@ describe('rejectRequest — deletes the pre-approval draft (status-guarded, by s
     });
   });
 
-  it('flips the request → rejected AND deletes the on-site draft for the slug (cascade screenshots, SetNull images)', async () => {
+  it('flips the request → rejected WITHOUT deleting the on-site draft for the slug', async () => {
     await rejectRequest({
       publishRequestId: 'req_1',
       reviewerUserId: 9,
@@ -107,24 +133,39 @@ describe('rejectRequest — deletes the pre-approval draft (status-guarded, by s
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'rejected' }) })
     );
-    const deletes = draftDeleteCalls();
-    expect(deletes).toHaveLength(1);
-    // Status-guarded delete (can never remove an approved/removed row).
-    expect(deletes[0][0]).toEqual({
-      where: { slug: SLUG, kind: 'onsite', appBlockId: null, status: 'draft' },
-    });
+    expect(draftDeleteCalls()).toHaveLength(0);
   });
 
-  it('reject STANDS even if the draft cleanup throws (best-effort)', async () => {
-    db.write.appListing.deleteMany.mockRejectedValueOnce(new Error('db blip'));
-    await expect(
-      rejectRequest({
-        publishRequestId: 'req_1',
-        reviewerUserId: 9,
-        rejectionReason: 'not good enough for production',
-      })
-    ).resolves.toBeUndefined();
-    expect(db.write.appBlockPublishRequest.update).toHaveBeenCalled();
+  /**
+   * Deliberately WIDER than `draftDeleteCalls()`. That helper matches the exact old
+   * predicate, so a mutant that restores the delete with any OTHER shape — a different
+   * `where`, a `delete` instead of `deleteMany` — would walk straight through it. This
+   * asserts the reject path performs NO destructive `AppListing` write at all, which is
+   * the claim that actually protects the developer's listing.
+   */
+  it('performs NO AppListing delete of any shape', async () => {
+    await rejectRequest({
+      publishRequestId: 'req_1',
+      reviewerUserId: 9,
+      rejectionReason: 'not good enough for production',
+    });
+    expect(db.write.appListing.deleteMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The slug must still be RESERVED after the reject — that is the half a "we stopped
+   * deleting" test cannot see on its own. Nothing in the reject path may release it, so
+   * the developer's chosen slug is still theirs when they fix the problem and re-submit
+   * (`submitVersion` then REUSES the surviving draft, owner-scoped).
+   */
+  it('leaves the listing row — and therefore the slug — untouched', async () => {
+    await rejectRequest({
+      publishRequestId: 'req_1',
+      reviewerUserId: 9,
+      rejectionReason: 'missing a screenshot',
+    });
+    expect(db.write.appListing.deleteMany).not.toHaveBeenCalled();
+    expect(db.write.appListing.updateMany).not.toHaveBeenCalled();
   });
 });
 

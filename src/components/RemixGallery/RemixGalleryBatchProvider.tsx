@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
 import { chunkStickerIds } from '~/components/Sticker/sticker.util';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -43,7 +43,20 @@ export function RemixGalleryBatchProvider({
   // filled in `allBrowsingLevelsFlag` and the thumbnails, which render as bare
   // `EdgeMedia` with no ImageGuard, came back at every level the viewer had
   // turned off.
-  const browsingLevel = useBrowsingLevelDebounced();
+  //
+  // 🔴 The VIEWER's level, matching `RemixGalleryCard`. This count and the
+  // gallery it opens are one concept and were reading two different numbers:
+  // wherever a page set an override — the site root, the home blocks, a
+  // collection — the count was page-scoped while the gallery was viewer-scoped,
+  // which is the count-versus-contents mismatch #4497 fixed on the other side.
+  // Justin's call, 2026-08-30.
+  //
+  // ⚠️ The consequence, since it is the argument against: on a page that
+  // deliberately narrows itself, the count and its thumbnails now follow the
+  // viewer rather than the page. Domain and policy caps still apply — they ride
+  // `forcedBrowsingLevel`, which this hook honours — so what widens is a page's
+  // curation choice, never a ceiling.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
 
   // The sticker batch's chunker, not a third copy of it. Its own tests pin the
   // property both providers depend on and neither spells out in code: chunking

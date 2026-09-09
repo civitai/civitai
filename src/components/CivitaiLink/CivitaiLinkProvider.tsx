@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
+import { getCivitaiLinkBaseUrl } from '~/components/CivitaiLink/civitai-link-api';
 import type {
   Command,
   ResponseResourcesList,
@@ -19,6 +20,7 @@ import type {
   WorkerOutgoingMessage,
   WorkerIncomingMessage,
   Instance,
+  PairingStatus,
 } from '~/workers/civitai-link-worker-types';
 import type { MantineColor } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -51,11 +53,14 @@ type CivitaiLinkState = {
   resources: ResponseResourcesList['resources'];
   error?: string;
   status: CivitaiLinkStatus;
+  pairingStatus?: PairingStatus;
   createInstance: (id?: number) => Promise<void>;
   deleteInstance: (id: number) => Promise<void>;
   renameInstance: (id: number, name: string) => Promise<void>;
   selectInstance: (id: number) => Promise<void>;
   deselectInstance: () => Promise<void>;
+  awaitPairing: () => Promise<void>;
+  cancelAwaitPairing: () => Promise<void>;
   runCommand: (command: CommandRequest) => Promise<{
     promise: Promise<unknown>;
     id: string;
@@ -64,6 +69,12 @@ type CivitaiLinkState = {
 };
 
 const CivitaiLinkCtx = createContext<CivitaiLinkState>({} as any);
+
+// Shown when the current origin can't reach a Link host that would accept its
+// session cookie (see `getCivitaiLinkBaseUrl`). Distinct from the
+// 'Civitai Link is not enabled' flag message: the feature IS enabled for this
+// user, it just cannot work from this domain.
+export const UNAVAILABLE_ON_DOMAIN = 'Civitai Link is not available on this domain';
 // #endregion
 
 // #region zu store
@@ -117,7 +128,7 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
                 title: 'Civitai Link',
                 message: `${inError ? 'Failed ' : ''}Added ${
                   activity.resource.modelName
-                } to SD Instance`,
+                } to your app`,
                 color: inError ? 'red' : 'green',
               });
             }
@@ -145,13 +156,21 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
   const [resources, setResources] = useState<ResponseResourcesList['resources']>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string>();
+  const [pairingStatus, setPairingStatus] = useState<PairingStatus>();
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
 
   //TODO.civitai-link - timeout when setting active instance
 
-  const getWorker = () => {
+  const getWorker = (): Promise<SharedWorker | undefined> => {
     if (workerPromise.current) return workerPromise.current;
     if (workerRef.current) return Promise.resolve(workerRef.current);
+    // The Link service authenticates ONLY via the civitai session cookie, which
+    // never reaches it from an origin on a different registrable domain (PR
+    // previews on *.civitaic.com, civitai.green). Spawning the worker there buys
+    // nothing but a confusing `request failed (401 )` and a socket pointed at a
+    // host that will never accept us — so don't. Checked here rather than in
+    // render so SSR and hydration can't disagree.
+    if (!getCivitaiLinkBaseUrl()) return Promise.resolve(undefined);
     // Built by `pnpm build:workers` (scripts/build-workers.mjs) → public/workers.
     // Static path (not new URL(import.meta.url)) to bypass Turbopack's broken
     // .ts SharedWorker compilation — see vercel/next.js#74842.
@@ -208,6 +227,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
         else if (data.type === 'activitiesUpdate') handleActivities(data.payload);
         else if (data.type === 'commandComplete') handleCommandComplete(data.payload);
         else if (data.type === 'socketConnection') setSocketConnected(data.payload);
+        else if (data.type === 'pairing') setPairingStatus(data.status);
       };
     });
 
@@ -216,12 +236,13 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 
   const boot = async () => {
     const worker = await getWorker();
+    if (!worker) setError(UNAVAILABLE_ON_DOMAIN);
     return worker;
   };
 
   const workerReq = async (req: WorkerIncomingMessage) => {
     const worker = await getWorker();
-    worker.port.postMessage(req);
+    worker?.port.postMessage(req);
   };
 
   const selectInstance = (id: number) => workerReq({ type: 'join', id });
@@ -229,12 +250,42 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
   const createInstance = (id?: number) => workerReq({ type: 'create', id });
   const deleteInstance = (id: number) => workerReq({ type: 'delete', id });
   const renameInstance = (id: number, name: string) => workerReq({ type: 'rename', id, name });
+  const awaitPairing = () => {
+    const known = instances ?? [];
+    setPairingStatus('waiting');
+    return workerReq({
+      type: 'awaitPairing',
+      knownIds: known.map((x) => x.id),
+      knownKeys: Object.fromEntries(known.map((x) => [x.id, x.key])),
+    });
+  };
+  const cancelAwaitPairing = () => {
+    setPairingStatus(undefined);
+    return workerReq({ type: 'cancelAwaitPairing' });
+  };
 
   const runCommand = async (command: CommandRequest, timeout = 0) => {
     const payload = command as Command;
     payload.id = uuid();
 
-    // Setup promise for later resolution
+    // No reachable Link host: deliver nothing and hand back an already-settled
+    // promise. Registering in `commandPromises` first would leak the entry
+    // forever — nothing can complete it, and the default `timeout = 0` arms no
+    // rejection timer, so `.promise` would stay pending for the page's life.
+    // Settle rather than reject: callers `await runCommand(...)` (the outer
+    // call) and none attach a handler to `.promise`, so a rejection here would
+    // surface as an unhandled rejection.
+    const worker = await getWorker();
+    if (!worker) {
+      setError(UNAVAILABLE_ON_DOMAIN);
+      return { promise: Promise.resolve(undefined), id: payload.id, cancel: () => {} };
+    }
+
+    // Setup promise for later resolution. Note the `timeout` clock now arms
+    // AFTER the worker is ready rather than before it — `getWorker()` above is
+    // the wait that moved. Unobservable today (`timeout` is not on the context
+    // type and no caller passes one), but it is the semantics whoever first
+    // passes a timeout will get.
     const promise = new Promise((resolve, reject) => {
       commandPromises[payload.id] = { resolve, reject };
       if (timeout <= 0) return;
@@ -245,6 +296,11 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
       }, timeout);
     });
 
+    // Deliberately still routed through `workerReq`, not a direct
+    // `worker.port.postMessage(...)`: `postMessage` takes `any`, so posting
+    // directly drops the `WorkerIncomingMessage` check on the one message that
+    // carries every resource add/remove/cancel. `getWorker()` is idempotent, so
+    // the second call here is just the cached promise.
     await workerReq({ type: 'command', payload });
     const cancel = () => {
       if (!commandPromises[payload.id]) return;
@@ -277,11 +333,14 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
         resources,
         error,
         status,
+        pairingStatus,
         createInstance,
         deleteInstance,
         renameInstance,
         selectInstance,
         deselectInstance,
+        awaitPairing,
+        cancelAwaitPairing,
         runCommand,
       }}
     >
@@ -305,11 +364,14 @@ export function CivitaiLinkProvider({ children }: { children: React.ReactElement
         resources: [],
         error: 'Civitai Link is not enabled',
         status: 'not-connected',
+        pairingStatus: undefined,
         createInstance: () => Promise.resolve(),
         deleteInstance: () => Promise.resolve(),
         renameInstance: () => Promise.resolve(),
         selectInstance: () => Promise.resolve(),
         deselectInstance: () => Promise.resolve(),
+        awaitPairing: () => Promise.resolve(),
+        cancelAwaitPairing: () => Promise.resolve(),
         runCommand: () => Promise.resolve({ promise: Promise.resolve(), id: '', cancel: () => {} }),
       }}
     >

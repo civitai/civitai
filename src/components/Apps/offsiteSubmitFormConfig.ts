@@ -6,6 +6,7 @@ import {
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import {
+  BETA_MESSAGE_MAX,
   OFFSITE_CHANGELOG_MAX,
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_DESCRIPTION_MAX,
@@ -57,6 +58,7 @@ export const OFFSITE_SUBMIT_LIMITS = {
   changelogMax: OFFSITE_CHANGELOG_MAX,
   urlMax: MAX_EXTERNAL_URL_LENGTH,
   sourceRepoUrlMax: MAX_REPOSITORY_URL_LENGTH,
+  betaMessageMax: BETA_MESSAGE_MAX,
   justificationMax: SCOPE_JUSTIFICATION_MAX_LENGTH,
 } as const;
 
@@ -77,6 +79,19 @@ export type OffsiteSubmitFormValues = {
   externalUrl: string;
   /** OPTIONAL public source-repository link ('' = none). */
   sourceRepoUrl: string;
+  /**
+   * AUTHOR-DECLARED beta status + an optional short note ('' = none).
+   *
+   * 🔴 EDIT-ONLY IN PRACTICE, and deliberately still part of this SHARED view-model. Only
+   * `ExternalListingEditForm` renders inputs for these; the CREATE wizard does not, because
+   * "is this app in beta" is a claim about a listing that exists rather than part of
+   * submitting one. They live here anyway so `editContextToForm` / `buildScalarPatch` — the
+   * pure functions that turn a listing into this shape and back into a patch — have one
+   * value shape to work with. On the create path they keep their blank defaults and
+   * `toSubmitExternalInput` never reads them, so nothing is sent.
+   */
+  isBeta: boolean;
+  betaMessage: string;
   tagline: string;
   description: string;
   category: MarketplaceCategory | null;
@@ -131,6 +146,8 @@ export function emptyOffsiteSubmitForm(): OffsiteSubmitFormValues {
     name: '',
     externalUrl: '',
     sourceRepoUrl: '',
+    isBeta: false,
+    betaMessage: '',
     tagline: '',
     description: '',
     category: null,
@@ -170,11 +187,17 @@ export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boole
     // A typed-but-unsaved source link IS work worth a confirmation before Cancel
     // discards it — the same claim every other text field here makes.
     'sourceRepoUrl',
+    // A typed-but-unsaved beta note is work too. `isBeta` itself is covered by the explicit
+    // comparison below rather than here — this list is string fields, and `String(false)` is
+    // the non-empty `'false'`, so including a boolean here would report EVERY blank form as
+    // dirty and pop the discard-confirmation on a Cancel that discards nothing.
+    'betaMessage',
     'tagline',
     'description',
     'changelog',
   ];
   if (texts.some((k) => String(values[k] ?? '').trim().length > 0)) return true;
+  if (values.isBeta !== blank.isBeta) return true;
   if (values.category !== blank.category) return true;
   if (values.contentRating !== blank.contentRating) return true;
   if (values.connectClientId !== blank.connectClientId) return true;
@@ -225,6 +248,14 @@ export function validateOffsiteSubmitForm(
   if (values.sourceRepoUrl.trim().length > 0) {
     const repo = validateRepositoryUrl(values.sourceRepoUrl);
     if (!repo.ok) errors.sourceRepoUrl = repo.error;
+  }
+
+  // The beta note is OPTIONAL and free text — the only rule is the shared bound, mirrored
+  // from the server constant so this inline error and the zod refusal cannot disagree about
+  // the number. Deliberately no content rule: this is the same trust posture `description`
+  // has, and the mitigations are the bound plus PLAIN-TEXT rendering, not a word filter.
+  if (values.betaMessage.length > BETA_MESSAGE_MAX) {
+    errors.betaMessage = `Beta message must be at most ${BETA_MESSAGE_MAX} characters.`;
   }
 
   if (values.tagline.length > OFFSITE_TAGLINE_MAX) {

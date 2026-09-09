@@ -6,6 +6,7 @@ import { getPerceptualHash } from '~/server/services/orchestrator/orchestrator.s
 import {
   COSMETIC_SIMILARITY_CLOSE_RATIO,
   COSMETIC_SIMILARITY_LIMIT,
+  COSMETIC_SIMILARITY_MAX_RATIO,
 } from '~/shared/constants/cosmetic-shop.constants';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -173,6 +174,7 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
 }
 
 export const COSMETIC_SIMILARITY_CLOSE_RATIO_KEY = 'cosmetic-similarity-close-ratio';
+export const COSMETIC_SIMILARITY_MAX_RATIO_KEY = 'cosmetic-similarity-max-ratio';
 
 /**
  * The near-identical threshold, as a fraction of the hash width.
@@ -205,6 +207,21 @@ export const COSMETIC_SIMILARITY_CLOSE_RATIO_KEY = 'cosmetic-similarity-close-ra
 const closeRatioSchema = z.number().min(0).lt(1);
 
 export async function getCosmeticSimilarityCloseRatio(): Promise<number> {
+  return readTunableRatio(COSMETIC_SIMILARITY_CLOSE_RATIO_KEY, COSMETIC_SIMILARITY_CLOSE_RATIO);
+}
+
+/**
+ * How far away a cosmetic can be and still be listed at all.
+ *
+ * Separate from the close ratio and looser: that one decides a red badge on a
+ * row already on screen, this one decides whether the row exists. Conflating
+ * them would mean every listed cosmetic is also flagged near-identical.
+ */
+export async function getCosmeticSimilarityMaxRatio(): Promise<number> {
+  return readTunableRatio(COSMETIC_SIMILARITY_MAX_RATIO_KEY, COSMETIC_SIMILARITY_MAX_RATIO);
+}
+
+async function readTunableRatio(key: string, fallback: number): Promise<number> {
   let value: unknown;
 
   // The READ is guarded, not only the value it returns. This is awaited inside
@@ -214,31 +231,31 @@ export async function getCosmeticSimilarityCloseRatio(): Promise<number> {
   // the confusion the card exists to remove.
   try {
     const row = await dbRead.keyValue.findUnique({
-      where: { key: COSMETIC_SIMILARITY_CLOSE_RATIO_KEY },
+      where: { key },
     });
     value = row?.value;
   } catch (error) {
     logToAxiom({
       type: 'error',
       name: 'cosmetic-phash',
-      message: `Could not read KeyValue '${COSMETIC_SIMILARITY_CLOSE_RATIO_KEY}'; using the built-in ${COSMETIC_SIMILARITY_CLOSE_RATIO}.`,
+      message: `Could not read KeyValue '${key}'; using the built-in ${fallback}.`,
       error: error instanceof Error ? error.message : String(error),
     }).catch(() => null);
-    return COSMETIC_SIMILARITY_CLOSE_RATIO;
+    return fallback;
   }
 
   // An absent row is the ordinary "not configured" state, not a malformed one.
-  if (value === null || value === undefined) return COSMETIC_SIMILARITY_CLOSE_RATIO;
+  if (value === null || value === undefined) return fallback;
 
   if (!closeRatioSchema.safeParse(value).success) {
     logToAxiom({
       type: 'warning',
       name: 'cosmetic-phash',
-      message: `KeyValue '${COSMETIC_SIMILARITY_CLOSE_RATIO_KEY}' is not a fraction between 0 and 1 (got ${JSON.stringify(
+      message: `KeyValue '${key}' is not a fraction between 0 and 1 (got ${JSON.stringify(
         value
-      )}); using the built-in ${COSMETIC_SIMILARITY_CLOSE_RATIO}.`,
+      )}); using the built-in ${fallback}.`,
     }).catch(() => null);
-    return COSMETIC_SIMILARITY_CLOSE_RATIO;
+    return fallback;
   }
 
   return value as number;
@@ -350,23 +367,36 @@ export async function getSimilarCosmetics({
       AND id != ${cosmeticId}
   `;
 
-  const nearest = candidates
-    .map(({ id, pHashHex }) => ({ id, distance: hammingDistanceHex(targetHex, pHashHex) }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, limit);
-
   // "Nothing was close" and "there was nothing to be close to" are the same empty
   // list and completely different verdicts. Right after a lane bump the candidate
   // set is empty by construction while the sweep drains, so an `ok` here would
   // hand a moderator a green all-clear built on zero comparisons — a check that
   // cannot fail, which is the failure this whole panel exists to remove.
+  //
+  // Checked before the ratios are read so the no-corpus path still costs nothing.
   if (!candidates.length) return { status: 'unavailable', reason: 'no-corpus' };
+
+  const [closeRatio, maxRatio] = await Promise.all([
+    getCosmeticSimilarityCloseRatio(),
+    getCosmeticSimilarityMaxRatio(),
+  ]);
+  const closeAtOrUnder = bits * closeRatio;
+  const showAtOrUnder = bits * maxRatio;
+
+  // The distance filter runs BEFORE the rank limit, and that order is the whole
+  // fix. Ranking first and taking ten meant the panel always listed ten, padding
+  // the tail with whatever happened to be least-far — routinely neighbours past
+  // the 1st percentile of unrelated artwork. A moderator reads a ranked list as a
+  // ranking, so ten rows of noise is worse than no panel at all.
+  const nearest = candidates
+    .map(({ id, pHashHex }) => ({ id, distance: hammingDistanceHex(targetHex, pHashHex) }))
+    .filter(({ distance }) => distance <= showAtOrUnder)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit);
 
   if (!nearest.length)
     return { status: 'ok', comparedAgainst: candidates.length, bits, matches: [] };
 
-  const closeRatio = await getCosmeticSimilarityCloseRatio();
-  const closeAtOrUnder = bits * closeRatio;
   const distanceById = new Map(nearest.map((n) => [n.id, n.distance]));
   const details = await dbRead.cosmetic.findMany({
     where: { id: { in: nearest.map((n) => n.id) } },

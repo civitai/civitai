@@ -65,6 +65,11 @@ export default function AppsPage() {
           to `/apps/<appBlockId>`, which is retired and redirects to the store
           detail. Restoring the old grid therefore no longer restores the old
           detail surface — undo the route retirement too if that is the intent.
+          ⚠️ It is also partial in a second way now: the legacy grid's 5-star
+          rating chip, its "Top rated" sort option and the whole `AppBlockReview`
+          system behind them were removed. `blocks.listAvailable` now defaults to
+          `popular` and exposes no rating at all, so the rollback restores the
+          old grid WITHOUT the old ranking.
 
           The grid will be EMPTY until the mod-only backfills run on prod
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
@@ -81,12 +86,10 @@ export default function AppsPage() {
             nothing is pushed down. For a viewer inside it, the prompt is one
             collapsed line above the search/sort row; the grid stays in view.
 
-            `active` is deliberately UNCONDITIONAL. The images-feed mount gates on
-            `feedSnapshot.source === 'bitdex'` because that prompt asks about one
-            specific backend and would misattribute reports about any other. This
-            one asks about the marketplace page as a whole, so there is no
-            equivalent condition and inventing one would only make the surface
-            silently dark. The Flipt flag is the rollout control. */}
+            `active` is deliberately UNCONDITIONAL: this prompt asks about the
+            marketplace page as a whole, so there is no backend-specific condition
+            to gate on and inventing one would only make the surface silently
+            dark. The Flipt flag is the rollout control. */}
         <FeedbackPrompt
           area="apps-marketplace"
           active
@@ -101,10 +104,19 @@ export default function AppsPage() {
             path: typeof window !== 'undefined' ? window.location.pathname : undefined,
           })}
         />
-        {/* Widened past the default `xl` (1320px) token. The width is UNCHANGED by
-            the larger-cover pass — the store now runs a 4-across grid at `xl` (see
-            `LISTING_GRID_SPAN`), and the container/grid pair is pinned together in
-            `appListingGrid.ts` so neither can drift alone. */}
+        {/* The container is `APPS_PAGE_CONTAINER_WIDTH` (2560), applied by
+            `AppsPageLayout` — not by anything on this page. This route takes no body
+            `measure`, so its content width IS the container width, which is what makes
+            the store's column arithmetic true.
+            The store spends that width as an explicit column ladder driven by a
+            container query (`LISTING_GRID_COLUMN_STEPS`): 1/2/3/4 exactly where the
+            retired Mantine breakpoints put them, then 5 from 2364px of grid — so this
+            page renders five columns at ~490.8px on a 2560 monitor (492.8px against the
+            2560 CONTAINER; a 2560 viewport loses ~10px more to the scroll container's
+            thin scrollbar where the platform reserves one), wider than the 460px four-up
+            the 1920 container shipped. A sixth column is declared at
+            2840 and is unreachable at this cap. Container and ladder are pinned
+            together in `appListingGrid.ts` and its test so neither can drift alone. */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

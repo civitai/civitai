@@ -198,12 +198,25 @@ export const ShopItem = ({
           >
             <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
+                {/*
+                  Shop grids render this card unvirtualised, so each one fetches its `<img>`
+                  up front. Deferring here rather than at EdgeImage: that component backs
+                  every image on the site, and no `loading="eager"` opt-out exists in the
+                  tree to escape a flipped default with.
+
+                  Covers the `<img>` branches only. A ContentDecoration paints its artwork as
+                  a CSS `background-image` (TwCosmeticWrapper's `--bgImage`), and a
+                  video-typed ProfileBackground routes to EdgeVideo, which never receives
+                  imgProps — neither is reachable by a `loading` attribute. Sizes and counts
+                  are in PR #4565; they are catalogue-side and decay, so they are not pinned
+                  here.
+                */}
                 {cosmetic ? (
-                  <CosmeticSample cosmetic={cosmetic} size="lg" />
+                  <CosmeticSample cosmetic={cosmetic} size="lg" lazy />
                 ) : itemMeta.coverUrl ? (
-                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
+                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} loading="lazy" />
                 ) : (
-                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon />
+                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon lazy />
                 )}
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>

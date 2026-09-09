@@ -28,6 +28,7 @@ import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -109,6 +110,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       getFullscreenSnapshot,
       getFullscreenServerSnapshot
     );
+    // The store is document-wide; fullscreen is requested on containerRef, so narrow it to
+    // this player before acting on it.
+    const isSelfFullscreen =
+      isFullscreen && !!containerRef.current && document.fullscreenElement === containerRef.current;
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
       defaultValue: muted ? 0 : 0.5,
@@ -135,6 +140,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
         if (ref.current) {
+          if (resumeId) recordVideoPosition(resumeId, ref.current.currentTime);
           ref.current.pause();
           ref.current.currentTime = 0;
         }
@@ -238,6 +244,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     );
 
     const showCustomControls = loaded && controls && !html5Controls;
+    // Navigating post -> image detail mounts a second player for the same media, so playback
+    // position is carried across. Only real players qualify; silent looping previews in feeds
+    // have nothing meaningful to resume.
+    const resumeId = imageId && (controls || html5Controls) ? imageId : undefined;
     // Drag-to-add is for control-less previews. Any controls (custom or native) take over pointer
     // interaction — disable drag so scrubbing/volume don't get hijacked into a video drag.
     const draggableEnabled = !!imageId && !controls && !html5Controls;
@@ -281,14 +291,23 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       const videoElem = ref.current;
       if (!videoElem) return;
       if (isCurrentStack && (canPlay || props.autoPlay)) {
+        // Coming back from the detail dialog, this element is still paused where it was left;
+        // the other player kept the position moving.
+        const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
+        if (resumeAt !== undefined && Math.abs(resumeAt - videoElem.currentTime) > 0.5) {
+          videoElem.currentTime = resumeAt;
+        }
         videoElem.play().catch(() => {
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
-      } else {
+      } else if (!isSelfFullscreen) {
+        // Fullscreen moves the element to the top layer, so it stops intersecting the
+        // observer's scroll-area root and canPlay goes false. Pausing on that would stop
+        // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay]);
+    }, [canPlay, isCurrentStack, props.autoPlay, isSelfFullscreen, resumeId]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -311,8 +330,19 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       <div
         ref={containerRef}
         {...wrapperProps}
+        onClick={(e) => {
+          // The post page wraps the media in a link, and fullscreen only repaints — clicks still
+          // bubble there and would route away mid-playback. preventDefault is needed alongside
+          // stopPropagation: the link's own handler is what suppresses the native navigation.
+          if (isSelfFullscreen) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          wrapperProps?.onClick?.(e);
+        }}
         className={clsx(
           styles.iosScroll,
+          props.controlsList?.includes('nofullscreen') && styles.noFullscreenButton,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
           'relative flex flex-col items-center justify-center overflow-hidden'
         )}
@@ -344,7 +374,17 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             // reveal once loaded — declarative replacement for the old imperative opacity writes.
             ...(fadeIn ? { opacity: loaded ? 1 : 0 } : {}),
           }}
-          onLoadedMetadata={markVideoReady}
+          onLoadedMetadata={(e) => {
+            markVideoReady();
+            const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
+            // Skip a position at the very end — that should start over, not resume a finished video.
+            if (resumeAt !== undefined && resumeAt < e.currentTarget.duration - 0.5) {
+              e.currentTarget.currentTime = resumeAt;
+            }
+          }}
+          onTimeUpdate={
+            resumeId ? (e) => recordVideoPosition(resumeId, e.currentTarget.currentTime) : undefined
+          }
           onLoadedData={handleLoadedData}
           onCanPlay={markVideoReady}
           onLoad={onLoad}

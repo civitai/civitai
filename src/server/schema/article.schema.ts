@@ -15,11 +15,14 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { imageSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
-import type { UnpublishReason } from '~/server/common/moderation-helpers';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
+import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
-const UnpublishReasons = Object.keys(unpublishReasons) as [UnpublishReason, ...UnpublishReason[]];
+const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
+  ArticleUnpublishReason,
+  ...ArticleUnpublishReason[]
+];
 
 export const articleRateLimits: RateLimit[] = [
   {
@@ -60,6 +63,10 @@ export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = baseQuerySchema.extend({
   query: z.string().optional(),
   tags: z.array(z.number()).optional(),
+  // `true` narrows to Civitai-published articles. `false` is NOT the inverse — it is
+  // absent, the same as not filtering — so a stale `?isOfficial=false` in a url cannot
+  // silently hide every official article from a feed.
+  isOfficial: z.boolean().optional(),
   favorites: z.boolean().optional(),
   hidden: z.boolean().optional(),
   username: z.string().optional(),
@@ -106,6 +113,9 @@ export const upsertArticleInput = z.object({
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),
+  // Moderator-only. `upsertArticleHandler` DROPS this field for everyone else rather
+  // than refusing the save — see the comment there for why refusing is the wrong shape.
+  isOfficial: z.boolean().optional(),
 });
 
 export type ResolveArticleImageScanInput = z.infer<typeof resolveArticleImageScanSchema>;
@@ -147,7 +157,9 @@ export type ArticleMetadata = {
 
 export const unpublishArticleSchema = z.object({
   id: z.number(),
-  reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as any)).optional(),
+  reason: z
+    .custom<ArticleUnpublishReason>((x) => UnpublishReasons.includes(x as ArticleUnpublishReason))
+    .optional(),
   customMessage: z.string().optional(),
 });
 
@@ -165,4 +177,10 @@ export const createArticleRatingReviewSchema = z.object({
 export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;
 export const getMyArticleRatingReviewSchema = z.object({
   articleId: z.number(),
+});
+
+export type SetArticleOfficialInput = z.infer<typeof setArticleOfficialSchema>;
+export const setArticleOfficialSchema = z.object({
+  id: z.number(),
+  isOfficial: z.boolean(),
 });

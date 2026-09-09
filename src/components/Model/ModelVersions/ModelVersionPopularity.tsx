@@ -69,7 +69,7 @@ export const ModelVersionPopularity = ({
 
   const { data, isLoading } = trpc.modelVersion.getPopularity.useQuery(
     { id: versionId },
-    { enabled: features.modelVersionPopularity }
+    { enabled: !!features.modelVersionPopularity }
   );
 
   const configKey = getImageGenConfigKey(versionId);

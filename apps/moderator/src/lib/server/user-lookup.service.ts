@@ -30,6 +30,9 @@ export type UserIdentity = {
   bannedAt: Date | null;
   banReason: string | null;
   banDetails: string | null;
+  /** A contest ban is a SEPARATE state from `bannedAt` — the account is otherwise in good standing
+   *  and can still post — so it has to be its own badge rather than a detail under the ban one. */
+  contestBannedAt: string | null;
   customerId: string | null;
   rewardsEligibility: string | null;
   /** Retool showed both as header chips on every section. */
@@ -378,7 +381,45 @@ export async function getLeaderboardRanks(userId: number): Promise<LeaderboardRa
   );
 }
 
-async function getIdentity(userId: number): Promise<UserIdentity | null> {
+/**
+ * One field of the ONE restriction row this panel speaks for.
+ *
+ * 🔴 `ORDER BY (ur.status = 'Pending') DESC` first, `ur.id DESC` second — a PENDING case outranks a
+ * merely newer one. The old ordering was newest-of-any-type, which was sound only while a user could
+ * hold at most one open row. Restrictions now dedupe PER TYPE, so two open cases can coexist: a
+ * Pending generation case sitting behind a later Upheld bot-account row rendered as *no open
+ * restriction at all*, leaving the account muted, the ruling form unrendered, and nobody able to see
+ * the open case. Preferring Pending is what makes that impossible in either direction.
+ *
+ * The panel shows ONE row on purpose — it is a header chip plus a single ruling form, and the audit
+ * queue is where a list of cases belongs. So the one it shows is the one that can still be acted on;
+ * among several Pending rows it shows the newest, and a resolved row is only ever shown when there is
+ * no open one.
+ *
+ * Written once and called three times rather than spelled out per column: the three subqueries must
+ * name the SAME row, and three copies of an ordering rule is three places for it to stop agreeing.
+ * `ur.id DESC` makes the order total, so all three resolve to that same row deterministically.
+ * `expr` is a literal from this module, never caller input.
+ *
+ * 🔴 `DESC NULLS LAST`, not bare `DESC`. Postgres sorts NULLs FIRST under `DESC`, so `(ur.status =
+ * 'Pending')` evaluating to NULL would outrank an actual Pending row and put the panel back in the
+ * state this ordering exists to prevent — a real open case hidden behind another row. `ur.status` is
+ * a NOT NULL enum today, which makes bare `DESC` correct by a precondition nothing here states or
+ * checks; spelling the null placement makes the ordering independent of the column's nullability
+ * instead of quietly depending on it.
+ */
+function restrictionField<T>(expr: string) {
+  return sql<T>`(
+    SELECT ${sql.raw(expr)} FROM "UserRestriction" ur
+    WHERE ur."userId" = u.id
+    ORDER BY (ur.status = 'Pending') DESC NULLS LAST, ur.id DESC
+    LIMIT 1
+  )`;
+}
+
+// Exported for the SQL-shape test — `getUserLookup` fans out over two databases, so reaching this
+// query through it would be a test about the mocks rather than about the ordering above.
+export async function getIdentity(userId: number): Promise<UserIdentity | null> {
   const row = await dbRead
     .selectFrom('User as u')
     .select([
@@ -408,24 +449,16 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       // jsonb path extraction has no builder equivalent.
       sql<string | null>`u.meta #>> '{banDetails,reasonCode}'`.as('banReason'),
       sql<string | null>`u.meta #>> '{banDetails,detailsInternal}'`.as('banDetails'),
+      sql<string | null>`u.meta #>> '{contestBanDetails,bannedAt}'`.as('contestBannedAt'),
       // Retool joined both of these into the LANDING query — they are header chips there, not
       // something a moderator has to go looking for. Without them an account with a CSAM report filed
       // against it renders as clean, and a system auto-mute is indistinguishable from a manual one.
       sql<number>`(SELECT COUNT(*)::int FROM "CsamReport" cr WHERE cr."userId" = u.id)`.as(
         'csamReportCount'
       ),
-      sql<string | null>`(
-        SELECT ur.status::text FROM "UserRestriction" ur
-        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
-      )`.as('restrictionStatus'),
-      sql<string | null>`(
-        SELECT ur.type FROM "UserRestriction" ur
-        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
-      )`.as('restrictionType'),
-      sql<number | null>`(
-        SELECT ur.id FROM "UserRestriction" ur
-        WHERE ur."userId" = u.id ORDER BY ur.id DESC LIMIT 1
-      )`.as('restrictionId'),
+      restrictionField<string | null>('ur.status::text').as('restrictionStatus'),
+      restrictionField<string | null>('ur.type').as('restrictionType'),
+      restrictionField<number | null>('ur.id').as('restrictionId'),
       // The ticket asked for open reports against the account "very clearly at the top". A report
       // nobody has ruled on changes what every other panel means, and it was reachable only by
       // navigating to the Reports section and reading a list.
@@ -736,46 +769,72 @@ export type UserSubscription = {
   currency: string | null;
 };
 
-// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design, and
-// referrals deliberately add a `referral` row that can outlast a paid one. Ordering by period end alone
-// would report the referral grant as the user's plan, so filter to the paid subscription the main app
-// treats as canonical and surface `buzzType` regardless.
-const PAID_BUZZ_TYPE = 'yellow';
+// CustomerSubscription is unique on (userId, buzzType) — multiple rows per user are by design. A paid
+// colour row and the two membership variants (`buzzPurchase`, `referral`) can coexist and disagree, so
+// the panel has to pick one to speak for. Source of truth for these two strings:
+// src/shared/utils/buzz-membership.ts (BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) and referral.service.ts.
+const BUZZ_PURCHASE_TYPE = 'buzzPurchase';
+const REFERRAL_TYPE = 'referral';
 
-export async function getSubscription(userId: number): Promise<UserSubscription | null> {
-  const select = [
-    'p.name as productName',
-    'p.provider',
-    'cs.status',
-    'cs.buzzType',
-    'cs.cancelAtPeriodEnd',
-    'cs.canceledAt',
-    'cs.currentPeriodEnd',
-    // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
-    // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
-    'pr.interval',
-    'pr.unitAmount',
-    'pr.currency',
-  ] as const;
+// A `buzzType` that names a subscription KIND rather than a Buzz colour is a perks-only variant; every
+// other value is a paid/canonical membership row.
+const isCanonicalRow = (buzzType: string | null) =>
+  buzzType !== BUZZ_PURCHASE_TYPE && buzzType !== REFERRAL_TYPE;
 
-  const paid = await dbRead
+// Live = the statuses the main app counts as a real membership (subscriptions.service.ts uses
+// `['active','trialing']` and excludes past_due/unpaid as failed) AND the period has not ended — status
+// alone is not liveness, since a lapsed row keeps `status = 'active'` until something reconciles it. A
+// past_due/unpaid paid row must NOT outrank an active variant, or it re-hides a working membership.
+const LIVE_STATUSES = new Set(['active', 'trialing']);
+const isLiveRow = (row: UserSubscription, now: Date) =>
+  LIVE_STATUSES.has(row.status) && row.currentPeriodEnd != null && row.currentPeriodEnd > now;
+
+// Which of several coexisting rows the panel shows. NOT a product ruling on "is this user a member" —
+// that shared cross-surface precedence is ticket item 1, still awaiting a decision. This only orders the
+// display so an active membership is never hidden behind a lapsed one: a live paid row wins (keeping a
+// longer-dated referral grant from outranking it), then any live variant (the buzz-bought case the
+// panel used to drop), then a lapsed paid row, then whatever is most recent.
+function displayPriority(row: UserSubscription, now: Date) {
+  const live = isLiveRow(row, now);
+  const canonical = isCanonicalRow(row.buzzType);
+  if (live && canonical) return 3;
+  if (live) return 2;
+  if (canonical) return 1;
+  return 0;
+}
+
+export async function getSubscription(
+  userId: number,
+  now = new Date()
+): Promise<UserSubscription | null> {
+  const rows = (await dbRead
     .selectFrom('CustomerSubscription as cs')
     .leftJoin('Product as p', 'p.id', 'cs.productId')
     .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
-    .select(select)
+    .select([
+      'p.name as productName',
+      'p.provider',
+      'cs.status',
+      'cs.buzzType',
+      'cs.cancelAtPeriodEnd',
+      'cs.canceledAt',
+      'cs.currentPeriodEnd',
+      // Retool's UserSubscriptionStatusAnnual was a second query for exactly this column. Annual vs
+      // monthly is what decides the amount on a refund or a chargeback, so it rides the one query.
+      'pr.interval',
+      'pr.unitAmount',
+      'pr.currency',
+    ])
     .where('cs.userId', '=', userId)
-    .where('cs.buzzType', '=', PAID_BUZZ_TYPE)
-    .executeTakeFirst();
-  if (paid) return paid as UserSubscription;
+    .execute()) as UserSubscription[];
 
-  // No paid row — show whatever they do have rather than nothing, with buzzType visible.
-  const other = await dbRead
-    .selectFrom('CustomerSubscription as cs')
-    .leftJoin('Product as p', 'p.id', 'cs.productId')
-    .leftJoin('Price as pr', 'pr.id', 'cs.priceId')
-    .select(select)
-    .where('cs.userId', '=', userId)
-    .orderBy('cs.currentPeriodEnd', 'desc')
-    .executeTakeFirst();
-  return (other as UserSubscription | undefined) ?? null;
+  if (rows.length === 0) return null;
+
+  return rows.reduce((best, row) => {
+    const byPriority = displayPriority(row, now) - displayPriority(best, now);
+    if (byPriority !== 0) return byPriority > 0 ? row : best;
+    return (row.currentPeriodEnd?.getTime() ?? 0) > (best.currentPeriodEnd?.getTime() ?? 0)
+      ? row
+      : best;
+  });
 }

@@ -44,6 +44,27 @@ export const useMutateComment = () => {
     },
   });
 
+  const toggleThreadMuteMutation = trpc.commentv2.toggleThreadMute.useMutation({
+    async onSuccess(result, { commentId }) {
+      // Invalidate rather than write the shape by hand. `own` and `ancestor` are not exclusive, so
+      // deleting your own row can leave a mute above still suppressing — a hand-written
+      // `viaAncestor: false` claimed otherwise, and because it was `setData` the wrong state stuck
+      // until something else refetched. Only the server can answer what is left.
+      await queryUtils.commentv2.getThreadMuted.invalidate({ commentId });
+      showSuccessNotification({
+        message: result.muted
+          ? "You won't be notified about replies in this thread"
+          : 'Your mute on this thread has been removed',
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to update thread notifications',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const handleToggleHide = (payload: ToggleHideCommentInput) => {
     if (toggleHideCommentMutation.isPending) return;
     return toggleHideCommentMutation.mutateAsync(payload);
@@ -64,5 +85,7 @@ export const useMutateComment = () => {
     togglePinned: handleTogglePinned,
     setTosViolation: setTosViolationMutation.mutateAsync,
     settingTosViolation: setTosViolationMutation.isPending,
+    toggleThreadMute: toggleThreadMuteMutation.mutateAsync,
+    togglingThreadMute: toggleThreadMuteMutation.isPending,
   };
 };

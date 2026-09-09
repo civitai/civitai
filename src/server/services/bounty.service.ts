@@ -51,7 +51,8 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import type { BlurbUse } from '~/server/services/blurb-materialize.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -183,11 +184,17 @@ export const createBounty = async ({
   expiresAt: incomingExpiresAt,
   buzzType,
   addLockedProperties,
+  blurbUses,
   ...data
 }: CreateBountyInput & {
   userId: number;
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
+  /**
+   * `undefined` means the feature was not evaluated for the owner and must NOT reconcile — an
+   * empty array would delete every reference row. See `BlurbExpansion`.
+   */
+  blurbUses?: BlurbUse[];
 }) => {
   const { userId } = data;
   switch (currency) {
@@ -302,6 +309,14 @@ export const createBounty = async ({
           break;
       }
 
+      if (blurbUses)
+        await reconcileBlurbReferences({
+          entityType: 'Bounty',
+          entityId: bounty.id,
+          uses: blurbUses,
+          tx,
+        });
+
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
@@ -333,12 +348,18 @@ export const updateBountyById = async ({
   entryLimit,
   isModerator,
   addLockedProperties,
+  blurbUses,
   ...data
 }: UpdateBountyInput & {
   userId: number;
   isModerator?: boolean;
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
+  /**
+   * `undefined` means the feature was not evaluated for the owner and must NOT reconcile — an
+   * empty array would delete every reference row. See `BlurbExpansion`.
+   */
+  blurbUses?: BlurbUse[];
 }) => {
   // Convert dates to UTC for storing
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
@@ -444,6 +465,14 @@ export const updateBountyById = async ({
         });
       }
 
+      if (blurbUses)
+        await reconcileBlurbReferences({
+          entityType: 'Bounty',
+          entityId: bounty.id,
+          uses: blurbUses,
+          tx,
+        });
+
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
@@ -469,7 +498,10 @@ export const upsertBounty = async ({
   buzzType,
   ...data
 }: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
-  await throwOnBlockedLinkDomain(data.description);
+  await throwOnBlockedUserContent([data.name, data.description], {
+    isModerator,
+    surface: 'bounty',
+  });
 
   const stored = id
     ? await dbRead.bounty.findUnique({
@@ -499,7 +531,7 @@ export const upsertBounty = async ({
 
   // The guard above saw the CLIENT's html. Blurb bodies were spliced in since, so the string
   // about to be written is one it never checked.
-  await throwOnBlockedLinkDomain(data.description);
+  await throwOnBlockedUserContent(data.description, { isModerator, surface: 'bounty' });
 
   const addLockedProperties: string[] = [];
   if (!isModerator) {
@@ -534,13 +566,8 @@ export const upsertBounty = async ({
       userId,
       isModerator,
       addLockedProperties,
+      blurbUses: expansion.evaluated ? expansion.uses : undefined,
     });
-    if (updated && expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'Bounty',
-        entityId: updated.id,
-        uses: expansion.uses,
-      });
     if (updated) await queueBountySearchIndexUpdate(updated.id);
     return updated;
   } else {
@@ -551,13 +578,12 @@ export const upsertBounty = async ({
     }
 
     const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
-    const created = await createBounty({ ...createInput, userId, addLockedProperties });
-    if (expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'Bounty',
-        entityId: created.id,
-        uses: expansion.uses,
-      });
+    const created = await createBounty({
+      ...createInput,
+      userId,
+      addLockedProperties,
+      blurbUses: expansion.evaluated ? expansion.uses : undefined,
+    });
     await queueBountySearchIndexUpdate(created.id);
     return created;
   }
@@ -589,7 +615,7 @@ export async function applyBountyContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and this path has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'bounty' });
 
   const stored = await dbWrite.bounty.findUnique({
     where: { id },

@@ -16,6 +16,7 @@ import {
   type UpsertAppListingReviewInput,
 } from '~/server/schema/blocks/app-listing-review.schema';
 import { bustCacheTag } from '~/server/utils/cache-helpers';
+import { APP_LISTING_RECOMMEND_MEAN_TAG } from '~/server/services/blocks/app-listing-cache.constants';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -28,7 +29,9 @@ import {
  * The write half of `AppListingReview` (the read/DISPLAY of the recommend
  * rollup + the model already existed — see `app-listing.service.recommendRollup`
  * + the P0 `AppListingMetric` table). Steam-style RECOMMEND: a boolean
- * thumbs-up/down (NOT the legacy AppBlock 5-star `appBlockReview.service`).
+ * thumbs-up/down. (This SUPERSEDED the legacy AppBlock 5-star
+ * `appBlockReview.service`, which has since been removed — thumbs are now the
+ * only app-review system.)
  *
  * ELIGIBILITY (locked W13 decision — enforced here; the router adds the flag +
  * auth gates): any signed-in user EXCEPT the listing OWNER, for BOTH `onsite`
@@ -57,14 +60,17 @@ import {
 // getGlobalRecommendMean, tag below, 1h). The per-listing card/detail counts are
 // read straight off the AppListingMetric rollup (uncached), so only the global
 // mean needs busting when a review shifts the counters.
-const GLOBAL_RECOMMEND_MEAN_TAG = 'app-listing:recommend-global-mean';
+// 🔴 The tag string is now the SHARED constant, not a private literal re-spelled
+// here. The producer (`getGlobalRecommendMean`, which writes the tagged key) and
+// this, its only buster, previously declared the same string independently — so a
+// rename on one side silently stopped busting the other. Both read the leaf module.
 
 /**
  * Bust the store-wide recommend-mean cache after a review write. Fire-and-forget
  * (a cache-bus outage must never fail the review).
  */
 async function bustRecommendMeanCache(): Promise<void> {
-  await bustCacheTag([GLOBAL_RECOMMEND_MEAN_TAG]);
+  await bustCacheTag([APP_LISTING_RECOMMEND_MEAN_TAG]);
 }
 
 /** The compound-unique lookup key for `AppListingReview(appListingId, userId)`. */
@@ -86,8 +92,11 @@ function reviewKey(appListingId: string, userId: number) {
 // 🔴 "No recompute" is a TWO-SIDED contract, not a property of this file. The
 // `app_listing_metrics` row is ALSO written by the metric processor
 // (`src/server/metrics/appListing.metrics.sql.ts`), which deliberately names only
-// `install_count` in its INSERT and ON CONFLICT lists so a row created here
-// survives the rollup untouched. Each side pins the other:
+// `install_count` / `open_count` in its INSERT and ON CONFLICT lists so a row
+// created here survives the rollup untouched. Both of those counters are FULL
+// RECOMPUTES (installs from `block_user_subscriptions`, plays from the ClickHouse
+// `App_Open` event stream) — which is what makes that side a legal writer under
+// the last line of this paragraph. Each side pins the other:
 //   - that side is pinned by `src/server/metrics/__tests__/appListing.metrics.test.ts`
 //     ("NEVER writes thumbs_up_count / thumbs_down_count");
 //   - this side is pinned by the writer-set ledger in

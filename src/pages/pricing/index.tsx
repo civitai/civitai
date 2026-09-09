@@ -11,7 +11,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -48,6 +48,7 @@ export default function Pricing() {
   };
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
@@ -78,7 +79,7 @@ export default function Pricing() {
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen, reason, serverDomains.green]);
+  }, [selectedBuzzType, features.isGreen, reason, serverDomains.green, syncAccount]);
 
   // If no buzz type is selected and not on green environment, show selection screen
   if (!features.isGreen && !selectedBuzzType) {

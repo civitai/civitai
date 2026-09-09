@@ -62,7 +62,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
@@ -178,6 +178,7 @@ export const CreatorProgramV2 = () => {
 
 const MembershipLapsedCard = () => {
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   // Memberships are only purchasable on the green domain; sync-login carries the
   // session across when the current domain differs.
   const renewUrl = syncAccount(`//${serverDomains.green}/pricing`);

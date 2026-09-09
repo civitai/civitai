@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
@@ -101,6 +102,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
   collectionSupportsCollaborators,
@@ -762,6 +764,65 @@ async function applyCollectionAutoTag(
   }
 }
 
+type SubmissionNotifyCollection = { id: number; name: string; userId: number };
+
+// Callers have already committed the item write, so nothing here may throw: an error for a submit
+// that succeeded gets retried, and double-submits.
+async function notifyCollectionSubmissionReceived({
+  collections,
+  submitterId,
+}: {
+  collections: SubmissionNotifyCollection[];
+  submitterId: number;
+}) {
+  if (collections.length === 0) return;
+  const collectionIds = collections.map((c) => c.id);
+
+  try {
+    const [managers, judges] = await Promise.all([
+      dbRead.collectionContributor.findMany({
+        where: {
+          collectionId: { in: collectionIds },
+          permissions: { has: CollectionContributorPermission.MANAGE },
+        },
+        select: { collectionId: true, userId: true },
+      }),
+      // Every challenge entry collection is owned by a judge's user account
+      // (resolveChallengeCollectionOwnerId), so without this each entry notifies the judge.
+      dbRead.challengeJudge.findMany({ select: { userId: true } }),
+    ]);
+    const judgeUserIds = new Set(judges.map((j) => j.userId));
+
+    await Promise.all(
+      collections.map((collection) => {
+        const recipients = uniq([
+          collection.userId,
+          ...managers.filter((m) => m.collectionId === collection.id).map((m) => m.userId),
+        ]).filter((id) => id !== submitterId && !judgeUserIds.has(id));
+        if (recipients.length === 0) return;
+
+        return createNotification({
+          userIds: recipients,
+          type: 'collection-submission-received',
+          category: NotificationCategory.Update,
+          key: `collection-submission-received:${collection.id}:${uuid()}`,
+          details: { collectionId: collection.id, collectionName: collection.name },
+        });
+      })
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'collection-submission-notify-failed',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      collectionIds,
+    }).catch(() => {
+      // swallow — best-effort logging must never break the submit it is observing
+    });
+  }
+}
+
 export const saveItemInCollections = async ({
   input: {
     collections: upsertCollectionItems,
@@ -990,7 +1051,7 @@ export const saveItemInCollections = async ({
       })
       .filter(isDefined);
 
-    // The "Save to collection" modal is the other door into removal, and a delete through it
+    // The "Add to Collection" modal is the other door into removal, and a delete through it
     // would let the job re-add the image the removal was meant to stop.
     const autoFeatureUserId = await getAutoFeatureUserId();
     const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
@@ -1060,54 +1121,17 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // Excluding `unwrittenCollectionIds` keeps a no-op re-save from reading as a second submission.
   const reviewCollectionIds = uniq(
-    data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
+    data
+      .filter((d) => d.status === CollectionItemStatus.REVIEW)
+      .map((d) => d.collectionId)
+      .filter((id) => !unwrittenCollectionIds.has(id))
   );
-  if (reviewCollectionIds.length > 0) {
-    try {
-      const managers = await dbRead.collectionContributor.findMany({
-        where: {
-          collectionId: { in: reviewCollectionIds },
-          permissions: { has: CollectionContributorPermission.MANAGE },
-        },
-        select: { collectionId: true, userId: true },
-      });
-
-      await Promise.all(
-        reviewCollectionIds.map((collectionId) => {
-          const collection = collections.find((c) => c.id === collectionId);
-          if (!collection) return;
-
-          const recipients = uniq([
-            collection.userId,
-            ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
-          ]).filter((id) => id !== userId);
-          if (recipients.length === 0) return;
-
-          return createNotification({
-            userIds: recipients,
-            type: 'collection-submission-received',
-            category: NotificationCategory.Update,
-            key: `collection-submission-received:${collectionId}:${uuid()}`,
-            details: { collectionId, collectionName: collection.name },
-          });
-        })
-      );
-    } catch (error) {
-      // The item write above already committed — a failure resolving recipients or notifying
-      // them must not fail the submit itself, or the caller sees an error for an action that
-      // actually succeeded and is likely to retry and double-submit.
-      logToAxiom({
-        type: 'error',
-        name: 'collection-submission-notify-failed',
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        collectionIds: reviewCollectionIds,
-      }).catch(() => {
-        // swallow — best-effort logging must never break the submit it is observing
-      });
-    }
-  }
+  await notifyCollectionSubmissionReceived({
+    collections: collections.filter((c) => reviewCollectionIds.includes(c.id)),
+    submitterId: userId,
+  });
 
   // The feed index carries collection membership for hubs, and nothing about a
   // CollectionItem write reaches it on its own. Covers both directions: the
@@ -1175,6 +1199,15 @@ export const upsertCollection = async ({
     tags,
     ...collectionItem
   } = input;
+
+  // `collectionItem.note` is NOT dead. `upsertCollectionInput` merges `collectionItemSchema`, so
+  // `note` arrives from the client and reaches `items: { create: { ...collectionItem } }` below.
+  // A grep for `note:` in a write position does not find it, because it is spread — this check was
+  // deleted once on that evidence and had to be restored.
+  await throwOnBlockedUserContent([name, description, collectionItem.note], {
+    isModerator,
+    surface: 'collection',
+  });
 
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image
@@ -2111,6 +2144,8 @@ export const deleteCollectionById = async ({
     throw throwBadRequestError('You cannot delete a bookmark collection');
   }
 
+  await detachPostsFromCollection(id);
+
   const res = await dbWrite.collection.delete({ where: { id } });
 
   // UserHubSource.targetId is polymorphic, so there is no foreign key to cascade
@@ -2487,24 +2522,78 @@ export const updateCollectionItemsStatus = async ({
   return collection;
 };
 
+/**
+ * Accepted-item counts per collection.
+ *
+ * `browsingLevel` is OPTIONAL and defaults to today's behaviour — omit it and the
+ * emitted SQL is the unclamped query this function has always run (only the table
+ * alias is new), so every existing caller is unaffected. Supply it and the result
+ * is the CLAMPED count: how many items a viewer at that maturity ceiling can
+ * actually see.
+ *
+ * 🔴 THE CLAMPED FORM IS EXACT AND EXPENSIVE — CHECK THE POPULATION BEFORE USING
+ * IT. Unclamped, this is an Index Only Scan on the covering (collectionId, status)
+ * index with no heap access; the clamp's join to "Image" forfeits that index and
+ * becomes a nested loop over every accepted item. Measured on a production-scale
+ * replica: 85 ms unclamped vs 2829 ms clamped over one App Blocks discovery
+ * over-fetch window (97 collections, 298,469 accepted items). Its one production
+ * caller is `mode=mine` of the blocks collections endpoint, whose population is
+ * the subject's own already-sliced collections — bounded, and nothing like the
+ * popularity-sorted discovery window. Public discovery deliberately does NOT use
+ * it; it samples instead (`getCollectionPlayableSample`).
+ *
+ * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
+ * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId`,
+ * so model / post / article collections are counted here too. `nsfwLevel` lives on
+ * `Image`, so an INNER `JOIN "Image"` would silently return 0 for every one of
+ * those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
+ * escape: a non-image item has no image maturity to test and is kept
+ * unconditionally.
+ *
+ * An item whose `imageId` points at a row that no longer exists yields a NULL
+ * `nsfwLevel`, and both halves of the bitwise test are NULL → the item is NOT
+ * counted. That is deliberate and fail-closed: an image we cannot rate is one we
+ * cannot promise is playable, and it matches `getFallbackCoverImages`, whose
+ * inner join drops the same row.
+ *
+ * The maturity test itself is BITWISE (`nsfwLevel & browsingLevel != 0`, plus
+ * unrated 0) — the identical authority the images service, the collection detail
+ * path and `getFallbackCoverImages` use. A `<=` would be wrong: level 29 is a
+ * mixed bucket that intersects a SFW ceiling.
+ */
 export function getCollectionItemCount({
   collectionIds: ids,
   status,
+  browsingLevel,
 }: {
   collectionIds: number[];
   status?: CollectionItemStatus;
+  browsingLevel?: number;
 }) {
   if (ids.length === 0) return [] as { id: number; count: number }[];
 
-  const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
-  if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
+  const where = [Prisma.sql`ci."collectionId" IN (${Prisma.join(ids)})`];
+  if (status) where.push(Prisma.sql`ci."status" = ${status}::"CollectionItemStatus"`);
+  // `!= null`, NOT truthiness: a ceiling of 0 is a real (if degenerate) ceiling
+  // that permits only unrated items, and `if (browsingLevel)` would silently read
+  // it as "no clamp" — i.e. return the FULL count for the most restrictive viewer.
+  if (browsingLevel != null)
+    where.push(
+      Prisma.sql`(ci."imageId" IS NULL OR (i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`
+    );
+
+  // Joined only when clamping, so the unclamped plan every existing caller relies
+  // on is untouched.
+  const join =
+    browsingLevel != null ? Prisma.sql`LEFT JOIN "Image" i ON i."id" = ci."imageId"` : Prisma.empty;
 
   return dbRead.$queryRaw<{ id: number; count: number }[]>`
-    SELECT "collectionId" as "id", COUNT(*) as "count"
-    FROM "CollectionItem"
+    SELECT ci."collectionId" as "id", COUNT(*) as "count"
+    FROM "CollectionItem" ci
+    ${join}
     WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
-      AND ("imageId" IS NOT NULL OR "modelId" IS NOT NULL OR "postId" IS NOT NULL OR "articleId" IS NOT NULL)
-    GROUP BY "collectionId"
+      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL)
+    GROUP BY ci."collectionId"
   `;
 }
 
@@ -3267,6 +3356,14 @@ export const bulkSaveItems = async ({
 
   // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
   await applyCollectionAutoTag(metadata, savedImageIds);
+
+  // After the entry-fee block, so an entry rolled back for non-payment is never announced.
+  if (count > 0 && status === CollectionItemStatus.REVIEW) {
+    await notifyCollectionSubmissionReceived({
+      collections: [collection],
+      submitterId: userId,
+    });
+  }
 
   // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);

@@ -71,10 +71,15 @@ function sourceAspectRatio(image: { width?: number | null; height?: number | nul
  *   `<BrowsingLevelProvider browsingLevel={image.nsfwLevel}>`, so the strict
  *   `Flags.intersects` test below compares the source against the REMIX's level.
  *   The domain cap still wins (`forcedBrowsingLevel` takes priority) and
- *   `ImageGuard2` still blurs from the viewer's own level, and `RemixGalleryCard`
- *   beside this reads the same overridden value — so this is the established
- *   detail-page pattern, not something this card invents. Do not describe it as
- *   the viewer-specific gate; it is not one.
+ *   `ImageGuard2` still blurs from the viewer's own level. Do not describe this
+ *   as the viewer-specific gate; it is not one.
+ *
+ *   ⚠️ `RemixGalleryCard` beside this NO LONGER reads the overridden value — it
+ *   was moved to the viewer's level deliberately, because it lists OTHER
+ *   people's images and scoping those to this image's rating hid entries from
+ *   the viewers entitled to see them. This card is different: its subject IS
+ *   this image's own provenance, so the host's rating is the coherent scope.
+ *   The two are meant to differ; do not harmonise them by copying either.
  */
 export const ImageRemixOfDetails = ({ imageId }: { imageId: number }) => {
   const { data: generationData } = trpc.image.getGenerationData.useQuery({ id: imageId });

@@ -57,7 +57,7 @@ import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -81,6 +81,7 @@ import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
+  baseTypePrefersCaptions,
   formatTrainingValidationError,
   getTrainingFields,
   getAiToolkitEcosystem,
@@ -103,21 +104,6 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
 
-const prefersCaptions: TrainingBaseModelType[] = [
-  'flux',
-  'flux2',
-  'flux2klein',
-  'sd35',
-  'hunyuan',
-  'wan',
-  'chroma',
-  'zimage',
-  'ernie',
-  'hidream-o1',
-  'acestep15',
-  'acestep15xl',
-];
-
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
@@ -134,6 +120,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const { color: buzzColor } = useBuzzCurrencyConfig(selectedType);
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const yellowOnGreen = features.isGreen && selectedType === 'yellow';
 
   const { addRun, removeRun, updateRun } = trainingStore;
@@ -1170,7 +1157,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Stack>
       )}
 
-      {prefersCaptions.includes(selectedRun.baseType) &&
+      {baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -1199,7 +1186,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </AlertWithIcon>
         )}
 
-      {!prefersCaptions.includes(selectedRun.baseType) &&
+      {!baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon

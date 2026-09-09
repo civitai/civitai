@@ -66,6 +66,7 @@ export const cosmeticShopRouter = router({
       return upsertCosmeticShopItem({
         ...input,
         userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
       });
     }),
   deleteShopItem: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => {

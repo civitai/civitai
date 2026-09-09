@@ -5,6 +5,11 @@ import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
+import {
+  selectUndismissedAnnouncements,
+  useDismissedCreatorAnnouncements,
+} from '~/components/Announcements/creator-announcement-dismissals';
+import { useQueryFollowedAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
@@ -76,6 +81,59 @@ export function useGetAnnouncementsAsNotifications({
   );
 }
 
+/**
+ * The Announcements tab holds two independently-fetched, independently-dismissed sets —
+ * Civitai's own and the ones from creators you follow — and its badge is the count of what
+ * is undismissed across both.
+ *
+ * It takes the followed announcements and the dismissal set rather than a number, so the
+ * call site has nothing left to get wrong: the bug this fixes was the creator half never
+ * reaching the counter, and a function that accepts a count cannot tell a real one from a
+ * zero. Everything that decides the number is inside here, where a test can reach it.
+ */
+export function withAnnouncementCounts<T extends { all: number }>(
+  counts: T,
+  {
+    platform,
+    followed,
+    dismissedIds,
+  }: { platform: number; followed: { id: number }[]; dismissedIds: number[] }
+): T & { announcements: number } {
+  const announcements = platform + selectUndismissedAnnouncements(followed, dismissedIds).length;
+  return { ...counts, all: counts.all + announcements, announcements };
+}
+
+/**
+ * Which halves the "mark as read" button clears, per tab.
+ *
+ * The announcements half is cleared from the All tab too, not just the Announcements tab:
+ * the bell renders `all`, which now includes announcements, so a button labelled "Mark all
+ * as read" that skipped them would drop the bell to a number the tab it was clicked on has
+ * no way to clear.
+ */
+export function resolveMarkAsRead(selectedTab: string | null) {
+  const isAnnouncementsTab = selectedTab === 'announcements';
+  return {
+    clearsAnnouncements: isAnnouncementsTab || !selectedTab,
+    marksNotificationsRead: !isAnnouncementsTab,
+  };
+}
+
+/**
+ * Clearing the announcements half of the tab: both sets, or the badge goes up on a creator
+ * post and then refuses to come down — a worse bug than the uncounted one this fixes.
+ *
+ * Takes its two dismissers so the pair can be asserted. Dropping either call is otherwise
+ * invisible: they write to browser storage and return nothing.
+ */
+export function clearAnnouncements(
+  { platformIds, creatorIds }: { platformIds: number[]; creatorIds: number[] },
+  dismiss: { platform: (ids: number[]) => void; creator: (ids: number[]) => void }
+) {
+  dismiss.platform(platformIds);
+  dismiss.creator(creatorIds);
+}
+
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
@@ -87,6 +145,17 @@ export const useQueryNotificationsCount = () => {
   const { data: allAnnouncements, isLoading: announcementsLoading } = useGetAnnouncements();
   const announcements = allAnnouncements.filter((x) => !x.dismissed);
 
+  // Followed-creator announcements are the SAME tab and the same dismiss affordance as the
+  // rows above, so they belong in the same number — but they are a different query with a
+  // different dismissal store, so the count has to be assembled here rather than server-side.
+  // Same input as the panel's own call, so the two share one cache entry instead of fetching
+  // twice.
+  const { announcements: followedAnnouncements } = useQueryFollowedAnnouncements(!!currentUser);
+  const dismissedCreatorIds = useDismissedCreatorAnnouncements();
+
+  // Deliberately NOT gated on the followed query's loading state: this hook drives the header
+  // bell on every page, and adding a third gate would blank the whole badge until a query the
+  // rest of it does not need has landed.
   return isLoading || announcementsLoading || !data || !announcements
     ? {
         all: 0,
@@ -105,7 +174,11 @@ export const useQueryNotificationsCount = () => {
         pendingStickerPlacements: 0,
         pendingRemixSubmissions: 0,
       }
-    : { ...data, all: data.all + announcements.length, announcements: announcements.length };
+    : withAnnouncementCounts(data, {
+        platform: announcements.length,
+        followed: followedAnnouncements,
+        dismissedIds: dismissedCreatorIds,
+      });
 };
 
 /**

@@ -1,5 +1,5 @@
 import type { ButtonVariant } from '@mantine/core';
-import { Button, Title, useMantineTheme } from '@mantine/core';
+import { alpha, Button, Title, useMantineTheme } from '@mantine/core';
 import clsx from 'clsx';
 import React from 'react';
 import { ANNOUNCEMENT_IMAGE_WIDTH } from '~/components/Announcements/announcement-image';
@@ -9,6 +9,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 
 export type AnnouncementCardAction = {
   link: string;
@@ -39,6 +41,39 @@ export type AnnouncementCardCover =
       height?: number | null;
     };
 
+type AnnouncementCardProps = {
+  title?: string;
+  content: string;
+  color: string;
+  cover?: AnnouncementCardCover | null;
+  actions?: AnnouncementCardAction[];
+  /**
+   * Notified when one of `actions` is pressed, before the navigation. Analytics only, and
+   * deliberately a callback rather than tracking done here: this component renders sitewide
+   * and creator announcements alike, and only the creator ones are instrumented. Passing the
+   * decision to the call site is what keeps that boolean out of a component whose contract is
+   * layout.
+   */
+  onActionClick?: (action: AnnouncementCardAction, index: number) => void;
+  /**
+   * Entities this card should record an impression for once it has been half visible for a
+   * continuous second. Omitted by the sitewide surface, which is not instrumented — the hook
+   * disables itself on an empty list, so "creator only" is a property of who passes this.
+   */
+  impressions?: ImpressionTarget[];
+  /**
+   * A full-width bar across the top of the card, outside the cover/content row. Attribution
+   * for a card Civitai did not write goes here rather than beside the title: the frame is
+   * what a reader takes in before any of the card's own content.
+   */
+  topBar?: React.ReactNode;
+  /** Rendered beside the title — moderator or author controls. */
+  controls?: React.ReactNode;
+  /** Absolutely positioned over the card, e.g. the dismiss button. */
+  overlay?: React.ReactNode;
+  footer?: React.ReactNode;
+} & React.HTMLAttributes<HTMLDivElement>;
+
 /**
  * The one announcement card. Sitewide and creator announcements render through this so they
  * cannot drift apart visually — they had already drifted twice, on the cover breakpoint and
@@ -54,36 +89,22 @@ export function AnnouncementCard({
   color,
   cover,
   actions = [],
+  onActionClick,
+  impressions,
+  topBar,
   controls,
   overlay,
   footer,
   className,
   style,
   ...props
-}: {
-  title?: string;
-  content: string;
-  color: string;
-  cover?: AnnouncementCardCover | null;
-  actions?: AnnouncementCardAction[];
-  /** Rendered beside the title — moderator or author controls. */
-  controls?: React.ReactNode;
-  /** Absolutely positioned over the card, e.g. the dismiss button. */
-  overlay?: React.ReactNode;
-  footer?: React.ReactNode;
-} & React.HTMLAttributes<HTMLDivElement>) {
+}: AnnouncementCardProps) {
+  const impressionRef = useTrackImpression<HTMLElement>(impressions);
   const theme = useMantineTheme();
   const borderColor = theme.colors[color]?.[4] ?? theme.colors.blue[4];
 
-  return (
-    <TwCard
-      className={clsx('items-stretch border', className)}
-      direction="row"
-      style={{ borderColor, ...style }}
-      {...props}
-    >
-      {overlay}
-
+  const body = (
+    <>
       {cover && (
         // Both halves of `size-40` are load-bearing. The height is what makes this square:
         // it is a definite cross size, so the row's `items-stretch` no longer applies, and
@@ -124,7 +145,15 @@ export function AnnouncementCard({
         </div>
       )}
 
-      <div className="flex flex-1 flex-col justify-center gap-2 p-3">
+      <div
+        className={clsx(
+          'flex flex-1 flex-col justify-center gap-2 p-3',
+          // Gated on the same container query that hides the cover: keyed on the DATA alone
+          // this is a second border 1px inside the card's own on a narrow card.
+          cover && 'border-l @max-xs:border-l-0'
+        )}
+        style={cover ? { borderColor } : undefined}
+      >
         {(!!title || !!controls) && (
           <div className="flex justify-between gap-2">
             {!!title && <Title order={4}>{title}</Title>}
@@ -141,6 +170,7 @@ export function AnnouncementCard({
                 key={index}
                 component={Link}
                 href={action.link}
+                onClick={() => onActionClick?.(action, index)}
                 variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
                 color={action.color ?? color}
               >
@@ -151,6 +181,41 @@ export function AnnouncementCard({
         )}
         {footer}
       </div>
+    </>
+  );
+
+  if (!topBar)
+    return (
+      <TwCard
+        ref={impressionRef}
+        className={clsx('items-stretch border', className)}
+        direction="row"
+        style={{ borderColor, ...style }}
+        {...props}
+      >
+        {overlay}
+        {body}
+      </TwCard>
+    );
+
+  return (
+    <TwCard
+      ref={impressionRef}
+      className={clsx('border', className)}
+      direction="col"
+      style={{ borderColor, ...style }}
+      {...props}
+    >
+      {overlay}
+      {/* A wash of the border colour rather than the colour itself: the bar has to read as
+          part of the frame without competing with the announcement's own content. */}
+      <div
+        className="w-full border-b px-3 py-2"
+        style={{ backgroundColor: alpha(borderColor, 0.15), borderColor }}
+      >
+        {topBar}
+      </div>
+      <div className="flex flex-1 items-stretch">{body}</div>
     </TwCard>
   );
 }

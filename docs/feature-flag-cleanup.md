@@ -23,8 +23,11 @@ Also check the `FliptFlag` enum in [src/server/flipt/client.ts](../src/server/fl
 | Flag         | Status                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------- |
 | `imageIndex` | ✅ Removed — zero consumers                                                            |
-| `apiKeys`    | ❌ Restored — destructured in [user/account.tsx:30](../src/pages/user/account.tsx#L30) |
-| `oauthApps`  | ❌ Restored — destructured in [user/account.tsx:30](../src/pages/user/account.tsx#L30) |
+| `apiKeys`    | ❌ Restored — gates `ApiKeysCard` in [AccountPanes.tsx:92](../src/components/Account/AccountPanes.tsx#L92) and [LegacyAccountPage.tsx:62](../src/components/Account/LegacyAccountPage.tsx#L62) |
+| `oauthApps`  | ❌ Restored — gates `OAuthAppsCard` + `ConnectedAppsCard` in [AccountPanes.tsx:93-94](../src/components/Account/AccountPanes.tsx#L93) and [LegacyAccountPage.tsx:63-64](../src/components/Account/LegacyAccountPage.tsx#L63) |
+
+⚠️ Every account-page flag has **two** consumers while `accountSettingsV2` is alive — the pane
+(`AccountPanes.tsx`) and the fallback (`LegacyAccountPage.tsx`). One grep hit is not the whole answer.
 
 `apiKeys: ['public']` is decorative-only (always-true gate); see Tier 4.
 
@@ -47,7 +50,7 @@ Each has exactly one real consumer; the question is whether the feature itself i
 | `questions`               | [90](../src/server/services/feature-flags.service.ts#L90)   | [pages-old/questions/...](../src/pages-old/questions/[questionId]/[[...questionDetailSlug]].tsx#L27)                                                                               | Lives in `pages-old/` — strong signal the section is archived. Delete page + flag together |
 | `kinguinIframe`           | [177](../src/server/services/feature-flags.service.ts#L177) | [KinguinCheckout.tsx:85](../src/components/KinguinCheckout/KinguinCheckout.tsx#L85)                                                                                                | Is Kinguin still being used at all?                                                        |
 | `annualMemberships`       | [168](../src/server/services/feature-flags.service.ts#L168) | [MembershipPlans.tsx:221](../src/components/Purchase/MembershipPlans.tsx#L221)                                                                                                     | `['dev']` — ship it or remove                                                              |
-| `civitaiLink`             | [58](../src/server/services/feature-flags.service.ts#L58)   | [CivitaiLinkProvider.tsx:294](../src/components/CivitaiLink/CivitaiLinkProvider.tsx#L294), [CivitaiLinkPopover.tsx:182](../src/components/CivitaiLink/CivitaiLinkPopover.tsx#L182) | Desktop link app — still shipping?                                                         |
+| `civitaiLink`             | [190](../src/server/services/feature-flags.service.ts#L190)  | [CivitaiLinkProvider.tsx:355](../src/components/CivitaiLink/CivitaiLinkProvider.tsx#L355), [CivitaiLinkPopover.tsx:341](../src/components/CivitaiLink/CivitaiLinkPopover.tsx#L341) | **Keep.** Desktop `v1.21.0` and node pack `v0.6.0` both shipped Sep 2026; `['mod','member']` is the supporter gate, not a rollout leftover |
 | `thirtyDayEarlyAccess`    | [174](../src/server/services/feature-flags.service.ts#L174) | [constants.ts:1708,1718](../src/server/common/constants.ts#L1708)                                                                                                                  | Sets early-access duration ceiling to 30 days — likely still meaningful, but verify        |
 | `prepaidBuzzTransactions` | [187](../src/server/services/feature-flags.service.ts#L187) | [PrepaidBuzzTransactions.tsx:81](../src/components/Subscriptions/PrepaidBuzzTransactions.tsx#L81)                                                                                  | Single mod component                                                                       |
 | `safety`                  | [123](../src/server/services/feature-flags.service.ts#L123) | [AppFooter.tsx:36](../src/components/AppLayout/AppFooter.tsx#L36)                                                                                                                  | Just gates a footer link                                                                   |

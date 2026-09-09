@@ -20,6 +20,7 @@ import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
+import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   actionOpensOwnerMessage,
@@ -28,7 +29,7 @@ import {
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
-  listingModActions,
+  listingModActionsForRow,
   type ListingModAction,
 } from '~/components/Apps/appListingModerationTableView';
 import {
@@ -313,6 +314,10 @@ export function AppListingsModerationTable({
   const renderTable = (groups: SubmissionGroup<ModerationListingRow>[]) => (
     <Card withBorder p={0}>
       <Table verticalSpacing="md" horizontalSpacing="md">
+        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/review`
+            hosts this table and no longer caps its body, so the slack has to have
+            somewhere deliberate to go: the App cell (slug + kind + status chips). */}
+        <AppsTableColgroup columns={APPS_MOD_LISTINGS_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
             <SortableTh label="App" column="app" sort={sort ?? NEUTRAL_SORT} onSort={onSort} />
@@ -329,11 +334,10 @@ export function AppListingsModerationTable({
             // Badge reads the EFFECTIVE status ("Pending" for a draft-with-pending),
             // matching the bucket. Actions below intentionally keep the REAL status.
             const statusChip = listingStatusChip(effectiveModerationStatus(row));
-            const actions = listingModActions({
-              status: row.status,
-              kind: row.kind,
-              hasPendingRequest: row.pendingRequest != null,
-            });
+            // Row-shaped so the field mapping and its safe defaults live in a PURE function the
+            // unit tier can reach — inline here, nothing could test them (see the 🔴 note on
+            // `listingModActionsForRow`).
+            const actions = listingModActionsForRow(row);
             return (
               <Fragment key={row.id}>
                 <Table.Tr data-testid={`apps-mod-listing-row-${row.slug}`}>
@@ -346,10 +350,41 @@ export function AppListingsModerationTable({
                       <Badge size="xs" color={statusChip.color} variant="light">
                         {statusChip.label}
                       </Badge>
+                      {/* 🔴 THE ONLY MODERATOR SURFACE THAT SHOWS THE BETA DECLARATION.
+                          `betaMessage` is author-controlled PUBLIC copy that no moderator
+                          reviews before it goes live — beta is a TRIVIAL patch field, so it
+                          never enters the review queue, and the mod review preview only
+                          renders listings that are already IN review. Without this the DTO
+                          carried the fields and nothing branched on them, so the feature's
+                          only claimed human mitigation did not exist. The delist / takedown
+                          actions in this same table are the remedy. */}
+                      {row.isBeta && (
+                        <Badge
+                          size="xs"
+                          color="violet"
+                          variant="light"
+                          data-testid="apps-listing-mod-beta"
+                        >
+                          Beta
+                        </Badge>
+                      )}
                     </Group>
                     {row.name && (
                       <Text size="xs" c="dimmed">
                         {row.name}
+                      </Text>
+                    )}
+                    {/* Rendered as PLAIN TEXT, like every other consumer of this string —
+                        never markdown, never innerHTML. Only shown when the flag is on,
+                        matching the projection, so a stale note cannot surface here either. */}
+                    {row.isBeta && row.betaMessage && (
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        fs="italic"
+                        data-testid="apps-listing-mod-beta-message"
+                      >
+                        “{row.betaMessage}”
                       </Text>
                     )}
                   </Table.Td>
@@ -681,8 +716,9 @@ function ListingModActionModal({
       destructive={destructive}
       destructiveWarning={
         <Text size="sm">
-          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-          (with the slug snapshot) is kept. This cannot be undone.
+          Purge PERMANENTLY deletes this listing and its screenshots + reports, and{' '}
+          <b>releases the store address &quot;{row.slug}&quot; for anyone else to claim</b>. The
+          audit event (with the slug snapshot) is kept. This cannot be undone.
         </Text>
       }
       confirmSlug={destructive ? row.slug : undefined}

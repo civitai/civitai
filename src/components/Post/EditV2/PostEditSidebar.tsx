@@ -319,7 +319,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               <HelpButton
                 data-tour="post:reset"
                 tooltip="Need help? Start the tour!"
-                onClick={() => runTour({ key: 'post-generation', step: 0, forceRun: true })}
+                onClick={() =>
+                  runTour({ key: 'post-generation', step: 0, forceRun: true, trigger: 'help' })
+                }
               />
             )}
           </div>

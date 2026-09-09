@@ -117,7 +117,9 @@ vi.mock('~/server/flipt/client', () => ({
 
 import {
   applyScanOutcome,
+  deriveSshsHash,
   examinePickleImports,
+  normalizeScanHashes,
   processModelFileScanResult,
   rescanModel,
   unpublishBlockedModel,
@@ -1436,6 +1438,69 @@ describe('model-file-scan.service', () => {
       });
 
       expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SSHS_12 — the trainer hash from the safetensors header', () => {
+    // The real values from ClickUp 868kxvagd, model version 3120690. The 12-char form A1111/Forge
+    // write into image metadata is '0x7875fed548': the 0x occupies two of the twelve characters.
+    const SSHS_PREFIXED = '0x7875fed54803c0f6f23ec0b1e3ddc681f0bae3167dffef482054a68dfd5b172c';
+    const SSHS_PLAIN = '7f6de38cf1daa16be4caac096b158c7e92333a9523099418de028a2e60a4d95c';
+
+    it('keeps the 0x prefix, because that is what the generator writes', () => {
+      // 🔴 Stripping it is the fix that does NOT work: measured on prod, of 3,109 prefixed files
+      // exactly 1 matched AutoV3 after the prefix was removed. The prefix is not the defect.
+      expect(deriveSshsHash({ sshs_model_hash: SSHS_PREFIXED })).toBe('0x7875fed548');
+    });
+
+    it('ignores a header without the key, and a non-string or too-short value', () => {
+      expect(deriveSshsHash({ ss_v2: 'False' })).toBeUndefined();
+      expect(deriveSshsHash({ sshs_model_hash: 42 })).toBeUndefined();
+      expect(deriveSshsHash({ sshs_model_hash: '0xabc' })).toBeUndefined();
+      expect(deriveSshsHash(undefined)).toBeUndefined();
+      expect(deriveSshsHash(null)).toBeUndefined();
+      expect(deriveSshsHash('not an object')).toBeUndefined();
+    });
+
+    it('is added by normalizeScanHashes when no sibling row already carries the value', () => {
+      const out = normalizeScanHashes(
+        { SHA256: SHA256_FIXTURE, AutoV3: AUTOV3_FIXTURE },
+        { sshs_model_hash: SSHS_PREFIXED }
+      );
+
+      expect(out.SSHS_12).toBe('0x7875fed548');
+    });
+
+    it('🔴 is NOT added when AutoV3 already carries it — the ~98% case', () => {
+      // sshs_model_hash equals the addnet-safetensors hash for most files, so storing it again
+      // would add a row per file and match nothing AutoV3 does not already match. This is the
+      // whole reason the backfill is ~15k rows and not ~622k.
+      const out = normalizeScanHashes(
+        { SHA256: SHA256_FIXTURE, AutoV3: SSHS_PLAIN },
+        { sshs_model_hash: SSHS_PLAIN }
+      );
+
+      expect(out.SSHS_12).toBeUndefined();
+      expect(out.AutoV3).toBe(SSHS_PLAIN.slice(0, 12));
+    });
+
+    it('survives a hash-only rescan by falling back to the stored headerData', async () => {
+      // 🔴 The rebuild is deleteMany({ fileId }) + createMany, so a rescan carrying no headerData
+      // would drop the row entirely. Reverting the ?? fallback fails HERE and nowhere else.
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 1,
+        type: 'Model',
+        modelVersionId: 10,
+        headerData: { sshs_model_hash: SSHS_PREFIXED },
+        modelVersion: { modelId: 100, model: { userId: 5 } },
+      });
+
+      await applyScanOutcome({
+        fileId: 1,
+        hashes: { SHA256: SHA256_FIXTURE, AutoV3: AUTOV3_FIXTURE },
+      });
+
+      expect(hashRowsWritten()).toContain('1:SSHS_12=0x7875fed548');
     });
   });
 });

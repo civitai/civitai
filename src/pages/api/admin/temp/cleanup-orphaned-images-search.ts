@@ -28,19 +28,23 @@ export default WebhookEndpoint(async (req, res) => {
         await pgDbRead.cancellableQuery<{ start: number; end: number }>(`
           SELECT MIN(id) as "start", MAX(id) as "end"
           FROM "Image"
-          WHERE "postId" IS NULL
+          WHERE "postId" IS NULL AND "index" IS NOT NULL
         `)
       ).result();
       return result ?? { start: 0, end: 0 };
     },
     processor: async ({ start, end, cancelFns }) => {
-      // Find images in this ID range that have postId NULL
+      // `index` is what separates an orphan from an upload that was simply never posted: it is
+      // only set once an image is placed in a post, and the feed index requires `postId IS NOT NULL`
+      // at build time, so a never-posted image was never indexed and has nothing to delete. On prod
+      // that is the difference between 81k rows and 1.28M, all against a shared Meilisearch queue.
       const fetchQuery = await pgDbRead.cancellableQuery<{ id: number }>(
         `
         SELECT id
         FROM "Image"
         WHERE id >= $1 AND id <= $2
           AND "postId" IS NULL
+          AND "index" IS NOT NULL
       `,
         [start, end]
       );

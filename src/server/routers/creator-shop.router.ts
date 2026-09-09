@@ -129,6 +129,7 @@ export const creatorShopRouter = router({
     .query(({ input, ctx }) =>
       getBundlableCosmetics({
         ...input,
+        userId: ctx.user.id,
         // Stickers stay out of the picker while the flag is off; the submit
         // mutation refuses them regardless.
         types: ctx.features.stickers

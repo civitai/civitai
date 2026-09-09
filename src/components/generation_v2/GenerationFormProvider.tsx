@@ -35,6 +35,7 @@ import {
   isWorkflowAvailable,
   getEcosystemsForWorkflow,
   getOutputTypeForWorkflow,
+  getStoredOutputScope,
 } from '~/shared/data-graph/generation/config/workflows';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import {
@@ -336,17 +337,10 @@ function InnerProvider({
       if (!storedWorkflow) return;
 
       // 3D-model workflows pick their (resource-less) ecosystem explicitly via
-      // the inline picker; there's no silent auto-correction to surface. They're
-      // also output-type `model3d`, which the image/video heuristic below
-      // misclassifies as `image` — that reads the wrong stored ecosystem scope,
-      // sees a guaranteed mismatch vs the resolved 3D ecosystem, and (now that
-      // img2model3d exposes multiple ecosystems) spuriously fires the
-      // compatibility modal on panel open. Skip 3D entirely.
+      // the inline picker; there's no silent auto-correction to surface.
       if (workflowConfigByKey.get(storedWorkflow)?.category === 'model3d') return;
 
-      // Determine the output type from the stored workflow key prefix
-      // (can't use getOutputTypeForWorkflow — it falls back to 'image' for unknown workflows)
-      const storedOutputType = storedWorkflow.includes('2vid') ? 'video' : 'image';
+      const storedOutputType = getStoredOutputScope(storedWorkflow);
 
       // Read the stored ecosystem from the output-scoped storage
       const outputStored = localStorage.getItem(`${STORAGE_KEY}.output.${storedOutputType}`);
@@ -484,9 +478,9 @@ function InnerProvider({
         // The 3D ecosystem to land on — preserve the model (Meshy/Tripo/
         // Hunyuan3D) the source was generated with. Falls back to PolyGen
         // (Meshy) for legacy items whose metadata predates the model selector.
-        const model3dEcosystem: 'PolyGen' | 'Tripo' | 'Hunyuan3D' =
+        const model3dEcosystem: 'PolyGen' | 'Tripo' | 'Hunyuan3D' | 'Pixal3D' | 'Trellis2' =
           remixEcosystemKey && MODEL3D_ECOSYSTEM_KEYS.has(remixEcosystemKey)
-            ? (remixEcosystemKey as 'PolyGen' | 'Tripo' | 'Hunyuan3D')
+            ? (remixEcosystemKey as 'PolyGen' | 'Tripo' | 'Hunyuan3D' | 'Pixal3D' | 'Trellis2')
             : 'PolyGen';
 
         let resolvedWorkflow: string;
@@ -956,7 +950,7 @@ export function GenerationFormProvider({
 /** Convert GenerationResource to ResourceData (matching data-graph resourceSchema).
  * Resources arriving from the cross-domain handoff or storage may be partially
  * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
-function toResourceData(r: GenerationResource): ResourceData {
+export function toResourceData(r: GenerationResource): ResourceData {
   if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
   return {
     id: r.id,

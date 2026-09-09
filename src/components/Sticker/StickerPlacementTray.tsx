@@ -198,7 +198,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     // Measured as the obstacle the buy button avoids, and deliberately measured
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
-    <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
+    // The safe-area padding lands on the MEASURED root deliberately: the buy
+    // button avoids this element's height, and the tray is genuinely taller now,
+    // so growing the measured obstacle is the correct half of the change, not a
+    // side effect of it.
+    <div
+      ref={trayRef}
+      className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+    >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
             thing you are shopping to add to, so it stays visible while you buy. */}

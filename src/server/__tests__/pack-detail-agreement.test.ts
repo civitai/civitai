@@ -28,6 +28,7 @@ vi.mock('~/server/db/client', () => ({
     cosmeticShopItemCosmetic: { findMany: (...a: unknown[]) => packMemberFindMany(...a) },
     userCosmeticShopPurchaseCosmetic: { groupBy: (...a: unknown[]) => componentGroupBy(...a) },
     userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
+    userCosmeticShopItemResale: { findMany: vi.fn().mockResolvedValue([]) },
   },
   dbWrite: {
     userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },

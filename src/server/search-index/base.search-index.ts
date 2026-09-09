@@ -314,6 +314,18 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
       }
 
+      // Deletes FIRST, as `updateSync` already does. The two queues are disjoint sets with no
+      // timestamps, so an id queued in both carries no record of which action came last, and the
+      // drain order alone decides the outcome. Pulling second lets `pullData`'s own WHERE
+      // arbitrate; pulling first rebuilt the document and then deleted it.
+      if (queuedDeletes.content.length > 0 && !partial) {
+        await onSearchIndexDocumentsCleanup({
+          indexName,
+          ids: queuedDeletes.content,
+          client: processor.client,
+        });
+      }
+
       const workers = Array.from({ length: workerCount }).map(() => {
         return getTaskQueueWorker(
           queue,
@@ -323,14 +335,6 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
-
-      if (queuedDeletes.content.length > 0 && !partial) {
-        await onSearchIndexDocumentsCleanup({
-          indexName,
-          ids: queuedDeletes.content,
-          client: processor.client,
-        });
-      }
 
       // Commit queues:
       await queuedUpdates.commit();
@@ -476,6 +480,27 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         logger,
       };
 
+      // Deletes before updates, for the reason spelled out in `update()` above: when both
+      // flags are set an id can sit in both queues, and pulling first would rebuild the
+      // document only for the cleanup to remove it.
+      if (opts.processDeletes) {
+        const queuedDeletes = await SearchIndexUpdate.getQueue(
+          indexName,
+          SearchIndexUpdateQueueAction.Delete,
+          partial ? true : false // readOnly
+        );
+
+        if (queuedDeletes.content.length > 0 && !partial) {
+          await onSearchIndexDocumentsCleanup({
+            indexName,
+            ids: queuedDeletes.content,
+            client: processor.client,
+          });
+        }
+
+        await queuedDeletes.commit();
+      }
+
       if (opts.processUpdates) {
         const queuedUpdates = await SearchIndexUpdate.getQueue(
           indexName,
@@ -515,25 +540,6 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
         await Promise.all(workers);
         await queuedUpdates.commit();
-      }
-
-      if (opts.processDeletes) {
-        const queuedDeletes = await SearchIndexUpdate.getQueue(
-          indexName,
-          SearchIndexUpdateQueueAction.Delete,
-          partial ? true : false // readOnly
-        );
-
-        if (queuedDeletes.content.length > 0 && !partial) {
-          await onSearchIndexDocumentsCleanup({
-            indexName,
-            ids: queuedDeletes.content,
-            client: processor.client,
-          });
-        }
-
-        // Commit queues:
-        await queuedDeletes.commit();
       }
     },
   };

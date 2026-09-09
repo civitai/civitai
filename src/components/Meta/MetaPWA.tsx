@@ -1,12 +1,13 @@
 import Head from 'next/head';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 
 export function MetaPWA() {
   const features = useFeatureFlags();
 
   return (
     <Head>
-      <meta name="viewport" content="initial-scale=1, width=device-width" />
+      <meta name="viewport" content={VIEWPORT_META_CONTENT} />
       <link rel="manifest" href="/site.webmanifest" />
       <meta name="mobile-web-app-capable" content="yes" />
       {/* exoclick ad meta tag */}

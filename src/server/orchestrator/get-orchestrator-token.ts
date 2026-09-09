@@ -1,9 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
+import {
+  decodeOwnedToken,
+  encodeOwnedToken,
+} from '~/server/orchestrator/orchestrator-token-identity';
 import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { logToAxiom } from '~/server/logging/client';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -46,9 +53,27 @@ export async function getOrchestratorToken(
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // ~11min on every authenticated generation call. A fast DOWN already
     // rejects into the catch below; the SLOW half-open needs the race.
-    token = await withSysReadDeadline(sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey)).then(
-      (x) => x ?? null
+    const raw = decodeRedisString(
+      await withSysReadDeadline(
+        sysRedis.hGet<string | Buffer>(REDIS_KEYS.GENERATION.TOKENS_OWNED, redisKey)
+      )
     );
+    // The hash is keyed by userId, so a value bound to anyone else reached this field
+    // by a route that does not exist in this code — see orchestrator-token-identity.ts.
+    // Refuse it rather than hand a stranger's identity to the orchestrator; `token=null`
+    // takes the same fresh-mint path as an ordinary miss.
+    const owned = decodeOwnedToken(raw, userId);
+    if (owned.outcome === 'mismatch') {
+      observeTokenIdentityMismatch('redis');
+      logToAxiom({
+        name: 'orchestrator-token-identity-mismatch',
+        type: 'error',
+        layer: 'redis',
+        userId,
+        ownerId: owned.ownerId,
+      }).catch(() => undefined);
+    }
+    token = owned.token;
   } catch (err) {
     logSysRedisFailOpen('token-mint-amplification', 'getOrchestratorToken hGet', err, {
       userId,
@@ -109,9 +134,9 @@ export async function getOrchestratorToken(
     // 401 → user-visible auth failure with no automatic recovery.
     await hSetWithTTL(
       sysRedis,
-      REDIS_KEYS.GENERATION.TOKENS,
+      REDIS_KEYS.GENERATION.TOKENS_OWNED,
       redisKey,
-      token,
+      encodeOwnedToken(userId, token),
       generationServiceCookie.maxAge * 1000
     ).catch((err) => {
       logSysRedisFailOpen('write-degraded', 'getOrchestratorToken cache writeback', err, {

@@ -13,7 +13,11 @@ const h = vi.hoisted(() => ({
   getOrCreateDeviceId: vi.fn(() => 'device-xyz'),
 }));
 
-vi.mock('@civitai/auth', () => ({
+// Spread the real module and override only the signer: a hand-listed export list couples this test to
+// session.ts's whole transitive graph, and silently breaks the moment that graph grows (it did — `cookiePrefix`,
+// pulled in via pending-authz.ts). The real cookie helpers are pure env reads, so they need no stubbing.
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof CivitaiAuth>()),
   isSecureCookie: () => false,
   sessionCookieName: () => 'civ-token',
   maybeCreateSessionSigner: () => ({
@@ -30,6 +34,7 @@ vi.mock('../device', () => ({
 }));
 
 import { establishSession } from '../session';
+import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionUser } from '@civitai/auth';
 import type { Cookies } from '@sveltejs/kit';
 

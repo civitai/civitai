@@ -19,9 +19,10 @@ import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema'
  *    model/in-context slot. A PAGE app (target slot `app.page`, installModel
  *    `'none'`) is stateless — no install row, slot install path server-gated
  *    dark (#2622) — so it never shows Install/Manage.
- *  - Card cleanup: the install count is HIDDEN, the review indicator is hidden
- *    when reviewCount=0 (shown when >0), the mod-assigned category (+ icon) is
- *    shown, and the scopes were MOVED off the card face into the modal.
+ *  - Card cleanup: the install count is HIDDEN, the mod-assigned category
+ *    (+ icon) is shown, and the scopes were MOVED off the card face into the
+ *    modal. (The 5-star rating chip that used to sit here went with the rest of
+ *    the removed `AppBlockReview` system.)
  *  - Round-2 cleanup (2026-06): the slot/location badge and the "by {author}"
  *    attribution line were DROPPED from the card face (launch is page-only →
  *    slot badge is noise; both still on the detail page/modal), and the
@@ -89,8 +90,6 @@ function makeBlock(
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
     ...overrides,
   };
@@ -440,34 +439,6 @@ describe('AppBlockCard — 2026-06 card cleanup', () => {
     // not the capitalized button label.)
     expect(page.getByText(/\d[\d,]*\s+installs?/i).query()).toBeNull();
     expect(page.getByText('1,234', { exact: false }).query()).toBeNull();
-  });
-
-  test('review indicator HIDDEN when reviewCount=0 (no "No reviews" affordance)', async () => {
-    renderWithProviders(
-      <AppBlockCard
-        block={makeBlock({}, { reviewCount: 0, avgRating: null })}
-        alreadySubscribed={false}
-        onOpen={onOpen}
-      />
-    );
-
-    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
-    // No "No reviews" text, and no rating affordance for a 0-review app.
-    expect(page.getByText(/no reviews/i).query()).toBeNull();
-  });
-
-  test('review indicator SHOWN when reviewCount>0 (avg + count)', async () => {
-    renderWithProviders(
-      <AppBlockCard
-        block={makeBlock({}, { reviewCount: 12, avgRating: 4.5 })}
-        alreadySubscribed={false}
-        onOpen={onOpen}
-      />
-    );
-
-    // avg "4.5" and count "(12)" render.
-    await expect.element(page.getByText('4.5', { exact: false })).toBeInTheDocument();
-    await expect.element(page.getByText('(12)', { exact: false })).toBeInTheDocument();
   });
 
   test('category (+ icon) rendered when a category is set', async () => {

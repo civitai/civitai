@@ -65,7 +65,9 @@
   };
 </script>
 
-<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+<section
+  class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5 xl:mb-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"
+>
   <h2 class="mb-1 text-sm font-semibold text-white">Reports against posts ({num(total)})</h2>
   <p class="mb-3 text-xs text-dark-2">
     {#if defaultView}
@@ -91,7 +93,8 @@
   {#if queue.length === 0}
     <p class="text-sm text-dark-2">Nothing open in this queue.</p>
   {:else}
-    <ul class="space-y-2 text-sm">
+    <!-- `min-h-0` or the list refuses to shrink below its content and the panel overflows again. -->
+    <ul class="space-y-2 text-sm xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
       {#each queue as r (r.id)}
         {@const busy = pendingId === r.id}
         {@const p = r.post}

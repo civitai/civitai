@@ -57,9 +57,11 @@
       <li class="mb-1">
         Ask a moderator admin for <code class="font-mono text-dark-1">MOD_INBOUND_TOKEN</code>. It
         is a service secret, not a per-person credential — but it is <strong>inbound-only</strong>:
-        this app accepts it and nothing else does, so it cannot be used anywhere but here. Ask for
-        this one. <code class="font-mono text-dark-1">WEBHOOK_TOKEN</code> is also accepted for
-        compatibility and reaches further than this app, so it is the wrong thing to hand out.
+        this app accepts it and nothing else does, so it cannot be used anywhere but here. It is now
+        the <strong>only</strong> credential these endpoints accept.
+        <code class="font-mono text-dark-1">WEBHOOK_TOKEN</code> used to be accepted here as well and
+        <strong>no longer is</strong> — it reaches far beyond this app, which is why it was dropped.
+        If a caller of yours started returning 401, that is the reason: it needs the token above.
       </li>
       <li class="mb-1">
         Send it as <code class="font-mono text-dark-1">?token=</code> or

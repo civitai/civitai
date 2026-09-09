@@ -328,6 +328,16 @@ export const getPendingRemixGallerySubmissionsSchema = z.object({
   cursor: placementQueueCursorSchema,
 });
 
+/**
+ * One of your own images, asking which galleries its provenance points at. The
+ * hosts are resolved server-side from `sourceImageIds`; the caller cannot name
+ * them, which is what keeps the free gate meaningful.
+ */
+export const getRemixSourcesForImageSchema = z.object({
+  imageId: z.number().int().positive(),
+  browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
 /** Same marking rule as the owner queue: the submitter's own band, not a filter. */
 export const getMyRemixGallerySubmissionsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),

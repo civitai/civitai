@@ -1,0 +1,668 @@
+import {
+  ActionIcon,
+  Anchor,
+  Badge,
+  Button,
+  Card,
+  Center,
+  Divider,
+  Group,
+  Loader,
+  Select,
+  Stack,
+  Tabs,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import {
+  IconEyeOff,
+  IconHistory,
+  IconPlugConnected,
+  IconSettings,
+  IconShieldLock,
+  IconTrash,
+} from '@tabler/icons-react';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { useMemo } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
+import { Meta } from '~/components/Meta/Meta';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { AppsCardGrid } from '~/components/Apps/appsWideLayout';
+import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
+import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
+import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
+import { useFeatureFlags, useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type {
+  AvailableBlock,
+  SubscriptionRecord,
+} from '~/server/schema/blocks/subscription.schema';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
+import {
+  ACTIVITY_TAB_LABELS,
+  ACTIVITY_TAB_QUERY_KEY,
+  activityTabQuery,
+  isActivityTab,
+  isActivityTabVisible,
+  resolveActivityTab,
+  visibleActivityTabs,
+} from '~/components/Apps/appsActivityTabs';
+import type { ActivityTab } from '~/components/Apps/appsActivityTabs';
+import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
+import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { formatDate } from '~/utils/date-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+
+/** 🔴 The gate is the SHARED `resolveActivityPageAccess`, never an inline flag read —
+ *  and it is `appBlocks || appBlocksPages`. See `canAccessAppsActivity`. */
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features, session, ctx }) =>
+    resolveActivityPageAccess({
+      features,
+      user: session?.user,
+      loginDestination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+    }),
+});
+
+const PIN_LATEST_VALUE = '__latest__';
+
+interface PinnedInstallRowProps {
+  sub: SubscriptionRecord;
+}
+
+/**
+ * One compact line for a single pinned (per-model-install) subscription —
+ * slot_id non-NULL + target_model_ids non-empty. Carries the same controls
+ * the old SubscriptionRow gave pinned rows: the model link badge(s), the
+ * version Select (Latest + availableVersions), and the Uninstall action.
+ *
+ * Pinned subs are removed via `blocks.uninstallFromModel` (using the row's
+ * preserved blockInstanceId) so the rank-1 NOT EXISTS in listForModel's SQL
+ * stops suppressing platform defaults for the same slot. The original cache
+ * invalidations (listMySubscriptions, listMyScopeGrants, listForModel) are
+ * preserved verbatim.
+ */
+function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
+  const utils = trpc.useUtils();
+  const manifest = sub.manifest;
+  const uninstallMutation = trpc.blocks.uninstallFromModel.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.blocks.listMySubscriptions.invalidate(),
+        utils.blocks.listMyScopeGrants.invalidate(),
+        // Pinned subs render on exactly one modelId; targeted cache bust.
+        sub.targetModelIds && sub.targetModelIds[0]
+          ? utils.blocks.listForModel.invalidate({ modelId: sub.targetModelIds[0] })
+          : Promise.resolve(),
+      ]);
+      showSuccessNotification({ title: 'Removed', message: 'Uninstalled from model.' });
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not uninstall', error: new Error(e.message) }),
+  });
+  const pinVersionMutation = trpc.blocks.setSubscriptionPinnedVersion.useMutation({
+    onSuccess: async () => {
+      await utils.blocks.listMySubscriptions.invalidate();
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not change version', error: new Error(e.message) }),
+  });
+
+  const versionOptions: { value: string; label: string }[] = [
+    {
+      value: PIN_LATEST_VALUE,
+      label: sub.currentVersion ? `Latest (${sub.currentVersion})` : 'Latest',
+    },
+    ...sub.availableVersions.map((v) => ({ value: v.version, label: v.version })),
+  ];
+
+  const pinnedTo = (sub.targetModelIds ?? []).map((id) => ({
+    id,
+    name: sub.pinnedModelNames?.[id] ?? `Model ${id}`,
+  }));
+
+  const onConfirmUninstall = () => {
+    const targetName = pinnedTo[0]?.name ?? 'this model';
+    openConfirmModal({
+      title: `Uninstall ${manifest.name ?? sub.blockId}?`,
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This removes the install row entirely. The app will stop appearing on{' '}
+            <strong>{targetName}</strong>. Any platform default for the same slot will become
+            eligible again. The app's data and any other installs of it are untouched.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: 'Uninstall', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        if (sub.blockInstanceId) {
+          uninstallMutation.mutate({ blockInstanceId: sub.blockInstanceId });
+        }
+      },
+    });
+  };
+
+  return (
+    <Group justify="space-between" wrap="nowrap" gap="sm" align="center">
+      <Group gap={4} wrap="wrap" style={{ minWidth: 0, flex: 1 }}>
+        {pinnedTo.map(({ id, name }) => (
+          <Badge
+            key={id}
+            size="xs"
+            variant="outline"
+            component={Link}
+            href={`/models/${id}`}
+            style={{ cursor: 'pointer' }}
+          >
+            {name}
+          </Badge>
+        ))}
+        {!sub.enabled && (
+          <Badge size="xs" variant="light" color="gray">
+            Disabled
+          </Badge>
+        )}
+      </Group>
+      <Group gap="xs" wrap="nowrap" align="center">
+        <Tooltip
+          label="Which manifest the host uses for this install. Latest tracks the most recent approved release; pinning a version freezes scopes + settings to that version's manifest."
+          multiline
+          w={280}
+          withArrow
+        >
+          <Select
+            size="xs"
+            w={170}
+            data={versionOptions}
+            value={sub.pinnedVersion ?? PIN_LATEST_VALUE}
+            disabled={pinVersionMutation.isPending}
+            onChange={(value) => {
+              if (value == null) return;
+              const next = value === PIN_LATEST_VALUE ? null : value;
+              if (next === sub.pinnedVersion) return;
+              pinVersionMutation.mutate({
+                subscriptionId: sub.id,
+                version: next,
+              });
+            }}
+            comboboxProps={{ withinPortal: true }}
+            aria-label={`Version for ${manifest.name ?? sub.blockId} on ${
+              pinnedTo[0]?.name ?? 'model'
+            }`}
+          />
+        </Tooltip>
+        <ActionIcon
+          variant="default"
+          color="red"
+          disabled={uninstallMutation.isPending}
+          onClick={onConfirmUninstall}
+          title="Uninstall"
+        >
+          <IconTrash size={16} />
+        </ActionIcon>
+      </Group>
+    </Group>
+  );
+}
+
+interface InstalledAppCardProps {
+  app: GroupedApp;
+  onManage: (sub: SubscriptionRecord) => void;
+}
+
+/**
+ * One row per installed app. Collapses the two blanket "surfaces"
+ * (publisher / viewer) into a single card with a "Shows on" summary; pinned
+ * per-model installs are listed in a subsection below. Toggling which
+ * surfaces are active happens through the existing AppSettingsModal (the
+ * Manage button), which already supports both scopes.
+ */
+/** 🔴 EXPORTED SO ITS GEOMETRY CAN BE MEASURED — `AppsWideLayout.geometry.test.tsx`
+ *  mounts THIS card rather than a fixture copy of its markup. */
+export function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
+  const { blanketPublisher, blanketViewer, pinned } = app;
+  const name = app.manifest.name ?? app.blockId;
+  // Any blanket sub on the app is enough to seed the Manage modal — it
+  // re-scans all subs for the appBlockId internally.
+  const manageSeed = blanketPublisher ?? blanketViewer ?? pinned[0];
+  const hasBlanket = !!(blanketPublisher || blanketViewer);
+
+  return (
+    <Card withBorder padding="sm" radius="md">
+      <Stack gap="sm">
+        <Group justify="space-between" wrap="nowrap" gap="md" align="flex-start">
+          <Text fw={600} className="truncate" style={{ minWidth: 0, flex: 1 }}>
+            {name}
+          </Text>
+          {manageSeed && (
+            <Button
+              variant="default"
+              size="xs"
+              leftSection={<IconSettings size={14} />}
+              onClick={() => onManage(manageSeed)}
+            >
+              Manage
+            </Button>
+          )}
+        </Group>
+
+        <Group gap="xs" wrap="wrap" align="center">
+          <Text size="xs" c="dimmed">
+            Shows on:
+          </Text>
+          {hasBlanket ? (
+            <>
+              {blanketPublisher && (
+                <Tooltip label="Visible to anyone who views your models." withArrow>
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color={blanketPublisher.enabled ? undefined : 'gray'}
+                  >
+                    On my models
+                    {!blanketPublisher.enabled ? ' · Disabled' : ''}
+                  </Badge>
+                </Tooltip>
+              )}
+              {blanketViewer && (
+                <Tooltip label="Visible only to you, on every model page you open." withArrow>
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color={blanketViewer.enabled ? undefined : 'gray'}
+                  >
+                    On every page I view
+                    {!blanketViewer.enabled ? ' · Disabled' : ''}
+                  </Badge>
+                </Tooltip>
+              )}
+            </>
+          ) : (
+            <Text size="xs" c="dimmed" fs="italic">
+              Not on a blanket surface — pinned to specific models below.
+            </Text>
+          )}
+        </Group>
+
+        {pinned.length > 0 && (
+          <>
+            <Divider />
+            <Stack gap="xs">
+              <Text size="xs" c="dimmed" fw={500}>
+                Pinned to specific models
+              </Text>
+              {pinned.map((sub) => (
+                <PinnedInstallRow key={sub.id} sub={sub} />
+              ))}
+            </Stack>
+          </>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+/**
+ * 🔴 THE `/apps` ANCHOR IS GATED ON `hasAppsStoreAccess`, AND THE GAP IT CLOSES IS THIS
+ * PR'S OWN. `/apps` SSR-gates on `resolveAppsPageAccess` → `hasAppsStoreAccess` =
+ * `appListings || appBlocks || appListingsPublicExternal`. `appBlocksPages` is NOT one of
+ * those disjuncts — but this PAGE now admits `appBlocks || appBlocksPages`. So the cohort
+ * criterion 2 widened the page for can hold `appBlocksPages` ALONE, load this page, and
+ * be offered a marketplace link that answers `notFound`: the #3899 / #4668 defect class
+ * (an affordance into a 404), reintroduced by the widening rather than by a drifted rule.
+ *
+ * The CTA is OMITTED rather than reworded — a viewer with no store has no destination, so
+ * there is no honest link text. `useOptionalFeatureFlags` (not `useFeatureFlags`) so the
+ * absence of a provider REMOVES the affordance instead of throwing; same fail-closed
+ * decision as `ActivityAppName`.
+ */
+function EmptyState({ label }: { label: string }) {
+  const canSeeStore = hasAppsStoreAccess(useOptionalFeatureFlags());
+  return (
+    <Center py="md">
+      <Stack align="center" gap="xs">
+        <IconPlugConnected size={28} opacity={0.5} />
+        <Text size="sm" c="dimmed">
+          {label}
+        </Text>
+        {canSeeStore && (
+          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+            Browse the marketplace
+          </Anchor>
+        )}
+      </Stack>
+    </Center>
+  );
+}
+
+/**
+ * Surface where the user has the app installed in one short string.
+ */
+function buildSurfaceLine(surfaces: {
+  modelInstallCount: number;
+  subscriptionScopes: string[];
+}): string {
+  const parts: string[] = [];
+  if (surfaces.modelInstallCount > 0) {
+    parts.push(
+      `${surfaces.modelInstallCount} model install${surfaces.modelInstallCount === 1 ? '' : 's'}`
+    );
+  }
+  if (surfaces.subscriptionScopes.length > 0) {
+    parts.push(
+      `Subscriptions: ${surfaces.subscriptionScopes
+        .map((s) => (s === 'publisher_all_my_models' ? 'publisher' : 'viewer'))
+        .join(' / ')}`
+    );
+  } else if (surfaces.modelInstallCount === 0) {
+    parts.push('Subscriptions: none');
+  }
+  return parts.join(' · ');
+}
+
+function ScopeGrantsPanel() {
+  const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
+
+  if (isLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+  if (!grants || grants.length === 0) {
+    return <EmptyState label="No apps installed or subscribed yet." />;
+  }
+  return (
+    <AppsCardGrid testId="apps-installed-grants-grid">
+      {grants.map((grant) => (
+        <Card key={grant.appBlockId} withBorder padding="sm" radius="md">
+          <Stack gap="xs">
+            <Group justify="space-between" wrap="nowrap">
+              <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                <Group gap="xs">
+                  <Text fw={600} className="truncate">
+                    {grant.name}
+                  </Text>
+                  <Badge size="xs" variant="outline">
+                    {grant.slug}
+                  </Badge>
+                </Group>
+                <Text size="xs" c="dimmed">
+                  {buildSurfaceLine(grant.surfaces)}
+                </Text>
+              </Stack>
+            </Group>
+            <Divider />
+            <BlockScopeList scopes={grant.scopes} />
+          </Stack>
+        </Card>
+      ))}
+    </AppsCardGrid>
+  );
+}
+
+/**
+ * Viewer-local "Hide app block" restore surface. The ⋯ menu on a block's host
+ * trust-frame lets a viewer hide an owner-installed block; that lives only in
+ * this browser's localStorage (see components/AppBlocks/hiddenBlocks.ts), so it
+ * has no server-side row and isn't part of the user's installs/subscriptions —
+ * hence its own tab. "Restore" un-hides it, and the block reappears on the
+ * model page (reactively, via the shared change event).
+ */
+function HiddenBlocksPanel() {
+  const hidden = useHiddenBlockList();
+
+  if (hidden.length === 0) {
+    return (
+      <Center py="md">
+        <Stack align="center" gap="xs">
+          <IconEyeOff size={28} opacity={0.5} />
+          <Text size="sm" c="dimmed" ta="center" maw={420}>
+            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this device — it
+            only affects what you see, never the publisher or other viewers.
+          </Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  return (
+    /* `gap={12}` — this list was `<Stack gap="sm">`, not `md`. Carrying its own number
+       keeps `APPS_CARD_LIST_MIN_COLUMN`'s "nothing a 1440 or 1920 monitor shows changes"
+       literally true on this tab; the column ladder is identical at both gaps. */
+    <AppsCardGrid testId="apps-installed-hidden-grid" gap={12}>
+      {hidden.map((block) => (
+        <Card key={block.blockInstanceId} withBorder padding="sm" radius="md">
+          <Group justify="space-between" wrap="nowrap" gap="md" align="center">
+            <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+              <Text fw={600} className="truncate">
+                {block.appName ?? 'App'}
+              </Text>
+              <Group gap={6} wrap="wrap">
+                {block.modelId ? (
+                  <Anchor component={Link} href={`/models/${block.modelId}`} size="xs">
+                    {block.modelName ?? `Model ${block.modelId}`}
+                  </Anchor>
+                ) : null}
+                {block.hiddenAt > 0 && (
+                  <Text size="xs" c="dimmed">
+                    Hidden {formatDate(new Date(block.hiddenAt), 'YYYY-MM-DD')}
+                  </Text>
+                )}
+              </Group>
+            </Stack>
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => {
+                unhideBlock(block.blockInstanceId);
+                showSuccessNotification({
+                  title: 'Restored',
+                  message: `${block.appName ?? 'App'} will show again.`,
+                });
+              }}
+            >
+              Restore
+            </Button>
+          </Group>
+        </Card>
+      ))}
+    </AppsCardGrid>
+  );
+}
+
+/**
+ * The icon for each tab. Lives here rather than beside `ACTIVITY_TAB_LABELS` because
+ * `appsActivityTabs.ts` is deliberately React-free (that is what lets it run in the
+ * node-env `unit` project). Typed as a total `Record` so adding a tab to
+ * `ACTIVITY_TAB_VALUES` fails the build here rather than rendering an undefined icon.
+ */
+const ACTIVITY_TAB_ICONS: Record<ActivityTab, typeof IconHistory> = {
+  activity: IconHistory,
+  subscriptions: IconPlugConnected,
+  permissions: IconShieldLock,
+  hidden: IconEyeOff,
+};
+
+export default function AppActivityPage() {
+  const features = useFeatureFlags();
+  const router = useRouter();
+  // 🔴 The gated tabs' predicate is the `appBlocks` SLOT flag; the PAGE's is
+  // `appBlocks || appBlocksPages`. A tab's predicate is its content's own gate,
+  // restated — and this one is NON-VACUOUS only because the page gate widened.
+  // `SLOT_GATED_ACTIVITY_TABS` is the ledger of which tabs that covers, and everything
+  // below — the bar, the panels and the `?tab=` resolver — reads it through this ONE
+  // value, so none of them can disagree with another.
+  const visibility = { canSeeSlotGatedTabs: !!features.appBlocks };
+  const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
+    enabled: visibility.canSeeSlotGatedTabs,
+  });
+
+  // 🔴 URL-backed, controlled tabs. `resolveActivityTab` returns the default for an
+  // absent value, so an empty first-render `router.query` renders what SSR did.
+  const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], visibility);
+
+  // 🔴 THE BAR IS DERIVED, NOT HAND-SPELLED. This used to be four `canSee… &&` guards
+  // inline in the JSX below — four sites the node-env `unit` project could not see, so
+  // deleting one of them (rendering a tab whose panel stayed gated) left that whole
+  // suite green and only the report-only `component` tier caught it. Mapping the
+  // ledger's own output means the unit-tier guard on `SLOT_GATED_ACTIVITY_TABS` now
+  // governs what actually renders.
+  const visibleTabs = visibleActivityTabs(visibility);
+
+  const groupedApps = useMemo(() => groupSubscriptionsByApp(subs ?? []), [subs]);
+
+  function handleManage(sub: SubscriptionRecord) {
+    // Build an AvailableBlock-shaped object from the subscription's
+    // denormalised app_block row so we can reuse the marketplace modal.
+    const block: AvailableBlock = {
+      id: sub.appBlockId,
+      blockId: sub.blockId,
+      appId: sub.appId,
+      appName: null,
+      manifest: sub.manifest as Record<string, unknown>,
+      installCount: 0,
+      // E3 marketplace-card fields — unused on the Manage path (modal-only).
+      category: null,
+      scopesSummary: [],
+      // An installed app is on-platform by definition (external-link apps have
+      // no install) — never an external listing on this path.
+      externalUrl: null,
+      // Card cover — unused on the Manage path (the modal renders no cover) and
+      // the subscription row carries no screenshot data, so null.
+      coverUrl: null,
+    };
+    const existingByScope: Partial<Record<typeof sub.scope, SubscriptionRecord>> = {};
+    for (const candidate of subs ?? []) {
+      if (candidate.appBlockId === sub.appBlockId) {
+        existingByScope[candidate.scope] = candidate;
+      }
+    }
+    openAppSettingsModal({ block, existingByScope });
+  }
+
+  // The client-side re-check reads the SAME predicate the SSR gate does, so the two
+  // cannot answer differently for one viewer.
+  if (!canAccessAppsActivity(features)) return <NotFound />;
+
+  return (
+    <>
+      <Meta title="App activity — Civitai" deIndex />
+      <AppsPageLayout
+        title="Your app activity"
+        subtitle="What Civitai Apps have done on your behalf, what they can access, and where they show up."
+      >
+        {/* 🔴 CONTROLLED, NOT `defaultValue` — that is what puts the selection in the
+            URL. `replace` + `shallow`: no re-run of `getServerSideProps`, and no history
+            entry per click (which would turn Back into a tab-by-tab rewind). */}
+        <Tabs
+          value={activeTab}
+          onChange={(value) => {
+            if (!isActivityTab(value)) return;
+            void router.replace(
+              { pathname: router.pathname, query: activityTabQuery(value, router.query) },
+              undefined,
+              { shallow: true }
+            );
+          }}
+          variant="outline"
+        >
+          {/* 🔴 A `< 2` COLLAPSE, MIRRORING `AppsSubNav`'s `links.length < 2` — and it is
+              REACHABLE, which is why it exists. A viewer without the slot flag sees only
+              `Recent activity`, and a one-tab bar is chrome offering no choice. (The
+              earlier state of this file argued the floor was 2 and declined to build a
+              branch that could never run; gating `permissions` inverted that.) */}
+          {visibleTabs.length >= 2 && (
+            <Tabs.List>
+              {visibleTabs.map((tab) => {
+                const Icon = ACTIVITY_TAB_ICONS[tab];
+                return (
+                  <Tabs.Tab key={tab} value={tab} leftSection={<Icon size={14} />}>
+                    {ACTIVITY_TAB_LABELS[tab]}
+                  </Tabs.Tab>
+                );
+              })}
+            </Tabs.List>
+          )}
+
+          <Tabs.Panel value="activity" pt="md">
+            <Stack gap="sm">
+              <Text size="sm" c="dimmed">
+                Recent actions apps have taken on your behalf — Buzz spends plus every scope-gated
+                API call (read profile, read model, etc.).
+              </Text>
+              <AppActivityPanel />
+            </Stack>
+          </Tabs.Panel>
+
+          {/* 🔴 THE PANEL IS GATED TOO, THROUGH THE SAME PREDICATE THE BAR USES. A
+              `Tabs.Panel` with no tab is unreachable but still MOUNTS its children on
+              every render. Reading `isActivityTabVisible` rather than a local boolean is
+              what makes "the bar and the panels cannot disagree" a fact about the code. */}
+          {isActivityTabVisible('subscriptions', visibility) && (
+            <Tabs.Panel value="subscriptions" pt="md">
+              {isLoading ? (
+                <Center py="xl">
+                  <Loader />
+                </Center>
+              ) : groupedApps.length === 0 ? (
+                <EmptyState label="Nothing installed yet — browse the marketplace." />
+              ) : (
+                /* A GRID, NOT A `Stack` — the 640px dead-gap fix. Rationale + the measured
+                   ladder: `APPS_CARD_LIST_MIN_COLUMN` in `~/components/Apps/appsPageWidths`. */
+                <AppsCardGrid testId="apps-installed-apps-grid">
+                  {groupedApps.map((app) => (
+                    <InstalledAppCard key={app.appBlockId} app={app} onManage={handleManage} />
+                  ))}
+                </AppsCardGrid>
+              )}
+            </Tabs.Panel>
+          )}
+
+          {/* 🔴 GATED, AND ITS OWN DATA SOURCE IS WHY. `ScopeGrantsPanel`'s only read is
+              `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware returns
+              `[]` for a viewer without the `appBlocks` slot flag — so ungated this showed
+              the "No apps installed or subscribed yet." empty state to every such viewer,
+              always. Gating it displays nothing that was ever displayed. */}
+          {isActivityTabVisible('permissions', visibility) && (
+            <Tabs.Panel value="permissions" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  What each app you've installed can request, and where you have it. This is a
+                  reflection of the current state — to revoke access, remove the install or
+                  subscription on the Installs tab.
+                </Text>
+                <ScopeGrantsPanel />
+              </Stack>
+            </Tabs.Panel>
+          )}
+
+          {/* 🔴 THE PANEL IS GATED TOO — same reason as `subscriptions` above: an
+              unreachable `Tabs.Panel` still MOUNTS its children on every render. */}
+          {isActivityTabVisible('hidden', visibility) && (
+            <Tabs.Panel value="hidden" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  Apps you've hidden on this device. Hiding is local to your browser — it never
+                  affects the publisher's install or other viewers. Restore one to have it show on
+                  its model page again.
+                </Text>
+                <HiddenBlocksPanel />
+              </Stack>
+            </Tabs.Panel>
+          )}
+        </Tabs>
+      </AppsPageLayout>
+    </>
+  );
+}

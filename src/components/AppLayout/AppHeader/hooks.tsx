@@ -9,7 +9,6 @@ import {
   IconBrush,
   IconChartHistogram,
   IconCloudLock,
-  IconCode,
   IconCube,
   IconCrown,
   IconGift,
@@ -95,8 +94,8 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     },
   } = useSystemCollections();
 
-  // App Blocks nav entries: public get-started vs mod-only marketplace. Pure
-  // helper (unit-tested in appsNavVisibility.test.ts) is the source of truth.
+  // App Blocks nav entry: is the /apps store visible to this viewer. Pure helper
+  // (unit-tested in appsNavVisibility.test.ts) is the source of truth.
   const appsNav = appsNavVisibility(features);
 
   // Already in flight for the notification bell — one request per session,
@@ -219,27 +218,30 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-07-20'),
         },
         {
-          // PUBLIC "App builders" get-started landing page (Scope A soft launch).
-          // Gated on the separate public `appBlocksGetStarted` flag (kill switch),
-          // NOT the mod-only `appBlocks` gate — this is the only `/apps/*` surface
-          // visible to non-mods. Distinct label ("Build apps") from the mod-only
-          // marketplace entry below so a moderator never sees two identical labels.
-          // Visibility comes from the pure `appsNavVisibility` helper (unit-tested).
-          href: '/apps/get-started',
-          visible: appsNav.getStarted,
-          icon: IconCode,
-          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Build apps',
-          newUntil: new Date('2026-08-01'),
-        },
-        {
-          // App store + in-page AppsSubNav hub (installed, submit,
-          // my-submissions, revenue, review). Visible exactly when the STORE is
-          // — `hasAppsStoreAccess`, via `appsNavVisibility` (#3907): this is the
-          // only in-product route to `/apps`, so gating it on `appBlocks` alone
-          // hid the store from the catalog-only and external-only cohorts. The
-          // sub-nav entries behind it keep their own gates. Labeled "Apps" so it
-          // reads distinctly from the public "Build apps" entry above.
+          // 🔴 ONE `/apps*` DROPDOWN ENTRY, ONE DESTINATION. This was two entries
+          // ("Build apps" → `/apps/get-started` and "Apps" → `/apps`), then one entry
+          // with a CONDITIONAL href that fell back to `/apps/get-started` for a viewer
+          // who held that flag but no store flag — because such a viewer cannot load
+          // `/apps` at all (`resolveAppsPageAccess` → `notFound`) and sending them there
+          // would be a menu entry into a 404.
+          //
+          // 🔴 THE FALLBACK IS GONE BECAUSE ITS DESTINATION IS, AND THE REPLACEMENT WOULD
+          // 404 FOR THE SAME COHORT. `/apps/get-started` merged into `/apps/build`, whose
+          // gate (`canAccessAppsBuild`) requires `hasAppsStoreAccess` — so repointing the
+          // fallback would have recreated, on the very same line, exactly the
+          // menu-entry-into-a-404 defect the fallback was written to avoid. A
+          // get-started-only viewer now has NO `/apps/*` surface at all, so the honest
+          // menu for them is no entry, which is what `visible` says.
+          //
+          // That also retires the "the label and icon do not follow the href" note this
+          // block used to carry: there is one destination now, so "Apps" with
+          // `IconPlugConnected` names it exactly.
+          //
+          // `marketplace` still routes through the shared `hasAppsStoreAccess` predicate
+          // (#3907) — gating it on `appBlocks` alone hid the store from the catalog-only
+          // and external-only cohorts, and this entry is the ONLY in-product route to
+          // `/apps` (the sub-nav's Marketplace tab renders only once you are already on
+          // an `/apps/*` route).
           href: '/apps',
           visible: appsNav.marketplace,
           icon: IconPlugConnected,

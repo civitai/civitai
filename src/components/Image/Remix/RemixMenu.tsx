@@ -1,5 +1,5 @@
 import { Menu, Text, ThemeIcon } from '@mantine/core';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
@@ -12,6 +12,7 @@ import {
   startRemix,
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 import { waitForElement } from '~/utils/html-helpers';
 
@@ -98,6 +99,7 @@ export function RemixMenu({
   zIndex?: number;
 }) {
   const { trackAction } = useTrackEvent();
+  const { setBlockedTarget } = useTourContext();
   const kinds = getRemixKinds(image);
   const engineRefusal = getEngineRefusal(image);
   const showReuse = canReusePrompt(image) && !isReuseRefused(image);
@@ -135,9 +137,26 @@ export function RemixMenu({
   // exit is clicking through this button.
   const hasActionableItem = (!engineRefusal && kinds.length > 0) || showReuse;
   const announcedOpen = useRef(false);
+
+  // The menu step hides its footer, so a menu holding nothing but a disabled refusal
+  // would be a dead end. Reporting it blocked is what puts `Next` back on that step.
+  // Latched so clearing only ever undoes this menu's own report, never another
+  // component's (`FormFooter` reports `gen:submit` from the same slot).
+  const reportedBlocked = useRef(false);
+  const clearBlocked = () => {
+    if (!reportedBlocked.current) return;
+    reportedBlocked.current = false;
+    setBlockedTarget(null);
+  };
+  useEffect(() => clearBlocked, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleOpen = () => {
     if (announcedOpen.current) return;
     announcedOpen.current = true;
+    if (tourTarget && !hasActionableItem) {
+      reportedBlocked.current = true;
+      setBlockedTarget(`[data-tour="${tourTarget}"]`);
+    }
     if (!onOpen) {
       if (!hasActionableItem) onAction?.();
       return;
@@ -153,7 +172,13 @@ export function RemixMenu({
   };
 
   return (
-    <Menu withinPortal position="bottom-end" zIndex={zIndex ?? remixMenuZIndex} onOpen={handleOpen}>
+    <Menu
+      withinPortal
+      position="bottom-end"
+      zIndex={zIndex ?? remixMenuZIndex}
+      onOpen={handleOpen}
+      onClose={clearBlocked}
+    >
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown
         data-tour={tourTarget}

@@ -1458,13 +1458,20 @@ export async function listDisplayedCollaboratorUserIds(appListingId: string): Pr
  * The user ids that must be treated as "the app's own people" for ANTI-ABUSE
  * purposes — the owner plus every ACCEPTED collaborator, REGARDLESS of `displayed`.
  *
- * Keyed on the APP BLOCK because its only caller is the `AppBlockReview` self-review
- * gate, which is block-scoped; the seats are reached via the block's listing.
+ * Keyed on the APP BLOCK, which is how its original caller — the removed
+ * `AppBlockReview` self-review gate — was scoped; the seats are reached via the block's
+ * listing.
+ *
+ * ⚠️ NO PRODUCTION CALLER TODAY. The 5-star review system that used it was removed;
+ * this is kept because the question it answers ("who is on the inside of this app, for
+ * anti-abuse purposes") is the one any future self-review / self-vote gate needs, and
+ * because the `displayed` asymmetry below is a decision worth keeping written down and
+ * under test. Delete it if that stops being true — do not quietly repurpose it.
  *
  * 🔴 `displayed` is deliberately NOT filtered here, and the asymmetry with
  * {@link listDisplayedCollaboratorUserIds} is the whole point: `displayed` is a
  * PUBLIC-CREDIT preference, not a capability. An editor who opted out of the byline is
- * still an insider, so they still must not be able to 5-star the app they can edit.
+ * still an insider, so they still must not be able to review the app they can edit.
  * Filtering on `displayed` here would make "hide my name" a self-review bypass.
  */
 export async function listAppInsiderUserIds(appBlockId: string): Promise<number[]> {
@@ -1485,10 +1492,10 @@ export async function listAppInsiderUserIds(appBlockId: string): Promise<number[
  * people who can actually EDIT this listing, minus the owner.
  *
  * 🔴 THE ONE SPELLING OF `{ status: ACCEPTED }`-without-`displayed`, extracted because
- * it now has two callers and the pair must not drift. {@link listAppInsiderUserIds}
- * (the self-review gate) and the moderator-message fan-out ask the SAME question —
+ * it has two callers and the pair must not drift. {@link listAppInsiderUserIds} (the
+ * anti-abuse insider set) and the moderator-message fan-out ask the SAME question —
  * "who, other than the owner, is on the inside of this app" — and an answer that
- * diverged between them would mean an editor who cannot 5-star the app they co-author
+ * diverged between them would mean an editor who cannot review the app they co-author
  * silently stops receiving the moderation notice telling them what to fix, or the
  * reverse. The predicate that must never be added here is `displayed`, for the reason
  * {@link listDisplayedCollaboratorUserIds}'s header gives: it is PUBLIC-CREDIT

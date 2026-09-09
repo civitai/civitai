@@ -141,6 +141,10 @@ const mocks = vi.hoisted(() => ({
   strandedD: false,
   // Effective-status: a draft-with-a-live-pending-request + a true orphan draft.
   draftPending: false,
+  // A per-test row override. `null` ⇒ the shared `ROWS` fixture, so every pre-existing
+  // test is untouched; a test that needs its own dataset sets this instead of mutating
+  // the shared constant (which would leak into whichever test ran next).
+  rows: null as unknown[] | null,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -240,7 +244,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               };
             }
             return {
-              data: { items: ROWS, nextCursor: null },
+              data: { items: mocks.rows ?? ROWS, nextCursor: null },
               isLoading: false,
               isFetching: false,
               error: null,
@@ -310,6 +314,9 @@ beforeEach(() => {
   mocks.paged = false;
   mocks.strandedD = false;
   mocks.draftPending = false;
+  // 🔴 RESET, or a per-test dataset leaks into every later test in the file — the shared
+  // `ROWS` fixture backs most of them, and a stray override reads as an unrelated failure.
+  mocks.rows = null;
   showError.mockClear();
 });
 
@@ -772,5 +779,86 @@ describe('AppListingsModerationTable — dark posture + error resilience (C)', (
     // Retry calls refetch().
     await page.getByTestId('apps-mod-listings-error-retry').click();
     expect(mocks.refetch).toHaveBeenCalled();
+  });
+});
+
+describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
+  /**
+   * 🔴 WHY THIS EXISTS AT ALL. `betaMessage` is author-controlled PUBLIC copy that NO
+   * moderator reviews before it goes live: beta is a TRIVIAL patch field, so it never enters
+   * the review queue, and the mod review preview only renders listings already IN review.
+   * The DTO carried `isBeta`/`betaMessage` and NOTHING branched on them, while the field's
+   * docstring claimed this table was the surface where a moderator would see them — so the
+   * feature's only claimed human mitigation did not exist. A field in a DTO is not a guard;
+   * only a branch on it is, and this is the branch.
+   */
+  test('renders the Beta badge and the note for a beta listing', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_beta',
+        slug: 'beta-app',
+        name: 'Beta App',
+        status: 'approved',
+        isBeta: true,
+        betaMessage: 'Payments are broken — do not buy yet.',
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect.element(page.getByTestId('apps-listing-mod-beta')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-mod-beta-message')).toBeInTheDocument();
+    // The moderator can actually READ the unreviewed copy — that is the point.
+    expect(document.body.textContent).toContain('Payments are broken — do not buy yet.');
+  });
+
+  test('renders NEITHER for a listing that is not in beta', async () => {
+    mocks.rows = [
+      offsite({ id: 'apl_n', slug: 'plain-app', name: 'Plain App', status: 'approved' }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    // Positive control first: the row really rendered.
+    await expect.element(page.getByText('plain-app')).toBeInTheDocument();
+    // Absence read off the DOM, never through `.not.toBeInTheDocument()` (inert here).
+    expect(document.querySelectorAll('[data-testid="apps-listing-mod-beta"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="apps-listing-mod-beta-message"]')).toHaveLength(
+      0
+    );
+  });
+
+  test('🔴 a stale note is NOT shown when the flag is off', async () => {
+    // Defence in depth against a row written before the write-side fix: the cell branches on
+    // the FLAG, so a note left in the column cannot surface to a moderator as current either.
+    mocks.rows = [
+      offsite({
+        id: 'apl_s',
+        slug: 'stale-app',
+        name: 'Stale App',
+        status: 'approved',
+        isBeta: false,
+        betaMessage: 'left over from before',
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect.element(page.getByText('stale-app')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('left over from before');
+  });
+
+  test('the note is PLAIN TEXT — it mints no element', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_m',
+        slug: 'md-app',
+        name: 'MD App',
+        status: 'approved',
+        isBeta: true,
+        betaMessage: 'click [here](https://evil.example) **now**',
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    const cell = await vi.waitUntil(
+      () => document.querySelector('[data-testid="apps-listing-mod-beta-message"]'),
+      { timeout: 3000 }
+    );
+    expect(cell?.textContent).toContain('[here](https://evil.example)');
+    expect(cell?.querySelectorAll('a, strong, img')).toHaveLength(0);
   });
 });

@@ -152,14 +152,14 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   'server/services/article-rating-review.helpers.ts:482':
     'article-rating-dispute has no segment rollouts; background path with no SessionUser',
   // flag `feed-fetch-filter-in-post`: enabled=true, 0 rules, 0 rollouts.
-  'server/services/image.service.ts:4127':
+  'server/services/image.service.ts:3279':
     'feed-fetch-filter-in-post has no segment rollouts; hot feed path',
   // flag `feed-image-existence`: enabled=true, 0 rules, 0 rollouts. Three sites.
-  'server/services/image.service.ts:4268':
+  'server/services/image.service.ts:3323':
     'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:5006':
+  'server/services/image.service.ts:4092':
     'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:6140':
+  'server/services/image.service.ts:4902':
     'feed-image-existence has no segment rollouts; hot feed path',
   // flags `model-text-moderation-xguard` / `-apply`: both enabled=true, 0 rules,
   // 0 rollouts (checked against flipt-state and against the evaluation API on
@@ -190,7 +190,7 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   // 🔴 So this flag can only be ramped by PERCENTAGE or BOOLEAN. A SEGMENT rollout silently
   // matches nothing here and looks exactly like "blurbs are off". The full warning is on
   // FLIPT_FEATURE_FLAGS.TEXT_BLURBS, which is where someone running the ramp will look.
-  'server/services/blurb-materialize.service.ts:65':
+  'server/services/blurb-materialize.service.ts:66':
     'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
 };
 
@@ -219,7 +219,7 @@ describe('flipt evaluation context — source gate', () => {
     // these and fail the second, and vice versa.
     const bySite = new Map(calls.map((c) => [c.site, c]));
     expect(bySite.get('server/services/feedback.service.ts:43')?.argc).toBe(3);
-    expect(bySite.get('server/services/image.service.ts:4268')?.argc).toBe(2);
+    expect(bySite.get('server/services/image.service.ts:3323')?.argc).toBe(2);
   });
 
   it('adds no Flipt evaluation that names an entity but passes no context', () => {

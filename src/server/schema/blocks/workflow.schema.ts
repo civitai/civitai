@@ -3,6 +3,7 @@ import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import type { BlockStepToolCall } from '~/server/services/blocks/steps';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
@@ -732,17 +733,105 @@ export type BlockWorkflowSnapshot = {
    */
   textOutputs?: string[];
   /**
-   * Set when generated text WAS produced but is being withheld — a content-policy
-   * hit, or a scanner error/timeout (the scan fails CLOSED).
+   * Set when a text-posture step produced nothing the block can be given, with a
+   * user-facing sentence saying why. TWO distinct causes land here:
    *
-   * `reason` is a user-facing message, deliberately generic: it does not name the
-   * labels that triggered. The triggering labels + scores go to the per-app
-   * trigger log instead, which is where the actionable signal lives (an app whose
-   * outputs trigger constantly is telling you about its system prompt).
+   *   1. WITHHELD — text WAS produced and is being kept back: a content-policy
+   *      hit, or any other fail-CLOSED scan outcome (scanner error or timeout,
+   *      no verdict at all, an over-cap payload, or requested labels that came
+   *      back missing or errored). Every one of those paths returns the SAME
+   *      message, so this cause is one string with several origins.
+   *   2. UNPUBLISHABLE — the step SUCCEEDED and the scan RELEASED, but the
+   *      entry's extractors could publish none of what came back (e.g. a
+   *      provider tool-call `id` outside the published charset). Nothing was
+   *      moderated in this case, and the message says so explicitly.
+   *
+   * 🔴 AN EARLIER VERSION OF THIS DOC DESCRIBED ONLY CAUSE 1 — "generated text
+   * WAS produced but is being withheld" — and both halves of that sentence are
+   * FALSE on cause 2: no text was produced, and no policy or scanner event
+   * occurred. This is the doc the `@civitai/app-sdk` mirror-writer and block
+   * authors read, so a consumer branching on it was being told the wrong thing.
+   * If a third cause is ever added, correct this list in the same change.
+   *
+   * `reason` is deliberately generic: it does not name the labels that
+   * triggered. The triggering labels + scores go to the per-app trigger log
+   * instead, which is where the actionable signal lives (an app whose outputs
+   * trigger constantly is telling you about its system prompt).
+   *
+   * 🔴 THE TWO CAUSES ARE NOT MACHINE-SEPARABLE without matching on the string,
+   * which is NOT a contract. A consumer needing to branch on the difference is
+   * the trigger to add a discriminated reason code — not before.
+   *
+   * 🔴 ONLY CAUSE 2 IS STATUS-GATED, AND THE GATE READS THE STEP'S OWN
+   * `succeeded` STATUS — never the workflow's. CAUSE 1 IS NOT GATED AT ALL: in
+   * `steps/moderation.ts` the `succeeded` test guards the unpublishable branch
+   * only, and the withheld branch is the plain `else` beside it.
+   *
+   * So a CANCELLED generation CAN still set this field. The orchestrator returns
+   * whatever text it had already produced, that text is still scanned, and a hit
+   * still withholds it — `blocks.router.textOutputModeration.test.ts` pins
+   * exactly that, cancelling a workflow whose step succeeded and asserting the
+   * field IS set. A consumer that skips rendering `reason` on cancel would
+   * suppress a real content-policy explanation.
+   *
+   * A block polling a healthy in-flight generation does still see the field
+   * absent — but for a reason worth stating correctly rather than by status: a
+   * step that has produced no text YET can reach neither cause, because
+   * `screenGeneratedText` short-circuits to RELEASED on an empty text set, and
+   * cause 2 additionally needs `succeeded`.
+   *
+   * 🔴 THIS CLAUSE HAS NOW BEEN WRONG TWICE, both times by describing the FIELD
+   * when the code only ever gated ONE OF ITS TWO CAUSES. Before editing it
+   * again, check each cause against `steps/moderation.ts` separately.
    *
    * Independent of `textOutputs` rather than mutually exclusive: a workflow with
    * two text steps can release one and withhold the other, and both fields then
-   * appear.
+   * appear. Because of that pairing the `reason` is scoped to "a step in this
+   * response", never to the response as a whole.
    */
   textOutputWithheld?: { reason: string };
+  /**
+   * Structured tool calls the model requested on a registered `'textOutput'`
+   * step — and which have PASSED the same output moderation scan `textOutputs`
+   * passes.
+   *
+   * 🔴 SAME SINGLE PRODUCER, SAME STRIPPING, SAME RULE.
+   * `attachModeratedStepTextOutputs` is the only writer; it strips any incoming
+   * value of this field before merging its own, and it attaches tool calls ONLY
+   * onto a released verdict. Do NOT set it anywhere else.
+   *
+   * 🔴 WHY PUBLISHING THESE IS NOT A HOLE IN THE SCAN, since the objects
+   * themselves are never handed to a scanner: the entry's `extractText` returns
+   * every `arguments` string that appears here, so the released verdict was
+   * computed over exactly that prose.
+   *
+   * 🔴 WHAT ENFORCES THAT, STATED AT ITS REAL STRENGTH. For `chat-completion`
+   * the guarantee is STRUCTURAL — both extractors derive from one shared
+   * predicate, so they cannot disagree. Registry clause 8b is a load-time
+   * BACKSTOP against an entry re-splitting them, and it is only as wide as the
+   * shapes its `canonicalOutputFor` sample exercises: a re-split on an axis the
+   * sample does not cover would still pass. An earlier version of this line said
+   * clause 8b "fails the build if an entry ever breaks that containment", which
+   * is wider than the implementation — the same unscoped overclaim corrected in
+   * `steps/moderation.ts` and `steps/chat-completion.step.ts`. Do not restate it.
+   *
+   * The tool NAME is not scanned and does
+   * not need to be — it is pattern-bounded to `[A-Za-z0-9_-]` at both the param
+   * schema and the extractor, so it cannot carry prose. Widening that charset
+   * would make the name a free-text surface and is a moderation change, not a
+   * validation one.
+   *
+   * WHERE IT APPEARS: `blocks.pollWorkflow` and `blocks.cancelWorkflow` — the
+   * same two wrapped procedures as `textOutputs`, for the same reason.
+   *
+   * OMITTED entirely when there are none, so every existing snapshot stays
+   * byte-identical.
+   *
+   * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
+   * mirrors, exactly like `textOutputs` and `modelSubstitutions` above. The SDK's
+   * inbound validator does not know it yet, so a block reads it only once that
+   * type is widened in the SDK repo — tracked separately; nothing here edits
+   * another repo.
+   */
+  toolCalls?: BlockStepToolCall[];
 };

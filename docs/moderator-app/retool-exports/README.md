@@ -27,8 +27,10 @@ Progress against these lives in
 
 [**retool-db-tables.md**](retool-db-tables.md) covers the other half of the migration: which tables in
 Retool's own Postgres these apps actually depend on (7 of 43), and what has to move.
-[**moderator-id-mapping.md**](moderator-id-mapping.md) maps Retool's free-text moderator names to real
-user ids — needed before 69,100 notes and strikes can keep their attribution.
+[**moderator-id-mapping.md**](moderator-id-mapping.md) covers mapping Retool's free-text moderator
+names to real user ids — needed before 69,100 notes and strikes can keep their attribution. It holds
+the coverage figures and the method; **the name↔id table itself is in the private repo**, because it
+pairs staff real names with their Civitai accounts and this repository is public.
 
 ## The raw exports ARE here now — sanitized
 

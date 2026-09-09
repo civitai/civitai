@@ -26,7 +26,23 @@ import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listin
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
 import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
-import { queryCache } from '~/server/utils/cache-helpers';
+// The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
+// never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
+// its module header.
+import {
+  BETA_NOT_SET,
+  readListingBetaForRender,
+  readListingBetaManyForRender,
+  type ListingBetaRead,
+} from '~/server/services/blocks/app-listing-beta.service';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+// The cache TAG NAMES live in a dependency-free LEAF module, never here — a router
+// that must `await import()` this service cannot name a constant exported from it
+// without making that lazy import graph-inert. See that module's header.
+import {
+  APP_LISTING_CATALOG_TAG,
+  APP_LISTING_RECOMMEND_MEAN_TAG,
+} from '~/server/services/blocks/app-listing-cache.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -65,7 +81,9 @@ import { queryCache } from '~/server/utils/cache-helpers';
 /**
  * Bayesian prior COUNT for the `top-rated` recommend sort — how many "average"
  * reviews a 0-review app is seeded with so a 1-review 100% app can't outrank a
- * many-review 95% app. Mirrors the AppBlock rating sort's `BAYES_MIN_REVIEWS`.
+ * many-review 95% app. (This mirrored the removed AppBlock 5-star rating sort's
+ * `BAYES_MIN_REVIEWS`, which no longer exists — this constant is now the single
+ * source for the store's shrinkage prior, with nothing to stay in step with.)
  */
 export const LISTING_BAYES_PRIOR = 10;
 
@@ -226,7 +244,14 @@ export const listingHydrateSelect = {
   // column the public `popular` sort already orders every approved listing by
   // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
   // already — see the DTO field's allowlist justification.
-  metric: { select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true } },
+  // `openCount` feeds the store CARD's play-count stat. Selected here (the shared
+  // card+detail select) but projected onto the CARD only — see `cardOpenCount` and
+  // the DTO field's allowlist justification. It is an aggregate over the whole
+  // audience; the column is `Int NOT NULL DEFAULT 0`, so the null-vs-zero decision
+  // is made in the projection, never here.
+  metric: {
+    select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true, openCount: true },
+  },
   // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
@@ -268,10 +293,92 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
   };
 }
 
-/** Project a hydrated listing row → the PUBLIC card DTO (allowlist). */
-export function projectListingCard(row: HydratedListing): ListingCard {
+/**
+ * The card's play count: a NUMBER for an on-site listing, `null` for an off-site one.
+ *
+ * 🔴 THE DISCRIMINATION IS THE WHOLE POINT, and `row.metric?.openCount ?? 0` alone —
+ * the obvious implementation — is WRONG for every off-site card. `open_count` is
+ * `Int NOT NULL DEFAULT 0`, so an off-site row carries a literal `0`; projecting it
+ * would render "nobody has ever used this app" for an app whose CTA is a plain
+ * `target="_blank"` anchor to a third party, where no on-platform request follows the
+ * click and there is therefore nothing trustworthy to count. That number is ABSENT,
+ * not zero, and `null` is how the DTO says so (the renderer omits the stat row).
+ *
+ * 🔴 AND DO NOT OVER-NULL. An on-site listing nobody has opened yet is a genuine `0`.
+ * A missing metric row means "no plays recorded yet" ⇒ `0`, the same COALESCE-to-0
+ * reading `installCount` uses — NOT `null`.
+ *
+ * 🔴 DISCRIMINATE ON `kind`, NEVER ON `appBlockId` NULLNESS. They are not the same
+ * predicate: `schema.prisma` states at the `appBlockId` field that a natively-created
+ * OFF-SITE listing also leaves it NULL, so an `appBlockId`-based test would be right
+ * by accident on some rows and wrong on others.
+ *
+ * The positive `=== 'onsite'` test (rather than `!== 'offsite'`) is deliberate: it
+ * fails CLOSED to `null` for any kind added later, because an omitted stat row is
+ * honest about an unmeasured app while a `0` is a false claim about it. That property
+ * is GUARDED, not merely stated — see the unknown-future-kind case in
+ * `__tests__/app-listing.service.test.ts`; every other fixture there is onsite/offsite
+ * and cannot tell this form apart from the fail-OPEN `=== 'offsite'` one.
+ *
+ * ✅ MERGE-ORDER CONSTRAINT — DISCHARGED. THIS PARAGRAPH IS RE-DERIVED, NOT EDITED
+ * AROUND, SO READ IT RATHER THAN THE ONE IT REPLACES.
+ *
+ * It used to open "🔴 READ BEFORE SHIPPING THE RENDERER (Stage 4). NOTHING WRITES
+ * `open_count` YET. `appListing.metrics.sql.ts` populates `install_count` only — its
+ * own suite asserts `expect(upsert).not.toContain('open_count')`", and it required the
+ * renderer either to wait for #4653 or to ship behind a flag, on the grounds that a
+ * premature renderer would print "0 plays" on every on-site app INCLUDING heavily used
+ * ones — by this field's own standard the worst outcome available, and on a public
+ * surface.
+ *
+ * Every clause of that is now false, checked rather than assumed:
+ *   · #4653 IS MERGED (`f9f81dcfb5`, "derive app_listing_metrics.open_count from
+ *     App_Open events"), and #4652 before it (`6ff42aed42`) ships the App_Open events
+ *     it derives from;
+ *   · `appListing.metrics.sql.ts` names `open_count` in its INSERT and ON CONFLICT
+ *     lists, and the suite assertion quoted above has INVERTED — the same file now
+ *     asserts `toContain('COALESCE(oc."open_count", 0)')` and
+ *     `toContain('"open_count" = EXCLUDED."open_count"')`;
+ *   · the count is DERIVED from an all-time read on every rollup run rather than
+ *     accumulated, so there is no backfill step gating correctness — a listing's
+ *     number becomes right the first time the job covers it.
+ *
+ * The renderer (stage 4) therefore ships unflagged, and the flag this paragraph
+ * declined to build is still not built and is no longer wanted.
+ *
+ * ⚠️ WHAT IS **NOT** CLAIMED HERE: that the rollup has already RUN over the whole
+ * catalog in any given environment. That is an operational fact about a scheduled
+ * job, not a property of this code — an on-site listing whose row the job has not yet
+ * covered reads a truthful-by-the-DTO's-rule `0` until it does.
+ */
+function cardOpenCount(row: HydratedListing): number | null {
+  if (row.kind !== 'onsite') return null;
+  return row.metric?.openCount ?? 0;
+}
+
+/**
+ * Project a hydrated listing row → the PUBLIC card DTO (allowlist).
+ *
+ * 🔴 `beta` is passed IN, and it is the SAME manual-apply trap `projectListingDetail`
+ * documents at length — with a wider blast radius, because this projection backs the
+ * public `/apps` GRID. Putting `isBeta: true` into `listingHydrateSelect` (the obvious
+ * implementation, and the select this function's rows come from) makes every store read
+ * that shares it throw P2022 from the moment this deploys until a human runs the SQL. The
+ * caller resolves it through `readListingBetaManyForRender`, which degrades to an empty map on
+ * ANY error, and the
+ * row is not even consulted for it here. It defaults to {@link BETA_NOT_SET} so the many
+ * existing fixtures and call sites that pass one argument keep working unchanged.
+ */
+export function projectListingCard(
+  row: HydratedListing,
+  beta: ListingBetaRead = BETA_NOT_SET
+): ListingCard {
   const recommend = recommendRollup(row.metric);
   return {
+    // Author-declared beta label — resolved by the caller through the manual-apply guard,
+    // never selected on `row`. `false` covers BOTH "not in beta" and "the columns are not
+    // there yet"; the card has no way to render the difference and no reason to.
+    isBeta: beta.isBeta,
     id: row.id,
     slug: row.slug,
     kind: row.kind as ListingKind,
@@ -284,6 +391,8 @@ export function projectListingCard(row: HydratedListing): ListingCard {
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
+    // Number for on-site, `null` for off-site — see `cardOpenCount`.
+    openCount: cardOpenCount(row),
     kindData: cardKindData(row),
   };
 }
@@ -373,17 +482,45 @@ export async function getListingPreviewForReview(args: {
 }): Promise<{ card: ListingCard; detail: ListingDetail } | null> {
   const row = await dbRead.appListing.findUnique({
     where: { id: args.listingId },
-    select: listingHydrateSelect,
+    // `revisionOfId` on top of the shared select — the beta read below is keyed on the
+    // PARENT for a shadow. Spread here rather than added to `listingHydrateSelect`, so the
+    // public grid and detail reads are untouched (same pattern as `status` on the public
+    // detail read). It is an ordinary long-standing column, not a manual-apply one.
+    select: { ...listingHydrateSelect, revisionOfId: true },
   });
   if (!row) return null;
   // Same manual-apply guard as the public read — a moderator previewing a shadow must
   // see the source link the apply will publish, and the preview must not 500 while the
   // migration is outstanding. `args.listingId` is the row this preview projects (a
   // shadow id here, deliberately), not its parent.
-  const sourceRepo = await readListingSourceRepoUrl(args.listingId, dbRead);
+  //
+  // 🔴 THE BETA READ IS KEYED ON THE **PARENT** FOR A SHADOW, and that is what lets beta
+  // stay off the revision round trip entirely. Beta is never staged: every write targets the
+  // live listing, so the PARENT row is the only place the current declaration exists. A
+  // shadow's own beta columns are therefore not a source of truth — and the consequence of
+  // reading them is worse than staleness, which is what an earlier version of this comment
+  // said. NOTHING writes them: `beginListingRevision` clones no beta column and every write
+  // path targets the parent, so a shadow's `is_beta` / `beta_message` hold the SCHEMA
+  // DEFAULTS (`false` / `null`) for every shadow, always. Keying this read on the shadow id
+  // would not show a moderator a stale value; it would remove the badge and the notice from
+  // EVERY revision preview, which is precisely the framing the `preview` omission ledger in
+  // `AppListingDetailBody` exists to guarantee.
+  //
+  // 🔴 THIS REPLACED A CLONE, AND REMOVING THAT CLONE IS THE POINT. `beginListingRevision`
+  // used to copy the columns onto the shadow purely so this preview could render them. That
+  // put an ordering constraint on `updateListing` — the parent's beta write had to land
+  // before the shadow was minted or the clone captured the pre-edit value — and honouring it
+  // hoisted a WRITE above the patch validation, so a patch that failed validation applied
+  // its beta half anyway. Reading the parent here needs no clone, no ordering rule, and
+  // cannot go stale.
+  const betaSourceId = row.revisionOfId ?? args.listingId;
+  const [sourceRepo, beta] = await Promise.all([
+    readListingSourceRepoUrl(args.listingId, dbRead),
+    readListingBetaForRender(betaSourceId, dbRead),
+  ]);
   return {
-    card: projectListingCard(row),
-    detail: projectListingDetail(row, [], sourceRepo.value),
+    card: projectListingCard(row, beta),
+    detail: projectListingDetail(row, [], sourceRepo.value, beta),
   };
 }
 
@@ -418,10 +555,21 @@ export async function getListingPreviewForReview(args: {
 export function projectListingDetail(
   row: HydratedListing,
   collaborators: Array<{ id: number; username: string | null; image: string | null }> = [],
-  sourceRepoUrl: string | null = null
+  sourceRepoUrl: string | null = null,
+  beta: ListingBetaRead = BETA_NOT_SET
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
+    // Author-declared beta label + note. Passed IN for the SAME manual-apply reason as
+    // `sourceRepoUrl` above — the columns are never named in `listingHydrateSelect`.
+    // 🔴 `beta.isBeta`, NOT `beta.betaMessage != null`: an author may declare beta WITHOUT
+    // writing a note, and the badge must still show. Deriving the flag from the message
+    // would make a note the price of the label.
+    isBeta: beta.isBeta,
+    // 🔴 Only carried when the flag is set. A stale note left behind by an author who
+    // turned beta OFF must not reach a public DTO, and clearing it at the write site alone
+    // would leave every row written before that rule existed able to leak one.
+    betaMessage: beta.isBeta ? beta.betaMessage : null,
     collaborators: collaborators
       .map((u) => creatorChip(u))
       .filter((c): c is ListingCreatorChip => c !== null),
@@ -567,9 +715,155 @@ export async function getGlobalRecommendMean(): Promise<number> {
       WHERE al.status = 'approved'
         AND (m.thumbs_up_count + m.thumbs_down_count) > 0
     `,
-    { ttl: CacheTTL.hour, tag: ['app-listing:recommend-global-mean'] }
+    { ttl: CacheTTL.hour, tag: [APP_LISTING_RECOMMEND_MEAN_TAG] }
   );
   return rows[0]?.mean ?? DEFAULT_RECOMMEND_MEAN;
+}
+
+// ---------------------------------------------------------------------------
+// The unified store CATALOG cache (`listAvailableListings`) + its ONE buster.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the read-through cache for the `/apps` store's keyset id page, for ONE
+ * viewer class.
+ *
+ * 🔴 THE TWO SECURITY-BOUNDARY AXES ARE LITERAL KEY SEGMENTS, NOT HASH INPUT.
+ *
+ * `queryCache` builds its redis key as `[key, version, hashifyObject(query)]
+ * .join(':')` (`~/server/utils/cache-helpers`). `hashifyObject` → `hashify`
+ * (`~/utils/string-helpers`) is a **32-bit** rolling hash
+ * (`hash = (hash << 5) - hash + chr; hash |= 0`). It is neither injective nor
+ * one-way, and it is LINEAR — collisions against a chosen target are constructed
+ * algebraically, not brute-forced. An earlier revision of this code passed a
+ * single constant `key` and relied on "every axis is interpolated into the
+ * statement, so every axis is in the key". That reasoning silently assumes the
+ * hash is injective, and it is not.
+ *
+ * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
+ * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
+ * arbitrary free strings (only `cursorMean` is range-validated), the router
+ * validates `cursor` only as `z.string().max(128)`, and both land in this
+ * statement as bound params. That is enough tuning room to steer the 32-bit hash
+ * onto any target value.
+ *
+ * So the two axes that are SECURITY BOUNDARIES are lifted out of the hashed
+ * payload and into the `key` string itself:
+ *
+ *   · `scope` — `listingPublicVisibilityFilter`. `full` is the whole approved
+ *     catalog; `public-external` is offsite-only. That is the public/onsite
+ *     boundary (civitai#3983). A cross-scope collision would serve on-site apps
+ *     into the anonymous `GET /api/v1/apps` response, and the reverse direction
+ *     is cache poisoning.
+ *   · `redCapable` — `listingMatureFilter`. A cross-capability collision serves
+ *     `r`/`x` listings onto a SFW host.
+ *
+ * With both in the literal prefix, a hash collision can only ever mix two pages
+ * WITHIN one viewer class — the class boundary is no longer hash-dependent.
+ * `__tests__/app-listing.catalog-cache.test.ts` pins that the boundary lives in
+ * the un-hashed segments.
+ *
+ * 🔴 WHAT IS LEFT UN-CONTAINED, STATED AS A RESIDUAL RATHER THAN A REASSURANCE. The
+ * remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the hash, and
+ * a constructed collision across them is CROSS-USER CACHE POISONING of the shared
+ * `/apps` grid — not, as an earlier version of this comment said, "the attacker's own
+ * page served back to themselves". The entry is shared by every viewer in the class,
+ * and `full` is the class for ordinary logged-in users. The attacker's crafted-cursor
+ * request MISSES, so it is the request that WRITES the colliding key; every later
+ * reader deriving that key HITS it. So one request can pin the store's first page to
+ * an arbitrary filtered — or empty — result for up to `CacheTTL.sm` (180s) for everyone
+ * in that class.
+ *
+ * What it is NOT is a disclosure boundary: every row in a poisoned page came from a
+ * statement carrying the SAME `scope` and `redCapable` predicates, so no listing
+ * appears that the viewer was not already entitled to see. That is the whole reason
+ * those two axes, and only those two, were lifted out of the hash.
+ *
+ * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
+ * grid defect above. The alternative to accepting it is putting the remaining axes in
+ * the literal key too, and the blocker is `cursor`: it is a free-form 128-byte string,
+ * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
+ * label request-controlled and unbounded — exactly the property the note at the bottom
+ * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
+ * `limit` is 1..50, so those four could be lifted; they would multiply the label
+ * cardinality by their product, and they do not help while `cursor` stays hashed,
+ * because `cursor` is the tuning room the collision is built out of.) Widening
+ * `hashify` is the other alternative and it is global — see below.
+ *
+ * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
+ * cursor DIGEST computed with a real hash, not to widen `hashify`.
+ *
+ * 🔴 DO NOT "FIX" THIS BY WIDENING `hashify` — it is used across the codebase for
+ * cache keys, DOM ids and de-dup, so changing its output is a global blast radius.
+ * The containment belongs here, at the one call site that has a security boundary.
+ *
+ * Why `queryCache` + a bust tag, and not the alternatives:
+ *
+ * · **NOT `fetchThroughCache`** — it takes no `tag` option, so `bustCacheTag`
+ *   cannot drive it and a moderator's approve/delist would not be visible until
+ *   the TTL expired.
+ *
+ * · **NOT `clearCacheByPattern`** — banned for bust-on-mutation; see that
+ *   function's own header. A prior use ran a cluster SCAN over a ~60M-key shard,
+ *   producing redis timeouts and 504 waves, and was reverted.
+ *
+ * · **NOT a generation counter** — a counter folded into the key leaves the old
+ *   entries in redis to expire on their own, so a bust multiplies the keyspace
+ *   instead of reclaiming it. The tag set holds the exact keys to delete.
+ *
+ * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
+ * is bounded at 6 (3 scopes × 2 capabilities) — every component is a closed enum,
+ * never a request-controlled string.
+ */
+function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
+  return queryCache(
+    dbRead,
+    `listAvailableAppListings:${scope}:${redCapable ? 'red' : 'sfw'}`,
+    'v1'
+  );
+}
+
+/**
+ * Bust the `/apps` store catalog cache. THE one buster — nothing else deletes the tag.
+ *
+ * 🔴 THE RULE IS "BUST WHEN A CACHED AXIS OR CATALOG MEMBERSHIP MOVES", NOT "every
+ * listing-state mutation busts". Several call sites used to invoke the latter as a
+ * "uniform rule"; it is not uniform, and stating it that way made a reader's model of
+ * the cache wrong in the expensive direction — it implies that a writer WITHOUT a bust
+ * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
+ * statement reads
+ * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
+ * `al.app_block_id` + `ab.current_version_deployed_at` (the deploy gate and its join
+ * key) and the `sort_key` inputs (`al.name`, `al.created_at`, the metric rollup) — and
+ * nothing else. Every other column on the card is hydrated live below the cache and can
+ * never be served stale. ⚠️ The metric rollup is on `app_listing_metrics`, not on this
+ * table, and its two writers deliberately do NOT bust; `APP_LISTING_CATALOG_TAG`'s
+ * header in `app-listing-cache.constants.ts` states that exception in full.
+ *
+ * Some busts ARE kept on paths that are inert today, as cheap defence-in-depth against
+ * a future edit promoting the row into the catalog: `updateListing`'s `removed` and
+ * `draft`/`pending` branches, its material-shadow branch, `submitListingRevision`,
+ * `rejectExternalRequest` and `claimListing`. Each says so at its own call site. They
+ * are a judgement, not the rule.
+ *
+ * ⚠️ THAT LIST IS PROSE AND NOTHING ASSERTS ON IT. The ledger pins WHICH functions bust
+ * and which are `EXEMPT`; it does not pin which of the busts are inert, because that is
+ * a claim about the SQL a branch can write rather than about a call site. Re-derive it
+ * from the call-site comments rather than trusting the enumeration here.
+ *
+ * The asserted form of the rule — every `AppListing` writer either busts or is on an
+ * `EXEMPT` list with a reason — is
+ * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`. That
+ * file, not this paragraph, is what a new mutation has to satisfy.
+ *
+ * Fire-and-forget by the caller's convention (mirrors `bustRecommendMeanCache` in
+ * `app-listing-review.service`): a cache-bus outage must never fail the mutation
+ * that already committed. The worst case of a swallowed failure is a stale store
+ * grid for at most `CacheTTL.sm`; the worst case of a thrown one is a moderator
+ * action that reports failure after having succeeded.
+ */
+export async function bustAppListingCatalogCache(): Promise<void> {
+  await bustCacheTag([APP_LISTING_CATALOG_TAG]);
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +909,31 @@ export async function listAvailableListings(
   const kindParam = kind === 'all' ? null : kind;
   const categoryParam = category ?? null;
 
-  const idRows = await dbRead.$queryRaw<{ id: string; sort_key: string }[]>(Prisma.sql`
+  // 🔴 CACHED. Only the keyset ID PAGE is cached — the hydration below stays a live
+  // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
+  // a card's mutable projection fields are never served from two different ages.
+  // `nextCursor` is derived from these (now cached) rows, same as there.
+  //
+  // The cache is built PER VIEWER CLASS: `scope` and `redCapable` are literal segments
+  // of the redis key, deliberately outside the 32-bit `hashifyObject` of the statement.
+  // See {@link catalogPageCache} for why that is load-bearing rather than stylistic.
+  //
+  // TTL = `CacheTTL.sm` (180s). The catalog is MOD-GATED and low-churn: rows enter and
+  // leave only through moderator approve/delist/reject/purge or an owner
+  // unpublish/republish, and every one of those paths calls
+  // `bustAppListingCatalogCache()`.
+  //
+  // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
+  // no mutation to hang a bust on — chiefly a row that ages into visibility. It is NOT
+  // a redis-outage backstop: `queryCache` has no try/catch and no fail-open (unlike
+  // `fetchThroughCache`), so a redis outage does not degrade to a live DB read here, it
+  // throws — a 500 on `/apps` and on `GET /api/v1/apps`. That is the dependency this
+  // change accepts; the TTL does nothing about it. What 180s does buy is collapsing the
+  // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
+  // bust cannot stretch past.
+  const cacheable = catalogPageCache(scope, redCapable);
+  const idRows = await cacheable<{ id: string; sort_key: string }[]>(
+    Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
@@ -645,7 +963,9 @@ export async function listAvailableListings(
       )
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
-  `);
+  `,
+    { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+  );
 
   const trimmed = idRows.slice(0, limit);
   const last = trimmed[trimmed.length - 1];
@@ -660,15 +980,28 @@ export async function listAvailableListings(
   // Hydrate the public projection for the page, then re-apply the keyset order
   // (findMany does not preserve the `IN (...)` order).
   const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
-  const hydrated = await dbRead.appListing.findMany({
-    where: { id: { in: pageIds } },
-    select: listingHydrateSelect,
-  });
+  // 🔴 IN PARALLEL WITH THE HYDRATE, not after it. Both are keyed on `pageIds`, which is
+  // already in hand, so the beta read depends on nothing the hydrate produces — running them
+  // serially would add a whole round trip to the public `/apps` grid for a cosmetic badge.
+  // ONE batched read for the page, so it stays O(1) queries regardless of page size, and it
+  // is the `…ForRender` variant: a failure renders every card as not-beta rather than 500ing
+  // the grid, which is exactly what this module's header says must not happen.
+  const [hydrated, betaById] = await Promise.all([
+    dbRead.appListing.findMany({
+      where: { id: { in: pageIds } },
+      select: listingHydrateSelect,
+    }),
+    readListingBetaManyForRender(pageIds, dbRead),
+  ]);
   const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
   const items = pageIds
     .map((id: string) => byId.get(id))
     .filter((r): r is HydratedListing => r != null)
-    .map(projectListingCard);
+    // 🔴 `?? BETA_NOT_SET`, not `?? BETA_UNAVAILABLE`: a row present in `hydrated` but
+    // absent from the beta map means the columns WERE readable and that listing simply had
+    // no row when the second query ran. Both project as not-beta, but only the former is an
+    // honest description of what happened.
+    .map((r) => projectListingCard(r, betaById.get(r.id) ?? BETA_NOT_SET));
 
   return { items, nextCursor };
 }
@@ -731,16 +1064,18 @@ export async function getListingDetail(
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
-  // Both extras run in PARALLEL with each other, so the public detail read costs one
-  // round trip more than before, not two. Each is separately guarded against its own
-  // manual-apply migration being outstanding — the collaborator TABLE
-  // (`safeCollaboratorQuery` → `[]`) and the source-repo COLUMN
-  // (`readListingSourceRepoUrl` → `{available:false, value:null}`).
-  const [collaborators, sourceRepo] = await Promise.all([
+  // All three extras run in PARALLEL with each other, so the public detail read still costs
+  // ONE round trip more than the bare hydrate, not three. Each is separately guarded
+  // against its own manual-apply migration being outstanding — the collaborator TABLE
+  // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
+  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBetaForRender` →
+  // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
+  const [collaborators, sourceRepo, beta] = await Promise.all([
     loadDisplayedCollaboratorChips(row.id),
     readListingSourceRepoUrl(row.id, dbRead),
+    readListingBetaForRender(row.id, dbRead),
   ]);
-  return projectListingDetail(row, collaborators, sourceRepo.value);
+  return projectListingDetail(row, collaborators, sourceRepo.value, beta);
 }
 
 /**
@@ -843,6 +1178,33 @@ export type ModerationListingRow = {
     changelog: string | null;
     submittedBy: ModerationUserChip | null;
   } | null;
+  /**
+   * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
+   *
+   * `pendingRequest` above comes from the `AppListingPublishRequest` relation, whose
+   * `appListingId` the schema documents as "On-site: NULL until approve". So for an on-site
+   * PRE-APPROVAL DRAFT it is `null` no matter what — the live submission behind that row is an
+   * `AppBlockPublishRequest`, joined to the listing by the shared `@unique` SLUG and by no
+   * foreign key at all.
+   *
+   * This flag is that missing signal, resolved by a slug-keyed lookup. Without it the table
+   * cannot tell an ABANDONED draft from one under active review, and offered the destructive
+   * Purge action on both. Always `false` for an off-site row (whose requests do carry the FK).
+   */
+  hasPendingBlockRequest: boolean;
+  /**
+   * The author's beta declaration, so a moderator can SEE it.
+   *
+   * 🔴 A moderator cannot review what the store never shows them. Beta is a TRIVIAL patch
+   * field — an author edits it in place with no re-review — so this table is the only
+   * moderator surface on which the declaration and its free-text note appear at all, and
+   * the delist/takedown actions in this same table are the remedy for an abusive one.
+   *
+   * Both `false`/`null` while the MANUAL-APPLY migration is outstanding — resolved through
+   * the guarded batch read, never named in `moderationListingSelect`.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
 };
 
 /**
@@ -879,10 +1241,28 @@ type HydratedModerationRow = Prisma.AppListingGetPayload<{
   select: typeof moderationListingSelect;
 }>;
 
-/** Project a hydrated moderation row → the {@link ModerationListingRow} DTO. */
-export function projectModerationListing(row: HydratedModerationRow): ModerationListingRow {
+/**
+ * Project a hydrated moderation row → the {@link ModerationListingRow} DTO.
+ *
+ * `pendingBlockRequestSlugs` is the set of slugs with a live `AppBlockPublishRequest`,
+ * resolved by the caller in one batched query (there is no FK to include). A caller that
+ * cannot resolve it passes an empty set — see the 🔴 note on `hasPendingBlockRequest`, and
+ * note that an empty set is the PERMISSIVE direction, so only the mod-table read (which does
+ * resolve it) may drive a destructive affordance from this field.
+ */
+export function projectModerationListing(
+  row: HydratedModerationRow,
+  pendingBlockRequestSlugs: ReadonlySet<string> = new Set(),
+  beta: ListingBetaRead = BETA_NOT_SET
+): ModerationListingRow {
   const pending = row.publishRequests[0] ?? null;
   return {
+    // 🔴 The note is carried ONLY when the flag is set — the same rule the public detail
+    // projection applies, and for the same reason: a stale note from an author who turned
+    // beta off is not something this table should show as current.
+    isBeta: beta.isBeta,
+    betaMessage: beta.isBeta ? beta.betaMessage : null,
+    hasPendingBlockRequest: row.kind === 'onsite' && pendingBlockRequestSlugs.has(row.slug),
     id: row.id,
     slug: row.slug,
     name: row.name,
@@ -984,6 +1364,34 @@ export async function listAllListingsForModeration(
 
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
-  const items = page.map(projectModerationListing);
+
+  // 🔴 The on-site "is this draft under review?" signal, which no `include` can supply: an
+  // on-site `AppBlockPublishRequest` is joined to its listing by the shared `@unique` SLUG
+  // and carries no FK (`AppListingPublishRequest.appListingId` is "On-site: NULL until
+  // approve"). One batched query over just this page's on-site slugs, so it stays O(1) reads
+  // regardless of page size and costs nothing on an all-off-site page.
+  const onsiteSlugs = page.filter((r) => r.kind === 'onsite').map((r) => r.slug);
+  const pendingBlockRequestSlugs = new Set<string>(
+    onsiteSlugs.length
+      ? (
+          await dbRead.appBlockPublishRequest.findMany({
+            where: { slug: { in: onsiteSlugs }, status: 'pending' },
+            select: { slug: true },
+          })
+        ).map((r: { slug: string }) => r.slug)
+      : []
+  );
+
+  // ONE batched guarded read for this page's beta declaration — never a column in
+  // `moderationListingSelect`, which would 500 the whole mod table until a human runs the
+  // migration. Same O(1)-per-page shape as the on-site pending-request lookup above.
+  const betaById = await readListingBetaManyForRender(
+    page.map((r: { id: string }) => r.id),
+    dbRead
+  );
+
+  const items = page.map((r) =>
+    projectModerationListing(r, pendingBlockRequestSlugs, betaById.get(r.id) ?? BETA_NOT_SET)
+  );
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

@@ -44,9 +44,12 @@ describe('AppBlocksDevTunnel (opt-in scope — NOT part of Full)', () => {
 
   it('IS included in ALL_SCOPES (the computed upper bound)', () => {
     expect(ALL_SCOPES & TokenScope.AppBlocksDevTunnel).toBe(TokenScope.AppBlocksDevTunnel);
-    // Full is exactly ALL_SCOPES minus the two opt-in bits.
+    // Full is exactly ALL_SCOPES minus the three opt-in bits.
     expect(ALL_SCOPES).toBe(
-      TokenScope.Full | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel
+      TokenScope.Full |
+        TokenScope.AppBlocksSubmit |
+        TokenScope.AppBlocksDevTunnel |
+        TokenScope.LinkConnect
     );
   });
 
@@ -62,5 +65,35 @@ describe('AppBlocksDevTunnel (opt-in scope — NOT part of Full)', () => {
         `preset ${name} must not carry AppBlocksDevTunnel`
       ).toBe(true);
     }
+  });
+});
+
+describe('LinkConnect (opt-in scope — NOT part of Full)', () => {
+  it('is bit 27 = 134217728', () => {
+    expect(TokenScope.LinkConnect).toBe(1 << 27);
+    expect(TokenScope.LinkConnect).toBe(134217728);
+  });
+
+  it('is EXCLUDED from Full and from every preset', () => {
+    expect(TokenScope.Full).toBe(33554431);
+    expect(TokenScope.Full & TokenScope.LinkConnect).toBe(0);
+    for (const [name, preset] of Object.entries(TokenScopePresets)) {
+      expect(
+        (preset & TokenScope.LinkConnect) === 0,
+        `preset ${name} must not carry LinkConnect`
+      ).toBe(true);
+    }
+  });
+
+  it('IS included in ALL_SCOPES, raising it to (1 << 28) - 1', () => {
+    expect(ALL_SCOPES & TokenScope.LinkConnect).toBe(TokenScope.LinkConnect);
+    expect(ALL_SCOPES).toBe((1 << 28) - 1);
+    expect(ALL_SCOPES).toBe(268435455);
+  });
+
+  it('has a consent-screen label', () => {
+    expect(tokenScopeLabels[TokenScope.LinkConnect]).toBe(
+      'Connect the Civitai Link app to your account'
+    );
   });
 });

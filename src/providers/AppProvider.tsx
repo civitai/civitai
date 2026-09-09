@@ -5,7 +5,6 @@ import type { TosMeta } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
-import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
@@ -150,9 +149,6 @@ export function AppProvider({
     initialData: chatSettings,
     enabled: !!chatSettings,
   });
-  // Populate the module-level server domain map so `syncAccount(url)` can
-  // resolve hosts to colors without pulling from React context.
-  setServerDomains(serverDomains);
   const [state] = useState(() => ({
     ...appContext,
     allowMatureContent: domain !== 'green',

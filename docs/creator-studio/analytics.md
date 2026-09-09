@@ -1,4 +1,4 @@
-# `/earnings/analytics` — Basic analytics ⭐
+# `/analytics` — Basic analytics ⭐
 
 > **v1 priority.** The "what's driving my earnings" view: the creator's own model **usage** — generations per resource,
 > downloads, engagement over time — read-only from **ClickHouse** daily aggregates. **Keep it basic for v1**; richer
@@ -8,7 +8,7 @@
 
 ## User story
 
-As a creator, I open `/earnings/analytics` and see **how my models are being used** — generations per resource and
+As a creator, I open `/analytics` and see **how my models are being used** — generations per resource and
 downloads trending over time, plus a top-models breakdown. It answers "what's driving my fees?" so I can tie usage to
 the money I see on [earnings.md](./earnings.md). I can change the date range and skim which versions carry my usage.
 
@@ -17,9 +17,8 @@ the money I see on [earnings.md](./earnings.md). I can change the date range and
 `@civitai/ui` (shadcn-svelte) primitives — don't hand-build:
 
 - **`card`** — headline stat tiles (total generations, total downloads, engagement) for the selected range.
-- **charts** — generations-over-time + downloads-over-time line/area, per-resource. ⚠️ **`@civitai/ui` has NO chart
-  primitive**, and the main app's Chart.js is React-only — a **Svelte charting library must be chosen** (see open
-  questions). This is a real v1 dependency, not a detail.
+- **charts** — generations-over-time + downloads-over-time line/area, per-resource, via the `Chart` wrapper
+  in `@civitai/ui` (Chart.js, SSR-safe; line, bar and doughnut controllers registered) — decision **C1**.
 - **`table`** — **top models / versions** breakdown (generations · downloads · engagement, sortable). Depends on the
   owner-keyed rollup (see Data) — may be deferred if that rollup slips.
 - **`tabs`** (optional) — switch metric views (usage vs. downloads vs. engagement) to keep each view basic.
@@ -94,8 +93,6 @@ point to [join.md](./join.md). Nav item is not `memberOnly`.
 - **Per-model breakdown table** depends on the **owner-keyed rollup**
   ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)) — is it **v1** (needs the MV
   from backend) or **fast-follow** (v1 ships headline usage only)?
-- **Which Svelte charting library?** No chart primitive in `@civitai/ui`; Chart.js is React-only. Pick one
-  (LayerChart / LayerCake / d3-based) and decide whether it lands **in `@civitai/ui`** (shared) or app-local.
 - **Date-range picker** — `@civitai/ui` has no calendar; ship **presets** (7d/30d/90d) for v1 or adopt a date-picker?
 - **Default range + granularity** — proposed **last 30 days, daily** (matches the daily aggregates); confirm.
 - **Earnings-over-time boundary** — does the money time-series live **here** or on [earnings.md](./earnings.md)? Proposed:

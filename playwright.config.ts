@@ -57,10 +57,11 @@ export default defineConfig({
     //   name: 'webkit',
     //   use: { ...devices['Desktop Safari'] },
     // },
-    // {
-    //   name: 'Mobile Chrome',
-    //   use: { ...devices['Pixel 5'] },
-    // },
+    {
+      name: 'Mobile Chrome',
+      use: { ...devices['Pixel 5'] },
+      dependencies: ['setup'],
+    },
     {
       name: 'Mobile Safari',
       use: { ...devices['iPhone 12'] },

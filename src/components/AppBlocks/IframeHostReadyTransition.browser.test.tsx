@@ -88,8 +88,25 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // module imports `setTrpcBatchingEnabled` from '~/utils/trpc', which the
 // wholesale trpc factory below does not provide, so spreading the original makes
 // the file fail to LOAD.
+// 🔴 `useOptionalFeatureFlags` IS LISTED TOO, AND OMITTING IT BREAKS THE WHOLE FILE.
+// This factory REPLACES the module (deliberately — see the note above), so it must
+// name every export anything in this file's module graph imports. The app-block
+// chrome's breadcrumb crumb reads `useOptionalFeatureFlags` for its store gate (the
+// non-throwing variant, because the chrome renders outside a provider), and the day
+// it started doing so this factory stopped satisfying the link:
+//   SyntaxError: The requested module '/src/providers/FeatureFlagsProvider.tsx'
+//   does not provide an export named 'useOptionalFeatureFlags'
+//
+// 🔴 THE FILE THEN FAILS TO IMPORT, WHICH IS NOT THE SAME AS FAILING. Nothing is
+// collected, so the run reported `Test Files 6 failed` alongside `Tests 374 passed`
+// — zero failing ASSERTIONS. Anything reading a failure count, or a per-test
+// summary, sees success. Read the FILE count, not the test count.
+//
+// Both hooks return the SAME flags: the gate must be decided by this fixture, not
+// by which of the two a component happens to call.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
 }));
 
 // IframeHost drives two tRPC queries at render plus the SDK bridges. Stub them so
@@ -98,6 +115,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // `shouldStartInit` fires and the controller arms its readiness timeout).
 vi.mock('~/utils/trpc', () => ({
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       getEffectiveCheckpoint: {
         useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
@@ -496,11 +520,35 @@ describe('IframeHost ready transition — untrusted height payload', () => {
     }
   );
 
+  /**
+   * 🔴 THE VIEWPORT IS SET EXPLICITLY, AND IT HAS TO BE. This case is about
+   * LAYER 2 (the manifest's `maxHeight`), so every other height layer must be
+   * slack — otherwise it silently becomes a test of whichever layer happens to
+   * bind first.
+   *
+   * It used to rely on the harness default (414x896) and broke the day
+   * `IframeHost` gained layer 4, the viewport clamp: the budget at 896 is
+   * `896 - 98` of host chrome = 798, which is TIGHTER than this fixture's
+   * `MAX_HEIGHT` of 800, so the applied height was 798 and the assertion read
+   * `expected 798 to be 800`. The clamp was right and the test's premise was
+   * stale by 2px — a coincidence of the default viewport, not a real
+   * disagreement.
+   *
+   * 1200 leaves a budget of ~1102, well clear of 800, so `maxHeight` is
+   * unambiguously the binding layer again. Layer 4 has its own suite
+   * (`IframeHostViewportHeightClamp.browser.test.tsx`).
+   */
   test('an over-ceiling height is clamped to the manifest maxHeight', async () => {
+    await page.viewport(414, 1200);
     renderWithProviders(<IframeHost {...baseProps} />);
     await driveToReady({ height: 999_999 });
     await vi.waitFor(() => {
-      expect(appliedHeight()).toBe(MAX_HEIGHT);
+      expect(
+        appliedHeight(),
+        `layer 2 did not bind: with a ${1200}px viewport the chrome-adjusted budget is far above ` +
+          `the manifest maxHeight of ${MAX_HEIGHT}, so ${MAX_HEIGHT} is what must be applied, not ` +
+          `${appliedHeight()}`
+      ).toBe(MAX_HEIGHT);
     });
   });
 

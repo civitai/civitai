@@ -1,3 +1,4 @@
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
@@ -51,22 +52,12 @@ import {
   getAppSpendCapConfigSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
-  listAppBlockReviewsSchema,
   listAvailableSchema,
-  setAppReviewExcludedSchema,
   setAppSpendCapConfigSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
   toPublicBlockManifest,
-  upsertAppBlockReviewSchema,
 } from '~/server/schema/blocks/subscription.schema';
-import {
-  getMyAppBlockReview,
-  listAppBlockReviews,
-  setAppReviewExcluded,
-  upsertAppBlockReview,
-} from '~/server/services/appBlockReview.service';
-import { appBlockReviewReward } from '~/server/rewards/active/appBlockReview.reward';
 import {
   approveRequestSchema,
   backfillPublishRequestSchema,
@@ -225,7 +216,6 @@ import { getUserById } from '~/server/services/user.service';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
-  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -2400,14 +2390,14 @@ export const blocksRouter = router({
   }),
 
   /**
-   * W5 v0 — reflection surface for /apps/installed. One row per app the
+   * W5 v0 — reflection surface for /apps/activity. One row per app the
    * current user has either installed on a model OR subscribed to. Counts
    * + scope intersections derived from existing tables (no grant schema
    * yet — that's W5 v1). See user-app-surface.service.ts for shape.
    */
   // GA-relax (gotcha #66, manage-page half): own-data reflection query scoped
   // to ctx.user.id. moderator→protected + the appBlocks flag below. The
-  // /apps/installed page already gates per-user on features.appBlocks, so the
+  // /apps/activity page already gates per-user on features.appBlocks, so the
   // old moderator gate just broke this tab for non-mods on flag-public surfaces.
   listMyScopeGrants: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
@@ -2419,7 +2409,7 @@ export const blocksRouter = router({
   /**
    * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
    * current user is the spender (NOT the app owner). Powers the activity
-   * panel on /apps/installed so users can audit what apps have spent
+   * panel on /apps/activity so users can audit what apps have spent
    * Buzz on their behalf.
    *
    * Cursor pagination by id (createdAt desc, id desc tiebreak); cap 100
@@ -2463,7 +2453,7 @@ export const blocksRouter = router({
    *
    * Identifying the target row by the subscription's `id` (not the
    * blockInstanceId) — blanket subscriptions don't have a blockInstance
-   * Id, and the management UI on /apps/installed reads `id` off the
+   * Id, and the management UI on /apps/activity reads `id` off the
    * SubscriptionRecord directly.
    */
   // GA-relax (gotcha #66): own-data management action. moderator→protected +
@@ -2590,7 +2580,7 @@ export const blocksRouter = router({
 
   /**
    * Lists every user-subscription row (both scopes) for the current viewer.
-   * Used by the management UI at /apps/installed. The app_block row is
+   * Used by the management UI at /apps/activity. The app_block row is
    * denormalised onto each subscription so the UI can render block name,
    * icon, and target slot without a second round-trip.
    */
@@ -2620,6 +2610,7 @@ export const blocksRouter = router({
   getNavSummary: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     const allFalse = {
       hasInstalls: false,
+      hasActivity: false,
       hasSubmissions: false,
       hasApprovedApps: false,
       isReviewer: false,
@@ -2635,24 +2626,64 @@ export const blocksRouter = router({
     // `status: 'accepted'` consent filter in the codebase and failed
     // `app-access.call-site-ledger.test.ts` on the growth — one home, one filter.
     const { resolveAppsNavAccess } = await import('~/server/services/blocks/app-access.service');
-    const [install, submission, approvedApp, navAccess] = await Promise.all([
-      dbRead.blockUserSubscription.findFirst({
-        where: { userId: user.id },
-        select: { id: true },
-      }),
-      dbRead.appBlockPublishRequest.findFirst({
-        where: { submittedByUserId: user.id },
-        select: { id: true },
-      }),
-      dbRead.appBlock.findFirst({
-        where: { app: { userId: user.id }, status: 'approved' },
-        select: { id: true },
-      }),
-      resolveAppsNavAccess(user.id),
-    ]);
+    const [install, buzzActivity, scopeActivity, submission, approvedApp, navAccess] =
+      await Promise.all([
+        dbRead.blockUserSubscription.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        // 🔴 THE TWO ACTIVITY PROBES BELOW ARE THE TWO TABLES `/apps/activity` ACTUALLY
+        // WALKS — `listMyAppActivity` reads `block_buzz_attribution` filtered on the
+        // SPENDER's `userId`, and `listMyScopeInvocations` reads
+        // `block_scope_invocations` on the same column (both in
+        // `~/server/services/blocks/user-app-surface.service`). They are NOT a proxy for
+        // "the user did something app-ish": a probe on a table the feed does not read
+        // would light a tab over an empty page, which is the mirror of the defect this
+        // whole row exists to close.
+        dbRead.blockBuzzAttribution.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        // The scope-invocation half MIRRORS the feed's own WHERE clause, including the
+        // external-OAuth exclusion: the global feed keeps `app-block` and synthetic
+        // dev-tunnel rows (`appBlockId IS NOT NULL OR syntheticAppId IS NOT NULL`) and
+        // drops external-OAuth rows, which carry BOTH columns null. Without that term an
+        // external-OAuth-only viewer would be shown an Activity tab whose feed renders
+        // "No activity yet". Both columns are PRE-EXISTING, so this read is safe whether
+        // or not the `source`/`oauth_client_id` migration has been applied.
+        dbRead.blockScopeInvocation.findFirst({
+          where: {
+            userId: user.id,
+            // 🔴 IMPORTED, NEVER RE-SPELLED — see GLOBAL_SCOPE_ACTIVITY_OR. A second copy of
+            // this OR is the exact drift an audit demonstrated: tighten the feed, update the
+            // feed's own literal, and both suites stay green while this probe over-matches.
+            ...GLOBAL_SCOPE_ACTIVITY_OR,
+          },
+          select: { id: true },
+        }),
+        dbRead.appBlockPublishRequest.findFirst({
+          where: { submittedByUserId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlock.findFirst({
+          where: { app: { userId: user.id }, status: 'approved' },
+          select: { id: true },
+        }),
+        resolveAppsNavAccess(user.id),
+      ]);
 
     return {
       hasInstalls: install !== null,
+      /**
+       * 🔴 ACTIVITY IS NOT INSTALLS, AND THAT IS THE WHOLE REASON THIS FIELD EXISTS.
+       * `hasInstalls` is a `block_user_subscriptions` row — a SLOT subscription. A
+       * FULL-PAGE app (`/apps/run/<slug>`) is stateless by design and writes no such row
+       * ("no `block_user_subscriptions` row, no migration" — the run route's own header),
+       * so a viewer who only ever runs page apps has a populated activity feed and
+       * `hasInstalls: false`. Keying the Activity tab on installs alone hid the page from
+       * exactly the cohort the `/apps/installed` → `/apps/activity` rename widened it for.
+       */
+      hasActivity: buzzActivity !== null || scopeActivity !== null,
       hasSubmissions: submission !== null,
       hasApprovedApps: approvedApp !== null,
       isReviewer: isAppReviewer(user),
@@ -2839,117 +2870,6 @@ export const blocksRouter = router({
         isRedCapableRequest(ctx)
       );
       return { items };
-    }),
-
-  // -------------------------------------------------------------------------
-  // F-E marketplace REVIEWS (5-star) — all DARK behind enforceAppBlocksFlag.
-  // -------------------------------------------------------------------------
-
-  /**
-   * Create-or-update the viewer's review for an app block (5-star).
-   *
-   * GATING / ANTI-ABUSE (all enforced, see appBlockReview.service):
-   *   - enforceAppBlocksFlag (dark today: mutation throws UNAUTHORIZED when off).
-   *   - guardedProcedure: authenticated, email-verified, NOT muted.
-   *   - rating ∈ [1,5]; NO self-review (owner rejected); MUST have an enabled
-   *     install; ONE per (user, app) via the DB unique (upsert, not a 2nd row).
-   *
-   * REWARD (money-touching): a blue-buzz reward fires ONCE per (user, app), only
-   * on the CREATE branch (isFirstReview), AFTER the insert succeeds. It is
-   * FAIL-SOFT — a reward/ClickHouse outage must never 500 the review. We wrap
-   * it in try/catch as defense-in-depth on top of createBuzzEvent's own
-   * fail-soft inline path.
-   */
-  upsertReview: guardedProcedure
-    .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 60,
-        errorMessage: 'Too many review submissions — slow down.',
-      })
-    )
-    .input(upsertAppBlockReviewSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { review, isFirstReview } = await upsertAppBlockReview({
-        userId: ctx.user.id,
-        appBlockId: input.appBlockId,
-        rating: input.rating,
-        recommended: input.recommended,
-        details: input.details ?? null,
-      });
-
-      // Blue-buzz reward — first review only, fail-soft. The reward must never
-      // fail the review write (it's an audit/analytics + non-cashable grant).
-      if (isFirstReview) {
-        try {
-          await appBlockReviewReward.apply(
-            { appBlockId: input.appBlockId, userId: ctx.user.id, isFirstReview: true },
-            { ip: ctx.ip }
-          );
-        } catch (error) {
-          logToAxiom(
-            {
-              name: 'app-block-review-reward',
-              type: 'error',
-              message: 'Failed to apply appBlockReview reward (non-fatal)',
-              appBlockId: input.appBlockId,
-              userId: ctx.user.id,
-              error: (error as Error)?.message,
-            },
-            'app-blocks'
-          ).catch(() => undefined);
-        }
-      }
-
-      return { review, isFirstReview };
-    }),
-
-  /**
-   * Keyset-paginated list of an app's reviews (newest first), excluding
-   * mod-excluded rows. Public/anon-CAPABLE but DARK behind the flag (returns an
-   * empty page when the flag is off, same posture as listAvailable).
-   */
-  listReviews: publicProcedure
-    .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many review requests — slow down.',
-      })
-    )
-    .input(listAppBlockReviewsSchema)
-    .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
-        return { items: [], nextCursor: undefined };
-      }
-      return listAppBlockReviews(input);
-    }),
-
-  /**
-   * The viewer's own review for an app block (or null) — backs the
-   * "you rated this N★" state on the detail page. protectedProcedure (per-user
-   * data), DARK behind the flag.
-   */
-  getMyReview: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .input(getAppDetailSchema)
-    .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return null;
-      return getMyAppBlockReview(input.appBlockId, ctx.user.id);
-    }),
-
-  /**
-   * MOD-ONLY: flip `exclude` on a review so it drops out of the rating aggregate
-   * + the Bayesian sort. moderatorProcedure + the flag gate. Mirrors
-   * toggleExcludeResourceReview.
-   */
-  setReviewExcluded: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(setAppReviewExcludedSchema)
-    .mutation(async ({ input }) => {
-      return setAppReviewExcluded(input);
     }),
 
   /**
@@ -4763,7 +4683,7 @@ export const blocksRouter = router({
       if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
       // Log the workflow submission to the per-user activity feed so
-      // /apps/installed → Activity shows "this app ran a workflow on
+      // /apps/activity → Activity shows "this app ran a workflow on
       // your behalf at time T". Without this, generations that spend
       // existing balance (the common case) leave NO trace anywhere —
       // block_buzz_attribution only covers Buzz PURCHASES from inside
@@ -7173,10 +7093,26 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
  * at load time.
  *
  * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
- * `whatif:true` quote and the real submit go through here, so the two can never
- * price different things and neither can be given a step the other would have
- * refused. Extracting it is what makes "estimate quotes what submit bills" a
- * property of the code rather than of two call sites staying in step.
+ * `whatif:true` quote and the real submit go through here, so neither can be
+ * given a step the other would have refused. Extracting it is what makes
+ * "estimate quotes what submit bills" a property of the code rather than of two
+ * call sites staying in step.
+ *
+ * 🔴 BUT THIS IS NO LONGER A PURE FUNCTION, SO "THE TWO CAN NEVER PRICE
+ * DIFFERENT THINGS" IS NOT THE STRUCTURAL GUARANTEE IT READS AS. The estimate
+ * (`estimateStepWorkflow`) and the submit (`submitStepWorkflow`) are SEPARATE
+ * requests, each calling this helper once. `chat-completion`'s `buildStep`
+ * emits a fresh per-submit `seed` (see its `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX`
+ * for why), so the two requests build steps that DIFFER in that field.
+ *
+ * The guarantee still holds today, but it now rests on an ORCHESTRATOR fact
+ * that nothing in this repo pins: chat-completion is priced from a token
+ * estimate and the price does not depend on the seed. **If the orchestrator
+ * ever prices a dedupe-eligible step cheaper — an obvious optimisation for a
+ * content-addressed store — the estimate would quote one seed's price and the
+ * submit reserve another's, and nothing here would go red.** Any future
+ * `buildStep` that varies a PRICED field breaks this outright. Keep
+ * per-request variation confined to fields the quote cannot see.
  */
 function buildStepOrchestratorStep(
   step: ReturnType<typeof resolveBlockStep>,

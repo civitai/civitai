@@ -9,6 +9,7 @@ import type {
   AiToolkitTrainingInput,
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
+  AnimaAiToolkitTrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -28,6 +29,7 @@ import type {
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
@@ -226,6 +228,15 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
+  } else if (aiToolkitParams.ecosystem === 'anima') {
+    // The civitai Anima AIR is the sample-image diffusion model, not the trainer base; sending it
+    // here bills its per-image license fee once per epoch checkpoint.
+    if (model !== trainingModelInfo.anima.air) {
+      trainingInput = {
+        ...trainingInput,
+        model,
+      } as AnimaAiToolkitTrainingInput;
+    }
   }
 
   // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
@@ -425,6 +436,8 @@ export const createTrainingWorkflow = async ({
     },
   });
 
+  await assertWorkflowOwner(workflow, userId, token);
+
   // Update file and version status immediately after workflow creation
   const now = new Date().toISOString();
   const existingTrainingResults = (fileMetadata.trainingResults ??
@@ -566,7 +579,7 @@ export const createTrainingWhatIfWorkflow = async ({
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);
-  const precedingJobs = _step?.jobs?.[0]?.queuePosition?.precedingJobs;
+  const precedingJobs = _step?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
   return { cost, licenseFee, precedingJobs, eta };

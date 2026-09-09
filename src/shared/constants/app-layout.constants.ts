@@ -34,6 +34,29 @@
  */
 export const HEADER_HEIGHT_PX = 60;
 
+/**
+ * The `<meta name="viewport">` content string, rendered by `MetaPWA` — the ONLY
+ * viewport meta in the app.
+ *
+ * 🔴 `viewport-fit=cover` is what makes `env(safe-area-inset-*)` resolve to a
+ * NON-ZERO value on a notched device. Without it the UA reports `0px` for every
+ * inset, so every `env(safe-area-inset-*)` in the codebase silently no-ops —
+ * which is exactly the state this repo was in until this token was added, with
+ * one call site (`ReviewActionBar`) written against insets that could never
+ * arrive.
+ *
+ * The flip side, and the reason this is a whole-string constant rather than a
+ * token someone appends to: with `cover` the layout viewport extends UNDER the
+ * status bar / notch / home indicator. `html`/`body`/`#__next` are a
+ * `block-size: 100%; overflow: hidden` app shell (`src/styles/globals.css`), so
+ * that shell now spans the full physical screen and anything pinned to a
+ * viewport edge sits under system UI unless it pays the inset back with
+ * `var(--safe-area-inset-*)`. Removing the token would re-zero every inset and
+ * make that padding inert without any test that only greps for the padding
+ * noticing; `viewport-fit-cover.test.ts` pins this string as a whole.
+ */
+export const VIEWPORT_META_CONTENT = 'initial-scale=1, width=device-width, viewport-fit=cover';
+
 export const imageGenerationDrawerZIndex = 301;
 
 /** Joyride's overlay. Anything a tour step expects the user to click must clear it. */

@@ -1,7 +1,7 @@
 import { Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -43,7 +43,13 @@ export function UserAvatarSimple({
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const browsingLevel = useBrowsingLevelDebounced();
+  // 🔴 The VIEWER's level, not the page's. A profile picture belongs to the
+  // person in the avatar, not to whatever this page happens to be about — and
+  // `ImageDetail2` sets a page override to the IMAGE's rating, so on a PG image
+  // every commenter's PG-13 avatar was suppressed for viewers who accept PG-13.
+  // Same defect as the remix gallery beside it (#4497); this is the other half.
+  // Domain and policy caps still apply, only the page override is skipped.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
   const router = useRouter();

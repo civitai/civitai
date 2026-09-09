@@ -155,7 +155,7 @@ describe('isAllowedOutputHost', () => {
       'https://evil.com/?x=civitai.com', // query substring
       'https://civitai.com@evil.com/x.jpeg', // userinfo
       'http://orchestration.civitai.com/x.jpeg', // not https
-      'https://orchestration-api.orchestration-poc.svc.cluster.local:8080/x', // the internal API host
+      'https://orchestration-api.internal.svc.cluster.local:8080/x', // the internal API host
       'https://notcivitai.com/x.jpeg',
       'not a url',
     ]) {

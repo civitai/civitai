@@ -97,6 +97,17 @@ describe('assertUserInGoodStanding (create gate — standing AND score, unchange
     );
   });
 
+  // Until 2026-09-04 this read `meta.scores?.total ?? 0`, which failed OPEN on a malformed score:
+  // JS coerces the string, `999999 < 5000` is false, and the gate lets the account through. Every
+  // other fixture in this file supplies a numeric total, so nothing caught it.
+  it('refuses a non-numeric score rather than coercing it through the gate', async () => {
+    mockUser({ meta: { scores: { total: '999999' } } });
+
+    await expect(assertUserInGoodStanding(1)).rejects.toThrow(
+      'You need a creator score of at least 5,000 to create challenges.'
+    );
+  });
+
   it('resolves when standing is good and scoreTotal meets the creator threshold', async () => {
     mockUser({ meta: { scores: { total: 5000 } } });
 

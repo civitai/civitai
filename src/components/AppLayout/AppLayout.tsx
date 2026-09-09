@@ -18,6 +18,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
 import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
+import { VerifyEmailBanner } from '~/components/User/VerifyEmailBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
@@ -128,11 +129,17 @@ export function MainContent({
       <main className="min-w-0 flex-1">
         {subNav && (
           <SubNav>
+            <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
           </SubNav>
         )}
-        {!subNav && <RewardsBonusBanner />}
+        {!subNav && (
+          <>
+            <VerifyEmailBanner />
+            <RewardsBonusBanner />
+          </>
+        )}
         {announcements && <Announcements className="mb-3" />}
         {children}
       </main>
@@ -143,11 +150,17 @@ export function MainContent({
       <main className="flex flex-1 flex-col overflow-hidden">
         {subNav && (
           <SubNav>
+            <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
           </SubNav>
         )}
-        {!subNav && <RewardsBonusBanner />}
+        {!subNav && (
+          <>
+            <VerifyEmailBanner />
+            <RewardsBonusBanner />
+          </>
+        )}
         {children}
       </main>
       {footer}
@@ -192,6 +205,9 @@ export function SubNav({
   return (
     <div
       {...props}
+      // Read by anything that pins itself below the subnav: it keeps its layout box while hidden,
+      // so a fixed offset leaves a gap once it retracts. See `useStickyTop` in AccountLayout.
+      data-subnav=""
       className={clsx(
         'sticky inset-x-0 top-0 z-50 mb-3 bg-gray-1 shadow transition-transform dark:bg-dark-6',
         className

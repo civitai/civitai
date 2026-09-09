@@ -1,4 +1,4 @@
-import { Avatar, Box, Center, Loader, Stack, Text } from '@mantine/core';
+import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -32,6 +32,14 @@ import {
   toHostGateStatus,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  buildCollectionFollowConsentCopy,
+  createCollectionFollowSettlement,
+  createCollectionLookupBudget,
+  resolveCollectionFollowRequest,
+  resolveCollectionIdentity,
+  type CollectionLookupBudget,
+} from './collectionFollowGate';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -53,6 +61,7 @@ import {
   exceedsPreDownloadCap,
   resolveGetWildcardPackRequest,
   WILDCARD_MAX_CONCURRENT,
+  type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
@@ -210,6 +219,22 @@ type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
 
+// 🔴 The ONE reviewMode NACK that must NOT use REVIEW_NACK_MESSAGE.
+// WILDCARD_PACK_RESULT's `error` is a DISCRIMINATED ENUM, not free text: the
+// block-side `isValidWildcardPackResult` rejects any value outside
+// not-found | forbidden | too-large | parse-failed | busy, and a rejected reply
+// is DROPPED by the SDK transport (console.warn only) — so a free-text NACK here
+// never settles the block's pending request and the caller hangs until the
+// transport timeout, the exact opposite of the fail-fast the handler promises.
+// `forbidden` is the in-set code: review preview genuinely is a permission
+// context, and it is the closest member semantically.
+//
+// The annotation is the GUARD — `WildcardPackErrorCode` is the repo's local
+// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts;
+// the pinned @civitai/app-sdk dist does not export the wildcard union yet), so
+// tsc rejects any future edit that swaps in a non-member string.
+const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
+
 /**
  * The floor a `fit="fill"` host will not shrink below, in px.
  *
@@ -232,10 +257,12 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
  * unreachable content), so the number's only job is to make the band as small as
  * it can be while still catching the degenerate case. Raising it widens the
  * population that sees two scrollbars, so the value is bounded on BOTH sides —
- * in `__tests__/pageRunScrollContract.test.ts` (the GATING node suite; that is
- * the copy that can block a merge) and again in
- * `PageBlockHostScrollFit.browser.test.tsx` (report-only, which is why it is not
- * the only one). The NUMBERS deliberately live in those tests, not here: a band
+ * in `__tests__/pageRunScrollContract.test.ts` (the node `unit` suite, which
+ * renders a real verdict on a push to `main`) and again in
+ * `PageBlockHostScrollFit.browser.test.tsx` (the report-only browser tier, which
+ * is why it is not the only one). NEITHER TIER BLOCKS A MERGE: `main` requires
+ * no status check at all in this repo, so both are signals a reviewer must read,
+ * not doors that stay shut. The NUMBERS deliberately live in those tests, not here: a band
  * declared beside the value it bounds can be moved in the same edit. What lives
  * here is the ARITHMETIC that justifies them.
  *
@@ -268,6 +295,147 @@ const REVIEW_NACK_MESSAGE = 'not available in review preview';
  */
 export const FILL_MIN_HEIGHT_PX = 300;
 
+/**
+ * The width a full-page App Block stops growing at, in px. Above it the host is
+ * a CENTRED column with a neutral gutter either side; below it the cap is inert.
+ *
+ * 🔴 THIS IS THE `var()` FALLBACK, NOT THE SOURCE. The value the host actually
+ * uses comes from `--app-page-max-width`, declared once on `:root` in
+ * `src/styles/globals.css`, because that is the only spelling a per-app opt-out
+ * rule can override (an inline custom property on this element would beat every
+ * stylesheet rule and make the documented opt-out inert). CSS cannot import a TS
+ * constant, so the number exists twice; `__tests__/pageBlockHostMaxWidth.test.ts`
+ * asserts the two agree, exactly as the `--header-height`/`HEADER_HEIGHT_PX`
+ * guard in `__tests__/pageRunScrollContract.test.ts` does. The fallback is not
+ * decorative: it is what caps a host rendered in a context that has not loaded
+ * the app stylesheet, and it is exercised by a case in the browser suite.
+ *
+ * 🔴 WHY A CAP EXISTS AT ALL. The host sized the iframe `width: 100%` with no
+ * bound anywhere in the chain — the run page's wrapper is `width: '100%'`, the
+ * host root was `width: '100%'`, the iframe is `width: '100%'` — so on a 2560px
+ * display an app rendered as a single ~2500px column. An App Block is a
+ * cross-origin guest that is handed a viewport and told nothing about the
+ * display, so the defence has to be here.
+ *
+ * 🔴 WHO IS ACTUALLY UNDEFENDED — enumerated, because the obvious premise ("apps
+ * do not cap themselves") is only half true, and the half that is false is what
+ * decides where this value sits.
+ *
+ * ⚠️ THE CENSUS BELOW IS A CROSS-REPO READING, NOT SOMETHING THIS REPO CAN CHECK, AND
+ * NOTHING ASSERTS IT. It was taken by reading 13 separate first-party App Block repos
+ * at whatever refs they were at when the cap was chosen; no ref is recorded, no
+ * fixture reproduces it, and every number in it (13 repos, 11 page surfaces, the nine
+ * wells, median 860, max 1100) would silently rot as those repos change. Treat it as
+ * the RATIONALE that was in front of whoever picked 1600, not as a live measurement —
+ * and re-take it, recording refs, before leaning on it to move the cap. Across those
+ * 13 repos as read then — 11 with a `page` surface; the other two are
+ * `model.sidebar_top` slot blocks and a PAGE cap cannot reach them:
+ *
+ *   · NINE of the eleven page apps DO cap themselves, at 640 / 720 / 720 / 760 /
+ *     820 / 880 / 900 / 960 / 1100 px — a hand-copied `contentStyle` well; median
+ *     860, max 1100. None renders content wider than 1100px, so this cap is a
+ *     no-op for their layout: it changes which background paints the far gutter
+ *     and nothing else.
+ *   · TWO do not cap at all — Notepad and Sensei, both `100dvh` two-pane app
+ *     shells (a fixed 280 / 240px sidebar beside an unbounded `flex: 1` pane).
+ *     Those are the shipped apps that genuinely stretched to the monitor.
+ *   · THE LONG TAIL IS UNBOUNDED BY CONSTRUCTION, which is the real reason for a
+ *     DEFAULT rather than a per-app fix. `@civitai/blocks-react` exports no
+ *     Container / AppShell / Page and declares no container width — its only
+ *     max-widths are modal-scoped (340 / 440 / 620) plus a 420px sign-in gate
+ *     card — and the official starter templates contain zero width declarations.
+ *     An app scaffolded today inherits whatever the host gives it. Nine
+ *     independently hand-picked numbers with nothing to coordinate on is the
+ *     argument for making the decision here instead of asking every app to make
+ *     it again.
+ *
+ * WHY 1600, AGAINST THOSE SURFACES. Two in-repo anchors bound the choice, and the
+ * number sits between them on purpose:
+ *
+ *   1288  the widest ORDINARY civitai content measure — Mantine `xl` (1320
+ *         border-box) is the widest container size in use across `src/pages`,
+ *         and `APPS_TWO_COLUMN_DETAIL_MEASURE` (the store-preview page an app is
+ *         usually launched FROM) starts there. An app capped below this would
+ *         render narrower than the page that linked to it, which reads as a
+ *         downgrade rather than a frame.
+ *         ⚠️ THAT CONSTANT IS NO LONGER A SINGLE NUMBER, and the sentence above used
+ *         to say "is exactly it". It is a BAND now — `{min: 1288, max: 1600}` — so on
+ *         a wide screen the store-preview page reaches 1600, which is EXACTLY this
+ *         cap rather than 312px below it. The conclusion survives (an app is never
+ *         narrower than the page that launched it) but the MARGIN this paragraph
+ *         implied is gone: at the top of that band the two are equal. If the
+ *         store-preview band is ever raised again, this cap stops being a ceiling
+ *         over it and the reasoning here has to be re-made rather than re-read.
+ *   2560  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
+ *         outlier for a reason that does NOT transfer: it exists for card GRIDS
+ *         and wide TABLES (`appsPageWidths.ts` records the measurements), which
+ *         genuinely spend the space. An app block may be a grid, but it may just
+ *         as easily be a single form, and the host cannot tell which.
+ *         ⚠️ IT WAS 1920 WHEN THIS BAND WAS CHOSEN and the ultrawide pass moved it
+ *         to 2560. The gap between the cap and the outlier therefore WIDENED, which
+ *         does not by itself justify widening the cap — see below.
+ *
+ * 1600 is at-or-above every ordinary content measure on the site and below the grid
+ * container, i.e. no app is ever narrower than a civitai page. ⚠️ "AT-OR-ABOVE" IS THE
+ * CORRECTION: this read "above every ordinary content measure" while
+ * `APPS_TWO_COLUMN_DETAIL_MEASURE` was the fixed 1288. It is a band now, topping out at
+ * exactly 1600, so on a wide screen the store-preview page and this cap are the SAME
+ * width. The claim that matters — no app renders narrower than the page that launched it
+ * — still holds at equality; the headroom it used to have does not. It also clears the
+ * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
+ * that has already thought about its own width, while leaving a two-pane shell
+ * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
+ * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
+ * four, 2560 holds eight).
+ *
+ * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
+ * used to appear here and it is a moving target: the apps container has taken three
+ * values over time — 1600 → 1920 → 2560 — without any of them being a statement about
+ * how wide a THIRD-PARTY app should be. The cap's real justification is the two bounds above
+ * it does control — at-or-above every ordinary content measure, and comfortably clear of
+ * the widest app-imposed well — neither of which moves when the apps CONTAINER does.
+ * (The store-preview band's ceiling does sit exactly on the first of those two, so it is
+ * a bound this cap now touches rather than clears; raising that band again would invert
+ * it, and this reasoning would have to be re-made.) Widening 1600 is a separate decision with its own evidence.
+ *
+ * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
+ * rather than after it: Playable Collections. Re-read at its DEPLOYED ref
+ * (`sync/deployed-0.2.2`, manifest `blockId: "playable-collections"`), because an
+ * earlier reading of this — that only its "player mode" is affected, the rest
+ * being governed by the app's own 960px well — is WRONG, and wrong in the
+ * direction that makes the opt-out look smaller than it is:
+ *
+ *   · the 960 well is `contentStyle` in `App.tsx:972`, applied at `App.tsx:789`
+ *     to the BROWSE shell only;
+ *   · opening a collection early-returns at `App.tsx:733` past that wrapper into
+ *     `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
+ *     `width: 100%; min-height: 100dvh` with NO max-width;
+ *   · and that root serves THREE view modes — classic (`Player`), plus
+ *     continuous-horizontal and continuous-vertical (`ContinuousView`) — with an
+ *     ambient "cast" state on top. None of them is capped by the app.
+ *
+ * So an opt-out here is per-APP and would unbound all three modes, not tidy up
+ * one. That may well be right — a ticker and a wall want width, and the player's
+ * media is `object-fit: contain` so a centred column simply shrinks it — but it
+ * is a bigger product call than "the app already governs this", and it is not
+ * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
+ * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
+ * to be added deliberately.
+ *
+ * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
+ * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
+ * desktop, and it gets a ~150px gutter either side. That is the deliberate
+ * trade. It does NOT bind on any laptop class (1280/1366/1440/1536), on any
+ * tablet, or on any phone in either orientation, which is where the traffic is
+ * and where the rendered geometry is unchanged to the pixel.
+ *
+ * The BAND this value may move in lives in the tests, not here — a band declared
+ * beside the value it bounds can be moved in the same edit (the lesson
+ * `FILL_MIN_HEIGHT_PX` records). The ARITHMETIC that justifies it is what lives
+ * here.
+ */
+export const APP_PAGE_MAX_WIDTH_PX = 1600;
+
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
   appBlockId: string;
@@ -278,6 +446,47 @@ export interface PageBlockHostProps {
   appName: string;
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
+  /**
+   * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
+   * paints its own boot state (THEMED only if the app is also enabled for the
+   * BLOCK_INIT fragment and reads it before first paint; otherwise it is
+   * guessing from prefers-color-scheme), so the host must stand back and let it show.
+   *
+   * 🔴 This does three things, not one, and all three are required: without any
+   * of them the app's boot state is invisible and the declaration is a lie.
+   *   1. no branded veil (it is opaque, `inset: 0`, until BLOCK_READY);
+   *   2. the iframe is visible from mount rather than `opacity: 0` until ready;
+   *   3. no `translateY` settle on reveal — that IS a layout shift, and the
+   *      point of an app-painted skeleton is that hydration moves nothing.
+   *
+   * The host's own skeleton stays the default for every app that does NOT
+   * declare this: an app with an empty `#root` and no veil is a blank white
+   * iframe for 300-1200ms, which is worse than what we had.
+   *
+   * 🔴 IT ALSO WIDENS WHAT AN APP CAN PAINT, AND WHEN. Without this the block
+   * could put no pixels on screen before BLOCK_READY (opacity 0 + an opaque
+   * veil); with it, publisher-controlled content is visible from mount, before
+   * the host holds a token. `pointerEvents` still blocks the mouse and
+   * AppBlockChrome still sits above, and an app can already paint freely once
+   * ready — so the change is to TIMING, not capability. It is named here
+   * because the surrounding comments discuss anti-spoof posture and this is
+   * part of it.
+   *
+   * 🔴 NOTHING VALIDATES THE DECLARATION TODAY — do not rest a safety argument
+   * on a build gate that does not exist yet. An app may set this over an empty
+   * `#root` and the result is that blank iframe, with no rejection anywhere in
+   * submit, approve or build. A platform-build check is planned (talos-infra);
+   * until it lands, the only thing standing between a false declaration and a
+   * blank run page is the author looking at their own app.
+   */
+  // REQUIRED, and passed explicitly by every call site — the same shape
+  // `surface` above uses, for the same reason. An optional prop with a
+  // `= false` default made the DEV route and the MODERATOR REVIEW preview
+  // silently render the veil: the author checking their own app and the
+  // moderator approving it both saw the pre-feature presentation, and the
+  // first person to see the real one would have been a user. Required means
+  // a new host is a type error until someone decides what it should do.
+  bootSkeleton: boolean;
   /**
    * Which surface mounted this host. REQUIRED, and passed explicitly by each
    * call site rather than inferred, because it is one of the two axes the
@@ -329,6 +538,10 @@ export interface PageBlockHostProps {
    *  values from the token mint — forwarded, never derived client-side. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  /** The domain ceiling intersected with the VIEWER's own browsing level (see
+   *  `projectBlockInitMaturity`). Absent → the block falls back to
+   *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel?: number;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -410,11 +623,20 @@ export interface PageBlockHostProps {
    *     it scroll.
    *     Correct ONLY for a mounter sitting inside a SCROLLING ancestor that does
    *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
-   *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
-   *     modal). Without it those hosts would be sized only by
-   *     `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome, 269px of
-   *     iframe, regardless of how much room the page actually has. Usable, but
-   *     no longer FILLING anything.
+   *     default `AppLayout` → `ScrollArea`). Without it that host would be sized
+   *     only by `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome,
+   *     269px of iframe, regardless of how much room the page actually has.
+   *     Usable, but no longer FILLING anything.
+   *
+   *     ⚠️ This used to name the mod-review preview here too, and that was the
+   *     WRONG diagnosis of that surface: it is not in an unbounded scrolling
+   *     ancestor, it is in a box that bounds its height and CLIPS
+   *     (`height: 420; overflow: hidden` in the review modal;
+   *     `100dvh − header` on the full-page preview). Claiming
+   *     `100dvh − HEADER_HEIGHT_PX` inside a 420px panel put roughly 600px of app
+   *     out of reach on a 1080px screen, with nothing to scroll to it — and it
+   *     got worse the taller the viewport, because the claim grows while the
+   *     panel does not. `ReviewBlockPreviewHost` is on `'fill'` as of that fix.
    *
    *   'fill' — the host fills its parent (`flex: 1`, floored at
    *     `FILL_MIN_HEIGHT_PX`) and
@@ -463,6 +685,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  bootSkeleton,
   surface,
   sandbox,
   trustTier,
@@ -476,6 +699,7 @@ export function PageBlockHost({
   tokenTerminal = false,
   domain,
   maxBrowsingLevel,
+  effectiveBrowsingLevel,
   viewer,
   theme,
   onConsentGranted,
@@ -934,7 +1158,7 @@ export function PageBlockHost({
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
-      ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
+      ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
     }),
     [
       appId,
@@ -948,6 +1172,7 @@ export function PageBlockHost({
       theme,
       domain,
       maxBrowsingLevel,
+      effectiveBrowsingLevel,
     ]
   );
   buildInitPayloadRef.current = buildInitPayload;
@@ -959,6 +1184,15 @@ export function PageBlockHost({
     // `init_wait` is meant to include the re-post quantization, not exclude it.
     const marks = launchMarksRef.current;
     if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
+    // 🔴 COUNT EVERY POST, not just the first — this is the whole point of the
+    // field. `initSentAt` above is stamped once because `init_wait` must span
+    // the re-post quantization; `initPosts` counts the posts INSIDE that span,
+    // which is what tells a quantized wait apart from a slow-booting block.
+    //
+    // Counted HERE rather than read off `controller.postCount()` at ack time
+    // because the auto-retry path builds a fresh controller per attempt while
+    // these marks persist across the whole launch — see `LaunchMarks.initPosts`.
+    if (marks) marks.initPosts += 1;
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
 
@@ -1177,11 +1411,33 @@ export function PageBlockHost({
   // 🔴 PURELY ADDITIVE — see `IframeInitController.notifyHello`. The immediate
   // post on start(), the retry interval and the readiness timeout are all
   // unchanged, so a block that never announces (older SDK) behaves exactly as
-  // today and a block that announces but never acks still times out. The retry
-  // loop is NOT removed: as of 2026-08-05 no deployed block sends BLOCK_HELLO,
-  // so it is still doing all of the work.
+  // today and a block that announces but never acks still times out.
+  //
+  // 🔴 THE RETRY LOOP IS STILL DOING ALMOST ALL OF THE WORK, and the number
+  // behind that claim was re-measured. An earlier revision of this comment said
+  // "as of 2026-08-05 no deployed block sends BLOCK_HELLO"; that is now stale.
+  // MEASURED 2026-08-31 against the deployed fleet: 4 of 23 deployed blocks
+  // ship the accelerator — so 19 do not, including two hand-rolled
+  // `civitai-host.js` shims and one inline-shell app.
+  //
+  // Treat that as a DATED MEASUREMENT, not a standing fact: it moves whenever a
+  // block is rebuilt and re-approved. Its consequence is what matters here —
+  // getting the remaining 19 onto the accelerator is 19 separate
+  // rebuild-and-moderator-approve cycles, so the host-side re-post cadence
+  // (`INIT_RETRY_BACKOFF_MS`) is the only lever that reaches every deployed app
+  // immediately.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      // 🔴 RECORDED BEFORE — AND INDEPENDENTLY OF — THE CONTROLLER, deliberately.
+      // The label means "the guest announced during this launch", NOT "the
+      // accelerator fired an extra post". `notifyHello()` is a no-op when the
+      // controller has not started, has stopped, or has already handled a hello;
+      // recording inside it would file those launches as `no` even though the
+      // guest's listener was demonstrably attached and the host's next post was
+      // heard. That is the wrong bucket, and it biases the comparison toward the
+      // null. See `LaunchMarks.helloSeen` for the full argument.
+      const marks = launchMarksRef.current;
+      if (marks) marks.helloSeen = true;
       controllerRef.current?.notifyHello();
     });
     return off;
@@ -1622,6 +1878,22 @@ export function PageBlockHost({
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
+  // (protectedProcedure), like resolveWildcardPack above and for the same reason:
+  // these are the SAME procedures the site's own follow button calls, so the
+  // handler self-binds to `ctx.user.id` server-side and reuses
+  // `addContributorToCollection` / `removeContributorFromCollection` verbatim.
+  // The block token is deliberately NOT involved — the point of this bridge is
+  // that a block needs no `collections:write:self` scope.
+  const followCollectionMutation = trpc.collection.follow.useMutation();
+  const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
+  // 🔴 This block instance's DISTINCT-collection-id lookup budget. A ref, not
+  // module scope and not state: per-instance (two blocks on a page cannot drain
+  // each other), reset on remount, and read synchronously inside the message
+  // handler. Lazily constructed so a render never allocates a Set it throws away.
+  // The reasoning — and the authenticated visibility oracle it closes — lives on
+  // `createCollectionLookupBudget`.
+  const collectionLookupBudgetRef = useRef<CollectionLookupBudget | null>(null);
   // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
   // so incrementing/decrementing never re-renders and the count is read
   // synchronously in the message handler (JS is single-threaded, so the
@@ -2705,17 +2977,19 @@ export function PageBlockHost({
   // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
   // live in apps.shared.update (server, #3146); the host only forwards {key, value}
   // and relays the result. Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
-  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook treats `!ok || error` as reject,
-  // and its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send
-  // one (the error path MUST carry `ok: false` or the reply is dropped → hang).
+  // SHARED_APPEND's `{ key }`) — the SDK hook treats `!ok || error` as reject.
+  // isValidSharedUpdateResult now ACCEPTS an error reply with or without `ok`, so
+  // omitting it would no longer be dropped; both paths still send `ok` because an
+  // explicit `ok: false` is the clearer signal, not because it is required.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
       'SHARED_UPDATE',
       async (raw) => {
         if (reviewMode) {
           // Cross-user shared datastore WRITE (author-scoped edit) — NACK even in
-          // run-for-real (never a cross-user write). Reply MUST carry ok:false or the
-          // SDK drops it (→ hang). See handler doc.
+          // run-for-real (never a cross-user write). The validator accepts an error
+          // reply with or without `ok`; we send `ok: false` as the clearer signal.
+          // See handler doc.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_UPDATE_RESULT', {
               requestId: raw.requestId,
@@ -2903,8 +3177,11 @@ export function PageBlockHost({
   // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
   // reports a posted row for mod review; the server already trust-gates + rate-
   // limits + files the report (endpoint pre-exists). Reply is SHARED_WITHDRAW-
-  // style `{ ok, error? }` — the error path MUST carry ok:false or the SDK drops
-  // it (→ hang). reviewMode NACK: report is a shared:write-trust op, never granted
+  // style `{ ok, error? }`. The SDK accepts an error reply whether or not it
+  // carries `ok` (every `{ ok, error }` validator early-accepts on a PRESENT
+  // `error`), so we send `ok: false` because it is the clearer signal, NOT
+  // because omitting it would hang. reviewMode NACK: report is a
+  // shared:write-trust op, never granted
   // in run-for-real (mirrors the other shared writes).
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
@@ -3018,8 +3295,10 @@ export function PageBlockHost({
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
   // Generalizes the model-slot OPEN_CHECKPOINT_PICKER (IframeHost) to the page
-  // surface and widens it from Checkpoint-only to a typed allowlist (v1:
-  // Checkpoint + LoRA only). The block asks the HOST to open its OWN native
+  // surface and widens it from Checkpoint-only to a typed allowlist (Checkpoint
+  // plus the generator's LoRA family: LORA, LoCon, DoRA — the exact set the
+  // spend-time page-LoRA gate already accepts, so the picker offers nothing
+  // submit would refuse). The block asks the HOST to open its OWN native
   // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
   // the iframe); the host posts back ONLY the single chosen resource. The
   // untrusted iframe NEVER receives a list, the search API, or the catalog — it
@@ -3057,10 +3336,13 @@ export function PageBlockHost({
   // (resource-select.types.ts) exposes NO browsing-level / sfwOnly / nsfw
   // constraint — only `canGenerate`, `resources`, `excludeIds`. NSFW filtering
   // is done purely client-side in the SHARED `ResourceHitList` via
-  // `useApplyHiddenPreferences`, which defaults to the site-wide
-  // `useBrowsingLevelDebounced()` context (the Meili query in
-  // useResourceSelectFilters doesn't filter by browsing level at all). Passing a
-  // block-SFW ceiling in would require adding a new option to
+  // `useApplyHiddenPreferences`, which is passed NO `browsingLevel` override and
+  // so defaults to the site-wide `useBrowsingLevelDebounced()` context (the
+  // server-side list query behind it — the tRPC `model.getResourceSelect`
+  // procedure, service `resource-select.service.ts` — doesn't filter by browsing
+  // level at all; the older `useResourceSelectFilters` hook this note used to
+  // name no longer exists). Passing a block-SFW ceiling in would require adding
+  // a new option to
   // `ResourceSelectOptions`, threading it through `ResourceSelectProvider` /
   // `useResourceSelectContext`, and feeding it to that `useApplyHiddenPreferences`
   // call — i.e. modifying the shared modal's filtering internals (higher blast
@@ -3454,8 +3736,11 @@ export function PageBlockHost({
         // pending block could drive the MOD's real download entitlements to
         // resolve+fetch+unzip+parse an arbitrary modelVersionId's wildcard pack and
         // read the contents into the sandboxed iframe. NACK before resolving or
-        // downloading anything (fail-fast, never a hang).
-        send('WILDCARD_PACK_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
+        // downloading anything (fail-fast, never a hang) — with the ENUM code, not
+        // REVIEW_NACK_MESSAGE: this reply's `error` is validated against a closed
+        // set block-side, so free text would be dropped and hang. See
+        // WILDCARD_REVIEW_NACK_CODE.
+        send('WILDCARD_PACK_RESULT', { requestId, error: WILDCARD_REVIEW_NACK_CODE });
         return;
       }
       // Concurrency cap (host-side backpressure): bound the per-tab memory. The
@@ -3501,8 +3786,144 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
+  // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
+  //
+  // A block asks the host to follow / unfollow a collection for the viewer. The
+  // decision layer is SHARED with IframeHost (`collectionFollowGate.ts`) and
+  // carries the full rationale; the two things this host contributes are its own
+  // `viewer` prop (the signed-in signal) and `reviewNack`.
+  //
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK, AND IT IS THE ONLY CONSENT THIS
+  // PATH HAS EVER HAD. The HTTP endpoint's `collections:write:self` scope is
+  // CONSENT-EXEMPT server-side, so it never prompted anyone — see the retracted
+  // claim recorded in `collectionFollowGate.ts`. This bridge therefore TIGHTENS a
+  // zero-prompt path into one prompt per action. Do not "simplify" it by calling
+  // the mutation directly, and do not delete the confirm as redundant with a
+  // scope grant that does not exist.
+  //
+  // 🔴 THE DIALOG MUST NAME THE COLLECTION, and the name must be the one the HOST
+  // resolved from `collectionId` — never one the block supplied. A block can
+  // render its own "Follow ⭐ Cute Cats" card and post a different id; host chrome
+  // that asserts nothing about the object cannot contradict it.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / lookup failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs to its SDK
+  // timeout; `createCollectionFollowSettlement` owns that latch AND the consent
+  // latch that keeps `declined` meaning "no write occurred". Only a payload with
+  // no usable requestId is dropped — there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
+      const gate = resolveCollectionFollowRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        // `viewer` is non-null ONLY for a signed-in viewer (the page route
+        // renders for logged-out viewers too, with viewer: null).
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('COLLECTION_FOLLOW_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, collectionId, follow } = gate.request;
+      const settlement = createCollectionFollowSettlement({
+        requestId,
+        emit: (payload) => send('COLLECTION_FOLLOW_RESULT', payload),
+      });
+      // 🔴 BOUND THE PROBE, BEFORE SPENDING AN AUTHENTICATED READ. The identity
+      // lookup below runs in the VIEWER'S session and completes before any
+      // dialog, so without a bound it is a per-id "can this viewer see it?"
+      // oracle the block can drive at the transport's 30 msg/s. DISTINCT ids,
+      // not calls — a repeat is free forever, so re-following a collection the
+      // viewer has already been asked about keeps working past the cap. The
+      // refusal deliberately reuses `collection-unavailable`; a distinct code
+      // would hand back the bit the cap withholds. Full reasoning (incl. why a
+      // distinct-id cap rather than a time window) on the factory.
+      const lookupBudget = (collectionLookupBudgetRef.current ??= createCollectionLookupBudget());
+      if (!lookupBudget.admit(collectionId)) {
+        settlement.reply({ error: 'collection-unavailable' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHO/WHAT the viewer is being asked about, server-side, from the
+        // same id we are about to act on. A failed lookup refuses WITH a reply —
+        // never a hang, and never a dialog missing the name it promised.
+        let identity;
+        try {
+          identity = resolveCollectionIdentity(
+            await trpcUtils.collection.getById.fetch({ id: collectionId }, { staleTime: 0 })
+          );
+        } catch {
+          // Not found / not visible / feature-flagged / network — all one
+          // outcome, so the reply cannot be used to probe for existence.
+          identity = { kind: 'unavailable' } as const;
+        }
+        if (identity.kind !== 'ok') {
+          settlement.reply({ error: 'collection-unavailable' });
+          return;
+        }
+        const copy = buildCollectionFollowConsentCopy({
+          follow,
+          appName,
+          collectionId,
+          collection: identity.identity,
+        });
+        dialogStore.trigger({
+          // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
+          // not reproducible, since rendering a Mantine modal costs >1 ms.)
+          id: `block-collection-follow-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: copy.message,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a write that is under way.
+              settlement.markConsented();
+              try {
+                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+                // actor and target, so `collectionId` is the ONLY thing the block
+                // influences.
+                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+                else await unfollowCollectionMutation.mutateAsync({ collectionId });
+                settlement.reply({ result: { collectionId, followed: follow } });
+              } catch (err) {
+                // FORBIDDEN from the collection services (e.g. a private
+                // collection this viewer may not follow) lands here as a message,
+                // never as a hang.
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    followCollectionMutation,
+    unfollowCollectionMutation,
+  ]);
+
   // ONE sanitized label for the whole launch surface — the avatar initial, the
-  // Loader's accessible name and the visible "Starting …" copy all derive from
+  // loading skeleton's accessible name and the visible "Starting …" copy all derive from
   // this, so they can never disagree about the fallback. Same sanitizer the
   // visible chrome uses (anti-spoof: strips control/bidi/zalgo from a
   // publisher-controlled name); 'app' when nothing legible remains.
@@ -3628,6 +4049,28 @@ export function PageBlockHost({
       style={{
         display: 'flex',
         flexDirection: 'column',
+        // 🔴 THE ROOT IS FULL-BLEED ON PURPOSE, AND THIS IS A REVERSAL — READ THE
+        // NOTE BEFORE "RESTORING" A CAP HERE. The ultrawide cap used to live on
+        // THIS element, so the trust chrome and the app took one measure. It now
+        // lives on the CONTENT wrapper below, which holds the app and the failure
+        // card but NOT `AppBlockChrome`.
+        //
+        // The argument the old placement made — that a breadcrumb vouching for the
+        // app should not span a width the app does not occupy — is real, but it was
+        // outweighed in practice: the chrome is site furniture, and stopping it at
+        // 1600px made a full-page app look like a boxed widget dropped into the
+        // page rather than a page of the site. Every other site-level bar spans the
+        // viewport, so the capped one read as the odd element. Operator decision;
+        // the cost is that on a very wide display the chrome is wider than the app
+        // it labels, which is the same relationship the site header already has to
+        // every page's content column.
+        //
+        // What did NOT change: the cap's VALUE, the `var()` read, the fallback, and
+        // the `data-block-id` opt-out ledger — the custom property is still declared
+        // once in globals.css and still overridden per-app on THIS element, from
+        // which it INHERITS to the content wrapper. So a ledger entry keyed on
+        // `[data-app-page-frame][data-block-id='…']` keeps working exactly as
+        // documented, with no change to its selector.
         width: '100%',
         // See the `fit` prop for why these are the two modes and why the
         // viewport arithmetic can never agree with its own scroll viewport.
@@ -3650,10 +4093,40 @@ export function PageBlockHost({
             }),
       }}
       data-testid="app-page-frame"
+      // 🔴 THE OPT-OUT LEDGER'S OTHER HALF, AND IT EXISTS BECAUSE `data-testid`
+      // DOES NOT SHIP. `next.config.mjs` sets
+      // `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` under
+      // `NODE_ENV === 'production'`, so EVERY `data-testid` is compiled out of the
+      // production DOM. The ledger in globals.css used to be keyed on
+      // `[data-testid='app-page-frame'][data-block-id='…']`, which therefore
+      // matched nothing on the live site while passing in every test tier (they
+      // all run with `NODE_ENV !== 'production'`, where the testid is present) —
+      // measured on civitai.com/apps/run/playable-collections: the rule shipped
+      // verbatim in the CSS, 0 elements matched the compound selector, 1 matched
+      // `[data-block-id='playable-collections']`, and the app was letterboxed at
+      // the 1600px cap. This attribute is the production-surviving spelling of
+      // "this is the page host", the same way `data-app-footer` and
+      // `data-adhesive-ad` mark their elements for `globals.css` elsewhere.
+      //
+      // It carries no value on purpose: it is a presence marker, not data. Never
+      // re-key the ledger onto `data-testid` (stripped) and never delete this —
+      // both make every ledger rule inert with nothing visibly wrong. Guarded by
+      // `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`, which reads the strip
+      // list out of `next.config.mjs` and the ledger selectors out of globals.css
+      // and compares them, rather than restating either.
+      data-app-page-frame=""
       // Observable sizing mode, so a regression test (and DevTools) can assert
       // WHICH branch a surface took rather than re-deriving it from computed
       // styles that jsdom does not resolve.
       data-fit={fit}
+      // 🔴 THE OPT-OUT LEDGER'S ANCHOR, not decoration. The full-bleed escape
+      // hatch documented on `--app-page-max-width` is a CSS rule keyed on this
+      // attribute, so removing it does not merely lose an observability hook —
+      // it makes every ledger rule match nothing, silently. `blockId` (the app's
+      // slug, the same value that builds `<slug>.civit.ai`) is the identifier an
+      // app author knows themselves by; `data-block-instance-id` below is the
+      // per-install id and is NOT stable across surfaces.
+      data-block-id={blockId}
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent
@@ -3667,6 +4140,12 @@ export function PageBlockHost({
         blockInstanceId={blockInstanceId}
         appBlockId={appBlockId}
         appName={appName}
+        // The page's own route slug. For an on-site app it is the `AppBlock.block_id`,
+        // which is exactly what `AppListing.slug` stores — so the chrome can key the
+        // store lookup off it without a second identifier. This is the ONLY surface
+        // that threads it: the model slot renders no breadcrumb, so it has nothing to
+        // hang the store popover on.
+        slug={slug}
         slotId={PAGE_SLOT_ID}
         canOpenPage={canOpenPage}
       />
@@ -3686,102 +4165,210 @@ export function PageBlockHost({
           }}
         />
       ))}
-      {showIframe ? (
-        // The iframe fills the remaining viewport. While the block is still
-        // handshaking (status === 'loading', before BLOCK_READY), the surface
-        // would otherwise be blank — the iframe is mounted but visually empty and
-        // non-interactive (pointerEvents:none). Overlay a centered Loader on top
-        // so the user sees a loading state instead of a blank page. The overlay
-        // is gated purely on `status === 'loading'`: it unmounts the instant the
-        // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
-        // terminal path (timeout / fatal / no_token / error, which also flip
-        // `showIframe` to false and render the BlockFallback below) — so it can
-        // never spin forever.
-        <Box
-          style={{
-            position: 'relative',
-            flex: 1,
-            display: 'flex',
-            // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
-            // handshaking the iframe carries `translateY(8px)`, and a transform
-            // does not change layout but DOES extend the SCROLLABLE OVERFLOW
-            // region — so those 8px pushed past this wrapper and asked the
-            // nearest scrolling ancestor for a scrollbar. Measured, not
-            // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
-            // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
-            // motion should never be able to do that. Clipping here is also
-            // free — the iframe fills this box exactly, so nothing else can be
-            // cut off. Covered by the GREEN ARM in
-            // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
-            // equality precisely so an 8px leak cannot hide in a tolerance.
-            overflow: 'hidden',
-          }}
-        >
-          <iframe
-            // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
-            // the iframe (fresh contentWindow), not just reloads its src — the
-            // re-armed init handshake then talks to a clean frame.
-            key={reloadNonce}
-            ref={iframeRef}
-            src={renderedIframeSrc}
-            sandbox={effectiveSandbox}
-            referrerPolicy="no-referrer"
-            // Sanitize the publisher-controlled appName for the iframe title too
-            // (same sanitizer as the visible chrome + the loader aria-label), so
-            // every appName-derived plain-text attribute is consistent. Falls
-            // back to blockId when nothing legible remains.
-            title={sanitizeAppChromeName(appName) || blockId}
-            data-testid="app-page-iframe"
-            data-block-instance-id={blockInstanceId}
-            data-block-ready={isReady ? 'true' : 'false'}
+      {/* THE APP'S OWN COLUMN — everything the cap applies to, and nothing else.
+          `AppBlockChrome` above is deliberately OUTSIDE it (see the root's note): the
+          chrome spans the page like every other site-level bar, the app does not.
+
+          🔴 ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
+          full width below it. See that constant for the value's justification and
+          `--app-page-max-width` in globals.css for the per-app opt-out ledger.
+
+          🔴 BOTH CAP DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
+          `width: 100%` already resolves narrower than the cap on any ordinary display,
+          so `max-width` clamps nothing; and `margin-inline: auto` distributes the
+          LEFTOVER inline space, of which there is none on a box that fills its parent,
+          so both margins resolve to 0. Nothing about the rendered geometry moves until
+          the parent is wider than the cap — measured in
+          `PageBlockHostMaxWidth.browser.test.tsx`.
+
+          🔴 READ THROUGH `var()` DELIBERATELY. An inline custom property here
+          (`'--app-page-max-width': …`) would win over any stylesheet rule targeting the
+          same element, which is precisely the rule shape the opt-out ledger uses — so
+          writing the value inline would silently make the opt-out inert while looking
+          tidier. The property is set on the ROOT and inherits down to here, so the
+          ledger's existing `[data-app-page-frame][data-block-id='…']` selector
+          is unchanged by the move.
+
+          🔴 IT REPRODUCES THE VERTICAL CHAIN IT WAS INSERTED INTO, which is the only
+          way this can be a width-only change. It was previously the iframe wrapper's
+          `flex: 1` that consumed the space left by the chrome, as a direct child of the
+          root's column; this box now takes that role and re-offers it, so it must be a
+          column flex container AND a `flex: 1` item itself.
+
+          🔴 `flex: 1` IS THE LOAD-BEARING ONE AND NOTHING RENDERED CATCHES ITS LOSS.
+          Measured by mutation: dropping it leaves the FULL node suite and the FULL
+          `AppBlocks` browser suite green while the app column collapses to ~150px at a
+          900px content height — a running App Block reduced to a sliver, with every tier
+          green. `__tests__/pageBlockHostMaxWidth.test.ts` therefore pins this style block
+          verbatim in the node `unit` tier; that source pin is the only thing that CATCHES
+          that mutation at all. It does not BLOCK it: `main` requires no status check in
+          this repo, so what the pin buys is a red run a reviewer has to read (and an
+          honest verdict on a push to `main`), not a door that stays shut.
+
+          ⚠️ `minHeight: 0` IS DEFENCE, NOT A LOAD-BEARING PROPERTY — SAY SO RATHER THAN
+          NAMING A TEST THAT DOES NOT COVER IT. Measured: removing it leaves the scroll-fit
+          and max-width browser suites 20/20 green, because the child iframe wrapper already
+          carries `overflow: hidden`, which per CSS Flexbox §4.5 gives it an automatic
+          minimum size of 0 — so this box's content-based minimum is 0 with or without the
+          declaration. It is kept because that reasoning depends on a property of a DIFFERENT
+          element that nothing pins, and it costs nothing; an earlier version of this comment
+          credited `PageBlockHostScrollFit.browser.test.tsx` with covering it, which would
+          have misled anyone auditing whether it could go. */}
+      <Box
+        data-testid="app-page-content"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
+          maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
+          marginInline: 'auto',
+        }}
+      >
+        {showIframe ? (
+          // The iframe fills the remaining viewport. While the block is still
+          // handshaking (status === 'loading', before BLOCK_READY), the surface
+          // would otherwise be blank — the iframe is mounted but visually empty and
+          // non-interactive (pointerEvents:none). Overlay a centered branded
+          // launch state (app initial + a content-shaped skeleton) on top
+          // so the user sees a loading state instead of a blank page. The overlay
+          // is gated on `(!bootSkeleton || reloadNonce > 0) && overlayMounted`
+          // inside `status === 'loading'`: it unmounts the instant the
+          // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
+          // terminal path (timeout / fatal / no_token / error, which also flip
+          // `showIframe` to false and render the BlockFallback below) — so it can
+          // never spin forever.
+          <Box
             style={{
+              position: 'relative',
               flex: 1,
-              display: 'block',
-              width: '100%',
-              border: 0,
-              pointerEvents: isReady ? 'auto' : 'none',
-              // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
-              // cross-fading with the branded overlay below. Under reduced motion
-              // `revealMs` is 0 → no transition is emitted and the opacity flip is
-              // instantaneous (the pre-animation behaviour).
-              opacity: isReady ? 1 : 0,
-              transform: isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
-              transition:
-                revealMs === 0
-                  ? undefined
-                  : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
+              display: 'flex',
+              // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
+              // handshaking the iframe carries `translateY(8px)`, and a transform
+              // does not change layout but DOES extend the SCROLLABLE OVERFLOW
+              // region — so those 8px pushed past this wrapper and asked the
+              // nearest scrolling ancestor for a scrollbar. Measured, not
+              // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
+              // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
+              // motion should never be able to do that. Clipping here is also
+              // free — the iframe fills this box exactly, so nothing else can be
+              // cut off. Covered by the GREEN ARM in
+              // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
+              // equality precisely so an 8px leak cannot hide in a tolerance.
+              overflow: 'hidden',
             }}
-          />
-          {overlayMounted && (
-            <Center
-              data-testid="app-page-loading"
-              // Announce the loading state on the REGION, not just the graphic:
-              // role="status" + aria-busy mark the overlay container as a live
-              // busy region so a screen reader announces "loading" when it
-              // appears (the bare <Loader> below only exposes a labeled graphic).
-              // Once the block IS ready the overlay is a purely decorative
-              // fading-out veil, so it drops the live-region roles and hides from
-              // the a11y tree instead of announcing a stale "loading".
-              {...(isReady
-                ? { 'aria-hidden': true }
-                : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
-              // Observable reveal state (DevTools / manual QA): 'false' while the
-              // block is still handshaking, 'true' for the one cross-fade after
-              // BLOCK_READY, then the node unmounts.
-              data-revealing={isReady ? 'true' : 'false'}
+          >
+            <iframe
+              // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
+              // the iframe (fresh contentWindow), not just reloads its src — the
+              // re-armed init handshake then talks to a clean frame.
+              key={reloadNonce}
+              ref={iframeRef}
+              src={renderedIframeSrc}
+              sandbox={effectiveSandbox}
+              referrerPolicy="no-referrer"
+              // Sanitize the publisher-controlled appName for the iframe title too
+              // (same sanitizer as the visible chrome + the loader aria-label), so
+              // every appName-derived plain-text attribute is consistent. Falls
+              // back to blockId when nothing legible remains.
+              title={sanitizeAppChromeName(appName) || blockId}
+              data-testid="app-page-iframe"
+              data-block-instance-id={blockInstanceId}
+              data-block-ready={isReady ? 'true' : 'false'}
+              /* 🔴 A11Y. The veil is the host's ONLY loading announcement
+                (role="status" + aria-busy). Standing it down for a bootSkeleton
+                app removed it with nothing in its place — measured, ZERO
+                elements matching [role="status"],[aria-busy],[role="alert"] —
+                and the host cannot borrow the app's, because that boot state is
+                inside a cross-origin frame it can never read. Marking the frame
+                itself busy restores a machine-readable "still loading" without
+                claiming to know what it says. `reloadNonce === 0` is what makes
+                "only while the veil is absent" TRUE rather than merely stated:
+                the retry path brings the veil (role="status") back, and without
+                that term both were busy at once — measured, 2 regions. */
+              aria-busy={bootSkeleton && reloadNonce === 0 && !isReady ? true : undefined}
               style={{
-                position: 'absolute',
-                inset: 0,
-                background: 'var(--mantine-color-body)',
-                // Never intercept clicks: during loading the iframe is already
-                // pointer-inert, and during the fade-out the block is live
-                // underneath — the veil must not swallow that first click.
-                pointerEvents: 'none',
-                opacity: isReady ? 0 : 1,
-                transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+                flex: 1,
+                display: 'block',
+                width: '100%',
+                border: 0,
+                pointerEvents: isReady ? 'auto' : 'none',
+                // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
+                // cross-fading with the branded overlay below. Under reduced motion
+                // `revealMs` is 0 → no transition is emitted and the opacity flip is
+                // instantaneous (the pre-animation behaviour).
+                //
+                // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
+                // their own boot state in the HTML they ship (themed only if they also
+                // read the BLOCK_INIT fragment; otherwise a prefers-color-scheme
+                // guess), so hiding the
+                // iframe until BLOCK_READY would hide exactly that, and the
+                // translateY settle would move it on arrival — a layout shift, at
+                // the one moment the app is trying not to move. Visible from mount,
+                // no transform, no transition: the app's skeleton is on screen at
+                // first paint and its own React render replaces it in place.
+                // `pointerEvents` is deliberately NOT opted out — a skeleton is not
+                // interactive, and the block must stay inert until it has a token.
+                opacity: bootSkeleton || isReady ? 1 : 0,
+                transform: bootSkeleton || isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+                transition:
+                  bootSkeleton || revealMs === 0
+                    ? undefined
+                    : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
               }}
-            >
-              {/* Branded launch state. The app's initial in the same Avatar
+            />
+            {/* 🔴 Suppressed for a `bootSkeleton` app. This veil is opaque and
+              `inset: 0` until BLOCK_READY, so leaving it up would cover the very
+              boot state the app ships — the declaration would be inert and the
+              app author would have no way to tell. For every other app it stays
+              exactly as it was, and it is the reason NOT declaring the field is
+              the safe default: no veil plus an empty `#root` is a blank white
+              iframe. */}
+            {/* 🔴 `reloadNonce > 0` deliberately RE-ENABLES the veil for a
+              bootSkeleton app. The opt-out is about FIRST boot, where the app's
+              own skeleton is about to paint. A RETRY is the opposite situation:
+              `key={reloadNonce}` remounts the iframe, so the app's document is
+              being re-fetched and its skeleton is NOT on screen — and the
+              "Retrying …" copy lives inside this veil, so suppressing it left
+              the user with an empty region and no indication anything had
+              happened, for the manual attempt and every automatic one.
+              Measured: veil absent, iframe blank, the string "Retrying" nowhere
+              in the document. */}
+            {(!bootSkeleton || reloadNonce > 0) && overlayMounted && (
+              <Center
+                data-testid="app-page-loading"
+                // Announce the loading state on the REGION: role="status" +
+                // aria-busy mark the overlay container as a live busy region so a
+                // screen reader announces it when it appears. The region is the
+                // ONLY thing that announces — the skeleton group below is
+                // aria-hidden and exposes nothing, deliberately (see its own
+                // comment). Do not give that group a role to "restore" a labelled
+                // graphic: its label would then be read as part of this region and
+                // the app name would announce twice.
+                // Once the block IS ready the overlay is a purely decorative
+                // fading-out veil, so it drops the live-region roles and hides from
+                // the a11y tree instead of announcing a stale "loading".
+                {...(isReady
+                  ? { 'aria-hidden': true }
+                  : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
+                // Observable reveal state (DevTools / manual QA): 'false' while the
+                // block is still handshaking, 'true' for the one cross-fade after
+                // BLOCK_READY, then the node unmounts.
+                data-revealing={isReady ? 'true' : 'false'}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'var(--mantine-color-body)',
+                  // Never intercept clicks: during loading the iframe is already
+                  // pointer-inert, and during the fade-out the block is live
+                  // underneath — the veil must not swallow that first click.
+                  pointerEvents: 'none',
+                  opacity: isReady ? 0 : 1,
+                  transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+                }}
+              >
+                {/* Branded launch state. The app's initial in the same Avatar
                   treatment the store card uses gives a visual through-line from
                   card → run page, so opening an app feels continuous rather than
                   landing on a bare spinner. Purely presentational: every string is
@@ -3790,17 +4377,27 @@ export function PageBlockHost({
                   carry control/bidi/zalgo spoofing here either — consistency with
                   AppBlockChrome, not a new gate. Falls back to 'app' when nothing
                   legible remains. */}
-              <Stack align="center" gap="sm">
-                <Avatar radius="md" size={56} alt="" aria-hidden>
-                  {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
+                {/* 🔴 `w="100%"` is load-bearing, not decoration. Without it this
+                  Stack is a shrink-to-fit flex item of the <Center>, so its
+                  width is set by its widest CONTENT-sized child — the
+                  "Starting {appName}…" text. A percentage width on the
+                  skeleton group below then resolves against the APP NAME's
+                  rendered width and its `maw` is never reached: measured, a
+                  two-character app name gave an 82.5px group with 27.8px bars,
+                  where a normal one gave 193px. Publisher-controlled, so the
+                  loading state would look different for every app in the
+                  store. Constraining the Stack instead makes the group's
+                  100%/maw pair mean what it says. */}
+                <Stack align="center" gap="sm" w="100%">
+                  <Avatar radius="md" size={56} alt="" aria-hidden>
+                    {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
                       surrogate pair, so an emoji-leading app name would render a
                       broken half-glyph. Falls back to the SAME string as the
                       visible copy below so the two can't disagree. */}
-                  {(Array.from(launchName)[0] ?? '').toUpperCase()}
-                </Avatar>
-                <Loader size="sm" aria-label={`Loading ${launchName}`} />
-                <Text size="sm" c="dimmed">
-                  {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
+                    {(Array.from(launchName)[0] ?? '').toUpperCase()}
+                  </Avatar>
+                  <Text size="sm" c="dimmed">
+                    {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
                       (manual AND automatic — both go through performRetry), so
                       a re-attempt reads as a retry-in-progress rather than an
                       identical "Starting …" that looks like nothing happened.
@@ -3818,47 +4415,101 @@ export function PageBlockHost({
                       against a stated maximum of 2. The bounded count belongs to
                       the terminal card, where the budget is meaningful; this line
                       only has to say that something is happening again. */}
-                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
-                </Text>
-              </Stack>
-            </Center>
-          )}
-        </Box>
-      ) : fallbackReason ? (
-        <Box
-          style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
-          data-testid="app-page-fallback"
-        >
-          <BlockFallback
-            reason={fallbackReason}
-            blockName={sanitizeAppChromeName(appName) || blockId}
-            onRetry={handleRetry}
-            // 🔴 The REAL terminal message renders the instant the status goes
-            // terminal — a pending automatic attempt is surfaced INSIDE it, never
-            // instead of it. The user is never held in a loading state waiting on
-            // a quiet retry (the silent-blank failure class), and the manual
-            // affordance stays available the whole time.
-            autoRetry={
-              autoRetry.kind === 'retry'
-                ? {
-                    attempt: autoRetry.attempt,
-                    // The ceiling REACHABLE from here, not the raw attempt cap —
-                    // an auth terminal is bounded by the lower re-mint budget, so
-                    // showing MAX_AUTO_RETRIES would promise a retry that will
-                    // never happen. Derived in decideAutoRetry.
-                    maxAttempts: autoRetry.maxAttempts,
-                    // prefers-reduced-motion: reduce → no spinner.
-                    animate: !reduceMotion,
-                  }
-                : undefined
-            }
-            autoRetriesSpent={autoRetryBudget.attempts}
-            // Automatic recovery has settled (exhausted, or never applicable):
-            // the button is now the only path forward, so make it unmissable.
-            prominentRetry={autoRetrySettled}
-          />
-        </Box>
-      ) : null}
+                    {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
+                  </Text>
+                  {/* CONTENT-SHAPED LOADING STATE, not a spinner.
+                    A spinner says "busy"; a skeleton says "content is coming and
+                    this is roughly its shape", which is what the sidebar slot
+                    already gets for free — `IframeHost` renders BlockFallback's
+                    <Skeleton> while its block is loading. This page was the only
+                    block surface still showing a bare spinner, so the two hosts
+                    disagreed about what a loading app looks like.
+
+                    🔴 Why it lives HERE and not in the block's own index.html:
+                    this overlay is `inset: 0` at `opacity: 1` over the entire
+                    iframe until BLOCK_READY, so ANYTHING a block paints before
+                    then — including a static skeleton shipped in its own HTML —
+                    is behind an opaque veil and never seen. Putting it in the
+                    host is also what makes it free for every app: no per-app
+                    change, no rebuild, no SDK bump.
+
+                    Deliberately GENERIC bars, not a mimic of any one app's
+                    layout: this renders for every app in the store, so a shape
+                    borrowed from one of them would be wrong for the rest.
+
+                    🔴 `aria-hidden`, and NOT `role="img"`. These are decorative
+                    placeholder boxes; the announcement is the container's
+                    role="status" / aria-live copy ("Starting …") and always
+                    was. Giving this group a role would expose its name inside
+                    that live region — a region is announced from its
+                    ACCESSIBLE-tree text, so an exposed labelled child is read
+                    as part of it and the app name would announce twice
+                    ("Starting Budgeted Generator… Loading Budgeted
+                    Generator"). The <Loader> this replaces never did that:
+                    Mantine renders it as a bare <span> with no role, so its
+                    aria-label was not exposed either — this restores the
+                    pre-change announcement rather than changing it.
+
+                    Carries no aria-label: on an aria-hidden node it would be
+                    permanently inert, and `data-testid` below is what the
+                    suite queries. */}
+                  <Box
+                    aria-hidden
+                    w="100%"
+                    maw={420}
+                    px="md"
+                    data-testid="app-page-loading-skeleton"
+                  >
+                    <Stack gap="xs">
+                      {/* `animate={!reduceMotion}` — same call the fallback makes.
+                        Under prefers-reduced-motion the bars stay as static
+                        placeholder boxes instead of shimmering. */}
+                      <Skeleton h={12} w="55%" radius="sm" animate={!reduceMotion} />
+                      <Skeleton h={12} w="35%" radius="sm" animate={!reduceMotion} />
+                      <Skeleton h={32} radius="sm" animate={!reduceMotion} mt={6} />
+                      <Skeleton h={40} radius="sm" animate={!reduceMotion} mt={4} />
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Center>
+            )}
+          </Box>
+        ) : fallbackReason ? (
+          <Box
+            style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
+            data-testid="app-page-fallback"
+          >
+            <BlockFallback
+              reason={fallbackReason}
+              blockName={sanitizeAppChromeName(appName) || blockId}
+              onRetry={handleRetry}
+              // 🔴 The REAL terminal message renders the instant the status goes
+              // terminal — a pending automatic attempt is surfaced INSIDE it, never
+              // instead of it. The user is never held in a loading state waiting on
+              // a quiet retry (the silent-blank failure class), and the manual
+              // affordance stays available the whole time.
+              autoRetry={
+                autoRetry.kind === 'retry'
+                  ? {
+                      attempt: autoRetry.attempt,
+                      // The ceiling REACHABLE from here, not the raw attempt cap —
+                      // an auth terminal is bounded by the lower re-mint budget, so
+                      // showing MAX_AUTO_RETRIES would promise a retry that will
+                      // never happen. Derived in decideAutoRetry.
+                      maxAttempts: autoRetry.maxAttempts,
+                      // prefers-reduced-motion: reduce → no spinner.
+                      animate: !reduceMotion,
+                    }
+                  : undefined
+              }
+              autoRetriesSpent={autoRetryBudget.attempts}
+              // Automatic recovery has settled (exhausted, or never applicable):
+              // the button is now the only path forward, so make it unmissable.
+              prominentRetry={autoRetrySettled}
+            />
+          </Box>
+        ) : null}
+      </Box>
     </Box>
   );
 }

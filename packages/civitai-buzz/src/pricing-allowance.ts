@@ -113,8 +113,20 @@ export function pricingFloorMessage(score?: number | null): string {
   return `You need a creator score of ${MONETIZATION_MIN_CREATOR_SCORE.toLocaleString()} to monetize a model version.${standing} Prices you have already set are unaffected.`;
 }
 
-export function pricingAllowanceMessage(used: number, limit: number): string {
-  return `You have monetized ${used} of ${limit} model versions this month. Upgrade your membership to monetize more, or wait until next month — changing a price you have already set is always free.`;
+/** Shared wherever a slot is counted or refused: "monetized" alone read as covering Early Access (CU 868m1baec). */
+export const PRICING_SLOT_EXPLAINER =
+  'This counts versions carrying a licensing fee or permanent paid access. A timed Early Access window is not counted here — it has its own separate limit. Changing a price you have already set is always free.';
+
+export const EARLY_ACCESS_NOT_COUNTED =
+  "A timed Early Access window doesn't use a monthly pricing slot — it has its own separate limit.";
+
+export function capTierLabel(tier: string | null | undefined): string | undefined {
+  return tier ? CAP_TIER_LABELS[tier as CapTier] : undefined;
+}
+
+export function pricingAllowanceMessage(used: number, limit: number, tierLabel?: string): string {
+  const tier = tierLabel ? ` on ${tierLabel}` : '';
+  return `You have priced ${used} of ${limit} model versions this month${tier}. ${PRICING_SLOT_EXPLAINER} Upgrade your membership to price more, or wait until next month.`;
 }
 
 /** What the creator's allowance looks like right now, for every counter and gate in either UI. */
@@ -154,8 +166,8 @@ export function pricingAllowanceState({
 
 /** One vocabulary for the counter, shared by the server's refusal and every UI that renders it. */
 export function formatPricingAllowance(state: PricingAllowanceState): string {
-  if (state.unlimited) return `${state.used} versions monetized this month · unlimited`;
-  return `${state.used} of ${state.limit} versions monetized this month${
+  if (state.unlimited) return `${state.used} versions priced this month · unlimited`;
+  return `${state.used} of ${state.limit} versions priced this month${
     state.atLimit ? ' · limit reached' : ''
   }`;
 }

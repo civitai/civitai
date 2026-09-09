@@ -31,11 +31,12 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.util';
 import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { isBlobUrl } from '~/utils/type-guards';
+import { Flags } from '~/shared/utils/flags';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -106,7 +107,13 @@ export function UserAvatar({
   const colorScheme = useComputedColorScheme('dark');
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const browsingLevel = useBrowsingLevelDebounced();
+  // 🔴 The VIEWER's level, not the page's. A profile picture belongs to the
+  // person in the avatar, not to whatever this page happens to be about — and
+  // `ImageDetail2` sets a page override to the IMAGE's rating, so on a PG image
+  // every commenter's PG-13 avatar was suppressed for viewers who accept PG-13.
+  // Same defect as the remix gallery beside it (#4497); this is the other half.
+  // Domain and policy caps still apply, only the page override is skipped.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
 
   const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
     { id: userId as number },
@@ -148,7 +155,7 @@ export function UserAvatar({
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
     (!isPendingOwnerPreview &&
-      (!features.canViewNsfw ? !passesSfwGate : nsfwLevel > browsingLevel));
+      (!features.canViewNsfw ? !passesSfwGate : !Flags.hasFlag(browsingLevel, nsfwLevel)));
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;

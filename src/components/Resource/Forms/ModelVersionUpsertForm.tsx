@@ -1,6 +1,8 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
+  Box,
   Card,
   Checkbox,
   Divider,
@@ -19,12 +21,13 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
-import { isEqual, uniq } from 'lodash-es';
+import { uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
+import { PricingSlotHistory } from '~/components/Buzz/PricingSlotHistory';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
@@ -63,7 +66,6 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
   ModelVersionMeta,
   ModelVersionPaidAccessDto,
-  ModelVersionPaidAccessInputSchema,
   ModelVersionUpsertInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -76,10 +78,10 @@ import {
   type ModelVersionTerms,
   ACCEPTS_BLUE_BUZZ_HINT,
   DEFAULT_GENERATION_TRIAL_LIMIT,
+  EARLY_ACCESS_NOT_COUNTED,
+  PRICING_SLOT_EXPLAINER,
   DEFAULT_FEE_IMAGES,
   MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT,
-  acceptsBlueBuzz,
-  buildModelVersionTerms,
   feeMaxFor,
   hasCurrentRightsAffirmation,
   paidAccessCharges,
@@ -89,7 +91,6 @@ import {
   pricingAllowanceState,
   ratioToFee,
   resolveCapTier,
-  separateGenerationPriceMissing,
   seedFeeRatio,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -109,100 +110,21 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import {
+  type FormPaidAccessConfig,
+  type MonetizationDefaults,
+  formPaidAccessConfigSchema,
+  monetizationDefaultsSchema,
+} from '~/components/Resource/Forms/model-version-monetization-defaults';
+import { monetizationDefaultsStore } from '~/store/model-version-monetization-defaults.store';
 
-// The form keeps paid-access config — the timed early-access window AND the permanent gate — in this
-// UX-shaped local field; the API contract is `paidAccess` + `donationGoal`. These transforms map across
-// the boundary (submit / initial values).
-const formPaidAccessConfigSchema = z.object({
-  // Permanent = never-expiring gate (always paid); false = a timed Early Access window that becomes free.
-  permanent: z.boolean().default(false),
-  timeframe: z.number(),
-  // "Price for access" — unlocks download + generation (the bundle). Required when charging.
-  accessPrice: z.number().optional(),
-  // Optional cheaper generation-only tier; defaults to the access price when unset.
-  generationPrice: z.number().optional(),
-  // Gate the download but leave generation free for everyone (no price, no trial limit).
-  freeGeneration: z.boolean().default(false),
-  // Accept Blue Buzz as payment at the same price — and be paid in it.
-  acceptsBlueBuzz: z.boolean().default(false),
-  // Free preview generations before purchase is required (the trial limit). Cleared/empty = 0 (no trial),
-  // matching Creator Studio; a new gate seeds the default via the enable switch.
-  freePreviewGenerations: z.preprocess(
-    (v) => (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v)) ? 0 : v),
-    z.number().int()
-  ),
-  donationGoalEnabled: z.boolean().default(false),
-  donationGoal: z.number().optional(),
-});
-type FormPaidAccessConfig = z.infer<typeof formPaidAccessConfigSchema>;
-
-// Wrap the terms in the permanent/timed gate shape (or null for an off/invalid gate).
-function toGate(
-  config: FormPaidAccessConfig,
-  terms: ModelVersionTerms
-): ModelVersionPaidAccessInputSchema | null {
-  if (config.permanent) return { permanent: true, terms };
-  const timeframeDays = config.timeframe ?? 0;
-  if (timeframeDays <= 0) return null;
-  return { permanent: false, timeframeDays, terms };
-}
-
-function toPaidAccessInput(
-  config: FormPaidAccessConfig | null | undefined,
-  usageControl: ModelUsageControl | undefined
-): ModelVersionPaidAccessInputSchema | null {
-  if (!config || config.accessPrice == null) return null;
-  // Only downloadable or on-site-generation versions can be gated; other usage controls (internal /
-  // external API) can't set paid access at all.
-  if (
-    usageControl &&
-    usageControl !== ModelUsageControl.Download &&
-    usageControl !== ModelUsageControl.Generation
-  )
-    return null;
-  const terms = buildModelVersionTerms({
-    accessPrice: config.accessPrice,
-    generationPrice: config.generationPrice,
-    freePreviewGenerations: config.freePreviewGenerations,
-    genOnly: usageControl === ModelUsageControl.Generation,
-    freeGeneration: config.freeGeneration,
-    acceptsBlueBuzz: config.acceptsBlueBuzz,
-  });
-  return toGate(config, terms);
-}
-
-type GenerationMode = 'bundled' | 'separate' | 'free';
-const generationModeOf = (config: FormPaidAccessConfig | null | undefined): GenerationMode =>
-  config?.freeGeneration ? 'free' : config?.generationPrice != null ? 'separate' : 'bundled';
-
-function toDonationGoalInput(config: FormPaidAccessConfig | null | undefined) {
-  // A donation goal only makes sense for a timed gate (it ends the window early); permanent never ends.
-  if (config?.permanent || !config?.donationGoalEnabled || !config.donationGoal) return null;
-  return { amount: config.donationGoal };
-}
-
-function toFormPaidAccessConfig(
-  paidAccess: { timeframeDays: number | null; terms: ModelVersionTerms } | null | undefined,
-  donationGoal: { goalAmount: number } | null | undefined
-): FormPaidAccessConfig | null {
-  if (!paidAccess) return null;
-  const terms = paidAccess.terms ?? {};
-  const paidGen = terms.generation && !('free' in terms.generation) ? terms.generation : undefined;
-  return {
-    // No timeframeDays on the row => a permanent (never-expiring) gate.
-    permanent: paidAccess.timeframeDays == null,
-    timeframe: paidAccess.timeframeDays ?? EARLY_ACCESS_CONFIG.timeframeValues[0],
-    // "Price for access" is the download price when downloadable; for a gen-only version (no download
-    // tier) it's the generation price. The separate generation-only tier only exists with a download bundle.
-    accessPrice: terms.download?.price ?? paidGen?.price,
-    generationPrice: terms.download ? paidGen?.price : undefined,
-    freeGeneration: !!terms.generation && `free` in terms.generation,
-    acceptsBlueBuzz: acceptsBlueBuzz(terms),
-    freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
-    donationGoalEnabled: !!donationGoal,
-    donationGoal: donationGoal?.goalAmount,
-  };
-}
+import {
+  type GenerationMode,
+  decideModelVersionSubmit,
+  generationModeOf,
+  toFormPaidAccessConfig,
+  toPaidAccessInput,
+} from '~/components/Resource/Forms/model-version-submit';
 
 const schema = modelVersionUpsertSchema2
   .omit({ paidAccess: true, donationGoal: true })
@@ -701,99 +623,52 @@ export function ModelVersionUpsertForm({
     recommendedResources: rawRecommendedResources,
     ...data
   }: Schema) => {
-    // Validate NSFW + restricted base model combination
-    if (
-      model?.nsfw &&
-      data.baseModel &&
-      nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-    ) {
-      showErrorNotification({
-        error: new Error(
-          `NSFW models cannot use base models with license restrictions. The base model "${
-            data.baseModel
-          }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-            ', '
-          )}`
-        ),
-        title: 'Base Model License Restriction',
-      });
-      return;
-    }
+    const schemaResult = querySchema.safeParse(router.query);
+    const decision = decideModelVersionSubmit(
+      { ...data, recommendedResources: rawRecommendedResources },
+      {
+        modelId: model?.id,
+        modelNsfw: !!model?.nsfw,
+        gateSuppressed,
+        monetizationBlocked,
+        showClipSkip,
+        genMode,
+        requiresRightsAffirmation,
+        isDirty,
+        versionId: version?.id,
+        storedPaidAccessConfig: toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal),
+        templateId: schemaResult.success ? schemaResult.data.templateId : undefined,
+        bountyId: schemaResult.success ? schemaResult.data.bountyId : undefined,
+      }
+    );
 
-    const gatedConfig = gateSuppressed ? null : data.paidAccessConfig;
-    // Keyed to the gate the submit actually sends, not to the config: a usage control that can't be gated
-    // leaves the pricing controls unmounted with their values intact, and refusing over a price nobody can
-    // see (for a gate that would be dropped anyway) is a save the creator has no way to unblock.
-    const submittedGate = toPaidAccessInput(gatedConfig, data.usageControl);
-
-    // A generation grant with no price of its own is charged at the DOWNLOAD price (see `generationPrice`),
-    // so an empty box under "a cheaper generation-only price" bills the full access price while the screen
-    // says cheaper. Nothing downstream can tell that apart from a deliberate "same as access price", so the
-    // refusal has to happen here, where the creator's choice still exists.
-    if (
-      genMode === 'separate' &&
-      submittedGate &&
-      data.usageControl !== ModelUsageControl.Generation &&
-      separateGenerationPriceMissing(data.paidAccessConfig?.generationPrice)
-    ) {
-      const message = 'Enter a generation-only price, or choose "Same as the access price"';
-      form.setError('paidAccessConfig.generationPrice', { message });
-      showErrorNotification({ error: new Error(message), title: 'Generation price required' });
-      return;
-    }
-
-    if (requiresRightsAffirmation && !data.rightsAffirmed) {
-      const message = 'You must confirm you hold the rights to monetize this model';
-      form.setError('rightsAffirmed', { message });
-      // The checkbox can be well below the fold, and this also blocks wizard step navigation — an
-      // inline-only error reads as the button doing nothing.
-      showErrorNotification({ error: new Error(message), title: 'Confirmation required' });
+    if (decision.kind === 'refuse') {
+      // The offending control can be well below the fold, and a refusal also blocks wizard step
+      // navigation — an inline-only error reads as the button doing nothing, so both surface.
+      if (decision.field) form.setError(decision.field, { message: decision.message });
+      showErrorNotification({ error: new Error(decision.message), title: decision.title });
       return;
     }
 
     if (data.baseModel) setLastUsedBaseModel(data.baseModel);
 
-    const schemaResult = querySchema.safeParse(router.query);
-    const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
-    const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
+    if (decision.kind === 'submit') {
+      const { payload, submittedFee, submittedGate, gatedConfig } = decision;
+      const result = await upsertVersionMutation.mutateAsync(
+        payload as Parameters<typeof upsertVersionMutation.mutateAsync>[0]
+      );
 
-    if (
-      isDirty ||
-      !version?.id ||
-      templateId ||
-      bountyId ||
-      !isEqual(
-        data.paidAccessConfig,
-        toFormPaidAccessConfig(version?.paidAccess, version?.donationGoal)
-      )
-    ) {
-      const recommendedResources =
-        rawRecommendedResources?.map(({ id, strength }) => ({
-          resourceId: id,
-          settings: { strength },
-        })) ?? [];
-
-      const result = await upsertVersionMutation.mutateAsync({
-        ...data,
-        // Don't persist a stale clip skip for base models that don't use it.
-        clipSkip: showClipSkip ? data.clipSkip ?? null : null,
-        epochs: data.epochs ?? null,
-        steps: data.steps ?? null,
-        modelId: model?.id ?? -1,
-        // A POI model earns nothing: the fee editor is unmounted for one, so its stored value would
-        // otherwise ride along untouched behind a section that shows no controls at all.
-        licensingFee: submittedFee,
-        paidAccess: submittedGate,
-        // Keyed to the gate that is actually sent: a goal ends a timed window early, so writing one for a
-        // version whose gate was just rejected leaves a goal against nothing to end.
-        donationGoal: submittedGate ? toDonationGoalInput(gatedConfig) : null,
-        trainedWords: skipTrainedWords ? [] : trainedWords,
-        baseModelType: data.baseModelType,
-        monetization: monetizationBlocked ? null : data.monetization,
-        recommendedResources,
-        templateId,
-        bountyId,
-      });
+      // Remembered only once the server has taken it, so what comes back next time is a configuration
+      // that already cleared the eligibility floor, the fee ceiling and the affirmation — and read off
+      // the submitted values rather than form state, which can still hold a charge the payload dropped.
+      if (model?.type && (submittedFee > 0 || submittedGate)) {
+        let paidAccess: MonetizationDefaults['paidAccess'] = null;
+        if (submittedGate && gatedConfig) {
+          const { donationGoalEnabled, donationGoal, ...rest } = gatedConfig;
+          paidAccess = rest;
+        }
+        monetizationDefaultsStore.set(model.type, { fee: feeToRatio(submittedFee), paidAccess });
+      }
 
       await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
       await queryUtils.modelVersion.getById.invalidate({ id: result.id });
@@ -957,13 +832,73 @@ export function ModelVersionUpsertForm({
 
   // Removals the creator cannot prevent — the gate goes on save whatever they do, whether the submit
   // substitutes null (suppressed model, ungatable usage control) or an effect already cleared the config
-  // (non-commercial base model). Nothing to offer them, so say why instead. Anything reachable here
-  // without an arm below reads as the reversible early-access loss, which is the wrong sentence.
+  // (non-commercial base model). Nothing to offer them, so say why instead.
   const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
+  // The one thing a gate removal actually costs. A timed Early Access window can't be started again
+  // after publish (`canChooseTimed`), so dropping one is one-way; permanent Paid Access can be re-added
+  // whenever, so there is nothing to warn about there.
+  const gateRemovalLosesTimedWindow =
+    removingStoredGate && !gateRemovalIsStructural && isPublished && timedAlreadySet;
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
     (!removingStoredGate || (showChargeSettings && showPaidAccessInput));
+
+  // What the creator last saved a charge with for this model type, offered back on a new version — the
+  // settings block otherwise resets on every model. Only ever a starting point: nothing is applied until
+  // they save, and the affirmation is never remembered, because it is a statement about THIS model.
+  //
+  // A version that already charges is left alone. Switching the section back on there is the explicit
+  // `restoreStoredCharges` path, and overwriting a stored price with a remembered one would be the
+  // silent re-pricing that path exists to avoid.
+  const applyMonetizationDefaults = () => {
+    if (hasExistingCharge) return;
+    const parsed = monetizationDefaultsSchema.safeParse(monetizationDefaultsStore.get(model?.type));
+    if (!parsed.success) return;
+    const { fee, paidAccess } = parsed.data;
+
+    // Clamped, not rejected: the ceiling is 5x on a video base model, so a fee remembered from one can
+    // exceed what this version may charge. The denominator has no such fallback — one the select cannot
+    // offer would seed an option with no item.
+    if (fee.buzz > 0 && showLicensingFeeBlock && feeImageOptions.includes(fee.images)) {
+      feeSeededRef.current = true;
+      setFeeEnabled(true);
+      applyFeeRatio({
+        buzz: Math.min(fee.buzz, feeMaxFor(limits, fee.images)),
+        images: fee.images,
+      });
+    }
+
+    // A remembered timed window is dropped rather than coerced when this version cannot offer it (past
+    // publish, or a length this creator hasn't unlocked): shortening someone's early-access window on
+    // their behalf is a worse answer than leaving the gate for them to set.
+    const timeframe = paidAccess?.timeframe;
+    const timedOfferable =
+      canChooseTimed &&
+      timeframe != null &&
+      earlyAccessUnlockedDays.includes(timeframe) &&
+      timeframe <= maxEarlyAccessValue;
+    if (paidAccess && showPaidAccessInput && (paidAccess.permanent || timedOfferable)) {
+      const config: FormPaidAccessConfig = {
+        ...paidAccess,
+        donationGoalEnabled: false,
+        donationGoal: undefined,
+      };
+      form.setValue('paidAccessConfig', config, { shouldDirty: true });
+      setGenMode(generationModeOf(config));
+    }
+  };
+
+  // Keyed to the pricing controls mounting, NOT to the switch: at the switch the creator has only the
+  // affirmation on screen, so a fee restored there is a charge with no control to see it by — and one
+  // `requiresRightsAffirmation` then refuses the save over. Same disclosure rule the seeded suggestion
+  // follows, and once per mount for the same reason: re-applying after a clear would undo it.
+  const monetizationDefaultsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!showChargeSettings || monetizationDefaultsAppliedRef.current) return;
+    monetizationDefaultsAppliedRef.current = true;
+    applyMonetizationDefaults();
+  }, [showChargeSettings]);
 
   return (
     <>
@@ -1293,6 +1228,22 @@ export function ModelVersionUpsertForm({
                           {formatPricingAllowance(allowanceState)}
                           {hasExistingCharge ? ' · editing this one is free' : ''}
                         </Text>
+                        <Popover width={320} withArrow withinPortal shadow="sm">
+                          <Popover.Target>
+                            <ActionIcon
+                              variant="subtle"
+                              color="gray"
+                              size="xs"
+                              aria-label="What counts toward this limit"
+                            >
+                              <IconInfoCircle size={14} />
+                            </ActionIcon>
+                          </Popover.Target>
+                          <Popover.Dropdown>
+                            <Text size="xs">{PRICING_SLOT_EXPLAINER}</Text>
+                          </Popover.Dropdown>
+                        </Popover>
+                        <PricingSlotHistory />
                         {!allowanceState.unlimited && (
                           <CapUpsell
                             used={allowanceState.used}
@@ -1303,6 +1254,33 @@ export function ModelVersionUpsertForm({
                       </Group>
                     )}
                 </Stack>
+                {!monetizationBlocked &&
+                  !belowPricingFloor &&
+                  (showPaidAccessInput || showLicensingFeeBlock) &&
+                  allowanceState?.atLimit && (
+                    <Alert
+                      color="yellow"
+                      icon={<IconAlertTriangle size={18} />}
+                      title="You've priced all this month's versions"
+                      mb="sm"
+                    >
+                      <Text size="sm">{PRICING_SLOT_EXPLAINER}</Text>
+                      {showPaidAccessInput && canChooseTimed && (
+                        <Text size="sm" mt={4}>
+                          You can still put this version on a timed Early Access window — that
+                          doesn&apos;t need a slot. A licensing fee or permanent paid access does.
+                        </Text>
+                      )}
+                      <Box mt="xs">
+                        <CapUpsell
+                          used={allowanceState.used}
+                          limit={pricingAllowance?.limit ?? Infinity}
+                          capTier={feeCapTier}
+                          expanded
+                        />
+                      </Box>
+                    </Alert>
+                  )}
                 {monetizationBlocked && (
                   <Alert
                     color="red"
@@ -1381,12 +1359,13 @@ export function ModelVersionUpsertForm({
                             ? "A private model can't have paid access, so this can't be kept."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
-                      ) : (
+                      ) : gateRemovalLosesTimedWindow ? (
                         <Text size="xs" c="red">
-                          You will not be able to add this model to early access again after
-                          removing it. Also, your payment for early access will be lost.
+                          This version is already published, so its Early Access window can&apos;t
+                          be started again once removed. Permanent paid access can still be added
+                          back at any time.
                         </Text>
-                      ))}
+                      ) : null)}
                     {/* No affordance for a removal the creator cannot prevent: the submit substitutes
                         null for these regardless, so restoring would clear nothing and read as broken.
                         The fully-blocked reasons (POI, non-commercial) never reach here — they render the
@@ -1484,8 +1463,8 @@ export function ModelVersionUpsertForm({
                                 }
                                 description={
                                   paidAccessConfig.permanent
-                                    ? 'Always requires purchase — this version never becomes free.'
-                                    : 'A timed Early Access window; the version becomes free when it ends.'
+                                    ? 'Always requires purchase — this version never becomes free. Uses one of your monthly pricing slots.'
+                                    : `A timed Early Access window; the version becomes free when it ends. ${EARLY_ACCESS_NOT_COUNTED}`
                                 }
                               >
                                 <SegmentedControl

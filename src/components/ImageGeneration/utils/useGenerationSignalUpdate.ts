@@ -7,7 +7,10 @@ import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
+import type {
+  NormalizedStep,
+  WorkflowStatusUpdate,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import { COMPLETE_STATUSES, POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
@@ -26,6 +29,32 @@ export function useTextToImageSignalUpdate() {
     }
     debouncer(() => updateSignaledWorkflows());
   });
+}
+
+type SignaledStep = NonNullable<NonNullable<WorkflowStatusUpdate>['steps']>[number];
+
+/** Applies one refetched step onto the cached step in place — `step` is an immer draft. */
+export function mergeSignaledStep(
+  step: Pick<NormalizedStep, 'status' | 'completedAt' | 'errors' | 'queuePosition' | 'output'>,
+  stepMatch: SignaledStep
+) {
+  step.status = stepMatch.status;
+  step.completedAt = stepMatch.completedAt;
+  step.errors = stepMatch.errors;
+  // Assigned even when undefined: a step that has left the queue reports no queuePosition, and
+  // keeping the old one strands a stale position and ETA on the card for the rest of the session.
+  step.queuePosition = stepMatch.queuePosition;
+  // Merge updated images by id, then append ones the client has not seen. Multi-step workflows
+  // (e.g. Wan 2.2 interpolation) start the later step with zero images and only materialize
+  // outputs on completion, which a per-index loop drops until reload.
+  for (const [index, item] of step.output.entries()) {
+    const itemMatch = stepMatch.output.find((x) => x.id === item.id);
+    if (itemMatch) step.output[index] = itemMatch;
+  }
+  const existingIds = new Set(step.output.map((x) => x.id));
+  for (const item of stepMatch.output) {
+    if (!existingIds.has(item.id)) step.output.push(item);
+  }
 }
 
 export async function updateWorkflowsStatus(workflowIds: string[]) {
@@ -57,24 +86,7 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
 
               for (const step of item.steps) {
                 const stepMatch = update.steps?.find((x) => x.name === step.name);
-                if (stepMatch) {
-                  step.status = stepMatch.status;
-                  step.completedAt = stepMatch.completedAt;
-                  step.errors = stepMatch.errors;
-                  // Merge in updated images by id, then append any new images the server
-                  // produced that the client hadn't seen yet. Needed for multi-step workflows
-                  // (e.g. Wan 2.2 interpolation) where the later step starts with zero images
-                  // and only materializes outputs on completion — the previous per-index
-                  // loop only updated existing entries and dropped new ones until reload.
-                  for (const [index, item] of step.output.entries()) {
-                    const itemMatch = stepMatch.output.find((x) => x.id === item.id);
-                    if (itemMatch) step.output[index] = itemMatch;
-                  }
-                  const existingIds = new Set(step.output.map((x) => x.id));
-                  for (const item of stepMatch.output) {
-                    if (!existingIds.has(item.id)) step.output.push(item);
-                  }
-                }
+                if (stepMatch) mergeSignaledStep(step, stepMatch);
               }
             }
           }

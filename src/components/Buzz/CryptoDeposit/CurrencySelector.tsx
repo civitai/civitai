@@ -1,12 +1,4 @@
-import {
-  Badge,
-  Group,
-  Menu,
-  Skeleton,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { Badge, Group, Menu, Skeleton, Stack, Text, UnstyledButton } from '@mantine/core';
 import React, { useCallback, useMemo, useState } from 'react';
 import { getFiatDisplay } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
@@ -133,9 +125,7 @@ export function CurrencyBadges({ state }: { state: CurrencySelectionState }) {
                     className="cursor-pointer"
                   >
                     {group.ticker.toUpperCase()}
-                    <span className="ml-0.5 opacity-60">
-                      ·{group.networks.length}
-                    </span>
+                    <span className="ml-0.5 opacity-60">·{group.networks.length}</span>
                   </Badge>
                 </UnstyledButton>
               </Menu.Target>
@@ -191,8 +181,7 @@ export function MinDepositInfo({ state }: { state: CurrencySelectionState }) {
     <Group gap={4} align="center">
       <Text component="div" size="xs" c="dimmed">
         Minimum {selectedTicker.toUpperCase()} deposit
-        {networkLabel ? ` on ${networkLabel}` : ''}
-        :{' '}
+        {networkLabel ? ` on ${networkLabel}` : ''}:{' '}
         {loadingMin ? (
           <Skeleton height={12} width={40} radius="sm" className="inline-block align-middle" />
         ) : minData?.fiatEquivalent != null ? (
@@ -200,8 +189,21 @@ export function MinDepositInfo({ state }: { state: CurrencySelectionState }) {
             {fiatSymbol}
             {(Math.ceil(minData.fiatEquivalent * 100) / 100).toFixed(2)}
           </Text>
-        ) : null}
-        {' '}
+        ) : minData?.minAmount != null ? (
+          // NowPayments returns `fiat_equivalent` as a nullish field; the crypto amount is the one
+          // that is always there. Falling back to it keeps a number on the line rather than an
+          // amount-shaped gap.
+          <Text span fw={600}>
+            {minData.minAmount} {selectedTicker.toUpperCase()}
+          </Text>
+        ) : (
+          // Never render the label with nothing after it. This line is the only thing between a
+          // depositor and a sub-minimum send, which NowPayments does not sweep and does not refund,
+          // and a blank reads as "no minimum" rather than as "we could not fetch it".
+          <Text span fw={600}>
+            unavailable — check before sending
+          </Text>
+        )}{' '}
         <FiatMenu selectedFiat={selectedFiat} onFiatChange={onFiatChange} />
       </Text>
     </Group>

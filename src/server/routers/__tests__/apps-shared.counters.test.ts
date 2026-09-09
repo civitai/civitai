@@ -70,6 +70,7 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefi
 // workspace-package deps.
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(async () => undefined),

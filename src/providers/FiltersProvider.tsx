@@ -46,6 +46,7 @@ const modelFilterSchema = z.object({
   status: z.enum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
+  hidePaid: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -125,6 +126,9 @@ const articleFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.enum(ArticleSort).default(ArticleSort.MostBookmarks),
   followed: z.boolean().optional(),
+  // Optional with no default, so an unfiltered store carries no key at all — the server
+  // reads only `true` as a filter.
+  isOfficial: z.boolean().optional(),
 });
 
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;

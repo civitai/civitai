@@ -249,7 +249,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Spoke: `training-moderation.service.ts` (`getPausedTrainingVersions`, `getTrainingVersionDetail`,
     `moderateTrainingData`). The detail read goes through the WRITE connection — `ModelFile.metadata` is
     TOASTed jsonb the logical subscriber drops on UPDATE, so on the replica `trainingResults` is empty.
-  - Approve/deny releases the orchestrator's ambient gate job (the SECOND job of the first step) and then
+  - Approve/deny releases the orchestrator's moderation gate for the workflow
+    (`POST /v1/manager/workflows/{id}/moderation-gate`) and then
     POSTs the `resource-training-v2` webhook, because the orchestrator does not reliably fire it —
     without that an approved run stays Paused in our database.
   - **CSAM report ported**, but through a NEW main-app endpoint `/api/mod/csam/training-data-report`
@@ -505,7 +506,7 @@ main app (or moves to a Retool/admin surface), not here.
 Client-only playgrounds/demos with no backend slice and no production value:
 
 - [ ] ~~`/moderator/aspect-ratio-explorer`~~ — client-only AR calculator (localStorage)
-- [ ] ~~`/moderator/link-demo`~~ — Civitai Link demo (`useCivitaiLink`)
+- [x] ~~`/moderator/link-demo`~~ — Civitai Link demo (`useCivitaiLink`). **Deleted**, not migrated: it walked through the retired A1111 "SD Settings → Civitai tab" pairing flow.
 - [ ] ~~`/moderator/test`~~ — UI playground (slots, upload, Headless UI)
 - [ ] ~~`/moderator/test2`~~ — slot-system reference demo
 

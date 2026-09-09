@@ -105,6 +105,84 @@ describe('buzzEvents columns narrower than BuzzEventLog', () => {
 
     expect(insertedRow().multiplier).toBe(4);
   });
+
+  // The ceiling above and the floor below are separate guards: `Math.max` does not bound a value
+  // from above and a `> ceiling` test does not bound one from below. A negative reaches here from
+  // one operator-typed `Product.metadata.rewardsMultiplier`, which the cache reads as a bare float.
+  it('floors a negative multiplier at 0 rather than recording the negative', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: -1 });
+    h.evalImpl.mockResolvedValue(-4 as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    // 0 is the value `process-rewards` already reads as unqualified: no payout, and the reporter's
+    // cap is left intact. A negative kept as a negative passes the ceiling check, is recorded
+    // `awarded`, eats the cap, and is then dropped by `sendAward`'s amount filter.
+    expect(row.multiplier).toBe(0);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: -1 });
+  });
+
+  // `Math.max(0, NaN)` is `NaN`, so a floor alone does not cover this: Decimal(3, 2) cannot hold
+  // NaN, and the insert runs `wait_for_async_insert=0`, so the row is dropped server-side with the
+  // Buzz already paid — the same silent loss the ceiling exists to prevent.
+  it.each([
+    ['NaN', NaN, 1],
+    ['Infinity', Infinity, 1],
+    ['-Infinity', -Infinity, 0],
+  ] as const)(
+    'replaces a %s multiplier with a value the column can hold',
+    async (label, raw, expected) => {
+      h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: raw });
+      h.evalImpl.mockResolvedValue(raw as any);
+
+      await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+      const row = insertedRow();
+      expect(row.multiplier).toBe(expected);
+      // Recorded as a string: `JSON.stringify` writes all three as `null`, which is
+      // indistinguishable from the raw having been absent.
+      expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: label });
+    }
+  );
+
+  // `Number.isFinite` does not coerce where the `> ceiling` test it replaced did, so a multiplier
+  // read back out of the ClickHouse `Decimal(3, 2)` as a quoted string would take the non-finite
+  // fallback. That is an underpay, not a dropped row: `sendAward` pays `awardAmount * multiplier`.
+  it('leaves a quoted in-range multiplier alone rather than reading it as non-finite', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '4.00' } as any);
+    h.evalImpl.mockResolvedValue(16 as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    expect(row.multiplier).toBe('4.00');
+    expect(JSON.parse(row.transactionDetails)).not.toHaveProperty('multiplierRaw');
+  });
+
+  // The raw is recorded from the ORIGINAL value, not from its coercion: `String(Number('4x'))` is
+  // `'NaN'`, which loses the only thing that would tell an operator which product is misconfigured.
+  it('records the original text when the multiplier is not a number at all', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '4x' } as any);
+    h.evalImpl.mockResolvedValue(NaN as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    expect(row.multiplier).toBe(1);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: '4x' });
+  });
+
+  it('clamps a quoted multiplier past the ceiling and records the raw as a number', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '20.00' } as any);
+    h.evalImpl.mockResolvedValue(80 as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    expect(row.multiplier).toBe(9.99);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: 20 });
+  });
 });
 
 describe('buzzEvents forId must be an Int32 by the time it reaches ClickHouse', () => {

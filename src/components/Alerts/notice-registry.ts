@@ -105,7 +105,7 @@ export type FeatureNotice = {
 
 export const FEATURE_NOTICES = {
   /** Sub-nav popover pointing at the settings toggle for the tidied-away tabs. */
-  navTidy: { id: 'nav-tidy-notice' },
+  navCustomize: { id: 'nav-customize-notice' },
   /** Header popover telling holders of yellow buzz where their balance went. */
   yellowBuzzMigration: { id: 'yellow-buzz-migration' },
   /** Crypto-deposit onboarding card. The only notice a user can bring back. */

@@ -66,6 +66,11 @@ cookies are not shared across aliases. The existing `sync-account` flow
 covers cross-host hops; same-color aliases use it just like cross-color hops
 do today.
 
+⚠️ **Only for links stamped in the browser.** `syncAccount()` no-ops during SSR, so a server-rendered
+cross-host link ships unstamped and the carry-over never fires — masked in normal use only because the
+destination's 30-day rolling cookie usually means the user is already signed in there. Use
+`useSyncAccount()` for anything server-rendered.
+
 ## Inbound Resolution
 
 `getRequestDomainColor(req)` walks every color's primary + aliases. Earliest

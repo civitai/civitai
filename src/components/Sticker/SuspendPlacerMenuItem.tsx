@@ -25,7 +25,7 @@ export function SuspendPlacerMenuItem({ userId }: { userId: number }) {
   const utils = trpc.useUtils();
   const removeExisting = useRef(false);
 
-  const placementSurfaceEnabled = features.stickerPlacement || features.remixGallery;
+  const placementSurfaceEnabled = !!features.stickerPlacement || !!features.remixGallery;
 
   const { data: suspended } = trpc.placement.isSuspended.useQuery(
     { userId },

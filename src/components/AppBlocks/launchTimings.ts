@@ -83,6 +83,60 @@ export type LaunchMarks = {
    * measures tab-switching, not launch.
    */
   wasHidden: boolean;
+  /**
+   * 🔴 THE DISCRIMINATING INSTRUMENT: how many BLOCK_INIT posts the host made
+   * during this launch window.
+   *
+   * `init_wait` (first BLOCK_INIT -> BLOCK_READY) is the dominant launch phase,
+   * and its distribution has a 0.4-0.6 s mode. That mode has TWO candidate
+   * causes and the duration alone cannot separate them:
+   *
+   *   (a) the re-post QUANTIZATION — the block's listener attached early, but
+   *       the host's next BLOCK_INIT was not due until the next tick, so the
+   *       ack could not arrive before it. Signature: `initPosts >= 2`.
+   *   (b) the block simply BOOTS in 400-600 ms. Signature: `initPosts == 1`.
+   *
+   * Same duration, opposite fix. Counting the posts is what makes the two
+   * distinguishable, and it is also the only way to show whether shortening the
+   * schedule (`INIT_RETRY_BACKOFF_MS`) actually moved anything.
+   *
+   * Counted HERE — in the host's own `sendInit` callback — rather than read off
+   * the controller, because the auto-retry path constructs a FRESH
+   * `IframeInitController` per attempt while these marks persist across the
+   * whole launch. Reading `controller.postCount()` would silently report only
+   * the last attempt's posts against an `init_wait` spanning all of them.
+   */
+  initPosts: number;
+  /**
+   * 🔴 THE STRATIFIER — and its meaning is EXACTLY ONE THING, stated here
+   * because two plausible readings exist and they disagree on real launches.
+   *
+   * MEANING: the guest sent `BLOCK_HELLO` at some point during this launch
+   * window (host mount -> BLOCK_READY). Nothing more.
+   *
+   * 🔴 IT DOES **NOT** MEAN "the accelerator fired an extra BLOCK_INIT".
+   * `IframeInitController.notifyHello()` posts only when it is already started,
+   * not stopped, and not already handled — so a hello arriving BEFORE `start()`
+   * is recorded and posts nothing, because `start()` posts immediately on its
+   * own. Under the "accelerator fired" reading that launch would be filed as
+   * `no`, and that is the wrong bucket: the guest's listener WAS attached, so
+   * the host's very next post was heard and the re-post cadence never governed
+   * the wait. Filing it as `no` would push fast, accelerator-capable launches
+   * into the population that exists to isolate cadence-bound ones — biasing the
+   * comparison toward "the cadence change did nothing".
+   *
+   * The question this label answers is "was this launch's `init_wait` governed
+   * by the host's re-post schedule, or short-circuited by the guest announcing
+   * itself?" Once the guest has announced, its listener is attached and the next
+   * post lands, whichever post that is. So ANNOUNCED-AT-ALL is the correct cut,
+   * and it is why this is recorded in the message handler rather than inside
+   * `notifyHello()`.
+   *
+   * Recorded independently of the controller: the handler sets this even when
+   * `controllerRef.current` is null, so a hello landing before the controller
+   * exists still counts. Sticky for the whole launch, like `wasHidden`.
+   */
+  helloSeen: boolean;
 };
 
 /** The optional `timings` object carried on the existing block-render beacon. */
@@ -90,10 +144,34 @@ export type LaunchTimingsPayload = {
   totalMs: number;
   tokenMintMs?: number;
   initWaitMs?: number;
+  initPosts?: number;
+  /**
+   * Whether the guest announced `BLOCK_HELLO` during this launch — see
+   * `LaunchMarks.helloSeen` for the exact meaning and why it is not
+   * "the accelerator fired".
+   *
+   * 🔴 ALWAYS PRESENT when a sample is emitted, never omitted for `false`. An
+   * omitted field and a `false` field would be indistinguishable on the wire,
+   * and the server must be able to tell "this client does not send the field"
+   * (labelled `unknown`) from "this launch had no hello" (labelled `no`).
+   * Emitting it unconditionally is what makes that distinction exist — without
+   * it, every launch from a current client that simply saw no hello would be
+   * lumped in with stale browser bundles and the `no` population would be
+   * unusable.
+   */
+  hello: boolean;
 };
 
 export function createLaunchMarks(now: number | null, hidden: boolean): LaunchMarks {
-  return { mountedAt: now, tokenAt: null, initSentAt: null, readyAt: null, wasHidden: hidden };
+  return {
+    mountedAt: now,
+    tokenAt: null,
+    initSentAt: null,
+    readyAt: null,
+    wasHidden: hidden,
+    initPosts: 0,
+    helloSeen: false,
+  };
 }
 
 /**
@@ -108,6 +186,15 @@ export function resetLaunchMarks(marks: LaunchMarks, now: number | null, hidden:
   marks.initSentAt = null;
   marks.readyAt = null;
   marks.wasHidden = hidden;
+  // 🔴 Must reset with the rest. A soft navigation A -> B reuses the component
+  // instance, so app A's posts would otherwise be attributed to app B's launch
+  // — and unlike a timestamp this one ACCUMULATES, so the error compounds with
+  // every navigation rather than being a single wrong delta.
+  marks.initPosts = 0;
+  // Resets with the rest: a soft navigation A -> B reuses the component, and a
+  // sticky `true` would label app B's launch with app A's announcement — which
+  // is precisely the mis-stratification this label exists to prevent.
+  marks.helloSeen = false;
 }
 
 /**
@@ -147,6 +234,45 @@ export function boundedDeltaMs(
   if (typeof from !== 'number' || typeof to !== 'number') return undefined;
   if (!Number.isFinite(from) || !Number.isFinite(to)) return undefined;
   return boundedDurationMs(to - from);
+}
+
+/**
+ * Upper sanity bound on a single launch's BLOCK_INIT post count.
+ *
+ * 🔴 DERIVED FROM THE SCHEDULE, NOT PICKED — the derivation is CODE, in
+ * `worstReachableInitPosts()` (pageBlockHostLogic), and a test asserts this cap
+ * clears it. This mirrors `MAX_LAUNCH_SAMPLE_MS` exactly, and for the same
+ * reason: that cap's justification lived only in a comment and was wrong twice.
+ * Shortening `INIT_RETRY_BACKOFF_MS` RAISES the reachable post count, so a cap
+ * chosen by eye today is a cap that silently starts dropping real samples the
+ * next time someone tunes the cadence — and the drop would be correlated with
+ * exactly the slow launches this metric exists to explain.
+ *
+ * On today's constants the worst reachable value is 84 and this is 128.
+ */
+export const MAX_LAUNCH_INIT_POSTS = 128;
+
+/**
+ * A bounded, strictly-positive INTEGER post count, or `undefined`.
+ *
+ * 🔴 DROPPED, NEVER CLAMPED — the same rule as `boundedDurationMs`, and it
+ * matters more here because the histogram's top bucket is where the
+ * "quantization is hurting us" signal would live. Clamping an impossible 5,000
+ * onto that edge would manufacture exactly the evidence the metric is supposed
+ * to test for.
+ *
+ * 🔴 REJECTS ZERO. A launch that reached BLOCK_READY posted at least one
+ * BLOCK_INIT by construction, so a 0 is a bug in the counter, not a fast
+ * launch. Emitting it would drag the distribution toward "one post, no
+ * quantization" — the reassuring answer — which is the one direction a broken
+ * instrument must not be able to fake.
+ */
+export function boundedInitPosts(raw: number | null | undefined): number | undefined {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined;
+  if (!Number.isInteger(raw)) return undefined;
+  if (!(raw > 0)) return undefined;
+  if (raw > MAX_LAUNCH_INIT_POSTS) return undefined;
+  return raw;
 }
 
 /** The same two gates applied to an already-computed duration. */
@@ -207,11 +333,21 @@ export function computeLaunchTimings(marks: LaunchMarks): LaunchTimingsPayload |
 
   const tokenMintMs = boundedDeltaMs(marks.mountedAt, marks.tokenAt);
   const initWaitMs = boundedDeltaMs(marks.initSentAt, marks.readyAt);
+  // Rides the same anchor and the same hidden-tab drop as every field above —
+  // deliberately, not incidentally. A post count harvested from a background
+  // tab measures throttled timers, so it would answer the quantization question
+  // with data from the one situation where the quantization does not matter.
+  const initPosts = boundedInitPosts(marks.initPosts);
 
   return {
     totalMs,
     ...(tokenMintMs !== undefined ? { tokenMintMs } : {}),
     ...(initWaitMs !== undefined ? { initWaitMs } : {}),
+    ...(initPosts !== undefined ? { initPosts } : {}),
+    // Unconditional — see `LaunchTimingsPayload.hello`. Gated by the same
+    // hidden-tab / anchor drops as every field above, because a launch we do not
+    // observe must not contribute a label either.
+    hello: marks.helloSeen,
   };
 }
 

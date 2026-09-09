@@ -3,15 +3,10 @@ import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import {
-  getAllImages,
-  getAllImagesIndex,
-  getImagesFromFeedSearch,
-} from '~/server/services/image.service';
+import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
 import { imageMetaCache } from '~/server/redis/caches';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,
@@ -22,7 +17,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
  * Shared image-search + response-shaping body extracted verbatim from
  * `/api/v1/images/index.ts` so the public endpoint AND the block-scoped catalog
  * endpoint (`/api/v1/blocks/images.ts`) build the SAME response from the SAME
- * query path (legacy `getAllImages` / BitDex `getAllImagesIndex` / feed
+ * query path (legacy `getAllImages` / feed
  * `getImagesFromFeedSearch`, the `withMeta` enrichment, and the JSON shaping).
  *
  * The ONLY maturity lever is `browsingLevel`, supplied by the caller. The public
@@ -67,7 +62,7 @@ export type RunImageSearchContext = {
   browsingLevel: number;
   /** The viewer (session user) — undefined for anon. */
   user?: SessionUser;
-  /** Used for feature flags, region read by the caller, and the BitDex/search actor. */
+  /** Used for feature flags, region read by the caller, and the search actor. */
   req: NextApiRequest;
 };
 
@@ -113,16 +108,8 @@ export async function runImageSearch(
 
   const features = getFeatureFlags({ user, req });
 
-  // Check BitDex mode — if active, route through getAllImagesIndex
-  const bitdexMode = await getFliptVariant(
-    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    user?.id?.toString() || 'anonymous',
-    buildFliptContext(user)
-  );
-  const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-
-  // Always route modelId/imageId lookups through legacy getAllImages — BitDex
-  // and Meili feed search don't support filtering by modelId/imageId (they index
+  // Always route modelId/imageId lookups through legacy getAllImages — Meili
+  // feed search doesn't support filtering by modelId/imageId (it indexes
   // postedToId/modelVersionId only), so they'd silently return the global feed.
   // When both modelId and modelVersionId are passed, modelId is redundant
   // (getAllImages also silently ignores it via an `else if` chain) — let those
@@ -140,7 +127,8 @@ export async function runImageSearch(
   // those sorts are honored.
   const useLegacyMethod = (data as { imageId?: unknown }).imageId
     ? true
-    : !!(data as { modelId?: unknown }).modelId && !(data as { modelVersionId?: unknown }).modelVersionId;
+    : !!(data as { modelId?: unknown }).modelId &&
+      !(data as { modelVersionId?: unknown }).modelVersionId;
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -212,25 +200,6 @@ export async function runImageSearch(
         includeBaseModel: true,
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       } as unknown as Parameters<typeof getAllImages>[0])
-    : useBitdex
-    ? await getAllImagesIndex({
-        ...data,
-        types: type ? [type] : undefined,
-        limit,
-        skip,
-        cursor,
-        include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
-        periodMode: 'published',
-        browsingLevel,
-        withMeta: false,
-        user,
-        useCombinedNsfwLevel: !features.canViewNsfw,
-        disableMinor: true,
-        disablePoi: true,
-        headers: { src: '/api/v1/images' },
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        actor,
-      } as unknown as Parameters<typeof getAllImagesIndex>[0])
     : await getImagesFromFeedSearch({
         ...data,
         types: type ? [type] : undefined,
@@ -286,7 +255,7 @@ export async function runImageSearch(
       username: image.user.username,
       baseModel: image.baseModel,
       modelVersionIds: image.modelVersionIds,
-      tags: withTags ? (image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? []) : undefined,
+      tags: withTags ? image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? [] : undefined,
     };
   });
 

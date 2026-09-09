@@ -4,7 +4,6 @@ import {
   LoadingOverlay,
   Popover,
   Stack,
-  Stepper,
   Text,
   TextInput,
   Title,
@@ -23,6 +22,7 @@ import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersion
 import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
+import { WizardStepper } from '~/components/Stepper/WizardStepper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TemplateOmittableField } from '~/server/schema/model.schema';
 import { templateOmittableFields } from '~/server/schema/model.schema';
@@ -146,18 +146,16 @@ const CreateSteps = ({
     useWizardStepSave(navigateToStep);
 
   return (
-    <Stepper
+    <WizardStepper
       active={activeIndex}
       onStepClick={(idx) => {
         const urlStep = skipFiles && idx >= 2 ? idx + 2 : idx + 1;
         handleStepSelect(urlStep, step);
       }}
-      allowNextStepsSelect={false}
-      size="sm"
       classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Model Info */}
-      <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
+      <WizardStepper.Step label={editing ? 'Edit model' : 'Create your model'}>
         <div className="container relative flex max-w-sm flex-col gap-3">
           <LoadingOverlay visible={isLoadingTemplateData} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
@@ -181,10 +179,13 @@ const CreateSteps = ({
             )}
           </ModelUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 2: Version Info */}
-      <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'} allowStepSelect={!!model}>
+      <WizardStepper.Step
+        label={hasVersions ? 'Edit version' : 'Add version'}
+        allowStepSelect={!!model}
+      >
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
@@ -223,11 +224,11 @@ const CreateSteps = ({
             )}
           </ModelVersionUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 3: Upload Files */}
       {!skipFiles && (
-        <Stepper.Step
+        <WizardStepper.Step
           label="Upload files"
           loading={uploading > 0}
           color={error + aborted > 0 ? 'red' : undefined}
@@ -238,18 +239,18 @@ const CreateSteps = ({
             <Files />
             <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
           </div>
-        </Stepper.Step>
+        </WizardStepper.Step>
       )}
 
-      <Stepper.Step
+      <WizardStepper.Step
         label={postId ? 'Edit post' : 'Create a post'}
         allowStepSelect={!!hasVersions && (hasFiles || skipFiles)}
       >
         {model && modelVersion && (
           <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
         )}
-      </Stepper.Step>
-    </Stepper>
+      </WizardStepper.Step>
+    </WizardStepper>
   );
 };
 
@@ -345,15 +346,13 @@ const TrainSteps = ({
   };
 
   return (
-    <Stepper
+    <WizardStepper
       active={step - 1}
       onStepClick={(idx) => handleStepSelect(idx + 1, step)}
-      allowNextStepsSelect={false}
-      size="sm"
       classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Select File */}
-      <Stepper.Step
+      <WizardStepper.Step
         label="Select Model Iteration"
         loading={
           modelVersion.trainingStatus === TrainingStatus.Pending ||
@@ -378,10 +377,10 @@ const TrainSteps = ({
           </Text>
           <TrainingSelectFile model={model} modelVersion={modelVersion} onNextClick={goNext} />
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 2: Model Info */}
-      <Stepper.Step label="Edit model">
+      <WizardStepper.Step label="Edit model">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit model</Title>
           <ModelUpsertForm
@@ -402,10 +401,10 @@ const TrainSteps = ({
             )}
           </ModelUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 3: Version Info */}
-      <Stepper.Step label="Edit version">
+      <WizardStepper.Step label="Edit version">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm
@@ -438,15 +437,15 @@ const TrainSteps = ({
             )}
           </ModelVersionUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 4: Post Info */}
-      <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
+      <WizardStepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {model && modelVersion && (
           <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
         )}
-      </Stepper.Step>
-    </Stepper>
+      </WizardStepper.Step>
+    </WizardStepper>
   );
 };
 

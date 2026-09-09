@@ -10,6 +10,7 @@
   import { fetchSupport } from './user-support';
   import { REWARDS_ELIGIBILITY } from './enforcement-options';
   import { FormState } from '$lib/form-state.svelte';
+  import { unwiredRulingReason } from '$lib/restriction-types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
@@ -19,7 +20,16 @@
     identity,
     canAct,
     canToggleModerator,
-  }: { identity: Identity; canAct: boolean; canToggleModerator: boolean; } =
+    canBan,
+    canPurge,
+  }: {
+    identity: Identity;
+    canAct: boolean;
+    canToggleModerator: boolean;
+    /** Ban and purge are separate grants, not one "enforcement" right: purge has no way back. */
+    canBan: boolean;
+    canPurge: boolean;
+  } =
     $props();
 
 
@@ -32,6 +42,13 @@
 
   const support = $derived(browser ? fetchSupport(identity.id, version) : null);
   const mutesUrl = $derived(userLookupUrl(identity.id, 'mutes'));
+
+  // A restriction of a type with no verdict path cannot be ruled on ANYWHERE — `resolveUserRestriction`
+  // in the main app refuses it, which is what this panel posts through. Without this the panel offered
+  // Overturn/Uphold on such a row, and clicking Overturn would have sent a "your generation access has
+  // been restored" notice and reset the account's prompt-violation counter over an unrelated case.
+  // Falls back to `generation` for a null type, matching the label below.
+  const unwiredReason = $derived(unwiredRulingReason(identity.restrictionType ?? 'generation'));
 
   // `reload: true` because these writes change `identity`, which DOES come from `load` — unlike the
   // panels fed by `/api/*`, where reloading re-runs the reaction scan for nothing.
@@ -78,6 +95,14 @@
           A <strong>{identity.restrictionType ?? 'generation'}</strong> restriction on this account is
           awaiting a ruling. Unmuting alone leaves it Pending — rule on it here instead.
         </p>
+        {#if unwiredReason}
+          <p class="mb-2 text-sm text-amber-200">
+            {unwiredReason} Review it in the
+            <a href="/audit/generator-restrictions?type={identity.restrictionType}" class={LINK_CLASS}>
+              restriction queue
+            </a>.
+          </p>
+        {/if}
         <form method="POST" action="?/resolveRestriction" use:enhance={form.enhance} class="grid gap-2">
           <input type="hidden" name="userRestrictionId" value={identity.restrictionId} />
           <input type="hidden" name="userId" value={identity.id} />
@@ -88,7 +113,13 @@
           />
           <div class="flex flex-wrap gap-2">
             <!-- One field, two submits: a submit button contributes a single name/value pair. -->
-            <Button type="submit" name="status" value="Overturned" size="sm" disabled={form.submitting}>
+            <Button
+              type="submit"
+              name="status"
+              value="Overturned"
+              size="sm"
+              disabled={form.submitting || !!unwiredReason}
+            >
               Overturn — lift it
             </Button>
             <Button
@@ -97,7 +128,7 @@
               value="Upheld"
               size="sm"
               variant="destructive"
-              disabled={form.submitting}
+              disabled={form.submitting || !!unwiredReason}
             >
               Uphold — keep them muted
             </Button>
@@ -130,15 +161,23 @@
         <Button type="submit" size="sm" disabled={form.submitting}>Refresh session</Button>
       </form>
 
-      {#if identity.bannedAt}
-        <Button size="sm" onclick={() => (confirming = 'unban')}>Unban</Button>
-      {:else}
-        <Button size="sm" variant="destructive" onclick={() => (confirming = 'ban')}>Ban</Button>
+      <!-- Gated on the action's own grant, not on `canAct`: reaching this page and being allowed to end
+           an account are different rights, and the server now enforces them separately. Showing a
+           control the action will refuse is how an operator learns a permission exists by being told
+           no. -->
+      {#if canBan}
+        {#if identity.bannedAt}
+          <Button size="sm" onclick={() => (confirming = 'unban')}>Unban</Button>
+        {:else}
+          <Button size="sm" variant="destructive" onclick={() => (confirming = 'ban')}>Ban</Button>
+        {/if}
       {/if}
 
-      <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
-        Purge content
-      </Button>
+      {#if canPurge}
+        <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
+          Purge content
+        </Button>
+      {/if}
     </div>
 
     <div class="mt-4 border-t border-dark-4 pt-4">

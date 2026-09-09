@@ -54,16 +54,16 @@ See `src/shared/constants/block-scope.constants.ts`. Each block scope maps
 to an OAuth bitmask bit (registration-time gate), plus a context-binding
 check at request time (`enforceContextBinding`).
 
-| Scope                            | Bind                                              | Notes                             |
-| -------------------------------- | ------------------------------------------------- | --------------------------------- |
-| `models:read:self`               | `query.id == ctx.modelId`                         |                                   |
-| `media:read:owned`               | non-anon `sub`                                    |                                   |
-| `buzz:read:self`                 | non-anon `sub`                                    |                                   |
-| `social:tip:self`                | non-anon `sub`                                    |                                   |
+| Scope                            | Bind                                              | Notes                                                                                                                                                                   |
+| -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models:read:self`               | `query.id == ctx.modelId`                         |                                                                                                                                                                         |
+| `media:read:owned`               | non-anon `sub`                                    |                                                                                                                                                                         |
+| `buzz:read:self`                 | non-anon `sub`                                    |                                                                                                                                                                         |
+| `social:tip:self`                | non-anon `sub`                                    |                                                                                                                                                                         |
 | `user:read:self`                 | non-anon `sub`                                    | viewer identity — read via the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Also gates the **deprecated** `/api/v1/blocks/me` REST route (retiring) |
-| `ai:write:budgeted`              | positive `buzzBudget`                             |                                   |
-| `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance; `SKIP_OAUTH_CHECK` |
-| `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext` |
+| `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
+| `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance; `SKIP_OAUTH_CHECK`                                                                                                                   |
+| `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                      |
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
 
@@ -74,14 +74,14 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 
 ## Routes
 
-| Route                                          | Auth                 | Scope required                  |
-| ---------------------------------------------- | -------------------- | ------------------------------- |
-| `POST /api/v1/block-tokens`                    | same-origin session  | — (any approved install)        |
-| `GET /api/v1/block-tokens/jwks`                | public               | —                               |
-| `GET /api/v1/blocks/me` _(deprecated, retiring)_ | block JWT          | `user:read:self` — superseded by the `useViewer()` hook (`GET_VIEWER` bridge). Kept live for now; migrate to the hook |
-| `GET /api/v1/models/[id]`                      | session OR block JWT | `models:read:self` (block path) |
-| `POST /api/v1/developer/block-manifests`       | `JOB_TOKEN`          | —                               |
-| `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt  | —                               |
+| Route                                            | Auth                 | Scope required                                                                                                        |
+| ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/block-tokens`                      | same-origin session  | — (any approved install)                                                                                              |
+| `GET /api/v1/block-tokens/jwks`                  | public               | —                                                                                                                     |
+| `GET /api/v1/blocks/me` _(deprecated, retiring)_ | block JWT            | `user:read:self` — superseded by the `useViewer()` hook (`GET_VIEWER` bridge). Kept live for now; migrate to the hook |
+| `GET /api/v1/models/[id]`                        | session OR block JWT | `models:read:self` (block path)                                                                                       |
+| `POST /api/v1/developer/block-manifests`         | `JOB_TOKEN`          | —                                                                                                                     |
+| `POST /api/internal/blocks/workflow-completed`   | `JOB_TOKEN` + Flipt  | —                                                                                                                     |
 
 ## Feature flag
 
@@ -237,10 +237,10 @@ Two flows, both delivering the same wrapped-token shape:
    any `TOKEN_REFRESH_RESPONSE`, while the caller's promise sat there to its own
    timeout). Both hosts therefore branch on what arrived:
 
-   | `REQUEST_TOKEN` payload | host answers with |
-   |---|---|
-   | `{ requestId: '<string>' }` — any string, **`''` included** | `TOKEN_REFRESH_RESPONSE` echoing that exact `requestId` |
-   | `{}`, no `requestId`, or a non-string one | `TOKEN_REFRESH` **push** (no `requestId` — there is nothing to correlate to) |
+   | `REQUEST_TOKEN` payload                                     | host answers with                                                            |
+   | ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
+   | `{ requestId: '<string>' }` — any string, **`''` included** | `TOKEN_REFRESH_RESPONSE` echoing that exact `requestId`                      |
+   | `{}`, no `requestId`, or a non-string one                   | `TOKEN_REFRESH` **push** (no `requestId` — there is nothing to correlate to) |
 
    An empty-string `requestId` is echoed verbatim. It used to be dropped by a
    truthiness test, which silently turned a legitimate request into an
@@ -316,7 +316,7 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   an out-of-set pick is rejected, absent → Auto (see
   `resolveBlockCurrenciesForAccount`).
 - **Which pool actually paid**: the workflow status snapshot carries
-  `spentAccountType` — the `accountType` of the largest *realized* debit — so a
+  `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
 
 ## Publish / review / deploy lifecycle (no trust on push)
@@ -359,6 +359,103 @@ manifest validation are all still enforced on the webhook.
 > contents.
 
 ## Publisher-side notes
+
+### How wide your app renders (`/apps/run/<slug>`)
+
+The page host gives your app a **centred column with a maximum width**, not the
+whole monitor. The value is `--app-page-max-width` (currently `1600px`), declared
+on `:root` in `src/styles/globals.css` and read by `PageBlockHost` as
+`max-width: var(--app-page-max-width, …); margin-inline: auto`.
+
+Practically:
+
+- **Below 1600px of viewport the cap does nothing.** Your iframe is exactly as
+  wide as it has always been — laptops, tablets and phones are unaffected.
+- **Above it your app is centred**, with civitai's page background either side.
+  On a 2560px display your app gets 1600px and a ~480px gutter per side.
+- Your app is still handed a **normal viewport** inside the iframe: your own
+  media queries, `100dvh`, `position: fixed` and so on all resolve against the
+  iframe, so nothing about writing the app changes. The only thing that changed
+  is how wide that iframe gets on a large display.
+
+Why: an App Block is a cross-origin guest and cannot see the monitor it is on,
+and nothing in `@civitai/blocks-react` gives you a container to lay out in (its
+only max-widths are modal-scoped). Left uncapped, an app on a 2560px display
+renders as a single ~2500px column. Most shipped apps already impose a well of
+their own between 640px and 1100px, so for those this changes only which
+background paints the far gutter.
+
+#### Asking for full bleed
+
+Some apps genuinely want the whole width — an infinite grid, a canvas, a
+timeline, a map, a fullscreen player. There is **no manifest field** for this
+(the manifest schema is mirrored across three repos and has to move in lockstep,
+and the host runs an older `@civitai/app-sdk` than guests do, so a new field
+would be untyped where the host reads it). Instead it is one CSS rule on the
+civitai side, keyed on the `data-block-id` the host stamps:
+
+```css
+[data-app-page-frame][data-block-id='your-app-slug'] {
+  --app-page-max-width: none;
+}
+```
+
+🔴 **Never key this rule on `data-testid` — that attribute does not exist in
+production.** `next.config.mjs` sets `compiler.reactRemoveProperties` under
+`NODE_ENV === 'production'`, so every testid is compiled out of the live DOM. A
+rule keyed on one works in every preview and local build and matches **zero
+elements on civitai.com** — the app stays letterboxed and nothing looks broken.
+That is not hypothetical: this ledger shipped that spelling and
+`playable-collections` rendered capped in production while every test tier passed.
+`data-app-page-frame` is the presence marker the host stamps for exactly this
+purpose, on the same element as `data-block-id`; both halves of the selector must
+be on that one element.
+
+Those rules live in the **full-bleed opt-out ledger** in
+`src/styles/globals.css`, next to the `--app-page-max-width` declaration; the
+comment there carries the template and the review criteria. Open a PR adding
+your app's line with a one-line reason, or ask a maintainer to. A narrower value
+(`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
+frame than the default.
+
+**Currently opted out:** `playable-collections` — a collection player whose three
+open-collection view modes (slideshow, ticker, wall) are all uncapped by the app
+itself, so a centred column shrinks the player and truncates the grids. Its own
+960px well applies only to the browse list, which sits behind an early return and
+is unaffected either way. Every entry is expected to carry a reason like this
+one; the ledger's membership is asserted in a test, so a rule cannot be added or
+removed here without that being a deliberate, reviewed change.
+
+**What actually guards the snippet above.** The CSS block on this page is read by
+`src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
+which parses the strip list out of `next.config.mjs` and fails if the selector
+shown here depends on an attribute production removes — and parses
+`PageBlockHost.tsx` and fails if the attributes the selector chains are not
+stamped **together on one element**, the other way a compound selector silently
+matches nothing. Both are real checks and both catch the specific ways this
+recipe has gone wrong (the `data-testid` spelling; a half of the selector moved
+onto another box).
+
+🔴 **What that does NOT mean is that the mistake is impossible.** The guard runs
+in the node `unit` project, which on a pull request is **report-only** — the job
+carries `continue-on-error` there, so the check annotates and the run still
+concludes green — and renders a real verdict only on pushes to `main`, after the
+merge. And **no status check is required on `main` in this repo at all**: branch
+protection declares none, so nothing a test does stops a merge. A red guard here
+is a signal a reviewer has to read, not a gate that holds the door.
+
+Two things it does **not** promise. It compares the doc against the compiler
+config and against the host's JSX; it does not render anything, so it cannot tell
+you the rule still has the visual effect described. And the rule's measured
+behaviour — `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`
+injects a rule of this shape at a 2560px viewport and asserts the host goes back
+to full width — runs in the browser `component` project, which reports as the
+`preview / component-tests` status. Useful evidence, not a gate — and, as above,
+neither tier is one: both can go red without stopping a merge. What this tier
+alone can do is see a rendered width at all. And the guard covers the CSS
+**selector** on this page, nothing else: that test is the only thing in the repo
+that reads this file, so every other claim here is unverified prose and should be
+read as such.
 
 ### Manifest re-publish behavior
 

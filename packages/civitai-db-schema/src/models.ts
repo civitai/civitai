@@ -60,7 +60,7 @@ export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
 export type ModelVersionEngagementType = "Notify";
 
-export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3" | "SHA256_12";
+export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3" | "SHA256_12" | "SSHS_12";
 
 export type ScanResultCode = "Pending" | "Success" | "Danger" | "Error";
 
@@ -252,7 +252,7 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
-export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection";
+export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export interface Account {
   id: number;
@@ -545,6 +545,7 @@ export interface User {
   questionReactions?: QuestionReaction[];
   answerReactions?: AnswerReaction[];
   commentV2Reactions?: CommentV2Reaction[];
+  threadMutes?: ThreadMute[];
   answerVotes?: AnswerVote[];
   tagsEngaged?: TagEngagement[];
   imageReactions?: ImageReaction[];
@@ -665,7 +666,6 @@ export interface User {
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
-  appBlockReviews?: AppBlockReview[];
   appDevForgejoIdentity?: AppDevForgejoIdentity | null;
   appListings?: AppListing[];
   appListingReviews?: AppListingReview[];
@@ -1926,23 +1926,7 @@ export interface AppBlock {
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
-  reviews?: AppBlockReview[];
   appListing?: AppListing | null;
-}
-
-export interface AppBlockReview {
-  id: number;
-  appBlockId: string;
-  appBlock?: AppBlock;
-  userId: number;
-  user?: User;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  tosViolation: boolean;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface AppCollaborator {
@@ -2037,6 +2021,8 @@ export interface AppListing {
   contentRating: string | null;
   externalUrl: string | null;
   sourceRepoUrl: string | null;
+  isBeta: boolean;
+  betaMessage: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
   connectRequestedScopes: number | null;
@@ -2589,6 +2575,15 @@ export interface Thread {
   comments?: CommentV2[];
   directChildren?: Thread[];
   children?: Thread[];
+  mutes?: ThreadMute[];
+}
+
+export interface ThreadMute {
+  userId: number;
+  user?: User;
+  threadId: number;
+  thread?: Thread;
+  mutedAt: Date;
 }
 
 export interface QuestionReaction {
@@ -2916,6 +2911,7 @@ export interface Article {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  isOfficial: boolean;
   status: ArticleStatus;
   thread?: Thread | null;
   reactions?: ArticleReaction[];
@@ -5433,6 +5429,7 @@ export interface UserHubSource {
   targetId: number;
   alias: string | null;
   enabled: boolean;
+  exclude: boolean;
   index: number;
 }
 

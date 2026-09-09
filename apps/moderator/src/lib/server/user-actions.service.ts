@@ -8,6 +8,7 @@ import { bustUserCosmeticCaches } from './cache';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
+import { restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
@@ -57,13 +58,13 @@ async function callMainApp(
 export type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
 
 /** The refusal an endpoint wrote for the operator. A rate limit also carries how long is left, which
- *  is the difference between "try later" and a moderator retrying immediately. */
+ *  is the difference between "try later" and a moderator retrying immediately.
+ *
+ *  The body-shape rule lives in `./rest-error-reason` because the main app emits TWO envelopes and
+ *  reading only one drops the reason — see that file. It is kept import-free so the main app's suite
+ *  can drive the real emitter into this real reader in one process. */
 async function readError(res: Response): Promise<string | null> {
-  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  const error = typeof body?.error === 'string' ? body.error : null;
-  if (!error) return null;
-  const retry = body?.retryAfterSeconds;
-  return res.status === 429 && typeof retry === 'number' ? `${error} — retry in ${retry}s.` : error;
+  return restErrorReason(await res.json().catch(() => null), res.status);
 }
 
 /** The one JSON poster. Two auth schemes because the endpoint families disagree, not because the
@@ -130,6 +131,7 @@ async function postJson(opts: {
 export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
+  | 'comment/restore-from-tos'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
@@ -224,7 +226,7 @@ const countOf = (body: Record<string, unknown>, keys: string[]) =>
 // BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
 // endpoint's contract and Retool's Model Comments / Other Comments split.
 export async function bulkCommentAction(input: {
-  action: 'bulkDelete' | 'removeAsTos';
+  action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos';
   commentIds: number[];
   commentV2Ids: number[];
   userId: number;
@@ -233,10 +235,17 @@ export async function bulkCommentAction(input: {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
+  const ENDPOINTS = {
+    bulkDelete: ['comment/bulk-delete', 'Comment delete'],
+    removeAsTos: ['comment/remove-as-tos', 'Comment ToS'],
+    restoreFromTos: ['comment/restore-from-tos', 'Comment ToS restore'],
+  } as const;
+  const [path, label] = ENDPOINTS[input.action];
+
   const result = await callModEndpoint(
-    input.action === 'bulkDelete' ? 'comment/bulk-delete' : 'comment/remove-as-tos',
+    path,
     { commentIds: input.commentIds, commentV2Ids: input.commentV2Ids },
-    input.action === 'bulkDelete' ? 'Comment delete' : 'Comment ToS'
+    label
   );
   if (!result.ok) return result;
 
@@ -247,6 +256,7 @@ export async function bulkCommentAction(input: {
       ? countOf(section as Record<string, unknown>, ['count'])
       : 0;
   };
+  // `restoreFromTos` nests per table exactly like `removeAsTos`; only `bulkDelete` is flat.
   const affected =
     input.action === 'bulkDelete'
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
@@ -254,7 +264,13 @@ export async function bulkCommentAction(input: {
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0)
-    return { ok: false, error: 'Nothing changed — those comments may already be gone. Reload.' };
+    return {
+      ok: false,
+      error:
+        input.action === 'restoreFromTos'
+          ? 'Nothing changed — those comments may not be flagged. Reload.'
+          : 'Nothing changed — those comments may already be gone. Reload.',
+    };
 
   await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
   // Both endpoints count rows they actually wrote, so a short count is real.
@@ -439,16 +455,27 @@ export const alreadyBannedError = (ban: boolean) =>
  *
  * Polls rather than reading once, and reads the PRIMARY: the write is in flight, so a replica can
  * answer from before it. A false negative withholds a caller's follow-up action; it never bans twice.
+ *
+ * 🔴 Polls `banDetails.completedAt`, NOT `bannedAt`. `toggleBan` writes `bannedAt` before any of the
+ * fan-out — model unpublish, media block, comment flagging, index removal, subscription cancels — so
+ * confirming on it returns while every one of those is still running on the primary, and Bulk Ban's
+ * checkpoint paced the loop without bounding what overlapped. `completedAt` is stamped as the last
+ * statement of the ban branch, so it is the only signal that means the expensive half is done.
+ *
+ * ⚠️ **Deploy the main app first.** An older `toggleBan` never writes `completedAt`, so this reports
+ * every ban unconfirmed and Bulk Ban stops with a 502 after its first checkpoint. There is deliberately
+ * no fall back to `bannedAt`: from here a missing stamp is indistinguishable from a fan-out still in
+ * flight, and falling back would silently restore the unbounded behaviour this exists to end.
  */
-export async function banConfirmed(userId: number, attempts = 6): Promise<boolean> {
+export async function banConfirmed(userId: number, attempts = 20): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     const row = await dbWrite
       .selectFrom('User')
-      .select('bannedAt')
+      .select(sql<string | null>`meta #>> '{banDetails,completedAt}'`.as('completedAt'))
       .where('id', '=', userId)
       .executeTakeFirst();
-    if (row?.bannedAt) return true;
+    if (row?.completedAt) return true;
   }
   return false;
 }

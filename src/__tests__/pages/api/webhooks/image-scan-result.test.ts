@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import handler from '~/pages/api/webhooks/image-scan-result';
+import { processImageScanWorkflow } from '~/server/services/image-scan-result.service';
+import { signalClient } from '~/utils/signal-client';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
@@ -551,6 +553,197 @@ describe('image-scan-result webhook - pipeline tests', () => {
     const updateForImage7 = dbUpdates.find((call: any) => call[0].where.id === 7);
     expect(updateForImage7).toBeDefined();
     expect(updateForImage7[0].data.nsfwLevel).toBeUndefined(); // locked, so undefined (not updated)
+  });
+
+  it('creates a never-before-seen tag with the columns the Tag table requires', async () => {
+    const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+    let tagInsert: { text: string; params: any[] } | undefined;
+
+    mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (!strings.join('').includes('INSERT INTO "Tag"')) return passthrough(query, ...values);
+
+      tagInsert = renderSql(strings, values);
+      // Model the real 23502: both columns are NOT NULL with no DB default.
+      for (const column of ['"updatedAt"', 'target']) {
+        if (!tagInsert.text.includes(column))
+          throw new Error(`Raw query failed. Code: \`23502\`. "Tag" insert omits ${column}`);
+      }
+      return [{ id: 999, name: 'never seen tag', nsfwLevel: 1, type: 'UserGenerated' }];
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-with-an-unseen-tag',
+      status: 'succeeded',
+      imageId: 9,
+      steps: [
+        {
+          $type: 'wdTagging',
+          output: { tags: { 'never seen tag': 0.9 }, rating: { general: 0.9 } },
+        },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        { $type: 'mediaHash', output: { hashes: { perceptual: '6F51B11C49611E0E' } } },
+      ] as any,
+    });
+
+    expect(tagInsert?.text).toContain('"updatedAt"');
+    expect(tagInsert?.text).toContain('target');
+    expect(tagInsert?.params.some((param) => param instanceof Date)).toBe(true);
+
+    const written = mockInsertTagsOnImageNew.mock.calls.flatMap((call) => call[0]);
+    expect(written.some((tag: any) => tag.imageId === 9 && tag.tagId === 999)).toBe(true);
+  });
+
+  describe('a throw while the image is still Pending', () => {
+    const scanSteps = (tag: string) =>
+      [
+        { $type: 'wdTagging', output: { tags: { [tag]: 0.9 }, rating: { general: 0.9 } } },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        { $type: 'mediaHash', output: { hashes: { perceptual: '6F51B11C49611E0E' } } },
+      ] as any;
+
+    it('terminalizes to Error with a bumped retryCount instead of leaving it Pending', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      let markedError: { text: string; params: any[] } | undefined;
+
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        const text = strings.join('');
+        if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
+        if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'")) {
+          markedError = renderSql(strings, values);
+          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
+        }
+        return passthrough(query, ...values);
+      });
+
+      // Must resolve: rejecting 400s the webhook, and the orchestrator redelivers a
+      // workflow that is already terminal.
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-whose-processing-fails',
+          status: 'succeeded',
+          imageId: 10,
+          steps: scanSteps('a tag that cannot be created'),
+        })
+      ).resolves.toBeUndefined();
+
+      expect(markedError?.text).toContain(`'{retryCount}'`);
+      expect(markedError?.params).toContain(ImageIngestionStatus.Error);
+      expect(markedError?.params).toContain(10);
+      const stamped = markedError?.params.find(
+        (param) => typeof param === 'string' && param.includes('processing-failed')
+      );
+      expect(stamped).toBeDefined();
+    });
+
+    it('leaves a hard-blocked image Blocked rather than flipping it back to Error', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        if (strings.join('').includes('INSERT INTO "Tag"'))
+          throw new Error('Raw query failed. Code: `23502`.');
+        return passthrough(query, ...values);
+      });
+
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-blocked-then-failing',
+          status: 'succeeded',
+          imageId: 13,
+          steps: [
+            {
+              $type: 'wdTagging',
+              output: { tags: { 'a tag that cannot be created': 0.9 }, rating: { general: 0.9 } },
+            },
+            {
+              $type: 'mediaRating',
+              output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+            },
+          ] as any,
+        })
+      ).resolves.toBeUndefined();
+
+      // blockImageFromRating already persisted Blocked. markImageScanError is
+      // unconditional, so running it here would un-block the image.
+      const blocked = mockDbWrite.image.updateMany.mock.calls.find(
+        (call: any) => call[0].where.id === 13
+      );
+      expect(blocked?.[0].data.ingestion).toBe(ImageIngestionStatus.Blocked);
+
+      const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
+        const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
+        return strings.join('').includes("'{retryCount}'");
+      });
+      expect(errorFlips).toHaveLength(0);
+    });
+
+    it('signals the Error state so the editor stops showing "Analyzing image"', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        const text = strings.join('');
+        if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
+        if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'"))
+          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
+        return passthrough(query, ...values);
+      });
+
+      await processImageScanWorkflow({
+        workflowId: 'workflow-whose-processing-fails',
+        status: 'succeeded',
+        imageId: 14,
+        steps: scanSteps('another tag that cannot be created'),
+      });
+
+      // Without this the editor keeps rendering Pending until the page is reloaded.
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 55,
+          data: expect.objectContaining({ imageId: 14, ingestion: ImageIngestionStatus.Error }),
+        })
+      );
+    });
+
+    it('still surfaces a deleted image so the webhook can ACK it as skipped', async () => {
+      mockDbWrite.image.findUnique.mockResolvedValue(null);
+
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-for-a-deleted-image',
+          status: 'succeeded',
+          imageId: 11,
+          steps: scanSteps('some tag'),
+        })
+      ).rejects.toThrow(/^image not found/);
+    });
+  });
+
+  it('keeps a persisted verdict when a post-verdict side effect throws', async () => {
+    mockDbWrite.$executeRaw.mockImplementation(async (query: any) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('DELETE FROM "JobQueue"'))
+        throw new Error('job queue delete failed');
+      return 0;
+    });
+
+    await expect(
+      processImageScanWorkflow({
+        workflowId: 'workflow-with-a-failing-side-effect',
+        status: 'succeeded',
+        imageId: 12,
+        steps: [
+          { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+          { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        ] as any,
+      })
+    ).resolves.toBeUndefined();
+
+    const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
+      const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
+      return strings.join('').includes("'{retryCount}'");
+    });
+    expect(errorFlips).toHaveLength(0);
   });
 
   describe('webhook body strings never reach SQL text', () => {

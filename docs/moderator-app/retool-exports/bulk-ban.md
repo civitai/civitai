@@ -73,7 +73,7 @@ resources: REST-WithoutResource, JavascriptQuery, Replicated_Read_Prod, retool_d
     SELECT DISTINCT "fromAccountId" 
     FROM "default"."buzzTransactions" 
     WHERE amount >= 50
-    AND "toAccountId" IN(4059236, 5561675, 5603046, 5601367, 5551054)
+    AND "toAccountId" IN(<accountId>, <accountId>, <accountId>, <accountId>, <accountId>)
     AND "type" = 'tip' 
     AND "fromAccountId" > 5400000
     ORDER BY 1 DESC
@@ -111,7 +111,7 @@ resources: REST-WithoutResource, JavascriptQuery, Replicated_Read_Prod, retool_d
 ### UsersByIp   [SqlQuery / Clickhouse] 
     SELECT DISTINCT targetUserId 
     FROM default.userActivities 
-    WHERE ip IN('109.236.62.211', '109.236.63.69', '109.236.63.55', '185.245.255.238')
+    WHERE ip IN('203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4')
     AND type = 'Registration'
     ORDER BY 1
 

@@ -1,0 +1,32 @@
+-- Lets the remix-gallery readiness pass find its rows by index instead of
+-- heap-filtering every pending placement on the surface, every five minutes.
+--
+-- Measured on prod 2026-08-27 (PostgreSQL 18.3), before this index:
+--   Limit -> Sort -> Nested Loop Left Join
+--     -> Index Scan using "Placement_surface_targetType_targetId_status_idx"
+--          Filter: ((data ->> 'awaitingReadiness') = 'true')
+--          Rows Removed by Filter: 22
+--
+-- Three problems in that plan, all of which this index removes:
+--   1. The jsonb marker is a heap-level Filter, so every pending row on the
+--      surface is fetched from the heap before it can be tested.
+--   2. targetId is skipped in the composite index, so status is an in-index
+--      recheck rather than a scan boundary and the whole (surface, targetType)
+--      range is walked.
+--   3. ORDER BY pl.id sits above a Sort, so every candidate is joined and
+--      EXISTS-evaluated BEFORE the LIMIT applies. The LIMIT bounds the loop,
+--      not the query.
+--
+-- Harmless today: 22 pending rows, 28 buffers, 0.213 ms. It matters because the
+-- job runs on the PRIMARY every five minutes and drain() re-runs it up to ten
+-- times per tick, so the cost is paid 2,880 times a day and scales with pending
+-- rows rather than with actionable ones.
+--
+-- 🔴 APPLY BY HAND. This repo does not run `prisma migrate deploy`.
+--    CONCURRENTLY cannot run inside a transaction block, so apply it as a SINGLE
+--    statement — `psql -c` with two statements opens one implicitly and the
+--    server refuses. A cancelled CONCURRENTLY build leaves an INVALID index that
+--    must be dropped before retrying.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Placement_awaitingReadiness_id_idx"
+  ON "Placement" (id)
+  WHERE status = 'pending' AND (data ->> 'awaitingReadiness') = 'true';

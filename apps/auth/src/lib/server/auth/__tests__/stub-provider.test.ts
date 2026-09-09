@@ -18,7 +18,7 @@ const STUB_KEYS = [
 ] as const;
 
 // URLs must pass validatedStubUrl (https, or http to an in-cluster .svc host) — use the real shape.
-const STUB_BASE = 'http://stub-oidc.civitai-auth-staging.svc.cluster.local:8080';
+const STUB_BASE = 'http://stub-oidc.internal.svc.cluster.local:8080';
 const FULL = {
   AUTH_ENABLE_STUB_PROVIDER: '1',
   STUB_AUTHORIZE_URL: `${STUB_BASE}/authorize`,
@@ -127,10 +127,10 @@ describe('stub provider — SSRF-safe URL validation (pinned to the in-cluster S
 
     const https = await load({
       ...FULL,
-      STUB_TOKEN_URL: 'https://stub-oidc.civitai-auth-staging.svc.cluster.local/token',
+      STUB_TOKEN_URL: 'https://stub-oidc.internal.svc.cluster.local/token',
     });
     expect(https.getProvider('stub')!.tokenUrl).toBe(
-      'https://stub-oidc.civitai-auth-staging.svc.cluster.local/token'
+      'https://stub-oidc.internal.svc.cluster.local/token'
     );
   });
 

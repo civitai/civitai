@@ -41,10 +41,19 @@ vi.mock('@civitai/client', () => ({
   }),
 }));
 
-import { collectBlobRefs, refreshBlobUrlsInBody, submitWorkflow } from '../workflows';
+import {
+  collectBlobRefs,
+  deleteWorkflow,
+  refreshBlobUrlsInBody,
+  submitWorkflow,
+} from '../workflows';
 import { shouldRefreshBlobUrl } from '~/shared/orchestrator/blob-url';
 
-import { refreshBlob, submitWorkflow as clientSubmitWorkflow } from '@civitai/client';
+import {
+  deleteWorkflow as clientDeleteWorkflow,
+  refreshBlob,
+  submitWorkflow as clientSubmitWorkflow,
+} from '@civitai/client';
 
 describe('shouldRefreshBlobUrl', () => {
   it('should return false for standard non-blob URLs', () => {
@@ -274,5 +283,51 @@ describe('submitWorkflow (mocked)', () => {
       }),
       query: undefined,
     });
+  });
+});
+
+/**
+ * `assertWorkflowOwner` reports whether a mis-attributed workflow was actually torn down, on a
+ * counter its own help text calls paging-grade. That report is only as true as these two lines,
+ * and both suites that exercise the guard mock this module — so without coverage here, a revert
+ * of either is invisible to the whole repo.
+ */
+describe('deleteWorkflow', () => {
+  const mockClientDelete = vi.mocked(clientDeleteWorkflow);
+
+  beforeEach(() => {
+    vi.mocked(mockClientDelete).mockReset();
+  });
+
+  it('surfaces a non-2xx teardown as a throw when throwOnError is set', async () => {
+    // The generated client defaults to ThrowOnError=false, so an HTTP failure RESOLVES here.
+    mockClientDelete.mockResolvedValue({ error: { status: 403 } } as never);
+
+    await expect(
+      deleteWorkflow({ workflowId: 'wf-1', token: 't', throwOnError: true })
+    ).rejects.toThrow(/deleteWorkflow failed for wf-1/);
+  });
+
+  it('stays silent on the same failure by default — the historical contract of 39 callers', async () => {
+    mockClientDelete.mockResolvedValue({ error: { status: 403 } } as never);
+
+    await expect(deleteWorkflow({ workflowId: 'wf-1', token: 't' })).resolves.toBeUndefined();
+  });
+
+  it('does not throw on a successful teardown', async () => {
+    mockClientDelete.mockResolvedValue({ data: {} } as never);
+
+    await expect(
+      deleteWorkflow({ workflowId: 'wf-1', token: 't', throwOnError: true })
+    ).resolves.toBeUndefined();
+  });
+
+  it('FORWARDS the caller’s signal to the client, not merely accepts it', async () => {
+    mockClientDelete.mockResolvedValue({ data: {} } as never);
+    const signal = AbortSignal.timeout(5_000);
+
+    await deleteWorkflow({ workflowId: 'wf-1', token: 't', signal });
+
+    expect(mockClientDelete).toHaveBeenCalledWith(expect.objectContaining({ signal }));
   });
 });

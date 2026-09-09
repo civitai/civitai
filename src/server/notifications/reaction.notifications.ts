@@ -82,7 +82,17 @@ export const reactionNotifications = createNotificationProcessor({
         } model has received ${details.reactionCount} reactions`;
       }
 
-      return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
+      // `postId` is null for images that are not in a post (an article cover, for one:
+      // 25,135 such images on prod as of 2026-09-03). Interpolated, that null became the
+      // literal string `null`, and `/images/[imageId]` parses `postId` with `numericString`,
+      // so `Number('null')` -> NaN -> a thrown ZodError during SSR -> a 500 on the link we
+      // just mailed the user. Omit the param instead; the page reads a missing `postId` fine.
+      const url =
+        details.postId != null
+          ? `/images/${details.imageId}?postId=${details.postId}`
+          : `/images/${details.imageId}`;
+
+      return { message, url };
     },
   },
   'article-reaction-milestone': {

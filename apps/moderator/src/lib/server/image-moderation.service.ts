@@ -17,6 +17,20 @@ import { NsfwLevel } from '@civitai/shared';
 
 const BLOCKED_REASON_MODERATED = 'moderated';
 
+/**
+ * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
+ * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
+ * main app's `src/`. Canonical definitions are `PRIOR_INGESTION_KEY` / `PRIOR_BLOCKED_FOR_KEY` in
+ * `src/server/utils/image-removal-mode.ts`, and the drift between the two spellings is pinned by
+ * `src/server/services/__tests__/account-deletion-marker-clearing.test.ts`.
+ *
+ * A block strips them: the main app's restore path un-blocks an image on the presence of the first
+ * key alone, so a row marked during a grace period and then moderated would be put back by a later
+ * account restore.
+ */
+const ACCOUNT_DELETION_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
+const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
+
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
@@ -156,12 +170,15 @@ export async function blockImage({
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
       updatedAt: new Date(),
-      // remixSource: COALESCE guards the usual metadata=NULL — `||` NULL-propagates, dropping the stamp.
-      ...(img.needsReview === 'remixSource'
-        ? {
-            metadata: sql`COALESCE("metadata", '{}'::jsonb) || '{"remixSourceReviewed": true}'::jsonb`,
-          }
-        : {}),
+      // Two things happen to `metadata` on a block, and they compose in one expression:
+      //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a
+      //     row whose metadata is NULL stays NULL rather than becoming `{}`.
+      //   - remixSource gets its stamp. COALESCE guards the usual metadata=NULL, because `||`
+      //     NULL-propagates too and would drop the stamp.
+      metadata:
+        img.needsReview === 'remixSource'
+          ? sql`(COALESCE("metadata", '{}'::jsonb) - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text) || '{"remixSourceReviewed": true}'::jsonb`
+          : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text`,
     })
     .where('id', '=', imageId)
     .execute();

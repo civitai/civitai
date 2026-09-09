@@ -20,7 +20,7 @@
 --   GRANT USAGE, SELECT ON SEQUENCE abuse_detection_run_id_seq, abuse_detection_finding_id_seq TO internal_tools;
 --
 -- 🔴 `MODERATOR_DATABASE_URL` and `RETOOL_DATABASE_URL` currently resolve to the SAME instance
--- (`internal-tools-db-rw…/internal_tools`, measured 2026-08-21, post-Retool-cutover). Either works
+-- (the same `internal_tools` database, measured 2026-08-21, post-Retool-cutover). Either works
 -- today; this names the one whose purpose is new moderator data.
 --
 -- Idempotent: safe to re-run.

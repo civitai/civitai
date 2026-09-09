@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { OLD_DRAFT_LEAD_TEXT, OLD_DRAFT_NOTICE_DAYS } from '~/server/common/draft-reaping';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   createNotificationProcessor,
@@ -281,9 +282,91 @@ export const modelNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
+      message: `Your ${details.modelName} model that is in draft mode will be deleted in ${OLD_DRAFT_LEAD_TEXT}.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
+    /**
+     * Selects models the reaper in `src/server/jobs/remove-old-drafts.ts` is
+     * heading for, `OLD_DRAFT_LEAD_DAYS` ahead of time. The message promises the
+     * deletion is coming and is `toggleable: false`, so a model this EXCLUDES is
+     * a model destroyed with no notice at all.
+     *
+     * 🔴 THE INVARIANT, with its two exclusions named — it is NOT an absolute,
+     * and an earlier revision of this comment wrongly stated it as one:
+     *
+     *     For a model in `Draft`, no term here may exclude a model the reaper
+     *     will destroy, EXCEPT via the two carve-outs below.
+     *
+     *   1. `status`. The reaper destroys `('Draft', 'Deleted')`; this warns on
+     *      `Draft` only, so a `Deleted` model is cascade-deleted unwarned. That
+     *      is deliberate — a user who deleted a model has already expressed the
+     *      intent — and it is pinned by a test so it stays visible. Widening this
+     *      to `Deleted` is a product decision, not a bug fix.
+     *   2. `downloadCount`, which is an ASSUMPTION rather than a property. See
+     *      the value-term note below for the path on which it fails.
+     *
+     * Outside those two, errors are one-directional — warn, then spare.
+     *
+     * 🔴 THAT IS WHY THERE IS NO ACTIVITY FENCE HERE, and re-adding one is a bug.
+     * The reaper carries two `NOT EXISTS` clauses over recent ModelVersion /
+     * ModelFile activity. They cannot be mirrored into this query, and the reason
+     * is a difference in EVALUATION SCHEDULE, not in wording:
+     *
+     *   - the reaper is a nightly cron that RETRIES FOREVER, so it fires at
+     *     `max(U + REAP_AGE_DAYS, activity + ACTIVITY_WINDOW_DAYS)` — note the
+     *     two constants are distinct quantities that happen to both be 30 today,
+     *     so do NOT collapse this to one of them (see `draft-reaping.ts`);
+     *   - this notification evaluates ONCE, in a ~1-minute band at
+     *     `U + OLD_DRAFT_NOTICE_DAYS`, and is never re-evaluated for that `U`.
+     *
+     * So any `now()`-relative activity clause here is asking the question at the
+     * wrong instant. Worked example: model row last written Jan 1, version and
+     * file land Jan 3 — which `remove-old-drafts.ts` documents as the NORM, "the
+     * finished resource lands hours or weeks later". The notification runs Jan 24
+     * with a cutoff of Jan 1, sees activity on Jan 3, excludes the model, and
+     * never looks again. The reaper first fires Feb 3 with a cutoff of Jan 4, the
+     * fence clears, and the model plus its versions, files and training data are
+     * cascade-deleted — unwarned. Two successive revisions of this PR shipped a
+     * variant of that bug; the fences are gone rather than re-tuned because no
+     * choice of interval fixes a predicate evaluated at a single instant against
+     * a condition that keeps moving.
+     *
+     * Dropping them costs nothing this notification was for: every one of the
+     * ~1,308 false alarms this predicate was tightened to prevent came from
+     * `downloadCount >= 10`, not from activity.
+     *
+     * WHY THE VALUE TERMS MAY BE MIRRORED, when the fences may not — they do not
+     * depend on predicting WHEN the reaper fires:
+     *
+     *   - `availability` is SAFE. It is NOT NULL with a `Public` default, and its
+     *     only raw-SQL writer (`entityAvailabilityUpdate` in
+     *     `src/server/services/common.service.ts`) sets `"updatedAt" = NOW()` in
+     *     the same statement, so a change bumps `Model."updatedAt()"` and re-arms
+     *     this band at the new `U` as well as resetting the reaper's clock.
+     *
+     *   - 🔴 `downloadCount` is an ASSUMPTION, not a property — do not restate it
+     *     as one. It has NO incrementing writer: every write is a full recompute
+     *     (`src/server/metrics/model.metrics.ts`, a `SUM` over surviving
+     *     `ModelVersionMetric` rows), so it is DECREASING-CAPABLE by
+     *     construction. The failure path, concretely: a Draft model rolled up to
+     *     12 is excluded here at day 23. A version carrying 8 downloads is then
+     *     deleted; `deleteVersionById` calls `updateModelLastVersionAt`, which
+     *     early-returns when the model has no `Published` version — true for a
+     *     Draft — so `Model."updatedAt"` is NOT bumped and this band never
+     *     re-arms. A later recompute yields 4, the reaper's `< 10` becomes true,
+     *     and the model is cascade-deleted UNWARNED.
+     *
+     *     That is architectural, not a bug to patch here: the band gives exactly
+     *     one evaluation per `U` (its lower edge is `lastSent - notice`), so
+     *     there is no second chance to catch the change. It is recorded so the
+     *     next person does not read `downloadCount` as a safe term.
+     *
+     * ⚠ Residual directions OUTSIDE the two exclusions above, both harmless: in
+     * the gap before the reap, `downloadCount` can rise past 10 or new activity
+     * can arrive, either of which makes the reaper SPARE a model this warned; and
+     * because the reaper retries, the real gap can exceed `OLD_DRAFT_LEAD_DAYS`,
+     * so the warning may arrive earlier than the message implies.
+     */
     prepareQuery: ({ lastSent }) => `
       with to_add AS (
         SELECT DISTINCT
@@ -295,7 +378,14 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
-        AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '23 days' AND NOW() - INTERVAL '23 days'
+        AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days' AND NOW() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
+        AND m."availability" != 'Private'::"Availability"
+        -- EXISTS, not a JOIN, but the same semantics as the reaper's INNER
+        -- JOIN + DISTINCT: a model with no "ModelMetric" row is not reapable,
+        -- so it must not be warned either.
+        AND EXISTS (SELECT 1 FROM "ModelMetric" mm
+                     WHERE mm."modelId" = m.id
+                       AND mm."downloadCount" < 10)
       )
       SELECT
         concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",

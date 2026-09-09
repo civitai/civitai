@@ -8,7 +8,7 @@ import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope
  * (`/apps/submit`, `/apps/my-submissions`, `/apps/revenue`, and the
  * per-app `/apps/[appBlockId]/revenue`). These are the surfaces for people
  * who BUILD and earn from apps, as opposed to the consumer surfaces
- * (`/apps`, `/apps/installed`) which any user with `features.appBlocks`
+ * (`/apps`, `/apps/activity`) which any user with `features.appBlocks`
  * can use.
  *
  * Today = moderators only (pre-GA). This mirrors the existing `/apps/submit`
@@ -51,6 +51,96 @@ export function isAppDeveloper(
   opts?: { appBlocksAuthor?: boolean }
 ): boolean {
   return !!user?.isModerator || !!opts?.appBlocksAuthor;
+}
+
+/**
+ * The flag shape {@link canAccessAppsBuild} needs: the three STORE flags (inherited
+ * from {@link AppsStoreFeatureFlags}, so they stay derived from `FeatureAccess`) plus
+ * the two App-Blocks CAPABILITY flags. Optional + nullable throughout for the same
+ * reason the store type is — a Flipt-down flag and an absent `features` object both
+ * flow in without a cast, and the predicate fails CLOSED on both.
+ */
+export type AppsBuildFeatureFlags =
+  | (NonNullable<AppsStoreFeatureFlags> &
+      Partial<Pick<FeatureAccess, 'appBlocksAuthor' | 'appBlocksGetStarted'>>)
+  | null
+  | undefined;
+
+/**
+ * App Blocks — the `/apps/build` (BUILD) surface gate.
+ *
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach the build surface", and it
+ * is consumed by exactly TWO callers that MUST agree: the `Build` row in
+ * `SUB_NAV_LINKS` (`~/components/Apps/AppsSubNav`) and the page's own SSR gate
+ * (`~/components/Apps/resolveBuildPageAccess`, called from `pages/apps/build.tsx`).
+ *
+ * ## Why one predicate, in one place
+ *
+ * 🔴 THIS EXISTS BECAUSE THE SPLIT VERSION SHIPPED A LIVE 404, TWICE, AND WAS CAUGHT
+ * ONCE. `/apps/submit` and `/apps/mine` both `getServerSideProps`-gate on
+ * `features.appBlocksAuthor` + {@link isAppDeveloper} and otherwise return `notFound`,
+ * while the sub-nav rows pointing at them were gated on store visibility — so a
+ * store-visible NON-author was offered a tab straight into a 404. That exact
+ * tab/page mismatch was a deploy-blocking finding on PR #4668 (a tab shown to a
+ * cohort its page refused), and before that it is what #3899 was filed for. The
+ * fix each time was to re-derive the tab's predicate from the page's; the fix that
+ * makes it not come back is for there to be only ONE predicate to derive.
+ *
+ * So: do NOT re-inline this, and do NOT "simplify" either caller to a subset of it.
+ * A row whose visibility rule is spelled out at the row is how this defect is
+ * reintroduced. Pinned by `components/Apps/__tests__/appsBuildAccess.test.ts` (the
+ * truth table) and `components/Apps/__tests__/appsBuildGateCallSites.test.ts` (the
+ * call-site ledger, which fails if either caller stops routing through here).
+ *
+ * ## The rule
+ *
+ * `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
+ *
+ * - The STORE term is a hard precondition. `/apps/build` is a surface INSIDE the apps
+ *   store IA — it renders under the same `AppsSubNav` chrome, its workbench state links
+ *   into `/apps/listing/<id>/edit`, and its Marketplace sibling tab is store-gated. A
+ *   viewer with no store access has no `/apps` at all, so admitting them here would put
+ *   them on a page whose every onward link 404s.
+ * - The AUTHOR term is what opens states B/C (first-app + workbench). It routes through
+ *   {@link isAppDeveloper}, so moderators stay a hard floor.
+ * - The `appBlocksGetStarted` term keeps its KILL-SWITCH meaning exactly: it governs
+ *   whether a store-visible NON-author is shown the recruiting pitch (state A). Flip
+ *   `app-blocks-get-started` off in Flipt and the pitch — and the tab offering it —
+ *   disappear for non-authors, with no deploy. It cannot switch an AUTHOR out of their
+ *   own workbench, which is correct: the kill switch is on the funnel, not on authoring.
+ *
+ * 🔴 HYDRATION-SAFE, AND MEASURED RATHER THAN ASSUMED. All of the inputs are SSR-seeded
+ * and FROZEN, so this predicate computes the same boolean on the server render and on
+ * the first client paint, and its callers must NOT defer it behind `useIsClient()`:
+ *   • `appBlocksAuthor` and `appBlocksGetStarted` are resolved server-side in `_app`'s
+ *     `getInitialProps`, serialized into `pageProps.flags`, and frozen by
+ *     `useState(initialFlags)` in `FeatureFlagsProvider`. NEITHER declares
+ *     `toggleable: true` in `feature-flags.service.ts` (verified at this ref:
+ *     `appBlocksGetStarted` and `appBlocksAuthor` are bare
+ *     `{ availability: ['mod'], fliptKey: … }` entries), so
+ *     `computeUserFeatureFlagsOverlay` never emits them and the client
+ *     `user.getFeatureFlags` overlay cannot move them.
+ *   • the three store flags are frozen the same way, via {@link hasAppsStoreAccess}.
+ *   • `user.isModerator` rides `SessionProvider`'s `useState(initial)`, seeded from the
+ *     same SSR `pageProps.session`; when that seed is `undefined` the SERVER also
+ *     rendered without a user, so the first client paint still matches.
+ * What is NOT frozen — and therefore IS deferred by its consumer — is
+ * `blocks.getNavSummary`, which decides state B vs state C. See `AppsBuildBody`.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ *
+ * Pure (no server/client-only imports) so it is usable from both the
+ * `getServerSideProps` resolver and the client-side nav container.
+ */
+export function canAccessAppsBuild(
+  user: { isModerator?: boolean | null } | null | undefined,
+  features: AppsBuildFeatureFlags
+): boolean {
+  if (!hasAppsStoreAccess(features)) return false;
+  return (
+    isAppDeveloper(user, { appBlocksAuthor: features?.appBlocksAuthor }) ||
+    !!features?.appBlocksGetStarted
+  );
 }
 
 /**
@@ -147,10 +237,13 @@ export type AppsStoreFeatureFlags =
  * driven against one fake Flipt config —
  * `server/services/__tests__/app-blocks-flag.external-scope.seam.test.ts`.
  *
- * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/installed`,
+ * 🔴 This is NOT the gate for the block-RUNTIME surfaces. `/apps/activity`,
  * `/apps/review`, `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`
- * and the `blocks.*` tRPC procedures gate on `appBlocks` alone, on purpose —
- * they need the runtime, not just the catalog. Widening them is a product
+ * and the `blocks.*` tRPC procedures gate on the RUNTIME flags, on purpose —
+ * they need the runtime, not just the catalog. (`/apps/activity` is the one that
+ * takes `appBlocks || appBlocksPages` rather than `appBlocks` alone; see
+ * {@link canAccessAppsActivity} for why the page flag is a second disjunct there
+ * and nowhere else.) Widening them is a product
  * decision, not a mechanical alignment; do not sweep them into this predicate.
  * The external-only cohort in particular must NOT reach them: they hold neither
  * `appBlocks` nor `appListings`, and adding this third term here leaves those
@@ -160,6 +253,56 @@ export type AppsStoreFeatureFlags =
  */
 export function hasAppsStoreAccess(features: AppsStoreFeatureFlags): boolean {
   return !!features?.appListings || !!features?.appBlocks || !!features?.appListingsPublicExternal;
+}
+
+/**
+ * The flag shape {@link canAccessAppsActivity} needs — the two App-Blocks RUNTIME
+ * flags. Derived from `FeatureAccess` (type-only import) so a rename at GA breaks
+ * here at compile time rather than silently degrading the gate to one term.
+ */
+export type AppsActivityFeatureFlags =
+  | Partial<Pick<FeatureAccess, 'appBlocks' | 'appBlocksPages'>>
+  | null
+  | undefined;
+
+/**
+ * App Blocks — the `/apps/activity` (per-viewer app ACTIVITY) surface gate:
+ * `appBlocks || appBlocksPages`.
+ *
+ * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach /apps/activity", consumed
+ * by the page's SSR resolver (`~/components/Apps/resolveActivityPageAccess`) and
+ * by the page body's client-side re-check. Two callers, one function — the
+ * shared-predicate pattern {@link canAccessAppsBuild} exists for, and for the same
+ * recorded reason: a tab or a body gate written separately from its page's SSR gate
+ * WILL drift (#3899, PR #4668).
+ *
+ * 🔴 THE SECOND DISJUNCT IS THE WHOLE POINT OF THE `/apps/installed` → `/apps/activity`
+ * RENAME. The page used to gate on `appBlocks` alone, which is the SLOT flag — it
+ * governs the `BlockSlot` mount on model pages. Someone who has only ever run a
+ * FULL-PAGE app (`/apps/run/<slug>`, gated on `appBlocksPages`) has app activity —
+ * generations, scope-gated API calls, Buzz spends — and no slot install at all.
+ * Calling the page "Activity" while refusing them is the dishonest half of the rename.
+ *
+ * 🔴 IT IS NOT `hasAppsStoreAccess`. That predicate governs the CATALOG (`/apps`,
+ * the listing detail) and carries `appListingsPublicExternal`, the external-only
+ * cohort that holds neither runtime flag. This page reads `blocks.*` procedures, all
+ * of which gate on the runtime — so widening it to the store predicate would admit a
+ * cohort to a page whose every query answers all-false.
+ *
+ * ⚠️ SCOPE: this gates the PAGE. The `Installs` TAB inside it stays on
+ * `features.appBlocks` alone, because that tab's content (slot subscriptions /
+ * per-model installs) is what the slot flag governs — a tab's predicate is its
+ * content's own gate, restated. See `pages/apps/activity.tsx`.
+ *
+ * Neither flag is `toggleable: true` in `feature-flags.service.ts`, so
+ * `computeUserFeatureFlagsOverlay` never emits them and the client value cannot move
+ * between the SSR gate and the first client paint — which is what lets one predicate
+ * serve both without a hydration hazard.
+ *
+ * Fails CLOSED: absent / null features, or an empty object, → `false`.
+ */
+export function canAccessAppsActivity(features: AppsActivityFeatureFlags): boolean {
+  return !!features?.appBlocks || !!features?.appBlocksPages;
 }
 
 /**

@@ -1,6 +1,6 @@
 ---
 name: add-generation-support
-description: Wire an existing ecosystem into the generation system. Adds generation support to basemodel.constants.ts, creates graph and handler files, and wires them into the ecosystem discriminator, workflow config, and router. Use after add-ecosystem when you need the ecosystem to show up in the generation form. Always checks @civitai/client for ecosystem-specific types before writing the handler.
+description: Wire an existing ecosystem into the generation system. Adds generation support to basemodel.constants.ts, creates graph and handler files, and wires them into the ecosystem discriminator, workflow config, and router. Use after add-ecosystem when you need the ecosystem to show up in the generation form. Always checks @civitai/orchestration-client for ecosystem-specific types before writing the handler.
 ---
 
 # Add Generation Support
@@ -25,23 +25,28 @@ If any are missing, stop and direct the user to run `add-ecosystem` first.
 
 ## Workflow (interactive after research)
 
-### 1. Check @civitai/client for ecosystem-specific types
+### 1. Check @civitai/orchestration-client for ecosystem-specific types
+
+The orchestrator client package is **`@civitai/orchestration-client`**. It is the continuation of the old
+`@civitai/client`, which can no longer be published to and is frozen at `0.2.0-beta.98`; the version line
+carries on unbroken in the new package (`0.2.0-beta.101` and up). New ecosystem types only ever land
+there, so check it even while this repo still depends on the old package.
 
 **Always** check the latest published client version, even if types aren't in the currently installed version.
 
 ```bash
-# Check installed version
-grep "@civitai/client" c:/Work/model-share/package.json
+# Check installed version (either package may be present)
+grep -E '@civitai/(orchestration-)?client' package.json
 
-# Check latest available
-npm view @civitai/client versions --json | tail -20
+# Check latest available — the 'latest' dist-tag lags 'beta', so read the version list
+npm view @civitai/orchestration-client versions --json | tail -20
 ```
 
 Search the **latest** version's types for the ecosystem:
 
 ```bash
-cd /tmp && npm pack @civitai/client@<latest-version> 2>/dev/null
-tar -xzf civitai-client-<latest-version>.tgz
+cd /tmp && npm pack @civitai/orchestration-client@<latest-version> 2>/dev/null
+tar -xzf civitai-orchestration-client-<latest-version>.tgz
 grep -n "<EcosystemName>\|<ecosystem-name>" /tmp/package/dist/generated/types.gen.d.ts
 ```
 
@@ -54,8 +59,13 @@ Note what you find (or don't find):
 If the installed version is older than the latest and the latest has useful types, bump:
 
 ```bash
-pnpm add @civitai/client@<latest-version>
+pnpm add @civitai/orchestration-client@<latest-version>
 ```
+
+If the repo is still on `@civitai/client` and the types you need exist only in
+`@civitai/orchestration-client`, add the new package and import from it rather than hand-rolling the types.
+Handlers already importing from `@civitai/client` keep working — leave them unless migrating them is the
+task you were asked to do.
 
 ### 2. Research model defaults
 
@@ -94,7 +104,7 @@ Graph: src/shared/data-graph/generation/<name>-graph.ts
 - Structure: [single graph | discriminator with subgraphs | version-dependent defaults]
 
 Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
-- Types: <from @civitai/client, or generic>
+- Types: <from @civitai/orchestration-client, or generic>
 - Step type: <imageGen | videoGen | textToImage>
 - Fixed params: sampler=<x>, scheduler=<y> (if applicable)
 
@@ -169,7 +179,7 @@ Template:
 import type {
   <EcosystemSpecificInputType>, // e.g., SeedanceVideoGenInput
   <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate | TextToImageStepTemplate
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { <name>VersionIds } from '~/shared/data-graph/generation/<name>-graph';
@@ -258,7 +268,7 @@ pnpm run typecheck
 
 If there are errors, iterate until clean. Common failures:
 
-- **Ecosystem-specific type not found in @civitai/client**: fall back to generic `ImageGenStepTemplate`/`VideoGenStepTemplate` with `as <Type>` casts.
+- **Ecosystem-specific type not found in @civitai/orchestration-client**: fall back to generic `ImageGenStepTemplate`/`VideoGenStepTemplate` with `as <Type>` casts.
 - **Discriminator value not in union**: verify the value in `ecosystem-graph.ts` `groupedDiscriminator` matches the case in `ecosystems/index.ts` exactly (case-sensitive).
 - **Graph context missing a key**: the ecosystemGraph shared nodes (`prompt`, `enhancedCompatibility`) expect certain keys — don't redefine them in your ecosystem subgraph.
 
@@ -454,7 +464,7 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 
 ## Notes
 
-- **Always check `@civitai/client` first.** Skipping this step leads to hand-rolled types that drift from the orchestrator API.
+- **Always check `@civitai/orchestration-client` first.** Skipping this step leads to hand-rolled types that drift from the orchestrator API.
 - **`engine` string conventions**: `'comfy'` uses a separate `ecosystem` field; most other engines (`'sdcpp'`, `'seedance'`, `'vidu'`, etc.) use the engine string directly.
 - **Sampler/scheduler**: if the provider recommends a single fixed sampler+scheduler, hardcode them in the handler rather than creating UI controls. Simpler UX and avoids bad user choices.
 - **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints.

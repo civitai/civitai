@@ -732,10 +732,26 @@ export async function cancelWorkflow({
 export async function deleteWorkflow({
   workflowId,
   token,
-}: z.infer<typeof workflowIdSchema> & { token: string }) {
+  throwOnError,
+  signal,
+}: z.infer<typeof workflowIdSchema> & {
+  token: string;
+  /**
+   * Surface a non-2xx teardown as a throw. OFF by default, preserving the historical behaviour of
+   * every existing caller: `createOrchestratorClient` sets no `throwOnError`, so the generated
+   * client RESOLVES on an HTTP error and this function has always reported success for a delete
+   * that did not happen. Opt in wherever the difference is load-bearing — `assertWorkflowOwner`
+   * does, because "we tore down the mis-attributed workflow" is the one claim it must not overstate.
+   */
+  throwOnError?: boolean;
+  /** Bound the call. Unset leaves it unbounded, as it has always been. */
+  signal?: AbortSignal;
+}) {
   const client = createOrchestratorClient(token);
 
-  await clientDeleteWorkflow({ client, path: { workflowId } });
+  const result = await clientDeleteWorkflow({ client, path: { workflowId }, signal });
+  if (throwOnError && result?.error)
+    throw new Error(`deleteWorkflow failed for ${workflowId}: ${JSON.stringify(result.error)}`);
 }
 
 export async function deleteManyWorkflows({

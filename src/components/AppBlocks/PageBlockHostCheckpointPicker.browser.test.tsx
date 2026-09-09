@@ -49,6 +49,13 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
@@ -184,6 +191,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -269,12 +279,30 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
       selected: Record<string, unknown>;
     };
     const sel = payload.selected;
-    const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
-      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'trainedWords', 'model', 'modelType'];
+    const sensitiveAbsent = [
+      'availability',
+      'hasAccess',
+      'canGenerate',
+      'image',
+      'name',
+      'nsfw',
+      'nsfwLevel',
+      'poi',
+      'minor',
+      'sfwOnly',
+      'userId',
+      'trainedWords',
+      'model',
+      'modelType',
+    ];
     for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
-    expect(Object.keys(sel).sort()).toEqual(
-      ['baseModel', 'modelId', 'modelName', 'versionId', 'versionName']
-    );
+    expect(Object.keys(sel).sort()).toEqual([
+      'baseModel',
+      'modelId',
+      'modelName',
+      'versionId',
+      'versionName',
+    ]);
     replies.stop();
   });
 
@@ -366,7 +394,8 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     );
     await vi.waitFor(() => {
       const r = replies.last('CHECKPOINT_PICKER_RESULT');
-      if (!(r && (r.payload as any)?.requestId === 'rq_ck')) throw new Error('checkpoint not resolved');
+      if (!(r && (r.payload as any)?.requestId === 'rq_ck'))
+        throw new Error('checkpoint not resolved');
     });
     useDialogStore.getState().closeAll();
 
@@ -379,7 +408,8 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     );
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
-      if (!(r && (r.payload as any)?.requestId === 'rq_res')) throw new Error('resource not resolved');
+      if (!(r && (r.payload as any)?.requestId === 'rq_res'))
+        throw new Error('resource not resolved');
     });
 
     // Each result kept its own message type + requestId — the handlers don't cross.

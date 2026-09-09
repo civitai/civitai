@@ -2,6 +2,7 @@ import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
   deleteChallengeSchema,
+  moderatorDeleteChallengeSchema,
   getChallengeEventsSchema,
   getChallengeWinnersSchema,
   getCompletedChallengesWithWinnersSchema,
@@ -335,9 +336,9 @@ export const challengeRouter = router({
 
   // Moderator: Delete a challenge
   delete: moderatorProcedure
-    .input(deleteChallengeSchema)
+    .input(moderatorDeleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => deleteChallenge(input.id)),
+    .mutation(({ input }) => deleteChallenge(input.id, { force: input.force })),
 
   // Public: Get active challenge events for featured section
   getActiveEvents: publicProcedure

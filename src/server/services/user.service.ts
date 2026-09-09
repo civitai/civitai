@@ -76,6 +76,7 @@ import {
   disarmAccountDeletionImagePurge,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImageById } from '~/server/services/image.service';
 import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
@@ -103,7 +104,7 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { imageRemovalMode } from '~/server/utils/image-removal-mode';
+import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -363,6 +364,21 @@ export const getUsers = async ({
     select.push(`u."meta"`);
   }
 
+  // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an
+  // arbitrary twenty of them and a ban that had just succeeded landed anywhere — which is why it read
+  // as "the ban did nothing". Newest ban first is the only order that makes the write visible.
+  // `bannedAt` is an ISO-8601 UTC string, so the text sort is chronological; every row carries one
+  // (checked against production).
+  const orderBy = contestBanned
+    ? `ORDER BY u."meta" #>> '{contestBanDetails,bannedAt}' DESC`
+    : query
+    ? 'ORDER BY LENGTH(username) ASC'
+    : '';
+
+  // ORDER BY goes after every predicate. It used to share a line with `u."id" != -1`, above the
+  // `contestBanned` clause, so a caller passing both emitted `... ORDER BY ... AND ...` and Postgres
+  // rejected the statement with 42601. `user.getAll` routes here whenever a moderator sets
+  // `contestBanned`, and `query` is on the same input schema, so that combination is reachable.
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
@@ -378,10 +394,11 @@ export const getUsers = async ({
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
-      AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
+      AND u."id" != -1
       AND ${
         contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
       }
+      ${Prisma.raw(orderBy)}
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
@@ -1313,6 +1330,14 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
       blockedFor: BlockedReason.CSAM,
     },
   });
+  // A CSAM block outranks an account-deletion grace block. If this account had already
+  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
+  // later restore would un-block CSAM-blocked content.
+  //
+  // Account-wide here, unlike the ban branch in `toggleBan`: the UPDATE above carries no
+  // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
+  // block's scope are the same set, which is what makes the wide form correct in this one place.
+  await clearAccountDeletionImageMarkers({ userId: id });
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1578,12 +1603,6 @@ const leaderboardRankInsert = ({
     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
     WHERE lr.date = current_date
       AND lr.position <= 100
-      -- UserRank is a single global table but the badge (title + cosmetic) renders
-      -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
-      -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
-      -- is visible on any SFW domain still earns a badge (requiring 'all' would
-      -- strip the badge from everyone on the green/blue-scoped boards).
-      AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
       ${leaderboardFilter}
       ${userFilter}
   ),
@@ -1979,6 +1998,47 @@ export const toggleBan = async ({
       removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
     if (shouldRemoveMedia) {
       try {
+        // The rows this ban is about to block that still carry account-deletion grace
+        // breadcrumbs. Read BEFORE the UPDATE: afterwards they are indistinguishable from the
+        // rows the grace pass itself blocked, because both end up `ingestion = 'Blocked'` with
+        // `blockedFor = 'moderated'`.
+        //
+        // 🔴 NOT `clearAccountDeletionImageMarkers({ userId: id })`, and do not "simplify" it back
+        // to that. Both of `remove-deleted-user-images`'s statements write the breadcrumb only on
+        // a row they leave `ingestion = 'Blocked'` — one sets it in the same UPDATE, the other
+        // requires it — and the UPDATE below only touches rows that are NOT Blocked. So for every
+        // row the grace pass marked, an account-wide clear here strips a breadcrumb off a row
+        // this ban provably did not touch. Lift the ban, restore the
+        // account, and `countPendingAccountDeletionImageRestores` (which keys on the breadcrumb)
+        // reads 0: `restoreUser` never queues the account, `restore-user-images` never runs, and
+        // the library stays Blocked with the recorded prior `ingestion` values gone — silent in
+        // the row and silent in the `imagesPendingRestore` the moderator is shown.
+        //
+        // This set is normally EMPTY. It is non-empty only for a row that was breadcrumbed and
+        // then un-blocked during the grace period — `handleUnblockImages` sets
+        // `ingestion = 'Scanned'` without stripping the breadcrumb — which is exactly the row a
+        // later account restore would otherwise un-block back out of this ban.
+        // Its own catch: this read is new, and the media block is the part of a ban that must not
+        // be able to fail because of it. Falling back to an empty set degrades the clear to what
+        // shipped before the breadcrumbs existed, which is the recoverable direction; letting it
+        // escape into the outer catch would skip the block and leave a banned account's media up.
+        let graceMarked: { id: number }[] = [];
+        try {
+          graceMarked = await dbWrite.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image"
+            WHERE "userId" = ${id}
+              AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+              AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
+          `;
+        } catch (error) {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-grace-marker-scan',
+            message: (error as Error).message,
+            error,
+          });
+        }
+
         await dbWrite.image.updateMany({
           where: { userId: id, ingestion: { not: 'Blocked' } },
           data: {
@@ -1987,6 +2047,11 @@ export const toggleBan = async ({
             blockedFor: BlockedReason.Moderated,
           },
         });
+
+        // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
+        // actually blocked rather than to the account: a ban outranks a grace block, so the
+        // restore breadcrumbs come off the rows it hid.
+        await clearAccountDeletionImageMarkers({ ids: graceMarked.map((x) => x.id) });
       } catch (error) {
         logToAxiom({
           type: 'error',
@@ -2020,6 +2085,20 @@ export const toggleBan = async ({
         });
       }
     }
+
+    // The LAST thing the ban branch does. `bannedAt` is written before any of the fan-out above, so a
+    // caller polling it is told the ban landed while the model unpublish, media block, comment
+    // flagging, index removal and subscription cancels are all still running on the primary — which is
+    // how Bulk Ban came to queue a thousand overlapping fan-outs. This is the only signal that means
+    // "the expensive half is done", and `banConfirmed` in the moderator app polls it.
+    //
+    // `jsonb_set` rather than another `updateUserById`: the fan-out takes seconds, and a read-modify-
+    // write of `meta` here would clobber anything written to that column in the meantime.
+    await dbWrite.$executeRaw`
+      UPDATE "User"
+      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{banDetails,completedAt}', to_jsonb(NOW()))
+      WHERE id = ${id} AND meta -> 'banDetails' IS NOT NULL
+    `;
   } else {
     // Unbanning: reverse the at-period-end cancellation applied on ban, if the
     // membership is still within its paid period.
@@ -2868,18 +2947,25 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
  * overlapping patches compose instead of clobbering.
  *
  * Ops (all optional, all applied in one statement, in this order):
- *  - `set`       — replace these top-level keys outright. The patch WINS over the
- *                  stored value; that is the whole point, so the operand order of
- *                  the `||` below is load-bearing rather than stylistic.
- *  - `mergeInto` — merge one level INTO these top-level object keys, so a
- *                  sibling sub-key another writer added survives.
- *  - `remove`    — delete these top-level keys.
+ *  - `set`           — replace these top-level keys outright. The patch WINS over
+ *                      the stored value; that is the whole point, so the operand
+ *                      order of the `||` below is load-bearing rather than stylistic.
+ *  - `mergeInto`     — merge one level INTO these top-level object keys, so a
+ *                      sibling sub-key another writer added survives.
+ *  - `deepMergeInto` — merge one level further: a sub-key of a top-level object is
+ *                      itself merged rather than replaced. `mergeInto` alone still
+ *                      loses a race between two writers of the SAME sub-key (e.g.
+ *                      two `tourSettings.welcome` writes), because it replaces
+ *                      `tourSettings.welcome` wholesale; this composes the two
+ *                      writers' fields instead. Only `tourSettings` uses this today.
+ *  - `remove`        — delete these top-level keys.
  *
- * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key. `mergeInto`
- * reads `settings->key` — the STORED column — not the partially-built expression,
- * so passing one key to both ops makes `mergeInto` merge onto the pre-`set` value
- * and win. No caller does this today; if one ever needs to, make `mergeInto` read
- * from the accumulated expression instead of the column.
+ * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key, and neither
+ * does `deepMergeInto` with either of them. All three read `settings->key` — the
+ * STORED column — not the partially-built expression, so combining ops on one key
+ * makes the later op win over the earlier op's in-progress result rather than
+ * compose with it. No caller does this today; if one ever needs to, make the ops
+ * read from the accumulated expression instead of the column.
  *
  * Values are bound as parameters, never spliced into the statement text —
  * `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding
@@ -2892,6 +2978,8 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
 export type UserSettingsPatch = {
   set?: Record<string, unknown>;
   mergeInto?: Record<string, Record<string, unknown>>;
+  /** One level deeper than `mergeInto`: top-level key -> sub-key -> patch. */
+  deepMergeInto?: Record<string, Record<string, Record<string, unknown>>>;
   remove?: string[];
   /** `userUpdateCounter` label, so consolidating the writers does not collapse the
    *  per-call-site attribution the metric already carried. */
@@ -2909,6 +2997,15 @@ export async function patchUserSettings(
   const mergeInto = Object.entries(patch.mergeInto ?? {}).filter(
     ([, value]) => value && Object.keys(value).length
   );
+  const deepMergeInto = Object.entries(patch.deepMergeInto ?? {})
+    .map(
+      ([key, subPatch]) =>
+        [
+          key,
+          Object.entries(subPatch ?? {}).filter(([, value]) => value && Object.keys(value).length),
+        ] as const
+    )
+    .filter(([, subEntries]) => subEntries.length);
   const remove = patch.remove?.length ? patch.remove : undefined;
 
   const client = tx ?? dbWrite;
@@ -2922,7 +3019,7 @@ export async function patchUserSettings(
   // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
   // see it. Reading the row also keeps the return value consistent with the write
   // path below, which returns `RETURNING settings` rather than a cached blob.
-  if (!set && !mergeInto.length && !remove) {
+  if (!set && !mergeInto.length && !deepMergeInto.length && !remove) {
     const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
       `SELECT settings FROM "User" WHERE id = $1`,
       userId
@@ -2953,14 +3050,34 @@ export async function patchUserSettings(
     // value). Treating a non-object as absent restores that property — the next write
     // repairs the row. This is hardening, not a live fix: sampled prod rows are 100%
     // objects for every key written this way, but `mergeInto` is now the designated
-    // nested-write primitive for `chat`, `features`, `creatorShop`, `gallerySettings`
-    // and `tourSettings`, so the gap would be inherited five times over.
+    // nested-write primitive for `chat`, `features`, `creatorShop` and `gallerySettings`
+    // (`tourSettings` uses `deepMergeInto`, below), so the gap would be inherited
+    // four times over.
     const k = bind(key);
     expr =
       `(${expr} || jsonb_build_object(${k}::text, ` +
       `CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
       `THEN settings->${k}::text ELSE '{}'::jsonb END ` +
       `|| ${bind(JSON.stringify(value))}::jsonb))`;
+  }
+  for (const [key, subEntries] of deepMergeInto) {
+    // Same guard as `mergeInto`, applied twice: once for the top-level key (so a
+    // malformed `tourSettings` doesn't concatenate) and once per sub-key (so a
+    // malformed `tourSettings.welcome` doesn't either). Both reads are of the STORED
+    // column, same reasoning as the `set`/`mergeInto` non-composition note above.
+    const k = bind(key);
+    let sub =
+      `(CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
+      `THEN settings->${k}::text ELSE '{}'::jsonb END)`;
+    for (const [subKey, value] of subEntries) {
+      const sk = bind(subKey);
+      sub =
+        `(${sub} || jsonb_build_object(${sk}::text, ` +
+        `CASE WHEN jsonb_typeof(settings->${k}::text->${sk}::text) = 'object' ` +
+        `THEN settings->${k}::text->${sk}::text ELSE '{}'::jsonb END ` +
+        `|| ${bind(JSON.stringify(value))}::jsonb))`;
+    }
+    expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
   }
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;
@@ -3022,6 +3139,23 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
  * notices can now overlap without either being lost — which the previous
  * read-the-array-in-JS-and-write-it-back form could not survive.
  */
+/**
+ * Set `meta.emailVerificationRequired` without reading `meta` into JS first.
+ *
+ * `User.meta` is shared: `banDetails`, `muteReason`/`mutedBy`, contest-ban state and more live on it,
+ * written by moderation paths that know nothing about this one. A read-modify-write would clobber
+ * whichever of them landed in the window — and the read would be off the replica, so the window is
+ * replica lag rather than milliseconds. `jsonb_set` merges in the database, touching one key.
+ */
+export async function setEmailVerificationRequired(userId: number, required: boolean) {
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{emailVerificationRequired}', to_jsonb(${required}::boolean))
+    WHERE id = ${userId}
+  `;
+  userUpdateCounter?.inc({ location: 'user.service:setEmailVerificationRequired' });
+}
+
 export async function setAlertDismissed(userId: number, alertId: string, dismissed: boolean) {
   // `settings->'dismissedAlerts'` is read inside the statement, so nothing about the
   // array is carried through JS. Add is idempotent (`@>` containment guard); `jsonb_agg`

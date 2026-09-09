@@ -31,7 +31,7 @@ function parseCacheTtl(raw: string | undefined): number {
 // Dev-only local overrides. Set FLIPT_LOCAL_OVERRIDES to short-circuit flag evaluation without
 // touching shared Flipt state (GitOps overwrites it). Format: comma-separated `flagKey=variantKey`
 // pairs; use `on`/`off` for booleans.
-// Example: FLIPT_LOCAL_OVERRIDES=bitdex-image-search=primary,my-bool-flag=on
+// Example: FLIPT_LOCAL_OVERRIDES=some-variant-flag=on-variant,my-bool-flag=on
 export function parseLocalOverrides(raw: string | undefined): Record<string, string> {
   if (!raw) return {};
   const out: Record<string, string> = {};

@@ -205,7 +205,8 @@ export class StepData {
 
   /**
    * Logical media type of this step's output, independent of the blob container format.
-   * aceStepAudio emits a VideoBlob (audio + cover) or AudioBlob; both are semantically 'audio'.
+   * An audio step emits an AudioBlob, or a VideoBlob when a cover image is bundled in — both
+   * are semantically 'audio'.
    */
   get mediaType(): 'image' | 'video' | 'audio' {
     switch (this.$type) {
@@ -215,6 +216,7 @@ export class StepData {
       case 'videoInterpolation':
         return 'video';
       case 'aceStepAudio':
+      case 'miniMaxMusic3':
         return 'audio';
       default:
         return 'image';
@@ -409,8 +411,8 @@ export abstract class BlobData {
 
   /**
    * Logical media type, derived from the parent step's `$type`.
-   * Distinct from `type` (the blob container format): aceStepAudio emits a VideoBlob when a
-   * cover image is combined with audio, but its mediaType is still 'audio'.
+   * Distinct from `type` (the blob container format): an audio step's cover-image output is a
+   * VideoBlob, but its mediaType is still 'audio'.
    */
   get mediaType(): 'image' | 'video' | 'audio' {
     return this.#step.mediaType;

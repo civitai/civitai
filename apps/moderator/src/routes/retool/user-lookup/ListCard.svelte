@@ -13,6 +13,7 @@
     empty = 'None.',
     shown = 5,
     capped = false,
+    action,
     controls,
     children,
   }: {
@@ -22,6 +23,9 @@
     empty?: string;
     shown?: number;
     capped?: boolean;
+    /** Sits on the heading row, right-aligned — a control that governs what the card counts, so it
+     *  belongs beside the count rather than under it. */
+    action?: Snippet;
     /** Filter rows and anything else that must survive an empty list. `children` is NOT rendered when
      *  `total` is 0, so a filter bar placed there disappears the moment it matches nothing — taking
      *  with it the only way to clear the filter that emptied the list. */
@@ -35,9 +39,16 @@
 </script>
 
 <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-  <h3 class="text-sm font-semibold text-white" class:mb-1={hint} class:mb-3={!hint}>
-    {title} ({total}{capped ? '+' : ''})
-  </h3>
+  <div
+    class="flex flex-wrap items-end justify-between gap-2"
+    class:mb-1={hint}
+    class:mb-3={!hint}
+  >
+    <h3 class="text-sm font-semibold text-white">
+      {title} ({total}{capped ? '+' : ''})
+    </h3>
+    {@render action?.()}
+  </div>
   {#if hint}
     <p class="mb-3 text-xs text-dark-2">{hint}</p>
   {/if}

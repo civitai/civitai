@@ -333,18 +333,6 @@ export type AppBlockPublishRequest = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
-export type AppBlockReview = {
-  id: Generated<number>;
-  app_block_id: string;
-  user_id: number;
-  rating: number;
-  recommended: Generated<boolean>;
-  details: string | null;
-  exclude: Generated<boolean>;
-  tos_violation: Generated<boolean>;
-  created_at: Generated<Timestamp>;
-  updated_at: Timestamp;
-};
 export type AppCollaborator = {
   app_listing_id: string;
   user_id: number;
@@ -416,6 +404,8 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;
+  is_beta: Generated<boolean>;
+  beta_message: string | null;
   connect_client_id: string | null;
   connect_requested_scopes: number | null;
   connect_scope_justifications: unknown | null;
@@ -611,6 +601,7 @@ export type Article = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
 };
 export type ArticleEngagement = {
@@ -3918,6 +3909,11 @@ export type Thread = {
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
+export type ThreadMute = {
+  userId: number;
+  threadId: number;
+  mutedAt: Generated<Timestamp>;
+};
 export type TipConnection = {
   transactionId: string;
   entityId: number;
@@ -4064,6 +4060,7 @@ export type UserHubSource = {
   targetId: number;
   alias: string | null;
   enabled: Generated<boolean>;
+  exclude: Generated<boolean>;
   index: Generated<number>;
 };
 export type UserLink = {
@@ -4312,7 +4309,6 @@ export type DB = {
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
   app_block_publish_requests: AppBlockPublishRequest;
-  app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
@@ -4585,6 +4581,7 @@ export type DB = {
   TagStat: TagStat;
   Technique: Technique;
   Thread: Thread;
+  ThreadMute: ThreadMute;
   TipConnection: TipConnection;
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;

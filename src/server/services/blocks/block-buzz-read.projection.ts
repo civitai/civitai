@@ -40,8 +40,9 @@ import type { getUserBuzzTransactions } from '~/server/services/buzz.service';
  *          — the sharpest leak), `refereeCreated` (the referrer's user id — the
  *          referral edge), `firstDailyFollow` (the followed user's id — a follow
  *          edge), `encouragement:<kind>` (the viewer's reaction footprint), plus
- *          `ad-watched` / `appBlockReview` / `generation-feedback` /
- *          `userReferred` — AND, by DEFAULT, any FUTURE reward type until it is
+ *          `ad-watched` / `generation-feedback` / `userReferred` (and the
+ *          since-removed `appBlockReview`) — AND, by DEFAULT, any FUTURE reward
+ *          type until it is
  *          deliberately added to the allowlist (default-deny, not a denylist).
  *          `forId` additionally keeps a NUMERIC-ONLY guard (every allowlisted
  *          tag's subject id is a number; the one string-valued writer is

@@ -97,9 +97,13 @@ export function SimilarArtworkCard({
         </Group>
       ) : (
         <>
+          {/* Not "the N closest" any more. The list is a threshold, not a rank —
+              anything too far away is dropped rather than padding it out, so a
+              short list means few were close and not that few were compared. */}
           <Text size="xs" c="dimmed" px="md" pt={9} pb={4}>
-            The {result.matches.length} closest of {result.comparedAgainst.toLocaleString()}{' '}
-            cosmetics, most alike first. Closeness is a prompt to look, not a verdict.
+            {result.matches.length} of {result.comparedAgainst.toLocaleString()} cosmetics{' '}
+            {result.matches.length === 1 ? 'was' : 'were'} close enough to be worth a look, most
+            alike first. Closeness is a prompt to look, not a verdict.
           </Text>
           <Stack gap={0}>
             {result.matches.map((match) => {

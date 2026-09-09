@@ -45,15 +45,6 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
-  BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
-  // Gates the reemit-bitdex-ops job (BitDex publish re-emitter). Default-off: the
-  // job is registered but no-ops until this flag is flipped on.
-  BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
-  // Gates the audit-bitdex-consistency job (standing PG<->BitDex comparison).
-  // Separate from the re-emitter flag on purpose: the audit is read-only and the
-  // healer is write-side, so switching one off must not blind or unblind the other.
-  // Default-off, like every flag here — isFlipt returns false for an unknown flag.
-  BITDEX_CONSISTENCY_AUDIT = 'bitdex-consistency-audit',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -126,6 +117,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
   // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
   TEXT_BLURBS = 'text-blurbs',
+
+  // 🔴 BOOLEAN ONLY — neither a segment NOR a percentage rollout works on this one.
+  // `throwOnBlockedUserContent` evaluates it with no context AND no entityId, because several of
+  // its call sites are content fan-outs with no session in scope. A segment rollout reads the
+  // context and so matches nothing; a threshold rollout buckets on `hash(entityId + flagKey)` and
+  // the entityId defaults to the literal `'global'`, so every evaluation in production hashes one
+  // constant and the flag is 0% or 100% with nothing in between. Set the boolean, not a ramp.
+  //
+  // OFF is the shipped default and means the pattern list is recorded but not enforced on these
+  // surfaces. The link-domain half throws either way — this flag has never governed it.
+  USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

@@ -43,11 +43,6 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     title: 'Join the Discussion',
     content: 'Engage in discussions related to this resource.',
-    // Hack to prevent solid gray box from appearing
-    styles: {
-      overlay: { backgroundColor: 'rgba(0, 0, 0, 0.4)' },
-      spotlight: { backgroundColor: 'rgba(255, 255, 255, 0.2)' },
-    },
   },
   {
     target: '[data-tour="model:gallery"]',
@@ -71,6 +66,7 @@ export const modelPageTour: StepWithData[] = [
     // Below the button is where the remix menu opens; a tooltip there covers it.
     placement: 'top',
     disableBeacon: true,
+    hideFooter: true,
     spotlightClicks: true,
     disableOverlayClose: true,
     spotlightPadding: 10,

@@ -14,21 +14,10 @@ import { describe, expect, it, vi } from 'vitest';
 const captured = vi.hoisted(() => [] as string[]);
 
 // Built inside the factory, not in `vi.hoisted`: hoisted blocks run before this file's own imports, so
-// constructing Kysely there reads it before initialisation.
+// constructing the client there reads it before initialisation.
 vi.mock('$lib/server/db', async () => {
-  const { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } =
-    await import('kysely');
-  const db = new Kysely<never>({
-    dialect: {
-      createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new DummyDriver(),
-      createIntrospector: (i) => new PostgresIntrospector(i),
-      createQueryCompiler: () => new PostgresQueryCompiler(),
-    },
-    log: (e) => {
-      if (e.level === 'query') captured.push(e.query.sql);
-    },
-  });
+  const { capturingDb } = await import('../../../test/capture-sql');
+  const db = capturingDb(captured);
   return { dbRead: db, dbWrite: db };
 });
 vi.mock('$lib/server/user-actions.service', () => ({

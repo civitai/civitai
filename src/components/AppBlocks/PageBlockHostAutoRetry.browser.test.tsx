@@ -85,6 +85,13 @@ vi.mock('~/utils/trpc', () => ({
   // this; a wholesale module mock MUST re-declare it or the ESM link fails.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -153,6 +160,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -374,6 +384,28 @@ describe('PageBlockHost auto-retry — fires from a terminal state, bounded and 
     await pollFor('retry loading surface', () => loadingEl() !== null);
     expect(page.getByText('Retrying Budgeted Generator…').query()).not.toBeNull();
     expect(iframeEl()?.getAttribute('data-block-ready')).toBe('false');
+  });
+
+  test('a bootSkeleton app gets the retry surface on the AUTOMATIC attempt too', async () => {
+    // The manual button is covered in PageBlockHostLaunchReveal. Both paths run
+    // through `performRetry`, so this holds by construction — which is exactly
+    // why it is worth one case: a future change that bumps `reloadNonce` on only
+    // one of them would leave an automatically-retrying bootSkeleton app with a
+    // blank frame and no feedback, and nothing else here would notice.
+    useVirtualClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        bootSkeleton
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await driveToFatal();
+
+    await advance(FIRST_BACKOFF_MS + 100);
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+    expect(page.getByText('Retrying Budgeted Generator…').query()).not.toBeNull();
   });
 
   test('auto-retry also fires from the `timeout` terminal (block never acks BLOCK_READY)', async () => {

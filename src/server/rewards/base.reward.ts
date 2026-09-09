@@ -1,3 +1,4 @@
+import { BUZZ_EVENTS_MAX_MULTIPLIER, clampBuzzEventMultiplier } from '@civitai/clickhouse';
 import type { ClickHouseClient } from '@clickhouse/client';
 import type { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
@@ -15,6 +16,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
+import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -143,11 +145,14 @@ export function createBuzzEvent<T>({
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
-    // Apply multipliers
+    // Display rather than money, but `getMultipliersForUser` can return a non-finite product, and
+    // an advertised award of `Infinity` is still a bug. Not a complete census of readers: `claimBuzz`
+    // is a fourth, in buzz.service.ts, and it pays.
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
-    if (rewardsMultiplier !== 1) {
-      data.awardAmount = Math.ceil(rewardsMultiplier * data.awardAmount);
-      if (data.cap) data.cap = Math.ceil(rewardsMultiplier * data.cap);
+    const multiplier = clampRewardMultiplier(rewardsMultiplier);
+    if (multiplier !== 1) {
+      data.awardAmount = Math.ceil(multiplier * data.awardAmount);
+      if (data.cap) data.cap = Math.ceil(multiplier * data.cap);
     }
 
     if (!isOnDemand) {
@@ -207,7 +212,7 @@ export function createBuzzEvent<T>({
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: Math.ceil(event.awardAmount * (event.multiplier ?? 1)),
+              amount: Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1)),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
@@ -239,11 +244,20 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    const effectiveAward = Math.ceil(config.awardAmount * multiplier);
+    // WHETHER to clamp: `getMultipliersForUser` floors its BASE and then multiplies by the bonus
+    // without re-clamping the product, so it can hand this a non-finite value built from two finite
+    // floored factors — see `can return a NON-FINITE multiplier` in
+    // buzz.service.multiplier-floor.test.ts.
+    //
+    // WHERE, and this is the part that is easy to get wrong: clamping at `apply`'s read would close
+    // the same case, but it normalises the value before `toClickhouseBuzzEvent` sees it and
+    // destroys the `multiplierRaw` audit fidelity — see base.reward.forid.test.ts.
+    const effective = clampRewardMultiplier(multiplier);
+    const effectiveAward = Math.ceil(config.awardAmount * effective);
     // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
     // Lua, which would throw out of the script and into the user's mutation.
     const effectiveCap =
-      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * multiplier);
+      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * effective);
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
     const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {
@@ -575,15 +589,6 @@ const INT32_MAX = 2147483647;
 // `buzzEvents` is narrower than `BuzzEventLog`: `forId` is Int32, `status` is
 // Enum8('pending','awarded','capped') and `multiplier` is Decimal(3, 2).
 const CLICKHOUSE_STATUSES = new Set(['pending', 'awarded', 'capped']);
-// 🔴 This must equal the ceiling of the DEPLOYED `buzzEvents.multiplier` column, which is
-// Decimal(3, 2). Raising it sends a value the column cannot hold, and an unparseable row is
-// dropped server-side while `sendAward` pays anyway — so this is the ONLY guard, not a backstop.
-// Widening the column was costed and declined (2026-08-24): the ceiling is not reachable today,
-// and it was not worth a mutation over 1.4 billion rows. If that changes, the column moves first
-// and this follows in the same window — never the other way round.
-// See src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql.
-const CLICKHOUSE_MAX_MULTIPLIER = 9.99;
-
 /**
  * Fit an event to the `buzzEvents` column types before it goes over the wire.
  *
@@ -593,7 +598,7 @@ const CLICKHOUSE_MAX_MULTIPLIER = 9.99;
  * anywhere. Three fields could do it, and all three were doing it (ClickUp 868ktbnjh):
  *
  *   forId       a reward keyed on a string (generation-feedback's jobId, ad-watched's token,
- *               appBlockReview's appBlockId). 4M payouts, zero event rows.
+ *               the removed appBlockReview's appBlockId). 4M payouts, zero event rows.
  *   status      `unqualified` is not in the enum, so a chunk carrying one loses the awarded and
  *               capped updates riding with it and those rows stay `pending` forever.
  *   multiplier  gold's 4 times MAX_GLOBAL_BONUS of 5 is 20, against a ceiling of 9.99.
@@ -632,14 +637,31 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   }
 
   let multiplier = event.multiplier;
-  if (multiplier !== undefined && multiplier > CLICKHOUSE_MAX_MULTIPLIER) {
-    coerced.multiplierRaw = multiplier;
-    multiplier = CLICKHOUSE_MAX_MULTIPLIER;
-    // On the batch path this value is not audit — `process-rewards` reads it back out and
-    // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
-    // rounding a record. Reported once per batch by the caller, not here: the condition becomes
-    // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
-    // events at once, and this function runs per event per retry.
+  if (multiplier !== undefined) {
+    // Shared with the moderator's writer so the two apps cannot disagree about what the column
+    // holds. That shared floor is also why an already-written row cannot arrive here with a
+    // `multiplierRaw` this function would then overwrite in the merge below: `process` never
+    // recomputes `multiplier`, so a row the other writer clamped comes back already in range.
+    // `Number()` for the same reason as the `status === 0` read below: this value comes back out
+    // of a ClickHouse `Decimal(3, 2)` on the process path, and `Number.isFinite` does not coerce
+    // where the `>` test it replaced did. A quoted `'4.00'` would otherwise take the non-finite
+    // fallback and rewrite a legitimate multiplier to 1 — an underpay, since `sendAward` pays
+    // from it.
+    const raw = Number(multiplier);
+    const clamped = clampBuzzEventMultiplier(raw);
+    if (clamped !== raw) {
+      // `JSON.stringify` writes +/-Infinity and NaN as `null`, which reads as "the raw was absent"
+      // — the one case that most needs a legible audit trail records the least. The moderator's
+      // writer omits the key instead; it can, because it builds its row fresh. Here an omitted key
+      // would leave `coerced` empty and return the unclamped event below.
+      coerced.multiplierRaw = Number.isFinite(raw) ? raw : String(multiplier);
+      multiplier = clamped;
+      // On the batch path this value is not audit — `process-rewards` reads it back out and
+      // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
+      // rounding a record. Reported once per batch by the caller, not here: the condition becomes
+      // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
+      // events at once, and this function runs per event per retry.
+    }
   }
 
   if (Object.keys(coerced).length === 0) return event;
@@ -673,10 +695,10 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
     logToAxiom({
       name: 'buzz-rewards',
       type: 'error',
-      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+      message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
       clampedEvents: clamped,
       batchSize: events.length,
-      clampedTo: CLICKHOUSE_MAX_MULTIPLIER,
+      clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
     }).catch(() => null);
   }
 

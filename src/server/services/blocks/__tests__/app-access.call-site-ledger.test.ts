@@ -118,10 +118,6 @@ const GATE_LEDGER: Record<string, string> = {
     'listing re-key an OFF-SITE seat contributes no block id to that set (it has no ' +
     'block), so this read is unchanged for offsite: analytics for an offsite listing is ' +
     'AppListingMetric, a different surface, not this block-scoped one.',
-  'src/server/services/appBlockReview.service.ts':
-    'The self-review exclusion is widened to the INSIDER set (owner + accepted ' +
-    'collaborators, regardless of `displayed`) so a collaborator cannot 5-star the app ' +
-    'they co-author. Pending/rejected invitees are NOT insiders.',
   'src/server/services/blocks/offsite-moderation.service.ts':
     'loadOwnedListingInTx (unpublish/republish own listing) and ' +
     'listMyListingModerationEvents are NOT widened: unpublishing a live listing and ' +
@@ -838,11 +834,13 @@ describe('app-ownership gate ledger', () => {
     it('the OLD composite seat key `appBlockId_userId` is gone from the seat files', () => {
       // The Prisma selector for the pre-re-key primary key `(appBlockId, userId)`.
       //
-      // 🔴 SCOPED TO THE SEAT FILES ON PURPOSE, and the reason is a genuine collision:
-      // `AppBlockReview` carries its OWN `@@unique([appBlockId, userId])`, which Prisma
-      // ALSO names `appBlockId_userId`. A repo-wide ban on the string would fail on
-      // `appBlockReview.service.ts` for a completely unrelated (and correct) selector —
-      // an assertion that looks like a re-key regression and is not one.
+      // 🔴 SCOPED TO THE SEAT FILES ON PURPOSE. The reason used to be a genuine
+      // collision: the removed `AppBlockReview` model carried its OWN
+      // `@@unique([appBlockId, userId])`, which Prisma ALSO named `appBlockId_userId`,
+      // so a repo-wide ban on the string failed on a completely unrelated (and correct)
+      // selector. That model is gone, but the scoping stays — a repo-wide ban would
+      // re-acquire the same false positive the moment any other model declares that
+      // composite, and the property this test cares about is about the SEAT files.
       const seatFiles = [...new Set(SEAT_CALLS.map(([f]) => f))];
       expect(seatFiles.length).toBe(3);
       for (const file of seatFiles) {

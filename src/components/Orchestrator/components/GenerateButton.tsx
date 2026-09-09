@@ -3,7 +3,6 @@ import { Button, Text } from '@mantine/core';
 
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export function GenerateButton({
   loading,
@@ -26,7 +25,6 @@ export function GenerateButton({
 } & ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
   const canGenerate = useGenerationContext((state) => state.canGenerate);
-  const { running } = useTourContext();
   const { size = 'lg' } = buttonProps;
 
   return (
@@ -35,7 +33,7 @@ export function GenerateButton({
         {...buttonProps}
         size={size}
         loading={loading}
-        disabled={!running && (!canGenerate || disabled)}
+        disabled={!canGenerate || disabled}
         onClick={onClick}
         className={buttonProps.className}
         style={{

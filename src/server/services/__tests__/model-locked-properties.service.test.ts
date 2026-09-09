@@ -53,6 +53,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: mockThrowOnBlockedLinkDomain,
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/collection.service', () => ({
   getAvailableCollectionItemsFilterForUser: vi.fn(),

@@ -108,10 +108,15 @@ export function PostDetailContent({ postId }: Props) {
   const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel ?? undefined;
 
   const { setForcedBrowsingLevel } = useBrowsingLevelContext();
+  // 🔴 Set unconditionally so the cap is CLEARED when a post has no collection.
+  // Guarding on a truthy value latched the last contest ceiling into the ancestor
+  // provider, and `resolvePageBrowsingLevel` puts `forced` AHEAD of the viewer's
+  // preference rather than intersecting with it — so a PG-only viewer kept an
+  // escalated R ceiling after moving to a post that never had one. Safe to clear
+  // only because the provider no longer keeps its `forcedBrowsingLevel` prop in
+  // the same state slot.
   useEffect(() => {
-    if (forcedBrowsingLevel) {
-      setForcedBrowsingLevel?.(forcedBrowsingLevel);
-    }
+    setForcedBrowsingLevel?.(forcedBrowsingLevel);
   }, [forcedBrowsingLevel]);
 
   const {

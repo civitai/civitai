@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -302,6 +303,11 @@ export const submitCreatorShopItem = async ({
   rightsAffirmed,
   quotedFee,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
+  // The same CosmeticShopItem.title/description columns the moderator-only upsert guards; these
+  // are the CREATOR-facing doors into them. Guarding only the moderator one would have closed
+  // the lower-risk door and left these open.
+  await throwOnBlockedUserContent([name, description], { surface: 'creatorShop' });
+
   // The zod schema already requires it; this keeps the item from ever being
   // created without the record if the service is called from anywhere else.
   if (!rightsAffirmed)
@@ -478,6 +484,10 @@ export const updateCreatorShopItem = async ({
   rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+
+  // AFTER the ownership check, deliberately. The rejection names the matched entry, so running it
+  // first turns this endpoint into a membership oracle for anyone holding someone else's id.
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'creatorShop' });
   // A pack has no cosmetic of its own; everything below edits one.
   if (existing.cosmeticId == null || existing.cosmetic == null)
     throw throwBadRequestError('Packs are edited through the pack editor');

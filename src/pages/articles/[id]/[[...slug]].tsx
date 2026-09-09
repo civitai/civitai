@@ -19,15 +19,17 @@ import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/ico
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ArticleProcessing } from '~/components/Article/ArticleProcessing';
 import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import {
@@ -43,6 +45,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openArticleRatingReviewModal } from '~/components/Dialog/triggers/article-rating-review';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -62,8 +65,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
-import { isArticlePublished } from '~/server/services/article.service';
+import { getPublishedArticleIngestion } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -124,12 +126,17 @@ export const getServerSideProps = createServerSideProps({
 
       // `getById` is viewer-scoped: it resolves for the owner and moderators and throws
       // NOT_FOUND for everyone else, so this 404s a draft/hidden article for crawlers while
-      // its author still loads it. The publish check keeps a live article out of that branch —
+      // its author still loads it. The ingestion check keeps a live article out of that branch —
       // `getById` also throws NOT_FOUND while a published article is being re-scanned after an
       // edit, and a 404 on an indexed URL is not a state to enter transiently. Any other
       // failure keeps the 200 and lets the client refetch.
-      if (fetched === NOT_FOUND && !(await isArticlePublished(result.data.id)))
-        return { notFound: true };
+      if (fetched === NOT_FOUND) {
+        const ingestion = await getPublishedArticleIngestion(result.data.id);
+        // Blocked is the one published state that can never resolve for the public, so it takes
+        // the 404 rather than serving an indexable shell that only ever renders NotFound.
+        if (ingestion === null || ingestion === ArticleIngestionStatus.Blocked)
+          return { notFound: true };
+      }
 
       const article = fetched === NOT_FOUND ? null : fetched;
 
@@ -185,6 +192,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
+  // `getById` hides a published article from non-owners until its images finish scanning, and a
+  // publish notification links straight into that window — so a refusal is not yet a 404. Poll
+  // while it is transient and pull the article back in once the scan lands, rather than leaving
+  // the reader on a dead end they have to reload out of.
+  const refused = !isLoading && !article && features.articles;
+  const { data: isProcessing, isInitialLoading: checkingProcessing } =
+    trpc.article.isProcessing.useQuery(
+      { id },
+      { enabled: refused, refetchInterval: (query) => (query.state.data === true ? 15_000 : false) }
+    );
+
   // Intersection observer for lazy loading comments
   const { ref: commentsRef, inView: commentsInView } = useInView({
     triggerOnce: true,
@@ -208,15 +226,26 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isActualOwner = currentUser?.id === article?.user?.id;
   const isOwner = isActualOwner || isModerator;
 
-  // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
   const disableArticles = !features.articles && !article?.user.isModerator;
 
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
 
+  // The poll above stops the moment the scan window closes; this is what turns that into a
+  // rendered article without a reload. Only the true->false edge, so an article that was never
+  // processing (a real 404) doesn't refetch itself.
+  const wasProcessing = React.useRef(false);
+  useEffect(() => {
+    if (isProcessing) wasProcessing.current = true;
+    else if (wasProcessing.current) {
+      wasProcessing.current = false;
+      queryUtils.article.getById.invalidate({ id });
+    }
+  }, [isProcessing, id, queryUtils]);
+
   const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
     { articleId: id },
-    { enabled: isActualOwner && features.articleRatingDispute, staleTime: 60_000 }
+    { enabled: isActualOwner && !!features.articleRatingDispute, staleTime: 60_000 }
   );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
@@ -248,7 +277,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const [image] = items;
 
   if (isLoading) return <PageLoader />;
-  if (!article || isBlocked || disableArticles) return <NotFound />;
+  if (!article) {
+    if (disableArticles) return <NotFound />;
+    if (checkingProcessing) return <PageLoader />;
+    return isProcessing ? <ArticleProcessing /> : <NotFound />;
+  }
+  if (isBlocked || disableArticles) return <NotFound />;
 
   const category = article.tags.find((tag) => tag.isCategory);
   const tags = article.tags.filter((tag) => !tag.isCategory);
@@ -387,6 +421,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </Text>
                 </Tooltip>
               )}
+            {article.isOfficial && (
+              <>
+                <Divider orientation="vertical" />
+                <OfficialArticleBadge />
+              </>
+            )}
             {category && (
               <>
                 <Divider orientation="vertical" />
@@ -442,33 +482,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </AlertWithIcon>
           )}
           {article.status === ArticleStatus.UnpublishedViolation && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
-              <div>
-                <Text weight={600} size="lg" mb="xs">
-                  This article has been unpublished due to a Terms of Service violation
-                </Text>
-                {article.metadata?.unpublishedReason &&
-                  article.metadata.unpublishedReason !== 'other' && (
-                    <Text>
-                      <strong>Reason:</strong>{' '}
-                      {
-                        unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
-                          ?.notificationMessage
-                      }
-                    </Text>
-                  )}
-                {article.metadata?.customMessage && (
-                  <Text>
-                    <strong>Additional details:</strong> {article.metadata.customMessage}
-                  </Text>
-                )}
-                {!isModerator && (
-                  <Text mt="sm" size="sm">
-                    If you believe this was done in error, please contact support.
-                  </Text>
-                )}
-              </div>
-            </AlertWithIcon>
+            <ArticleUnpublishedAlert
+              reason={article.metadata?.unpublishedReason}
+              customMessage={article.metadata?.customMessage}
+              showSupportHint={!isModerator}
+            />
           )}
           {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
             <ArticleScanStatus

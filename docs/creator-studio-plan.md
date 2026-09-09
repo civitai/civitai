@@ -191,7 +191,7 @@ are **not** the analytics path.)*
 | CP cash / banked / pool | `creatorProgram.getCash` / `getBanked` / `getCompensationPool` (`creator-program.router.ts`) |
 | Set a licensing fee (single) | `modelVersion` upsert — `licensingFee*` fields (`model-version.schema.ts:418`), flag `licensing-fee` |
 | Early/paid access config + purchase | `modelVersion.earlyAccessPurchase`, `earlyAccessModelVersionsOnTimeframe` (`model-version.router.ts`) |
-| Cosmetic purchase + 70/30 split | `cosmeticShop.purchaseShopItem`; split via `meta.paidToUserIds` → `TransactionType.Sell` (`cosmetic-shop.service.ts:619`) |
+| Cosmetic purchase + 70/30 split | `cosmeticShop.purchaseShopItem`; split via `computeCreatorShopSplit` (`creator-shop.schema.ts`) paying `Cosmetic.createdById` → `TransactionType.Sell` (`cosmetic-shop.service.ts`, `purchaseCosmeticShopItem`) |
 
 ### 5.3 New monetization operations (creator-studio module; extract to a package at consolidation)
 

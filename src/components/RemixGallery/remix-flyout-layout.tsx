@@ -35,3 +35,30 @@ export function RemixFlyoutLayoutProvider({
     <RemixFlyoutLayoutContext.Provider value={layout}>{children}</RemixFlyoutLayoutContext.Provider>
   );
 }
+
+/**
+ * The card's own box within the shelf that clips it.
+ *
+ * The flyout lifts this box so the panel clears the neighbouring cards, so it
+ * has to be a SIBLING of those cards rather than the container holding them.
+ *
+ * 🔴 Counting levels does not find it. How many boxes sit between the card and
+ * the shelf is a property of the caller: a home block wraps each card in a
+ * padding div, a profile shelf makes the card's cosmetic wrapper the grid item
+ * directly. Two levels lands on the cell for the first and on the GRID for the
+ * second, and lifting a container does nothing relative to its own children.
+ *
+ * Returns null when there is no clipper, because then there is no shelf and
+ * nothing here can identify a cell; the caller decides what to do with that.
+ */
+export function resolveShelfCell<T extends { parentElement: T | null }>(
+  card: T | null,
+  clip: T | null
+): T | null {
+  if (!card || !clip) return null;
+  let cell = card;
+  while (cell.parentElement && cell.parentElement !== clip) cell = cell.parentElement;
+  // The walk ran past the clipper rather than stopping under it — the clipper
+  // was not an ancestor at all, so there is no cell to name.
+  return cell.parentElement === clip ? cell : null;
+}

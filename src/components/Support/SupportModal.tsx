@@ -9,7 +9,21 @@ export default function SupportModal() {
     <Modal
       {...dialog}
       size="auto"
-      classNames={{ content: 'p-10', inner: 'py-6', body: 'p-0' }}
+      // 🔴 `py-6` HERE OUTRANKS THE SHELL'S MODAL RULE, so it has to carry the
+      // inset itself. A Tailwind utility in `classNames` is UNLAYERED, which
+      // beats the `@layer mantine` rule in globals.css that raises a
+      // non-fullScreen modal's vertical offset to clear the display cutout.
+      // This is the only `inner:` override in the app, and left as a flat 24px
+      // it is the one dialog that can still land under a 47-59px notch.
+      //
+      // `max(...)` and not addition: 24px is the design offset on every device
+      // and the inset only has to win where it is larger.
+      classNames={{
+        content: 'p-10',
+        inner:
+          'pt-[max(1.5rem,var(--safe-area-inset-top))] pb-[max(1.5rem,var(--safe-area-inset-bottom))]',
+        body: 'p-0',
+      }}
       withCloseButton={false}
       centered
     >

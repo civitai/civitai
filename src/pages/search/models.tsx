@@ -1,4 +1,4 @@
-import { Stack, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
+import { Stack, Center, Loader, Title, Text, ThemeIcon, Checkbox } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
@@ -9,7 +9,7 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
@@ -25,6 +25,8 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-search-filter';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
@@ -45,6 +47,8 @@ export default function ModelsSearch() {
 const RenderFilters = () => {
   const currentUser = useCurrentUser();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const features = useFeatureFlags();
+  const [hidePaid, setHidePaid] = useState(false);
 
   const filters = [
     browsingSettingsAddons.settings.disablePoi
@@ -56,6 +60,7 @@ const RenderFilters = () => {
     `availability != ${Availability.Private}${
       currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
     }`,
+    paidModelsSearchFilterClause(features.paidModelSearchFilter, hidePaid),
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '
     )}] AND version.baseModel IN [${nsfwRestrictedBaseModels
@@ -112,6 +117,13 @@ const RenderFilters = () => {
         operator="and"
         searchable
       />
+      {features.paidModelSearchFilter && (
+        <Checkbox
+          label="Hide paid models"
+          checked={hidePaid}
+          onChange={(event) => setHidePaid(event.currentTarget.checked)}
+        />
+      )}
       <ClearRefinements />
     </>
   );

@@ -2,6 +2,7 @@ import { constants } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
+import type { ExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
@@ -204,6 +205,11 @@ export interface AuditPromptOptions {
   inputVideo?: string; // Source video URL (vid2vid)
   // Only honored when every trigger is soft — see `isSoftBlock`.
   acknowledgedSoftBlock?: boolean;
+  // OBSERVABILITY ONLY. Selects the `source` label on the external-moderation duration histogram so
+  // the request-path prompt gate can be told apart from background work; changes no behaviour, no
+  // deadline and no verdict. Absent ⇒ `other`, so a caller that declares nothing can never inflate
+  // the `generate` population. See `~/server/prom/external-moderation.metrics`.
+  moderationSource?: ExternalModerationSource;
 }
 
 /**
@@ -230,6 +236,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     inputImages,
     inputVideo,
     acknowledgedSoftBlock,
+    moderationSource,
   } = options;
 
   // Skip auditing if prompt is empty (will be caught by validation elsewhere)
@@ -285,7 +292,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
 
     // Run external moderation service
     const { flagged, categories } = await extModeration
-      .moderatePrompt(auditedPrompt ?? prompt)
+      .moderatePrompt(auditedPrompt ?? prompt, moderationSource)
       .catch((error) => {
         logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
         return { flagged: false, categories: [] as string[] };

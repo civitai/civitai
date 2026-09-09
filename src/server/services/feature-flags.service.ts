@@ -121,6 +121,14 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
+  // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
+  // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.
+  // NOT `['public']`: that reads true whenever the Flipt key is missing or Flipt is unreachable,
+  // which would cut every user over during an outage — and this page is the landing target for
+  // Stripe and Tipalti `return_url`s, so a bad cutover strands payout onboarding rather than merely
+  // looking wrong. Instant rollback = set the threshold to 0.
+  accountSettingsV2: { availability: ['mod'], fliptKey: 'account-settings-v2' },
   // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
   // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
   // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
@@ -183,6 +191,10 @@ const featureFlags = createFeatureFlags({
   // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
   // Until that flag exists, evaluation returns null and static evaluation keeps it on.
   feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
+  // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
+  // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
+  // and an index-settings change, not a deploy.
+  paidModelSearchFilter: { availability: [], fliptKey: 'paid-model-search-filter' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -247,20 +259,6 @@ const featureFlags = createFeatureFlags({
     default: false,
     displayName: 'Larger Images in Generator',
     description: `Images displayed in the generator will be larger on small screens`,
-    availability: ['public'],
-  },
-  postsNavItem: {
-    toggleable: true,
-    default: false,
-    displayName: 'Posts in Navigation',
-    description: `Show the Posts item in the main site navigation.`,
-    availability: ['public'],
-  },
-  eventsNavItem: {
-    toggleable: true,
-    default: false,
-    displayName: 'Events in Navigation',
-    description: `Show the Events item in the main site navigation.`,
     availability: ['public'],
   },
   nativeVideoControls: {
@@ -345,6 +343,24 @@ const featureFlags = createFeatureFlags({
   // gate rendering a gallery that already has entries, or an owner declining
   // what is already waiting on their work.
   remixGallery: { availability: ['mod'], fliptKey: 'remix-gallery' },
+  // The three entry points below are gated SEPARATELY from `remixGallery` so they
+  // can be released one at a time, and each one is checked TOGETHER with it
+  // rather than instead of it. `remixGallery` gates the submit mutation, so a
+  // surface flag on while the base is off is a live button that fails on click.
+  //
+  // Turning a surface flag off removes a way IN. It does not touch a submission
+  // already made, an owner's queue, or a gallery that already has entries -
+  // that distinction is `remixGallery`'s, above.
+  //
+  // The post editor's card, under the image in the post edit view. The oldest of
+  // the three and the only one that was ever live.
+  remixGalleryPostEditor: { availability: ['mod'], fliptKey: 'remix-gallery-post-editor' },
+  // "Submit this remix" and "View original" on the shared image context menu -
+  // so feed cards and the image detail page, which render the same menu.
+  remixGalleryMenu: { availability: ['mod'], fliptKey: 'remix-gallery-menu' },
+  // The generator and the generation queue, which share one component. Routes to
+  // the post editor rather than submitting, so this one moves no Buzz on its own.
+  remixGalleryGenerator: { availability: ['mod'], fliptKey: 'remix-gallery-generator' },
   // Gates BUILDING a pack, seeing packs in shops, and buying one. Like
   // `stickers` it does not gate what a buyer already owns: turning it off must
   // not strip cosmetics people paid for, only stop new packs being listed,
@@ -426,6 +442,9 @@ const featureFlags = createFeatureFlags({
   appTour: ['public'],
   privateModels: ['public'],
   auctions: ['blue', 'red', 'green', 'public'],
+  // Not public until C2: the orchestrator prices a prepare at zero, so a wider audience would be
+  // loading models for free.
+  resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
@@ -479,6 +498,8 @@ const featureFlags = createFeatureFlags({
   // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['public'], fliptKey: 'hunyuan3d-generator' },
+  pixal3dGenerator: { availability: ['mod'], fliptKey: 'pixal3d-generator' },
+  trellis2Generator: { availability: ['mod'], fliptKey: 'trellis2-generator' },
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
   // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
@@ -487,6 +508,11 @@ const featureFlags = createFeatureFlags({
   // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
   // version id falls back to the ecosystem default (see grok-graph.ts).
   grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
+  // THE form-graph cutover flag: swaps GenerationTabs' form for the form-graph
+  // lane AND serves the hub parse for the user's submits/whatIfs (validateInput
+  // reads it from the generation ctx). Every parse shadow-compares regardless.
+  // Widen via the fliptKey; flag and comparison both go away with data-graph.
+  formGraphGenerator: { availability: ['mod'], fliptKey: 'form-graph-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -537,16 +563,26 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
-  // App Blocks — "App builders" get-started landing page (`/apps/get-started`).
-  // Scope A soft launch: a single marketing/funnel page that explains the
-  // platform to would-be app developers. INDEPENDENT of the mod-only `appBlocks`
-  // gate — this flag controls ONLY the get-started page + its nav entry, NOT
-  // any other `/apps/*` surface (those stay gated on `appBlocks`). Staged
-  // mod-only today (like `appBlocks` / `appBlocksPages`) so it deploys dark-to-
-  // public and mods can review the page live on prod; widened to `['public']`
-  // (a one-line flag change) when launch copy + the real Request-access link
-  // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
-  // to drop the page + nav entry without a deploy).
+  // App Blocks — "App builders" get-started pitch, now state A of the
+  // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
+  // launch: a single marketing/funnel page that explains the platform to
+  // would-be app developers. Staged mod-only today (like `appBlocks` /
+  // `appBlocksPages`) so it deploys dark-to-public and mods can review the page
+  // live on prod. The Flipt key stays the kill-switch lever (flip it off to drop
+  // the pitch + its nav entry without a deploy).
+  //
+  // 🔴 WIDENING THIS IS NO LONGER A ONE-LINE CHANGE, and the old comment saying
+  // it was is what this replaces. Since the `/apps/build` consolidation the pitch
+  // lives behind `canAccessAppsBuild` = `hasAppsStoreAccess(features) &&
+  // (isAppDeveloper(user, …) || appBlocksGetStarted)`, so this flag is now one
+  // disjunct UNDER a store AND, not an independent gate: widening it alone gives
+  // the new cohort a `notFound` from `/apps/build` (and from `/apps/get-started`,
+  // which 301s there), no user-menu "Apps" entry, and no sub-nav — the pitch
+  // becomes unreachable by every route, silently, for exactly the audience it was
+  // widened for. Widening it therefore ALSO requires widening a store flag
+  // (`app-listings` is the intended one; `appBlocks` and
+  // `appListingsPublicExternal` are the other two disjuncts of
+  // `hasAppsStoreAccess`).
   appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
   // App Blocks — AUTHOR capability (developer soft-launch, Phase B). Grants the
   // right to SUBMIT apps + use `dev:live` (the author surfaces + the runtime
@@ -860,7 +896,7 @@ export type FeatureAccess = Record<FeatureFlagKey, boolean>;
  *   2. A toggleable flag whose `default === false` is absent at the base layer —
  *      logged-in users get their stored choice merged client-side (via
  *      user.getFeatureFlags), but anonymous users have no override, so a
- *      default-off toggleable (e.g. postsNavItem) must stay off on bare access.
+ *      default-off toggleable (e.g. largerGenerationImages) must stay off on bare access.
  *   3. Otherwise present.
  * `fliptContext` is threaded in (built once per compute via buildFliptContext)
  * so a single lazy request reuses one context across every accessed key, exactly

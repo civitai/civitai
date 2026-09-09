@@ -84,6 +84,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
 
 // #region [types]
@@ -104,6 +105,8 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
+  isScanFailed: boolean;
+  isScanNotFound: boolean;
   canAdd: boolean;
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
@@ -202,6 +205,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
+  const isScanFailed = ingestion === ImageIngestionStatus.Error;
+  const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
   const canAdd = canAddFunc(type, meta);
@@ -296,6 +301,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
+        isScanFailed,
+        isScanNotFound,
         canAdd,
         otherImages,
         allowedResources,
@@ -496,11 +503,13 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   });
 
   const handleRemoveResource = () => {
-    if (!canAdd || !modelVersionId || detected) return;
+    if (!canAdd || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
-      children: 'Are you sure you want to remove this resource from this image?',
+      children: detected
+        ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
+        : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -566,10 +575,10 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           </LegacyActionIcon>
         </Tooltip>
       )}
-      {!canAdd || detected ? (
+      {!canAdd ? (
         <></>
       ) : (
-        <Tooltip label="Delete">
+        <Tooltip label={detected ? 'Not what you used? Remove it' : 'Delete'}>
           <LegacyActionIcon
             color="red"
             size="sm"
@@ -606,6 +615,8 @@ function EditDetail() {
     isBlocked,
     isPending,
     isScanned,
+    isScanFailed,
+    isScanNotFound,
     onEditMetaClick,
     isDeleting,
     isUpdating,
@@ -615,6 +626,9 @@ function EditDetail() {
     isMinor,
   } = useAddedImageContext();
   const postId = usePostEditStore((state) => state.post?.id);
+  // A published post has no publish left to hang a promise on, so the remix card
+  // submits on the spot instead of collecting ticks.
+  const postPublished = usePostEditStore((state) => !!state.post?.publishedAt);
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
@@ -700,6 +714,10 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {/* Directly under the image. The wrapper is `flex-row-reverse`, so
+                  this narrow column is the one on the RIGHT. Renders nothing
+                  without remix provenance, which is the ordinary case. */}
+              <RemixSourcesCard imageId={image.id} published={postPublished} />
               {hasSimpleMeta && (
                 <>
                   <div className="flex flex-col *:border-gray-4 not-last:*:border-b dark:*:border-dark-4">
@@ -1133,6 +1151,35 @@ function EditDetail() {
             <Text align="center">
               Analyzing image. Image will not be visible to other people while analysis is in
               progress.
+            </Text>
+          </Alert>
+        )}
+        {isScanFailed && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t finish analyzing this image, so it won&apos;t be visible to others.
+              We&apos;ll keep retrying for a while — if this message is still here later, remove the
+              image and upload it again, or contact support.
+            </Text>
+          </Alert>
+        )}
+        {isScanNotFound && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t load this image to analyze it, so it won&apos;t be visible to others.
+              Remove it and upload it again.
             </Text>
           </Alert>
         )}

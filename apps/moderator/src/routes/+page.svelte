@@ -403,7 +403,7 @@
       <TableHeader class="sticky top-0 z-10 bg-dark-6">
         <TableRow>
           <TableHead class="w-16">Reports</TableHead>
-          <TableHead>Content</TableHead>
+          <TableHead class="w-[38%]">Content</TableHead>
           <TableHead>Reason</TableHead>
           <TableHead>First reported</TableHead>
           <TableHead>By</TableHead>
@@ -442,7 +442,18 @@
                   {entityLabel(row)} {row.entityId ?? ''}
                 </span>
                 {#if details.length > 0}
-                  <div class="mt-1 flex flex-col gap-0.5 text-xs text-dark-2">
+                  <!-- `whitespace-normal` is the load-bearing class. `TableCell` sets
+                       `whitespace-nowrap` on every cell and `white-space` inherits, so a detail value
+                       could not wrap at ALL — the cell grew to the full length of the text and pushed
+                       every column right of it across. Report details are user-submitted free text of
+                       no bounded length or shape, and this is the only cell that renders them.
+                       `wrap-anywhere` then handles what wrapping alone cannot: production carries a
+                       640-character run with no whitespace in it. It is `overflow-wrap: anywhere`, NOT
+                       `break-words` — measured, `break-word` does not break that token here, because it
+                       only breaks a word that overflows its line box and an auto-layout cell grows
+                       instead of overflowing. `anywhere` participates in min-content sizing, so the
+                       cell can actually shrink. -->
+                  <div class="mt-1 flex min-w-0 flex-col gap-0.5 text-xs whitespace-normal wrap-anywhere text-dark-2">
                     {#each details as [key, value] (key)}
                       <span><span class="font-semibold">{key}:</span> {value}</span>
                     {/each}

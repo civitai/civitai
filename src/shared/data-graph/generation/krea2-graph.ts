@@ -1,9 +1,9 @@
 /**
  * Krea 2 Family Graph
  *
- * Controls for the Krea 2 ecosystem. The checkpoint is locked (modelLocked), but
- * the version selector offers four official variants that split across two
- * engines:
+ * Controls for the Krea 2 ecosystem. The version selector offers four official
+ * variants that split across two engines (community checkpoints take the raw
+ * control set):
  *
  * FAL engine (Krea2FalImageGenInput) — size tiers, no LoRA:
  * - medium: smaller/faster model
@@ -16,10 +16,10 @@
  * - turbo: distilled, low-step variant
  *   Controls: aspectRatio / resources (LoRA) / negativePrompt / cfgScale / steps / seed.
  *
- * The selected version is mapped to a `krea2Variant` discriminator
- * ('fal' | 'raw' | 'turbo') that swaps in the engine-appropriate controls. The
- * `img2img:edit` workflow selects a fourth 'edit' variant regardless of version
- * — Krea 2 exposes editing as an operation, not as its own build.
+ * The selected version is mapped to a `krea2Variant` discriminator that swaps in
+ * the engine-appropriate controls. `img2img:edit` maps to editRaw/editTurbo —
+ * still per-version, because Krea 2 exposes editing as an operation on either
+ * build, not as its own build.
  */
 
 import z from 'zod';
@@ -95,16 +95,14 @@ export const krea2VersionIdToSize = new Map<number, Krea2Size>([
   [krea2VersionIds.large, 'large'],
 ]);
 
-/**
- * Map version ID → control-set variant. medium/large share the FAL control set;
- * raw/turbo each get the comfy control set. Unknown IDs fall back to 'fal'.
- */
 const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
   [krea2VersionIds.medium, 'fal'],
   [krea2VersionIds.large, 'fal'],
   [krea2VersionIds.raw, 'raw'],
   [krea2VersionIds.turbo, 'turbo'],
 ]);
+
+export const isOfficialKrea2Version = (id: number) => krea2VersionIdToVariant.has(id);
 
 // =============================================================================
 // Aspect Ratios
@@ -138,12 +136,31 @@ const krea2AspectRatioDimensions = {
   '9:16': { width: 768, height: 1376 },
 } satisfies Partial<Record<GenerationAspectRatio, AspectRatioDimensions>>;
 
-const krea2AspectRatioOptions = (
-  Object.keys(krea2AspectRatioDimensions) as (keyof typeof krea2AspectRatioDimensions)[]
-).map((ratio) => {
-  const { width, height } = krea2AspectRatioDimensions[ratio];
-  return { label: ratio, value: ratio, width, height };
-});
+/** 2K doubles each ~1MP bucket to ~4MP. The FAL tiers take `size` + `aspectRatio` only, so they get no tier. */
+const krea2ResolutionOptions = [
+  { label: '1K', value: '1K' },
+  { label: '2K', value: '2K' },
+] as const;
+
+const krea2AspectRatioOptionsFor = (scale: number) =>
+  (Object.keys(krea2AspectRatioDimensions) as (keyof typeof krea2AspectRatioDimensions)[]).map(
+    (ratio) => {
+      const { width, height } = krea2AspectRatioDimensions[ratio];
+      return { label: ratio, value: ratio, width: width * scale, height: height * scale };
+    }
+  );
+
+const krea2AspectRatioOptionsByResolution: Record<
+  string,
+  ReturnType<typeof krea2AspectRatioOptionsFor>
+> = {
+  '1K': krea2AspectRatioOptionsFor(1),
+  '2K': krea2AspectRatioOptionsFor(2),
+};
+
+/** Edit runs a comfy build whichever version is picked, so it keeps the tier; unknown ids are community checkpoints, comfy-only. */
+const krea2UsesComfyEngine = (modelId?: number, workflow?: string) =>
+  workflow === 'img2img:edit' || modelId === undefined || !krea2VersionIdToSize.has(modelId);
 
 /** Standard preferred ratios — substitute 4:5 for 3:4 since Krea lacks 3:4. */
 const krea2PriorityRatios = ['16:9', '4:3', '1:1', '4:5', '9:16'];
@@ -329,21 +346,32 @@ export const krea2Graph = new DataGraph<
     ['workflow']
   )
   .node(
-    'aspectRatio',
-    aspectRatioNode({
-      options: krea2AspectRatioOptions,
-      defaultValue: '1:1',
-      priorityOptions: krea2PriorityRatios,
-    })
+    'resolution',
+    (ctx) => ({
+      ...enumNode({ options: krea2ResolutionOptions, defaultValue: '1K' }),
+      when: krea2UsesComfyEngine(ctx.model?.id, ctx.workflow),
+    }),
+    ['model', 'workflow']
   )
-  // Derive the control-set variant from the selected version, then swap in the
-  // engine-appropriate controls (FAL: creativity/styleRefs; comfy: LoRA/cfg/steps).
+  .node(
+    'aspectRatio',
+    (ctx) =>
+      aspectRatioNode({
+        options: krea2AspectRatioOptionsByResolution[ctx.resolution ?? '1K'],
+        defaultValue: '1:1',
+        priorityOptions: krea2PriorityRatios,
+      }),
+    ['resolution']
+  )
+  // Unknown ids are community checkpoints. Only the comfy builds can load one via
+  // `diffusionModel`, so they fall back off the FAL tiers — and to the full-step
+  // build, since turbo's 15-step / cfg-2 ceilings can't drive an undistilled model.
   .computed(
     'krea2Variant',
     (ctx): Krea2Variant => {
       if (ctx.workflow === 'img2img:edit')
-        return ctx.model?.id === krea2VersionIds.raw ? 'editRaw' : 'editTurbo';
-      return (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'fal';
+        return ctx.model?.id === krea2VersionIds.turbo ? 'editTurbo' : 'editRaw';
+      return (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'raw';
     },
     ['model', 'workflow']
   )

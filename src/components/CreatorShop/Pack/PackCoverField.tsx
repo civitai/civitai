@@ -3,6 +3,7 @@ import { Dropzone } from '@mantine/dropzone';
 import { IconUpload } from '@tabler/icons-react';
 import { ArtThumb } from '~/components/CreatorShop/Submit/ArtThumb';
 import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import { notifyUploadRejection } from '~/components/CreatorShop/upload-rejection';
 
 /**
  * A pack's cover is a storefront image, not a cosmetic anyone receives — so it
@@ -53,6 +54,7 @@ export function PackCoverField({
             accept={['image/png', 'image/webp', 'image/jpeg']}
             maxFiles={1}
             maxSize={maxSize}
+            onReject={(rejections) => notifyUploadRejection(rejections, maxSize)}
             loading={uploading}
           >
             <Center mih={100}>

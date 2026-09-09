@@ -116,7 +116,6 @@ describe('BlockRegistry.getFeaturedBlocks — featured rail exposure (F-E E4)', 
       [
         'appId',
         'appName',
-        'avgRating',
         'blockId',
         'category',
         'coverUrl',
@@ -124,7 +123,6 @@ describe('BlockRegistry.getFeaturedBlocks — featured rail exposure (F-E E4)', 
         'id',
         'installCount',
         'manifest',
-        'reviewCount',
         'scopesSummary',
       ].sort()
     );

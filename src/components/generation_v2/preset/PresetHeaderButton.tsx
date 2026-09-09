@@ -54,8 +54,10 @@ export function PresetHeaderButton() {
       opened={menuOpened}
       onChange={setMenuOpened}
     >
-      <Menu.Target>
-        <Tooltip label="Presets" disabled={menuOpened}>
+      {/* Tooltip WRAPS Menu.Target, not the other way round — the inner nesting
+          silently stops the menu opening. See AppListingActionsMenu.tsx. */}
+      <Tooltip label="Presets" disabled={menuOpened}>
+        <Menu.Target>
           <LegacyActionIcon aria-label="Presets">
             <Text c="dimmed" inline>
               <IconBookmark
@@ -74,8 +76,8 @@ export function PresetHeaderButton() {
               />
             </Text>
           </LegacyActionIcon>
-        </Tooltip>
-      </Menu.Target>
+        </Menu.Target>
+      </Tooltip>
       <Menu.Dropdown>
         <Menu.Item leftSection={<IconEye size={14} />} onClick={openPicker}>
           View presets

@@ -98,7 +98,14 @@ export const auditRemixSourcesJob = createJob(
         // External moderation (only if regex passed)
         if (!isProblematic) {
           try {
-            const { flagged: extFlagged } = await extModeration.moderatePrompt(prompt);
+            // 'remixAudit' is observability only — it keeps this batch job's latency out of the
+            // request-path population on the external-moderation histogram. Nobody is waiting on
+            // these calls, so blending them into `generate` would distort the one figure that
+            // metric exists to produce.
+            const { flagged: extFlagged } = await extModeration.moderatePrompt(
+              prompt,
+              'remixAudit'
+            );
             if (extFlagged) isProblematic = true;
           } catch {
             // If external moderation fails, skip — don't flag based on unavailability

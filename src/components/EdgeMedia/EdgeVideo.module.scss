@@ -72,3 +72,11 @@
   left: 50%;
   transform: translate(-50%, -50%);
 }
+
+.noFullscreenButton {
+  // controlsList="nofullscreen" only disables the button; Chrome still paints it greyed out,
+  // which reads as broken. This removes it. WebKit-only, matching controlsList's own support.
+  video::-webkit-media-controls-fullscreen-button {
+    display: none;
+  }
+}

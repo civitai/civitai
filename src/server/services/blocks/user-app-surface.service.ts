@@ -1,5 +1,5 @@
 /**
- * W5 v0 — reflection surface for /apps/installed.
+ * W5 v0 — reflection surface for /apps/activity.
  *
  * Provides the two read-only views the v0 ships:
  *   - `listMyScopeGrants`: aggregates per-app, "what JWT scopes does this
@@ -14,6 +14,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -64,7 +65,7 @@ export type ScopeGrantSurface = {
  * for "what an app can do today" shouldn't surface installs the user
  * has explicitly toggled off. Subscriptions are included regardless of
  * the enabled flag because the row IS the user's claim of intent (the
- * toggle on `/apps/installed` already lets them turn it off).
+ * toggle on `/apps/activity` already lets them turn it off).
  */
 export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurface[]> {
   // Post kill_per_model_installs: every install — blanket OR per-model-
@@ -117,9 +118,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   for (const row of subs) {
     if (!row.appBlock) continue;
     const isPinned =
-      row.slotId !== null &&
-      Array.isArray(row.targetModelIds) &&
-      row.targetModelIds.length > 0;
+      row.slotId !== null && Array.isArray(row.targetModelIds) && row.targetModelIds.length > 0;
     const existing = byAppBlock.get(row.appBlockId);
     if (existing) {
       if (isPinned) existing.modelInstallCount += row.targetModelIds.length;
@@ -174,12 +173,43 @@ export type AppActivityItem = {
   createdAt: Date;
   appBlockId: string;
   appName: string;
-  appSlug: string;
+  /**
+   * The app's STORE-LISTING slug (`AppBlock.blockId`), or NULL when the row's AppBlock
+   * does not resolve. See "the appSlug contract" below — it is never an `AppBlock.id`.
+   */
+  appSlug: string | null;
   blockInstanceId: string;
   scope: string;
   usdAmountCents: number;
   status: string;
 };
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * THE `appSlug` CONTRACT — shared by BOTH activity feeds below.
+ *
+ * 🔴 `appSlug` IS A STORE-LISTING SLUG OR IT IS NULL — IT IS NEVER AN `AppBlock` PRIMARY
+ * KEY, AND THE FALLBACK THAT MADE IT ONE WAS A GUARANTEED 404.
+ *
+ * Both feeds used to emit `appSlug: r.appBlock?.blockId ?? r.appBlockId`. Those two
+ * columns are not interchangeable: `AppBlock.blockId` is the SLUG that `AppListing.slug`
+ * mirrors (`app-listing-mapper.ts` writes `slug: ab.blockId`) and that
+ * `/apps/run/<slug>` resolves, while `appBlockId` is the FOREIGN KEY — the AppBlock's
+ * `id`. So whenever the join did NOT resolve, the fallback handed the UI a primary key
+ * dressed as a slug, and `ActivityAppName` rendered `/apps/store-preview/<pk>`: a link
+ * that can only 404, offered precisely on the rows where the app is least resolvable.
+ * That join genuinely does come back null — a scope-invocation row's `appBlockId` is
+ * NULLABLE (a pre-approval App-Dev-Tunnel spend writes `appBlockId: null` +
+ * `syntheticAppId`), and a `Restrict`-deleted AppBlock leaves the same shape.
+ *
+ * The fix is a NULL, not a better fallback: a row with no resolvable AppBlock has no
+ * listing to link to, and the consumer's job is to render plain text. That is
+ * `AppNameCrumb`'s rule ("Omitted → no store cluster … not a broken link"), applied at
+ * the source rather than re-derived per call site — and it is deliberately NOT a
+ * per-row client fetch, which on a paginated table would be an N+1.
+ *
+ * `appName` keeps its `?? r.appBlockId` tail on purpose: that is a DISPLAY string with no
+ * navigational meaning, so a last-resort identifier there is worse-looking, not broken.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
 export type AppActivityPage = {
   items: AppActivityItem[];
@@ -258,7 +288,9 @@ export async function listMyAppActivity({
       createdAt: r.attributedAt,
       appBlockId: r.appBlockId,
       appName,
-      appSlug: r.appBlock?.blockId ?? r.appBlockId,
+      // NULL, not `?? r.appBlockId` — see "the appSlug contract" above. `appBlockId` is
+      // the FK (AppBlock.id), and emitting it here produced `/apps/store-preview/<pk>`.
+      appSlug: r.appBlock?.blockId ?? null,
       blockInstanceId: r.blockInstanceId,
       scope: r.scope,
       usdAmountCents: r.usdAmountCents,
@@ -278,7 +310,7 @@ export async function listMyAppActivity({
  * `setSubscriptionPinnedVersion` is the write path that replaces the
  * removed `setInstallPinnedVersion`.
  *
- * The /apps/installed surface uses `BlockRegistry.listUserSubscriptions`
+ * The /apps/activity surface uses `BlockRegistry.listUserSubscriptions`
  * for the read side (it already returns availableVersions + pinned model
  * names + slotId / pinnedVersion on each row), so there is no separate
  * "list my model installs" call anymore.
@@ -333,7 +365,13 @@ export type ScopeInvocationItem = {
   createdAt: Date;
   appBlockId: string;
   appName: string;
-  appSlug: string;
+  /**
+   * The app's STORE-LISTING slug (`AppBlock.blockId`), or NULL when the row's AppBlock
+   * does not resolve — which on THIS feed is a live case, not a theoretical one: a
+   * pre-approval App-Dev-Tunnel spend writes `appBlockId: null` + `syntheticAppId`. See
+   * "the appSlug contract" above `AppActivityItem`.
+   */
+  appSlug: string | null;
   blockInstanceId: string;
   scope: string;
   endpoint: string;
@@ -390,7 +428,7 @@ export async function listMyScopeInvocations(opts: {
     appBlock: { blockId: string; manifest: unknown } | null;
   };
   const rows = (await dbRead.blockScopeInvocation.findMany({
-    // This is the BLOCK-token activity feed (/apps/installed). Unified scope-usage
+    // This is the BLOCK-token activity feed (/apps/activity). Unified scope-usage
     // audit: EXTERNAL-OAuth invocations now share this table but carry a NULL
     // `appBlockId` (+ `source = 'external-oauth'`); exclude them here so they don't
     // leak into a block-semantic UI. But NOT every null-`appBlockId` row is
@@ -409,9 +447,7 @@ export async function listMyScopeInvocations(opts: {
     // client types (CI-regenerated; may lag locally).
     where: {
       userId: opts.userId,
-      ...(opts.appBlockId
-        ? { appBlockId: opts.appBlockId }
-        : { OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }] }),
+      ...(opts.appBlockId ? { appBlockId: opts.appBlockId } : GLOBAL_SCOPE_ACTIVITY_OR),
     } as unknown as Prisma.BlockScopeInvocationWhereInput,
     orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
     take: cappedLimit + 1,
@@ -432,9 +468,7 @@ export async function listMyScopeInvocations(opts: {
   const hasNext = rows.length > cappedLimit;
   const visible = hasNext ? rows.slice(0, cappedLimit) : rows;
   const nextCursor =
-    hasNext && visible.length > 0
-      ? visible[visible.length - 1]!.id.toString()
-      : null;
+    hasNext && visible.length > 0 ? visible[visible.length - 1]!.id.toString() : null;
 
   const items: ScopeInvocationItem[] = visible.map((r) => {
     const manifest = (r.appBlock?.manifest ?? {}) as { name?: unknown };
@@ -447,7 +481,9 @@ export async function listMyScopeInvocations(opts: {
       createdAt: r.invokedAt,
       appBlockId: r.appBlockId,
       appName,
-      appSlug: r.appBlock?.blockId ?? r.appBlockId,
+      // NULL, not `?? r.appBlockId` — see "the appSlug contract" above. `appBlockId` is
+      // the FK (AppBlock.id), and emitting it here produced `/apps/store-preview/<pk>`.
+      appSlug: r.appBlock?.blockId ?? null,
       blockInstanceId: r.blockInstanceId,
       scope: r.scope,
       endpoint: r.endpoint,
@@ -559,15 +595,18 @@ export async function recordScopeInvocation(opts: {
     // an FK violation so a deleted REAL app on the normal path keeps the historical
     // "log, no row" behaviour (never mislabelled synthetic).
     const isFkViolation =
-      typeof err === 'object' &&
-      err !== null &&
-      (err as { code?: unknown }).code === 'P2003';
+      typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2003';
     // Gate the synthetic path on a SYNTHETIC-id PREFIX, not merely `dev && P2003`.
     // A dev token can carry a REAL `apb_<ulid>` appBlockId whose AppBlock row was
     // deleted between mint and spend — that FK-fails too, but it is NOT synthetic,
     // so it must keep the historical "log, no row" behaviour (never mislabelled
     // `synthetic_app_id = <real id>`). Only a genuine synthetic namespace retries.
-    if (opts.dev && isFkViolation && opts.appBlockId != null && isSyntheticAppBlockId(opts.appBlockId)) {
+    if (
+      opts.dev &&
+      isFkViolation &&
+      opts.appBlockId != null &&
+      isSyntheticAppBlockId(opts.appBlockId)
+    ) {
       try {
         // `appBlockId: null` + `syntheticAppId` require the schema change in this
         // PR (BlockScopeInvocation.appBlockId → nullable, + synthetic_app_id).

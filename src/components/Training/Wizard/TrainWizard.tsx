@@ -1,4 +1,4 @@
-import { Container, Group, Stack, Stepper, Title } from '@mantine/core';
+import { Container, Group, Stack, Title } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -9,6 +9,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { WizardStepper } from '~/components/Stepper/WizardStepper';
 import { TrainingFormBasic } from '~/components/Training/Form/TrainingBasicInfo';
 import { basePath } from '~/components/Training/Form/TrainingCommon';
 import { TrainingFormImages } from '~/components/Training/Form/TrainingImages';
@@ -115,44 +116,42 @@ export default function TrainWizard() {
             />
           </Group>
           <TrainStatusMessage />
-          <Stepper
+          <WizardStepper
             active={state.step - 1}
             onStepClick={(step) =>
               router.replace(`${pathWithId}&step=${step + 1}`, undefined, {
                 shallow: true,
               })
             }
-            allowNextStepsSelect={false}
-            size="sm"
           >
             {/* == Step 1: Model type selection + name */}
-            <Stepper.Step label={editing ? 'Edit LoRA' : 'Create your LoRA'}>
+            <WizardStepper.Step label={editing ? 'Edit LoRA' : 'Create your LoRA'}>
               <Stack>
                 <Title order={3}>{editing ? 'Edit LoRA' : 'Create your LoRA'}</Title>
                 <TrainingFormBasic model={model} />
               </Stack>
-            </Stepper.Step>
+            </WizardStepper.Step>
 
             {/* == Step 2: Upload images/zip, labeling */}
             {/*
               loading={uploading > 0}
               color={error + aborted > 0 ? 'red' : undefined}
             */}
-            <Stepper.Step label={hasFiles ? 'Edit training data' : 'Add training data'}>
+            <WizardStepper.Step label={hasFiles ? 'Edit training data' : 'Add training data'}>
               <Stack>
                 <Title order={3}>{hasFiles ? 'Edit training data' : 'Add training data'}</Title>
                 {model ? <TrainingFormImages model={model} /> : <NotFound />}
               </Stack>
-            </Stepper.Step>
+            </WizardStepper.Step>
 
             {/* == Step 3: Review and submit for training */}
-            <Stepper.Step label="Review and Submit">
+            <WizardStepper.Step label="Review and Submit">
               <Stack>
                 <Title order={3}>Review and Submit</Title>
                 {model ? <TrainingFormSubmit model={model} /> : <NotFound />}
               </Stack>
-            </Stepper.Step>
-          </Stepper>
+            </WizardStepper.Step>
+          </WizardStepper>
         </Stack>
       )}
     </Container>

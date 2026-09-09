@@ -1,7 +1,8 @@
 import { Anchor, Divider, Text, Title } from '@mantine/core';
 import type { ErrorInfo, ReactNode } from 'react';
 import React, { Component, Fragment } from 'react';
-import { filterHomeOptions } from '~/components/HomeContentToggle/HomeContentToggle';
+import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
+import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
@@ -21,7 +22,16 @@ class UserErrorBoundary extends Component<Props, State> {
     hasError: false,
   };
 
-  options = filterHomeOptions(this.props.features);
+  // Defaults, not the viewer's saved layout: this renders after something already threw, and a
+  // class component cannot reach the settings hook. `isAuthed: false` costs nothing — every
+  // signed-in-only destination is `hidden` by default, so it would not be listed either way.
+  options = (() => {
+    const { bar, more } = resolveNavItems(navRegistry, {
+      features: this.props.features,
+      isAuthed: false,
+    });
+    return [...bar, ...more];
+  })();
 
   static getDerivedStateFromError(error: Error) {
     // Update state so the next render will show the fallback UI

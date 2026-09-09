@@ -13,7 +13,12 @@ import {
 // tests drive the real clause builders through a bounded in-memory pager so that flipping
 // either half back to DESC fails on the first repeated row instead of hanging the runner.
 
-type Row = { id: number; publishedAt: Date | null; createdAt: Date };
+type Row = {
+  id: number;
+  publishedAt: Date | null;
+  createdAt: Date;
+  collectionItemId?: number;
+};
 
 const d = (iso: string) => new Date(iso);
 
@@ -50,6 +55,35 @@ const publishedFeed: Row[] = [
   { id: 7, publishedAt: d('2025-01-09T10:00:00.000Z'), createdAt: d('2025-01-09T09:00:00.000Z') },
 ];
 
+// Publication order is deliberately the inverse of add order, so Newest and Recently Added
+// produce exactly reversed feeds and a fall-through to the publishedAt branch cannot pass.
+const collectionFeed: Row[] = [
+  {
+    id: 501,
+    publishedAt: d('2020-01-01T00:00:00.000Z'),
+    createdAt: d('2020-01-01T00:00:00.000Z'),
+    collectionItemId: 94,
+  },
+  {
+    id: 502,
+    publishedAt: d('2022-01-01T00:00:00.000Z'),
+    createdAt: d('2022-01-01T00:00:00.000Z'),
+    collectionItemId: 93,
+  },
+  {
+    id: 503,
+    publishedAt: d('2024-01-01T00:00:00.000Z'),
+    createdAt: d('2024-01-01T00:00:00.000Z'),
+    collectionItemId: 92,
+  },
+  {
+    id: 504,
+    publishedAt: d('2026-01-01T00:00:00.000Z'),
+    createdAt: d('2026-01-01T00:00:00.000Z'),
+    collectionItemId: 91,
+  },
+];
+
 /**
  * Evaluate one of the sort expressions the module emits against an in-memory row. The
  * `default` throw is deliberate: if `getPostSortClauses` starts emitting an expression this
@@ -65,6 +99,10 @@ const evalSortKey = (expr: string, row: Row): number => {
       return (row.publishedAt ?? row.createdAt).getTime();
     case `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`:
       return (row.publishedAt ?? plusCentury(row.createdAt)).getTime();
+    case 'ci."id"':
+      if (row.collectionItemId === undefined)
+        throw new Error(`row ${row.id} has no collectionItemId under ${expr}`);
+      return row.collectionItemId;
     default:
       throw new Error(`post-sort pager cannot evaluate sort expression: ${expr}`);
   }
@@ -72,11 +110,18 @@ const evalSortKey = (expr: string, row: Row): number => {
 
 const parseDirection = (orderBy: string) => {
   const match = orderBy.match(/^(.+?)\s+(ASC|DESC),\s*p\.id\s+(ASC|DESC)$/);
-  if (!match) throw new Error(`unparseable orderBy: ${orderBy}`);
-  const [, , primaryDir, idDir] = match;
-  if (primaryDir !== idDir)
-    throw new Error(`orderBy mixes directions, keyset cursor cannot be single-tuple: ${orderBy}`);
-  return primaryDir === 'ASC' ? 1 : -1;
+  if (match) {
+    const [, , primaryDir, idDir] = match;
+    if (primaryDir !== idDir)
+      throw new Error(`orderBy mixes directions, keyset cursor cannot be single-tuple: ${orderBy}`);
+    return primaryDir === 'ASC' ? 1 : -1;
+  }
+
+  // Recently Added carries no p.id tiebreaker: the join is through a unique
+  // ("collectionId", "postId") index, so ci."id" is already total over the feed.
+  const single = orderBy.match(/^(.+?)\s+(ASC|DESC)$/);
+  if (!single) throw new Error(`unparseable orderBy: ${orderBy}`);
+  return single[2] === 'ASC' ? 1 : -1;
 };
 
 type ParsedCursor =
@@ -107,18 +152,21 @@ const fetchPage = ({
   rows,
   sort,
   draftOnly,
+  collectionJoined,
   limit,
   cursor,
 }: {
   rows: Row[];
   sort: PostSort;
   draftOnly?: boolean;
+  collectionJoined?: boolean;
   limit: number;
   cursor?: string;
 }) => {
   const { orderBy, primarySortProp, isDateSort, ascending } = getPostSortClauses({
     sort,
     draftOnly,
+    collectionJoined,
   });
   const direction = parseDirection(orderBy);
   const cursorClause = buildPostCursorClause({ cursor, primarySortProp, isDateSort, ascending });
@@ -160,11 +208,13 @@ const drain = ({
   rows,
   sort,
   draftOnly,
+  collectionJoined,
   limit,
 }: {
   rows: Row[];
   sort: PostSort;
   draftOnly?: boolean;
+  collectionJoined?: boolean;
   limit: number;
 }) => {
   const seen: number[] = [];
@@ -172,7 +222,14 @@ const drain = ({
   let pages = 0;
 
   while (pages < PAGE_CAP) {
-    const { items, nextCursor } = fetchPage({ rows, sort, draftOnly, limit, cursor });
+    const { items, nextCursor } = fetchPage({
+      rows,
+      sort,
+      draftOnly,
+      collectionJoined,
+      limit,
+      cursor,
+    });
     pages += 1;
     for (const id of items) {
       // A comparison pointing against the ORDER BY re-serves rows it already served. Fail on
@@ -219,6 +276,41 @@ describe('getPostSortClauses', () => {
     expect(getPostSortClauses({ sort: PostSort.Newest, draftOnly: true }).primarySortProp).toBe(
       `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`
     );
+  });
+
+  it('orders on the collection item, not the post, under Recently Added', () => {
+    expect(getPostSortClauses({ sort: PostSort.RecentlyAdded, collectionJoined: true })).toMatchObject(
+      {
+        orderBy: 'ci."id" DESC',
+        primarySortProp: 'ci."id"',
+        isDateSort: false,
+        ascending: false,
+      }
+    );
+  });
+
+  it('throws rather than silently ordering by publishedAt when the collection was not joined', () => {
+    // The silent fallback IS the regression: dropping `collectionJoined = true` in the service
+    // would reorder the feed by publication date with nothing to read. Assert it is loud.
+    expect(() => getPostSortClauses({ sort: PostSort.RecentlyAdded })).toThrow(
+      /requires the caller to join/
+    );
+  });
+
+  it('pages a collection feed in add order, opposite to the publication order', () => {
+    const recentlyAdded = drain({
+      rows: collectionFeed,
+      sort: PostSort.RecentlyAdded,
+      collectionJoined: true,
+      limit: 2,
+    });
+    expect(recentlyAdded.seen).toEqual([501, 502, 503, 504]);
+    expect(recentlyAdded.pages).toBeGreaterThan(1);
+
+    // Negative control: a pager that ignored primarySortProp would satisfy the assertion above.
+    expect(drain({ rows: collectionFeed, sort: PostSort.Newest, limit: 2 }).seen).toEqual([
+      504, 503, 502, 501,
+    ]);
   });
 
   it('adds no `> 0` filter for Oldest — it is a date sort, not a count sort', () => {

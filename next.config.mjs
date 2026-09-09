@@ -185,6 +185,9 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [
+      // pnpm link: to the local checkout during the data-graph port — Turbopack
+      // won't resolve the out-of-root symlink without transpiling it
+      'form-graph',
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
@@ -291,10 +294,20 @@ export default defineNextConfig(
       // Turning this flag ON is the only lever here that attacks the mechanism, because
       // P(collision) grows with the SQUARE of the chunk count. Measured on one tree:
       // 24,552 server chunks with the flag off vs 7,122 with it on (-71%).
-      // See claudedocs/turbopack-chunk-hash-collision-2026-08-18.md before flipping it —
-      // in particular, this flag is BROKEN on Next 16.3.0 (it fails the build with 19
-      // `__turbopack_context__.a is not a function` PostCSS errors) and only usable from
-      // 16.3.1 onward.
+      // 🔴 DO NOT FLIP IT ANYWAY — measured on 16.3.1, it does not fit the builder's
+      // memory ceiling. Two blockers were on record here. The first cleared: the flag is
+      // BROKEN on Next 16.3.0 (19 `__turbopack_context__.a is not a function` PostCSS
+      // errors) and compiles from 16.3.1 onward, which the repo is now on. The second
+      // closed the option: a same-commit A/B on 16.3.1 measured +43.0% peak `next-build`
+      // RSS / +30.3% build-container peak — LARGER than the ~+33% quoted above, not
+      // smaller. Projected onto the worst observed production build that lands at
+      // 37-39 GiB against the enforced 40 GiB limit, which is the exact band where the
+      // release build OOMKilled three times when this flag was last on (#3807).
+      // Dropping source maps to pay for it is also closed: it works, but server `.js.map`
+      // has three consumers including the hard `scripts/assert-compiled-branches.mjs`
+      // gate, and `turbopackSourceMaps` cannot be split client/server.
+      // Full evidence: claudedocs/turbopack-chunk-hash-collision-2026-08-18.md
+      // (§Option 1 is closed). The live fix is upstream, not this flag.
       turbopackServerSideNestedAsyncChunking: false,
       // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
@@ -374,19 +387,58 @@ export default defineNextConfig(
       // here would be pruned to nothing at build time anyway since
       // SERVER_DOMAIN_* env vars aren't exposed as Docker build ARGs.
       return [
+        // ── The `/apps/build` consolidation ────────────────────────────────────────
+        // `/apps/get-started` (a static marketing page whose every CTA pointed
+        // off-platform) and `/apps/mine` (the real author table) merged into ONE
+        // state-aware `/apps/build`: pitch → first-app → workbench. Both page components
+        // are DELETED, not emptied — a stub whose only job is to redirect is dead code
+        // that reads as a live route, and `appsPageWidths`' fs-walk would then demand a
+        // width classification for a route that never renders.
+        //
+        // 🔴 ALL THREE ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
+        // to **308**, which preserves the request METHOD — correct in general, but these
+        // are GET-only pages whose inbound links are bookmarks, notification URLs and
+        // search results, and 301 is the status those consumers cache and rewrite on. The
+        // two options are mutually exclusive in Next's schema, so this is `statusCode`
+        // alone.
+        //
+        // 🔴 NO CHAIN. `/apps/my-submissions` used to land on `/apps/mine`; it now lands
+        // on `/apps/build` DIRECTLY. Repointing only the two new rules and leaving that
+        // one would have made it a two-hop 301→301 — which costs a round trip, and which
+        // some link-equity and bookmark-rewriting consumers stop following.
         {
-          // `/apps/my-submissions` merged into `/apps/mine` — one author table over every
-          // app you own or hold a seat on, with each app's submission history nested in
-          // its row. The page component is DELETED, not emptied: a stub whose only job is
-          // to redirect is dead code that reads as a live route.
-          //
-          // 🔴 `statusCode: 301`, not `permanent: true`. Next maps `permanent` to **308**,
-          // which preserves the request METHOD — correct in general, but this is a GET-only
-          // author page whose inbound links are bookmarks, notification URLs and search
-          // results, and 301 is the status those consumers cache and rewrite on. The two
-          // options are mutually exclusive in Next's schema, so this is `statusCode` alone.
           source: '/apps/my-submissions',
-          destination: '/apps/mine',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        {
+          source: '/apps/mine',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        {
+          source: '/apps/get-started',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        // ── `/apps/installed` → `/apps/activity` ───────────────────────────────────
+        // The page was renamed when it stopped being an installs surface: it now opens
+        // on the activity feed, and its gate widened from `appBlocks` (the model-slot
+        // flag) to `appBlocks || appBlocksPages`, so a viewer whose only app usage is a
+        // full-page app reaches it. The page component is MOVED (`installed.tsx` →
+        // `activity.tsx`), not stubbed — same reason as the three rules above.
+        //
+        // 🔴 `statusCode: 301`, matching its neighbours and for the same reason: Next
+        // maps `permanent: true` to 308, and these are GET-only pages whose inbound
+        // links are bookmarks and search results. The two keys are mutually exclusive
+        // in Next's schema.
+        //
+        // Next preserves the query string across a redirect, so an inbound
+        // `/apps/installed?tab=permissions` keeps its `?tab=` — which only became a
+        // meaningful statement when the tabs went URL-backed in the same change.
+        {
+          source: '/apps/installed',
+          destination: '/apps/activity',
           statusCode: 301,
         },
         {

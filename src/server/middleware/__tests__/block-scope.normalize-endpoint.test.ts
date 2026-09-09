@@ -252,6 +252,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'shared-storage',
       'tip',
       'tip-allowance',
+      // The read-only chat-tool surface (#398 AC5). Added deliberately: this
+      // pin is what makes a new withBlockScope route a conscious edit rather
+      // than something that silently widens the audit-log segment allowlist.
+      'tools',
       'top',
       'v1',
     ]);

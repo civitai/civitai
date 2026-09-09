@@ -51,6 +51,13 @@ vi.mock('~/utils/trpc', () => ({
   // this; a wholesale module mock MUST re-declare it or the ESM link fails.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -120,6 +127,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. The DEFAULT (host-veil) presentation; the bootSkeleton tests
+  // below override it explicitly.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -174,12 +184,162 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     await expect.element(page.getByText('Starting Budgeted Generator…')).toBeInTheDocument();
     // Its initial, in the same Avatar treatment the store card uses.
     await expect.element(page.getByText('B', { exact: true })).toBeInTheDocument();
-    // The existing a11y contract is preserved: a busy live REGION, plus a
-    // labelled graphic.
+    // The a11y contract: the REGION announces, and it is the only thing that
+    // does. The skeleton group is decorative and stays out of the tree.
     const overlay = overlayEl();
     expect(overlay.getAttribute('role')).toBe('status');
     expect(overlay.getAttribute('aria-busy')).toBe('true');
-    await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
+
+    // Asserted as STATE, not via a label query. `getByLabelText` does NOT
+    // filter aria-hidden, so an assertion phrased that way passes identically
+    // whether the group is an exposed labelled graphic or a hidden decorative
+    // box — i.e. it reads as a11y coverage while pinning nothing. Giving this
+    // group a role is the specific regression: its name would then be read as
+    // part of the live region and the app name would announce twice.
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    expect(group.getAttribute('aria-hidden')).toBe('true');
+    expect(group.getAttribute('role')).toBeNull();
+    expect(group.getAttribute('aria-label')).toBeNull();
+  });
+
+  test('the launch state is a content-shaped SKELETON, not a spinner', async () => {
+    // The sidebar slot already gets this for free — `IframeHost` renders
+    // BlockFallback's <Skeleton> while its block loads. This page was the only
+    // block surface still showing a bare spinner, so the two hosts disagreed
+    // about what a loading app looks like. Pinning the shape, not the styling:
+    // a spinner reappearing here is the regression this catches.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    // Mantine's Skeleton is the shared primitive both hosts use; asserting the
+    // rendered elements rather than a class keeps this about "there are
+    // placeholder bars", not about Mantine's internals.
+    const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
+    expect(bars.length).toBeGreaterThan(1);
+
+    // POSITIVE CONTROL for the reduced-motion test below. Asserting only that
+    // `data-animate` is ABSENT under reduce-motion is satisfied by a build
+    // where NOBODY ever sees the shimmer: `animate={false}` on all four bars
+    // survives the whole file. One direction of a boolean is not a pin, and
+    // this is the direction the feature actually exists for.
+    for (const bar of bars) {
+      expect(bar.getAttribute('data-animate')).toBe('true');
+    }
+
+    // …and the spinner it replaced is GONE. Without this the test passes with
+    // BOTH rendered, which is the half-done state a partial revert produces.
+    expect(overlayEl().querySelector('.mantine-Loader-root')).toBeNull();
+  });
+
+  test('the skeleton stops shimmering under prefers-reduced-motion', async () => {
+    // Same call the fallback makes (`animate={!reduceMotion}`). An overlay that
+    // keeps shimmering under reduce-motion is a real a11y defect, and it is
+    // invisible to every other test here because they all run with it false.
+    mocks.reduceMotion = true;
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
+    expect(bars.length).toBeGreaterThan(1);
+    // Mantine renders `data-animate="true"` when animating and omits the
+    // attribute entirely when not (`Skeleton.mjs` `mod: [{ visible, animate }]`
+    // in 7.17.8 — confirmed against the rendered DOM, not assumed). The
+    // OPPOSITE direction is asserted in the test above; without that pair this
+    // one alone is satisfied by never animating at all.
+    for (const bar of bars) {
+      expect(bar.getAttribute('data-animate')).toBeNull();
+    }
+  });
+
+  // `bootSkeleton` stands down THREE separate things, and leaving any one of
+  // them in place makes the app's own boot state invisible — i.e. the flag is
+  // inert and the app author has no way to tell. One test each, so a failure
+  // names WHICH one regressed rather than just "the contract broke".
+  const renderBootSkeletonApp = async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} bootSkeleton onConsentGranted={vi.fn()} />);
+    await expect.element(page.getByTestId('app-page-iframe')).toBeInTheDocument();
+    // Every assertion below is about the PRE-ready window — the one the app
+    // paints its own skeleton in. If this ever went true the tests would be
+    // asserting the post-reveal state and would pass for the wrong reason.
+    expect(iframeEl().getAttribute('data-block-ready')).toBe('false');
+    return iframeEl();
+  };
+
+  test('bootSkeleton: the host renders NO veil over the app', async () => {
+    const frame = await renderBootSkeletonApp();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    expect(page.getByTestId('app-page-loading-skeleton').query()).toBeNull();
+    // Still inert until it has a token — a skeleton is not interactive.
+    expect(frame.style.pointerEvents).toBe('none');
+  });
+
+  test('bootSkeleton: the iframe is VISIBLE from mount, not opacity 0', async () => {
+    const frame = await renderBootSkeletonApp();
+    expect(frame.style.opacity).toBe('1');
+  });
+
+  test('bootSkeleton: the frame is marked aria-busy while it boots', async () => {
+    // The veil was the host's ONLY loading announcement (role="status" +
+    // aria-busy). Standing it down removed it with nothing in its place — the
+    // app's boot state is cross-origin, so the host cannot borrow the app's.
+    const frame = await renderBootSkeletonApp();
+    expect(frame.getAttribute('aria-busy')).toBe('true');
+    // And it must not persist past the handshake, or the region claims to be
+    // loading forever.
+    await driveToReady();
+    expect(iframeEl().getAttribute('aria-busy')).toBeNull();
+  });
+
+  test('bootSkeleton: a RETRY brings the veil back, so the user gets feedback', async () => {
+    // `key={reloadNonce}` remounts the iframe, so on a retry the app's document
+    // is being re-fetched and its skeleton is NOT on screen. The "Retrying …"
+    // copy lives inside the veil, so suppressing the veil here left an empty
+    // region and no sign anything had happened.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        bootSkeleton
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+      />
+    );
+    // Terminal first — that is where Retry is offered.
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    await page.getByRole('button', { name: /Retry/i }).click();
+
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByText(/Retrying/)).toBeInTheDocument();
+
+    // 🔴 EXACTLY ONE busy region. The veil is role="status" and the iframe
+    // carries aria-busy while booting; during a retry BOTH are on screen, so
+    // without the `reloadNonce === 0` term the page announces twice. Measured
+    // at 2 before that term existed — and the comment claimed the exclusion
+    // while the code did not implement it, which is the shape that survives a
+    // reviewer.
+    const busy = document.querySelectorAll('[aria-busy="true"],[role="status"]');
+    expect(busy.length).toBe(1);
+    expect((busy[0] as HTMLElement).getAttribute('role')).toBe('status');
+  });
+
+  test('bootSkeleton: no translateY settle and no reveal transition', async () => {
+    // The settle would move the app's skeleton on arrival — a layout shift at
+    // the exact moment an app-painted boot state exists to avoid one.
+    const frame = await renderBootSkeletonApp();
+    expect(frame.style.transform).toBe('none');
+    expect(frame.style.transition).toBe('');
+  });
+
+  test('an app that does NOT declare bootSkeleton keeps the veil (safe default)', async () => {
+    // The default matters more than the opt-in: no veil plus an empty #root is a
+    // blank white iframe, which is worse than what the veil was doing.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    expect(iframeEl().style.opacity).toBe('0');
   });
 
   test('the branded copy runs appName through the chrome sanitizer (control/bidi stripped)', async () => {

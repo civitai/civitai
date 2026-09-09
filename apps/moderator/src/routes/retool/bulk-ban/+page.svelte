@@ -95,6 +95,42 @@
   let noteUnbannedOnly = $state(false);
   const noteTargets = $derived(noteUnbannedOnly ? bannable : kept);
 
+  // The count beside a capped list has to be the search’s own, never the page size: an IP carrying
+  // 908 registrations rendered "(500)", which reads as the answer rather than as the cap.
+  const shownOf = (r: { accounts: unknown[]; total: number }) =>
+    r.total > r.accounts.length
+      ? `${num(r.accounts.length)} of ${num(r.total)}`
+      : num(r.total);
+
+  // `IpAccount['status']` is the app's only string spelling of this; every other consumer of
+  // `usersByIds` carries the timestamps. Both lists on THIS page now render through one derivation.
+  const accountStatus = (a: { bannedAt: Date | null; deletedAt: Date | null }) =>
+    a.bannedAt ? 'banned' : a.deletedAt ? 'deleted' : 'active';
+
+  const ipShown = $derived(data.ipAccounts.accounts.length);
+  const remainingIps = $derived(data.ipAccounts.total - data.ipAccounts.offset - ipShown);
+  const hasMoreIps = $derived(remainingIps > 0);
+  // Rows, not pages: the question is whether the whole ring has been seen.
+  const ipRange = $derived(
+    data.ipAccounts.total > ipShown
+      ? `${num(data.ipAccounts.offset + 1)}–${num(data.ipAccounts.offset + ipShown)} of ${num(data.ipAccounts.total)}`
+      : num(data.ipAccounts.total)
+  );
+  // Every other input on this page lives in the URL so a moderator can hand a colleague the exact
+  // search; the offset travels the same way or Previous lands on a different set.
+  const ipPageUrl = (offset: number) => {
+    const next = new URL(page.url);
+    if (offset > 0) next.searchParams.set('ipOffset', String(offset));
+    else next.searchParams.delete('ipOffset');
+    return `${next.pathname}${next.search}`;
+  };
+
+  // Only `active` can be banned. The other three stay VISIBLE — a ring that has been actioned before
+  // is what a moderator reads this panel for — but adding them would only earn an already-banned error.
+  const bannableIps = $derived(
+    data.ipAccounts.accounts.filter((a) => a.status === 'active').map((a) => a.userId)
+  );
+
   const idList = (rows: { id: number }[]) => rows.map((r) => r.id).join('\n');
   const addToList = (newIds: number[]) => {
     const existing = new Set(
@@ -208,9 +244,9 @@
 
 <!-- Absence must not read as "this account is clean": an empty IP panel because ClickHouse is down
      looks exactly like an account that shares nothing with anyone. -->
-{#if data.clickhouseDown.length}
+{#if data.sourcesDown.length}
   <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200" role="status">
-    Could not read {data.clickhouseDown.join(' or ')} — those panels are empty because the source is
+    Could not read {data.sourcesDown.join(' or ')} — those panels are empty because the source is
     unavailable, not because there is nothing there. The list and the ban path below are unaffected.
   </div>
 {/if}
@@ -237,8 +273,14 @@
   {/if}
 {/if}
 
+{#snippet statusBadge(status: "active" | "banned" | "deleted" | "gone")}
+  {#if status === 'banned'}<Badge variant="destructive">already banned</Badge>{/if}
+  {#if status === 'deleted'}<Badge variant="secondary">deleted</Badge>{/if}
+  {#if status === 'gone'}<Badge variant="secondary">no account</Badge>{/if}
+{/snippet}
+
 <!-- IP and domain expansion START a list, so they must render with no pasted ids at all. -->
-{#if data.candidates.length || data.unmatched.length || data.ipAccounts.length || data.domainAccounts.length}
+{#if data.candidates.length || data.unmatched.length || data.ipAccounts.accounts.length || data.domainAccounts.accounts.length}
   <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
     <section class="min-w-0 flex-1 rounded-xl border border-dark-4 bg-dark-6 p-5">
       <h2 class="mb-1 text-sm font-semibold text-white">
@@ -259,8 +301,7 @@
             <a href={userLookupUrl(c.id)} class={LINK_CLASS}>{c.username ?? `#${c.id}`}</a>
             <code class="text-xs text-dark-2">#{c.id}</code>
             <span class="text-xs text-dark-2">{c.email ?? '—'}</span>
-            {#if c.bannedAt}<Badge variant="destructive">already banned</Badge>{/if}
-            {#if c.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
+            {@render statusBadge(accountStatus(c))}
             <button
               type="button"
               class="text-xs text-dark-2 hover:text-red-300"
@@ -419,53 +460,86 @@
         </ul>
       {/if}
 
-      {#if data.ipAccounts.length}
+      {#if data.ipAccounts.accounts.length}
         <h3 class="text-xs tracking-wide text-dark-2 uppercase">
-          Accounts on those IPs ({num(data.ipAccounts.length)})
+          Accounts on those IPs ({ipRange})
         </h3>
         <p class="mb-1 text-xs text-dark-2">
-          Registration only. A carrier or office IP will list unrelated accounts — confirm before adding.
+          Registration only, newest first. A carrier or office IP will list unrelated accounts —
+          confirm before adding.
         </p>
         <ul class="max-h-72 space-y-0.5 overflow-y-auto text-sm">
-          {#each data.ipAccounts as a (a.userId)}
-            <li class="flex justify-between gap-2">
-              <a href={userLookupUrl(a.userId)} class={LINK_CLASS}>#{a.userId}</a>
-              <span class="text-xs text-dark-2">{dateTime(a.registeredAt)}</span>
+          {#each data.ipAccounts.accounts as a (a.userId)}
+            <li class="flex flex-wrap items-baseline justify-between gap-x-2">
+              <a href={userLookupUrl(a.userId)} class={LINK_CLASS}>{a.username ?? `#${a.userId}`}</a>
+              <span class="flex items-baseline gap-2">
+                {@render statusBadge(a.status)}
+                <span class="text-xs text-dark-2">{dateTime(a.registeredAt)}</span>
+              </span>
             </li>
           {/each}
         </ul>
         <!-- This panel is where a list of one becomes a list of a ring, and the ids were reachable only
              one row link at a time. -->
         <div class="mt-2 flex flex-wrap items-center gap-2">
-          <Button
-            size="xs"
-            variant="outline"
-            onclick={() => addToList(data.ipAccounts.map((a) => a.userId))}
-          >
-            Add {num(data.ipAccounts.length)} to the list
+          <Button size="xs" variant="outline" onclick={() => addToList(bannableIps)}>
+            Add {num(bannableIps.length)} to the list
           </Button>
+          {#if bannableIps.length < data.ipAccounts.accounts.length}
+            <span class="text-xs text-dark-2">
+              {num(data.ipAccounts.accounts.length - bannableIps.length)} already banned, deleted or gone
+            </span>
+          {/if}
         </div>
+        <!-- Already-banned rows are marked rather than removed, so working the list does not shrink it.
+             Without these the other 408 accounts on a reported IP were unreachable by any action. -->
+        {#if data.ipAccounts.total > data.ipAccounts.limit}
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={data.ipAccounts.offset === 0}
+              href={ipPageUrl(data.ipAccounts.offset - data.ipAccounts.limit)}
+            >
+              Previous
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!hasMoreIps}
+              href={ipPageUrl(data.ipAccounts.offset + data.ipAccounts.limit)}
+            >
+              Next {num(Math.min(data.ipAccounts.limit, remainingIps))}
+            </Button>
+          </div>
+        {/if}
         <details class="mt-2">
-          <summary class="cursor-pointer text-xs text-dark-2">Copy these IDs</summary>
+          <summary class="cursor-pointer text-xs text-dark-2">
+            Copy the {num(bannableIps.length)} bannable IDs
+          </summary>
           <Textarea
             readonly
             rows={4}
             class="mt-2 max-h-40 overflow-y-auto font-mono text-xs"
-            value={data.ipAccounts.map((a) => a.userId).join('\n')}
+            value={bannableIps.join('\n')}
           />
         </details>
       {/if}
 
-      {#if data.domainAccounts.length}
+      {#if data.domainAccounts.accounts.length}
         <h3 class="mt-3 text-xs tracking-wide text-dark-2 uppercase">
-          Accounts on those domains ({num(data.domainAccounts.length)})
+          Accounts on those domains ({shownOf(data.domainAccounts)})
         </h3>
         <p class="mb-1 text-xs text-dark-2">
-          Not already banned or deleted. A mainstream provider will list unrelated accounts — this is
-          for disposable domains.
+          Not already banned or deleted, newest first. A mainstream provider will list unrelated
+          accounts — this is for disposable domains.
+          {#if data.domainAccounts.total > data.domainAccounts.accounts.length}
+            Showing the {num(data.domainAccounts.accounts.length)} most recent of
+            {num(data.domainAccounts.total)}.
+          {/if}
         </p>
         <ul class="max-h-72 space-y-0.5 overflow-y-auto text-sm">
-          {#each data.domainAccounts as a (a.id)}
+          {#each data.domainAccounts.accounts as a (a.id)}
             <li class="flex flex-wrap items-baseline justify-between gap-x-2">
               <a href={userLookupUrl(a.id)} class={LINK_CLASS}>{a.username ?? `#${a.id}`}</a>
               <span class="text-xs text-dark-2">{a.email ?? '—'}</span>
@@ -476,9 +550,9 @@
           <Button
             size="xs"
             variant="outline"
-            onclick={() => addToList(data.domainAccounts.map((a) => a.id))}
+            onclick={() => addToList(data.domainAccounts.accounts.map((a) => a.id))}
           >
-            Add {num(data.domainAccounts.length)} to the list
+            Add {num(data.domainAccounts.accounts.length)} to the list
           </Button>
         </div>
         <details class="mt-2">
@@ -487,7 +561,7 @@
             readonly
             rows={4}
             class="mt-2 max-h-40 overflow-y-auto font-mono text-xs"
-            value={idList(data.domainAccounts)}
+            value={idList(data.domainAccounts.accounts)}
           />
         </details>
       {/if}

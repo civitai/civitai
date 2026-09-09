@@ -7,6 +7,7 @@ import type { FilterSubTypes } from '~/providers/FiltersProvider';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import {
   ArticleSort,
+  ArticleSortHidden,
   BountySort,
   BuzzWithdrawalRequestSort,
   CollectionSort,
@@ -14,7 +15,9 @@ import {
   ImageSort,
   ImageSortHidden,
   ModelSort,
+  ModelSortHidden,
   PostSort,
+  PostSortHidden,
   QuestionSort,
   ThreadSort,
   ToolSort,
@@ -30,12 +33,12 @@ type SortFilterComponentProps = {
 type SortFilterProps = StatefulProps | DumbProps;
 
 const sortOptions = {
-  models: Object.values(ModelSort),
-  posts: Object.values(PostSort),
+  models: Object.values(ModelSort).filter((x) => !Object.values(ModelSortHidden).includes(x)),
+  posts: Object.values(PostSort).filter((x) => !Object.values(PostSortHidden).includes(x)),
   images: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   modelImages: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   questions: Object.values(QuestionSort),
-  articles: Object.values(ArticleSort),
+  articles: Object.values(ArticleSort).filter((x) => !Object.values(ArticleSortHidden).includes(x)),
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),

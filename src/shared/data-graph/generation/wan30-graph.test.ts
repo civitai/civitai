@@ -62,3 +62,14 @@ describe('wan 3.0 cfgScale', () => {
     expect(init('txt2vid', 'WanVideo-25-T2V', 'Wan Video 2.5 T2V').hasNode('cfgScale')).toBe(true);
   });
 });
+
+describe('wan 3.0 prime', () => {
+  // usePrime routes to wan3.0-video-prime, which costs more — so it must be off
+  // unless the user asks for it, and must not leak onto other Wan versions.
+  it('is offered for 3.0 only, and defaults off', () => {
+    const g = init('txt2vid');
+    expect(g.hasNode('usePrime')).toBe(true);
+    expect(g.getSnapshot().usePrime).toBe(false);
+    expect(init('txt2vid', 'WanVideo-25-T2V', 'Wan Video 2.5 T2V').hasNode('usePrime')).toBe(false);
+  });
+});

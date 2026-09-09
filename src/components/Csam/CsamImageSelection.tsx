@@ -154,7 +154,7 @@ export function CsamImageSelection({
           </IsClient>
         </div>
       </MasonryProvider>
-      <Card className="sticky inset-x-0 bottom-0 z-30 rounded-none">
+      <Card className="sticky inset-x-0 bottom-0 z-30 rounded-none pb-[max(var(--mantine-spacing-md),var(--safe-area-inset-bottom))]">
         <Group justify="flex-end">
           {/* <Button variant="default">Cancel</Button> */}
           <Badge>

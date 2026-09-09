@@ -7,6 +7,9 @@ import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+// Eager, and shared by every importer of this module: subscriptions.service statically
+// pulls clickhouse, redis and freshdesk, so anything added to its graph is added to theirs.
+import { deliverMonthlyCosmetics } from '~/server/services/subscriptions.service';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
@@ -1067,6 +1070,11 @@ async function grantReferralSubscription(
         metadata: nextMetadata as Prisma.InputJsonValue,
       },
     });
+    // `tx` is load-bearing: the subscription row above is uncommitted, so a delivery on
+    // any other client reads no active sub and silently inserts nothing. Unguarded because
+    // a failed insert aborts this transaction regardless, and the rollback leaves the
+    // tokens unspent and retryable — the same contract as the grant itself.
+    await deliverMonthlyCosmetics({ userIds: [userId], tx });
     return { created: true, activeTier: active.tier, queuedCount: queue.length };
   }
 
@@ -1082,6 +1090,7 @@ async function grantReferralSubscription(
       metadata: nextMetadata as Prisma.InputJsonValue,
     },
   });
+  await deliverMonthlyCosmetics({ userIds: [userId], tx });
   return { updated: true, activeTier: active.tier, queuedCount: queue.length };
 }
 
@@ -1163,6 +1172,10 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
           } as Prisma.InputJsonValue,
         },
       });
+      // After the update, so the delivery resolves against the tier just promoted to.
+      // A throw here aborts this subscription's transaction AND the rest of the batch —
+      // the same exposure the update above already carries; the 01:00 cron re-delivers.
+      await deliverMonthlyCosmetics({ userIds: [sub.userId], tx });
       return 'advanced' as const;
     });
 

@@ -25,6 +25,7 @@ vi.mock('~/libs/profanity-simple', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: mockThrowOnBlockedLinkDomain,
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(async () => []),

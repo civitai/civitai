@@ -503,13 +503,12 @@ export const actions: Actions = {
 
   // Checkbox ids arrive as repeated fields, so they are read off the raw FormData rather than the
   // parsed object, which keeps only the last value per name.
-  contentAction: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return contentFail('Not permitted.');
+  contentAction: requiresGrant('user.comments.bulk', async ({ request, locals }) => {
     const form = await request.formData();
     const input = parseForm(
       userIdSchema.extend({
         kind: z.enum(['comments', 'reviews']),
-        op: z.enum(['delete', 'tos', 'exclude', 'include']),
+        op: z.enum(['delete', 'tos', 'untos', 'exclude', 'include']),
       }),
       form
     );
@@ -522,12 +521,17 @@ export const actions: Actions = {
         .filter((n) => Number.isInteger(n) && n > 0);
 
     if (input.kind === 'comments') {
-      if (input.op !== 'delete' && input.op !== 'tos')
+      if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')
         return contentFail('Unsupported action for comments.');
       const commentIds = ids('commentIds');
       const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
-        action: input.op === 'delete' ? 'bulkDelete' : 'removeAsTos',
+        action:
+          input.op === 'delete'
+            ? 'bulkDelete'
+            : input.op === 'tos'
+              ? 'removeAsTos'
+              : 'restoreFromTos',
         commentIds,
         commentV2Ids,
         userId: input.userId,
@@ -542,7 +546,8 @@ export const actions: Actions = {
       };
     }
 
-    if (input.op === 'tos') return contentFail('Unsupported action for reviews.');
+    if (input.op === 'tos' || input.op === 'untos')
+      return contentFail('Unsupported action for reviews.');
     const result = await bulkReviewAction({
       action: input.op === 'delete' ? 'delete' : 'setExclude',
       reviewIds: ids('reviewIds'),
@@ -552,12 +557,11 @@ export const actions: Actions = {
     });
     if (!result.ok) return contentFail(result.error);
     return { success: true };
-  },
+  }),
 
   // The typed-username confirmation is checked SERVER-side as well as in the UI: this is irreversible,
   // and a client-only guard is no guard at all against a double-submit or a forged post.
-  purgeContent: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+  purgeContent: requiresGrant('user.purge', async ({ request, locals }) => {
     const input = parseForm(
       userIdSchema.extend({ confirm: z.string().trim() }),
       await request.formData()
@@ -572,10 +576,9 @@ export const actions: Actions = {
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
-  },
+  }),
 
-  setBanned: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+  setBanned: requiresGrant('user.ban', async ({ request, locals }) => {
     // reasonCode is validated against the SAME list the main app's endpoint parses. It rejects anything
     // else with a 500 before the ban happens, so an unchecked value here is a ban that silently does not
     // occur.
@@ -598,7 +601,7 @@ export const actions: Actions = {
     });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
-  },
+  }),
 
   addTimedMute: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');

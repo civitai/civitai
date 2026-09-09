@@ -2,11 +2,26 @@
 //
 // Mounted at `trpc.apps.shared.*` (block-token authed) + `trpc.apps.mod.*`
 // (session moderatorProcedure). This is the FIRST App Blocks surface that opens
-// the per-app datastore to PUBLIC cross-user writes — today per-user KV is
-// reachable only by mods + app-dev-testers (apps.router `assertViewerIsAppDeveloper`).
-// Every control here exists because a community app serves GENERAL users; see the
-// hardened design (`shared-storage-design.md`, "HARDENED per design security
-// review"). Read that before touching auth/counter/trust logic.
+// the per-app datastore to PUBLIC cross-user writes. The per-user KV path
+// (apps.router) is scoped by every query to the writer's OWN
+// (block_instance_id, user_id) rows, and is gated on the RUN capability
+// (`app-blocks-enabled`, via apps.router's `assertAppBlocksEnabledForTokenUser`).
+// It is NO LONGER limited to app authors: `assertViewerIsAppDeveloper` left that
+// path when per-user storage was re-gated on the run capability, and now guards
+// only the mod review-preview ("run for real") branch. That is CLOSE TO, but not
+// identical to, "whoever may open the app at all" — the block-token mint gates on
+// `getFeatureFlags({ user }).appBlocks`, which falls back to the static
+// `availability: ['mod']` evaluation when Flipt returns null, whereas
+// `isAppBlocksEnabled` has no mod floor. So with Flipt unavailable a moderator can
+// mint a token that the per-user KV gate then refuses: a divergence in the SAFE
+// direction, on a path that is already degraded.
+//
+// Here, by contrast, a write is readable, votable and reportable by OTHER users
+// of the app, which is what every control below (min-trust, per-user row cap,
+// rate limits, revocation, content safety) is answering. The security review that
+// motivated those controls is not a document in this repo; the rationale that
+// survives is the per-control comments below — read those before touching
+// auth/counter/trust logic.
 //
 // Data model (per-app schema `app_<slug>`, provisioned by AppStorageProvisioner):
 //   - shared_kv(key ULID PK [SERVER-generated], author_user_id, value jsonb, …)

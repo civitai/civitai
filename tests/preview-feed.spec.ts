@@ -49,7 +49,7 @@ import { trpcQuery } from './preview-trpc';
  * the DB in a preview: getInfiniteImagesHandler routes a broad query (no
  * postId/modelId/collection/reaction filter → requiresDbPath=false) through
  * getAllImagesIndex — the MEILISEARCH-backed index path — whenever
- * `features.imageIndexFeed` or the BitDex Flipt flag (BITDEX_IMAGE_SEARCH) is on,
+ * `features.imageIndexFeed` is on,
  * which is the production-like default (src/server/controllers/image.controller.ts
  * :300-320). That path hits an image search index the preview doesn't populate and
  * then hydrates from the dev clone, so a broad image.getInfinite returns flaky /
@@ -84,11 +84,9 @@ test.describe('browse feed renders real content (tester)', () => {
     // app's background traffic never idles, so a networkidle nav hangs to timeout.
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    const data = await trpcQuery<{ items: Array<{ id: number }> }>(
-      page.request,
-      'model.getAll',
-      { limit: FEED_LIMIT }
-    );
+    const data = await trpcQuery<{ items: Array<{ id: number }> }>(page.request, 'model.getAll', {
+      limit: FEED_LIMIT,
+    });
 
     const items = data?.items ?? [];
     // STRUCTURE: a real, non-empty page came back. An empty models feed is the

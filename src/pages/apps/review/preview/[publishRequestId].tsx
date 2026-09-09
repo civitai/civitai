@@ -80,9 +80,25 @@ export default function ReviewPreviewPage({ publishRequestId, slug }: ReviewPrev
   return (
     <>
       <Meta title={`Review preview — ${slug}`} deIndex />
-      {/* Fill the viewport under the global 60px header so the mod reviews the
-          app full-size (the modal used a fixed 420px iframe). */}
-      <Box style={{ height: 'calc(100dvh - var(--header-height))', width: '100%' }}>
+      {/* Fill the viewport under the global header so the mod reviews the app
+          full-size (the modal uses a fixed 420px panel).
+
+          🔴 A FLEX COLUMN, for the same reason as the modal's panel:
+          `ReviewBlockPreviewHost` passes `fit="fill"`, so this box is what the
+          host resolves its height against. Before, the host claimed
+          `100dvh − header` for ITSELF while the run-for-real banner still had to
+          fit above it inside a box of exactly that height, so the content
+          overflowed by the banner's height and the page scrolled beside the
+          block's own scrollbar. Bounding here and letting the host take the
+          remainder removes the arithmetic instead of re-tuning it. */}
+      <Box
+        style={{
+          height: 'calc(100dvh - var(--header-height))',
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         {isLive && stableIframeSrc ? (
           <ReviewBlockPreviewHost
             publishRequestId={publishRequestId}

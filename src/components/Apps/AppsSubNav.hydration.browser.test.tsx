@@ -10,41 +10,55 @@ import type * as TrpcMod from '~/utils/trpc';
 /**
  * Regression: `AppsSubNav` HYDRATION SAFETY (prod incident — every /apps page inert).
  *
- * The conditional sub-nav tabs (Installed / My submissions / Revenue / Review) are
- * driven by the client-only `blocks.getNavSummary` query. tRPC runs with `ssr:false`,
- * so the SERVER always renders the always-on set (`EMPTY_SUMMARY`), while the query's
- * data is present in the CLIENT's FIRST render. For a user with
- * installs/submissions/approved-apps/reviewer status the first client paint rendered
- * 6 tabs against the server's 2 — a React hydration mismatch (#418/#425) that bailed
- * hydration of the ENTIRE /apps page ROOT, leaving every /apps page un-hydrated and
- * inert (dead buttons; the `/apps/submit?edit=` query never fired → a permanent
- * "Loading your listing…").
+ * The conditional sub-nav tabs (Installed / Invites / Revenue / Review) are driven by the
+ * client-only `blocks.getNavSummary` query. tRPC runs with `ssr:false`, so the SERVER
+ * always renders the deferred-off set (`EMPTY_SUMMARY`), while the query's data is
+ * present in the CLIENT's FIRST render. For a user with
+ * installs/invites/approved-apps/reviewer status the first client paint rendered 6 tabs
+ * against the server's 2 — a React hydration mismatch (#418/#425) that bailed hydration
+ * of the ENTIRE /apps page ROOT, leaving every /apps page un-hydrated and inert (dead
+ * buttons; the `/apps/submit?edit=` query never fired → a permanent "Loading your
+ * listing…").
  *
  * The fix gates the SUMMARY-driven tabs on `useIsClient()` (false on the server AND
  * the first client paint, true only AFTER mount) so the server render and the first
  * client render are IDENTICAL — those tabs reveal only post-hydration.
  *
- * ── THE AUTHOR GATE IS DELIBERATELY *NOT* `isClient`-DEFERRED ────────────────────
- * `Create` now renders only for `isAuthor` (`isAppDeveloper(user, { appBlocksAuthor })`).
- * Both of that predicate's inputs are SSR-seeded and FROZEN — `features.appBlocksAuthor`
- * comes from `pageProps.flags` (resolved server-side in `_app.getInitialProps`, frozen
- * by `useState(initialFlags)`; it is NOT a `toggleable` flag so the client
- * `user.getFeatureFlags` overlay cannot move it), and `isModerator` rides
- * `SessionProvider`'s `useState(initial)` seed. So it is safe on the FIRST paint, and
- * these tests pin the distinction: the summary tabs stay deferred, the author tab does
+ * ── THE CAPABILITY GATES ARE DELIBERATELY *NOT* `isClient`-DEFERRED ───────────────
+ * The `Build` row is gated on `canAccessAppsBuild(currentUser, features)` and
+ * `Marketplace` on `hasAppsStoreAccess(features)`. Every input to both is SSR-seeded and
+ * FROZEN — the store flags, `appBlocksAuthor` and `appBlocksGetStarted` all come from
+ * `pageProps.flags` (resolved server-side in `_app.getInitialProps`, frozen by
+ * `useState(initialFlags)`; NONE of them is a `toggleable` flag, so the client
+ * `user.getFeatureFlags` overlay cannot move them), and `isModerator` rides
+ * `SessionProvider`'s `useState(initial)` seed. So they are safe on the FIRST paint, and
+ * these tests pin the distinction: the summary tabs stay deferred, the capability tabs do
  * not, and the pre-mount output must not vary with the query's data.
  *
+ * 🔴 WHAT CHANGED WITH THE `/apps/build` CONSOLIDATION. "Build apps"
+ * (`/apps/get-started`), "Create" (`/apps/submit`) and "My apps" (`/apps/mine`) were
+ * replaced by one "Build" row (`/apps/build`), and `Marketplace` stopped being
+ * unconditional. The load-bearing consequence for THIS file: the one row still gated on
+ * `context.isAuthor` — `Invites` — is ALSO summary-driven, so an author and a non-author
+ * with the same flags now render the SAME pre-mount set. That is not a weakening of the
+ * pairs below, it is the invariant itself: an author's extra tab MUST NOT appear before
+ * mount, or hydration breaks exactly as it did in the incident.
+ *
  * These tests drive the `AppsSubNav` CONTAINER (not the pure `AppsSubNavView`) so the
- * `useIsClient` gate + the `isAppDeveloper` derivation are both exercised.
+ * `useIsClient` gate + the `canAccessAppsBuild` / `isAppDeveloper` derivations are all
+ * exercised.
  * (The REAL `renderToString` → `hydrateRoot` check, with a console.error positive
  * control, lives in `AppsSubNav.ssrHydration.browser.test.tsx`.)
  */
 
 const ALL_TRUE_SUMMARY = {
   hasInstalls: true,
+  hasActivity: true,
   hasSubmissions: true,
   hasApprovedApps: true,
   isReviewer: true,
+  hasEditableApps: true,
+  hasPendingInvites: true,
 };
 
 const mocks = vi.hoisted(() => ({
@@ -75,6 +89,13 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // mock): a hand-written replacement silently breaks every importer the day
 // '~/utils/trpc' grows an export this factory omits — the whole FILE then fails to
 // load with 0 tests collected and no failing assertion.
+//
+// ⚠️ This mock IGNORES `enabled:` on purpose — the question here is the `useIsClient`
+// deferral, and forcing the data in regardless of the query gate is what makes the
+// deferral observable (and what makes `isAuthor`'s session-scoping observable for a
+// logged-out viewer, whose real query would never run). The sibling
+// `AppsSubNav.storeGate.browser.test.tsx` HONOURS `enabled` and pins the production
+// wiring.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: mocks.navSummary }) } } },
@@ -117,9 +138,11 @@ async function renderSubNav() {
   await expect.element(page.getByTestId(RENDER_BARRIER)).toBeInTheDocument();
 }
 
-// "My submissions" was retired when its page merged into `/apps/mine`; "My apps" is the
-// surviving conditional tab and carries the same client-only hydration behaviour.
-const CONDITIONAL = ['Installed', 'Revenue', 'Review'] as const;
+// Every row driven by the client-only `getNavSummary`, i.e. every tab that must stay
+// hidden until after mount. `Invites` is included and is the strongest of the four: it
+// reads BOTH the summary and `context.isAuthor`, so a mutant that lifted it out of the
+// deferral would leak an author-only tab into the SSR set.
+const CONDITIONAL = ['Activity', 'Invites', 'Revenue', 'Review'] as const;
 
 beforeEach(() => {
   mocks.isClient = false;
@@ -133,13 +156,14 @@ beforeEach(() => {
 });
 
 describe('AppsSubNav container — hydration-safe conditional tabs', () => {
-  test('pre-mount (server + first client paint) renders ONLY the always-on tabs, even when the query already has a full summary', async () => {
+  test('pre-mount (server + first client paint) renders ONLY the SSR-frozen tabs, even when the query already has a full summary', async () => {
     mocks.isClient = false; // server / first client paint
     await renderSubNav();
 
-    // The always-on tabs render.
+    // The two capability-driven tabs render — their inputs are SSR-frozen.
+    await expect.element(tab('Build')).toBeInTheDocument();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
 
     // The conditional tabs MUST NOT render pre-mount — this is what keeps the first
     // client paint identical to the SSR HTML (the fix). Before the fix, the query
@@ -153,20 +177,58 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
     mocks.isClient = true; // after mount / hydration has matched
     await renderSubNav();
 
-    for (const name of ['Marketplace', 'Create', ...CONDITIONAL]) {
+    for (const name of ['Marketplace', 'Build', ...CONDITIONAL]) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
+    expect(renderedTabs()).toEqual([
+      'Marketplace',
+      'Activity',
+      'Invites',
+      'Revenue',
+      'Build',
+      'Review',
+    ]);
   });
 
-  test('pre-mount with NO summary data also shows only the always-on tabs (server parity)', async () => {
+  test('pre-mount with NO summary data also shows only the SSR-frozen tabs (server parity)', async () => {
     mocks.isClient = false;
     mocks.navSummary = undefined; // server: query never resolved
     await renderSubNav();
 
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
     for (const name of CONDITIONAL) {
       expect(tab(name).elements()).toHaveLength(0);
+    }
+  });
+
+  /**
+   * 🔴 `hasSubmissions` AND `hasEditableApps` NO LONGER DRIVE ANY TAB, AND THAT IS A
+   * HYDRATION PROPERTY, NOT A TIDY-UP. They used to light "My apps"; `/apps/build`
+   * absorbed it, and the replacement row deliberately does NOT consult them — they come
+   * from the client-only summary, so a Build tab keyed on them would appear only after
+   * mount for exactly the population most likely to have it (an author with apps), which
+   * is the incident above. `resolveAppsBuildState` reads them instead, on the page.
+   *
+   * Pinned POST-mount, where the summary is fully applied: if either flag were wired into
+   * the table there would be a seventh tab here.
+   */
+  test('🔴 hasSubmissions / hasEditableApps add no tab post-mount either', async () => {
+    mocks.isClient = true;
+    mocks.navSummary = {
+      ...ALL_TRUE_SUMMARY,
+      hasInstalls: false,
+      hasActivity: false,
+      hasApprovedApps: false,
+      isReviewer: false,
+      hasPendingInvites: false,
+      // …leaving hasSubmissions + hasEditableApps as the only true flags.
+    };
+    await renderSubNav();
+    await expect.element(tab('Build')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    for (const retired of ['My apps', 'My submissions', 'Create', 'Build apps']) {
+      expect(tab(retired).elements(), `a tab named "${retired}" is rendered`).toHaveLength(0);
     }
   });
 });
@@ -182,28 +244,50 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
  * Each cohort is asserted TWICE against the SAME pinned literal (once with the data
  * absent = the server, once with it present = the first client paint) rather than by
  * comparing one render to another: a pinned literal cannot be satisfied by two renders
- * that are equally wrong, and the AUTHOR pair below is deliberately NON-EMPTY so the
- * equality is not an `[] === []` that any broken render would also satisfy.
+ * that are equally wrong, and both pairs below are deliberately NON-EMPTY so the equality
+ * is not an `[] === []` that any broken render would also satisfy.
+ *
+ * 🔴 THE TWO COHORTS NOW PIN THE SAME LITERAL, AND THAT IS THE POINT. Before the
+ * consolidation the author pair carried an extra "Create" tab. The only `isAuthor`-gated
+ * row left is `Invites`, which is ALSO summary-driven and therefore deferred — so an
+ * author and a non-author with the same flags MUST be indistinguishable before mount.
+ * The AUTHOR pair's second arm is where that bites: its summary has `hasPendingInvites`,
+ * so lifting `Invites` out of the `useIsClient` deferral makes it fail while the
+ * non-author pair stays green.
  */
 describe('AppsSubNav container — SSR tab set === first client render', () => {
+  // 🔴 BOTH COHORTS HOLD `appBlocksGetStarted`, DELIBERATELY. The pairs assert
+  // SSR ≡ first-client-paint against a pinned literal, and an EMPTY literal is
+  // satisfied by two renders that are equally broken — a non-author without this flag
+  // has `canBuild: false`, qualifies for Marketplace alone, and the `< 2` collapse would
+  // make both sides `[]`. Adding the flag makes the pinned set non-empty on both sides,
+  // which is strictly stronger. It also puts `context.canBuild` under the invariant:
+  // like `canSeeStore`, it is applied OUTSIDE the `useIsClient` deferral, so if it were
+  // ever sourced from something client-only the "Build" tab would appear on one side of
+  // a pair and not the other and these tests would fail. (The cohorts WITHOUT the flag —
+  // where the collapse fires — are pinned in the last describe of this file and in
+  // `AppsSubNav.storeGate.browser.test.tsx`.)
   const NON_AUTHOR = () => {
-    // The widened store-visibility tester cohort, verified live: sees the store,
-    // cannot author.
-    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+    // A store-visible non-author who reaches `/apps/build` on the get-started term alone.
+    // ⚠️ THIS IS A SHAPE, NOT A LIVE COHORT, and the "verified live" claim that used to sit
+    // here is withdrawn: `app-blocks-author` rolls out to the same segment as `app-listings`,
+    // so `{appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true}` on a non-mod
+    // is empty under the current Flipt state. The fixture is what the invariant needs; it is
+    // not evidence about who holds these flags today.
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
   };
   const AUTHOR = () => {
-    mocks.flags = { appBlocks: true, appBlocksAuthor: true };
+    mocks.flags = { appBlocks: true, appBlocksAuthor: true, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'author', isModerator: false };
   };
-
-  test('NON-AUTHOR, server render (no query data) → no bar at all', async () => {
+  test('NON-AUTHOR, server render (no query data) → Build + Marketplace', async () => {
     NON_AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = undefined;
     await renderSubNav();
-    expect(renderedTabs()).toEqual([]);
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
   test('NON-AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
@@ -211,132 +295,207 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     mocks.isClient = false;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // the prod condition that broke hydration
     await renderSubNav();
-    expect(renderedTabs()).toEqual([]);
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
-  test('AUTHOR, server render (no query data) → Marketplace + Create', async () => {
+  test('AUTHOR, server render (no query data) → Build + Marketplace', async () => {
     AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = undefined;
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 
-  test('AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
+  test('AUTHOR, first client paint (query data PRESENT, invites pending) → the identical set', async () => {
     AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    // Non-empty on BOTH sides of the pair: the author gate applied on the first
-    // paint (Create is here pre-mount) while the summary gate did NOT (none of the
-    // four conditional tabs leaked in).
-    expect(renderedTabs()).toEqual(['Marketplace', 'Create']);
+    // Non-empty on BOTH sides of the pair: the capability gates applied on the first
+    // paint (Build is here pre-mount) while the summary gate did NOT — including the
+    // author-only `Invites`, whose summary flag is true in this fixture.
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    expect(tab('Invites').elements()).toHaveLength(0);
   });
 
   test('POSITIVE CONTROL: the same reader DOES see the conditional tabs post-mount', async () => {
-    // Guards every `toEqual([])` above against being vacuously green — if
-    // `renderedTabs()` were wired to nothing it would return `[]` here too.
+    // Guards every pinned pre-mount literal above against being vacuously green — if
+    // `renderedTabs()` were wired to nothing it would return the same short list here.
     NON_AUTHOR();
     mocks.isClient = true;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
     await renderSubNav();
-    await expect.element(tab('Installed')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual([
-      'Marketplace',
-      'Installed',
-      'Revenue',
-      'Review',
-    ]);
-    // Create is the one tab the author gate removes.
-    expect(renderedTabs()).not.toContain('Create');
+    await expect.element(tab('Activity')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    // Invites is the one tab the author gate removes — this viewer has a pending invite
+    // in the summary and still must not get it.
+    expect(renderedTabs()).not.toContain('Invites');
   });
 });
 
 /**
- * The author-capability derivation IN THE CONTAINER — the half that
- * `AppsSubNavView` (props-only) cannot cover: that `AppsSubNav` feeds the shared
- * `isAppDeveloper(user, { appBlocksAuthor })` predicate, not an inlined check.
+ * The build-capability derivation IN THE CONTAINER — the half that `AppsSubNavView`
+ * (props-only) cannot cover: that `AppsSubNav` feeds the SHARED
+ * `canAccessAppsBuild(currentUser, features)`, the same call `resolveBuildPageAccess`
+ * makes in `/apps/build`'s `getServerSideProps`, rather than an inlined flag read.
+ *
+ * These tests carry the intent of the old "the Create tab keys off isAppDeveloper" block:
+ * the authoring row's visibility must be the page's own gate. The predicate widened
+ * (`store && (isAppDeveloper || appBlocksGetStarted)`), so both disjuncts and the
+ * moderator floor inside `isAppDeveloper` are exercised here.
  */
-describe('AppsSubNav container — the Create tab keys off isAppDeveloper', () => {
+describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', () => {
   beforeEach(() => {
     mocks.isClient = true; // post-mount, so the full tab set is observable
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
   });
 
-  test('non-mod WITHOUT the author capability → no Create tab', async () => {
+  test('non-mod with NEITHER the author capability nor get-started → no Build tab', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(tab('Create').elements()).toHaveLength(0);
+    await expect.element(tab('Marketplace')).toBeInTheDocument(); // positive control
+    expect(tab('Build').elements()).toHaveLength(0);
   });
 
-  test('non-mod WITH the author capability → Create tab', async () => {
+  test('non-mod WITH the author capability → Build tab', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: true };
     mocks.user = { id: 7, username: 'author', isModerator: false };
     await renderSubNav();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    await expect.element(tab('Build')).toBeInTheDocument();
+    expect(tab('Build').element().getAttribute('href')).toBe('/apps/build');
   });
 
-  test('🔴 MODERATOR FLOOR: a mod keeps Create even with appBlocksAuthor=false', async () => {
+  test('non-mod, non-author WITH appBlocksGetStarted → Build tab (the second disjunct)', async () => {
+    // The kill-switch term: `app-blocks-get-started` governs whether a store-visible
+    // NON-author is shown the recruiting pitch. Fails if the row is narrowed to
+    // `isAppDeveloper` alone.
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
+    mocks.user = { id: 7, username: 'tester', isModerator: false };
+    await renderSubNav();
+    await expect.element(tab('Build')).toBeInTheDocument();
+  });
+
+  test('🔴 MODERATOR FLOOR: a mod keeps Build even with appBlocksAuthor=false', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 1, username: 'mod', isModerator: true };
     await renderSubNav();
-    await expect.element(tab('Create')).toBeInTheDocument();
+    await expect.element(tab('Build')).toBeInTheDocument();
   });
 
-  test('the flag being ABSENT entirely behaves as false for a non-mod', async () => {
-    // Flipt-down / flag-not-yet-created: `appBlocksAuthor` is simply missing.
+  test('the flags being ABSENT entirely behaves as false for a non-mod', async () => {
+    // Flipt-down / flags-not-yet-created: `appBlocksAuthor` and `appBlocksGetStarted`
+    // are simply missing. `canAccessAppsBuild` fails CLOSED.
     mocks.flags = { appBlocks: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     await renderSubNav();
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(tab('Create').elements()).toHaveLength(0);
+    expect(tab('Build').elements()).toHaveLength(0);
   });
 
-  test('a logged-out viewer never gets Create, even if the flag reads true', async () => {
+  /**
+   * 🔴 THE SESSION-SCOPING ASYMMETRY BETWEEN `isAuthor` AND `canBuild`, ASSERTED.
+   *
+   * This replaces the old "a logged-out viewer never gets Create, even if the flag reads
+   * true" test, whose subject is gone. The rule it was really pinning — that the
+   * container's `isAuthor` is resolved INSIDE the `currentUser ?` branch — survives on
+   * `Invites`, and the new half is its mirror image: `canBuild` is deliberately NOT
+   * session-scoped, because `canAccessAppsBuild` takes the user as an argument and
+   * handles the anon case itself. Folding it into the `currentUser` branch would hide the
+   * tab from a logged-out viewer `/apps/build` would happily serve state A to — and that
+   * "simplification" is exactly what this asserts against.
+   *
+   * ⚠️ The summary data is forced in for an anon viewer, which production's `enabled:
+   * !!currentUser` prevents (see the mock note at the top). That is what makes
+   * `isAuthor`'s session-scoping observable at all; the real query gate is pinned in the
+   * storeGate suite.
+   */
+  test('🔴 logged out: canBuild still resolves (Build renders) while isAuthor does not (no Invites)', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: true };
     mocks.user = null;
-    mocks.navSummary = undefined; // the summary query is protected — no data for anon
+    mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // hasPendingInvites: true
     await renderSubNav();
-    // Marketplace alone ⇒ the whole bar is hidden.
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
-    expect(tab('Create').elements()).toHaveLength(0);
+    await expect.element(tab('Build')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    expect(tab('Invites').elements()).toHaveLength(0);
+  });
+
+  test('a logged-out viewer with no capability at all gets no bar', async () => {
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+    mocks.user = null;
+    mocks.navSummary = undefined; // the summary query is protected — no data for anon
+    await renderSubNav(); // barrier awaited inside — absence below is a real observation
+    // Marketplace is all that qualifies (`canBuild` needs one of the two capability
+    // terms), so the `< 2` collapse removes the bar entirely.
+    expect(renderedTabs()).toEqual([]);
+  });
+
+  test('🔴 a logged-out viewer WITH appBlocksGetStarted does get Build (positive control)', async () => {
+    // The control for the `toEqual([])` above — the same reader observes a bar as soon
+    // as one qualifying tab is added, so the empty set there is a real absence. It also
+    // pins the deliberate asymmetry again from the get-started side: that term consults
+    // no user whatsoever.
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
+    mocks.user = null;
+    mocks.navSummary = undefined;
+    await renderSubNav();
+    await expect.element(tab('Build')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 });
 
-/** The <2-tab collapse, driven through the container. */
+/**
+ * The <2-tab collapse, driven through the container. Still reachable, and by the live
+ * `app-dev-testers` shape: a store-visible non-author with an empty summary and no
+ * `appBlocksGetStarted` has `canBuild: false` and qualifies for Marketplace ALONE. The
+ * third test is the same fixture with only that one flag moved, which is what attributes
+ * the difference to the flag rather than to two unrelated fixtures.
+ */
 describe('AppsSubNav container — hides entirely below two tabs', () => {
-  test('a non-author with an empty summary renders no nav at all', async () => {
+  const EMPTY_SUMMARY = {
+    hasInstalls: false,
+    hasActivity: false,
+    hasSubmissions: false,
+    hasApprovedApps: false,
+    isReviewer: false,
+    hasEditableApps: false,
+    hasPendingInvites: false,
+  };
+
+  test('a store-visible non-author with an empty summary renders no nav at all', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
-    mocks.navSummary = {
-      hasInstalls: false,
-      hasSubmissions: false,
-      hasApprovedApps: false,
-      isReviewer: false,
-    };
-    await renderSubNav();
+    mocks.navSummary = { ...EMPTY_SUMMARY };
+    await renderSubNav(); // barrier awaited inside — absence below is a real observation
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
-    expect(page.getByRole('tablist').elements()).toHaveLength(0);
+    expect(renderedTabs()).toEqual([]);
   });
 
   test('one install is enough to bring the bar back', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
-    mocks.navSummary = {
-      hasInstalls: true,
-      hasSubmissions: false,
-      hasApprovedApps: false,
-      isReviewer: false,
-    };
+    mocks.navSummary = { ...EMPTY_SUMMARY, hasInstalls: true };
     await renderSubNav();
-    await expect.element(page.getByRole('navigation', { name: 'App sections' })).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Installed']);
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Activity']);
+  });
+
+  test('🔴 …and so is appBlocksGetStarted, on the OTHERWISE IDENTICAL viewer', async () => {
+    mocks.isClient = true;
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
+    mocks.user = { id: 7, username: 'tester', isModerator: false };
+    mocks.navSummary = { ...EMPTY_SUMMARY };
+    await renderSubNav();
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
   });
 });

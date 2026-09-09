@@ -129,5 +129,13 @@ import { getUserBuzzAccounts } from '~/server/services/buzz.service';
 const accounts = await getUserBuzzAccounts({ userId });
 ```
 
-`getUserBuzzAccount` (singular) returns a **one-element array defaulted to yellow** unless you pass
+`getUserBuzzAccount` (singular) returns a **one-element array labelled yellow** unless you pass
 `accountTypes` — it is not the per-type balance call despite the name.
+
+🔴 **That label is wrong, and the buzz API is where it goes wrong.** With no `accountType`, the read is
+the untyped `GET /account/{id}`, and the buzz service answers that with **Yellow + Blue summed** —
+`balance` and `lifetimeBalance` both (Green is not included). Verified against prod for user 5:
+`/account/User/5` 467,019 + `/account/Generation/5` 95,030 = `/account/5` 562,049. Anything that
+displays or spends against "yellow" must pass `accountType: 'yellow'` explicitly. Reading the untyped
+one as Yellow is what overstated the Yellow balance on the moderator user-lookup panel by the user's
+generation Buzz (CU-868ky98cn).

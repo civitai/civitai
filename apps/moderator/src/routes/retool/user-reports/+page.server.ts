@@ -122,7 +122,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     accountHistory,
     canAct,
     // The queue and the selected suspect sit side by side, which needs the full content width.
-    wide: true,
+    // Not `wide`: this page owns its own height so the queue column can be sized against the
+    // viewport. Under `wide` the column started 136px down the page and a `100vh` height then
+    // hung 104px below the fold, taking the pager with it — CSS cannot read its own offset, so
+    // the header has to be a sibling of the panes rather than something above them.
+    fullBleed: true,
   };
 };
 

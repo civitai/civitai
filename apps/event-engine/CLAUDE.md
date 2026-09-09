@@ -30,6 +30,7 @@ metric-event-watcher/
 │   │   ├── worker-pool.ts         # Parallel task processing
 │   │   ├── debezium-manager.ts    # CDC connector management
 │   │   ├── redis-cache.ts         # Redis cache updates
+│   │   ├── metric-excluded-users.ts # Reaction-farm exclusion list, mirrored from ClickHouse
 │   │   ├── metric-event-batcher.ts # ClickHouse batch inserts
 │   │   ├── index-update-queue.ts  # Meilisearch updates
 │   │   └── health-check.ts        # Health monitoring
@@ -78,6 +79,7 @@ metric-event-watcher/
 - **MetricEventBatcher**: ClickHouse batch inserts
 - **IndexUpdateQueue**: Meilisearch index updates
 - **RedisCache**: Real-time metric cache updates
+- **MetricExcludedUsers**: Mirrors the ClickHouse `metricExcludedUsers` reaction-farm list into memory (refreshed every `METRIC_EXCLUSION_REFRESH_MS`). `RedisCache` and the live signal path skip events from users in it, matching what the ClickHouse metric aggregates already filter
 
 ### Handlers (`src/handlers/`)
 - handlers for different entity types (User, Model, Post, Image, etc.)

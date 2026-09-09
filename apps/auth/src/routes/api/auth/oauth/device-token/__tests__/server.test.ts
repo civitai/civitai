@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   hDel: vi.fn(),
   createPair: vi.fn(),
   getClientIp: vi.fn<() => string | null>(),
+  checkRateLimit: vi.fn<(bucket: string, id: string | null) => Promise<boolean>>(),
   logOAuthEvent: vi.fn(),
   // controllable Kysely client-row result for the OauthClient lookup
   clientRow: undefined as unknown,
@@ -41,7 +42,7 @@ vi.mock('$lib/server/redis', () => ({
 }));
 
 vi.mock('$lib/server/oauth/rate-limit', () => ({
-  checkOAuthRateLimit: vi.fn().mockResolvedValue(true),
+  checkOAuthRateLimit: h.checkRateLimit,
 }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
@@ -74,6 +75,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.clientRow = undefined;
   h.getClientIp.mockReturnValue('203.0.113.7'); // resolved client IP for the audit log
+  h.checkRateLimit.mockResolvedValue(true);
   h.hDel.mockResolvedValue(1); // claim succeeds by default (atomic HDEL returns 1)
   h.createPair.mockResolvedValue({
     accessToken: 'civitai_access',
@@ -191,5 +193,44 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
     expect(h.createPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('device-token +server — the poll is bounded per sign-in, not per fleet', () => {
+  // Every install of a device-flow app presents the SAME public client_id, so keying either bucket on it
+  // caps the whole fleet: at DEVICE_POLL_INTERVAL=5 one in-flight sign-in already spends 12 requests a
+  // minute. These assertions fail if the identifier regresses to client_id.
+  it('charges the coarse ceiling to the caller IP and the poll bound to the device_code', async () => {
+    h.hGet.mockResolvedValueOnce(approvedCode);
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+
+    await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'cli',
+      })
+    );
+
+    expect(h.checkRateLimit).toHaveBeenCalledWith('device-token-anon', '203.0.113.7');
+    expect(h.checkRateLimit).toHaveBeenCalledWith('device-token', 'devcode');
+    const identifiers = h.checkRateLimit.mock.calls.map(([, id]) => id);
+    expect(identifiers).not.toContain('cli');
+  });
+
+  it('bails on the per-IP ceiling before it can create a bucket for an unvalidated device_code', async () => {
+    h.checkRateLimit.mockImplementation(async (bucket) => bucket !== 'device-token-anon');
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'attacker-supplied',
+        client_id: 'cli',
+      })
+    );
+
+    expect(res.status).toBe(429);
+    expect(h.checkRateLimit).not.toHaveBeenCalledWith('device-token', 'attacker-supplied');
+    expect(h.hGet).not.toHaveBeenCalled();
   });
 });

@@ -25,9 +25,9 @@ import {
   freeRefusalExplanation,
   freeRefusalOutcome,
   freeSubmissionOffer,
-  paidSubmissionOpen,
   submissionMethod,
 } from '~/components/RemixGallery/remix-gallery.utils';
+import { paidSubmissionOpen } from '~/shared/utils/remix-gallery';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

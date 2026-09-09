@@ -26,7 +26,7 @@ import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
@@ -148,6 +148,7 @@ export function PanelCard({
   //    true and the result is downloaded into S3 inline.
   const requiresUnlock = status === 'RequireUnlock';
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
   const unlockHref =
     features.isGreen && redDomain
       ? syncAccount(`//${redDomain}/comics/project/${projectId}/chapter/${chapterPosition}`)

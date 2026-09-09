@@ -114,7 +114,7 @@ import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 
 /** Minimal harness: renders the hook's whole state as assertable DOM state. */
 function Probe({
-  notice = FEATURE_NOTICES.navTidy,
+  notice = FEATURE_NOTICES.navCustomize,
   enabled,
   testId = 'probe',
 }: {
@@ -183,7 +183,7 @@ describe('useFeatureNotice — reading dismissed state', () => {
   });
 
   test('dismissed when the registered id is stored', async () => {
-    mocks.state.settings = { dismissedAlerts: ['nav-tidy-notice'] };
+    mocks.state.settings = { dismissedAlerts: ['nav-customize-notice'] };
     renderWithProviders(<Probe />);
     expect((await probeState()).dismissed).toBe('true');
   });
@@ -193,7 +193,7 @@ describe('useFeatureNotice — reading dismissed state', () => {
     renderWithProviders(
       <>
         <Probe notice={FEATURE_NOTICES.cryptoOnrampGuidance} testId="onramp" />
-        <Probe notice={FEATURE_NOTICES.navTidy} testId="navtidy" />
+        <Probe notice={FEATURE_NOTICES.navCustomize} testId="navtidy" />
       </>
     );
     expect((await probeState('onramp')).dismissed).toBe('true');
@@ -268,8 +268,8 @@ describe('useFeatureNotice — writing', () => {
     await vi.waitFor(async () => {
       // Payload shape matters: the server schema defaults `dismiss` to true, and
       // this is the exact payload every call site sent before consolidation.
-      expect(mocks.state.mutateCalls).toEqual([{ alertId: 'nav-tidy-notice' }]);
-      expect(mocks.state.settings?.dismissedAlerts).toEqual(['nav-tidy-notice']);
+      expect(mocks.state.mutateCalls).toEqual([{ alertId: 'nav-customize-notice' }]);
+      expect(mocks.state.settings?.dismissedAlerts).toEqual(['nav-customize-notice']);
       expect(mocks.state.invalidateCount).toBe(1);
       expect((await probeState()).dismissed).toBe('true');
     });
@@ -282,7 +282,7 @@ describe('useFeatureNotice — writing', () => {
 
     await vi.waitFor(() => {
       expect(mocks.state.settings).toEqual({
-        dismissedAlerts: ['other', 'nav-tidy-notice'],
+        dismissedAlerts: ['other', 'nav-customize-notice'],
         hideModelsFrom: [7],
         someFlag: true,
       });
@@ -290,12 +290,14 @@ describe('useFeatureNotice — writing', () => {
   });
 
   test('restore sends dismiss:false and removes ONLY its own id', async () => {
-    mocks.state.settings = { dismissedAlerts: ['a', 'nav-tidy-notice', 'b'] };
+    mocks.state.settings = { dismissedAlerts: ['a', 'nav-customize-notice', 'b'] };
     renderWithProviders(<Probe />);
     await userEvent.click(page.getByRole('button', { name: 'restore-probe' }));
 
     await vi.waitFor(async () => {
-      expect(mocks.state.mutateCalls).toEqual([{ alertId: 'nav-tidy-notice', dismiss: false }]);
+      expect(mocks.state.mutateCalls).toEqual([
+        { alertId: 'nav-customize-notice', dismiss: false },
+      ]);
       expect(mocks.state.settings?.dismissedAlerts).toEqual(['a', 'b']);
       expect(mocks.state.invalidateCount).toBe(1);
       expect((await probeState()).dismissed).toBe('false');
@@ -328,12 +330,12 @@ describe('useFeatureNotice — writing', () => {
 
   test('a failed restore rolls the cache back — the notice stays dismissed', async () => {
     mocks.state.mutationFails = true;
-    mocks.state.settings = { dismissedAlerts: ['nav-tidy-notice'] };
+    mocks.state.settings = { dismissedAlerts: ['nav-customize-notice'] };
     renderWithProviders(<Probe />);
     await userEvent.click(page.getByRole('button', { name: 'restore-probe' }));
 
     await vi.waitFor(async () => {
-      expect(mocks.state.settings?.dismissedAlerts).toEqual(['nav-tidy-notice']);
+      expect(mocks.state.settings?.dismissedAlerts).toEqual(['nav-customize-notice']);
       expect((await probeState()).dismissed).toBe('true');
     });
   });
@@ -346,7 +348,7 @@ describe('useFeatureNotice — writing', () => {
     await userEvent.click(page.getByRole('button', { name: 'dismiss-probe' }));
 
     await vi.waitFor(() => {
-      expect(mocks.state.settings).toEqual({ dismissedAlerts: ['nav-tidy-notice'] });
+      expect(mocks.state.settings).toEqual({ dismissedAlerts: ['nav-customize-notice'] });
       expect(mocks.state.invalidateCount).toBe(1);
     });
   });
@@ -358,10 +360,10 @@ describe('useFeatureNotice — audience targeting', () => {
   // `unit`, which is what CI runs); this is the corroborating end-to-end pass.
   //
   // `remixGalleryExplainer` is the only registry entry that declares an
-  // audience, and `navTidy` declares none — so the pair below moves BOTH ways
+  // audience, and `navCustomize` declares none — so the pair below moves BOTH ways
   // from one flag map, which a constant cannot do.
   const TARGETED = FEATURE_NOTICES.remixGalleryExplainer;
-  const UNTARGETED = FEATURE_NOTICES.navTidy;
+  const UNTARGETED = FEATURE_NOTICES.navCustomize;
 
   test('a targeted notice is out of audience when its flag is off', async () => {
     mocks.state.features = { remixGallery: false };

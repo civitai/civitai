@@ -3,9 +3,11 @@
 -- of the numbers, the hazards and the precedent, so that whoever needs it next does not re-derive
 -- any of it.
 --
--- 🔴 WHAT THAT MEANS FOR THE CODE: the clamp in src/server/rewards/base.reward.ts is no longer a
--- backstop, it is the ONLY guard. CLICKHOUSE_MAX_MULTIPLIER = 9.99 is correct and must stay
--- correct — it has to equal the ceiling of the deployed column, which this file does not change.
+-- 🔴 WHAT THAT MEANS FOR THE CODE: the clamp is no longer a backstop, it is the ONLY guard.
+-- BUZZ_EVENTS_MAX_MULTIPLIER = 9.99 in packages/civitai-clickhouse/src/buzz-events.ts is correct
+-- and must stay correct — it has to equal the ceiling of the deployed column, which this file does
+-- not change. Both writers of the table read it: src/server/rewards/base.reward.ts and
+-- apps/moderator/src/lib/server/rewards.ts.
 -- Do not raise it while this is unapplied: a value the column cannot hold is a row ClickHouse
 -- drops server-side while sendAward pays anyway.
 --
@@ -90,8 +92,9 @@ ALTER TABLE buzzEvents UPDATE multiplier = CAST(multiplier_old, 'Decimal(4, 2)')
 
 -- 🔴 AFTERWARDS — THIS MIGRATION BUYS NOTHING WITHOUT IT.
 --
--- CLICKHOUSE_MAX_MULTIPLIER in src/server/rewards/base.reward.ts is 9.99 and clamps to it, and
--- that clamp is what pays: process-rewards reads the multiplier back out and sendAward computes
+-- BUZZ_EVENTS_MAX_MULTIPLIER in packages/civitai-clickhouse/src/buzz-events.ts is 9.99 and both
+-- writers clamp to it, and that clamp is what pays: process-rewards reads the multiplier back out
+-- of any app's pending row and sendAward computes
 -- awardAmount * multiplier from it. Widening the column and leaving the constant alone means a
 -- 1.4-billion-row rewrite that changes nothing — gold members are still paid half during a 5x
 -- bonus event, just against a column with room to spare.

@@ -74,6 +74,7 @@ import {
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -95,6 +96,7 @@ import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
+import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { expandSnippetsToTargets } from '~/server/services/wildcard-set-resolver.service';
@@ -102,9 +104,10 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
+import { recordShadowComparison, runHubParse } from './form-graph/shadow-parse';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
-import { resolveSourceImageIds, signProvenance } from './remix-provenance';
+import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -145,6 +148,13 @@ export type GenerationContext = {
       }>;
     }
   >;
+  /**
+   * Provenance tokens minted by `orchestrator.mintRemixProvenance` for the source
+   * images this submission started from. Verified here, never trusted: a token is
+   * sealed with a server key and bound to the submitting user, so it is a
+   * credential rather than a claim. See `remix-provenance.ts`.
+   */
+  sourceProvenance?: string[];
   remixOfId?: number;
   // Forwarded to orchestrator workflow-create as `externalId`; makes the submit
   // idempotent on retry and lets the funnel dashboard join Generator_Submit to
@@ -582,7 +592,17 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  * (computed values like `triggerWords` are derived, not user input).
  */
 function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
-  const result = generationGraph.safeParse(normalizeInput(input), externalCtx);
+  const normalized = normalizeInput(input);
+  const result = generationGraph.safeParse(normalized, externalCtx);
+
+  // form-graph cutover: every parse runs both engines and records the
+  // comparison; the hub result is served for users with the cutover flag on.
+  // The v1 parse above always runs — it feeds the substitution metrics and
+  // the reverse comparison. Flag, comparison, and the whole shadow-parse
+  // module go away in the delete-data-graph change.
+  const serveHub = externalCtx.flags?.formGraphGenerator === true;
+  const hubResult = runHubParse(normalized, externalCtx);
+  recordShadowComparison(result, hubResult, String(normalized.workflow ?? 'unknown'));
 
   // Issue #3520 — count silent checkpoint substitutions. This is the single
   // choke point every SERVER-side graph validation passes through (submit,
@@ -595,6 +615,19 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
   // path and never rejects (see its module note). It is deliberately NOT
   // awaited: this function is synchronous and on the submit path.
   void emitModelSubstitutions(externalCtx.modelSubstitutions);
+
+  if (serveHub && hubResult.ok !== null) {
+    if (!hubResult.ok) {
+      const errorMessages = Object.entries(hubResult.errors)
+        .map(([key, error]) => `${key}: ${error.message}`)
+        .join(', ');
+      throw throwBadRequestError(`Validation failed: ${errorMessages}`);
+    }
+    return {
+      data: hubResult.data as GenerationGraphOutput,
+      computedKeys: new Set(hubResult.computedKeys),
+    };
+  }
 
   if (!result.success) {
     const errorMessages = Object.entries(result.errors)
@@ -1514,6 +1547,7 @@ export async function generateFromGraph({
   tags: customTags = [],
   sourceMetadata,
   sourceMetadataMap,
+  sourceProvenance,
   remixOfId,
   track,
   externalId,
@@ -1522,7 +1556,16 @@ export async function generateFromGraph({
   const { data, computedKeys } = validateInput(input, externalCtx);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
-  const sourceImageIds = await resolveSourceImageIds(inputImages);
+  // Both routes, because neither covers the other — see `unionSourceImageIds`.
+  // The short version: the form re-uploads a remix's on-site source as an
+  // orchestrator blob before submit, so the URL route alone reports nothing for
+  // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
+  // 2,526 on the engine that button picks).
+  const sourceImageIds = unionSourceImageIds({
+    urlSourceImageIds: await resolveSourceImageIds(inputImages),
+    tokens: sourceProvenance,
+    userId,
+  });
 
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
@@ -1542,6 +1585,15 @@ export async function generateFromGraph({
         inputImages,
         inputVideo,
         acknowledgedSoftBlock,
+        // Observability only — see `~/server/prom/external-moderation.metrics`. Reuses the ONE
+        // surface→source mapping that already exists for the submit metric rather than inventing a
+        // parallel vocabulary, so the two families can never disagree about which requests are
+        // preset/cron work. The clamp is the type-safe bridge between the two label sets: any value
+        // the submit family gains that this one does not have falls to `other` instead of failing
+        // to compile or minting an unbounded label.
+        moderationSource: clampExternalModerationSource(
+          submitSourceForSurface(externalCtx.modelSubstitutions?.surface)
+        ),
       });
     } catch (err) {
       // Legacy regex/external audit blocked the prompt. Fire-and-forget an
@@ -1582,6 +1634,12 @@ export async function generateFromGraph({
       isModerator,
       track,
       acknowledgedSoftBlock,
+      // Same population as the prompt audit above — the ACE Audio creative fields go through the
+      // same auditor on the same submission, so they must carry the same label or the `generate`
+      // count would undercount its own calls.
+      moderationSource: clampExternalModerationSource(
+        submitSourceForSurface(externalCtx.modelSubstitutions?.surface)
+      ),
     });
   }
 
@@ -1683,6 +1741,8 @@ export async function generateFromGraph({
     },
   })) as TextToImageResponse;
 
+  await assertWorkflowOwner(workflow, userId, token);
+
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
 
@@ -1758,16 +1818,10 @@ export async function whatIfFromGraph({
     },
   });
 
-  // Check if all jobs are ready (have available support)
   let ready = true;
   for (const workflowStep of workflow.steps ?? []) {
-    for (const job of workflowStep.jobs ?? []) {
-      const { queuePosition } = job;
-      if (!queuePosition) continue;
-
-      const { support } = queuePosition;
-      if (support !== 'available' && ready) ready = false;
-    }
+    const support = workflowStep.queuePosition?.support;
+    if (support && support !== 'available') ready = false;
   }
 
   // Silent checkpoint substitutions from the validation above (#3520 / #3665).
@@ -1811,7 +1865,7 @@ import type {
   Workflow,
   WorkflowStatus,
   WorkflowStep,
-  WorkflowStepJobQueuePosition,
+  WorkflowStepQueuePosition,
 } from '@civitai/client';
 import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
@@ -2007,7 +2061,7 @@ export interface NormalizedStep {
   status?: WorkflowStatus;
   timeout?: string | null;
   completedAt?: string | null;
-  queuePosition?: WorkflowStepJobQueuePosition;
+  queuePosition?: WorkflowStepQueuePosition;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */
@@ -2187,7 +2241,8 @@ type StepWithOutput = WorkflowStep & {
     // job (e.g. LTX 2.3). Each slot uses Seed + slotIndex.
     additionalVideos?: VideoBlob[] | null;
     blobs?: ImageBlob[];
-    // For aceStepAudio: blob.type is 'audio' (audio-only) or 'video' (audio + cover image).
+    // Audio steps bundle a cover image into a VideoBlob when they have one, so the
+    // container type varies per result — discriminate on blob.type, not on $type.
     blob?: ImageBlob | VideoBlob | AudioBlob;
     // PolyGen: composite output with a primary 3D model, optional alternate-
     // format export, a 2D preview thumbnail, and optional rigged / animated
@@ -2265,6 +2320,9 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       if (output.blob.type === 'video')
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
+    case 'miniMaxMusic3':
+      // Always audio-only — MiniMaxMusic3Output has no cover-image variant.
+      return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh
@@ -2529,8 +2587,6 @@ export function formatStepOutputs(
     } satisfies NormalizedImageOutput;
   });
 
-  // Collect step errors (including external-provider job.reason failures) and
-  // sanitize each before surfacing to the client.
   const engine =
     (params.engine as string | undefined) ??
     (step as { input?: { engine?: string } }).input?.engine;
@@ -2663,7 +2719,7 @@ function formatStep(
     status: step.status,
     timeout: step.timeout,
     completedAt: step.completedAt,
-    queuePosition: step.jobs?.[0]?.queuePosition,
+    queuePosition: step.queuePosition,
     metadata: {
       ...removeEmpty({
         params: finalParams,
@@ -3094,6 +3150,7 @@ export async function getWorkflowStatusUpdate({
           name: step.name,
           status: step.status,
           completedAt: step.completedAt,
+          queuePosition: step.queuePosition,
           output,
           // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
           images: output,

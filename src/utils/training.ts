@@ -357,7 +357,7 @@ export const trainingModelInfo: {
     description: "Krea AI's in-house image generation model.",
     // Krea 2 is an AI-Toolkit-only ecosystem, so this AIR is NOT sent as the orchestrator
     // `model` (the orchestrator resolves the base model from the ecosystem); it's only used for
-    // UI display / getModel. Points at the locked Krea 2 generation checkpoint.
+    // UI display / getModel. Points at a Krea 2 generation checkpoint.
     air: 'urn:air:krea2:checkpoint:civitai:2656567@2983022',
     baseModel: 'Krea 2',
     isNew: true,
@@ -695,6 +695,15 @@ export const isAiToolkitEnabled = (
   const flagKey = aiToolkitFlagByBaseType[baseType];
   return flagKey ? !!features[flagKey] : false;
 };
+
+// Base model types trained on short, comma-separated tags (legacy kohya SD1.5/SDXL).
+// Every other base type — the AI-Toolkit image ecosystems, video, and audio — trains on
+// natural-language captions, so caption preference is the complement rather than a second
+// hand-maintained list that would drift as models are added.
+export const tagLabelBaseTypes: TrainingBaseModelType[] = ['sd15', 'sdxl'];
+
+export const baseTypePrefersCaptions = (baseType: TrainingBaseModelType): boolean =>
+  !(tagLabelBaseTypes as readonly string[]).includes(baseType);
 
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {

@@ -153,6 +153,42 @@ export const blockRenderSchema = z.object({
       totalMs: z.number().finite().nonnegative().max(600_000),
       tokenMintMs: z.number().finite().nonnegative().max(600_000).optional(),
       initWaitMs: z.number().finite().nonnegative().max(600_000).optional(),
+      // 🔴 A COUNT, NOT A DURATION — how many BLOCK_INIT posts the host made
+      // before the block acked. It is what discriminates the two mutually
+      // exclusive explanations for `init_wait`'s 0.4-0.6s mode: re-post
+      // quantization (>=2 posts) vs. a block that simply boots that slowly
+      // (1 post). Without it the histogram cannot say which, and cannot show
+      // whether tuning the re-post cadence changed anything.
+      //
+      // 🔴 DELIBERATELY LOOSE HERE, exactly like the durations above: no
+      // `.int()`, and a coarse `max`. This object carries `.catch(undefined)`,
+      // so a STRICT rule here would let one malformed count discard the whole
+      // `timings` object — the client's own bug would silently delete the
+      // DURATION samples too. The real gate is `launchInitPostsSample`
+      // server-side (integer, >0, <= MAX_APP_BLOCK_LAUNCH_INIT_POSTS, DROPPED
+      // not clamped), mirrored client-side by `boundedInitPosts`.
+      //
+      // Still a NUMBER, so like every field here it can never become a prom
+      // label — the histogram it feeds carries no labels at all.
+      initPosts: z.number().finite().nonnegative().max(100_000).optional(),
+      // 🔴 THE STRATIFIER, and it is a BOOLEAN — never a client-supplied string.
+      // The server maps it onto its own two literals (`yes`/`no`), so nothing a
+      // client sends can become a prom label value. That is the same rule the
+      // `phase` label follows and the reason this beacon body can stay public.
+      //
+      // MEANING: the guest sent BLOCK_HELLO at some point during the launch —
+      // NOT "the accelerator fired an extra post". See `LaunchMarks.helloSeen`.
+      //
+      // 🔴 OPTIONAL HERE, BUT ABSENCE IS NOT `false`. A client that predates this
+      // field omits it; a launch that genuinely saw no hello sends `false`. The
+      // server must tell those apart — it labels the second `no` and the first
+      // `unknown` (a real bucket, never a drop: dropping would cut coverage of
+      // an existing metric, and cut it in a latency-correlated way) — so this
+      // stays `.optional()` rather than `.default(false)`, which
+      // would erase the distinction at the parse boundary and silently file every
+      // stale-client launch into the `no` population this metric exists to
+      // isolate.
+      hello: z.boolean().optional(),
     })
     .optional()
     .catch(undefined),
@@ -529,10 +565,11 @@ const generatorSubmitSchema = z.object({
     // opened from the remix entry point. See the doc-block above: the meaning
     // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
-    // 'new' (generation_v2/FormFooter) is emitted by the current form.
-    // 'legacy'/'video' are retained for backward-compatibility with
-    // historical events from the removed legacy generation form.
-    formVersion: z.enum(['legacy', 'new', 'video']).optional(),
+    // 'new' (generation_v2/FormFooter) is emitted by the current form;
+    // 'form-graph' by the form-graph lane's footer. 'legacy'/'video' are
+    // retained for backward-compatibility with historical events from the
+    // removed legacy generation form.
+    formVersion: z.enum(['legacy', 'new', 'video', 'form-graph']).optional(),
     // False when the submit attempt failed validation (react-hook-form
     // onError path or graph.validate() early return). The data team can
     // split valid-vs-invalid attempts to spot UX traps where users click
@@ -609,6 +646,93 @@ const feedTagBarClickSchema = z.object({
   }),
 });
 
+// Creator announcement analytics — the click half. The impression half rides the feed
+// impression pipeline (`entityType: 'Announcement'`) and writes no `actions` row.
+//
+// `creatorId` is carried even though it is derivable from `announcementId` in Postgres:
+// the Creator Studio read is a ClickHouse query and would otherwise need a join it has no
+// table for. Both are ids, so neither can carry user text into the `details` column.
+const announcementClickSchema = z.object({
+  type: z.literal('Announcement_Click'),
+  details: z.object({
+    announcementId: z.number().int().positive(),
+    creatorId: z.number().int().positive(),
+  }),
+});
+
+// Mute and unmute of a creator's announcements. Two types rather than one carrying a
+// boolean: the chart is `countIf(type = ...)` per day with no JSON parsing of `details`,
+// and a net line is the difference of the two.
+//
+// 🔴 DELIBERATELY ABSENT FROM `trackActionSchema`. That schema is what `/api/track/batch`
+// accepts from a browser, so an arm here would let anyone post mute events for any creator
+// — which is the opposite of the property these two types exist to have. They are emitted
+// only from the tRPC mutation that performs the mute. `BuzzLimit_Set` is the existing
+// precedent for a server-only action type with no client arm.
+//
+// 🔴 THESE ARE THE ONLY RECORD OF A MUTE OVER TIME. `UserAnnouncementMute` is the live
+// truth for "how many people have me muted right now", but an unmute DELETES the row, so
+// a chart built from its `createdAt` shows only mutes that are still in force — a past
+// day's bar shrinks as people unmute, and a mute-then-unmute never happened at all. These
+// events are what make the series honest, so they must be emitted on BOTH edges.
+//
+// Emitted SERVER-SIDE from the tRPC mutation, not from the browser: unlike the impression
+// beacon this number cannot be inflated by a script posting to /api/track/batch.
+
+// App store play count — the `App_Open` half. (Blank line above is load-bearing: without
+// it this block reads as a continuation of the mute pair's rationale directly overhead,
+// and the play-count reasoning attaches to the wrong schemas.)
+//
+// 🔴 DELIBERATELY ABSENT FROM `trackActionSchema`, for the same reason as the mute pair
+// above and `BuzzLimit_Set` before it: this schema is what `/api/track/batch` accepts from
+// a browser, so an arm here would let anyone inflate ANY app's play count by POSTing —
+// and unlike a chart in an admin page, that number is printed on a public marketplace card
+// next to the review count. It is emitted SERVER-SIDE only, from the `/apps/run/<slug>`
+// SSR resolver (`recordAppListingOpen`), i.e. from a request this server actually served
+// after the flag gate, the approved-app resolution and the host rating check all passed.
+//
+// The containment direction in `action-type-enum-drift.test.ts` is what keeps this true in
+// one direction (every arm here must be an `ActionType`); the reverse is deliberately not
+// asserted, which is exactly what lets a server-only type exist.
+// The consolidated `/apps/build` developer funnel. `/apps/get-started`, `/apps/submit`
+// and `/apps/mine` carried ZERO instrumentation between them, so nothing could answer
+// the only question the funnel exists to answer: of the people shown the pitch, how many
+// reach the CLI, and how many go on to start an app.
+//
+// 🔴 CLIENT-POSTABLE ON PURPOSE, UNLIKE THE THREE SERVER-ONLY TYPES ABOVE, and the
+// difference is what the number is FOR. `App_Open` and the mute pair are absent from this
+// schema because each drives a figure someone benefits from inflating — a public play
+// count, a creator-facing mute chart. These four steps drive an internal funnel ratio that
+// nobody is paid by, and the `view` step happens in the browser on a page render with no
+// server round-trip of its own, so a server-side emitter would have to invent one. A
+// script posting these skews an internal conversion chart and nothing else.
+//
+// 🔴 EVERY FIELD IS A CLOSED ENUM — NO FREE STRING. `details` is a `String` column at
+// storage (`tracker.action` JSON-stringifies whatever it is handed), so the only thing
+// standing between a browser POST and arbitrary text in that column is this schema. Both
+// fields are `z.enum`, so a tampered client can post a WRONG combination but cannot post
+// user text, an unbounded string, or a value the funnel query does not already know.
+//
+// `state` is carried on every step, `view` included, because the funnel question is
+// per-state: a `create_entry` from the pitch (a non-author clicking through) and one from
+// the workbench (an author adding their fifth app) are different events that would
+// otherwise be indistinguishable in the rollup.
+const appsBuildActionSchema = z.object({
+  type: z.literal('AppsBuild_Action'),
+  details: z.object({
+    /** Which funnel step fired. Ordered as the funnel runs. */
+    action: z.enum(['view', 'request_access', 'cli_copy', 'create_entry']),
+    /**
+     * Which of the page's three states the viewer was in. Mirrors `AppsBuildState` in
+     * `~/components/Apps/appsBuildState`; the two are pinned together by
+     * `components/Apps/__tests__/appsBuildState.test.ts` so a renamed state cannot
+     * silently start posting a value this enum rejects (a rejected POST is dropped with
+     * a 200, so the loss would be invisible).
+     */
+    state: z.enum(['pitch', 'first-app', 'workbench']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -633,6 +757,8 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   imageRemixClickSchema,
   generatorSubmitSchema,
   feedTagBarClickSchema,
+  announcementClickSchema,
+  appsBuildActionSchema,
 ]);
 
 // Feed impression event — an entity was actually SEEN in a feed, as opposed to
@@ -659,6 +785,10 @@ export const IMPRESSION_ENTITY_TYPES = [
   'Bounty',
   'BountyEntry',
   'User',
+  // Creator announcements only. The sitewide rows render through the same card but are
+  // not instrumented — nobody reads a reach number for those, and they would sit in the
+  // same rollup a creator's page sums.
+  'Announcement',
 ] as const;
 export type ImpressionEntityType = (typeof IMPRESSION_ENTITY_TYPES)[number];
 

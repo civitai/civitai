@@ -8,6 +8,7 @@
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import FollowerReachPanels from './FollowerReachPanels.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -176,6 +177,14 @@
       </div>
     </div>
   </div>
+
+  {#if data.followerReach.status === 'ok'}
+    <FollowerReachPanels reach={data.followerReach.reach} />
+  {:else if data.followerReach.status === 'unavailable'}
+    <div class="placeholder mt-4">
+      Follower reach is temporarily unavailable — please try again shortly.
+    </div>
+  {/if}
 
   {#if data.reactionSplit && splitTotal > 0}
     <div class="cs-panel mt-4 p-4">

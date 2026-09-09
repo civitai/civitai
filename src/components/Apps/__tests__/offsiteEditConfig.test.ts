@@ -770,3 +770,114 @@ describe('🔴 materialEditBlockedReason — role-aware, and pinned as WHOLE str
     expect(drifted(undefined)).not.toMatch(/republish the app from the Publishing tab/i);
   });
 });
+
+describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', () => {
+  /**
+   * 🔴 THE REGRESSION THIS PINS WAS INTRODUCED BY THE FIX FOR N5. The server refuses a
+   * `betaMessage` set while the effective flag is off — correct for a stale form and for a
+   * direct API caller, and reachable from four ordinary clicks in ONE tab:
+   *   1. listing has beta OFF; 2. author ticks the box, revealing the textarea;
+   *   3. types a note; 4. changes their mind and UNTICKS.
+   * The textarea is hidden but NOT cleared (deliberately — re-ticking should restore what
+   * they typed), so `current.betaMessage` still holds the text while `current.isBeta` is back
+   * to its original `false`. The diff then emitted `{betaMessage}` ALONE, the server refused,
+   * and because the whole form saves in one mutation every other edit in it — name, tagline,
+   * description, category, URL — was rejected with it. The refusal's own advice ("tick the
+   * box and save again") would have published the note they had just abandoned.
+   */
+  /**
+   * 🔴 BUILT THROUGH `makeCtx`, NOT HAND-ROLLED WITH A CAST. An earlier version of this
+   * fixture was a literal cast `as never`, which is how a fixture silently stops modelling
+   * the contract: `tsconfig.json` excludes every `__tests__` directory, so nothing
+   * type-checks these files today, and a cast guarantees they stay invisible even if that
+   * exclusion is ever narrowed. (The exclude glob is deliberately NOT written out here — a
+   * `**` followed by `/` closes a block comment, which is exactly how this docstring broke
+   * the file's parse the first time.) When `ListingEditContext` gains a field the diff reads, `makeCtx` is the
+   * one place a maintainer updates — a cast-built fixture would keep passing against a
+   * contract it no longer models.
+   */
+  const OFF_LISTING = makeCtx({
+    status: 'approved',
+    scalars: {
+      name: 'n',
+      tagline: null,
+      description: null,
+      category: null,
+      contentRating: 'g',
+      externalUrl: null,
+      isBeta: false,
+      betaMessage: null,
+    },
+  });
+
+  /** The same listing with beta already ON and a stored note. */
+  const ON_LISTING = makeCtx({
+    status: 'approved',
+    scalars: { ...OFF_LISTING.scalars, isBeta: true, betaMessage: 'x' },
+  });
+
+  it('tick → type → untick emits NO beta keys at all', () => {
+    const current = {
+      ...editContextToForm(OFF_LISTING),
+      isBeta: false, // unticked again
+      betaMessage: 'Expect rough edges', // still in the hidden textarea
+    };
+    const patch = buildScalarPatch(OFF_LISTING, current);
+    expect('betaMessage' in patch).toBe(false);
+    expect('isBeta' in patch).toBe(false);
+  });
+
+  it('an unrelated edit in the SAME save still goes through', () => {
+    // 🔴 THE HARM WAS NEVER THE BETA FIELD — it was that one refused key took the whole form
+    // with it. This is the half that matters to the author.
+    const current = {
+      ...editContextToForm(OFF_LISTING),
+      isBeta: false,
+      betaMessage: 'Expect rough edges',
+      tagline: 'a new tagline',
+    };
+    const patch = buildScalarPatch(OFF_LISTING, current);
+    expect(patch.tagline).toBe('a new tagline');
+    expect('betaMessage' in patch).toBe(false);
+  });
+
+  it('positive control — with the box TICKED the note IS emitted', () => {
+    // Without this, the two assertions above would pass on a diff that never emits the note
+    // at all, which would silently break the feature.
+    const current = {
+      ...editContextToForm(OFF_LISTING),
+      isBeta: true,
+      betaMessage: 'Expect rough edges',
+    };
+    const patch = buildScalarPatch(OFF_LISTING, current);
+    expect(patch.isBeta).toBe(true);
+    expect(patch.betaMessage).toBe('Expect rough edges');
+  });
+
+  it('INVARIANT GUARD — unticking a listing that HAS a note emits no note key', () => {
+    // 🔴 LABELLED AS AN INVARIANT GUARD, NOT COUNTED AS REGRESSION COVERAGE. Measured: this
+    // case survives BOTH directions of the NEW-1 mutation, because the fixture's current and
+    // original notes are identical so the key is omitted with or without the guard. It pins
+    // what must not move; it is not evidence the fix works.
+    //
+    // 🔴 AND IT ASSERTS ONLY THE CLIENT HALF. The claim that unticking CLEARS a stored note
+    // is the SERVER's (`buildListingPatchData` nulls it on the off transition). The test that
+    // pins it for THIS patch shape — `{isBeta:false}` with no note key, which is exactly what
+    // the client now sends — is `turning beta OFF clears the note in the SAME write`, in the
+    // F1 block of `offsite-listing.edit.service.test.ts`. (NOT the N5 block, which an earlier
+    // version of this comment cited: N5's subject is a note sitting behind an ALREADY-off
+    // flag, and its nearest case sends `{isBeta:false, betaMessage:'x'}` — a patch that names
+    // the note key, which the client no longer produces.) All this test shows is that the
+    // client does not need to send the note for the server's clear to happen.
+    const current = { ...editContextToForm(ON_LISTING), isBeta: false };
+    const patch = buildScalarPatch(ON_LISTING, current);
+    expect(patch.isBeta).toBe(false);
+    expect('betaMessage' in patch).toBe(false);
+  });
+
+  it('editing the note while beta stays ON still emits it', () => {
+    const current = { ...editContextToForm(ON_LISTING), betaMessage: 'y' };
+    const patch = buildScalarPatch(ON_LISTING, current);
+    expect(patch.betaMessage).toBe('y');
+  });
+});

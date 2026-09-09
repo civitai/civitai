@@ -25,6 +25,12 @@ const valid: OffsiteSubmitFormValues = {
   name: 'My External App',
   externalUrl: 'https://example.com/app',
   sourceRepoUrl: '',
+  // 🔴 PRESENT, not omitted, even though this literal is not type-checked (tsconfig
+  // excludes `src/**/__tests__/**`). `validateOffsiteSubmitForm` reads `.length` off the
+  // text fields directly, exactly as it does for `tagline` two lines down, so a missing key
+  // here is a `TypeError` at runtime rather than a compile error.
+  isBeta: false,
+  betaMessage: '',
   tagline: 'a neat tool',
   description: 'does neat things',
   category: 'utility',

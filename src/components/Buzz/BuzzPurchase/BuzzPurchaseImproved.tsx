@@ -76,7 +76,7 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { InlineMembershipUpsell } from '~/components/Stripe/InlineMembershipUpsell';
 import { QS } from '~/utils/qs';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
@@ -305,6 +305,7 @@ export const BuzzPurchaseImproved = ({
   const currentUser = useCurrentUser();
   const { region } = useAppContext();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
@@ -401,7 +402,7 @@ export const BuzzPurchaseImproved = ({
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen, minBuzzAmount, serverDomains.green]);
+  }, [selectedBuzzType, features.isGreen, minBuzzAmount, serverDomains.green, syncAccount]);
 
   const minBuzzAmountPrice = minBuzzAmount
     ? Math.max(minBuzzAmount / 10, effectiveMinCharge)

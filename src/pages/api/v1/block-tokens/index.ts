@@ -30,7 +30,9 @@ import {
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,
+  effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
@@ -50,6 +52,46 @@ import {
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
 import type { Logger } from '@civitai/next-axiom';
+
+/**
+ * The EFFECTIVE browsing-level ceiling this mint advertises to the host for
+ * `BLOCK_INIT` — the intersection of the domain ceiling already computed for
+ * the token claim and the VIEWER's own NSFW browsing level.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL: `maxBrowsingLevel` is a property of the DOMAIN, so
+ * two viewers on `civitai.red` — one who never enabled NSFW, one at XXX — are
+ * handed the identical, maximally-wide ceiling. A block that renders mature
+ * affordances off `maxBrowsingLevel` therefore shows them to a viewer whose own
+ * setting says PG. This value is the one a block should render against.
+ *
+ * 🔴 WHY IT IS AN INTERSECTION AND NOT THE VIEWER'S RAW LEVEL: on `blue` the
+ * App-Blocks domain ceiling is SFW (see `domainBrowsingCeiling`) while the
+ * viewer's saved level may carry R/X/XXX, so the raw viewer level is WIDER than
+ * the domain permits. Shipping it would hand untrusted publisher code a number
+ * that reads as permission and is not one. Only the intersection is safe to
+ * project, and it is what a block actually needs.
+ *
+ * `getServerBrowsingLevel` is the platform's single source of truth for "the
+ * viewer's own level" (the same helper `wildcard-pack.service.ts` gates on);
+ * this does not re-derive it. It already fails closed to PG for an anonymous
+ * viewer and for a viewer with NSFW off, and `effectiveBrowsingCeiling` fails
+ * closed again on both operands — so every absent/anonymous/malformed path
+ * lands on a subset of the domain ceiling, never a superset.
+ *
+ * `canViewNsfw` is read from the SAME `getFeatureFlags({ user, req })` call
+ * shape the route already uses for `appBlocks`, so the domain half of the
+ * viewer-level derivation cannot drift from the rest of the request.
+ */
+function resolveEffectiveBrowsingLevel(args: {
+  req: NextApiRequest;
+  sessionUser: SessionUser | undefined;
+  maxBrowsingLevel: number;
+}): number {
+  const { req, sessionUser, maxBrowsingLevel } = args;
+  const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
+  const viewerBrowsingLevel = getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
+  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerBrowsingLevel);
+}
 
 /**
  * POST /api/v1/block-tokens
@@ -471,6 +513,14 @@ async function tryDevTunnelScopedMint(args: {
     // Forced-SFW: the dev mint never reads the request host.
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // Still narrowed by the author's OWN browsing level: forced-SFW caps the
+    // domain half, it says nothing about the viewer half. An author with NSFW
+    // off dogfoods at PG here, exactly as they would on the public run page.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser,
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+    }),
   });
   return 'handled';
 }
@@ -638,6 +688,12 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     missingScopes: [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser,
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+    }),
   });
   return 'handled';
 }
@@ -955,12 +1011,35 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // H-2: intersect requested scopes with the approved-scope snapshot. An
   // approved manifest re-published with added scopes already loses approval
   // (status → 'pending', filtered above), but the approved_scopes column is
-  // the authoritative pinning. Empty array = fail-closed. Checked on the
-  // known-scope subset — an unknown scope was dropped above (capability-less),
-  // so an anti-swap check on it would only mislead; a KNOWN scope added outside
-  // the approved snapshot is still caught here.
+  // the authoritative pinning. An empty snapshot is fail-closed ONLY against a
+  // manifest that actually asks for something. Checked on the known-scope
+  // subset — an unknown scope was dropped above (capability-less), so an
+  // anti-swap check on it would only mislead; a KNOWN scope added outside the
+  // approved snapshot is still caught here.
+  //
+  // ZERO-SCOPE APPS: an app whose manifest declares `scopes: []` (or only
+  // removed/unknown scopes — see the INTENTIONAL note above) is legitimately
+  // approved with an EMPTY snapshot. It is asking for no capabilities, so there
+  // is nothing to fail closed on and it must mint a valid zero-scope token
+  // rather than be locked out of running at all. Guarding this branch on the
+  // manifest actually declaring known scopes is what restores that: with an
+  // empty manifest there is nothing to intersect, and the token that gets
+  // signed grants nothing (every scope-gated endpoint fails closed at the
+  // deny-by-default runtime gate).
+  //
+  // The dangerous shape — a manifest that DOES declare known scopes against an
+  // empty snapshot — is unchanged, and is in fact caught twice: this branch
+  // reports it as "no approved scopes", and the intersection immediately below
+  // would independently reject every one of those scopes as outside the
+  // snapshot. This branch is kept as the more precise diagnostic (and as a belt
+  // if the intersection is ever refactored) — but ONLY for the empty-snapshot
+  // half. It does NOT cover the PARTIAL-snapshot case: a manifest declaring
+  // `A`+`B` against a snapshot holding only `A` reaches this branch with
+  // `approvedScopes.size === 1`, passes it, and is caught solely by the
+  // intersection below. Deleting that intersection on the strength of this
+  // "belt" would sign `B` into the token. Both checks are load-bearing.
   const approvedScopes = new Set(block.approvedScopes ?? []);
-  if (approvedScopes.size === 0) {
+  if (knownManifestScopes.length > 0 && approvedScopes.size === 0) {
     res.status(403).json({ error: 'block has no approved scopes' });
     return;
   }
@@ -1189,5 +1268,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // self-filter their catalog reads / blur. See projectBlockInit.ts.
     domain: domainColor ?? null,
     maxBrowsingLevel,
+    // The PER-VIEWER narrowing of the line above. `maxBrowsingLevel` is a
+    // property of the domain and is identical for every viewer on it; this is
+    // that ceiling intersected with the viewer's own NSFW browsing level, and
+    // it is what a block should render mature affordances against. Always a
+    // subset of `maxBrowsingLevel` — see `resolveEffectiveBrowsingLevel`.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser: session?.user,
+      maxBrowsingLevel,
+    }),
   });
 });

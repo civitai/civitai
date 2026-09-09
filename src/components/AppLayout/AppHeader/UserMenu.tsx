@@ -4,6 +4,7 @@ import {
   Button,
   Divider,
   Popover,
+  Text,
   Tooltip,
   UnstyledButton,
   useComputedColorScheme,
@@ -12,6 +13,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -21,6 +23,7 @@ import {
   IconMoonStars,
   IconSettings,
   IconSun,
+  IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { LinkProps } from 'next/link';
@@ -281,8 +284,26 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
 }
 
 function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
-  const { accounts, swapAccount } = useAccountContext();
+  const { accounts, swapAccount, removeAccount } = useAccountContext();
   const { handleClose } = useUserMenuContext();
+
+  // Confirmed because this sits next to the switch target, so a mis-click is easy — and the roster is
+  // DURABLE: an entry stays listed after its seamless-switch window lapses, so removing is the only way
+  // to clear one short of signing out of every account on this browser.
+  const handleRemoveAccount = (id: number, username?: string) =>
+    openConfirmModal({
+      title: 'Remove account',
+      children: (
+        <Text size="sm">
+          Remove <b>{username ?? 'this account'}</b> from this browser? You can sign back in at any
+          time — this does not delete the account.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Remove', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => removeAccount(id),
+    });
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin">
@@ -292,24 +313,37 @@ function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
       </MenuItemButton>
       <Divider />
       {Object.entries(accounts).map(([k, v]) => (
-        <MenuItemButton
-          key={k}
-          onClick={v.active ? undefined : () => swapAccount(v.id)}
-          className={clsx('flex items-center justify-between gap-2.5', {
-            ['cursor-auto']: v.active,
-          })}
-        >
-          <div className="flex items-center gap-2">
-            <CustomUserAvatar data={v} />
-            <Username username={v.username} />
-          </div>
-          {v.active ? (
-            <IconCircleCheck size={20} color="green" />
-          ) : v.needsLogin ? (
-            // Aged out of the seamless-switch window — clicking re-authenticates at the hub.
-            <span className="text-xs opacity-60">Sign in</span>
-          ) : null}
-        </MenuItemButton>
+        // Row, not a MenuItemButton: the remove control is a second button, and a button cannot be
+        // nested inside one. The hover styling moves to the row so both halves light up together.
+        <div key={k} className="flex items-center pr-2 hover:bg-gray-1 hover:dark:bg-dark-4">
+          <UnstyledButton
+            onClick={v.active ? undefined : () => swapAccount(v.id)}
+            className={clsx(
+              'flex flex-1 items-center justify-between gap-2.5 px-4 py-3 @md:px-3 @md:py-2.5',
+              { ['cursor-auto']: v.active }
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <CustomUserAvatar data={v} />
+              <Username username={v.username} />
+            </div>
+            {v.active ? (
+              <IconCircleCheck size={20} color="green" />
+            ) : v.needsLogin ? (
+              // Aged out of the seamless-switch window — clicking re-authenticates at the hub.
+              <span className="text-xs opacity-60">Sign in</span>
+            ) : null}
+          </UnstyledButton>
+          {!v.active && (
+            <LegacyActionIcon
+              size="sm"
+              aria-label={`Remove ${v.username ?? 'this account'} from this browser`}
+              onClick={() => handleRemoveAccount(v.id, v.username)}
+            >
+              <IconX size={16} />
+            </LegacyActionIcon>
+          )}
+        </div>
       ))}
       <Divider />
       <div className="p-4 @md:p-1 @md:pt-2">

@@ -102,7 +102,7 @@ import {
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -534,7 +534,21 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  if (data.description) await throwOnBlockedLinkDomain(data.description);
+  // Description only. `data.name` and `data.trainedWords` are both deliberately absent, for one
+  // reason: `requestReviewHandler` and `declineReviewHandler` select BOTH and replay the stored row
+  // through here with no moderator flag. The link half never exempts moderators and is not behind
+  // the enforcement flag, so scanning either field would let a version that trips a list become
+  // impossible to decline or resubmit — the guard would block the remedy for the abuse it found.
+  //
+  // So a version's name and trained words are scanned NOWHERE, while a model's name IS scanned in
+  // `upsertModel`. That is a known gap rather than a rule, tracked on 868kz1yt1.
+  //
+  // 🔴 Adding either field here looks obviously right and was tried. Closing it needs the replay
+  // callers to say they are replaying, not a wider argument list.
+  await throwOnBlockedUserContent(data.description, {
+    isModerator,
+    surface: 'modelVersion',
+  });
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -611,7 +625,7 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.description);
+    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
   }
 
   // Validate NSFW + restricted base model combination
@@ -706,68 +720,74 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError('You cannot add versions to a private model.');
     }
 
-    const [version] = await dbWrite.$transaction([
-      dbWrite.modelVersion.create({
-        data: {
-          ...data,
-          meta:
-            ((rightsAffirmation
-              ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
-              : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
-          availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
-            (s) => s === data?.status
-          )
-            ? Availability.Public
-            : Availability.Private,
-          settings: settings !== null ? settings : Prisma.JsonNull,
-          monetization:
-            monetization && monetization.type
+    const version = await dbWrite.$transaction(
+      async (tx) => {
+        const created = await tx.modelVersion.create({
+          data: {
+            ...data,
+            meta:
+              ((rightsAffirmation
+                ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
+                : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
+            availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
+              (s) => s === data?.status
+            )
+              ? Availability.Public
+              : Availability.Private,
+            settings: settings !== null ? settings : Prisma.JsonNull,
+            monetization:
+              monetization && monetization.type
+                ? {
+                    create: {
+                      type: monetization.type,
+                      unitAmount: monetization.unitAmount,
+                      currency: constants.defaultCurrency,
+                      sponsorshipSettings: monetization.sponsorshipSettings
+                        ? {
+                            create: {
+                              type: monetization.sponsorshipSettings?.type,
+                              currency: constants.defaultCurrency,
+                              unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                            },
+                          }
+                        : undefined,
+                    },
+                  }
+                : undefined,
+            index: 0,
+            recommendedResources: recommendedResources
               ? {
-                  create: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings: monetization.sponsorshipSettings
-                      ? {
-                          create: {
-                            type: monetization.sponsorshipSettings?.type,
-                            currency: constants.defaultCurrency,
-                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                          },
-                        }
-                      : undefined,
+                  createMany: {
+                    data: recommendedResources?.map((resource) => ({
+                      resourceId: resource.resourceId,
+                      settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                    })),
                   },
                 }
               : undefined,
-          index: 0,
-          recommendedResources: recommendedResources
-            ? {
-                createMany: {
-                  data: recommendedResources?.map((resource) => ({
-                    resourceId: resource.resourceId,
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
-                  })),
-                },
-              }
-            : undefined,
-          baseModelType: data.baseModelType ?? undefined,
-        },
-      }),
-      ...existingVersions.map(({ id }, index) =>
-        dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
-      ),
-    ]);
+            baseModelType: data.baseModelType ?? undefined,
+          },
+        });
+
+        for (const [index, { id: existingId }] of existingVersions.entries())
+          await tx.modelVersion.update({ where: { id: existingId }, data: { index: index + 1 } });
+
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'ModelVersion',
+            entityId: created.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return created;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
-
-    if (descriptionSupplied && expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'ModelVersion',
-        entityId: version.id,
-        uses: expansion.uses,
-      });
 
     return version;
   } else {
@@ -852,89 +872,104 @@ export const upsertModelVersion = async ({
           }
         : undefined;
 
-    const version = await dbWrite.modelVersion.update({
-      where: { id },
-      data: {
-        ...data,
-        meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
-        availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
-        settings: settings !== null ? settings : Prisma.JsonNull,
-        monetization:
-          existingVersion.monetization?.id && !monetization
-            ? { delete: true }
-            : monetization && monetization.type
-            ? {
-                upsert: {
-                  create: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings: monetization.sponsorshipSettings
-                      ? {
-                          create: {
-                            type: monetization.sponsorshipSettings?.type,
-                            currency: constants.defaultCurrency,
-                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                          },
-                        }
-                      : undefined,
-                  },
-                  update: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings:
-                      existingVersion.monetization?.sponsorshipSettings &&
-                      !monetization.sponsorshipSettings
-                        ? { delete: true }
-                        : monetization.sponsorshipSettings
-                        ? {
-                            upsert: {
+    const version = await dbWrite.$transaction(
+      async (tx) => {
+        const updated = await tx.modelVersion.update({
+          where: { id },
+          data: {
+            ...data,
+            meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
+            availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
+            settings: settings !== null ? settings : Prisma.JsonNull,
+            monetization:
+              existingVersion.monetization?.id && !monetization
+                ? { delete: true }
+                : monetization && monetization.type
+                ? {
+                    upsert: {
+                      create: {
+                        type: monetization.type,
+                        unitAmount: monetization.unitAmount,
+                        currency: constants.defaultCurrency,
+                        sponsorshipSettings: monetization.sponsorshipSettings
+                          ? {
                               create: {
                                 type: monetization.sponsorshipSettings?.type,
                                 currency: constants.defaultCurrency,
                                 unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                               },
-                              update: {
-                                type: monetization.sponsorshipSettings?.type,
-                                currency: constants.defaultCurrency,
-                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                              },
-                            },
-                          }
-                        : undefined,
+                            }
+                          : undefined,
+                      },
+                      update: {
+                        type: monetization.type,
+                        unitAmount: monetization.unitAmount,
+                        currency: constants.defaultCurrency,
+                        sponsorshipSettings:
+                          existingVersion.monetization?.sponsorshipSettings &&
+                          !monetization.sponsorshipSettings
+                            ? { delete: true }
+                            : monetization.sponsorshipSettings
+                            ? {
+                                upsert: {
+                                  create: {
+                                    type: monetization.sponsorshipSettings?.type,
+                                    currency: constants.defaultCurrency,
+                                    unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                                  },
+                                  update: {
+                                    type: monetization.sponsorshipSettings?.type,
+                                    currency: constants.defaultCurrency,
+                                    unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                                  },
+                                },
+                              }
+                            : undefined,
+                      },
+                    },
+                  }
+                : undefined,
+            recommendedResources: recommendedResources
+              ? {
+                  deleteMany: {
+                    id: {
+                      notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
+                    },
                   },
-                },
-              }
-            : undefined,
-        recommendedResources: recommendedResources
-          ? {
-              deleteMany: {
-                id: {
-                  notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
-                },
-              },
-              createMany: {
-                data: recommendedResources
-                  .filter((resource) => !resource.id)
-                  .map((resource) => ({
-                    resourceId: resource.resourceId,
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
-                  })),
-              },
-              update: recommendedResources
-                .filter((resource) => resource.id)
-                .map((resource) => ({
-                  where: { id: resource.id },
-                  data: {
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                  createMany: {
+                    data: recommendedResources
+                      .filter((resource) => !resource.id)
+                      .map((resource) => ({
+                        resourceId: resource.resourceId,
+                        settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                      })),
                   },
-                })),
-            }
-          : undefined,
-        baseModelType: data.baseModelType ?? undefined,
+                  update: recommendedResources
+                    .filter((resource) => resource.id)
+                    .map((resource) => ({
+                      where: { id: resource.id },
+                      data: {
+                        settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                      },
+                    })),
+                }
+              : undefined,
+            baseModelType: data.baseModelType ?? undefined,
+          },
+        });
+
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'ModelVersion',
+            entityId: updated.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return updated;
       },
-    });
+      { maxWait: 10000, timeout: 30000 }
+    );
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
@@ -986,13 +1021,6 @@ export const upsertModelVersion = async ({
         context: { modelId: version.modelId },
       });
 
-    if (descriptionSupplied && expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'ModelVersion',
-        entityId: version.id,
-        uses: expansion.uses,
-      });
-
     return version;
   }
 };
@@ -1033,7 +1061,7 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
 
   let modelId: number;
   if (context) {
@@ -2001,6 +2029,8 @@ export const upsertExplorationPrompt = async ({
   index,
   prompt,
 }: UpsertExplorationPromptInput) => {
+  await throwOnBlockedUserContent([name, prompt], { surface: 'explorationPrompt' });
+
   try {
     const explorationPrompt = await dbWrite.modelVersionExploration.upsert({
       where: { modelVersionId_name: { modelVersionId, name } },

@@ -21,6 +21,7 @@
     retoolActivity,
     reportsOnUser,
     notes,
+    truncated,
   }: {
     userId: number;
     civitaiUrl: string;
@@ -32,7 +33,13 @@
     retoolActivity: RetoolActivityRow[];
     reportsOnUser: UserReportRow[];
     notes: UserNote[];
+    /** Whether each source had more rows than the panel was given. Every count here is `.length`
+     *  over a capped list, so without this the cap renders as the total. See `account-history.ts`. */
+    truncated: { strikes: boolean; activity: boolean; reports: boolean };
   } = $props();
+
+  /** A capped count must never read as a complete one. */
+  const atLeast = (n: number, more: boolean) => (more ? `${n}+` : `${n}`);
 
   /** These rows also arrive over JSON, where a `Date` is a `string`; one snippet renders both. */
   type DisplayReportRow = Omit<UserReportRow, 'createdAt' | 'statusSetAt'> & {
@@ -101,7 +108,9 @@
 {/snippet}
 
 <div class="mb-4">
-  <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">Strikes ({strikes.length})</h3>
+  <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
+    Strikes ({atLeast(strikes.length, truncated.strikes)})
+  </h3>
   <!-- One store since the 2026-08-21 import: every Retool-era strike is a `UserStrike` row and shows
        in the list above. There is no "plus N elsewhere" left to say. -->
   <StrikeList {strikes} empty="No strikes on this account." />
@@ -110,7 +119,7 @@
 <div class="mb-4 grid gap-4 sm:grid-cols-2">
   <div>
     <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-      Moderation activity ({activityRows.length + retoolActivity.length})
+      Moderation activity ({atLeast(activityRows.length + retoolActivity.length, truncated.activity)})
     </h3>
     {#if activityRows.length === 0 && retoolActivity.length === 0}
       <p class="text-sm text-dark-2">
@@ -160,8 +169,15 @@
     <div class="mt-1 flex flex-wrap gap-x-3 text-xs">
       {#if activityHidden > 0 || expandActivity}
         <button type="button" class={LINK_CLASS} onclick={() => (expandActivity = !expandActivity)}>
-          {expandActivity ? 'Show fewer' : `Show all (${activityHidden} more)`}
+          {expandActivity
+            ? 'Show fewer'
+            : `Show all (${atLeast(activityHidden, truncated.activity)} more)`}
         </button>
+        <!-- Expanding used to end at 'Show fewer' with nothing hidden, which reads as "that is all of
+             it" on an account whose history was cut off by the query. -->
+        {#if truncated.activity}
+          <span class="text-xs text-dark-2">Older activity beyond this is not shown.</span>
+        {/if}
       {/if}
       {#if ratingActivity.length > 0}
         <button type="button" class={LINK_CLASS} onclick={() => (showRatings = !showRatings)}>
@@ -173,7 +189,7 @@
 
   <div>
     <h3 class="mb-2 text-xs tracking-wide text-dark-2 uppercase">
-      Account reports ({reportsOnUser.length}, human-filed)
+      Account reports ({atLeast(reportsOnUser.length, truncated.reports)}, human-filed)
     </h3>
     {#if reportsOnUser.length === 0}
       <p class="text-sm text-dark-2">No prior report against the account itself.</p>

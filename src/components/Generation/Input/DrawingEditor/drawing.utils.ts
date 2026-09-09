@@ -2,13 +2,8 @@ import type Konva from 'konva';
 import type { DrawingElement, DrawingLineInput } from './drawing.types';
 import z from 'zod';
 import { defaultCatch } from '~/utils/zod-helpers';
+import { copyMetadata } from '@civitai/generation-metadata';
 import { fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser, encodeMetadata } from '~/utils/metadata';
-import {
-  createExifSegmentFromTags,
-  encodeUserCommentUTF16BE,
-  isEncoded,
-} from '~/utils/encoding-helpers';
 
 // #region ID Generation
 
@@ -133,43 +128,17 @@ export async function exportDrawingToBlob(
     height: canvasHeight,
   });
 
-  // If source URL provided, extract EXIF and return JPEG with metadata
+  // If source URL provided, carry its generation metadata onto the export
   if (sourceImageUrl) {
     try {
       const file = await fetchBlobAsFile(sourceImageUrl);
       if (file) {
-        const parser = await ExifParser(file);
-
-        let userComment =
-          parser.exif.userComment && isEncoded(parser.exif.userComment)
-            ? parser.exif.userComment
-            : undefined;
-
-        if (!userComment) {
-          const meta = await parser.getMetadata();
-          if (Object.keys(meta).length > 0) {
-            userComment = encodeUserCommentUTF16BE(encodeMetadata(meta));
-          }
-        }
-
-        // Create JPEG with EXIF
-        const dataUrl = stageCanvas.toDataURL('image/jpeg', 0.95);
-        const exifSegment = createExifSegmentFromTags({
-          artist: parser.exif.Artist,
-          userComment,
-          software: parser.exif.Software,
-        });
-
-        const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
-        const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2);
-        const rest = Uint8Array.prototype.slice.call(jpegBytes, 2);
-        const newJpegBytes = new Uint8Array(soi.length + exifSegment.length + rest.length);
-
-        newJpegBytes.set(soi, 0);
-        newJpegBytes.set(exifSegment, soi.length);
-        newJpegBytes.set(rest, soi.length + exifSegment.length);
-
-        return new Blob([newJpegBytes], { type: 'image/jpeg' });
+        const stripped = await new Promise<Blob | null>((resolve) =>
+          stageCanvas.toBlob(resolve, 'image/jpeg', 0.95)
+        );
+        if (!stripped) throw new Error('canvas.toBlob failed');
+        const restored = await copyMetadata(file, new Uint8Array(await stripped.arrayBuffer()));
+        return new Blob([restored as BlobPart], { type: 'image/jpeg' });
       }
     } catch (error) {
       console.error('Failed to extract EXIF metadata:', error);

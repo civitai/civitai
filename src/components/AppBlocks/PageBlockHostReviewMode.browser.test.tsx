@@ -7,6 +7,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `importOriginal` generic below be written without an inline `import()` type,
 // which the repo's `consistent-type-imports` rule forbids.
 import type * as MantineNotifications from '@mantine/notifications';
+// Type-only too (erased, so it cannot defeat vi.mock hoisting) — the repo's local
+// mirror of the SDK's `BlockWildcardPackErrorCode` union, used below so the
+// permitted-code list in this file cannot silently drift from the union.
+import type { WildcardPackErrorCode } from '~/components/AppBlocks/wildcardPackParse';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — PageBlockHost `reviewMode` read-only gate.
@@ -59,6 +63,13 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: mocks.wildcard }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: mocks.submit }) },
@@ -145,6 +156,17 @@ function listenForReply() {
   };
 }
 
+// The closed set WILDCARD_PACK_RESULT.error is validated against block-side.
+// `satisfies` ties it to the union: adding/removing a member of
+// `WildcardPackErrorCode` without updating this list is a compile error.
+const WILDCARD_PACK_ERROR_CODES = [
+  'not-found',
+  'forbidden',
+  'too-large',
+  'parse-failed',
+  'busy',
+] as const satisfies readonly WildcardPackErrorCode[];
+
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 const REVIEW_TOKEN = 'review.jwt.self-bound';
 
@@ -157,6 +179,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   // Pinned transport (internal) for deterministic delivery — reviewMode is
   // independent of trust tier. The opaque-origin path has its own test below.
@@ -285,7 +310,7 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     l.stop();
   });
 
-  test('GET_WILDCARD_PACK (session-authed, token-INDEPENDENT) → NACK, resolveWildcardPack NOT called', async () => {
+  test('GET_WILDCARD_PACK (session-authed, token-INDEPENDENT) → NACK with an IN-SET enum code, resolveWildcardPack NOT called', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
     await driveToReady();
     const l = listenForReply();
@@ -295,7 +320,15 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     await vi.waitFor(() => expect(l.last('WILDCARD_PACK_RESULT')).toBeTruthy());
     const reply = l.last('WILDCARD_PACK_RESULT')!.payload as { requestId: string; error: string };
     expect(reply.requestId).toBe('wp1');
-    expect(reply.error).toBe('not available in review preview');
+    // 🔴 REGRESSION GUARD. Unlike every other reviewMode NACK, this reply's `error`
+    // is a DISCRIMINATED ENUM the block-side `isValidWildcardPackResult` checks
+    // against a closed set. A free-text NACK (e.g. REVIEW_NACK_MESSAGE) is rejected
+    // by that validator and DROPPED by the transport, so the block's pending
+    // request never settles — a spinner until the transport timeout, which is the
+    // opposite of the fail-fast this handler promises. Assert BOTH: membership in
+    // the five permitted codes, and the specific code we chose.
+    expect(WILDCARD_PACK_ERROR_CODES).toContain(reply.error);
+    expect(reply.error).toBe('forbidden');
     // The mod's session-authed download entitlement is NEVER exercised in review.
     expect(mocks.wildcard).not.toHaveBeenCalled();
     l.stop();
@@ -647,8 +680,11 @@ describe('PageBlockHost review preview handshake', () => {
       if (!el.contentWindow) throw new Error('not mounted yet');
     });
     const l = listenForReply();
-    // The controller re-posts BLOCK_INIT every 400ms until BLOCK_READY — wait for a
-    // re-post to land on our listener, then assert it carries the review token.
+    // The controller re-posts BLOCK_INIT until BLOCK_READY on the
+    // `INIT_RETRY_BACKOFF_MS` schedule (50/100/200ms, then every 400ms) — wait
+    // for a re-post to land on our listener, then assert it carries the review
+    // token. The 3s budget below is deliberately far above any of those gaps, so
+    // it does not need to track the schedule.
     await vi.waitFor(
       () => {
         expect(l.last('BLOCK_INIT')).toBeTruthy();

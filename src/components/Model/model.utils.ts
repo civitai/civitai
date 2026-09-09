@@ -24,6 +24,7 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
+import { getQueryErrorMessage } from '~/utils/errorHandling';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -59,6 +60,7 @@ const modelQueryParamSchema = z
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
     paidAccess: booleanString().optional(),
+    hidePaid: booleanString().optional(),
     types: z
       .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),
@@ -175,7 +177,7 @@ export const useQueryModels = (
     );
     showErrorNotification({
       title: 'Failed to fetch data',
-      error: new Error(`Something went wrong: ${error.message}`),
+      error: new Error(getQueryErrorMessage(error)),
     });
   }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -226,6 +228,13 @@ export const useToggleCheckpointCoverageMutation = () => {
   return { ...toggleMutation, toggle: handleToggle };
 };
 
+/**
+ * The showcase fetches this once and then links out to the collection, so it is the whole
+ * list rather than a page of one — `model.getAll` is rate limited at the edge, and the
+ * widget walking a collection a page at a time is what tripped that limit.
+ */
+const SHOWCASE_PAGE_SIZE = 50;
+
 export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
   const queryUtils = trpc.useUtils();
 
@@ -243,7 +252,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
       sort: ModelSort.Newest,
       period: MetricTimeframe.AllTime,
       periodMode: 'published',
-      limit: 10,
+      limit: SHOWCASE_PAGE_SIZE,
     },
     { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );

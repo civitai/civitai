@@ -1,11 +1,21 @@
 import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import { GENERATION_TAB_KEYS } from '~/components/ImageGeneration/GenerationTabs';
 import { tourScrollBlock } from '~/components/Tours/tour-scroll';
 import { tourSteps } from '~/components/Tours/tours';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
 
 const SRC = path.resolve(__dirname, '../../..');
 const TOUR_DEFINITIONS = path.join(SRC, 'components', 'Tours', 'tours');
+
+// `gen:reset` and `gen:results` are rendered but targeted by no step. Harmless, and
+// removing them is not this guard's business — but listing them means the NEXT
+// orphaned attribute fails here instead of quietly joining them.
+const UNTARGETED_ATTRIBUTES = ['gen:reset', 'gen:results'];
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -27,32 +37,114 @@ const tourTargetKeys = Object.entries(tourSteps).flatMap(([tour, steps]) =>
   })
 );
 
+const isGenTabKey = (key: string | undefined): boolean =>
+  GENERATION_TAB_KEYS.some((tab) => key === `gen:${tab}`);
+
 describe('tour steps point at something', () => {
   it('targets a data-tour attribute, so the key below is checkable', () => {
     expect(tourTargetKeys.filter((t) => !t.key).map((t) => `${t.tour}: ${t.target}`)).toEqual([]);
   });
 
   /**
-   * A step whose target is absent is not an error anyone sees: Joyride treats
-   * `TARGET_NOT_FOUND` as "next", so the step silently vanishes and the numbering
-   * jumps. `model:download` sat dead this way from #1964 until 2026-08-27,
-   * because the attribute went with the download UI rewrite and nothing failed.
+   * A missing target fails silently at runtime — Joyride just advances past it, so
+   * nothing errors. This is the static check that would have caught `model:download`
+   * (dead from #1964 to 2026-08-27) before it shipped; see joyride-callback.ts.
    */
   it('names a data-tour key that some component still renders', () => {
     const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
-    // `data-tour={`gen:${key}`}` in GenerationTabs builds its keys from the
-    // panel's tab names, so no file holds the whole string. Anything under such
-    // a prefix is out of this guard's reach — today that is the `gen:` half of
-    // the generation panel, and `model:`/`post:`/`auction:` stay fully covered.
-    const computedPrefixes = rendered.flatMap((source) =>
-      [...source.matchAll(/data-tour=\{`([^`$]+)\$\{/g)].map((m) => m[1])
-    );
+    // The `gen:<tab>` keys are exempted here, not because they're unchecked, but because
+    // the `gen: namespace` block below checks them a different way — see its JSDoc.
     const orphans = [...new Set(tourTargetKeys.map((t) => t.key))].filter(
       (key) =>
         !rendered.some((source) => source.includes(`'${key}'`) || source.includes(`"${key}"`)) &&
-        !computedPrefixes.some((prefix) => key?.startsWith(prefix))
+        !isGenTabKey(key)
     );
     expect(orphans).toEqual([]);
+  });
+});
+
+describe('the gen: namespace', () => {
+  /**
+   * `GenerationTabs` builds `data-tour={`gen:${key}`}` from the tab map, so no source
+   * file holds the literal string and the orphan check above cannot see these at all.
+   */
+  it('names a tab that GenerationTabs actually renders', () => {
+    const genTabTargets = tourTargetKeys
+      .map((t) => t.key)
+      .filter((key): key is string => !!key && key.startsWith('gen:'))
+      .filter(
+        (key) =>
+          ![
+            'gen:start',
+            'gen:terms',
+            'gen:prompt',
+            'gen:remix',
+            'gen:remix-menu',
+            'gen:submit',
+            'gen:buzz',
+            'gen:select',
+            'gen:post',
+          ].includes(key)
+      );
+
+    const unknown = genTabTargets.filter((key) => !isGenTabKey(key));
+
+    expect(unknown).toEqual([]);
+  });
+
+  it('renders a tab for every gen: tab target a tour names', () => {
+    expect([...GENERATION_TAB_KEYS]).toEqual(expect.arrayContaining(['queue', 'feed']));
+  });
+
+  /**
+   * The two checks above only compare the TYPE layer (`GENERATION_TAB_KEYS`) against tour
+   * definitions — neither reads GenerationTabs.tsx, so deleting the `data-tour` JSX itself
+   * would leave both green while the tour points at nothing, same as `model:download`.
+   */
+  it('still renders a gen: data-tour attribute for each tab', () => {
+    const source = readFileSync(
+      path.join(SRC, 'components', 'ImageGeneration', 'GenerationTabs.tsx'),
+      'utf-8'
+    );
+
+    expect(source).toMatch(/data-tour=\{`gen:\$\{/);
+  });
+
+  /**
+   * The orphan check above only asks whether SOME file in `src/` declares the key. That
+   * is why `gen:buzz` read as live for five months while on `BuzzTransactionButton`,
+   * which the v2 generator does not render — the tour skipped the step in silence and the
+   * step counter jumped. These two live in the generator's own footer or nowhere.
+   */
+  it.each([
+    ['GEN_BUZZ_KEY', 'gen:buzz', 'tourTarget={GEN_BUZZ_KEY}'],
+    ['GEN_SUBMIT_KEY', 'gen:submit', 'data-tour={GEN_SUBMIT_KEY}'],
+  ])('wires %s from the generator footer', (constant, key, binding) => {
+    const source = readFileSync(
+      path.join(SRC, 'components', 'generation_v2', 'FormFooter.tsx'),
+      'utf-8'
+    );
+
+    expect(source).toContain(binding);
+    expect(source).toContain('data-tour={tourTarget}');
+    expect(tourTargetKeys.some((t) => t.key === key)).toBe(true);
+  });
+});
+
+describe('data-tour attributes nothing targets', () => {
+  it('has not grown since it was last looked at', () => {
+    const rendered = sourceFiles(SRC).map((file) => readFileSync(file, 'utf-8'));
+    // A `[`-preceded match is a selector string (a template-literal lookup, or this
+    // guard's own regex source in joyride-callback.ts) rather than a declared attribute.
+    const declared = new Set(
+      rendered.flatMap((source) =>
+        [...source.matchAll(/(?<!\[)data-tour="([^"]+)"/g)].map((m) => m[1])
+      )
+    );
+    const targeted = new Set(tourTargetKeys.map((t) => t.key));
+    const untargeted = [...declared].filter((key) => !targeted.has(key)).sort();
+
+    expect(untargeted).toEqual([...UNTARGETED_ATTRIBUTES].sort());
   });
 });
 
@@ -73,10 +165,42 @@ describe.each([
     expect(targets()[index + 1]).toBe(`[data-tour="${button}-menu"]`);
   });
 
-  it('leaves the menu step a way forward for an image every engine refuses', () => {
+  /**
+   * The menu the next step aims at only exists once the button is clicked, so a
+   * `Next` here walks the tour onto a target that is not in the document.
+   */
+  it('offers no footer on the button step', () => {
+    const buttonStep = tourSteps[tour].find((step) => step.target === `[data-tour="${button}"]`);
+
+    expect(buttonStep?.hideFooter).toBe(true);
+  });
+
+  it('offers no footer on the menu step either', () => {
     const menuStep = tourSteps[tour].find((step) => step.target === `[data-tour="${button}-menu"]`);
 
-    expect(menuStep?.hideFooter).not.toBe(true);
+    expect(menuStep?.hideFooter).toBe(true);
+  });
+});
+
+/**
+ * Both remix steps hide their footer, so an image every engine refuses opens a menu
+ * with nothing clickable and no `Next`. `RemixMenu` reports that menu as the tour's
+ * blocked target, which is the only thing that puts the footer back — see
+ * `ToursProvider`'s `blockedTarget` doc and `TourPopover.blocked.browser.test.tsx`.
+ */
+describe('the remix menu', () => {
+  const source = readFileSync(
+    path.join(SRC, 'components', 'Image', 'Remix', 'RemixMenu.tsx'),
+    'utf-8'
+  );
+
+  it('reports itself blocked when nothing in it is actionable', () => {
+    expect(source).toContain('setBlockedTarget(`[data-tour="${tourTarget}"]`)');
+    expect(source).toMatch(/if \(tourTarget && !hasActionableItem\)/);
+  });
+
+  it('clears that report only when it was the one to make it', () => {
+    expect(source).toContain('if (!reportedBlocked.current) return;');
   });
 });
 
@@ -130,5 +254,47 @@ describe('tourScrollBlock', () => {
   it('still centres a target that fits', () => {
     expect(tourScrollBlock(40, 806)).toBe('center');
     expect(tourScrollBlock(806, 806)).toBe('center');
+  });
+});
+
+describe('the model page help button', () => {
+  /**
+   * `welcome` has no help-button icon of its own — the model page's help button is its
+   * only re-entry path. Since a failed tour still persists as completed, hardcoding
+   * this key would permanently strand anyone who started `welcome` from the URL.
+   */
+  it('restarts the tour the user actually arrived on', () => {
+    const source = readFileSync(
+      path.join(SRC, 'pages', 'models', '[id]', '[[...slug]].tsx'),
+      'utf-8'
+    );
+
+    expect(source).toMatch(
+      /runTour\(\{\s*key:\s*activeTour\s*===\s*'welcome'\s*\?\s*'welcome'\s*:\s*'model-page'/
+    );
+  });
+});
+
+describe('the shared generator steps', () => {
+  /**
+   * `gen:select` is deliberately excluded — its closing sentence differs per tour
+   * (see `selectStep`'s `closing` param) — so asserting identity here would license
+   * an extraction that silently overwrites one tour's copy.
+   */
+  it.each(['gen:terms', 'gen:buzz', 'gen:queue', 'gen:feed', 'gen:post'])(
+    'gives both tours the same %s step object',
+    (target) => {
+      const find = (steps: typeof contentGenerationTour) =>
+        steps.find((step) => step.target === `[data-tour="${target}"]`);
+
+      expect(find(contentGenerationTour)).toBe(find(remixContentGenerationTour));
+    }
+  );
+
+  it('keeps the two gen:select steps distinct', () => {
+    const find = (steps: typeof contentGenerationTour) =>
+      steps.find((step) => step.target === '[data-tour="gen:select"]');
+
+    expect(find(contentGenerationTour)).not.toBe(find(remixContentGenerationTour));
   });
 });

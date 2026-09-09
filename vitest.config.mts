@@ -295,7 +295,133 @@ const unitTestConfig = {
   experimental: { fsModuleCache: true },
 };
 
-// Three Vitest projects sharing one config/runner:
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED BY BOTH BROWSER PROJECTS (`component` and `geometry`).
+//
+// 🔴 ONE COPY, DELIBERATELY. The two differ in exactly two settings — their glob
+// and their setup file — and every other browser setting has to stay identical or
+// the split changes behaviour as well as which cascade is loaded. A duplicated
+// `optimizeDeps.include` in particular would regenerate the cold-cache reload
+// failure documented on it the first time one copy is updated and the other is not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// dedupe React so a transitive dep can't pull a second copy — a second
+// React makes `useContext` read a null context and crashes some Mantine
+// components (e.g. @mantine/dropzone) in browser mode, notably on a COLD
+// optimizeDeps cache (fresh CI runs). Canonical fix; protects every
+// browser test from this class of dual-React crash.
+const browserResolve = { alias: componentAlias, dedupe: ['react', 'react-dom'] };
+
+// Pre-bundle deps the browser setups mock/import so Vitest doesn't
+// discover them mid-run and trigger a "Vite unexpectedly reloaded a
+// test" warning (a flake vector).
+//
+// On a COLD optimizeDeps cache (every fresh CI/preview run), Vite was
+// discovering `vitest-browser-react` + `react/jsx-dev-runtime` only when
+// `test/component-setup.tsx` first imported them — mid-run — and reloading.
+// The reload tears down the module context while the setup is still
+// importing `vitest-browser-react`, so that package evaluates OUTSIDE a live
+// vitest runner → "Vitest failed to find the runner" → "Failed to import test
+// file test/component-setup.tsx" → EVERY browser test fails to load. (Warm
+// cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
+// the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
+const browserOptimizeDeps = {
+  include: [
+    'next/router',
+    'vitest-browser-react',
+    'react/jsx-dev-runtime',
+    'react/jsx-runtime',
+    // `react-dom/server` — used by the SSR→hydrate tests
+    // (`*.ssrHydration.browser.test.tsx`) to produce real server HTML and
+    // hydrate it. WITHOUT this entry Vite discovers it mid-run and emits a
+    // SEPARATE optimized chunk that carries its OWN copy of `react`, so
+    // `ReactCurrentDispatcher.current` is null inside it and every hook call
+    // during `renderToString` throws
+    // `Cannot read properties of null (reading 'useState')` — the dual-React
+    // failure the `dedupe` above exists to prevent, arriving through the
+    // optimizer rather than through a transitive dependency. Listing it here
+    // pre-bundles it in the same pass as `react`/`react-dom`, so all three
+    // share one instance.
+    'react-dom/server',
+  ],
+  // `@vitest/browser` seeds optimizeDeps.entries from EVERY browser test file
+  // (globTestFiles), not just the one you ran. The review app-listing browser tests
+  // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
+  // #3298 on main) each import their page, which pulls in `createServerSideProps` ->
+  // `appRouter` -> app-listing-assets.service.ts's
+  // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
+  // never evaluated at runtime — but esbuild's static scan follows the import anyway and
+  // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
+  // file), failing the whole browser project with "No loader is configured for '.node'
+  // files" regardless of which test you targeted. Exclude it; no browser test needs it.
+  exclude: ['sharp'],
+};
+
+// 🔴 A FACTORY, NOT A SHARED OBJECT — and the difference is observable.
+// Vitest STAMPS each browser instance with a name derived from the project that
+// owns it (`<project> (chromium)`). Handing two projects the SAME `instances`
+// array therefore lets the first project's label survive onto the second's
+// output: with a shared object the `geometry` project's failures printed under
+// `|component (chromium)|`, which is a run report naming the wrong tier — the
+// most expensive kind of wrong, because it points every reader at the wrong
+// setup file. Each project gets its own object.
+const browserModeOptions = () => ({
+  enabled: true as const,
+  // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
+  // Chromium as root inside the Tekton CI container (node:20 pod runs
+  // as UID 0; without --no-sandbox Chromium refuses to start, and the
+  // container's small /dev/shm crashes it without --disable-dev-shm-usage).
+  // Harmless locally.
+  // CI installs Playwright's own Chromium into the image (env unset),
+  // so it resolves by revision as normal. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
+  // is the escape hatch for a host whose browser bundle does not carry the
+  // revision this playwright release pins (the NixOS
+  // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
+  // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
+  // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
+  // rather than moving the pin; see CLAUDE.md "Browser/component tests on
+  // NixOS". A mismatch does not say "no browser" — it collects every file
+  // and executes none, which reads as a broken suite.
+  provider: playwright({
+    launchOptions: {
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    },
+  }),
+  headless: true as const,
+  instances: [{ browser: 'chromium' }],
+});
+
+/** Everything a browser project needs outside its own `test` block. */
+const browserProjectShell = () => ({
+  resolve: { ...browserResolve },
+  plugins: [componentGroupOrderPlugin],
+  optimizeDeps: { ...browserOptimizeDeps },
+});
+
+/**
+ * Everything both browser projects put INSIDE `test`, minus `name`, `include` and
+ * `setupFiles`.
+ *
+ * 🔴 BOTH PROJECTS TAKE THE SAME `maxWorkers` AND THE SAME `groupOrder`, AND THAT
+ * PAIRING IS REQUIRED, NOT COSMETIC. `groupSpecs` refuses two projects that share a
+ * `sequence.groupOrder` but resolve to different worker counts, and it reports that
+ * refusal as `Test Files: no tests` rather than as a failure — the reassuring-zero
+ * shape. Sharing one object is what makes them impossible to drift apart.
+ */
+const browserTestShell = () => ({
+  maxWorkers: componentMaxWorkers,
+  // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
+  // which serialises the browser projects against the node ones instead of interleaving
+  // them; CI and every script select one project at a time.
+  sequence: { groupOrder: COMPONENT_GROUP_ORDER },
+  globals: true as const,
+  browser: browserModeOptions(),
+});
+
+// Four Vitest projects sharing one config/runner:
 //  - `unit`        = the node-env suite, minus the six sharp-executing files.
 //  - `unit-native` = those six files, on `forks`, for the reason above.
 //  - `component`   = browser-mode (real Chromium via Playwright) for React
@@ -303,6 +429,11 @@ const unitTestConfig = {
 //                  unit project never boots a browser (its include is `.test.ts`
 //                  only, so `.tsx` is already excluded — the glob is explicit
 //                  belt-and-suspenders). See `test/component-setup.tsx`.
+//  - `geometry`    = browser-mode with the REAL app cascade loaded and an EXPLICIT
+//                  viewport, for tests that assert PIXELS. Distinct
+//                  `.geometry.test.tsx` glob, disjoint from both of the above. See
+//                  `test/geometry-setup.tsx` for why it is a second project rather
+//                  than a change to the shared one.
 export default defineConfig({
   resolve: { alias },
   test: {
@@ -379,97 +510,32 @@ export default defineConfig({
         },
       },
       {
-        // dedupe React so a transitive dep can't pull a second copy — a second
-        // React makes `useContext` read a null context and crashes some Mantine
-        // components (e.g. @mantine/dropzone) in browser mode, notably on a COLD
-        // optimizeDeps cache (fresh CI runs). Canonical fix; protects every
-        // component test from this class of dual-React crash.
-        resolve: { alias: componentAlias, dedupe: ['react', 'react-dom'] },
-        plugins: [componentGroupOrderPlugin],
-        // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
-        // discover them mid-run and trigger a "Vite unexpectedly reloaded a
-        // test" warning (a flake vector).
-        //
-        // On a COLD optimizeDeps cache (every fresh CI/preview run), Vite was
-        // discovering `vitest-browser-react` + `react/jsx-dev-runtime` only when
-        // `test/component-setup.tsx` first imported them — mid-run — and reloading.
-        // The reload tears down the module context while component-setup is still
-        // importing `vitest-browser-react`, so that package evaluates OUTSIDE a live
-        // vitest runner → "Vitest failed to find the runner" → "Failed to import test
-        // file test/component-setup.tsx" → EVERY component test fails to load. (Warm
-        // cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
-        // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
-        optimizeDeps: {
-          include: [
-            'next/router',
-            'vitest-browser-react',
-            'react/jsx-dev-runtime',
-            'react/jsx-runtime',
-            // `react-dom/server` — used by the SSR→hydrate tests
-            // (`*.ssrHydration.browser.test.tsx`) to produce real server HTML and
-            // hydrate it. WITHOUT this entry Vite discovers it mid-run and emits a
-            // SEPARATE optimized chunk that carries its OWN copy of `react`, so
-            // `ReactCurrentDispatcher.current` is null inside it and every hook call
-            // during `renderToString` throws
-            // `Cannot read properties of null (reading 'useState')` — the dual-React
-            // failure the `dedupe` above exists to prevent, arriving through the
-            // optimizer rather than through a transitive dependency. Listing it here
-            // pre-bundles it in the same pass as `react`/`react-dom`, so all three
-            // share one instance.
-            'react-dom/server',
-          ],
-          // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
-          // (globTestFiles), not just the one you ran. The review app-listing browser tests
-          // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
-          // #3298 on main) each import their page, which pulls in `createServerSideProps` ->
-          // `appRouter` -> app-listing-assets.service.ts's
-          // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
-          // never evaluated at runtime — but esbuild's static scan follows the import anyway and
-          // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
-          // file), failing the whole component project with "No loader is configured for '.node'
-          // files" regardless of which test you targeted. Exclude it; no component test needs it.
-          exclude: ['sharp'],
-        },
+        ...browserProjectShell(),
         test: {
+          ...browserTestShell(),
           name: 'component',
-          maxWorkers: componentMaxWorkers,
-          // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
-          // which serialises the two projects instead of interleaving them; CI and every script
-          // select one project at a time.
-          sequence: { groupOrder: COMPONENT_GROUP_ORDER },
-          globals: true,
           include: ['src/**/*.browser.test.tsx'],
           // process-shim MUST come first (no imports) so it runs before any
           // component's module graph reads `process.env` at import time.
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
-          browser: {
-            enabled: true,
-            // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
-            // Chromium as root inside the Tekton CI container (node:20 pod runs
-            // as UID 0; without --no-sandbox Chromium refuses to start, and the
-            // container's small /dev/shm crashes it without --disable-dev-shm-usage).
-            // Harmless locally.
-            // CI installs Playwright's own Chromium into the image (env unset),
-            // so it resolves by revision as normal. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
-            // is the escape hatch for a host whose browser bundle does not carry the
-            // revision this playwright release pins (the NixOS
-            // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
-            // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
-            // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
-            // rather than moving the pin; see CLAUDE.md "Browser/component tests on
-            // NixOS". A mismatch does not say "no browser" — it collects every file
-            // and executes none, which reads as a broken suite.
-            provider: playwright({
-              launchOptions: {
-                args: ['--no-sandbox', '--disable-dev-shm-usage'],
-                ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-                  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
-                  : {}),
-              },
-            }),
-            headless: true,
-            instances: [{ browser: 'chromium' }],
-          },
+        },
+      },
+      {
+        // The GEOMETRY tier. Same browser, same shell, different cascade.
+        //
+        // 🔴 THE GLOB IS DISJOINT FROM EVERY OTHER PROJECT'S, ON PURPOSE.
+        // `component` claims `src/**/*.browser.test.tsx` and `unit` claims
+        // `src/**/*.test.ts` — `.ts`, so `.tsx` is already outside it. Nothing
+        // that runs today changes project and no file is collected twice; a
+        // `.geometry.browser.test.tsx` spelling would have been claimed by BOTH
+        // browser projects and run under two different cascades, which is the one
+        // outcome that would make a red here uninterpretable.
+        ...browserProjectShell(),
+        test: {
+          ...browserTestShell(),
+          name: 'geometry',
+          include: ['src/**/*.geometry.test.tsx'],
+          setupFiles: ['test/browser-process-shim.ts', 'test/geometry-setup.tsx'],
         },
       },
     ],

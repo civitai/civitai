@@ -7,11 +7,10 @@ import {
   GENERATION_HANDOFF_PARAM,
 } from '~/components/generation_v2/utils/generation-url-handoff';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useGraph } from '~/libs/data-graph/react';
+import { useGenerationFormBridge } from '~/components/Generate/useGenerationFormBridge';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 
 const BLUE_BUZZ_ACKNOWLEDGED_KEY = 'blue-buzz-mature-acknowledged';
 
@@ -62,6 +61,7 @@ export function MembershipUpsell() {
   const { canShow, acknowledged, variant } = useMembershipUpsell();
   const { setBuzzType } = useSelectedBuzzType();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const [, setAcknowledged] = useLocalStorage({
     key: BLUE_BUZZ_ACKNOWLEDGED_KEY,
     defaultValue: false,
@@ -160,18 +160,19 @@ export function MembershipUpsell() {
 }
 
 /**
- * Lives in its own component so `useGraph` is only invoked when the yellow-on-green
- * variant fires — by that point the user is interacting with the form, so the
- * DataGraphProvider is guaranteed to be in scope.
+ * Lives in its own component so the form bridge is only consulted when the
+ * yellow-on-green variant fires — by that point the user is interacting with
+ * the form, so one of the form providers is in scope.
  */
 function YellowOnGreenAlert({ onSwitchToGreen }: { onSwitchToGreen: () => void }) {
   const serverDomains = useServerDomains();
-  const graph = useGraph<GenerationGraphTypes>();
+  const syncAccount = useSyncAccount();
+  const bridge = useGenerationFormBridge();
 
   const buildRedUrl = () => {
-    const snapshot = graph.getSnapshot() as Record<string, unknown>;
+    const snapshot = bridge?.getState() ?? {};
     const handoff = encodeGenerationHandoff(snapshot, {
-      computedKeys: graph.getComputedKeys(),
+      computedKeys: bridge?.getComputedKeys() ?? [],
     });
     const base = `//${serverDomains.red}/generate`;
     const withHandoff = handoff ? `${base}?${GENERATION_HANDOFF_PARAM}=${handoff}` : base;

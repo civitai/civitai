@@ -21,14 +21,12 @@ and it predates most of the standard.
 - **Built lazily, never at module load.** `vite build` evaluates modules, so anything reading
   `REDIS_*`/connecting at import time breaks the build. Construct on first use.
 
-## Known-failing typecheck
+## Typecheck is clean — keep it that way
 
-Two errors predate this file and are on `main`; they are not yours if you see them:
-
-- `src/lib/server/auth/providers.ts` — `Parameter 'p' implicitly has an 'any' type` (the `mapProfile`
-  stub)
-- `src/lib/server/auth/__tests__/establish-session.test.ts` — `Property '_store' does not exist on type
-  'never'`
+`pnpm run typecheck` is **0 errors, 1 warning** — `state_referenced_locally` in
+`src/routes/login/+page.svelte`. The two errors this section used to list as known-failing (a `mapProfile`
+implicit `any` in `providers.ts`, `_store` on `never` in `establish-session.test.ts`) are fixed, so any
+error you see is yours.
 
 ## Non-negotiables
 

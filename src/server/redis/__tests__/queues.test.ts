@@ -8,42 +8,58 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Everything referenced by a vi.mock factory must be hoisted (vi.mock is lifted
 // to the top of the file). `state.deadlineDisabled` is a mutable holder tests
 // flip to drop the deadline guard for the busy-loop cap test.
-const { hGet, hSet, sAdd, sMembers, del, exists, set, withSysReadDeadline, logSysRedisFailOpen, state } =
-  vi.hoisted(() => {
-    // Real-ish wall-clock deadline race. Mirrors sys-read-deadline.ts so the
-    // SLOW/hang path is genuinely exercised: a never-resolving op loses the race
-    // and rejects with a timeout error, which queues.ts must catch and fail open.
-    // The INTERNAL timer is a fixed small value (env-independent) regardless of
-    // the requested `ms` — so a large consumer deadline (15s) doesn't make the
-    // SLOW tests actually wait 15s; the reported error message still echoes the
-    // requested `ms` (so the consumer deadline is observable via the message).
-    const INTERNAL_DEADLINE_MS = 50;
-    const holder = { deadlineDisabled: false };
-    return {
-      hGet: vi.fn(),
-      hSet: vi.fn(() => Promise.resolve(1)),
-      sAdd: vi.fn(() => Promise.resolve(1)),
-      sMembers: vi.fn((_bucket?: string) => Promise.resolve([] as string[])),
-      del: vi.fn(() => Promise.resolve(1)),
-      exists: vi.fn(() => Promise.resolve(0)),
-      set: vi.fn(() => Promise.resolve('OK')),
-      logSysRedisFailOpen: vi.fn(),
-      state: holder,
-      withSysReadDeadline: vi.fn(<T>(p: Promise<T>, ms?: number): Promise<T> => {
-        if (holder.deadlineDisabled) return p;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const deadline = new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`sysRedis read timed out after ${ms ?? 'default'}ms`)),
-            INTERNAL_DEADLINE_MS
-          );
-        });
-        return Promise.race([p, deadline]).finally(() => {
-          if (timer) clearTimeout(timer);
-        });
-      }),
-    };
-  });
+const {
+  hGet,
+  hSet,
+  sAdd,
+  sMembers,
+  del,
+  exists,
+  set,
+  withSysReadDeadline,
+  logSysRedisFailOpen,
+  executeRaw,
+  queryRaw,
+  logToAxiom,
+  state,
+} = vi.hoisted(() => {
+  // Real-ish wall-clock deadline race. Mirrors sys-read-deadline.ts so the
+  // SLOW/hang path is genuinely exercised: a never-resolving op loses the race
+  // and rejects with a timeout error, which queues.ts must catch and fail open.
+  // The INTERNAL timer is a fixed small value (env-independent) regardless of
+  // the requested `ms` — so a large consumer deadline (15s) doesn't make the
+  // SLOW tests actually wait 15s; the reported error message still echoes the
+  // requested `ms` (so the consumer deadline is observable via the message).
+  const INTERNAL_DEADLINE_MS = 50;
+  const holder = { deadlineDisabled: false };
+  return {
+    hGet: vi.fn(),
+    hSet: vi.fn(() => Promise.resolve(1)),
+    sAdd: vi.fn(() => Promise.resolve(1)),
+    sMembers: vi.fn((_bucket?: string) => Promise.resolve([] as string[])),
+    del: vi.fn(() => Promise.resolve(1)),
+    exists: vi.fn(() => Promise.resolve(0)),
+    set: vi.fn(() => Promise.resolve('OK')),
+    logSysRedisFailOpen: vi.fn(),
+    executeRaw: vi.fn(() => Promise.resolve(1)),
+    queryRaw: vi.fn(() => Promise.resolve([] as { key: string; value: unknown }[])),
+    logToAxiom: vi.fn(() => Promise.resolve()),
+    state: holder,
+    withSysReadDeadline: vi.fn(<T>(p: Promise<T>, ms?: number): Promise<T> => {
+      if (holder.deadlineDisabled) return p;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`sysRedis read timed out after ${ms ?? 'default'}ms`)),
+          INTERNAL_DEADLINE_MS
+        );
+      });
+      return Promise.race([p, deadline]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+    }),
+  };
+});
 
 vi.mock('~/server/redis/client', () => ({
   sysRedis: { hGet, hSet, sAdd, sMembers, del, exists, set },
@@ -56,7 +72,16 @@ vi.mock('~/server/redis/client', () => ({
 // logging client (which opens its own IO) and so we can assert it was called.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
 
-import { addToQueue, checkoutQueue, mergeQueue } from '~/server/redis/queues';
+// The Postgres parking lot for dropped enqueues. Mocked at the client so the raw
+// SQL shape stays observable — the tests below assert that ids were handed to it,
+// which is the only way a lost delete is distinguishable from a dropped one.
+vi.mock('~/server/db/client', () => ({
+  dbWrite: { $executeRaw: executeRaw, $queryRaw: queryRaw },
+  dbRead: { $executeRaw: executeRaw, $queryRaw: queryRaw },
+}));
+vi.mock('~/server/logging/client', () => ({ logToAxiom }));
+
+import { addToQueue, checkoutQueue, drainDroppedEnqueues, mergeQueue } from '~/server/redis/queues';
 
 // The bucket value is always persisted as a comma-joined string (see hSet calls
 // in queues.ts). This is the exact value the failing prod path read back.
@@ -73,7 +98,18 @@ beforeEach(() => {
   del.mockResolvedValue(1);
   exists.mockResolvedValue(0);
   set.mockResolvedValue('OK');
+  // Implementations, not just call history — vi.clearAllMocks only clears the latter,
+  // so a per-test mockResolvedValue would otherwise leak into the next test.
+  executeRaw.mockResolvedValue(1);
+  queryRaw.mockResolvedValue([]);
 });
+
+// $queryRaw/$executeRaw are tagged templates: call[0] is the strings array, the rest
+// are the interpolated values. The parking lot issues three different statements
+// through the same two mocks, so tests match on the statement rather than the mock.
+const sqlOf = (call: unknown[]) => (call[0] as unknown as string[]).join(' ? ');
+const callsMatching = (mock: { mock: { calls: unknown[][] } }, fragment: string) =>
+  mock.mock.calls.filter((c) => sqlOf(c).includes(fragment));
 
 describe('getBucketNames (via queues.ts public API)', () => {
   // Regression: the HA/Sentinel sysRedis client returns BLOB_STRING replies as a
@@ -148,7 +184,7 @@ describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
   it('addToQueue: a rejecting hGet (bucket-list) read SKIPS the enqueue — does not throw, does not clobber', async () => {
     hGet.mockImplementation(DOWN); // getBucketNames read is DOWN → degraded
 
-    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBeUndefined();
+    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
     // Non-destructive: a false-empty bucket-list read must NOT drive a
     // bucket-reference overwrite (which would orphan pre-existing buckets).
     expect(hSet).not.toHaveBeenCalled();
@@ -167,19 +203,23 @@ describe('queues fail-open — DOWN (sysRedis command rejects fast)', () => {
     );
   });
 
-  it('addToQueue: a rejecting write (hSet/sAdd) is swallowed best-effort — does not throw', async () => {
+  it('addToQueue: a rejecting bucket registration parks the ids instead of writing them nowhere', async () => {
     hGet.mockResolvedValue(null); // empty queue → mints a new bucket
     hSet.mockImplementation(DOWN);
     sAdd.mockImplementation(DOWN);
 
-    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBeUndefined();
+    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
     expect(logSysRedisFailOpen).toHaveBeenCalledWith(
       'write-degraded',
       'queues.addToQueue hSet',
       expect.any(Error),
       expect.any(Object)
     );
-    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+    // A bucket whose registration failed is unreachable by every consumer, so the
+    // ids must NOT be written into it — they go to the parking lot instead.
+    expect(sAdd).not.toHaveBeenCalled();
+    expect(callsMatching(queryRaw, 'INSERT INTO "KeyValue"')).toHaveLength(1);
+    expect(logSysRedisFailOpen).not.toHaveBeenCalledWith(
       'write-degraded',
       'queues.addToQueue sAdd',
       expect.any(Error),
@@ -216,7 +256,7 @@ describe('queues fail-open — SLOW (sysRedis command parks; only the deadline s
     // race in withSysReadDeadline is the only thing that unblocks the caller.
     hGet.mockImplementation(never);
 
-    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBeUndefined();
+    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
     expect(withSysReadDeadline).toHaveBeenCalled();
     // Degraded read → skip; never clobbers the (unknown) real bucket list.
     expect(hSet).not.toHaveBeenCalled();
@@ -247,7 +287,7 @@ describe('queues fail-open — SLOW (sysRedis command parks; only the deadline s
     hGet.mockResolvedValue(null);
     hSet.mockImplementation(never);
 
-    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBeUndefined();
+    await expect(addToQueue('images_v6:Update', [1, 2, 3])).resolves.toBe(false);
     expect(logSysRedisFailOpen).toHaveBeenCalledWith(
       'write-degraded',
       'queues.addToQueue hSet',
@@ -320,9 +360,7 @@ describe('queues data-integrity — non-destructive fail-open (regression guard)
     // Two queued buckets; B1 reads fine, B2's read fails open mid-checkout.
     hGet.mockResolvedValue(`${B1},${B2}`);
     sMembers.mockImplementation((bucket?: string) =>
-      bucket === B1
-        ? Promise.resolve(['1'])
-        : Promise.reject(new Error('Redis connection lost'))
+      bucket === B1 ? Promise.resolve(['1']) : Promise.reject(new Error('Redis connection lost'))
     );
 
     const queue = await checkoutQueue('images_v6:Update', false, false);
@@ -401,5 +439,127 @@ describe('queues data-integrity — non-destructive fail-open (regression guard)
     expect(del).toHaveBeenCalledWith([B1, B2]);
     // Both retired → the rewritten list no longer references them.
     expect(hSet).toHaveBeenCalledWith('queues:buckets', 'images_v6:Update', '');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Postgres parking lot (see FALLBACK_KEY_PREFIX in queues.ts).
+//
+// A dropped enqueue used to be silently unrecoverable for Delete keys — nothing
+// re-derives a delete from a row that is already gone, so the search document
+// survived forever. These assert the ids reach durable storage and come back out,
+// because a revert of that behaviour is otherwise invisible: addToQueue swallows
+// everything by design, so no failure surfaces at the call site.
+// ---------------------------------------------------------------------------
+describe('dropped-enqueue parking lot', () => {
+  const DOWN = () => Promise.reject(new Error('Redis connection lost'));
+  const PARKED_KEY = 'search-index-queue-fallback:images_v6:Delete';
+  const parkPayload = (call: unknown[]) =>
+    call.slice(1).find((v) => typeof v === 'string' && (v as string).startsWith('[')) as string;
+
+  it('parks the ids in Postgres when the bucket-list read is degraded', async () => {
+    hGet.mockImplementation(DOWN);
+
+    await expect(addToQueue('images_v6:Delete', [7, 8, 9])).resolves.toBe(false);
+
+    const inserts = callsMatching(queryRaw, 'INSERT INTO "KeyValue"');
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].slice(1)).toContain(PARKED_KEY);
+    expect(parkPayload(inserts[0])).toBe(JSON.stringify([7, 8, 9]));
+  });
+
+  it('parks only the chunks that actually failed', async () => {
+    hGet.mockResolvedValue(BUCKETS_CSV);
+    let call = 0;
+    sAdd.mockImplementation(() =>
+      ++call === 2 ? Promise.reject(new Error('down')) : Promise.resolve(1)
+    );
+    const ids = Array.from({ length: 25000 }, (_, i) => i + 1);
+
+    await expect(addToQueue('images_v6:Delete', ids)).resolves.toBe(false);
+
+    const inserts = callsMatching(queryRaw, 'INSERT INTO "KeyValue"');
+    expect(inserts).toHaveLength(1);
+    const parked = JSON.parse(parkPayload(inserts[0]));
+    expect(parked).toHaveLength(10000);
+    expect(parked[0]).toBe(10001); // the second chunk, not the first or third
+  });
+
+  it('does not touch Postgres on a healthy enqueue', async () => {
+    hGet.mockResolvedValue(BUCKETS_CSV);
+    await expect(addToQueue('images_v6:Delete', [1, 2, 3])).resolves.toBe(true);
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('reports the cap so a full parking lot is not a silent discard', async () => {
+    hGet.mockImplementation(DOWN);
+    queryRaw.mockResolvedValue([{ capped: true }]);
+
+    await addToQueue('images_v6:Delete', [1, 2, 3]);
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'search-index-queue-fallback',
+        message: expect.stringContaining('cap'),
+      })
+    );
+  });
+
+  describe('drain', () => {
+    const parkedRow = (value: unknown) => [{ key: PARKED_KEY, value }];
+    // The SELECT and the parking INSERT share the queryRaw mock; route by statement.
+    const withParked = (value: unknown) =>
+      queryRaw.mockImplementation((...call: unknown[]) =>
+        Promise.resolve(sqlOf(call).includes('SELECT "key", "value"') ? parkedRow(value) : [])
+      );
+
+    it('replays parked ids and then deletes the row it replayed', async () => {
+      withParked([4, 5]);
+      hGet.mockResolvedValue(BUCKETS_CSV);
+
+      await expect(drainDroppedEnqueues()).resolves.toEqual({
+        keys: 1,
+        replayed: 2,
+        reparked: 0,
+      });
+      expect(sAdd).toHaveBeenCalledWith(BUCKETS_CSV, ['4', '5']);
+
+      // Deleted by key AND by the length it replayed, so a drop that landed between the
+      // read and the delete is not swallowed along with it.
+      const deletes = callsMatching(executeRaw, 'DELETE FROM "KeyValue"');
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0].slice(1)).toEqual([PARKED_KEY, 2]);
+    });
+
+    it('leaves the row parked when the replay fails, and does not park a second copy', async () => {
+      withParked([4, 5]);
+      hGet.mockImplementation(DOWN);
+
+      await expect(drainDroppedEnqueues()).resolves.toEqual({
+        keys: 1,
+        replayed: 0,
+        reparked: 2,
+      });
+      // The row is still there — deleting it before a successful replay is what would
+      // lose the ids, and re-inserting would duplicate them.
+      expect(callsMatching(executeRaw, 'DELETE FROM "KeyValue"')).toHaveLength(0);
+      expect(callsMatching(queryRaw, 'INSERT INTO "KeyValue"')).toHaveLength(0);
+    });
+
+    it('drops a row whose value is not an array rather than retrying it forever', async () => {
+      withParked({ not: 'an array' });
+      hGet.mockResolvedValue(BUCKETS_CSV);
+
+      await expect(drainDroppedEnqueues()).resolves.toEqual({
+        keys: 1,
+        replayed: 0,
+        reparked: 0,
+      });
+      const deletes = callsMatching(executeRaw, 'jsonb_typeof("value") <> \'array\'');
+      expect(deletes).toHaveLength(1);
+      expect(sAdd).not.toHaveBeenCalled();
+    });
   });
 });

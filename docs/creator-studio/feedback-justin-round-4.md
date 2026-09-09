@@ -39,7 +39,7 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 > Built across the main app (foundation PR #3279 + enforcement PR #3290, both merged to `main` and deployed) and
 > the spoke (`creator-studio-implementation`). Design decisions taken: **CP-member-only** gate, **edit freely /
 > protect buyers** post-publish policy, **tiered cap** (Bronze 3 / Silver 10 / Gold unlimited), explicit
-> `earlyAccessPermanent` column. Full detail: [paid-access-current-state.md](paid-access-current-state.md) (implemented; this was the original plan).
+> `earlyAccessPermanent` column. Full detail: [paid-access-current-state.md](monetization/paid-access-current-state.md) (implemented; this was the original plan).
 
 - [x] **[done]** **Early Access improvements** — `CU:868ke4944` (MNeMiC). EA terms are now **editable anytime**
   post-publish (price/charge/timeframe/permanent) — a purchase is a durable `entityAccess` entitlement not
@@ -144,9 +144,10 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 
 - [ ] **[vNext]** **Customizable Dashboard** — `CU:868ke495u`. Customizable panels; share code with the
   models/analytics custom-views work. (`T:538`)
-- [ ] **[vNext]** **Audience** — `CU:868ke4vn3`. Broader audience analytics. *(Note: the audience-tab all-time
-  reactions/comments charts Briant said he was "already doing" (`T:189`) appear to be landing in V1 analytics — this
-  vNext task is the larger expansion; confirm the split.)*
+- [ ] **[vNext]** **Audience** — `CU:868ke4vn3`. Broader audience analytics. *(Split resolved by build: the
+  all-time reactions/comments charts (`T:189`), follower **active reach** (30/60/100d) and the follower
+  **country** breakdown all shipped in V1's audience tab. What remains under this task is whatever is scoped
+  beyond those — confirm with Justin before building.)*
 - [x] **[done — pulled forward from vNext]** **Multi-period compare** — reworked into a **month-primary** model across
   **earnings + all analytics** (per Briant). The shared range control is now **two month pickers** — *Month* (defaults to
   the current month) and *Compare* (defaults to the prior month) — the 7d/30d presets are gone. The **comparison month

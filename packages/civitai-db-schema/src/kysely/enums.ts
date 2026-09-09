@@ -254,6 +254,7 @@ export const ModelHashType = {
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
   SHA256_12: 'SHA256_12',
+  SSHS_12: 'SSHS_12',
 } as const;
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
 export const ScanResultCode = {
@@ -986,5 +987,6 @@ export const UserHubSourceType = {
   Model: 'Model',
   ModelVersion: 'ModelVersion',
   Collection: 'Collection',
+  Tag: 'Tag',
 } as const;
 export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];

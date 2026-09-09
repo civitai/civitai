@@ -4,6 +4,7 @@
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
 
 export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
@@ -301,13 +302,28 @@ export function buildReviewConsentNotification(opts: {
 // RESOURCE_PICKER_RESULT. This generalizes the model-slot OPEN_CHECKPOINT_PICKER
 // (IframeHost) from Checkpoint-only to a typed allowlist.
 //
-// v1 type allowlist: Checkpoint + LoRA ONLY (matches the page-LoRA v1 body
-// contract — model.type LORA → additionalResources, Checkpoint → modelVersionId).
-// Any other requested type is REJECTED (the request is dropped, the modal never
-// opens) so a block can't open an embeddings/VAE/wildcards picker on a page.
+// Type allowlist: Checkpoint + the generator's LoRA FAMILY (LORA, LoCon, DoRA).
+// Matches the page-LoRA body contract — a LoRA-family model.type goes to
+// additionalResources, Checkpoint to modelVersionId. Any other requested type is
+// REJECTED (the request is dropped, the modal never opens) so a block can't open
+// an embeddings/VAE/wildcards picker on a page.
+//
+// Why LoCon + DoRA belong here and nothing else does — this CLOSES a gap rather
+// than opening one. The SPEND-time gate `PAGE_LORA_MODEL_TYPES`
+// (server/services/blocks/workflow.service, enforced by `resolvePageLoraGates`)
+// has always been {LORA, LoCon, DoRA} — the same set the platform's
+// compatibility model groups as the LoRA family (basemodel.constants'
+// `fullAddonTypes` / `sdxlCrossAddonTypes` / `sdxlSiblingAddonTypes` each list
+// all three side by side). So LoCon and DoRA were already spend-legal while
+// being unpickable: an author could only reach them by hard-coding a version id.
+// Widening the picker to exactly that set adds no type the submit path would
+// then reject, and moves NO gate — the spend-time set is untouched by this
+// change. Adding a type OUTSIDE the LoRA family (VAE, TextualInversion,
+// Wildcards, Upscaler, Hypernetwork, …) would be the opposite: a picker offering
+// resources `resolvePageLoraGates` refuses with BAD_REQUEST.
 
-/** Canonical model-type tokens the page resource picker accepts in v1. */
-export const PAGE_RESOURCE_PICKER_TYPES = ['Checkpoint', 'LORA'] as const;
+/** Canonical model-type tokens the page resource picker accepts. */
+export const PAGE_RESOURCE_PICKER_TYPES = ['Checkpoint', 'LORA', 'LoCon', 'DoRA'] as const;
 export type PageResourcePickerType = (typeof PAGE_RESOURCE_PICKER_TYPES)[number];
 
 export type ResourcePickerRequest = {
@@ -326,8 +342,13 @@ export type ResourcePickerRequest = {
  * whether to, and with what type/family filter.
  *
  * Type acceptance is case-insensitive on the wire (a block may send 'lora' or
- * 'LoRA'); the returned `resourceType` is the canonical token the native modal
- * filter expects ('Checkpoint' | 'LORA').
+ * 'LoRA'); the returned `resourceType` is the canonical `ModelType` token the
+ * native modal filter expects ('Checkpoint' | 'LORA' | 'LoCon' | 'DoRA').
+ *
+ * The returned shape is deliberately CLOSED: requestId, the canonical type and
+ * an optional family hint. There is no maturity / browsing-level / sfwOnly knob
+ * here and none is read off the raw payload, so widening the TYPE allowlist
+ * cannot widen what a viewer is shown.
  */
 export function resolveResourcePickerRequest(raw: unknown): ResourcePickerRequest | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -670,6 +691,48 @@ export function worstReachableLaunchMs(): number {
   // Every later attempt already holds a token, so it is ready-bounded only.
   const tokenHoldingAttempts = Math.max(0, MAX_AUTO_RETRIES - MAX_AUTO_REMINTS);
   return first + remintedAttempt + tokenHoldingAttempts * BLOCK_READY_TIMEOUT_MS + backoffs;
+}
+
+/**
+ * The most BLOCK_INIT posts one successful launch can make **via the bounded
+ * AUTOMATIC retry path**.
+ *
+ * 🔴 THAT QUALIFIER IS LOAD-BEARING — this is NOT an absolute maximum, and an
+ * earlier revision of this docstring wrongly claimed it was. A MANUAL retry is
+ * deliberately uncapped (`handleRetry` spends no automatic budget), and
+ * `performRetry` resets neither the launch marks nor `blockRenderEmittedRef`.
+ * So a user who clicks Retry repeatedly *inside the auto-retry backoff window*
+ * keeps `autoRetryBudget.attempts` at 0, emits no beacon yet, and accumulates
+ * posts across unboundedly many attempts into ONE launch sample.
+ *
+ * The consequence is bounded and lands in the safe direction: past
+ * `MAX_LAUNCH_INIT_POSTS` the count is DROPPED, never clamped, so no wrong value
+ * is ever published. What it does cost is a launch counted in
+ * `launch_total_seconds` but absent from `launch_init_posts` — which is exactly
+ * why the histogram's help text insists on its OWN `_count` as the denominator.
+ *
+ * 🔴 THE POST-COUNT SIBLING OF `worstReachableLaunchMs`, and it exists for the
+ * identical reason: `boundedInitPosts` DROPS anything past `MAX_LAUNCH_INIT_POSTS`,
+ * so a cap below this bound would silently discard the launches that posted the
+ * most — i.e. precisely the quantization-bound ones the field was added to find.
+ * The discard would be signal-correlated and would make the metric answer "no
+ * quantization here" by construction.
+ *
+ * 🔴 THE COUNT IS PER LAUNCH, NOT PER CONTROLLER. The auto-retry path builds a
+ * fresh `IframeInitController` per attempt but does NOT reset the launch marks,
+ * so the posts accumulate across every attempt of one launch. The bound is
+ * therefore `attempts x per-attempt-max`, plus one `BLOCK_HELLO` push per
+ * attempt (`notifyHello` is honored at most once per controller).
+ *
+ * Each attempt's controller is bounded by its own readiness timeout: it stops
+ * at `BLOCK_READY_TIMEOUT_MS`, whatever else the attempt spent waiting on a
+ * token. So `TOKEN_WAIT_TIMEOUT_MS` deliberately does NOT appear here — that is
+ * the one place this bound's shape differs from `worstReachableLaunchMs`'s.
+ */
+export function worstReachableInitPosts(): number {
+  const attempts = MAX_AUTO_RETRIES + 1;
+  const perAttempt = maxInitPostsWithin(BLOCK_READY_TIMEOUT_MS) + 1; // +1 = the BLOCK_HELLO push
+  return attempts * perAttempt;
 }
 
 /** Terminal statuses a bounded auto-retry may attempt to recover from. */

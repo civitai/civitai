@@ -111,6 +111,8 @@ export const getAllModelsSchema = z.object({
   needsReview: booleanString().optional(),
   earlyAccess: booleanString().optional(),
   paidAccess: booleanString().optional(),
+  /** Exclude every model with a live paid gate, timed or permanent. */
+  hidePaid: booleanString().optional(),
   /** Models with a live scheduled sale on a permanent paid-access version. */
   onSale: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),
@@ -234,9 +236,9 @@ export const modelUpsertSchema = z.object({
     .looseObject({
       showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
-      hideBuzz: z.boolean().optional(),
-      hideDownloads: z.boolean().optional(),
-      hideGenerations: z.boolean().optional(),
+      hideBuzz: z.boolean().nullish(),
+      hideDownloads: z.boolean().nullish(),
+      hideGenerations: z.boolean().nullish(),
     })
     .transform((val) => val as ModelMeta | null)
     .nullish(),
@@ -297,6 +299,9 @@ export const toggleModelLockSchema = z.object({
 export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
 export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
 
+export type SetModelSfwOnlyInput = z.infer<typeof setModelSfwOnlySchema>;
+export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boolean() });
+
 export type MinorFlagSnapshot = {
   at: string;
   source: 'auto' | 'manual';
@@ -353,9 +358,9 @@ export type ModelMeta = Partial<{
   minorHashAccepted: { at: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
-  hideBuzz: boolean;
-  hideDownloads: boolean;
-  hideGenerations: boolean;
+  hideBuzz: boolean | null;
+  hideDownloads: boolean | null;
+  hideGenerations: boolean | null;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

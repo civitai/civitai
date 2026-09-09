@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
+import { AppsTableColgroup, APPS_REVENUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -239,6 +240,18 @@ export function RevenuePanel({ appBlockId }: { appBlockId?: string }) {
               </Text>
             ) : (
               <Table mt="sm" highlightOnHover>
+                {/*
+                  🔴 FIRST CHILD, BEFORE the row groups — HTML requires it there; the
+                  ordering is pinned by `~/components/Apps/__tests__/appsWideLayout.test.ts`.
+                  The ledger is chosen by `scoped`, the SAME flag that
+                  decides whether the App column renders, so the column count and the width
+                  list cannot drift apart. Unscoped (`/apps/revenue`, full container) the
+                  App link is primary; scoped there is no App column and Scope takes the
+                  slack.
+                */}
+                <AppsTableColgroup
+                  columns={scoped ? APPS_REVENUE_COLUMNS.scoped : APPS_REVENUE_COLUMNS.withApp}
+                />
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Date</Table.Th>

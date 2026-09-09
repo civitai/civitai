@@ -1,3 +1,4 @@
+import { AUTO_FEATURE_JOB_DATE_KEY } from '~/server/common/auto-feature';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { runAutoFeatureImages } from '~/server/services/auto-feature-images.service';
@@ -10,7 +11,7 @@ import { createJob, getJobDate } from './job';
 export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', async () => {
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.AUTO_FEATURE_IMAGES))) return { reason: 'flag-off' };
 
-  const [lastRun, setLastRun] = await getJobDate('job:auto-feature-images');
+  const [lastRun, setLastRun] = await getJobDate(AUTO_FEATURE_JOB_DATE_KEY);
   const result = await runAutoFeatureImages({ lastRun });
   // The flag being on is a statement of intent, so every bail below it is a fault rather than an
   // off switch — and each one is otherwise indistinguishable from the job working. A missing config
@@ -21,6 +22,26 @@ export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', 
   // Only a run that got as far as scoring counts as a run; a config or eligibility miss must not
   // push the next attempt an interval away.
   if ('picked' in result) await setLastRun();
+
+  // What the caps did with this run. `job-summary` is the existing vocabulary for this
+  // (`image-ingestion.ts`), and it is emitted on EVERY run rather than only a short one: a healthy
+  // run and a dead job must not produce the same evidence.
+  //
+  // ⚠️ It cannot detect the job not running at all — the 79-hour silence in August emitted nothing
+  // from anywhere, and nothing logged from inside a run ever will. `auto-feature-health-check.ts`
+  // covers that from outside, by reading this job's output rather than instrumenting it.
+  if ('picked' in result)
+    logToAxiom({
+      type: 'job-summary',
+      name: 'auto-feature-images',
+      target: result.target,
+      picked: result.picked,
+      scored: result.scored,
+      candidates: result.candidates,
+      blockedByRunCap: result.blocked.creatorRun,
+      blockedByCreatorCap: result.blocked.creatorWindow,
+      blockedByCollectionCap: result.blocked.collectionWindow,
+    }).catch(() => null);
 
   return result;
 });

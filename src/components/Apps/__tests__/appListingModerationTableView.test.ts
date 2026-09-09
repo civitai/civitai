@@ -9,6 +9,7 @@ import {
   listingKindChip,
   listingModActionLabel,
   listingModActions,
+  listingModActionsForRow,
   type ListingModAction,
 } from '~/components/Apps/appListingModerationTableView';
 
@@ -30,34 +31,70 @@ const pendingReq = {
 describe('listingModActions — off-site rows', () => {
   it('pending (with a pending request) → Review + Message owner', () => {
     expect(
-      listingModActions({ status: 'pending', kind: 'offsite', hasPendingRequest: true })
+      listingModActions({
+        status: 'pending',
+        kind: 'offsite',
+        hasPendingRequest: true,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['review', 'message-owner']);
   });
 
   it('approved → Reset to pending + Hide', () => {
     expect(
-      listingModActions({ status: 'approved', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'approved',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
   });
 
   it('removed → Relist + Claim + Purge', () => {
     expect(
-      listingModActions({ status: 'removed', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'removed',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner', 'relist', 'claim', 'purge']);
   });
 
   it('draft → no lifecycle action (unless a pending request offers Review)', () => {
     expect(
-      listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'draft',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner']);
     expect(
-      listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: true })
+      listingModActions({
+        status: 'draft',
+        kind: 'offsite',
+        hasPendingRequest: true,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['review', 'message-owner']);
   });
 
   it('rejected → read-only apart from Message owner', () => {
     expect(
-      listingModActions({ status: 'rejected', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'rejected',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner']);
   });
 });
@@ -65,20 +102,133 @@ describe('listingModActions — off-site rows', () => {
 describe('listingModActions — on-site rows hide the off-site-only actions', () => {
   it('approved on-site → Reset to pending + Hide (reset is now dual-kind, #3165)', () => {
     expect(
-      listingModActions({ status: 'approved', kind: 'onsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'approved',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: 'ablk_live',
+      })
     ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
   });
 
   it('removed on-site → Relist ONLY (no claim / purge)', () => {
     expect(
-      listingModActions({ status: 'removed', kind: 'onsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'removed',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: 'ablk_live',
+      })
     ).toEqual(['message-owner', 'relist']);
   });
 
   it('pending on-site → NO Review (approve/reject is off-site only; onsite uses its own queue)', () => {
     expect(
-      listingModActions({ status: 'pending', kind: 'onsite', hasPendingRequest: true })
+      listingModActions({
+        status: 'pending',
+        kind: 'onsite',
+        hasPendingRequest: true,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner']);
+  });
+});
+
+/**
+ * 🔴 THE ON-SITE ORPHAN PRE-APPROVAL DRAFT — the one on-site shape that DOES offer Purge, and
+ * the reason this branch exists at all (clawgate #302).
+ *
+ * `rejectRequest` no longer deletes the pre-approval draft, so a rejected-and-abandoned first
+ * submission sits in this table holding its slug forever. `delistListing` is status-guarded to
+ * `{approved, removed}` and cannot touch a `draft`, so Purge here is the ONLY way a moderator
+ * can reclaim that slug. A row offering nothing but "message owner" is the state the
+ * reject-time delete used to prevent — the service arm existing is not enough if the operator
+ * cannot reach it.
+ *
+ * The three refusals below are one-term-off from the purgeable shape, so each pins its own term.
+ */
+describe('listingModActions — on-site orphan pre-approval draft offers Purge', () => {
+  it('draft + never approved + no pending request → Purge', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner', 'purge']);
+  });
+
+  /**
+   * 🔴 THE TERM THAT WAS INERT. `hasPendingRequest` comes from the
+   * `AppListingPublishRequest` relation, whose `appListingId` is "On-site: NULL until
+   * approve" — so for an on-site pre-approval draft it is ALWAYS false, and an earlier
+   * revision of this branch gated on it. That guard could never fire, and the mod table
+   * offered Purge on submissions under active review. The real signal is
+   * `hasPendingBlockRequest`, hydrated by a slug-keyed lookup against
+   * `AppBlockPublishRequest`.
+   *
+   * The two cases below are the proof: gating on the WRONG field would let case 1 through.
+   */
+  it('NOT while the BLOCK request is still pending — that submission is under review', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        // The inert field says "nothing pending"…
+        hasPendingRequest: false,
+        // …while the real one says otherwise. Purge must be withheld.
+        hasPendingBlockRequest: true,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('`hasPendingRequest` alone does NOT withhold purge — it is the wrong table', () => {
+    // Not an endorsement of the state (it is unreachable for this shape); it pins that the
+    // branch keys on `hasPendingBlockRequest` and nothing else, so a future edit that swaps
+    // the fields back is a red test rather than a silent regression.
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        hasPendingRequest: true,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner', 'purge']);
+  });
+
+  it('NOT once it has a backing AppBlock — it reached approve', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: 'ablk_live',
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('NOT for an off-site draft — that arm is unchanged and gated on `removed`', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        hasPendingBlockRequest: false,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('Purge stays the confirm-gated destructive action', () => {
+    expect(isDestructiveListingModAction('purge')).toBe(true);
   });
 });
 
@@ -100,21 +250,39 @@ describe('listingModActions — the owner-message action is offered on EVERY row
   const STATUSES = ['draft', 'pending', 'approved', 'rejected', 'removed'] as const;
   const KINDS = ['onsite', 'offsite'] as const;
 
-  it('appears for every status × kind × pending-request combination', () => {
+  it('appears for every status × kind × pending-request × block-request × backing-block combination', () => {
     const missing: string[] = [];
+    let walked = 0;
     for (const status of STATUSES) {
       for (const kind of KINDS) {
         for (const hasPendingRequest of [true, false]) {
-          const actions = listingModActions({ status, kind, hasPendingRequest });
-          if (!actions.includes('message-owner')) {
-            missing.push(`${kind}/${status}/pending=${hasPendingRequest}`);
+          // `appBlockId` joined the input for the orphan-draft Purge branch, so it is now
+          // part of the cross product too — otherwise the sweep would pin only one of the
+          // two shapes the new branch distinguishes.
+          for (const appBlockId of [null, 'ablk_live']) {
+            for (const hasPendingBlockRequest of [true, false]) {
+              walked++;
+              const actions = listingModActions({
+                status,
+                kind,
+                hasPendingRequest,
+                hasPendingBlockRequest,
+                appBlockId,
+              });
+              if (!actions.includes('message-owner')) {
+                missing.push(
+                  `${kind}/${status}/pending=${hasPendingRequest}/blockReq=${hasPendingBlockRequest}/block=${appBlockId}`
+                );
+              }
+            }
           }
         }
       }
     }
-    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 = 20 cases
+    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 × 2 × 2 = 80 cases
     // were actually walked, so an empty `missing` is a real sweep and not an empty loop.
-    expect(STATUSES.length * KINDS.length * 2).toBe(20);
+    expect(walked).toBe(80);
+    expect(STATUSES.length * KINDS.length * 2 * 2 * 2).toBe(80);
     expect(missing).toEqual([]);
   });
 
@@ -268,5 +436,65 @@ describe('effectiveModerationStatus', () => {
     expect(effectiveModerationStatus({ status: 'removed', pendingRequest: pendingReq })).toBe(
       'removed'
     );
+  });
+});
+
+/**
+ * 🔴 `listingModActionsForRow` — the DTO→args mapping and its SAFE DEFAULT.
+ *
+ * This lived inline in `AppListingsModerationTable.tsx` and was untestable there: the browser
+ * tier is the only suite that renders that component, it has no on-site orphan-draft fixture,
+ * and on this host it cannot run at all. Measured — inverting the default to the permissive
+ * direction left 1601 files / 25,069 tests green. These are the tests that make the mutation die.
+ */
+describe('listingModActionsForRow — DTO mapping and the fail-safe default', () => {
+  const draftRow = (over: Record<string, unknown> = {}) => ({
+    status: 'draft',
+    kind: 'onsite',
+    appBlockId: null,
+    pendingRequest: null,
+    hasPendingBlockRequest: false,
+    ...over,
+  });
+
+  it('offers Purge for an orphan draft with the flag explicitly FALSE', () => {
+    expect(listingModActionsForRow(draftRow())).toEqual(['message-owner', 'purge']);
+  });
+
+  it('withholds it when the flag is TRUE', () => {
+    expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: true }))).toEqual([
+      'message-owner',
+    ]);
+  });
+
+  /**
+   * 🔴 THE DEFAULT, and the only case that distinguishes `?? true` from `?? false`. A client
+   * bundle from either side of a deploy can hand us a row without this field; `!undefined` is
+   * truthy, so an unnormalized read would OFFER the destructive action on a listing that may be
+   * under live review.
+   */
+  it('withholds it when the flag is ABSENT — absent means assume under review', () => {
+    expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: undefined }))).toEqual([
+      'message-owner',
+    ]);
+  });
+
+  it('withholds it when the flag is NULL (a DTO that serialised the absence)', () => {
+    expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: null }))).toEqual([
+      'message-owner',
+    ]);
+  });
+
+  it('derives hasPendingRequest from the pendingRequest object, not a boolean field', () => {
+    // Off-site pending row: the mapping must turn a non-null object into `true` so Review shows.
+    expect(
+      listingModActionsForRow({
+        status: 'pending',
+        kind: 'offsite',
+        appBlockId: null,
+        pendingRequest: { id: 'alpr_1' },
+        hasPendingBlockRequest: false,
+      })
+    ).toEqual(['review', 'message-owner']);
   });
 });

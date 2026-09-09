@@ -49,7 +49,7 @@ export const serverSchema = z
     // switches the system client to `createSentinel(...)` against this Sentinel
     // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
     // for the rollout sequence.
-    REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+    REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "<sentinel-service>.<namespace>.svc.cluster.local:26379"
     // Master group name. No default — the cluster uses "sysmaster", and the
     // historical Sentinel default ("mymaster") would silently fail every lookup.
     // The superRefine below makes this required whenever REDIS_SYS_SENTINELS is set.
@@ -371,6 +371,21 @@ export const serverSchema = z
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
+    // Server-to-server base for the moderator app, for callers that never hand the URL to a browser.
+    // SEPARATE from MODERATOR_APP_URL on purpose: that one also feeds the /moderator/* redirect's
+    // Location header, so it must stay publicly resolvable. Optional — unset, moderator-app.service.ts
+    // falls back to MODERATOR_APP_URL and nothing changes.
+    // '' is accepted as well as absent, and that is not sloppiness. This whole change is built so
+    // the app and the config that supplies this key can deploy in either order; a bare key added to
+    // a ConfigMap arrives as an EMPTY STRING, and a plain `z.url().optional()` rejects '' — which
+    // fails the WHOLE schema parse and the process refuses to boot. Turning a typo into an outage
+    // is the opposite of what the fallback is for. '' is falsy, so it takes the fallback branch.
+    MODERATOR_APP_INTERNAL_URL: z.union([z.url(), z.literal('')]).optional(),
+    // The narrow, inbound-only credential the moderator app accepts, and the one this app should
+    // present when calling it. OPTIONAL on purpose — see moderator-app.service.ts for why the
+    // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
+    // caller: it is one secret, and the sibling jobs that call in already use this name.)
+    MOD_INBOUND_TOKEN: z.string().optional(),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -592,6 +607,101 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
+    // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
+    // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
+    // visible as the instant its series appear — which is the only thing that distinguishes "no
+    // repeats" from "probe never ran". It never changes the verdict, never skips the classifier,
+    // and never adds latency to the request (the Redis round trip is fire-and-forget).
+    //
+    // 🔴 IT IS A NAMESPACE, NOT A BOOLEAN, AND THAT IS THE WHOLE POINT. Set it to a short label for
+    // the deployment being measured. The accepted set is the allowlist in
+    // moderation-cache-probe.ts and is deliberately NOT restated here — restating it is exactly how
+    // this sentence went stale once already. The value becomes a segment of the
+    // probe's Redis key. Several civitai-web deployments SHARE ONE sysRedis, and unlike cache keys
+    // — which get an environment prefix via CACHE_KEY_NAMESPACE — sys keys carry no environment
+    // segment at all (see cache-key-prefix.ts: "This is CACHE-ONLY"). So two armed deployments
+    // would write the same probe keyspace and each would score HITS on the other's prompts, biasing
+    // the result toward "caching pays" — the direction that gets a cache built that does not pay.
+    //
+    // Making the namespace the ARMING SWITCH is what stops that being a thing to remember: there is
+    // no way to turn the probe on without naming a keyspace for it.
+    //
+    // ⚠️ WHY NOT REUSE CACHE_KEY_NAMESPACE — corrected 2026-09-03, because the first version of this
+    // comment asserted a measurement that was FALSE. It claimed that variable is "ABSENT on all of
+    // civitai-dp-prod, civitai-next and civitai-next-stage". It is not: `CACHE_KEY_NAMESPACE=next`
+    // is set on civitai-next (in the deployment env, which the original check never read — it
+    // looked only at ConfigMaps and generalised one source into a claim about all of them).
+    //
+    // The real reason it cannot serve here is the opposite of "nobody sets it": it is set EXACTLY
+    // as designed, and its design is wrong for this purpose. cache-key-prefix.ts requires
+    // production to be the EMPTY prefix, so civitai-dp-prod and civitai-next-stage BOTH resolve to
+    // `''` — routing the probe through it would put production and stage in one shared probe
+    // keyspace, which is precisely the collision this namespace exists to prevent.
+    //
+    // The accepted values are a CLOSED ALLOWLIST of deployment labels, defined in
+    // moderation-cache-probe.ts and deliberately not restated here (one rule, one place). Anything
+    // else — including every on/off spelling — is treated as OFF and logged once, so a typo yields
+    // NO SERIES (already documented as "not armed") plus a line saying why, rather than a second
+    // silent keyspace. An allowlist rather than a charset plus a denylist because a denylist is a
+    // guard SPELLED rather than STRUCTURAL: the charset alone accepts `false`, `n` and `disabled`
+    // as perfectly good namespaces, so the likeliest spelling of "turn this off" would ARM the
+    // probe. See src/server/integrations/moderation-cache-probe.ts.
+    EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
+    //
+    // 🔴 THE VERDICT CACHE NEEDS BOTH OF THE NEXT TWO VARIABLES. Neither alone arms it: this one
+    // says WHERE entries live, the TTL below says HOW LONG. Setting only one leaves the cache inert
+    // and emitting no metric series, which looks identical to "not configured" — so if you set a
+    // TTL and see no `civitai_app_external_moderation_cache_total` (PROM_PREFIX is prepended at
+    // registration, so the bare name in the counter's help text is NOT queryable), check this
+    // variable before concluding the
+    // metric is broken.
+    //
+    // ⚠️ An earlier revision of this block said the TTL was "THE ARMING SWITCH" with "deliberately
+    // no separate boolean". That was retracted across the module, the counter help text, the redis
+    // key registry and the PR body — and survived HERE, five lines above the comment contradicting
+    // it, which is the surface an operator actually reads. Stated once, in full, at both fields.
+    //
+    // The deployment this cache writes under. Several civitai-web deployments share one sysRedis
+    // and sys keys carry no environment segment, and the PR-preview task copies civitai-cfg
+    // WHOLESALE, so the TTL below is inherited by every open preview. A closed allowlist lives in
+    // moderation-verdict-cache.ts (one rule, one place); anything outside it is OFF and logged
+    // once. See that module for why the policy digest cannot substitute for this.
+    EXTERNAL_MODERATION_CACHE_NAMESPACE: z.string().trim().optional().default(''),
+    // Seconds to hold a cached external-moderation verdict — the second of the two required inputs
+    // described above. Capped at 3600 because a cached verdict is a STALE verdict and the TTL is
+    // the only bound on a classifier whose model can change behind a stable name; the measured
+    // value of a longer window is small anyway (12x the TTL bought ~7 points of hit rate).
+    // See src/server/integrations/moderation-verdict-cache.ts.
+    //
+    // ⚠️ This descriptive comment was ORPHANED for two commits — it sat above the NAMESPACE
+    // declaration, so a reader of that field was told it is measured in seconds and capped at 3600.
+    // Introduced by inserting the namespace field between this text and the field it describes.
+    //
+    // 🔴 `.catch(0)`, NOT `.default(0)` — the same rule TRPC_MAX_BATCH_SIZE and
+    // EXTERNAL_MODERATION_TIMEOUT_MS carry above. `src/env/server.ts` THROWS on any invalid field,
+    // and env is parsed only at container start, so a typo here (`=off`, `=false`, `=3600s`,
+    // `=7200` over the cap) does nothing visible at the time and then CrashLoops the whole fleet at
+    // the next rollout, hours detached from the change — during the very incident this lever exists
+    // to end. `.catch(0)` degrades an unparseable value to OFF, which is the safe direction for a
+    // cache in front of a moderation gate.
+    EXTERNAL_MODERATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(3600).catch(0),
+
+    // DARK SHADOW PROBE — compare a CANDIDATE classifier model against the incumbent on a sampled
+    // share of calls, to produce the disagreement rate the "cheaper model?" decision needs. Both
+    // fields are required to arm and neither defaults on; see
+    // src/server/integrations/moderation-shadow-probe.ts.
+    //
+    // 🔴 SAMPLE IS THE SPEND CONTROL, NOT A CONVENIENCE. Every sampled call issues a SECOND billable
+    // classifier request against the production credential, so 1.0 doubles the moderation bill for
+    // as long as it is armed. It is a fraction in [0,1], not a percentage.
+    //
+    // Both use `.catch(...)` rather than `.default(...)`, the same rule the TTL above carries:
+    // `src/env/server.ts` THROWS on an invalid field and env is parsed only at container start, so a
+    // typo would do nothing visible now and CrashLoop the fleet at the next rollout. Degrading to
+    // OFF is the safe direction for a probe that spends money. A non-numeric SAMPLE coerces to NaN,
+    // fails `.min(0)` and lands on 0 = off.
+    EXTERNAL_MODERATION_SHADOW_MODEL: z.string().default('').catch(''),
+    EXTERNAL_MODERATION_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).catch(0),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
@@ -784,9 +894,6 @@ export const serverSchema = z
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
 
-    // BitDex
-    BITDEX_URL: z.string().optional().default(''),
-
     // Color environment domains (server-only; delivered to client via AppProvider).
     // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.
     // SERVER_DOMAIN_<COLOR>_ALIASES is a comma-separated list of additional hosts
@@ -822,7 +929,7 @@ export const serverSchema = z
     // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
     //                           dc-02-a (the app-blocks-trigger receiver,
     //                           reached via the VPN proxy on dp-1). Example:
-    //                           http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-build
+    //                           http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-build
     // APPS_TEKTON_TRIGGER_SECRET   HMAC shared secret between civitai-web and
     //                           the app-blocks-trigger receiver. 32-byte hex.
     // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
@@ -868,7 +975,7 @@ export const serverSchema = z
     // (no new secret). OPTIONAL — when unset, triggerReviewBuild derives it from
     // APPS_TEKTON_TRIGGER_URL by swapping the trailing `/trigger-build` segment
     // for `/trigger-review-build`, so a typical deploy needs no extra env. Example:
-    // http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-review-build
+    // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
@@ -909,19 +1016,19 @@ export const serverSchema = z
     // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
     // keeps working before infra sets the in-cluster value ahead of un-dark.
     AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
-    // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
+    // Base URL of the screenshot-runner service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
-    // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.
-    // http://verify-runner.devpod-devops.svc.cluster.local:8080. OPTIONAL — when
+    // shipped no publisher screenshots. In-cluster service, e.g.
+    // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
-    // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
-    // MinIO with credentials scoped to the app-block-bundles bucket only.
+    // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO
+    // tenant with credentials scoped to the app-block-bundles bucket only.
     // All optional so envs without the publish-request feature still boot.
     //
-    // BUNDLE_S3_ENDPOINT             e.g. http://minio.minio-ssd-backups.svc.cluster.local
+    // BUNDLE_S3_ENDPOINT             e.g. http://<minio-service>.<namespace>.svc.cluster.local
     // BUNDLE_S3_BUCKET               e.g. app-block-bundles
     // BUNDLE_S3_ACCESS_KEY_ID        scoped service-account key
     // BUNDLE_S3_SECRET_ACCESS_KEY    matching secret

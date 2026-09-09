@@ -24,8 +24,11 @@ const metricSets = {
 const metricSchedules: Record<string, string> = {
   'model-collections': '*/5 * * * *', // every 5 minutes
   basemodels: '*/5 * * * *', // every 5 minutes
-  // Install/connect counts don't need minute-freshness — the store `popular`
-  // sort tolerates a few minutes of lag. Off-peak the affected set is empty.
+  // Install and play (open) counts don't need minute-freshness — the store
+  // `popular` sort tolerates a few minutes of lag. Off-peak the affected set is
+  // empty. The interval is also a cost knob: each run's play count is an unbounded
+  // ClickHouse scan (see appListing.metrics.sql.ts), so tightening this multiplies
+  // that scan rather than the useful work.
   'app-listings': '*/5 * * * *', // every 5 minutes
 };
 

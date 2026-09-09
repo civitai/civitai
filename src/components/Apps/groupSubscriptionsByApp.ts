@@ -5,7 +5,7 @@ import type { SubscriptionRecord } from '~/server/schema/blocks/subscription.sch
 export type { SubscriptionRecord };
 
 /**
- * One row in the unified /apps/installed Installs tab — one entry per
+ * One row in the unified /apps/activity Installs tab — one entry per
  * installed app (keyed on appBlockId), collapsing the two blanket
  * "surfaces" (publisher / viewer) plus any pinned-to-a-specific-model
  * subscriptions into a single record.

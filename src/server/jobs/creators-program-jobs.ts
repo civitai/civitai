@@ -297,7 +297,9 @@ const getCreatorProgramUsers = async ({
 
 export const bankingPhaseEndingNotification = createJob(
   'creator-program-banking-phase-ending',
-  `0 0 L-${EXTRACTION_PHASE_DURATION + 1} * *`,
+  // Banking ends at the end of day L-EXTRACTION_PHASE_DURATION (see getPhases), so L-3
+  // is the last day people can still bank — fire the "last day" nudge that morning.
+  `0 0 L-${EXTRACTION_PHASE_DURATION} * *`,
   async () => {
     const month = dayjs().format('YYYY-MM');
     // Banking nudge — only people who can actually still bank.
@@ -315,7 +317,9 @@ export const bankingPhaseEndingNotification = createJob(
 
 export const extractionPhaseStartedNotification = createJob(
   'creator-program-extraction-phase-started',
-  `0 0 L-${EXTRACTION_PHASE_DURATION} * *`,
+  // Extraction begins on day L-(EXTRACTION_PHASE_DURATION-1) (= L-2), the first of the
+  // last EXTRACTION_PHASE_DURATION days — fire "has begun" that morning, not a day early.
+  `0 0 L-${EXTRACTION_PHASE_DURATION - 1} * *`,
   async () => {
     const month = dayjs().format('YYYY-MM');
     const users = await getCreatorProgramUsers();

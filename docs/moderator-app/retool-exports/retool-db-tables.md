@@ -127,7 +127,9 @@ before discarding.
 
 1. **Moderators are identified by name, not id — and the names mostly do not resolve.**
    `createdBy`, `lastUpdateBy`, `handledBy` and `ReToolActions.User` are free text holding *Retool
-   account display names* ("Maxfield Hulker", "Cameron Jackson"), not Civitai usernames.
+   account display names* — a person's real first and last name — not Civitai usernames. The names
+   themselves are held with the mapping in the private repo; see
+   [moderator-id-mapping.md](moderator-id-mapping.md).
 
    Measured 2026-08-06: **37 distinct identifiers across `UserNotes` + `UserStrikes`; only 5 match a
    Civitai moderator account** by `username` or `name` (24 moderator accounts exist). None are emails.

@@ -10,14 +10,13 @@ import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilt
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
-import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
-import { NavTidyNotice } from '~/components/Alerts/NavTidyNotice';
+import { NavCustomizeNotice } from '~/components/Alerts/NavCustomizeNotice';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
+import { SubNavSettingsButton } from '~/components/HomeContentToggle/SubNavSettingsButton';
 import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImageFeedFilters';
 import clsx from 'clsx';
 
 const filterSections = [
-  { pathname: '/', component: <ManageHomepageButton ml="auto" /> },
   { pathname: '/models', component: <ModelFeedFilters ml="auto" /> },
   { pathname: '/images', component: <ImageFeedFilters ml="auto" hideMediaTypes /> },
   { pathname: '/videos', component: <VideoFeedFilters ml="auto" /> },
@@ -45,8 +44,12 @@ export function SubNav2() {
       })}
     >
       <HomeTabs />
-      <NavTidyNotice />
+      <NavCustomizeNotice />
       {section?.component}
+      <SubNavSettingsButton
+        withHomepageOption={router.pathname === '/'}
+        className={section ? undefined : 'ml-auto'}
+      />
     </div>
   );
 }

@@ -75,7 +75,8 @@ export const SUBMISSIONS_CONTAINER_CHROME = 34;
  * 🔴 `MY_SUBMISSIONS_CONTAINER_SIZE` LIVED HERE AND IS GONE, AND SO HAS ITS SUCCESSOR.
  * `/apps/my-submissions` merged into `/apps/mine` and 301s there, so the alias moved to
  * `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts` — and that is now gone too: every `/apps/*`
- * route renders in the single `APPS_PAGE_CONTAINER_WIDTH` (1920) container, so there is no
+ * route renders in the single `APPS_PAGE_CONTAINER_WIDTH` (2560 since the ultrawide
+ * pass; it was 1920 when this note was written) container, so there is no
  * per-page width left to alias. `/apps/mine` takes no body measure either, precisely so the
  * table below clears the floor. The relationship that used to be implied by the alias is
  * asserted directly in `__tests__/appsPageWidths.test.ts`:

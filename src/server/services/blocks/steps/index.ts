@@ -909,6 +909,25 @@ interface BlockStepBase<P> {
 // one rule.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A structured tool call a `'textOutput'` step may publish alongside its text.
+ *
+ * Declared HERE rather than in the entry that produces one, for the same reason
+ * `StepOutputMedia` is: it is part of the registry's published surface — the
+ * snapshot field, the moderation module's verdict, and the wire type in
+ * `workflow.schema` all name it — and a per-entry definition would make the
+ * registry's contract depend on an entry.
+ *
+ * Fully populated by construction. An extractor that cannot fill every field
+ * DROPS the call rather than publishing a partial one, so a block never has to
+ * defend against a half-formed tool call.
+ */
+export type BlockStepToolCall = {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+};
+
 /** A step whose result is MEDIA — the pre-existing shape, unchanged. */
 type MediaOutputSurface = {
   /** Narrowed from `BlockStepBase`: every posture whose shape is `'media'`. */
@@ -935,6 +954,14 @@ type MediaOutputSurface = {
    * (clause 1c's reverse direction, at the type level).
    */
   extractText?: never;
+  /**
+   * FORBIDDEN, for the same reason and on the same axis. `extractToolCalls` is
+   * published by `attachModeratedStepTextOutputs` and ONLY on a released scan
+   * verdict — a media entry never reaches that function's text path, so an
+   * extractor here would be a declaration that reads as a capability and is
+   * never called.
+   */
+  extractToolCalls?: never;
 };
 
 /** A step whose result is generated FREE TEXT, published only through the scan. */
@@ -974,6 +1001,26 @@ type TextOutputSurface = {
    * gate stayed green. `never` is what makes that unwritable.
    */
   extractOutput?: never;
+  /**
+   * OPTIONAL structured tool calls the model requested, published to the block
+   * only when the scan RELEASES.
+   *
+   * 🔴 OPTIONAL, NOT REQUIRED, AND THE REASON IS NOT CONVENIENCE. Every
+   * `'textOutput'` entry publishes text; only some of them can request a tool.
+   * Making it required would force `mediaCaptioning` / `transcription` / `echo`
+   * to declare a `() => []` stub — exactly the vacuous declaration clause 8a
+   * exists to reject on the text axis. A field satisfiable by returning nothing
+   * is not a control.
+   *
+   * 🔴 IT IS NOT A SECOND PUBLICATION CHANNEL, AND THAT IS ENFORCED RATHER THAN
+   * PROMISED. `attachModeratedStepTextOutputs` calls this ONLY after the strings
+   * from `extractText` have been through the scan and RELEASED; a withheld
+   * verdict publishes neither. Clause 8b additionally asserts at load that every
+   * argument string this returns for `canonicalOutputFor(variant)` is ALSO
+   * returned by `extractText` — so an entry cannot use it to route model-written
+   * prose around the scan.
+   */
+  extractToolCalls?(step: unknown): BlockStepToolCall[];
 };
 
 /**
@@ -1917,6 +1964,67 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
           );
         }
       }
+
+      // (8b) THE TOOL-CALL CONTAINMENT CLAUSE — `extractToolCalls` may not
+      // publish a string the scan never saw.
+      //
+      // 🔴 WHAT IT IS FOR. `extractToolCalls` is published by
+      // `attachModeratedStepTextOutputs` on a RELEASED verdict, and that verdict
+      // is computed over `extractText`'s strings. So the gating is sound only
+      // while every model-written string reachable through the tool-call surface
+      // is also reachable through `extractText`. An entry whose `extractText`
+      // returned only `content` while `extractToolCalls` returned the model's
+      // `arguments` would publish argument prose on the strength of a scan that
+      // never read it — a fail-open with every other clause green, and exactly
+      // the shape clause 8-ii closes on the media axis.
+      //
+      // 🔴 WHAT IT CHECKS, STATED NARROWLY. It compares the ARGUMENTS only, and
+      // only for `canonicalOutputFor(variant)`. `id` and `type` are not prose,
+      // and `name` is required by the surface's own contract to be
+      // pattern-bounded rather than free text (an entry that widens its name
+      // charset owes a change here, which is why this comment names the
+      // assumption rather than leaving it implicit). Like clause 8a this is a
+      // SELF-CONSISTENT PAIR check against the entry's own canonical sample: it
+      // catches an extractor pair that disagrees, not one where both are wrong
+      // about the real response shape. `./type-contract` is the mitigation for
+      // that, same as clause 8a.
+      if (typeof step.extractToolCalls === 'function') {
+        const calls = step.extractToolCalls(sampleStep);
+        if (!Array.isArray(calls)) {
+          throw new Error(
+            `${vWhere}: extractToolCalls() returned a non-array — the read path would publish a ` +
+              'value it cannot iterate while the entry reports a tool-call surface'
+          );
+        }
+        const scanned = new Set(texts);
+        for (const call of calls) {
+          if (
+            call === null ||
+            typeof call !== 'object' ||
+            typeof call.function?.arguments !== 'string'
+          ) {
+            throw new Error(
+              `${vWhere}: extractToolCalls() returned a malformed call — a partial tool call ` +
+                'published to a block is a shape the block cannot defend against'
+            );
+          }
+          if (!scanned.has(call.function.arguments)) {
+            throw new Error(
+              `${vWhere}: extractToolCalls() publishes an arguments string that extractText() ` +
+                'does not return — it would reach the block on the strength of a scan that ' +
+                'never read it. Return every tool-call arguments string from extractText() too.'
+            );
+          }
+        }
+      }
+    } else if (step.extractToolCalls !== undefined) {
+      // The reverse direction, same shape as 1c's and 8-ii's. A media entry
+      // never reaches the text path, so an extractor here reads as a capability
+      // and is never called.
+      throw new Error(
+        `${vWhere}: declares extractToolCalls() but moderationPosture ` +
+          `'${step.moderationPosture}' publishes MEDIA — the extractor would never be called`
+      );
     }
   }
 

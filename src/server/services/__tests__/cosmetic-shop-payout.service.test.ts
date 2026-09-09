@@ -177,15 +177,13 @@ describe('purchaseCosmeticShopItem payouts', () => {
     );
   });
 
-  it('own-storefront purchase (shop enabled) pays the creator the full 70% pool: 7000', async () => {
-    mocks.userFindUnique.mockResolvedValue({ settings: { creatorShop: { enabled: true } } });
-
+  it('own-storefront purchase pays the creator the full 70% pool: 7000 (no shop-settings lookup)', async () => {
     await purchase(CREATOR_ID);
 
-    expect(mocks.userFindUnique).toHaveBeenCalledWith({
-      where: { id: CREATOR_ID },
-      select: { settings: true },
-    });
+    // The creator selling their own item is the full-pool case on its own —
+    // the shop's `enabled` flag is visibility, not a payout term — so there is
+    // no settings blob to consult.
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(sellCalls()).toEqual([
       expect.objectContaining({
         fromAccountId: 0,
@@ -196,13 +194,18 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  it('spoofed own-shop claim (shop NOT enabled) pays the creator only their 50% cut: 5000', async () => {
+  // Regression guard for 868kxwtn3: a creator selling their own sellable item on
+  // their own storefront kept only ~50% because the payout gated the full pool on
+  // `creatorShop.enabled`. Own-store sales pay the full 70% pool regardless of
+  // that flag — there is no other creator reselling, so no seller share is
+  // diverted to the platform.
+  it('own-storefront purchase pays the full 70% pool even when the shop is not enabled: 7000', async () => {
     mocks.userFindUnique.mockResolvedValue({ settings: { creatorShop: { enabled: false } } });
 
     await purchase(CREATOR_ID);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 

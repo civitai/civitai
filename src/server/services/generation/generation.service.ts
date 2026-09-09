@@ -1,3 +1,4 @@
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
@@ -63,7 +64,6 @@ import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
   ecosystemById,
-  isBaseModelGenerationSupported,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
@@ -990,8 +990,7 @@ export function getResourceCanGenerate({
  *   - `Wildcards`-type versions: gated on a visible System-kind `WildcardSet`
  *     (one batched query via `getVisibleSystemWildcardSetIdsByVersionId`),
  *     since their baseModel isn't on the generation-supported list.
- *   - Everything else: the standard `getResourceCanGenerate` +
- *     `isBaseModelGenerationSupported` pair.
+ *   - Everything else: the standard `getResourceCanGenerate` + `isGenerationEligible` pair.
  *
  * Reads the disable-generation flag off each version's `flags` and fetches
  * `ecosystemConfig` internally so call sites don't have to thread them through.
@@ -1083,7 +1082,13 @@ export async function resolveCanGenerateForVersions(
           },
           user: ctx.user,
           hiddenGates,
-        }) && isBaseModelGenerationSupported(gate.baseModel, gate.modelType);
+        }) &&
+        isGenerationEligible({
+          covered: gate.covered,
+          baseModel: gate.baseModel,
+          modelType: gate.modelType,
+          flags: gate.flags,
+        });
       result.set(key, { canGenerate });
     }
   }
@@ -1374,6 +1379,58 @@ export async function getResourceData(
 
 const EMPTY_HASH = 'e3b0c44298fc';
 
+/**
+ * Mirrors the role vocabularies and the excluded file types in get_image_resources.sql. Matching on
+ * hash value alone credits an image to whoever else happens to host the same bundled component file
+ * -- see that function's header for the incident. Change both together.
+ */
+const RESOURCE_ROLES = new Set([
+  'model',
+  'checkpoint',
+  'refinermodel',
+  'lora',
+  'lycoris',
+  'locon',
+  'dora',
+  'embed',
+  'embedding',
+  'textualinversion',
+  'used_embeddings',
+  'hypernet',
+]);
+const COMPONENT_ROLES = new Set([
+  'vae',
+  'refinervae',
+  'clip',
+  'clipvision',
+  'cliplmodel',
+  'unet',
+  'textencoder',
+  'text_encoder',
+  'upscaler',
+  'controlnet',
+  'qwenmodel',
+  'llamamodel',
+  'txxlmodel',
+  'seedvrmodel',
+]);
+const NON_RESOURCE_FILE_TYPES = [
+  'Training Data',
+  'Archive',
+  'Config',
+  'Workflow',
+  'VAE',
+  'Text Encoder',
+  'CLIPVision',
+];
+
+/** A role we cannot read is not a role we can reject -- see the hashes branch in the SQL. */
+const roleFromHashKey = (key: string) => {
+  const role = key.toLowerCase().split(':')[0];
+  return RESOURCE_ROLES.has(role) || COMPONENT_ROLES.has(role) ? role : undefined;
+};
+const isResourceRole = (role: string | undefined) => !role || RESOURCE_ROLES.has(role);
+
 type HashCandidate = {
   hash: string;
   name: string;
@@ -1422,9 +1479,21 @@ function extractResourceInputFromMeta(metadata: Record<string, unknown>) {
 }
 
 /**
+ * Mirrors `NULLIF(LOWER(x), '')` and the empty-content-hash exclusion in the SQL, in one place so
+ * the three stages cannot drift apart. Takes `unknown` because they never had the string the casts
+ * in extractResourceInputFromMeta claim: the procedure is public and its schema is
+ * `z.record(z.string(), z.unknown())`, so a value here is whatever the caller wrote.
+ */
+const normalizeHash = (raw: unknown): string | undefined => {
+  if (typeof raw !== 'string') return undefined;
+  const hash = raw.toLowerCase();
+  return hash && hash !== EMPTY_HASH ? hash : undefined;
+};
+
+/**
  * Extract hash candidates from metadata (mirrors get_image_resources.sql stages 1-3).
  */
-function extractHashCandidates(
+export function extractHashCandidates(
   input: ReturnType<typeof extractResourceInputFromMeta>
 ): HashCandidate[] {
   const candidates: HashCandidate[] = [];
@@ -1432,9 +1501,10 @@ function extractHashCandidates(
   // Stage 1: meta.resources[] — resources with hashes
   if (input.resources) {
     for (const r of input.resources) {
-      if (!r.hash || r.name === 'vae') continue;
-      const hash = r.hash.toLowerCase();
-      if (hash === EMPTY_HASH) continue;
+      if (r.name === 'vae') continue;
+      if (!isResourceRole(r.type?.toLowerCase())) continue;
+      const hash = normalizeHash(r.hash);
+      if (!hash) continue;
       candidates.push({
         hash,
         name: r.name ?? r.type ?? 'unknown',
@@ -1447,18 +1517,17 @@ function extractHashCandidates(
   if (input.hashes) {
     for (const [key, value] of Object.entries(input.hashes)) {
       if (key === 'vae') continue;
-      const hash = value.toLowerCase();
-      if (hash === EMPTY_HASH) continue;
+      if (!isResourceRole(roleFromHashKey(key))) continue;
+      const hash = normalizeHash(value);
+      if (!hash) continue;
       candidates.push({ hash, name: key, strength: null });
     }
   }
 
   // Stage 3: Legacy 'Model hash' field (only if no hashes object)
-  if (input.modelHash && !input.hashes) {
-    const hash = input.modelHash.toLowerCase();
-    if (hash !== EMPTY_HASH) {
-      candidates.push({ hash, name: input.modelName ?? 'model', strength: null });
-    }
+  if (!input.hashes) {
+    const hash = normalizeHash(input.modelHash);
+    if (hash) candidates.push({ hash, name: input.modelName ?? 'model', strength: null });
   }
 
   return candidates;
@@ -1515,6 +1584,7 @@ export async function resolveImageMeta({
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE mfh.hash IN (${Prisma.join(uniqueHashes)})
         AND m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation')
+        AND mf.type NOT IN (${Prisma.join(NON_RESOURCE_FILE_TYPES)})
     `;
 
     // Build a map of hash → best matching modelVersionId

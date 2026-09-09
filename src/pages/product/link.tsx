@@ -1,5 +1,6 @@
 import {
   // AspectRatio,
+  Anchor,
   Container,
   Flex,
   Grid,
@@ -15,6 +16,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { CivitaiLinkDownloadButton } from '~/components/CivitaiLink/CivitaiLinkDownloadButton';
+import { CIVITAI_LINK_NODE_PACK_REPO } from '~/components/CivitaiLink/civitai-link-paths';
 
 import classes from '~/styles/utils.module.scss';
 
@@ -54,8 +56,8 @@ export default function LinkApp(props: ServerSideProps) {
   return (
     <>
       <Meta
-        title="Civitai Link | One-click install Stable Diffusion & Flux models"
-        description="Directly download any resource from Civitai to your local model library."
+        title="Civitai Link | Send models straight to ComfyUI or your model folder"
+        description="Send any model from Civitai to the machine you generate on — with the ComfyUI node pack or the Link desktop app."
         canonical="/product/link"
       />
       <Container>
@@ -70,6 +72,18 @@ export default function LinkApp(props: ServerSideProps) {
             </Title>
             <Text className="text-base font-medium text-gray-9 dark:text-white">
               For Windows, Linux, and MacOS.
+            </Text>
+            <Text className="text-base font-medium text-gray-9 dark:text-white">
+              Already on ComfyUI?{' '}
+              <Anchor
+                inherit
+                href={CIVITAI_LINK_NODE_PACK_REPO}
+                target="_blank"
+                rel="nofollow noreferrer"
+              >
+                The Civitai node pack
+              </Anchor>{' '}
+              does the same thing without a separate app.
             </Text>
             {!isMember ? (
               <Text className={classes.heroText}>

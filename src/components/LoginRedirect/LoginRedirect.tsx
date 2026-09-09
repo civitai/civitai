@@ -13,7 +13,7 @@ export type Props = {
 };
 export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
-  const { running, closeTour, activeTour } = useTourContext();
+  const { running, pauseTour, activeTour } = useTourContext();
 
   let url = returnUrl ?? router.asPath;
 
@@ -29,7 +29,7 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   }
 
   function handleClick(e: React.MouseEvent) {
-    if (running) closeTour();
+    if (running) pauseTour();
     requireLogin({
       uiEvent: e,
       reason,

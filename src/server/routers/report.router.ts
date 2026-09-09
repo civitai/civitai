@@ -10,11 +10,12 @@ import {
   getRecentAppealsSchema,
 } from '~/server/schema/report.schema';
 import { getAppealDetails } from '~/server/services/report.service';
-import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedureAllowUnverifiedEmail, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const reportRouter = router({
-  create: guardedProcedure
+  // Reporting abuse and appealing your own restriction are never gated on email verification.
+  create: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createReportInputSchema)
     .mutation(createReportHandler),
@@ -27,7 +28,7 @@ export const reportRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(({ input }) => getAppealDetails({ ...input })),
-  createAppeal: guardedProcedure
+  createAppeal: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createEntityAppealSchema)
     .mutation(createEntityAppealHandler),

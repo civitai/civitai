@@ -104,9 +104,7 @@ export const listAllListingsForModerationSchema = z.object({
   cursor: z.string().min(1).max(64).optional(),
   limit: z.number().int().min(1).max(50).default(25),
 });
-export type ListAllListingsForModerationInput = z.infer<
-  typeof listAllListingsForModerationSchema
->;
+export type ListAllListingsForModerationInput = z.infer<typeof listAllListingsForModerationSchema>;
 
 /** Detail lookup by EXACTLY ONE of slug or id (approved listings only). */
 export const getAppListingDetailSchema = z
@@ -191,6 +189,88 @@ export type ListingCard = {
   recommend: ListingRecommendRollup;
   /** Total reviews reflected in the recommend rollup (recommended + not). */
   reviewCount: number;
+  /**
+   * AUTHOR-DECLARED "this app is in beta" flag — renders a small badge on the card.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. A boolean the author chose to publish about their own app,
+   * carrying no information about anyone else and gating nothing. It affects no ranking,
+   * no curation and no CTA — it is a label.
+   *
+   * 🔴 THE FLAG IS ON THE CARD, THE MESSAGE IS NOT, and the asymmetry is the same one
+   * `sourceRepoUrl` makes for the opposite reason. A grid of store cards is a
+   * low-attention surface with no room for a sentence; the badge is the whole signal a
+   * card can carry honestly. `betaMessage` appears on the DETAIL page, where there is
+   * room to read it. The exact-key-set assertions in `app-listing.service.test.ts` pin
+   * both halves.
+   *
+   * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingCard`.
+   */
+  isBeta: boolean;
+  /**
+   * Play count from the `AppListingMetric` rollup (`open_count`) — how many times
+   * the app was OPENED — or `null` when the number is structurally unmeasurable.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — AND IT IS **NOT** THE SAME ARGUMENT AS
+   * `ListingDetail.installCount`. An earlier draft of this comment called it "the exact
+   * same argument, one step weaker and still sufficient", which flattered it on an axis
+   * it never named. What the two DO share: both are aggregates over the whole audience,
+   * so neither identifies a user, neither reveals WHO opened or installed the app or
+   * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
+   *
+   *   1. A NEW PUBLIC FACT, not added precision. `installCount` is already publicly
+   *      OBSERVABLE: the store's `popular` sort is `install_count DESC`, so the full
+   *      ordering of every approved listing by it is derivable from the public list
+   *      endpoint already, and surfacing the number only sharpens it. NO sort exposes
+   *      `open_count` (`listingSortSchema` = top-rated | popular | newest | name), so
+   *      this number is a genuinely new fact about the catalog.
+   *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
+   *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
+   *      — a public, anon-capable REST list returning up to 50 cards per page — so an
+   *      unauthenticated client can page the play count of the ENTIRE approved catalog
+   *      cheaply. `installCount` costs one `GET /api/v1/apps/<slug>` per app.
+   *
+   * 🔴 BOTH DELTAS WERE RAISED AND ACCEPTED DELIBERATELY (round-1 audit of this PR).
+   * The reasoning, recorded so the next reviewer does not have to re-open a settled
+   * question: printing a play count on a public store card WAS the decision, so bulk
+   * readability is a CONSEQUENCE of it rather than a separate one — and the `popular`
+   * sort already makes relative ordering by usage publicly inferable, so the catalog's
+   * usage shape is not newly disclosed in kind. It is the store analogue of the public
+   * play/view counts every other content type on the platform already renders, and
+   * that is the intent: a store card should be able to say how used an app is.
+   *
+   * This paragraph exists to hand the next reader the ACCURATE comparison rather than
+   * the flattering one. If the exposure ever needs revisiting, delta 2 is the axis.
+   *
+   * 🔴 `null` IS NOT `0`, AND THE DIFFERENCE IS A TRUTH CLAIM RATHER THAN A STYLE ONE.
+   * An OFF-SITE listing's CTA is a plain `target="_blank"` anchor to a third party, so
+   * no on-platform request follows the click and there is nothing trustworthy to count.
+   * Its play count is ABSENT, not zero — the renderer omits the stat entirely for
+   * `null`, whereas a `0` would render as "nobody has ever used this app", a false
+   * statement about an app we simply cannot measure. `app_listing_metrics.open_count`
+   * is `Int NOT NULL DEFAULT 0`, so an off-site row DOES carry a literal `0` in the
+   * column; `projectListingCard` discriminates on `kind` precisely so that column value
+   * never reaches this field.
+   *
+   * 🔴 The mirror is equally load-bearing: an ON-SITE listing nobody has opened yet is a
+   * genuine `0` and must stay `0`. A missing metric row means "no plays recorded yet",
+   * which is 0 — the same COALESCE-to-0 reading `installCount` documents.
+   *
+   * ✅ THE RENDERER EXISTS AND THE ROLLUP FEEDS IT — a re-derivation, because the
+   * sentence that used to close this block ("Reads `0` for every on-site listing until
+   * the rollup that populates `open_count` ships and the events feeding it exist") was
+   * true when written and is now false in both halves. `6ff42aed42` records the
+   * App_Open events and `f9f81dcfb5` derives `open_count` from them; the store card
+   * (`AppListingCard` → `getPlayCountLabel`) is what turns the `null` above into an
+   * omitted stat and a number into "N plays". The `null`-vs-`0` distinction this block
+   * describes is therefore live behaviour, not a forward promise.
+   *
+   * ⚠️ Still NOT claimed: that the rollup has already covered any particular listing
+   * in any particular environment. That is a fact about a scheduled job. A listing the
+   * job has not yet reached reads a `0` that is correct by the rule above and stale in
+   * substance; the count is derived all-time on each run, so it self-corrects rather
+   * than needing a backfill.
+   */
+  openCount: number | null;
   kindData: ListingCardKindData;
 };
 
@@ -316,6 +396,35 @@ export type ListingDetail = {
    * Null while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   sourceRepoUrl: string | null;
+  /**
+   * AUTHOR-DECLARED "this app is in beta" flag. Same allowlist justification as
+   * `ListingCard.isBeta` — a label the author publishes about their own app.
+   *
+   * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
+   */
+  isBeta: boolean;
+  /**
+   * The author's optional short beta note (≤`BETA_MESSAGE_MAX`), or null.
+   *
+   * 🔴 PLAIN TEXT, NOT MARKDOWN, AND THAT IS A SECURITY DECISION RATHER THAN A STYLE ONE.
+   * `description` on this same DTO renders through `AppListingDescription` →
+   * `CustomMarkdown`; this deliberately does not, so the string cannot mint a link, an
+   * image or any element at all. It is rendered as a text node. Do NOT route it through
+   * `CustomMarkdown`, and never through `dangerouslySetInnerHTML`.
+   *
+   * 🔴 THE TRUST POSTURE IS THE SAME ONE `description` ALREADY HAS on this surface —
+   * author-controlled public copy that no moderator reviews before it goes live, because
+   * beta is a TRIVIAL patch field. The mitigations are deterministic rather than
+   * procedural: a bounded length enforced in zod at the request boundary, and plain-text
+   * rendering. The residual risk is the same as `description`'s: an author can write
+   * misleading prose about their own app, which is a moderation problem (the listing is
+   * delistable) and not a rendering one.
+   *
+   * A STRING (or null), not an object: this DTO also crosses the transformer-less public
+   * REST `GET /api/v1/apps/{slug}` boundary, so it must be a JSON-safe scalar. Null while
+   * the MANUAL-APPLY migration is outstanding.
+   */
+  betaMessage: string | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;

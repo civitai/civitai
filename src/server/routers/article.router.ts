@@ -17,13 +17,16 @@ import {
   getMyArticleRatingReviewSchema,
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
+  setArticleOfficialSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  setArticleOfficial,
   getArticleScanStatus,
+  isArticleProcessing,
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
@@ -87,6 +90,13 @@ export const articleRouter = router({
         isModerator: ctx.user?.isModerator,
       })
     ),
+  // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
+  // per-image blocked/error detail. This answers only "come back in a minute" for a viewer
+  // `getById` just refused, so it must not distinguish Blocked from never-existed.
+  isProcessing: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getByIdSchema)
+    .query(({ input }) => isArticleProcessing(input)),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)
@@ -127,10 +137,15 @@ export const articleRouter = router({
     .use(isFlagProtected('articleImageScanning'))
     .use(isOwnerOrModerator)
     .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
-  getScanStatus: publicProcedure
+  // Author-facing scan detail: per-image URLs, `blockedFor` moderation labels, scan failure
+  // reasons and the article's text-moderation verdict, for any id including an unpublished
+  // draft. Same guard as its `rescan` sibling, which takes the same input — every caller is
+  // the author's own editor or their article page behind `isOwner`.
+  getScanStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
+    .use(isOwnerOrModerator)
     .query(({ input }) => getArticleScanStatus(input)),
   resolveImageScan: moderatorProcedure
     .input(resolveArticleImageScanSchema)
@@ -169,6 +184,13 @@ export const articleRouter = router({
         .catch(() => undefined);
       return review;
     }),
+  // Moderator-only, exactly like `model.setOfficial`. This is a provenance claim, so the
+  // authority is the procedure, not anything in the payload.
+  setOfficial: moderatorProcedure
+    .input(setArticleOfficialSchema)
+    .mutation(({ input, ctx }) =>
+      setArticleOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
+    ),
   getMyArticleRatingReview: protectedProcedure
     .use(isFlagProtected('articleRatingDispute'))
     .input(getMyArticleRatingReviewSchema)

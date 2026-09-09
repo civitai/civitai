@@ -20,6 +20,24 @@ export type RemixGalleryPlacementData = {
    * nothing about the submission and must never read as a demerit.
    */
   derivedFromHost?: boolean;
+  /**
+   * The submission was paid for before its image was finished — submitted from
+   * the post editor on a draft, or on an image still being scanned. It is
+   * charged and held, but not yet the owner's to answer: the queue cannot list
+   * it, and the checks that need a finished image have not run.
+   *
+   * Cleared by the readiness pass, which runs those checks and starts the
+   * expiry clock. While it is set, the row's `expiresAt` is the window to get
+   * the image LIVE, not the owner's window to answer.
+   */
+  awaitingReadiness?: boolean;
+  /**
+   * The readiness pass refused it for something about the image — blocked,
+   * deleted, or rated above what the creator accepts — rather than a deadline
+   * passing. Both outcomes are `expired` with the same full refund; only this
+   * says which, and only this one is worth telling the placer about.
+   */
+  undeliverable?: boolean;
   /** Set by the owner. Pinned entries render before the rotation. */
   pinnedAt?: string | null;
   /** Order among pinned entries only. The rest are shuffled. */
@@ -78,6 +96,26 @@ export const REMIX_GALLERY_REMOVAL_LOCK_HOURS = 24 * 7;
 /** When an entry approved at `approvedAt` may be removed by its owner. */
 export const remixGalleryRemovableAt = (approvedAt: Date | string) =>
   new Date(new Date(approvedAt).getTime() + REMIX_GALLERY_REMOVAL_LOCK_HOURS * 60 * 60 * 1000);
+
+/**
+ * Whether this gallery would accept a PAID submission.
+ *
+ * Not the same question as `open`, which `getRemixGalleryVisibility` answers
+ * from `mode !== 'off'` alone. Price and free capacity are independent in the
+ * schema, so a gallery can be open, take free submissions, and refuse every paid
+ * one — unpriced, where the submit button is disabled, or priced below the
+ * surface floor, where the button works and the mutation refuses.
+ *
+ * Mirrors the two refusals on the paid path in `createRemixGallerySubmission`.
+ * A third rule there needs one here, or the offer starts recommending a refusal
+ * again.
+ *
+ * Shared rather than client-side because `getRemixSourcesForImage` reads it too:
+ * that read decides whether a Submit button is drawn at all, so a second copy of
+ * these two comparisons would decide it differently from the mutation.
+ */
+export const paidSubmissionOpen = (price: number | null | undefined) =>
+  price != null && price >= PLACEMENT_SURFACES.remixGallery.serverMinPrice;
 
 export type RemixGalleryContentRule =
   /** The submission may not exceed the host image's rating. */

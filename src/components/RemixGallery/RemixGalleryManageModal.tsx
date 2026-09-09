@@ -52,7 +52,7 @@ import { useServerDomains } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -243,6 +243,7 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
   // the submitter's copy and is null for the owner, so the two are not
   // interchangeable.
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const features = useFeatureFlags();
   const acceptedMaxLevel = visibility?.acceptedMaxLevel ?? null;
   // Above the band the owner set, which is a state the submit mutation refuses

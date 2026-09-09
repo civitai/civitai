@@ -6,7 +6,7 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
 /**
  * Renders a block's declared JWT scopes as a badge + friendly-description
  * list. Shared by the install/manage modal (pre-Save disclosure — UX audit
- * H3) and the /apps/installed "Apps & permissions" panel so the two surfaces
+ * H3) and the /apps/activity "Apps & permissions" panel so the two surfaces
  * never drift. Unknown scopes (not in SCOPE_DESCRIPTIONS) render as a bare
  * badge with an italic "(no description)" — keeping the description map a soft
  * contract so new scopes ship without breaking the UI.

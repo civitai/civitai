@@ -3,6 +3,7 @@ import type {
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
+  ReactionSummary,
 } from '$lib/server/user-account.service';
 import type { Jsonified } from '$lib/format';
 
@@ -54,11 +55,7 @@ export type Cosmetic = {
   obtainedAt: string | null;
 };
 
-export type Reactions = {
-  total: number;
-  creators: number;
-  targets: { userId: number; username: string | null; count: number }[];
-};
+export type Reactions = Jsonified<ReactionSummary>;
 
 export type TrainingRun = {
   modelVersionId: number;

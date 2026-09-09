@@ -25,6 +25,7 @@ import {
   getTippersTo,
   resolveUsernamesToIds,
 } from '$lib/server/bulk-ban.service';
+import type { DomainAccounts, IpAccounts } from '$lib/server/bulk-ban.service';
 
 // The pasted list is in the URL so a moderator can hand a colleague the exact set they are about to
 // ban, and so the preflight survives a reload.
@@ -32,6 +33,9 @@ const querySchema = z.object({
   ids: z.string().trim().catch(''),
   names: z.string().trim().catch(''),
   ips: z.string().trim().catch(''),
+  // Marking already-banned accounts instead of hiding them means the list never drains, so this is
+  // the only way past the 500 cap. See `getAccountsOnIps`.
+  ipOffset: z.coerce.number().int().min(0).catch(0),
   domains: z.string().trim().catch(''),
   // Retool's GetUsers, parameterised. `minAccountId` defaults to its hardcoded 5400000 so the finder
   // opens on "recently created accounts" rather than on every supporter a creator has ever had.
@@ -52,6 +56,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     ids,
     names,
     ips,
+    ipOffset,
     domains: domainTerms,
     tippedTo,
     minTip,
@@ -70,21 +75,33 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // unreachable — including the pure-Postgres halves that are the actual ban path. Losing the IP
   // clustering is a degraded investigation; losing the candidate list and the ban button on a page
   // whose job is stopping a ring is an outage. Each ClickHouse source now fails to empty and says so.
-  const clickhouseDown: string[] = [];
-  const degrade = <T>(label: string, p: Promise<T[]>) =>
+  // Not only ClickHouse: `getAccountsOnIps` hydrates ban state from Postgres after its two ClickHouse
+  // queries, so either half failing lands here. The banner names the source rather than the store.
+  const sourcesDown: string[] = [];
+  const NO_IP_ACCOUNTS: IpAccounts = { accounts: [], total: 0, offset: 0, limit: 500 };
+  const NO_DOMAIN_ACCOUNTS: DomainAccounts = { accounts: [], total: 0 };
+  const degrade = <T>(label: string, p: Promise<T>, fallback: T) =>
     p.catch((e) => {
       console.error(`[bulk-ban] ${label} unavailable`, e);
-      clickhouseDown.push(label);
-      return [] as T[];
+      sourcesDown.push(label);
+      return fallback;
     });
 
   const [candidates, registrationIps, domains, ipAccounts, domainAccounts, tippers] =
     await Promise.all([
       getBanCandidates(userIds),
-      degrade('registration IPs', getRegistrationIps(userIds)),
+      degrade('registration IPs', getRegistrationIps(userIds), []),
       getEmailDomains(userIds),
-      ips ? degrade('accounts on IPs', getAccountsOnIps(splitList(ips))) : Promise.resolve([]),
-      domainTerms ? getAccountsOnDomains(splitList(domainTerms)) : Promise.resolve([]),
+      ips
+        ? degrade(
+            'accounts on IPs',
+            getAccountsOnIps(splitList(ips), { offset: ipOffset }),
+            NO_IP_ACCOUNTS
+          )
+        : Promise.resolve(NO_IP_ACCOUNTS),
+      domainTerms
+        ? getAccountsOnDomains(splitList(domainTerms))
+        : Promise.resolve(NO_DOMAIN_ACCOUNTS),
       tippedTo
         ? degrade(
             'tippers',
@@ -92,7 +109,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
               minAmount: minTip,
               minAccountId,
               days: tipDays,
-            })
+            }),
+            []
           )
         : Promise.resolve([]),
     ]);
@@ -101,6 +119,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     ids,
     names,
     ips,
+    ipOffset,
     domainTerms,
     domainAccounts,
     tippedTo,
@@ -113,7 +132,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     registrationIps,
     domains,
     ipAccounts,
-    clickhouseDown,
+    sourcesDown,
     // Ids that matched no account at all — a typo in a pasted list is otherwise invisible.
     unmatched: userIds.filter((id) => !candidates.some((c) => c.id === id)),
     wide: true,

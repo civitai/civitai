@@ -7,7 +7,7 @@
  *                        receiver on dc-02-a, which validates HMAC and
  *                        creates a PipelineRun via its in-pod ServiceAccount.
  *                        Reached via the dp-1 VPN proxy at
- *                        wireguard-proxy-service.civitai-submodel-proxy.svc:8088.
+ *                        <proxy-service>.<namespace>.svc:8088.
  *                        Called by the Forgejo push webhook handler.
  *   2. triggerApply()  — POSTs an apply Job to dp-1's civitai-apps
  *                        namespace via the in-pod ServiceAccount token.

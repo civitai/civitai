@@ -8,12 +8,12 @@
   let {
     account,
     userId,
-    canAct,
+    canBulkAct,
     civitaiUrl,
   }: {
     account: Promise<Account> | null;
     userId: number;
-    canAct: boolean;
+    canBulkAct: boolean;
     civitaiUrl: string;
   } = $props();
 
@@ -34,7 +34,7 @@
         truncated={result.comments.truncated}
         field="commentIds"
         {userId}
-        {canAct}
+        {canBulkAct}
       >
         {#snippet link(c)}
           {#if modelUrl(c.modelId, c.id)}
@@ -56,7 +56,7 @@
         truncated={result.commentsV2.truncated}
         field="commentV2Ids"
         {userId}
-        {canAct}
+        {canBulkAct}
       >
         {#snippet link(c)}
           <!-- Always linkable, even for an entity type with no page of its own: the resolver works

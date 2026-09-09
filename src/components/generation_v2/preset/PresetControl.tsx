@@ -12,11 +12,13 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { SavePresetModal } from '~/components/generation_v2/preset/SavePresetModal';
 import { applyPreset } from '~/components/generation_v2/preset/applyPreset';
-import { useGraph } from '~/libs/data-graph/react';
+import {
+  useGenerationFormBridge,
+  type GenerationFormBridge,
+} from '~/components/Generate/useGenerationFormBridge';
 import { constants } from '~/server/common/constants';
 
 const SYSTEM_USER_ID = constants.system.user.id;
-import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import {
   filterPresetValues,
   isPresetDirty,
@@ -28,28 +30,28 @@ import { trpc } from '~/utils/trpc';
 
 type EcosystemLike = { ecosystem?: string };
 
+const makeIsComputed = (graph: GenerationFormBridge) => {
+  const computed = new Set(graph.getComputedKeys());
+  return (k: string) => computed.has(k);
+};
+
 /**
  * Hook: publishes the current graph's ecosystem + snapshot-getter to the
  * preset store so the header button (which lives outside the graph context)
  * can use them.
  */
-function usePresetGraphBridge(graph: ReturnType<typeof useGraph<GenerationGraphTypes>>) {
+function usePresetGraphBridge(graph: GenerationFormBridge) {
   const setBridge = useGenerationPresetStore((s) => s.setBridge);
   const clearBridge = useGenerationPresetStore((s) => s.clearBridge);
 
   useEffect(() => {
     const getFilteredSnapshot = (): PresetValues =>
-      filterPresetValues(
-        graph.getSnapshot() as Record<string, unknown>,
-        (k) => graph.isComputed(k as never)
-      );
-    const readEcosystem = () =>
-      (graph.getSnapshot() as EcosystemLike).ecosystem ?? null;
+      filterPresetValues(graph.getState(), makeIsComputed(graph));
+    const readEcosystem = () => (graph.getState() as EcosystemLike).ecosystem ?? null;
 
     setBridge({ ecosystem: readEcosystem(), getFilteredSnapshot });
 
-    type LooseGraph = { subscribe: (key: string, cb: () => void) => () => void };
-    const unsub = (graph as LooseGraph).subscribe('ecosystem', () => {
+    const unsub = graph.subscribeKey('ecosystem', () => {
       setBridge({ ecosystem: readEcosystem() });
     });
 
@@ -60,7 +62,7 @@ function usePresetGraphBridge(graph: ReturnType<typeof useGraph<GenerationGraphT
   }, [graph, setBridge, clearBridge]);
 }
 
-function useGraphChangeCounter(graph: ReturnType<typeof useGraph<GenerationGraphTypes>>) {
+function useGraphChangeCounter(graph: GenerationFormBridge) {
   const [counter, setCounter] = useState(0);
   useEffect(() => graph.subscribe(() => setCounter((c) => c + 1)), [graph]);
   return counter;
@@ -73,16 +75,13 @@ function useGraphChangeCounter(graph: ReturnType<typeof useGraph<GenerationGraph
  * `PresetHeaderButton`.
  */
 export function PresetControl() {
-  const graph = useGraph<GenerationGraphTypes>();
+  const graph = useGenerationFormBridge();
+  if (!graph) throw new Error('PresetControl must render inside a generation form provider');
   usePresetGraphBridge(graph);
 
   const changeCounter = useGraphChangeCounter(graph);
   const filteredSnapshot = useMemo(
-    () =>
-      filterPresetValues(
-        graph.getSnapshot() as Record<string, unknown>,
-        (k) => graph.isComputed(k as never)
-      ),
+    () => filterPresetValues(graph.getState(), makeIsComputed(graph)),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- changeCounter forces recompute
     [graph, changeCounter]
   );
@@ -96,7 +95,7 @@ export function PresetControl() {
   const isSystemPreset = activePresetUserId === SYSTEM_USER_ID;
 
   const isDirty = useMemo(
-    () => isPresetDirty(activePresetValues, filteredSnapshot, (k) => graph.isComputed(k as never)),
+    () => isPresetDirty(activePresetValues, filteredSnapshot, makeIsComputed(graph)),
     [activePresetValues, filteredSnapshot, graph]
   );
 

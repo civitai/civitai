@@ -26,6 +26,13 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -64,7 +71,11 @@ vi.mock('~/utils/trpc', () => ({
           getCounts: { fetch: vi.fn() },
           get: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },
@@ -78,7 +89,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl.contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
@@ -114,6 +129,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'benchmark-app',
@@ -246,7 +264,15 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
 
   test('forwards the ids + token and replies the gated projection (visible + hidden)', async () => {
     const images = [
-      { imageId: 1, status: 'visible', nsfwLevel: 1, contentRating: 'g', url: 'edge:1', width: 512, height: 512 },
+      {
+        imageId: 1,
+        status: 'visible',
+        nsfwLevel: 1,
+        contentRating: 'g',
+        url: 'edge:1',
+        width: 512,
+        height: 512,
+      },
       { imageId: 2, status: 'hidden' },
     ];
     getImagesMutate.mockResolvedValue({ images });

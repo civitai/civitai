@@ -61,8 +61,10 @@ export const getServerSideProps = createServerSideProps({
 
     // Land back on the user's OWN origin (the request host), not a fixed primary — so a civitai.red user stays
     // on .red instead of bouncing to green. The landing runs this domain's /api/auth/authorize (the unified
-    // auth-code flow) so it mints its own cookie before post-login runs (mirrors the popup path's hubLoginEntryUrl).
-    const host = (ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host) as string | undefined;
+    // auth-code flow) so it mints its own cookie before post-login runs (mirrors the popup path's buildHubLoginUrl).
+    const host = (ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host) as
+      | string
+      | undefined;
     const proto =
       (ctx.req.headers['x-forwarded-proto'] as string | undefined) ??
       (host && !host.includes('localhost') ? 'https' : 'http');

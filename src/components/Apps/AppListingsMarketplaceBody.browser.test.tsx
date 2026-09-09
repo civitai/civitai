@@ -22,31 +22,23 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     tagline: 'tag',
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: kind === 'onsite' ? 0 : null,
     kindData:
       kind === 'onsite'
-        ? { kind: 'onsite', appBlockId: `blk-${id}`, hasPage: false, liveUrl: `https://slug-${id}.civit.ai` }
+        ? {
+            kind: 'onsite',
+            appBlockId: `blk-${id}`,
+            hasPage: false,
+            liveUrl: `https://slug-${id}.civit.ai`,
+          }
         : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
-}
-
-/**
- * The whitespace-stripped CSS Mantine generated for THIS element's own responsive
- * class. `Grid.Col` renders an `InlineStyles` <style> block keyed on a random
- * per-instance class, so scoping to that class keeps the assertions immune to
- * style blocks left behind by other tests in the same document.
- */
-function generatedCssFor(el: HTMLElement): string {
-  const classes = Array.from(el.classList);
-  return Array.from(document.querySelectorAll('style'))
-    .map((s) => s.textContent ?? '')
-    .filter((text) => classes.some((c) => text.includes(`.${c}`)))
-    .join('\n')
-    .replace(/\s+/g, '');
 }
 
 const mocks = vi.hoisted(() => ({
@@ -91,8 +83,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   },
 }));
 
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
 }));
 
 // The filters now live in the shared `AdaptiveFiltersDropdown`, which pulls in two
@@ -236,8 +243,14 @@ describe('AppListingsMarketplaceBody', () => {
     await expect
       .element(page.getByRole('button', { name: 'All apps' }))
       .toHaveAttribute('aria-pressed', 'true');
-    // Query fired with kind=all default.
-    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated', limit: 24 });
+    // Query fired with kind=all default. `limit: 48` (was 24) — the column ladder now
+    // reaches FIVE columns on a 2560 container, where 24 is under five rows; the page
+    // size and its relationship to the server's `max(50)` cap are pinned in the blocking
+    // unit suite (`__tests__/appListingGrid.test.ts`).
+    // ⚠️ This said "SIX columns … only four rows" until the card-width floor moved 383 →
+    // 460 in this same PR and made six unreachable. Written true, falsified by a later
+    // commit on the same branch.
+    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated', limit: 48 });
   });
 
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
@@ -366,38 +379,39 @@ describe('AppListingsMarketplaceBody', () => {
     await expect.element(page.getByText('No apps yet')).toBeInTheDocument();
   });
 
-  // ── Larger covers (feedback #1): the grid geometry ──────────────────────────
-  // The numbers themselves are pinned in the blocking unit suite
-  // (__tests__/appListingGrid.test.ts). What this asserts is the WIRING: the grid
-  // actually renders with that shared span object, so the two can't drift.
-  test('the grid renders each card with the shared LISTING_GRID_SPAN (xl = 4 columns)', async () => {
+  // ── The grid's STRUCTURE ────────────────────────────────────────────────────
+  // 🔴 THE COLUMN COUNTS MOVED OUT OF THIS FILE, DELIBERATELY. The grid used to be a
+  // Mantine `<Grid>`/`<Grid.Col span={LISTING_GRID_SPAN}>`, which compiled the whole
+  // responsive ladder into a generated `--col-flex-basis` <style> block — so the span
+  // was assertable from the CSSOM without any stylesheet being loaded. It is now a CSS
+  // grid whose column count comes from a CONTAINER QUERY in
+  // `AppListingsMarketplaceBody.module.scss`, and this file's tier deliberately loads
+  // no app cascade (see `test/component-setup.tsx`), so a `grid-template-columns`
+  // assertion here would be reading the UA default and passing on an unstyled element.
+  //
+  // The rendered counts are therefore measured in
+  // `AppListingsMarketplaceBody.columns.browser.test.tsx`, which imports the cascade
+  // itself; the ladder's numbers and its agreement with the stylesheet are pinned in
+  // the blocking unit suite (`__tests__/appListingGrid.test.ts`). What is left HERE is
+  // the structure those two both assume: one cell per card, each carrying the testid,
+  // inside the grid, inside the query container.
+  test('the grid renders one testid-carrying cell per card, nested inside the query container', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
 
     const cols = page.getByTestId('apps-listing-grid-col').elements();
     expect(cols).toHaveLength(mocks.items.length);
 
-    // Mantine Grid.Col compiles the responsive span into a generated <style>
-    // block of `--col-flex-basis` percentages (one media rule per breakpoint).
-    // The OLD `xl: 2.4` (five columns) compiled to a 20% basis; the NEW `xl: 3`
-    // compiles to 25%. So the absence of a 20% basis is a direct, mutation-
-    // sensitive assertion that the five-column xl layout is gone — flip the span
-    // back to 2.4 and this fails. The exact per-breakpoint numbers are pinned in
-    // the blocking unit suite (__tests__/appListingGrid.test.ts).
-    //
-    // Scoped to the styles Mantine generated for THIS column's own random class,
-    // not every <style> in the document — a document-wide scan would make the
-    // negative assertion below sensitive to style leakage from other tests.
-    const css = generatedCssFor(cols[0] as HTMLElement);
-
-    // Every basis Mantine emitted for this column — the base rule first, then one
-    // per breakpoint in ascending order: base 12 → 100% (1 col), sm 6 → 50% (2),
-    // md 4 → 33.3% (3), lg 3 → 25% (4), xl 3 → 25% (4). The OLD `xl: 2.4` compiled
-    // to a 20% basis, so this pins the whole responsive sequence AND proves the
-    // retired 5-column xl is gone. Flipping the span back to 2.4 fails here.
-    const bases = Array.from(css.matchAll(/--col-flex-basis:([\d.]+)%/g)).map((m) => m[1]);
-    expect(bases).toEqual(['100', '50', '33.333333333333336', '25', '25']);
-    expect(css).not.toContain('--col-flex-basis:20%'); // 2.4/12 — the retired 5-col xl
+    const grid = page.getByTestId('apps-listing-grid').element();
+    // Every cell is a DIRECT child of the grid. Load-bearing rather than pedantic: a
+    // CSS grid only lays out its own children, so a cell one wrapper deeper would be
+    // laid out by the wrapper and the column count would silently become 1 — with
+    // `grid-template-columns` still reading exactly right in the CSSOM.
+    for (const col of cols) expect(col.parentElement).toBe(grid);
+    // …and the grid sits inside a container element, which is what `@container`
+    // resolves against. `container-type` on the grid itself would match nothing.
+    expect(grid.parentElement).not.toBeNull();
+    expect(grid.parentElement).not.toBe(grid);
   });
 
   // ── "Recently opened" rail ──────────────────────────────────────────────────

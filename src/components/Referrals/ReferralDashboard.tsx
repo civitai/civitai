@@ -60,7 +60,7 @@ import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
 import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import {
   computeRecruiterScore,
@@ -817,6 +817,7 @@ function EarningsHero({
 function MembershipPerksAbbr() {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const pricingUrl = features.isGreen
     ? '/pricing'
     : syncAccount(`//${serverDomains.green}/pricing`);
@@ -1218,6 +1219,7 @@ function ShopTierCard({
 function TierPerksPopover({ tier }: { tier: string }) {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const pricingUrl = features.isGreen
     ? '/pricing'
     : syncAccount(`//${serverDomains.green}/pricing`);

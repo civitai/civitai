@@ -11,7 +11,7 @@ import { env } from '~/env/server';
 /**
  * S3-compatible client for the App Blocks W1 publish-request bundle store.
  *
- * Production points at ssd-minio-backups MinIO. Credentials are scoped to
+ * Production points at an in-cluster MinIO tenant. Credentials are scoped to
  * the app-block-bundles bucket only (R/W on objects, ListBucket on the
  * bucket itself) — the bundle store is intentionally not the same S3
  * civitai uses for image uploads.

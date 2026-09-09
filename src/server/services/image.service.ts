@@ -1,5 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import {
+  assertMediaPresentForPublish,
+  MediaPresence,
+  type MediaProbeAnswer,
+  summarizeProbeError,
+} from '@civitai/shared';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -12,6 +18,7 @@ import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
+import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
@@ -44,7 +51,7 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
@@ -145,6 +152,10 @@ import {
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
 } from '~/server/services/collection.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForImages,
+} from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
@@ -165,6 +176,7 @@ import {
   queueComicsForPanelImages,
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -224,45 +236,15 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
+import {
+  serverUploadImage,
+  getB2ImageS3Client,
+  getImageUploadBackend,
+  headObject,
+} from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
-import { buildFliptContext } from '~/server/services/feature-flags.service';
-import { queryBitdex } from '~/server/bitdex/client';
-import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
-import {
-  compareBitdexResults,
-  recordBitdexError,
-  recordSortAtOnlyHolds,
-} from '~/server/bitdex/compare';
-import {
-  recordBitdexPrimaryResult,
-  type BitdexQueryFailureReason,
-} from '~/server/metrics/bitdex-feed-serve.metrics';
-
-// --- BitDex native filter helpers ---
-const _int = (v: number): Value => ({ Integer: v });
-const _str = (v: string): Value => ({ String: v });
-const _bool = (v: boolean): Value => ({ Bool: v });
-const _eq = (f: string, v: Value): FilterClause => ({ Eq: [f, v] });
-const _notEq = (f: string, v: Value): FilterClause => ({ NotEq: [f, v] });
-const _in = (f: string, vs: Value[]): FilterClause => ({ In: [f, vs] });
-const _notIn = (f: string, vs: Value[]): FilterClause => ({ NotIn: [f, vs] });
-const _gt = (f: string, v: Value): FilterClause => ({ Gt: [f, v] });
-const _gte = (f: string, v: Value): FilterClause => ({ Gte: [f, v] });
-const _lte = (f: string, v: Value): FilterClause => ({ Lte: [f, v] });
-const _not = (c: FilterClause): FilterClause => ({ Not: c });
-const _isNull = (f: string): FilterClause => ({ IsNull: f });
-const _isNotNull = (f: string): FilterClause => ({ IsNotNull: f });
-const _and = (...cs: (FilterClause | null)[]): FilterClause => {
-  const valid = cs.filter((c): c is FilterClause => c !== null);
-  return valid.length === 1 ? valid[0] : { And: valid };
-};
-const _or = (...cs: (FilterClause | null)[]): FilterClause => {
-  const valid = cs.filter((c): c is FilterClause => c !== null);
-  return valid.length === 1 ? valid[0] : { Or: valid };
-};
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
@@ -283,6 +265,7 @@ import {
   sanitizeProvenance,
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
+import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 
 const {
   cacheHitRequestsTotal,
@@ -311,13 +294,31 @@ const {
  */
 export type PurgeResizeCacheScope = 'all' | 'hidden-meta-orphans';
 
+/**
+ * 🔴 Ask the image-cache service to destroy the SHARED STORED OBJECT too, not just this image's
+ * derived variants. Off unless a caller says otherwise, and only a moderation takedown may say so.
+ *
+ * The stored object is content-addressed, so it is shared by every byte-identical image, of every
+ * owner. Destroying it removes the full-resolution original for all of them at once — a
+ * cross-account destructive act, not a cache invalidation, and not reversible from here.
+ *
+ * 🔴 KNOWN AND ACCEPTED COLLATERAL. The other images keep their database rows and will serve a
+ * broken original. The app cannot enumerate them: it does not store the content-hash key per
+ * image, and the perceptual hash it does store is a similarity signal, NOT a byte-identity key,
+ * so it cannot stand in for one. Accepted because a byte-identical copy of content that must not
+ * exist is the same content — the point of a takedown is that no copy survives. The
+ * `image-blob-retraction-requested` log line below is the only attribution trail there is.
+ */
+export type PurgeResizeCacheRetraction = { retractPublicBlobs?: boolean };
+
 export async function purgeResizeCache({
   url,
   scope = 'all',
+  retractPublicBlobs = false,
 }: {
   url: string;
   scope?: PurgeResizeCacheScope;
-}) {
+} & PurgeResizeCacheRetraction) {
   // Invalidate the resized/converted variants for this image. Cache
   // invalidation only — a stale variant is self-healing (re-derived on next
   // request) and must never fail the caller's mutation.
@@ -360,11 +361,37 @@ export async function purgeResizeCache({
       }
     })();
 
-    const query = `imageKey=${encodeURIComponent(url)}${keepParam}`;
+    // Retraction is only coherent for a FULL purge. A narrower scope means the image is still
+    // live — only the pre-flip variants are being cleared — so destroying the shared object there
+    // would take down an image nobody asked to remove, plus every byte-identical copy of it.
+    // The combination degrades to NO retraction rather than to the wider blast radius, and says
+    // so, because it can only mean a caller is confused about what it is asking for.
+    const retract = retractPublicBlobs === true && scope === 'all';
+    if (retractPublicBlobs === true && scope !== 'all') {
+      logToAxiom({
+        type: 'warning',
+        name: 'image-blob-retraction-refused',
+        message: 'blob retraction was requested with a partial scope; not retracting',
+        imageKey: url,
+        scope,
+      }).catch(() => {
+        // swallow — best effort logging
+      });
+    }
+    // The exact literal the service gates on; it fails closed on anything else.
+    const retractParam = retract ? '&retractPublicBlobs=true' : '';
 
-    // The endpoint requires this header once its destructive mode is enabled, and rejects the
-    // call outright without it. Sending it whenever it is configured means enabling that mode is
-    // a change on ONE side, not a synchronised deploy across two services.
+    const query = `imageKey=${encodeURIComponent(url)}${keepParam}${retractParam}`;
+
+    // Sent whenever the secret is configured, rather than only on a retracting call, so THIS
+    // caller does not have to be redeployed in step with a change on the service side.
+    //
+    // 🔴 That is a statement about this caller, not about the endpoint's contract, and it does not
+    // generalise: `apps/moderator/src/lib/server/image-deletion.ts` open-codes its own POST to the
+    // same endpoint with no header, no response check and no retraction parameter, so it
+    // invalidates variants only and is unaffected by any of this. What the service does with a
+    // missing header is not observable from this repo — the `!res.ok` branch below is what makes a
+    // rejection visible here, and it is the only thing that would.
     const headers: Record<string, string> = {};
     if (env.IMAGE_CACHER_ADMIN_SECRET) {
       headers['X-Admin-Secret'] = env.IMAGE_CACHER_ADMIN_SECRET;
@@ -385,9 +412,10 @@ export async function purgeResizeCache({
         // 🔴 `fetch` DOES NOT REJECT ON A NON-2xx. Without this branch a 401 (missing/most likely
         // stale shared secret), a 409 refusal or a 503 partial failure all land in the success
         // path and vanish — so invalidation could stop working COMPLETELY and produce not one log
-        // line. That is the failure mode this check exists for, not a hypothetical one: the
-        // service's auth gate switches on when its delete mode is enabled, and the first symptom
-        // of a secret mismatch would otherwise be stale images with no signal anywhere.
+        // line. That is the failure mode this check exists for: whatever the service decides to do
+        // with a rejected call, this branch is the only place it becomes visible on this side, and
+        // the first symptom of a stale shared secret would otherwise be stale images with no
+        // signal anywhere.
         if (!res.ok) {
           return logToAxiom({
             type: 'warning',
@@ -416,7 +444,13 @@ export async function purgeResizeCache({
   }
 }
 
-export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
+export async function deleteImageFromS3({
+  id,
+  url,
+  // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
+  // destroys and for the collateral that is knowingly accepted along with it.
+  retractPublicBlobs = false,
+}: { id: number; url: string } & PurgeResizeCacheRetraction) {
   if (!env.DATABASE_IS_PROD) return;
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
@@ -507,11 +541,26 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
     }).catch(() => undefined);
   }
 
+  // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
+  // byte-identical image of every owner, and the app cannot enumerate those rows — it stores no
+  // content-hash key, and the perceptual hash it does store is not a byte-identity key. Their
+  // rows survive and will serve a broken original. Emitted before the request rather than after,
+  // so a request that is made but never confirmed still leaves a record.
+  if (retractPublicBlobs) {
+    await logToAxiom({
+      type: 'warning',
+      name: 'image-blob-retraction-requested',
+      message: 'moderation requested retraction of the shared stored object for this image',
+      imageId: id,
+      url,
+    }).catch(() => undefined);
+  }
+
   // Outside the try: a failed object delete is exactly when invalidation matters, because the
   // bytes are still in the bucket and a live cache entry keeps serving content whose row is
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
-  // to an image that is still live.
-  await purgeResizeCache({ url: url });
+  // to an image that is still live, so its bytes are not ours to retract either.
+  await purgeResizeCache({ url: url, retractPublicBlobs });
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
@@ -578,6 +627,17 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
+    // Resolved BEFORE the delete: `CollectionItem.imageId` is `onDelete: Cascade`, so
+    // once the row is gone there is no way left to learn which collections were
+    // showing this image. Their documents denormalize it and the collections index
+    // only sweeps newly created collections, so without this they keep rendering a
+    // thumbnail for an image that no longer exists. The resolver is non-throwing, so
+    // a failure here costs the reindex rather than cancelling the delete.
+    const collectionsToRebuild = await getCollectionIdsForImages({
+      imageIds: [id],
+      source: 'image-delete',
+    });
+
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
@@ -602,6 +662,7 @@ export const deleteImageById = async ({
       invalidateExistence,
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
+      enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
     ]);
 
     return image;
@@ -677,8 +738,26 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
-export async function deleteImages(ids: number[], updatePosts = true) {
+/**
+ * 🔴 A NAMED options object, deliberately not a third positional boolean beside `updatePosts`.
+ * The thing it turns on is cross-account and irreversible, so it must be impossible to reach by
+ * getting an argument position wrong. Default is off, stated explicitly at every layer rather
+ * than left to `undefined` being falsy.
+ */
+export async function deleteImages(
+  ids: number[],
+  updatePosts = true,
+  { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
+) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
+    // Resolved before the DELETE for the same reason as deleteImageById: the
+    // membership rows cascade away with the images, taking with them the only record
+    // of which collection documents now hold a dead thumbnail.
+    const collectionsToRebuild = await getCollectionIdsForImages({
+      imageIds: ids,
+      source: 'image-delete-bulk',
+    });
+
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`
@@ -702,12 +781,15 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       invalidateExistence,
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
+      enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
       results,
       async (results) =>
-        await Promise.all(results.map(({ id, url }) => deleteImageFromS3({ id, url })))
+        await Promise.all(
+          results.map(({ id, url }) => deleteImageFromS3({ id, url, retractPublicBlobs }))
+        )
     );
     if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
 
@@ -897,6 +979,14 @@ export async function handleBlockImages({
       // pre-block (visible) state.
       queueComicsForPanelImages(ids),
     ]);
+    // A moderator block outranks an account-deletion grace block: left on, a later account restore
+    // would read the grace breadcrumbs and un-block what was just moderated. See
+    // `clearAccountDeletionImageMarkers`.
+    //
+    // Sequenced AFTER the batch above rather than joining it: both statements UPDATE the same rows
+    // by id, and two concurrent row-lock acquisitions over one id set are how you buy a deadlock
+    // for nothing. Nothing here depends on the order, so it costs a round trip and no risk.
+    await clearAccountDeletionImageMarkers({ ids });
     // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
     if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
@@ -1562,9 +1652,6 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
-  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the controller — pass-through
-  // to avoid a second Flipt evaluation inside getImagesFromSearch.
-  bitdexMode?: string | null;
   // Caller identity forwarded to Meili via X-Search-Actor for abuse/rate
   // correlation. Built upstream via buildSearchActor().
   actor?: string;
@@ -1651,7 +1738,7 @@ function applyHideChallengesExclusion(input: {
   ];
 }
 
-export const getAllImages = async (
+const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
   }
@@ -1664,6 +1751,12 @@ export const getAllImages = async (
     throw throwInternalServerError(
       new Error('getAllImages cannot serve a hub; hub queries must use the index path')
     );
+
+  // Ahead of every early empty return below: the point of throwing rather than falling back is
+  // that the misuse is legible, and an empty page from one of those branches hides it.
+  if (input.sort === ImageSort.RecentlyAdded && !input.collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
 
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
@@ -1869,7 +1962,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!effectivePending) {
     // Strict published-only, with the owner carve-out gated on the `scheduled`
-    // opt-in — the same rule the two Meili builders and the BitDex merge apply
+    // opt-in — the same rule the two Meili builders apply
     // FOR A NON-MODERATOR.
     //
     // Deliberately not claiming full parity, because there isn't any. A
@@ -2103,13 +2196,14 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, status, "addedById", "sortKey"
+          SELECT "imageId", note, status, "addedById", "collectionItemId", "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
               ci.status,
               ci."addedById",
+              ci.id as "collectionItemId",
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -2160,6 +2254,8 @@ export const getAllImages = async (
     if (sort === ImageSort.Random) {
       isPersonalized = true; // random ordering should not be pinned by a cache
       orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    } else if (sort === ImageSort.RecentlyAdded) {
+      orderBy = 'ct."collectionItemId" DESC';
     }
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
@@ -2669,6 +2765,28 @@ export const getAllImages = async (
   };
 };
 
+export const getAllImages = async (input: Parameters<typeof getAllImagesUncaptured>[0]) => {
+  const started = Date.now();
+  try {
+    const result = await getAllImagesUncaptured(input);
+    void feedRequestCapture().record(input, {
+      source: 'getAllImages',
+      elapsedMs: Date.now() - started,
+      resultIds: result.items.map((i) => i.id),
+      nextCursor: result.nextCursor,
+    });
+    return result;
+  } catch (err) {
+    void feedRequestCapture().record(input, {
+      source: 'getAllImages',
+      error: true,
+      elapsedMs: Date.now() - started,
+      resultIds: [],
+    });
+    throw err;
+  }
+};
+
 // TODO split this into image-index.service because this file is a giant
 
 const getMetaForImages = async (imageIds: number[]) => {
@@ -2872,7 +2990,7 @@ export const getAllImagesIndex = async (
       getThumbnailsForImages(videoIds), // Only need this for videos
       getImageMetricsObject(searchResults),
       // Fetch tagIds from cache so client-side hidden-tag filtering works.
-      // Search results from BitDex don't include tagIds (too expensive to store),
+      // Search results don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
@@ -2890,15 +3008,11 @@ export const getAllImagesIndex = async (
 
   // Visibility-check the RAW `model3dId` carried on the search docs (indexed
   // from `Post.model3dId`) before it reaches the client — same no-leak bar as
-  // the raw-SQL feed path and `image.get`. Meili docs carry it; BitDex docs do
-  // NOT (the field is left `undefined` there → the chip falls back to the
-  // postId lookup, the documented self-healing path). Only the non-null few
-  // are resolved, in ONE batched query (no per-image N+1).
+  // the raw-SQL feed path and `image.get`. Only the non-null few are resolved,
+  // in ONE batched query (no per-image N+1).
   const rawIndexModel3dIds = [
     ...new Set(
       searchResults
-        // model3dId is present on Meili docs but not on BitDex docs (which the
-        // search-result union also covers) — read it defensively.
         .map((sr) => (sr as { model3dId?: number }).model3dId)
         .filter((id): id is number => typeof id === 'number')
     ),
@@ -2928,19 +3042,15 @@ export const getAllImagesIndex = async (
       //  - Meili doc, no link           → null (resolved-absent → chip renders
       //                                   nothing AND does NOT fall back, the
       //                                   durable elimination of getByPostId)
-      //  - BitDex doc (field not stored)→ undefined (fall back to getByPostId;
-      //                                   self-healing, the documented gap)
-      // `searchSource` is per-page (one backend serves the whole page), so an
-      // absent model3dId means "confirmed no link" on Meili but "not indexed"
-      // on BitDex — only the former is safe to assert as a resolved null.
+      // 🔴 That `null` is only correct while ONE backend serves this path. A
+      // second source that does not index `model3dId` needs its own arm
+      // returning `undefined`, or its chips silently stop appearing.
       const rawModel3dId = (sr as { model3dId?: number }).model3dId;
       const model3dId =
         typeof rawModel3dId === 'number'
           ? visibleIndexModel3DIds?.has(rawModel3dId)
             ? rawModel3dId
             : null
-          : searchSource === 'bitdex'
-          ? undefined
           : null;
 
       return {
@@ -2948,7 +3058,7 @@ export const getAllImagesIndex = async (
         model3dId,
         // Override tagIds from authoritative cache when available.
         // This ensures client-side hidden-tag filtering works even when
-        // the search engine (BitDex) doesn't return tagIds.
+        // the search engine doesn't return tagIds.
         tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
         modelVersionId: sr.postedToId,
         type: sr.type as MediaType,
@@ -3015,7 +3125,7 @@ export const getAllImagesIndex = async (
 
   return {
     nextCursor,
-    // Always-on wire trim on the DOMINANT tRPC Meili/BitDex feed path: the item
+    // Always-on wire trim on the DOMINANT tRPC Meili feed path: the item
     // literal above emits `scannedAt`/`mimeType`/`postTitle` as explicit `null`
     // props (plus any of IMAGE_INFINITE_DROPPED_FIELDS carried on `...sr`), which
     // still SERIALIZE even though the return type is narrowed to `Omit<...>` (a
@@ -3077,14 +3187,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   entry?: number;
   blockedFor?: string[];
   signal?: AbortSignal;
-  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the caller (controller).
-  // When provided, getImagesFromSearch skips its own Flipt evaluation.
-  bitdexMode?: string | null;
   actor?: string;
-  // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
-  // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
-  // hub is not the viewer's, which callers must serve as nothing.
-  resolvedHub?: ResolvedHubSources | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3122,11 +3225,6 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
 }
 
 /**
- * Defense-in-depth post-filter for BitDex results. The main query uses strict
- * cacheable filters (no per-user clauses), so this rarely removes anything.
- * User's own excluded content is fetched in a separate second pass and merged.
- */
-/**
  * Per-request tally, created by the caller and threaded through.
  *
  * NOT module-level. This process serves feed requests concurrently and every
@@ -3135,986 +3233,40 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
  * request B's drops. A number whose value cannot be attributed to a request is
  * not a measurement, and this counter exists precisely to attribute something.
  */
-type PostFilterStats = {
-  /** Documents held back by the publication test, for any of its reasons. */
-  publicationHolds: number;
-  /**
-   * Distinct ids held back on `sortAt` alone — their own `publishedAt` was
-   * already past. Tracked separately because that is the half that can hide
-   * genuinely published content, and by ID because the same document can be
-   * tested twice (main pass, then the own-excluded merge).
-   */
-  sortAtOnlyIds: Set<number>;
-};
-
-function postFilterBitdexDocs(
-  docs: ReturnType<typeof mapBitdexDoc>[],
-  currentUserId: number | undefined,
-  isModerator: boolean | undefined,
-  disablePoi: boolean | undefined,
-  /**
-   * The caller opted in to their own not-yet-published content. Without it, a
-   * document that is not yet published is filtered out for EVERYONE — including
-   * the owner and moderators — which is what the Meilisearch path has always
-   * done. See below.
-   *
-   * Only `scheduled` sets this for a non-moderator, because Meili's
-   * non-moderator branch honours only `scheduled` and ignores `notPublished`
-   * entirely. Accepting both here would make the two backends answer the same
-   * input differently, which surfaces as shadow-comparator divergence nobody can
-   * attribute.
-   */
-  wantsUnpublished: boolean,
-  stats: PostFilterStats
-) {
-  const now = Date.now();
-
-  // Moderators are exempt from the content filters below, but not from the
-  // publication one: Meili's moderator branch is `publishedAtUnix <= now OR
-  // userId = me` by default, and only lifts that on an explicit
-  // `scheduled`/`notPublished` request. Returning everything here would put
-  // not-yet-published documents at the head of a moderator's ordinary feed —
-  // they sort first — on a request that did not ask for them.
-  //
-  if (isModerator) {
-    // DEFENSIVE ONLY — not reachable from the sole caller, which declines a
-    // moderator's `scheduled`/`notPublished` request outright (see
-    // `fetchBitdexPrimary`) precisely because BitDex answers a different question
-    // for both. Kept so this function is correct in isolation rather than only in
-    // the presence of that guard; do not read it as live behaviour.
-    if (wantsUnpublished) return docs;
-    return docs.filter(
-      (doc) =>
-        (currentUserId != null && doc.userId === currentUserId) ||
-        isPublicallyPublished(doc, now, stats)
-    );
-  }
-
-  return docs.filter((doc) => {
-    const isOwn = currentUserId != null && doc.userId === currentUserId;
-    // Own content stays exempt from the content filters below — but a creator's
-    // own not-yet-published work is held back like anyone else's unless they
-    // asked for it, matching Meili: "By default, strict published-only — owners
-    // no longer see their own scheduled/unpublished content pinned to feeds. The
-    // `scheduled` flag is opt-in." Without this the future `sortAt` puts their
-    // unpublished post above every live image on their own feed until it
-    // publishes.
-    if (isOwn) return wantsUnpublished || isPublicallyPublished(doc, now, stats);
-
-    if (doc.availability === 'Private') return false;
-    if (doc.blockedFor) return false;
-    if (doc.acceptableMinor) return false;
-    if (disablePoi && doc.poi) return false;
-    return isPublicallyPublished(doc, now, stats);
-  });
-}
-
-/**
- * The whole publication test, in one place: published at all, and published
- * *already*.
- *
- * Both halves are needed and they are separate failures. A NULL publish time is
- * a draft that was never published; a future one is scheduled. Meili's
- * post-filter tests both together (`!hit.publishedAtUnix || hit.publishedAtUnix
- * > snappedNow`), and splitting them here is how the owner and moderator
- * branches came to enforce only the second — a never-published document with a
- * stale index flag would have been served to its owner, which is precisely the
- * case this post-filter exists to catch.
- */
-function isPublicallyPublished(
-  doc: Pick<ReturnType<typeof mapBitdexDoc>, 'id' | 'publishedAtUnix' | 'sortAtUnix'>,
-  now: number,
-  stats: PostFilterStats
-) {
-  if (doc.publishedAtUnix == null) {
-    stats.publicationHolds++;
-    return false; // never published
-  }
-  if (isScheduledForFuture(doc, now, stats)) {
-    stats.publicationHolds++;
-    return false; // published, but not yet
-  }
-  return true;
-}
-
-/**
- * True when the document's publish time has not arrived yet.
- *
- * The publication decision on this path is carried by a single index flag, with
- * no comparison against the current time. This restores the same time check the
- * Meilisearch path has always applied (`publishedAtUnix > snappedNow`), so the
- * post-filter no longer depends on that flag alone being right.
- *
- * BOTH timestamps are tested, and that is not belt-and-braces: a document can
- * carry a future schedule on `sortAt` while `publishedAt` still holds an
- * earlier value it was moved off, so a `publishedAt`-only test would let the
- * rescheduled case through.
- *
- * Unsnapped `Date.now()` is deliberate. The Meili sites snap to the minute to
- * keep filter strings cache-stable; a post-filter has no cache key, so snapping
- * would only withhold just-published content for up to 60s and buy nothing.
- */
-function isScheduledForFuture(
-  doc: Pick<ReturnType<typeof mapBitdexDoc>, 'id' | 'publishedAtUnix' | 'sortAtUnix'>,
-  now: number,
-  stats: PostFilterStats
-) {
-  if (doc.publishedAtUnix != null && doc.publishedAtUnix > now) return true;
-  const bySortAtOnly = doc.sortAtUnix != null && doc.sortAtUnix > now;
-
-  // Count the `sortAt`-only holds separately, because this half of the test can
-  // hide content that is genuinely published.
-  //
-  // `sortAt` is not PG's `sortAt` — the index recomputes it as
-  // `GREATEST(existedAt, publishedAt)`, and it is known to drift. A document
-  // whose stored `sortAt` is wrongly ahead of now is then invisible on the
-  // BitDex path while Meili, which tests `publishedAtUnix` alone, still serves
-  // it. Without this counter that surfaces only as unexplained shadow-comparator
-  // divergence with nothing to attribute it to — an absence, which is the one
-  // thing we have learned not to read as an answer.
-  if (bySortAtOnly) stats.sortAtOnlyIds.add(doc.id);
-  return bySortAtOnly;
-}
-
-/**
- * Fetch from BitDex in primary mode with post-filtering and pagination loop.
- * The main query is fully cacheable (no per-user filter clauses).
- * Returns null if BitDex can't serve the request.
- */
-/**
- * A cursored BitDex page came back empty because a query FAILED, so falling back to
- * Meili would silently restart the user's scroll at page 1. Caught by the only
- * caller that serves users and re-raised as a retryable 503.
- *
- * A dedicated class rather than a TRPCError: `fetchBitdexPrimary`'s call site
- * swallows every throw and falls through to Meili, which is correct for the
- * app-side map/merge/sort bugs that catch exists for. This one must survive it,
- * and matching on TRPCError would also catch throws from deeper in the query path
- * whose fallback behaviour is not ours to change.
- */
-class BitdexCursoredPageUnavailable extends Error {}
-
-async function fetchBitdexPrimary(input: ImageSearchInput, opts: { serving?: boolean } = {}) {
-  // Two moderator queues BitDex cannot answer, declined so Meili does.
-  //
-  // `scheduled`: the query pushes `isPublished = true`, so the scheduled
-  // population is not in the result at all and what comes back is the ordinary
-  // published feed.
-  //
-  // `notPublished`: the query pushes `isPublished = false`, which per the
-  // own-excluded comment below "covers both scheduled and never-published (no
-  // separate signal)". Meili answers this with `publishedAtUnix NOT EXISTS` —
-  // never-published only. So BitDex returns a SUPERSET seeded with scheduled
-  // posts, and with the opt-in set the post-filter passes them through
-  // unnarrowed.
-  //
-  // In both cases the failure is the same and it is worse than not answering: a
-  // non-empty result SUPPRESSES the Meili fallback, so the moderator opens a
-  // queue and is shown a different population, with nothing signalling that the
-  // wrong question was answered. Declining is the honest containment; answering
-  // properly means changing what the query asks for, which is not this PR.
-  // 🔴 Deliberately BEFORE any outcome is recorded, and deliberately not
-  // recorded itself. This declines the request without issuing a single BitDex
-  // query, so it is not a served page, not an empty index and not a failure — it
-  // is a policy choice. Counting it as a fallback would make the served ratio
-  // sag every time a moderator opened one of these queues. The denominator of
-  // `bitdex_primary_result_total` is therefore "requests that engaged BitDex",
-  // which the metric's help string states.
-  if (input.isModerator && (input.scheduled || input.notPublished)) return null;
-
-  // Resolve `username` → `userId` BEFORE anything reads the creator scope.
-  //
-  // `skipOwnExcluded` below decides whether to issue the own-excluded second
-  // pass from `input.userId`. When the caller addresses a creator by handle
-  // instead of id, that field is empty here — the resolution used to happen
-  // later and locally, inside `getImagesFromBitdexPreFilter` — so the "viewing
-  // someone else's profile" arm of that guard tested `undefined`, never fired,
-  // and the caller's own private/blocked/nsfw0 content was merged into a feed
-  // it does not belong to (#3929). Every document involved belongs to the
-  // caller, so nothing of anyone else's is exposed; what breaks is feed
-  // integrity — the feed misrepresents what that creator posted.
-  //
-  // Precedence is spelled exactly as every other resolution site in this file
-  // spells it (`username && !userId`): an explicit `userId` wins and a
-  // disagreeing `username` is ignored. Spelling it differently here would make
-  // the two forms of the same request address different creators depending on
-  // which backend answered.
-  //
-  // The handle is passed to the lookup verbatim — no lowercasing. Case
-  // semantics stay whatever the column's collation already decides, and the
-  // BitDex and Meili legs keep agreeing about which account a handle names.
-  // (Trimming is not a concern reachable from the request surface.
-  // `usernameSchema` is `.regex(/^[A-Za-z0-9_]*$/).trim()` and the REGEX RUNS
-  // FIRST — that ordering is what makes padding unreachable, since a padded
-  // handle is rejected outright rather than trimmed into a valid one. The
-  // ordering is pinned by a premise guard in
-  // `src/server/services/__tests__/bitdex-username-own-excluded-scope.test.ts`,
-  // because this argument rests on a file this one does not own.)
-  //
-  // Normally this costs no extra round trip: `getImagesFromBitdexPreFilter`
-  // guards its own resolution on `!userId`, so handing it the resolved input
-  // makes that a no-op — and it runs once PER PASS, so one lookup here replaces
-  // up to MAX_PASSES + MAX_EMPTIED_PAGES of them. The one exception is
-  // `hidden: true`, whose branch sits BEFORE that resolution and can return
-  // null without reaching it; such a request now pays one lookup it previously
-  // skipped.
-  //
-  // Same client (`dbRead`) and same query as the resolution it replaces, so
-  // this path's replica-lag behaviour is unchanged. It does NOT have the
-  // `dbRead ?? dbWrite` fallback the Meili-side sites have — deliberately, to
-  // keep a primary read off the feed hot path. On a replica miss the effect is
-  // strictly better than before: BitDex declines and the Meili leg, which does
-  // have the fallback, resolves and answers.
-  if (input.username && !input.userId) {
-    const targetUser = await dbRead.user.findUnique({
-      where: { username: input.username },
-      select: { id: true },
-    });
-    // A handle that resolves to nothing names no view, so there is nothing for
-    // a second pass to be scoped to. Returning null hands the request to the
-    // Meili leg, which raises NotFound — which is what a bad handle should do
-    // and, before this, did not: the main pass declined, but the own-excluded
-    // pass had already been issued, so `data` was non-empty and BitDex served
-    // the caller their own private images under a creator who does not exist.
-    if (!targetUser) return null;
-    // A NEW object, never an in-place mutation. `getImagesFromSearch` hands the
-    // caller's own `input` to the Meili leg after this function returns null,
-    // and to the shadow comparator; writing `userId` into it would rob the
-    // Meili leg of its own `dbRead ?? dbWrite` resolution and its NotFound, and
-    // would flip the shadow comparator's `hasFilters` from false to true for
-    // every username-addressed request. Pinned by a test.
-    input = { ...input, userId: targetUser.id };
-  }
-
-  // A creator asking for their OWN drafts declines for the same reason a
-  // moderator's request does: `wantsUnpublished` below reads `scheduled` alone
-  // for a non-moderator, so BitDex would answer a drafts request with the
-  // PUBLISHED feed — a non-empty result that suppresses the Meili fallback and
-  // shows the creator a population that is not the one they asked for.
-  //
-  // 🔴 Deliberately AFTER the username resolution above, not beside the
-  // moderator decline. The comparison needs the RESOLVED creator id: a request
-  // addressed by handle carries no `userId` at that point, so the same check
-  // placed earlier reads `undefined === <caller>` and never fires — the request
-  // would go on to be answered wrongly, silently, on exactly the profile page
-  // this feature is for.
-  //
-  // Scoped to the caller's own profile, matching `canRequestUnpublished`. An
-  // unscoped or someone-else's `notPublished` from a non-moderator is refused by
-  // the filter builders instead, because there is nothing to fall back TO —
-  // Meili will not answer that either.
-  if (input.notPublished && !!input.currentUserId && input.userId === input.currentUserId)
-    return null;
-
-  // Which cohort this run belongs to. Read once so the three emit points below
-  // cannot disagree, and computed here rather than at each call so a later
-  // caller-mode cannot be added to one of them and missed by the others.
-  const serveMode = opts.serving ? ('primary' as const) : ('shadow' as const);
-
-  // 🔴 THE PER-REQUEST PREDICATE: did ANY BitDex call in this request fail?
-  //
-  // Not "did the last call fail" and not "did the main pass fail". A request
-  // issues 1-4 calls — the paginating main pass plus, for a signed-in caller on
-  // the first page, an own-content pass that runs in PARALLEL. If the
-  // own-content pass failed while the main pass legitimately came back empty,
-  // the page is not known to be empty: the documents that would have filled it
-  // are exactly the ones the failed call was fetching. Collapsing that into
-  // `fallback_empty` would report the one case this instrument exists to find as
-  // the healthy one.
-  //
-  // Read AFTER `await ownExcludedPromise` below, which is where both passes have
-  // settled and which already precedes the `!data.length` guard.
-  // 🔴 DID THIS REQUEST ACTUALLY REACH BITDEX AT ALL? It can be ZERO, and the
-  // empty-result guard below cannot tell — an empty page and a page nobody asked
-  // for are the same `data.length === 0`.
-  //
-  // COUNTED FROM EVIDENCE THAT A CALL HAPPENED, NOT FROM LOOP ENTRY. An earlier
-  // revision incremented just before calling `getImagesFromBitdexPreFilter`,
-  // which was wrong in a way that looked right: that function has FIVE early
-  // `return null` paths that never reach `queryBitdex` — `hidden` with no
-  // signed-in user, `hidden` with no hidden images, an unresolvable username,
-  // followed-with-zero-follows, and newCreators-with-none. Counting on entry
-  // re-created the same overcount one door down.
-  //
-  // ⚠️ SCOPE. Do NOT paraphrase this — READ THE PREDICATE. Three successive
-  // hand-written glosses of it were each refuted by measurement ("all five doors
-  // are excluded"; "an anonymous caller, or any paginated request"), so the rule
-  // here is to name the predicate and enumerate it exactly, never to describe it.
-  //
-  // A door-walking request is excluded from this counter exactly when
-  // `skipOwnExcluded` (declared below, next to the own-content pass) is TRUE,
-  // because that is what decides whether a SECOND query goes out. Its three
-  // disjuncts, verbatim from that line:
-  //   1. `!input.currentUserId`                                  — anonymous caller
-  //   2. `bitdexCursor`                — a `bdx:` cursor, i.e. a BitDex-paginated
-  //                                      request (NOT any paginated request)
-  //   3. `creatorScopeExcludesCaller`  — the request is scoped to a set of
-  //                                      creators that does not contain the
-  //                                      caller (#4123). Reference it BY SYMBOL:
-  //                                      it is computed from three scopes and a
-  //                                      gloss of it drifts, which is what
-  //                                      happened to the `input.userId` version
-  //                                      this replaced.
-  // If none holds, the own-content pass is issued regardless of what the feed
-  // query did, a call goes out, and the request IS counted.
-  //
-  // Measured, driving the real path (each row is a request that walks a door):
-  //   signed-in, other user's profile        → 0 calls, nothing recorded
-  //   signed-in, `bdx:` cursor               → 0 calls, nothing recorded
-  //   signed-in, followed-with-zero-follows  → 0 calls, nothing recorded  (#4123)
-  //   signed-in, newCreators-with-none       → 0 calls, nothing recorded  (#4123)
-  //   signed-in, `hidden`-with-none, page 1  → 1 call,  `fallback_empty` recorded
-  //   signed-in, unscoped, NON-`bdx:` cursor → 1 call,  `fallback_empty` recorded
-  // 🔴 THE TWO SHAPES followed-with-zero-follows AND newCreators-with-none USED TO
-  // READ `1 call, fallback_empty recorded`, AND #4123 CHANGED THEM. (Named by
-  // shape, not by row number: #4123 reordered this table.) A set-shaped creator scope is now resolved before the decision,
-  // so those two doors stopped issuing the own pass and joined the other doors
-  // instead of being the ones that leaked a call. That is a REDUCTION in what
-  // `fallback_empty` counts — it shifts the served-ratio baseline, exactly as
-  // #4122 did. Do not compare that ratio across #4123.
-  // The last row is why "any paginated request" was wrong, and it is the NORMAL
-  // shape: a request that walks a door falls back to Meili, so its next page
-  // carries a MEILI cursor, which the `bdx:` decode above does not accept.
-  //
-  // Counting the remaining two is correct under the stated denominator — a call
-  // did go out — and is deliberately left as is.
-  //
-  // ⚠️ PIN SCOPE, STATED NARROWLY ON PURPOSE: of the six rows above, exactly TWO
-  // are driven in bitdex-feed-source.test.ts — followed-with-zero-follows and
-  // `hidden`-with-none, the two the counter's behaviour turns on. The other four
-  // are read from the code, not pinned by a test there. An earlier revision of
-  // this comment said "every shape above is pinned", which was a true narrow claim
-  // widened into a false one — the exact failure this comment block exists to
-  // prevent.
-  //
-  // The two observations that mean "a call was made": the client reported a
-  // FAILURE, or it handed back a NON-NULL result (it returns null on every
-  // failure). At most one fires per call, so this cannot double-count.
-  //
-  // ⚠️ Neither is exhaustive, in opposite directions, and both are accepted:
-  //   • `unconfigured` fires the failure callback WITHOUT a request leaving the
-  //     process (the client returns before any fetch — pinned by the
-  //     `not.toHaveBeenCalled()` assertion in the client suite). So a
-  //     misconfigured deployment counts as a call and records `fallback_error`.
-  //     Deliberate: a missing endpoint is a real degradation and that is exactly
-  //     when the tripwire should fire, not go quiet.
-  //   • A completed call whose body decodes to a value that is FALSY BUT SURVIVES
-  //     A PROPERTY READ (`0`, `""`, `false`, `NaN`) is returned unfiltered by the
-  //     client, so it is falsy here and neither observation fires — the call is
-  //     NOT counted. An UNDER-count, the worse direction, since the served ratio
-  //     silently improves. Measured. `null` is NOT in that set: the client
-  //     dereferences `.total_matched` on the parsed body, which THROWS on null,
-  //     so a null body is classified `parse` and IS counted — an earlier revision
-  //     of this comment listed it here and was wrong. Whether a falsy body throws
-  //     on that dereference is the whole distinction. Not reachable against a
-  //     backend that returns an object.
-  //
-  // Why it matters: recording a request that never contacted BitDex inflates the
-  // FALLBACK side of the exact ratio a roll-forward/rollback decision is read
-  // from. (Reachability is measured; organic frequency is NOT.)
-  let bitdexCallsObserved = 0;
-
-  let anyQueryFailed = false;
-  const noteQueryFailure = () => {
-    anyQueryFailed = true;
-    // Evidence of a call, with the `unconfigured` exception noted above.
-    bitdexCallsObserved++;
-  };
-
-  const limit = input.limit ?? 100;
-  // Opt-in to one's own not-yet-published content. Read once so the main
-  // post-filter and the own-excluded merge below cannot disagree about it.
-  //
-  // A non-moderator opts in with `scheduled` only. Meili's non-moderator branch
-  // honours `scheduled` and ignores `notPublished` entirely, so accepting both
-  // here would make the two backends answer the same input differently — and
-  // that divergence lands in the shadow comparator with nothing to attribute it
-  // to, which is the failure this PR adds a counter to avoid elsewhere.
-  const wantsUnpublished = input.isModerator
-    ? !!(input.scheduled || input.notPublished)
-    : !!input.scheduled;
-  const MAX_PASSES = 3;
-  // Pages discarded wholesale by the post-filter do not count against
-  // MAX_PASSES, up to this many pages AND this much wall clock, whichever binds
-  // first. See the loop below for why both.
-  const MAX_EMPTIED_PAGES = 5;
-  const EMPTIED_PAGE_BUDGET_MS = 1500;
-
-  // Decode BitDex keyset cursor from "offset|bdx:JSON" format
-  let bitdexCursor: any = undefined;
-  // Tracked separately from the parsed value because the fallback decision turns
-  // on "the caller sent a bdx: cursor", not on "we understood it". A cursor that
-  // fails to parse is still meaningless to Meili, so treating it as uncursored
-  // would send it down the very path that degrades offset to 0.
-  let hasBdxCursor = false;
-  if (input.cursor) {
-    const raw = input.cursor.toString();
-    const pipeIdx = raw.indexOf('|');
-    const entryPart = pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : raw;
-    if (entryPart.startsWith('bdx:')) {
-      hasBdxCursor = true;
-      try {
-        bitdexCursor = JSON.parse(entryPart.slice(4));
-      } catch {}
-    }
-  }
-
-  // Second pass: fetch user's own content that strict filters would exclude.
-  // Covers nsfw0, private, blocked, unpublished, and poi (when disabled).
-  // Merged into main results and re-sorted so they appear only when they
-  // naturally fit the active sort. Runs in parallel with main query. First page only.
-  //
-  // Content-scoping filters from the main query are applied so the second pass
-  // only returns content relevant to the current view (e.g. same model, same post).
-  //
-  // 🔴 #4123 — THE CREATOR SCOPE CAN BE A SET, AND IT WAS RESOLVED TOO LATE.
-  //
-  // This decision used to read `input.userId` alone — "skip entirely if viewing
-  // another user's profile". That covers a feed addressed to ONE creator, and
-  // since #4122 one addressed by handle. But a Following or new-creators feed has
-  // no `userId` at all: its creator scope is a SET, resolved later and locally
-  // inside `getImagesFromBitdexPreFilter`. The `userId`-shaped test therefore read
-  // `undefined`, did not fire, the second pass ran anyway, and the caller's own
-  // private/blocked/nsfw0 content was merged into a feed that exists to show OTHER
-  // people's work. Not a cross-user exposure — every document returned belongs to
-  // the caller — but the feed misrepresents whose work it is showing, and Following
-  // is a primary browsing surface.
-  //
-  // Generalised to the invariant both shapes share: THE OWN PASS BELONGS ONLY IN A
-  // FEED WHOSE CREATOR SCOPE CONTAINS THE CALLER. A single `userId` is a
-  // one-element set, so the old disjunct is SUBSUMED here rather than left sitting
-  // beside this one — one rule in one place, so a third scope shape cannot be added
-  // to one test and missed by the other.
-  //
-  // ⚠️ MEMBERSHIP, not "is this feed scoped to somebody else". `toggleFollowUser`
-  // creates `{ userId, targetUserId }` with no `userId !== targetUserId` guard, so
-  // a caller CAN sit inside their own followed set, and can be on the
-  // new-and-upcoming board. Both are pinned as positive controls in
-  // `src/server/services/__tests__/bitdex-followed-own-excluded-scope.test.ts`; a
-  // blanket "never run the second pass on a scoped feed" fails them.
-  //
-  // COST: both helpers are cached — `getNewCreatorUserIds` via `fetchThroughCache`
-  // (genuinely shared: the pre-filter calls the very same helper), and
-  // `getUserFollows` via `userFollowsCache`. ⚠️ `getUserFollows` is NOT already on
-  // this path: the search legs read follows with a raw
-  // `dbRead.userEngagement.findMany` (`getImagesFromSearchPreFilter`,
-  // `getImagesFromBitdexPreFilter`, `getImagesFromSearchPostFilter`), and the only
-  // other `getUserFollows` call in this file is in `getAllImages`, the legacy SQL
-  // feed. So this introduces a NEW `userFollowsCache` dependency into the
-  // image-search hot path rather than reusing one. Steady-state cost is still
-  // small — `cacheNotFound` defaults to true, so a zero-follow caller is
-  // negatively cached instead of falling through to the DB every request — but
-  // the basis is "a new, cheap cache read", not "a read we already do".
-  //
-  // The cheap disjuncts are evaluated FIRST and short-circuit the awaits entirely,
-  // so an anonymous request and any `bdx:`-paginated page (i.e. every page ≥2 of a
-  // BitDex-served Following feed) pay nothing here.
-  //
-  // ⚠️ THE STALENESS WINDOW IS REPLICA LAG, NOT CACHE TTL — and the cache is the
-  // FRESHER of the two. `toggleFollowUser` maintains it from the delta it committed,
-  // falling back to `userFollowsCache.refresh()`, which re-reads via `lookupFn(…,
-  // true)`, i.e. dbWrite; the pre-filter reads the REPLICA. So the disagreement is a
-  // caller who has just self-followed: for the replica-lag window this guard says
-  // "in scope" and runs the own pass while the replica-derived filter still
-  // excludes them. It needs a self-follow to reach at all, is self-healing, and
-  // the other direction merely withholds the caller's own excluded content from
-  // their own feed. Deliberately NOT unified here — repointing the pre-filter at
-  // the cache would change what the FEED CONTAINS, which is a different change
-  // from what this decision READS.
-  //
-  // 🔴 THIS HOIST INTRODUCES THE SHORT-CIRCUIT — IT DOES NOT PRESERVE ONE. An
-  // earlier revision claimed the guard "already had it by virtue of `||`". Two
-  // different baselines, and neither had it: pre-#4123 there were no awaits here
-  // at all, so there was nothing to short-circuit; and in #4123's own first
-  // revision the scope resolution was an unconditional `await Promise.all([...])`
-  // on the line ABOVE the guard, where `||` short-circuited only the read of an
-  // already-computed boolean. So removing the `skipOwnExcludedCheaply ? [] :`
-  // ternary below is NOT a no-op — it reinstates a lookup on every request already
-  // destined to skip, notably an anonymous `newCreators` request and every page
-  // >= 2 of a BitDex-served Following feed.
-  //
-  // ⚠️ It is also load-bearing for the `getUserFollows(input.currentUserId!)`
-  // call below, which dropped its own `input.currentUserId &&` guard because this
-  // line makes it unreachable when `currentUserId` is absent. Reorder or remove
-  // the hoist and that non-null assertion becomes `getUserFollows(undefined)`.
-  const skipOwnExcludedCheaply = !input.currentUserId || !!bitdexCursor;
-
-  // 🔴 The four scopes here must stay 1:1 with the creator-scoping filters
-  // `getImagesFromBitdexPreFilter` applies — `followed`, `newCreators`, `userId`
-  // and a creator-only hub. That coupling IS the correctness argument: the guard has to read
-  // the same creator scope the feed is filtered by, or it decides from a
-  // different set than the one that shaped the results. The ARGUMENTS matter as
-  // much as the calls — `entity` and `domain` select which board
-  // `getNewCreatorUserIds` reads, and passing a different `domain` here would
-  // silently consult the SFW board while the feed filters on the red one. Pinned
-  // by argument assertions in bitdex-followed-own-excluded-scope.test.ts.
-  const creatorScopes = skipOwnExcludedCheaply
-    ? []
-    : await Promise.all([
-        input.userId ? [input.userId] : null,
-        input.followed ? getUserFollows(input.currentUserId!) : null,
-        input.newCreators ? getNewCreatorUserIds({ entity: 'images', domain: input.domain }) : null,
-        // A hub is a creator scope ONLY when every arm of it is one. The arms are
-        // ORed, so a hub carrying a model source can match an image whose author
-        // is outside `userIds`, and treating that as a creator scope would skip
-        // the own-excluded pass for a feed the caller does legitimately appear in.
-        // Resolution is memoized on `input`, so this costs no extra query — the
-        // filter build below reads the same answer.
-        hubCreatorScope(await resolvedHubSources(input)),
-      ]);
-  // `some`, not `every`: the pre-filter ANDs these scopes, so exclusion by ANY
-  // one of them excludes the caller from the feed.
-  const creatorScopeExcludesCaller = creatorScopes.some(
-    (scope) => scope !== null && !scope.includes(input.currentUserId!)
-  );
-
-  const skipOwnExcluded = skipOwnExcludedCheaply || creatorScopeExcludesCaller;
-
-  let ownExcludedPromise: ReturnType<typeof queryBitdex> | null = null;
-  if (!skipOwnExcluded) {
-    const ownExcludedClauses = [
-      _eq('nsfwLevel', _int(0)),
-      _eq('availability', _str(Availability.Private)),
-      _in(
-        'blockedFor',
-        [
-          BlockedReason.TOS,
-          BlockedReason.Moderated,
-          BlockedReason.CSAM,
-          BlockedReason.AiNotVerified,
-        ].map(_str)
-      ),
-    ];
-    // Own scheduled/unpublished content only surfaces when the caller opts in.
-    // BitDex `isPublished=false` covers both scheduled and never-published (no
-    // separate signal), so the gate is unified.
-    //
-    // Reads the SAME `wantsUnpublished` the merge filter below uses. Asking for
-    // these documents on a flag combination the merge then discards is a wasted
-    // 500-document round trip on the feed hot path — and two gates that spell
-    // the same intent differently is how they drift apart.
-    if (wantsUnpublished) {
-      ownExcludedClauses.push(_eq('isPublished', _bool(false)));
-    }
-    if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
-
-    // Unscoped second pass — fetch ALL of user's excluded content regardless of
-    // which page/view they're on. This means the cache key is just:
-    //   userId × sort × disablePoi
-    // ...which is reused across every page the user visits (model galleries, feed,
-    // profiles, etc). Content-scoping (modelVersionId, postId, tags, etc) is applied
-    // during the merge step below, not in the query. Most users have at most a few
-    // hundred excluded items, so fetching them all is cheap.
-    const scopeFilters: FilterClause[] = [
-      _eq('userId', _int(input.currentUserId!)),
-      _or(...ownExcludedClauses),
-      _isNotNull('postId'),
-    ];
-
-    // Map the active sort to a BitDex sort field for consistent ordering
-    const sortField =
-      input.sort === ImageSort.MostReactions
-        ? 'reactionCount'
-        : input.sort === ImageSort.MostComments
-        ? 'commentCount'
-        : input.sort === ImageSort.MostCollected
-        ? 'collectedCount'
-        : 'sortAt';
-    const sortDir = input.sort === ImageSort.Oldest ? ('Asc' as const) : ('Desc' as const);
-
-    ownExcludedPromise = queryBitdex(
-      'civitai',
-      scopeFilters,
-      { field: sortField, direction: sortDir },
-      500,
-      undefined,
-      undefined,
-      true,
-      noteQueryFailure
-    );
-  }
-
-  // Main loop: fetch pages, post-filter, accumulate until we have enough.
-  // Main query uses strict filters (cacheable). User's own excluded content
-  // is fetched in the parallel second pass above and merged after.
-  const accumulated: ReturnType<typeof mapBitdexDoc>[] = [];
-  let lastCursor: any = undefined;
-
-  let pass = 0;
-  let emptiedPages = 0;
-  let firstPage = true;
-  // Started AFTER the first fetch (below), so page latency does not consume the
-  // budget the allowance is meant to spend. On the feed hot path each pass is a
-  // full `includeDocs` round trip; clocking from before it means two slow passes
-  // exhaust 1.5s before a single skip is granted, and the anti-starvation
-  // allowance degrades to nothing under exactly the load where starvation bites.
-  let skipBudgetStartedAt = 0;
-  const stats: PostFilterStats = { publicationHolds: 0, sortAtOnlyIds: new Set<number>() };
-
-  while (pass < MAX_PASSES && accumulated.length < limit) {
-    const result = await (firstPage
-      ? getImagesFromBitdexPreFilter(input, true, bitdexCursor, noteQueryFailure)
-      : getImagesFromBitdexPreFilter(input, true, lastCursor, noteQueryFailure));
-    // Non-null ⇒ the client completed a call (it returns null on every failure,
-    // and the wrapper returns null without calling it at all on its early-return
-    // paths). A failed call is counted by `noteQueryFailure` instead, so AT MOST
-    // one of the two fires per call — not exactly one. For a body that decodes
-    // falsy-but-non-throwing, NEITHER fires; see the exhaustiveness note at
-    // `bitdexCallsObserved`, which is the single place that scope is stated.
-    if (result) bitdexCallsObserved++;
-    if (skipBudgetStartedAt === 0) skipBudgetStartedAt = Date.now();
-    firstPage = false;
-
-    if (!result?.documents?.length) break;
-
-    const docs = result.documents.map((doc) => mapBitdexDoc(doc));
-    const heldBefore = stats.publicationHolds;
-    const filtered = postFilterBitdexDocs(
-      docs,
-      input.currentUserId,
-      input.isModerator,
-      input.disablePoi,
-      wantsUnpublished,
-      stats
-    );
-    accumulated.push(...filtered);
-    lastCursor = result.cursor;
-
-    if (!result.cursor) break; // no more pages
-
-    // A page the PUBLICATION guard emptied is not a page of results, and
-    // charging it against the pass budget starves the request. The documents it
-    // holds back sort FIRST under the default `sortAt Desc` — a not-yet-arrived
-    // publish time is a high sort value — so they arrive contiguously at the
-    // head. Enough of them and every pass returns nothing, `data` is empty, and
-    // the caller falls through to Meili on a request BitDex could have served.
-    //
-    // The allowance is deliberately NOT granted to any empty page: an ordinary
-    // filter that happens to drop a whole page (a poi-heavy view under
-    // `disablePoi`, a private-heavy slice) has no reason to expect the next page
-    // to be different, and paying 5 extra `includeDocs` fetches on the feed hot
-    // path for it is a latency regression with nothing bought.
-    //
-    // Bounded twice — by pages and by wall clock — because the main query is
-    // cacheable per filter shape, so a head cluster is not one unlucky request
-    // paying for extra pages: every request in that window walks the same ones.
-    //
-    // MOST of the page, not merely one document of it and not strictly all.
-    //
-    // "One is enough" grants the allowance to a page where 49 docs were dropped
-    // by `poi`/`Private` and the 50th happened to be unpublished — an
-    // ordinary-filter page buying the extra fetches.
-    //
-    // "All of them" fails the other way, and less obviously: `Private`,
-    // `blockedFor`, `acceptableMinor` and `poi` are tested BEFORE the publication
-    // check, so those documents never reach it and never increment the count. A
-    // single private or blocked document sitting inside a scheduled head cluster
-    // would then deny the allowance and restore the starvation it exists to
-    // prevent — and scheduled-and-unlisted is not an exotic combination.
-    //
-    // A majority keeps the cluster case working while still refusing the
-    // ordinary-filter page.
-    const publicationHeldHere = stats.publicationHolds - heldBefore;
-    const emptiedByPublicationGuard =
-      filtered.length === 0 && publicationHeldHere * 2 >= docs.length && publicationHeldHere > 0;
-
-    if (
-      emptiedByPublicationGuard &&
-      emptiedPages < MAX_EMPTIED_PAGES &&
-      Date.now() - skipBudgetStartedAt < EMPTIED_PAGE_BUDGET_MS
-    )
-      emptiedPages++;
-    else pass++;
-  }
-
-  // Logged after the merge below, not here, so the merge's own holds are
-  // included rather than bleeding into whichever request logs next.
-
-  let data = accumulated;
-
-  // Merge user's own excluded content, re-sort by the active sort, then limit.
-  // This ensures user's own private/blocked/unpublished/nsfw0/poi content appears
-  // only when it naturally ranks high enough for the active sort.
-  // Since the second pass is unscoped (for cacheability), we apply content-scoping
-  // filters here to match the current view.
-  const ownExcluded = await ownExcludedPromise;
-  // Same rule as the main pass. `ownExcludedPromise` is null when the pass was
-  // skipped entirely, and `await null` is null, so this counts only a pass that
-  // both ran and completed.
-  if (ownExcluded) bitdexCallsObserved++;
-  if (ownExcluded?.documents?.length) {
-    const mainIds = new Set(data.map((d) => d.id));
-    let ownDocs = ownExcluded.documents
-      .map((doc) => mapBitdexDoc(doc))
-      .filter((d) => !mainIds.has(d.id));
-
-    // Content-scope filtering — narrow unscoped results to the current view
-    //
-    // A hub is not expressible here: this pass fetches the viewer's own excluded
-    // content unscoped, and the narrowing below enumerates scalar inputs only, so
-    // a hub's source set has nothing to match against. Dropping the pass entirely
-    // is the fail-closed choice — the alternative is the viewer's own private,
-    // blocked and unscanned images from anywhere in their account appearing in a
-    // hub they may have composed entirely from other creators. It also keeps the
-    // two backends agreeing: Meili carries these carve-outs inside clauses ANDed
-    // with the hub group, so they stay hub-scoped there.
-    if (input.hubId) ownDocs = [];
-
-    // Creator scope first, because it is the one the rest of this list was
-    // missing. The second pass asks BitDex for `userId = currentUserId` and
-    // nothing else, so on a view pinned to a single creator these documents
-    // belong on the page only when that creator IS the caller. The
-    // `skipOwnExcluded` guard above already refuses to issue the pass
-    // otherwise — this makes the constraint hold where the documents are ADDED
-    // to the page rather than only where the decision to fetch them was made.
-    //
-    // That separation is exactly what #3929 broke: the decision was computed
-    // from a field that had not been resolved yet, and nothing downstream
-    // re-checked it. With the resolution above in place no live caller reaches
-    // this clause, so it is a structural guard rather than a second fix.
-    //
-    // 🔴 Be precise about what it does and does not catch, because the obvious
-    // reading is backwards. It catches a RESOLVED creator that reaches the
-    // merge past a wrong upstream decision — e.g. `skipOwnExcluded` recomputed
-    // from a stale pre-resolution binding. It does NOT catch an UNRESOLVED
-    // creator: `input.userId` is falsy in that case, so this clause is skipped
-    // entirely and the merge fails OPEN. That is measured, not assumed —
-    // deleting the resolution above while leaving this clause in place still
-    // serves the caller's own private image on another creator's feed. The two
-    // guards are therefore SEQUENTIAL, not independent: this one only has
-    // anything to test once the resolution has run. Do not cite it as coverage
-    // for a caller that arrives here with no creator resolved.
-    if (input.userId) ownDocs = ownDocs.filter((d) => d.userId === input.userId);
-    if (input.modelVersionId) {
-      ownDocs = ownDocs.filter(
-        (d) =>
-          d.postedToId === input.modelVersionId || d.modelVersionIds.includes(input.modelVersionId!)
-      );
-    }
-    if (input.postId) ownDocs = ownDocs.filter((d) => d.postId === input.postId);
-    if (input.postIds?.length) {
-      const postIdSet = new Set(input.postIds);
-      ownDocs = ownDocs.filter((d) => d.postId != null && postIdSet.has(d.postId));
-    }
-    if (input.types?.length) {
-      const typeSet = new Set(input.types);
-      ownDocs = ownDocs.filter((d) => typeSet.has(d.type as any));
-    }
-    // Tag filtering skipped on second pass — tagIds are expensive to store in BitDex docs.
-    // Edge case: user's own excluded content that doesn't match the active tag filter may
-    // appear when browsing by tag. Front-end hidden tag filtering still applies.
-    if (input.baseModels?.length) {
-      const bmSet = new Set(input.baseModels);
-      ownDocs = ownDocs.filter((d) => bmSet.has(d.baseModel as any));
-    }
-    if (input.remixOfId) ownDocs = ownDocs.filter((d) => d.remixOfId === input.remixOfId);
-    if (input.withMeta) ownDocs = ownDocs.filter((d) => d.hasMeta);
-    if (input.fromPlatform) ownDocs = ownDocs.filter((d) => d.onSite);
-
-    // These documents never pass through postFilterBitdexDocs, so the
-    // publication rule has to be applied here too — and without it the owner
-    // half of that rule does nothing.
-    //
-    // This pass asks for `nsfwLevel=0 OR availability=Private OR blockedFor IN
-    // (…)`, and `nsfwLevel = 0` is the ordinary state of a freshly-uploaded,
-    // not-yet-scanned image. So a creator's just-scheduled upload matches this
-    // pass on the nsfw0 arm alone — with no `isPublished=false` clause needed —
-    // and lands here carrying a future `sortAt`, which sorts it to position 1 of
-    // their own feed. Exactly the symptom the publication rule is for, arriving
-    // by the one door that did not check.
-    // Moderators are exempt, because the main post-filter keeps `OR userId = me`
-    // for them. Without this a moderator's own unpublished image would be served
-    // when it arrived through the main pass and dropped when it arrived through
-    // this one — visibility decided by which door it came in by.
-    //
-    // `publishedOnly` withdraws that exemption, because it withdraws its
-    // premise: the main post-filter drops the `OR userId = me` carve-out for
-    // such a caller, so keeping the exemption here would restore by the back
-    // door exactly what they asked to be rid of. This is the door the remix
-    // submit picker came in by — it asks for published images only, and a
-    // moderator was still offered their own drafts.
-    if (!wantsUnpublished && (!input.isModerator || input.publishedOnly)) {
-      const mergeNow = Date.now();
-      ownDocs = ownDocs.filter((d) => isPublicallyPublished(d, mergeNow, stats));
-    } else if (wantsUnpublished && !input.isModerator) {
-      // `scheduled` is a non-moderator's ONLY opt-in here, and it means scheduled —
-      // not "everything unpublished". The BitDex query cannot draw that line
-      // (`isPublished = false` carries both, see the own-excluded scope above), so it
-      // is drawn on the way out, where `publishedAtUnix` still separates a
-      // never-published draft (null) from one whose time has not come (future).
-      //
-      // Equivalent to what the two Meili builders now emit: their arms are
-      // `publishedAtUnix <= snappedNow` and `(userId = me AND publishedAtUnix >
-      // snappedNow)`, whose union is exactly "the field exists". Both backends
-      // therefore answer `scheduled` the same way, which is the property the
-      // `wantsUnpublished` comment above exists to protect.
-      ownDocs = ownDocs.filter((d) => {
-        if (d.publishedAtUnix != null) return true;
-        stats.publicationHolds++;
-        return false;
-      });
-    }
-
-    if (ownDocs.length) {
-      data = [...data, ...ownDocs];
-      const sort = input.sort;
-      if (sort === ImageSort.MostReactions) {
-        data.sort((a, b) => b.reactionCount - a.reactionCount);
-      } else if (sort === ImageSort.MostComments) {
-        data.sort((a, b) => b.commentCount - a.commentCount);
-      } else if (sort === ImageSort.MostCollected) {
-        data.sort((a, b) => b.collectedCount - a.collectedCount);
-      } else if (sort === ImageSort.Oldest) {
-        data.sort((a, b) => a.sortAtUnix - b.sortAtUnix);
-      } else {
-        // Newest (default)
-        data.sort((a, b) => b.sortAtUnix - a.sortAtUnix);
-      }
-    }
-  }
-
-  // A counter, not just a log line: this is the number that has to be
-  // attributable and alertable, and a log is neither queryable nor rate-limited
-  // on a hot path. The log stays for the local/debug case.
-  //
-  // TWO counters, not one gated counter. This function also runs in shadow mode,
-  // where nothing reaches the user, and folding both into one series would make
-  // an alert threshold mean two different things depending on the flag state — a
-  // number that changes meaning without changing its name.
-  //
-  // But counting ONLY when serving is worse: shadow mode exists precisely to
-  // size a risk before taking it, so a shadow-blind counter reads a flat zero
-  // until a cohort is flipped, i.e. it can only measure the exposure after it is
-  // taken. Separate names give attribution without the silence.
-  //
-  // Both are unlabelled for the reason given in compare.ts: a labelled series is
-  // absent until its first observation, and an alert over an absent series
-  // renders as "No data".
-  //
-  // No log line. A counter is queryable and a log is not, and `sortAt` drift is
-  // stated to be broad when it happens — one line per feed request at feed QPS,
-  // unsampled, on the hot path, is a liability rather than an instrument.
-  //
-  // Counted by distinct document id: a document held back in the main pass can
-  // reappear in the own-excluded merge (which dedupes against `data`, from which
-  // it has already been removed), and counting it twice would overstate the very
-  // thing this is here to size.
-  // Nothing to serve → return null so the caller falls back to Meilisearch.
-  // Checked HERE, on the merged result, and not on `accumulated` alone: the
-  // own-excluded second pass can be the only source of content on the page
-  // (and its docs are content-scoped just above), so an empty main pass is not
-  // yet an empty result. Checking earlier would either discard that content or
-  // — as it did before — make the fallback unreachable for any caller for whom
-  // the second pass was issued at all, i.e. every signed-in first-page request.
-  if (!data.length) {
-    // Recorded as `fallback`, NOT as `serving`. Meili answers this request and
-    // serves the very documents that were held, so nothing was hidden from the
-    // user — counting it under a name whose help text says "requests BitDex
-    // served" would make the alert fire loudest in the one case where the guard
-    // cost the user nothing.
-    recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, 'fallback');
-
-    // 🔴 THE SPLIT THIS PR EXISTS FOR. Both branches return the same `null` and
-    // land the user on the same Meilisearch page; what differs is whether the
-    // emptiness is TRUSTWORTHY. `fallback_empty` says every call succeeded and
-    // the index had nothing — routine, and the bulk of today's fallback volume.
-    // `fallback_error` says at least one call in this request failed, so nobody
-    // knows what was in the index. Before this line the two were the same
-    // observable, which is why a BitDex outage looked exactly like a quiet index.
-    //
-    // Gated on `bitdexCallsObserved` for the reason given at its declaration: a
-    // request that never contacted BitDex is neither of these things, and
-    // recording it would make this counter's denominator disagree with its own
-    // help string.
-    // A cursored request that is being SERVED does not fall back (see below), so
-    // it is recorded under its own outcomes rather than inflating `fallback_*`
-    // with requests that never fell back.
-    const cursoredServe = hasBdxCursor && !!opts.serving;
-    // A LIVE cursor with an empty page means the pass budget ran out, NOT the
-    // index. The loop above is bounded by MAX_PASSES as well as by `!result.cursor`,
-    // and an ordinary filter can empty every page it sees (a poi-heavy slice under
-    // `disablePoi`, a private-heavy one) while more content sits behind the cursor.
-    // Ending the feed there would truncate it permanently, which is worse than the
-    // page-1 restart this branch exists to fix.
-    const liveCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
-    if (bitdexCallsObserved > 0)
-      recordBitdexPrimaryResult(
-        cursoredServe
-          ? anyQueryFailed
-            ? 'cursored_error'
-            : liveCursor
-            ? 'cursored_skip'
-            : 'cursored_end'
-          : anyQueryFailed
-          ? 'fallback_error'
-          : 'fallback_empty',
-        serveMode
-      );
-
-    // A cursored request must NOT fall back to Meili. `getAllImagesIndex` parses
-    // cursors as `offset|entryTimestamp` behind two `isNumber` guards (see its
-    // `cursorParsed`), and a `bdx:{…}` cursor fails both — so `offset` degrades
-    // to 0 AND the `entry` pin is lost, and the user's infinite scroll silently
-    // restarts at the top of a feed reshuffled by anything published since. No
-    // error, no empty page, just the wrong content.
-    //
-    // The two empties are answered differently because only one of them is worth
-    // retrying, which is the whole reason the split above exists:
-    //   • a call FAILED  → nobody knows what was in the index. Throw, so the
-    //     client retries the same cursor and can land on the real page.
-    //   • nothing failed → no error. `fallback_empty` is the bulk of normal
-    //     fallback volume, so erroring here would spin the client on the routine
-    //     case. Whether that means END or SKIP is decided by `liveCursor` below.
-    //
-    // Shadow mode is deliberately excluded: it serves nobody, and throwing there
-    // would move `fallback_exception{serve_mode="shadow"}` off the flat zero that
-    // makes it a usable tripwire for app-side throws.
-    if (cursoredServe) {
-      if (anyQueryFailed) throw new BitdexCursoredPageUnavailable();
-      // `liveCursor` undefined here means the loop broke on `!result.cursor` — the
-      // index really is exhausted, so the feed is over. Otherwise hand the cursor
-      // back and let the client skip forward over the emptied region.
-      return { data: [], nextCursor: liveCursor };
-    }
-
-    return null;
-  }
-
-  data = data.slice(0, limit);
-
-  recordSortAtOnlyHolds(stats.sortAtOnlyIds.size, opts.serving ? 'serving' : 'shadow');
-
-  // Recorded on the RESULT, not on the flag: a request can serve a full page
-  // while one of its calls failed (a failed own-content pass alongside a healthy
-  // main pass), and that is a served page. `anyQueryFailed` only decides which
-  // KIND of empty an empty result is; it never demotes a page that exists.
-  //
-  // 🔴 THE CONSEQUENCE, STATED SO NOBODY HAS TO REDERIVE IT FROM AN ALERT THAT
-  // LOOKS FINE. If the own-content pass fails PERSISTENTLY while the main pass
-  // stays healthy, users silently lose their own private / blocked / unpublished
-  // content from their feed — a real, user-visible degradation — and THIS
-  // counter reads 100% `served` throughout, because a page was in fact served.
-  // That is a deliberate choice (a served page is a served page; demoting it
-  // would make `served` mean "served and perfect", which no threshold could then
-  // interpret), but it means `bitdex_primary_result_total` ALONE cannot see this
-  // failure. `bitdex_query_failures_total` is the only counter that moves.
-  //
-  // ⇒ Any dashboard or alert built on this family MUST watch BOTH counters. One
-  // keyed on the served ratio alone will stay green straight through this.
-  recordBitdexPrimaryResult('served', serveMode);
-
-  const nextCursor = lastCursor ? `bdx:${JSON.stringify(lastCursor)}` : undefined;
-  console.log(
-    '[BitDex] PRIMARY serving',
-    data.length,
-    'docs, cursor:',
-    nextCursor ? 'yes' : 'none'
-  );
-  return { data, nextCursor };
-}
 
 export async function getImagesFromSearch(input: ImageSearchInput) {
+  const started = Date.now();
+  try {
+    const result = await searchImages(input);
+    void feedRequestCapture().record(input, {
+      source: 'getImagesFromSearch',
+      filterMode: result.filterMode,
+      elapsedMs: Date.now() - started,
+      resultIds: result.data.map((i: { id: number }) => i.id),
+      nextCursor: result.nextCursor,
+    });
+    return result;
+  } catch (err) {
+    void feedRequestCapture().record(input, {
+      source: 'getImagesFromSearch',
+      error: true,
+      elapsedMs: Date.now() - started,
+      resultIds: [],
+    });
+    throw err;
+  }
+}
+
+async function searchImages(input: ImageSearchInput) {
+  if (!metricsSearchClient)
+    return {
+      data: [],
+      nextCursor: undefined,
+      source: 'meili' as const,
+      filterMode: 'none' as const,
+    };
   let searchFn = getImagesFromSearchPreFilter;
+  let filterMode: 'pre' | 'post' = 'pre';
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
   // flag fetch is contributing to the parent span's latency. Routes through
   // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
@@ -4125,122 +3277,25 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   input = await withSpan('image:flipt:eval', async () => {
     const entityId = input.currentUserId?.toString() || 'anonymous';
     const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
-    if (postFilter) searchFn = getImagesFromSearchPostFilter;
+    if (postFilter) {
+      searchFn = getImagesFromSearchPostFilter;
+      filterMode = 'post';
+    }
     return input;
   });
 
-  // Check BitDex mode (off / shadow / primary)
-  // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
-  // and 'testers' (userId in list) segments match correctly.
-  // Reuse the controller's pre-evaluated value when present (it queries the same
-  // flag with the same entityId+context) to avoid a duplicate Flipt round-trip.
-  const bitdexMode = await withSpan('image:flipt:bitdexMode', async () =>
-    input.bitdexMode !== undefined
-      ? input.bitdexMode
-      : await getFliptVariant(
-          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-          input.currentUserId?.toString() || 'anonymous',
-          buildFliptContext(
-            input.currentUserId
-              ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
-              : undefined
-          )
-        )
-  );
-  console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
-
-  // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
-  // BitDex queries use strict filters (no per-user OR clauses) for cacheability.
-  // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
-  if (bitdexMode === 'primary') {
-    try {
-      const result = await withSpan('image:bitdex:primary', { 'bitdex.mode': 'primary' }, () =>
-        fetchBitdexPrimary(input, { serving: true })
-      );
-      if (result) return { ...result, source: 'bitdex' as const };
-      console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
-    } catch (err) {
-      // Re-raised, not swallowed: this is the one throw from `fetchBitdexPrimary`
-      // that means "do not fall through to Meili". Falling through would hand the
-      // Meili path a `bdx:` cursor it cannot parse and restart the user's scroll
-      // at page 1, which is the defect this branch exists to prevent.
-      if (err instanceof BitdexCursoredPageUnavailable) {
-        throw new TRPCError({
-          code: 'SERVICE_UNAVAILABLE',
-          message: 'Image feed is temporarily unavailable — please retry.',
-          cause: err,
-        });
-      }
-      console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
-      recordBitdexError(err);
-      // Distinct from `fallback_error`, and the distinction is the point: the
-      // client never throws, so nothing that reaches here came from BitDex being
-      // unhealthy. This is the application's own map/merge/sort code throwing —
-      // a different team's page. It reads a flat zero today, which is what makes
-      // it a usable tripwire rather than a redundant series.
-      recordBitdexPrimaryResult('fallback_exception', 'primary');
-    }
-    // Fall through to Meili if BitDex fails
-  }
-
-  const meiliStart = Date.now();
   const result = await searchFn(input);
 
-  // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
-  // that primary uses, compare results against Meili, but serve Meili results.
-  //
-  // The shadow span is detached (its own root with a Link back to the user-request
-  // trace) because shadow work intentionally outlives the user-facing return.
-  // Keeping it as an active child of image:getAllImagesIndex:search would produce
-  // a child span whose end-time is past its parent's, which confuses parent-
-  // duration interpretation in trace UIs.
-  if (bitdexMode === 'shadow') {
-    const meiliElapsed = Date.now() - meiliStart;
-    void withDetachedSpan('image:bitdex:shadow', { 'bitdex.mode': 'shadow' }, () =>
-      fetchBitdexPrimary(input)
-        .then((bitdexResult) => {
-          if (bitdexResult) {
-            compareBitdexResults({
-              bitdexIds: bitdexResult.data.map((d) => d.id),
-              meiliIds: result.data.map((i: { id: number }) => i.id),
-              bitdexTotalMatched: bitdexResult.data.length,
-              meiliTotalMatched: result.data.length,
-              bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
-              meiliElapsedMs: meiliElapsed,
-              sort: input.sort ?? 'Newest',
-              hasPeriod: !!input.period,
-              hasFilters: !!(
-                input.tags?.length ||
-                input.types?.length ||
-                input.userId ||
-                input.withMeta ||
-                input.fromPlatform ||
-                input.baseModels?.length ||
-                input.postId
-              ),
-            });
-          }
-        })
-        .catch((err) => {
-          recordBitdexError(err);
-          // Same meaning as the primary arm above, in the cohort where nothing
-          // reaches a user. Recorded so an app-side throw is visible BEFORE the
-          // cohort is flipped, rather than only once it is serving.
-          recordBitdexPrimaryResult('fallback_exception', 'shadow');
-        })
-    );
-  }
-
-  return { ...result, source: 'meili' as const };
+  return { ...result, source: 'meili' as const, filterMode };
 }
 
 // No applyHideChallengesExclusion here: `hideChallenges` cannot reach this function. Its only
 // upstreams are /api/v1/images and /api/v1/blocks/images, whose zod objects declare neither
 // `hideChallenges` nor `excludedTagIds` and strip unknown keys. Adding either key to those
 // schemas would hand the REST API an unfiltered feed — apply the exclusion here first. Note
-// image-search.service.ts spreads the same `data` into all three branches
-// (getAllImages / getAllImagesIndex / here), so the result wouldn't be uniformly unfiltered:
-// two branches would filter and this one wouldn't, which reads as a caching bug, not a gap.
+// image-search.service.ts spreads the same `data` into both branches (getAllImages / here),
+// so the result wouldn't be uniformly unfiltered: one branch would filter and this one
+// wouldn't, which reads as a caching bug, not a gap.
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
@@ -4475,39 +3530,24 @@ import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema'
 // Returns null when the hub resolved to nothing. Callers must return an empty
 // page for null — never fall through unfiltered, which would serve the global
 // feed to someone who asked for their hub.
-// The creator scope a hub represents, or null when it is not purely one. Null means
-// "not a creator scope", which leaves the own-excluded pass alone — never "empty
-// scope", which would exclude the caller from their own feed.
-function hubCreatorScope(sources: ResolvedHubSources | null) {
-  if (!sources || !sources.userIds.length) return null;
-  if (sources.modelVersionIds.length || sources.collectionIds.length) return null;
-  return sources.userIds;
-}
-
-// One resolution per request, memoized on the input object itself. A hub feed page
-// runs the BitDex pass loop up to 8 times and can then fall through to Meili, and
-// each of those rebuilt the whole filter — 8-9 resolutions of the same hub, at 3 SQL
-// statements each. The memo is per-request state, not a cache: nothing outlives the
-// object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
-// resolution to another.
+// The two filter builders are mutually exclusive per request and each calls this
+// once, so nothing here needs memoizing. Kept as a helper so both spell the hubId
+// short-circuit and the argument set identically.
 async function resolvedHubSources(input: ImageSearchInput) {
   if (!input.hubId) return null;
-  if (input.resolvedHub !== undefined) return input.resolvedHub;
-  const sources = await resolveHubSources({
+  return resolveHubSources({
     hubId: input.hubId,
     userId: input.currentUserId,
     isModerator: input.isModerator,
     excludedSources: input.hubExcludedSources,
   });
-  input.resolvedHub = sources;
-  return sources;
 }
 
 type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
 
-// The single enumeration of the arms a hub ORs together. Both backends build their
-// own clause syntax from this, so an arm added here cannot reach one of them only —
-// which is how the BitDex copy drifted into a third builder.
+// The single enumeration of the arms a hub ORs together. One builder consumes it
+// today (`buildHubFilter`); the split survives so a second clause syntax cannot be
+// given a different set of arms.
 // Returns null for "no arm", which callers must treat as "serve nothing"; treating
 // it as "no filter" hands the caller the global feed as their hub.
 function hubFilterArms(
@@ -4525,12 +3565,53 @@ function hubFilterArms(
     if (!hideManualResources)
       arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
   }
+  // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
+  // attribute on the metrics index since 2024, and the ids are denormalised onto the
+  // documents at index time. Verified against the prod index rather than assumed —
+  // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
+  if (sources.tagIds.length) arms.push({ field: 'tagIds', ids: sources.tagIds });
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
     arms.push({ field: 'collectionIds', ids: sources.collectionIds });
 
   return arms.length ? arms : null;
+}
+
+/**
+ * The hub's keep-out group: a creator, model or version whose content the owner
+ * said must not appear. ANDed as a `NOT` against everything else rather than ORed
+ * into the source group — an exclusion that joins the OR is not an exclusion, it is
+ * a fifth way to be included.
+ *
+ * Returns null for "this hub excludes nothing", which is the only safe reading of
+ * an empty set: unlike `hubFilterArms`, a null here must NOT empty the page.
+ *
+ * The three resource arms are emitted unconditionally, where the positive builder
+ * gates two of them on hideAutoResources / hideManualResources. Those gates say
+ * which attributions the viewer wants to be COLLECTED by; they do not say the
+ * viewer is willing to see a model the owner refused, arriving under a different
+ * attribution.
+ */
+function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
+  const { userIds, modelVersionIds, tagIds } = sources.excluded;
+  const arms: HubFilterArm[] = [];
+  if (userIds.length) arms.push({ field: 'userId', ids: userIds });
+  if (tagIds.length) arms.push({ field: 'tagIds', ids: tagIds });
+  if (modelVersionIds.length) {
+    arms.push({ field: 'postedToId', ids: modelVersionIds });
+    arms.push({ field: 'modelVersionIds', ids: modelVersionIds });
+    arms.push({ field: 'modelVersionIdsManual', ids: modelVersionIds });
+  }
+  if (!arms.length) return null;
+
+  // Verified against the prod metrics index rather than assumed: a document whose
+  // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
+  // returns the whole set. So a NOT arm removes matches only — it does not also
+  // drop documents that lack the field.
+  return `NOT (${arms
+    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
+    .join(' OR ')})`;
 }
 
 function buildHubFilter(
@@ -4695,6 +3776,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // Pushed as its own AND term, and only when there is something to exclude: an
+    // empty keep-out set must leave the feed alone, not empty it.
+    const hubExclusionFilter = buildHubExclusionFilter(sources);
+    if (hubExclusionFilter) filters.push(hubExclusionFilter);
 
     // The hub's own content cap, applied before the browsing-level block below
     // reads `browsingLevel`. An empty intersection is served as an empty page, not
@@ -5193,335 +4279,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
 }
 
-// --- BitDex document mapping ---
-// BitDex low_cardinality_string fields preserve original casing (case-insensitive for queries,
-// but output matches input). Sort fields are u32 unix seconds. Nullable fields return null directly.
-
-/** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
-export function mapBitdexDoc(doc: Record<string, unknown>) {
-  const sortAtUnix = (doc.sortAt as number) * 1000; // u32 seconds → epoch ms
-  const publishedAtRaw = doc.publishedAt as number | null;
-  return {
-    id: doc.id as number,
-    url: doc.url as string,
-    hash: (doc.hash as string) ?? null,
-    nsfwLevel: doc.nsfwLevel as number,
-    userId: doc.userId as number,
-    type: (doc.type as string) ?? 'image',
-    availability: (doc.availability as string) ?? 'Public',
-    baseModel: (doc.baseModel as string) ?? null,
-    postId: (doc.postId as number) ?? null,
-    postedToId: (doc.postedToId as number) ?? null,
-    // Omit rather than `?? null`: downstream reads a missing key as "not indexed"
-    // and a null as "confirmed no link", so a missing value must not become null.
-    ...(doc.model3dId != null ? { model3dId: doc.model3dId as number } : {}),
-    remixOfId: (doc.remixOfId as number) ?? null,
-    hasMeta: doc.hasMeta as boolean,
-    onSite: doc.onSite as boolean,
-    poi: doc.poi as boolean,
-    minor: doc.minor as boolean,
-    width: (doc.width as number) ?? null,
-    height: (doc.height as number) ?? null,
-    needsReview: (doc.needsReview as string) ?? null,
-    reactionCount: (doc.reactionCount as number) ?? 0,
-    commentCount: (doc.commentCount as number) ?? 0,
-    collectedCount: (doc.collectedCount as number) ?? 0,
-    sortAt: new Date(sortAtUnix),
-    sortAtUnix,
-    publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
-    tagIds: [] as number[], // tagIds not stored in BitDex docs (expensive); fetched from tagIdsForImagesCache downstream
-    modelVersionIds: (doc.modelVersionIds as number[]) ?? [],
-    toolIds: (doc.toolIds as number[]) ?? [],
-    techniqueIds: (doc.techniqueIds as number[]) ?? [],
-    blockedFor: ((doc.blockedFor as string) || null) as BlockedReason | null,
-    // Fields expected by consumer but not stored in BitDex
-    hideMeta: false,
-    index: (doc.index as number) ?? 0,
-    acceptableMinor: (doc.acceptableMinor as boolean) ?? false,
-  };
-}
-
-/**
- * Build and execute a BitDex query from the same input as getImagesFromSearchPreFilter.
- * Returns { ids, total_matched, elapsed_us, docs? } or null on error.
- *
- * @param includeDocs - true to return all doc fields, or an array of field names
- */
-export async function getImagesFromBitdexPreFilter(
-  input: ImageSearchInput,
-  includeDocs?: boolean | string[],
-  cursor?: any,
-  // Threaded through to the client so the per-request outcome in
-  // fetchBitdexPrimary can tell "this page is empty" from "we do not know
-  // whether this page is empty" (#3930). Optional: the internal comparison
-  // endpoint calls this with `input` alone and is unaffected.
-  onFailure?: (reason: BitdexQueryFailureReason) => void
-) {
-  let { postIds = [] } = input;
-  const {
-    sort,
-    modelVersionId,
-    model3dId,
-    types,
-    withMeta,
-    fromPlatform,
-    notPublished,
-    scheduled,
-    username,
-    tags,
-    tools,
-    techniques,
-    baseModels,
-    period,
-    isModerator,
-    currentUserId,
-    excludedUserIds,
-    hideAutoResources,
-    hideManualResources,
-    hidden,
-    followed,
-    limit = 100,
-    offset,
-    entry,
-    postId,
-    remixOfId,
-    remixesOnly,
-    nonRemixesOnly,
-    excludedTagIds,
-    disablePoi,
-    disableMinor,
-    poiOnly,
-    minorOnly,
-    blockedFor,
-    requiringMeta,
-    newCreators,
-    domain,
-  } = input;
-  let { browsingLevel, userId } = input;
-
-  const filters: FilterClause[] = [];
-
-  // --- Access control ---
-  const allBlockedReasons = [
-    BlockedReason.TOS,
-    BlockedReason.Moderated,
-    BlockedReason.CSAM,
-    BlockedReason.AiNotVerified,
-  ].map(_str);
-
-  // Strict filters (no per-user OR clauses) — keeps queries cacheable.
-  // User's own excluded content is fetched in a parallel second pass and merged.
-  if (!isModerator) {
-    filters.push(_not(_eq('availability', _str(Availability.Private))));
-    filters.push(_notIn('blockedFor', allBlockedReasons));
-  }
-
-  // Only show images that belong to a post (null postId = no post, e.g. comic references)
-  filters.push(_isNotNull('postId'));
-
-  if (postId) postIds = [...postIds, postId];
-
-  if (disablePoi) {
-    filters.push(_not(_eq('poi', _bool(true))));
-  }
-  if (disableMinor) filters.push(_not(_eq('minor', _bool(true))));
-
-  if (isModerator) {
-    if (poiOnly) filters.push(_eq('poi', _bool(true)));
-    if (minorOnly) filters.push(_eq('minor', _bool(true)));
-    if (blockedFor?.length) filters.push(_in('blockedFor', blockedFor.map(_str)));
-  }
-
-  // --- Hidden images ---
-  if (hidden) {
-    if (!currentUserId) return null;
-    const hiddenImages = await dbRead.imageEngagement.findMany({
-      where: { userId: currentUserId, type: 'Hide' },
-      select: { imageId: true },
-    });
-    const imageIds = hiddenImages.map((x) => x.imageId);
-    if (!imageIds.length) return null;
-    filters.push(_in('id', imageIds.map(_int)));
-  }
-
-  // --- Username → userId ---
-  if (username && !userId) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) return null;
-    userId = targetUser.id;
-  }
-
-  // --- Followed users ---
-  if (currentUserId && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId: currentUserId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
-    if (!userIds.length) return null;
-    filters.push(_in('userId', userIds.map(_int)));
-  }
-
-  // --- New & upcoming creators ---
-  if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
-    if (!newCreatorIds.length) return null;
-    filters.push(_in('userId', newCreatorIds.map(_int)));
-  }
-
-  // Hubs are served here rather than declined, so they ride the BitDex migration
-  // instead of pinning themselves to Meili. Returning null anywhere below means
-  // "cannot serve this" and falls through to Meili — never "no filter", which
-  // would hand the caller the global feed as their hub.
-  if (input.hubId) {
-    const sources = await resolvedHubSources(input);
-    if (!sources) return null;
-
-    // Collection membership is not a BitDex field. While collection sources are
-    // switched off this cannot happen; once they are enabled, a hub containing one
-    // has to go to Meili, because filtering on a field BitDex does not know 400s
-    // the whole query rather than just that clause.
-    if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length) return null;
-
-    const arms = hubFilterArms(sources, { hideAutoResources, hideManualResources });
-    if (!arms) return null;
-    filters.push(_or(...arms.map((arm) => _in(arm.field, arm.ids.map(_int)))));
-
-    // Same cap as the Meili paths. `null` here means "BitDex cannot serve this",
-    // which falls through to Meili — where the identical clamp produces the empty
-    // page — rather than serving the hub past its own level.
-    const capped = hubBrowsingLevel(browsingLevel, sources);
-    if (capped !== undefined) {
-      if (!capped) return null;
-      browsingLevel = capped;
-    }
-  }
-
-  // --- NSFW Browsing Level ---
-  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
-  else browsingLevel = onlySelectableLevels(browsingLevel);
-  const browsingLevels = Flags.instanceToArray(browsingLevel);
-  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
-  if (isModerator && includesNsfwContent) browsingLevels.push(0);
-
-  // Main NSFW filter — no per-user clause, fully cacheable.
-  // User's own nsfw0 (unclassified) images are fetched in a separate pass and merged.
-  const nsfwLevelField = 'nsfwLevel';
-  filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
-
-  // NSFW license restrictions
-  // Only add when the browsing level actually includes NSFW levels — otherwise the outer
-  // nsfwLevel filter (line above) already excludes [4,8,16,32] and the inner AND is
-  // guaranteed false, making the compound NOT a no-op but still ~273ms to evaluate in BitDex.
-  if (nsfwRestrictedBaseModels.length > 0 && includesNsfwContent) {
-    filters.push(
-      _not(
-        _and(
-          _in(nsfwLevelField, nsfwBrowsingLevelsArray.map(_int)),
-          _in('baseModel', nsfwRestrictedBaseModels.map(_str))
-        )
-      )
-    );
-  }
-
-  // --- Model version ---
-  if (modelVersionId) {
-    const vClauses: FilterClause[] = [_eq('postedToId', _int(modelVersionId))];
-    if (!hideAutoResources) vClauses.push(_in('modelVersionIds', [_int(modelVersionId)]));
-    if (!hideManualResources) vClauses.push(_in('modelVersionIdsManual', [_int(modelVersionId)]));
-    filters.push(_or(...vClauses));
-  }
-
-  // --- Model3D gallery ---
-  // Must deploy only after BitDex has model3dId configured and populated: a
-  // filter on a field BitDex doesn't know returns HTTP 400 and fails the whole
-  // query, not just this clause.
-  if (model3dId) filters.push(_eq('model3dId', _int(model3dId)));
-
-  // --- Remix ---
-  if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
-  if (remixesOnly && !nonRemixesOnly) filters.push(_eq('isRemix', _bool(true)));
-  if (nonRemixesOnly) filters.push(_eq('isRemix', _bool(false)));
-
-  // --- Tag exclusions ---
-  // Server-enforced browsing-settings addon exclusions (uniform per browsing
-  // level, so BitDex cache keys stay stable across users). Per-user hidden tags
-  // are still applied client-side by useApplyHiddenPreferences.
-  if (excludedTagIds?.length) filters.push(_notIn('tagIds', excludedTagIds.map(_int)));
-
-  // --- Metadata ---
-  if (withMeta) filters.push(_eq('hasMeta', _bool(true)));
-  if (requiringMeta) filters.push(_eq('blockedFor', _str(BlockedReason.AiNotVerified)));
-  if (fromPlatform) filters.push(_eq('onSite', _bool(true)));
-
-  // --- Published ---
-  // Strict filter (cacheable). User's own unpublished content handled via second pass.
-  if (isModerator) {
-    if (notPublished) {
-      filters.push(_eq('isPublished', _bool(false)));
-    } else if (scheduled) {
-      filters.push(_eq('isPublished', _bool(true)));
-    } else {
-      filters.push(_eq('isPublished', _bool(true)));
-    }
-  } else {
-    filters.push(_eq('isPublished', _bool(true)));
-  }
-
-  // --- Simple field filters ---
-  if (types?.length) filters.push(_in('type', types.map(_str)));
-  if (tags?.length) filters.push(_in('tagIds', tags.map(_int)));
-  if (tools?.length) filters.push(_in('toolIds', tools.map(_int)));
-  if (techniques?.length) filters.push(_in('techniqueIds', techniques.map(_int)));
-  if (postIds.length) filters.push(_in('postId', postIds.map(_int)));
-  if (baseModels?.length) filters.push(_in('baseModel', baseModels.map(_str)));
-
-  if (userId) filters.push(_eq('userId', _int(userId)));
-  // Per-user hidden users handled client-side by useApplyHiddenPreferences.
-  // else if (excludedUserIds?.length) filters.push(_notIn('userId', excludedUserIds.map(_int)));
-
-  // --- Period ---
-  // BitDex supports time buckets: Gte on sortAtUnix snaps to pre-computed buckets.
-  // Requires time_buckets config in civitai-index.json (filter_field: sortAtUnix, sort_field: sortAt).
-  if (period && period !== 'AllTime') {
-    const periodMs: Record<string, number> = {
-      Day: 86400000,
-      Week: 604800000,
-      Month: 2592000000,
-      Year: 31536000000,
-    };
-    const ms = periodMs[period];
-    if (ms) filters.push(_gte('sortAtUnix', _int(Math.round((Date.now() - ms) / 1000))));
-  }
-
-  // --- Sort ---
-  let bitdexSort: SortClause | undefined;
-  if (sort === ImageSort.MostComments) {
-    bitdexSort = { field: 'commentCount', direction: 'Desc' };
-  } else if (sort === ImageSort.MostReactions) {
-    bitdexSort = { field: 'reactionCount', direction: 'Desc' };
-  } else if (sort === ImageSort.MostCollected) {
-    bitdexSort = { field: 'collectedCount', direction: 'Desc' };
-  } else if (sort === ImageSort.Oldest) {
-    bitdexSort = { field: 'sortAt', direction: 'Asc' };
-  } else {
-    bitdexSort = { field: 'sortAt', direction: 'Desc' };
-  }
-
-  // Use keyset cursor when available, fall back to offset
-  const result = await queryBitdex(
-    'civitai',
-    filters,
-    bitdexSort,
-    limit,
-    cursor,
-    cursor ? undefined : offset,
-    includeDocs,
-    onFailure
-  );
-  return result;
-}
-
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
@@ -5658,6 +4415,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const hubFilter = sources && buildHubFilter(sources, input);
     if (!hubFilter) return { data: [], nextCursor: undefined };
     filters.push(hubFilter);
+
+    // Pushed as its own AND term, and only when there is something to exclude: an
+    // empty keep-out set must leave the feed alone, not empty it.
+    const hubExclusionFilter = buildHubExclusionFilter(sources);
+    if (hubExclusionFilter) filters.push(hubExclusionFilter);
 
     // The hub's own content cap, applied before the browsing-level block below
     // reads `browsingLevel`. An empty intersection is served as an empty page, not
@@ -5950,7 +4712,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       //
       // Status-code rationale:
       //   - 408 (upstream-timeout)  → Meilisearch backend page-cache thrash
-      //   - 503 (upstream-overload) → civitai-feeds-proxy shed (MEILI_MAX_CONCURRENT)
+      //   - 503 (upstream-overload) → the feeds proxy shed (MEILI_MAX_CONCURRENT)
       //   - other 5xx               → upstream brownout / Traefik 504 / etc.
       //   - 4xx-other (400/401/403) → real client error, MUST bubble up
       let results: ImageMetricsSearchIndexRecord[];
@@ -6502,7 +5264,19 @@ export const getImage = async ({
     );
 
     if (!withoutPost) {
-      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
+      // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
+      // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
+      // `Image` separates that from a never-posted upload, so only the owner may fetch a postless one.
+      AND.push(
+        Prisma.sql`(
+          p."publishedAt" < now()
+          OR p."userId" = ${userId}
+          OR (i."postId" IS NULL AND i."userId" = ${userId})
+        )`
+      );
+      AND.push(
+        Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
+      );
     }
 
     // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
@@ -6559,7 +5333,7 @@ export const getImage = async ({
       ${
         !withoutPost
           ? Prisma.sql`
-            p."availability" "availability",
+            COALESCE(p."availability", 'Public') "availability",
             GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
           `
           : Prisma.sql`'Public' "availability",`
@@ -6572,17 +5346,7 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(
-      withoutPost
-        ? ''
-        : // Now that moderators can review images without post, we need to make this optional
-          // in case they land in an image-specific review flow
-          `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
-            !isModerator
-              ? `AND (p."publishedAt" < now()${userId ? ` OR p."userId" = ${userId}` : ''})`
-              : ''
-          }`
-    )}
+    ${Prisma.raw(withoutPost ? '' : `LEFT JOIN "Post" p ON p.id = i."postId"`)}
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
@@ -7362,6 +6126,167 @@ export async function createImage({
    */
   verifiedSourceImageIds?: number[] | null;
 }) {
+  /**
+   * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
+   *
+   * `createImage` is the widest single funnel for `Image` rows — `addPostImage`, the
+   * post-with-images handler, model-version and collection paths, comics, cover images,
+   * thumbnails all arrive here — and the check belongs at that one funnel rather than at
+   * each caller, because a predicate open-coded at N sites is wrong at N-1 of them. It
+   * cannot live in the zod schema, because it needs IO.
+   *
+   * 🔴 IT IS NOT EVERY `Image` ROW, AND THIS COMMENT USED TO CLAIM IT WAS. Six write
+   * paths reach the `Image` table without passing through here, so their rows appear in
+   * neither the numerator nor the denominator of anything this emits:
+   *   1. `article.service.ts` `linkArticleContentImages` (`tx.image.createManyAndReturn`)
+   *   2. `createEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
+   *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
+   *   6. `jobs/daily-challenge-processing.ts` `duplicateImage` — a raw
+   *      `INSERT INTO "Image" (…) SELECT … FROM "Image" i WHERE i.id = …` that re-owns an
+   *      existing row's columns (`url` first among them) to another user, for the
+   *      challenge cover.
+   *
+   * 🔴 THIS LIST SAID FIVE UNTIL A ROUND-2 AUDIT FOUND (6), so treat it as a claim that
+   * has already been wrong once. The population it asserts over is: every
+   * `.image.(create|createMany|createManyAndReturn|upsert)` call and every raw
+   * `INSERT INTO "Image"` under `src/`, excluding test files. Re-derive it, do not trust
+   * it — and note that (6) is the LOWER-risk shape of the two kinds here: its `url` is
+   * copied from a row that already exists rather than freshly minted from a client
+   * upload, so it can propagate an existing defective key but cannot create a new one.
+   * (1)–(5) all take their `url` from their INPUT rather than from an existing `Image`
+   * row, so those are where a brand-new orphan key can enter. That is a claim about the
+   * SHAPE of each write, not a ranking — nothing here has measured a per-path rate.
+   *
+   * 🔴 The article path is the highest-risk of those, because it is fed by the exact hook
+   * defect this change describes: the TipTap editor nodes (`TipTap/EdgeMediaNode.tsx`,
+   * `libs/tiptap/extensions/CustomImage.tsx`) write the upload's key into article content
+   * on a promise that RESOLVES even when the PUT was refused, and that content is then
+   * materialised into rows by `linkArticleContentImages` — unprobed.
+   *
+   * 🔴 EXTENDING THE PROBE TO IT IS A SEPARATE CHANGE, and the reason is structural, not
+   * scheduling: `linkArticleContentImages` does its `createManyAndReturn` INSIDE a
+   * `dbWrite.$transaction` callback, and this repo has a lint rule
+   * (`local-rules/no-io-in-transaction`) whose whole purpose is to keep network IO out of
+   * that callback, because it burns the transaction's timeout budget. Adding a HEAD there
+   * means restructuring the transaction first.
+   *
+   * So the honest scope of what follows is: every `Image` row written through
+   * `createImage`. Both halves of this change are partial — the client half only reaches
+   * sessions that have loaded the new bundle, this half only reaches this funnel — and
+   * nothing here establishes which of the two leaves more rows uncovered.
+   *
+   * 🔴 OBSERVE-ONLY, BY CONSTRUCTION AND NOT BY A FLAG. The verdict is logged and then
+   * dropped; nothing below branches on it. Rejecting here would be a new failure mode on
+   * a working user-facing path, and the only honest way to size that is to let the
+   * `absent` rate accumulate against a real denominator first. Enforcement is a separate
+   * change gated on the measurement this emits — which is also why there is no env var to
+   * flip: an unused enforcement branch is an untested one.
+   *
+   * 🔴 COST, AND THE LOOPS THAT MULTIPLY IT. One HEAD per call. Most callers are
+   * single-image, but TWO `comics.router.ts` procedures call this once per input item:
+   * `bulkCreatePanels` (`panels` capped at 20 by its zod schema) and `addReferenceImages`
+   * (`images` capped at 10). Both loops are sequential, so they add up to 20 and up to 10
+   * sequential probes respectively.
+   *
+   * 🔴 Size the DEGRADED case, not the healthy one — and it is now an ACTUAL NUMBER. An
+   * earlier version of this comment ended "the absolute number is unbounded until
+   * `getB2ImageS3Client` sets a `maxAttempts`", which was true and is the defect this
+   * paragraph used to describe: an abort signal bounds each network ATTEMPT, and the SDK's
+   * between-attempt sleep is not abort-aware, so a degraded store could add tens of seconds
+   * to a 20-item import and blow the request budget — telemetry becoming a new failure mode
+   * on a working path.
+   *
+   * That is closed, and NOT by changing `getB2ImageS3Client`: that factory is shared with
+   * the live upload-completion endpoints, which want their retries. The probe was given its
+   * own `maxAttempts: 1` client (`getImageUploadProbeBackend`), and
+   * `probeCreatedImageMedia` additionally races itself against
+   * `CREATED_IMAGE_MEDIA_PROBE_DEADLINE_MS` so the bound holds without trusting the SDK.
+   * Worst case is therefore 3s per call: 60s added to a 20-item `bulkCreatePanels` and 30s
+   * to a 10-item `addReferenceImages` — bounded, and only while the store is degraded.
+   *
+   * Both loops are already N sequential IO round-trips per item (a DB write plus an
+   * ingestion call), so this remains a proportional addition to an existing sequential-IO
+   * path. If those worst cases are judged too large, the lever is the deadline constant or
+   * making these two routers probe concurrently — not removing the bound.
+   */
+  const mediaVerdict = await probeCreatedImageMedia(image.url);
+
+  /**
+   * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
+   * one line per `createImage` call means the denominator is "image creations", which is
+   * the population the historical 10-in-a-sample figure was measured against. A log
+   * emitted only on the bad verdict counts a numerator against nothing.
+   *
+   * 🔴 THE POSITIVE CONTROL IS `present`, AND IT IS WHY THIS IS NOT A ONE-FIELD LOG. A
+   * probe that can never answer emits zero `absent` verdicts, and "zero absent" is exactly
+   * what a clean result looks like. `getImageUploadBackend()` throws without credentials
+   * and a rotated key answers 403 — both land on `unknown`, both look clean. Do not read
+   * the `absent` count until a NON-ZERO `present` count proves the probe reaches the store
+   * at all, and `unknown` is a small share of `present + absent + unknown`.
+   *
+   * 🔴 BUT A NON-ZERO `present` IS NOT SUFFICIENT ON ITS OWN, AND AN EARLIER VERSION OF
+   * THIS COMMENT SAID IT WAS. `present` proves the credential can read an object that
+   * EXISTS; it does not prove that a key which does NOT exist comes back as a 404 rather
+   * than a 403. `isNotFoundError` in `~/utils/s3-utils` accepts only `NotFound`,
+   * `NoSuchKey` and a 404 status, so under a 403-on-missing credential every real defect
+   * would land on `unknown` and `absent` would sit at zero — while the `present` control
+   * above reads perfectly healthy.
+   *
+   * That specific hazard was MEASURED rather than reasoned about, on 2026-09-08, by
+   * issuing HeadObject against the production image bucket with the production upload
+   * credential: a key that does not exist answered `name=NotFound`,
+   * `$metadata.httpStatusCode=404` (and a key that does exist returned its
+   * `ContentLength`, as the positive control). So `absent` IS reachable and the counter is
+   * not structurally pinned at zero.
+   *
+   * 🔴 That measurement is contingent on the credential it was taken with. A key rotation,
+   * a permissions change, or a move to a different bucket can reintroduce the hazard
+   * silently — the symptom is `absent` going to zero while `present` stays healthy. If you
+   * see that shape, re-take the measurement before concluding the defect is gone.
+   *
+   * `url` is logged only for a PROBED verdict, where `isProbeableMediaKey` has already
+   * accepted the value and it is therefore a 36-character uuid — not a filename and not
+   * PII. It is the field that makes an `absent` verdict actionable: settling "real defect
+   * or false verdict" means taking a key and HEADing the store by hand, and there is
+   * nothing else to look up (`postId` is null on most non-post paths, and `userId` alone
+   * selects thousands of rows). `not-applicable` is by definition the arbitrary
+   * caller-supplied strings that FAILED that predicate, so those are omitted rather than
+   * shipped to a log sink.
+   *
+   * There is deliberately no image id — the row does not exist yet, which is the whole
+   * reason the check sits here.
+   *
+   * 🔴 NOT AWAITED, AND CONTAINED. Telemetry must never be able to change this call's
+   * outcome, nor sit on a user-facing mutation's latency budget.
+   *
+   * 🔴 THIS LINE IS TEMPORARY, AND HERE IS WHAT ENDS IT. It is unsampled — one line per
+   * `createImage` call — which is the only shape that gives the `absent` count a
+   * denominator, and also the reason it must not live here indefinitely.
+   *
+   * CLOSING CONDITION: a merged PR that reads the `present` / `absent` / `unknown` counts
+   * for `create-image-media-verify`, quotes those three numbers in its body, and then
+   * either (a) adds the enforcement branch this measurement exists to size, or (b) deletes
+   * this call outright because the rate does not justify one. Either way that PR removes
+   * or samples down this `logToAxiom`.
+   *
+   * MECHANICAL CHECK THAT IT IS CLOSED: the string `create-image-media-verify` no longer
+   * appears in this file. Until then, an unread counter is the failure mode — if you are
+   * reading this and no such PR exists, the counts are already in the log; read them.
+   */
+  void logToAxiom({
+    type: 'info',
+    name: 'create-image-media-verify',
+    message: 'createImage media existence probe',
+    verdict: mediaVerdict,
+    url: mediaVerdict === 'not-applicable' ? null : image.url,
+    userId: image.userId,
+    postId: image.postId ?? null,
+  }).catch(() => {
+    // swallow — best-effort logging must never break the creation it is observing
+  });
+
   const meta = sanitizeProvenance(
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
@@ -8051,8 +6976,69 @@ export async function updateImageNsfwLevel({
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
 // downleveled-review queues) now live in the spoke app (apps/moderator). updateImageNsfwLevel STAYS — it
 // backs user rating votes + the mod APIs (set-image-nsfw-level, retool) + new-order.
-// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in the
-// spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
+/**
+ * Timeout budget for the media-existence probe below. A moderator is waiting on this click, and an
+ * UNBOUNDED probe against a degraded store would turn a review action into a hung request — strictly
+ * worse than the bug it guards. Per `headObject`'s contract this bounds each network ATTEMPT, not
+ * wall clock: the SDK's retry sleep is not abort-aware, so worst case is this budget plus one
+ * backoff. An abort is not a not-found shape, so it lands on `unknown` and the publish proceeds.
+ */
+const RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Ask the uploads bucket whether an image's object is actually there, as a three-valued answer.
+ *
+ * 🔴 THE BACKEND COMES FROM `getImageUploadBackend()`, NOT AN INLINE CLIENT + BUCKET LITERAL.
+ * `Image.url` is the key the UPLOAD path minted, so the only store that can answer about it is the
+ * one that path writes to. An open-coded `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ??
+ * 'civitai-media-uploads'` pair agrees with that resolver only by coincidence today: change where
+ * uploads land and the probe keeps asking the old bucket, which answers 404 for every key — and on
+ * this path an `absent` is a PERMANENT publish refusal, so the whole queue would fail closed while
+ * looking exactly like a real run of misses. Resolving through the same function the uploader uses
+ * removes that class WITHIN THIS PROCESS. (The sibling probe at
+ * `src/server/utils/stored-image-probe.ts` already resolves this way.)
+ *
+ * 🔴 SCOPE OF THAT CLAIM — IT IS ABOUT THIS RUNTIME ONLY, AND THE SPOKE IS NOT COVERED. Today this
+ * is a pure no-op: `getImageUploadBackend()` (`src/utils/s3-utils.ts`) returns exactly the
+ * `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads'` pair it replaces.
+ * Its whole value is that a future move of the upload store moves the probe with it, here.
+ *
+ * The moderator spoke's copy of this probe (`apps/moderator/src/lib/server/ingestion.service.ts`)
+ * names a fixed backend — `getMediaProbeStorage().headObject({ backend: 'b2Image', key })` — and
+ * that is NOT the same asymmetry it looks like, so it is written out rather than filed as a TODO.
+ * `'b2Image'` is not a bucket literal; it is an alias in `@civitai/storage`'s wire enum
+ * (`packages/civitai-storage/src/schema.ts`) that the `apps/storage` service resolves in ITS OWN
+ * process (`apps/storage/src/lib/server/backends.ts`) from ITS OWN `S3_IMAGE_B2_*` env — a
+ * different deployment and a different Secret from this app's. So the spoke already resolves
+ * through an indirection; it just lands on a SECOND source of truth rather than this one. There is
+ * no `getImageUploadBackend()` equivalent to route it through, and adding one is not a rename.
+ *
+ * The consequence, stated so nobody re-derives it as symmetry: moving the upload store needs THREE
+ * coordinated changes, not one — this app's `S3_IMAGE_B2_*`, the storage service's `S3_IMAGE_B2_*`
+ * (or a new alias in that enum plus every `backend: 'b2Image'` call site), and the Go
+ * storage-resolver's `B2_MEDIA_BUCKET_NAME`, whose `media_locations` rows are already stamped
+ * `backend='backblaze'`. This change removes one of the three from the list of things that can be
+ * forgotten silently. It does not remove the other two.
+ *
+ * Calling it is deliberately INSIDE the caller's try (see `assertMediaPresentForPublish`), because
+ * it builds the S3 client, which throws when credentials are absent — that must land on `unknown`,
+ * not on a failed publish.
+ */
+async function probeImageMediaPresence(key: string): Promise<MediaProbeAnswer> {
+  // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only
+  // calls this with a value that already passed the SHARED `isProbeableMediaKey` — a copy of that
+  // test in each probe is exactly how two runtimes come to disagree about the same row.
+  const { s3, bucket } = await getImageUploadBackend();
+  const head = await headObject(bucket, key, s3, {
+    abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
+  });
+  if (head.status === 'present') return MediaPresence.Present;
+  if (head.status === 'absent') return MediaPresence.Absent;
+  return MediaPresence.Unknown;
+}
+
+// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in
+// the spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
 // (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
 export async function resolveIngestionError({
   id,
@@ -8070,9 +7056,69 @@ export async function resolveIngestionError({
       postId: true,
       userId: true,
       metadata: true,
+      url: true,
     },
   });
   if (!image) throw new Error('Image not found');
+
+  /**
+   * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
+   *
+   * This function's whole effect is to make an image visible: `ingestion = 'Scanned'` plus a locked
+   * nsfwLevel. It did that unconditionally, and the queue that feeds it selects only on
+   * `ingestion = 'Error' AND nsfwLevel = 0` — so an image whose file can never be fetched was
+   * presented to a moderator for a rating exactly like a scan that merely timed out, and publishing
+   * it put a permanent 404 on the site. Measured over ~92,000 image creations in 24h: 10 such
+   * images, all 10 confirmed absent from the store, 8 of them published by the queue that day.
+   *
+   * Only `absent` refuses; see `@civitai/shared/missing-media` for why an unconsultable store must
+   * fail OPEN, and `@civitai/shared/media-key` for which urls are even askable. The same rule runs
+   * in the moderator spoke, from the same module, so the two cannot drift.
+   */
+  await assertMediaPresentForPublish({
+    url: image.url,
+    probe: (key) => probeImageMediaPresence(key),
+    raise: (message) => throwBadRequestError(message),
+    // The mirror of onUnknown: a wrong bucket name 404s for EVERY key, so a fail-CLOSED
+    // misconfiguration would refuse every publish and look exactly like a real run of misses.
+    onRefused: (presence) =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-absent-refused',
+        message: 'Refused to publish an image whose media cannot be served',
+        imageId: id,
+        presence,
+      }).catch(() => undefined),
+    // Silent fail-open is how a guard lies for months: with credentials rotated, every publish
+    // would take the `unknown` branch and this would be indistinguishable from a clean run.
+    // 🔴 `reason` is what makes the count readable: `headObject` RESOLVES `{ status: 'unknown' }`
+    // rather than throwing, so without it a store that answers 403 for every key and a client that
+    // cannot be built at all emit the same line with an empty `error`.
+    onUnknown: ({ reason, error }) =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-probe-unknown',
+        message: 'Could not consult the uploads bucket; allowing the publish',
+        imageId: id,
+        reason,
+        error: summarizeProbeError(error),
+      }).catch(() => undefined),
+    /**
+     * 🔴 The short-circuit needs a counter too, and for a sharper reason than the other two.
+     * `isProbeableMediaKey` is a deliberate UNDER-approximation — it matches only the bare-uuid
+     * shape our upload endpoints mint, and several write paths accept a caller-supplied string —
+     * so it is KNOWN to decline real keys. Without this line that under-approximation is
+     * unmeasurable: a run in which the predicate declines every row emits nothing at all and is
+     * byte-identical to a run where the guard did its job.
+     */
+    onSkipped: () =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-probe-skipped',
+        message: 'Image.url is not a probeable media key; no existence check ran',
+        imageId: id,
+      }).catch(() => undefined),
+  });
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 

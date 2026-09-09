@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
@@ -647,6 +648,11 @@ export const upsertModel3D = async ({
 }) => {
   const isModerator = !!user.isModerator;
   const { id, tagIds, tagNames, generationParams, meta, ...data } = input;
+
+  await throwOnBlockedUserContent([data.name, data.description, data.licenseDetails], {
+    isModerator,
+    surface: 'model3d',
+  });
 
   // Resolve free-form tag names (creating any that don't exist yet under
   // TagTarget.Model3D) and merge with `tagIds`. Mirrors the article-form

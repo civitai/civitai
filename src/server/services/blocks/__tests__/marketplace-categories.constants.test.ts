@@ -101,14 +101,17 @@ describe('marketplace-categories taxonomy (F-E E3)', () => {
     expect(marketplaceCategoryLabel('utility')).not.toBe('utility');
   });
 
-  it('listAvailable sort defaults to rating and rejects unknown sorts', () => {
-    // #2668 (marketplace reviews + Bayesian rating sort) made `rating` a sort
-    // option AND the default so the best-reviewed apps surface first; the
-    // pre-#2668 default was `popular`.
-    expect(listAvailableSchema.parse({}).sort).toBe('rating');
-    for (const s of ['rating', 'popular', 'newest', 'name']) {
+  it('listAvailable sort defaults to popular and rejects unknown sorts', () => {
+    // #2668 briefly made `rating` (Bayesian shrinkage over the 5-star
+    // `AppBlockReview` table) the default. That whole system was removed, so the
+    // default is back to `popular` and `rating` is no longer a legal value —
+    // accepting it again would mean someone re-introduced a sort with no data
+    // behind it.
+    expect(listAvailableSchema.parse({}).sort).toBe('popular');
+    for (const s of ['popular', 'newest', 'name']) {
       expect(listAvailableSchema.parse({ sort: s }).sort).toBe(s);
     }
+    expect(() => listAvailableSchema.parse({ sort: 'rating' })).toThrow();
     expect(() => listAvailableSchema.parse({ sort: 'trending' })).toThrow();
   });
 });
