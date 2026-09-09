@@ -1,13 +1,19 @@
 import { REDIS_KEYS } from '@civitai/redis';
 import { getRedis } from '../redis';
 import { db } from '../db/db';
+import { logAxiomError } from '../axiom';
 
 // Blocked email domains — mirrors the main app's getBlockedEmailDomains (blocklist.service.ts).
 // The main app keeps `${REDIS_KEYS.SYSTEM.BLOCKLIST}:EmailDomain` warm (a JSON {type, data[]},
 // refreshed on read). We read that shared cache first, then fall back to the Blocklist table on a
 // cold cache (and best-effort repopulate). Same redis + same DB = same list.
-const BLOCKLIST_KEY = `${REDIS_KEYS.SYSTEM.BLOCKLIST}:EmailDomain`;
-const SUFFIX_BLOCKLIST_KEY = `${REDIS_KEYS.SYSTEM.BLOCKLIST}:EmailDomainSuffix`;
+/**
+ * Derived from the type, never passed alongside it. A `(type, key)` pair that disagrees would DB-read
+ * one type's rows and cache them under another type's key — the key the main app and the moderator
+ * spoke also read, so one copy-pasted line poisons the shared cache for three apps for a whole TTL.
+ * Both other apps derive it the same way (`blocklistKey`, `getBlocklistKey`).
+ */
+const blocklistKey = (type: string) => `${REDIS_KEYS.SYSTEM.BLOCKLIST}:${type}`;
 
 /**
  * A CEILING on staleness, not a cache lifetime. The moderator writers DELETE this key, so an edit
@@ -48,7 +54,7 @@ export function emailDomain(email: string): string {
  * divergence `emailDomain` was extracted to prevent. The row is hand-edited by moderators, which is
  * the premise the case-normalization rule rests on too.
  */
-export function isBlockedDomain(entries: string[], domain: string): boolean {
+export function isBlockedExactDomain(entries: string[], domain: string): boolean {
   return !!domain && entries.some((entry) => normalizeDomain(entry) === domain);
 }
 
@@ -62,13 +68,22 @@ const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
 /**
  * The domain itself, or anything under it. `endsWith('.' + entry)` and not `endsWith(entry)`: the
  * latter matches `notevil.example` against an entry of `evil.example`, a different registrable
- * domain owned by someone else. Twin of the main app's `matchesBlockedSuffix`; reverting one side
- * only is how the two diverge.
+ * domain owned by someone else.
+ *
+ * Twin of `matchesBlockedSuffix` in the main app's `src/server/services/blocklist.service.ts`. The
+ * two are one rule in two separately-released apps: keep the case table in `__tests__/blocklist.test.ts`
+ * identical to the one beside that function, INCLUDING the leading-whitespace wildcard entry, which
+ * is the cell where they have already disagreed once.
  */
 export function isBlockedSuffix(entries: string[], domain: string): boolean {
   if (!domain) return false;
   return entries.some((raw) => {
-    const entry = normalizeDomain(raw.replace(SUFFIX_ENTRY_PREFIX, ''));
+    // 🔴 NORMALIZE, THEN STRIP, THEN NORMALIZE AGAIN — the order is the whole content of this line.
+    // `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so stripping the RAW string leaves ` *.farm.test`
+    // untouched and the entry then matches no address at all, silently. The main app trims first,
+    // so that entry is enforced there and inert here: a divergence, in the direction that admits
+    // a signup, on the path this list exists for.
+    const entry = normalizeDomain(normalizeDomain(raw).replace(SUFFIX_ENTRY_PREFIX, ''));
     if (!entry) return false;
     return domain === entry || domain.endsWith(`.${entry}`);
   });
@@ -87,7 +102,8 @@ export function normalizeEmailAddress(email: string): string {
   return `${email.slice(0, at).trim()}@${normalizeDomain(email.slice(at + 1))}`;
 }
 
-async function readBlocklist(type: string, key: string): Promise<string[]> {
+async function readBlocklist(type: string): Promise<string[]> {
+  const key = blocklistKey(type);
   const redis = getRedis();
   if (redis) {
     try {
@@ -96,8 +112,9 @@ async function readBlocklist(type: string, key: string): Promise<string[]> {
         const parsed = JSON.parse(cached) as { data?: string[] };
         return parsed.data ?? [];
       }
-    } catch {
-      // fall through to the DB
+    } catch (error) {
+      // Fall through to the DB — but say so. See the DB catch below for why silence is the hazard.
+      void logAxiomError(error, { event: 'blocklist-cache-read-failed', blocklistType: type });
     }
   }
 
@@ -119,18 +136,27 @@ async function readBlocklist(type: string, key: string): Promise<string[]> {
         .catch(() => {});
     }
     return data;
-  } catch {
-    return []; // degrade open — a lookup failure must not block every login
+  } catch (error) {
+    // 🔴 DEGRADE OPEN, but never silently. Returning `[]` admits every blocked signup, and
+    // `blockedEmailDomainSignupsTotal` only counts BLOCKS — so with no log the sole tell is a
+    // counter quietly reaching zero, and a moderator who just added an entry sees it on the page
+    // with no way to know it is not being enforced. The main app logs the same condition as
+    // `email-blocklist-lookup-failed`.
+    void logAxiomError(error, { event: 'blocklist-lookup-failed', blocklistType: type });
+    return [];
   }
 }
 
 export async function getBlockedEmailDomains(): Promise<string[]> {
-  return readBlocklist('EmailDomain', BLOCKLIST_KEY);
+  return readBlocklist('EmailDomain');
 }
 
-/** Entries that block the domain AND its subdomains. Opt-in per entry; see the main app's twin. */
+/**
+ * Entries that block the domain AND its subdomains. Opt-in per entry; twin of
+ * `getBlockedEmailDomainSuffixes` in the main app's `src/server/services/blocklist.service.ts`.
+ */
 export async function getBlockedEmailDomainSuffixes(): Promise<string[]> {
-  return readBlocklist('EmailDomainSuffix', SUFFIX_BLOCKLIST_KEY);
+  return readBlocklist('EmailDomainSuffix');
 }
 
 /**
@@ -142,6 +168,6 @@ export async function getBlockedEmailDomainSuffixes(): Promise<string[]> {
  */
 export async function isBlockedEmailDomain(domain: string): Promise<boolean> {
   if (!domain) return false;
-  if (isBlockedDomain(await getBlockedEmailDomains(), domain)) return true;
+  if (isBlockedExactDomain(await getBlockedEmailDomains(), domain)) return true;
   return isBlockedSuffix(await getBlockedEmailDomainSuffixes(), domain);
 }

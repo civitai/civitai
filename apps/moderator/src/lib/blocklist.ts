@@ -36,8 +36,9 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' mints fresh subdomains per account; the plain Email Domain list matches the exact domain' +
     ' only, which such a farm never trips twice.' +
     ' 🔴 Check what else lives under the domain before adding it. Blocking a shared host takes' +
-    ' every one of its users with it — "dynv6.net" is one host with 337 separate entries on the' +
-    ' Email Domain list, and "co.uk" and "org.uk" are on that list too.' +
+    ' every one of its users with it. Filter the Email Domain tab for the domain first — shared' +
+    ' hosts like "dynv6.net" carry many separate entries there, and "co.uk" and "org.uk" are on' +
+    ' that list too.' +
     ' Entries here are yours: nothing syncs this list, so what you add stays and what you remove' +
     ' stays removed. Existing accounts are never locked out — an entry refuses new signups only.',
   MessagePattern:

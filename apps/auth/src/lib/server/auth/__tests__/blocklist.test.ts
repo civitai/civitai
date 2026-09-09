@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Blocklist reads the shared `system:blocklist:EmailDomain` cache first, then falls back to the
-// `Blocklist` DB table. Mock both collaborators (`../redis` + `../db/db`) so the unit under test —
-// the redis→DB fallback + repopulate + degrade-open behavior — runs for real.
+// Blocklist reads a shared `system:blocklist:<type>` cache first, then falls back to the `Blocklist`
+// DB table. There are TWO of those now — `EmailDomain` (exact) and `EmailDomainSuffix` (opt-in,
+// covers subdomains) — and the key is derived from the type rather than passed beside it. Mock both
+// collaborators (`../redis` + `../db/db`) so the unit under test — the redis→DB fallback +
+// repopulate + degrade-open behavior — runs for real.
 const h = vi.hoisted(() => ({
   getRedis: vi.fn(),
   executeTakeFirst: vi.fn(),
@@ -35,7 +37,7 @@ import {
   emailDomain,
   getBlockedEmailDomains,
   getBlockedEmailDomainSuffixes,
-  isBlockedDomain,
+  isBlockedExactDomain,
   isBlockedEmailDomain,
   isBlockedSuffix,
   normalizeEmailAddress,
@@ -175,23 +177,23 @@ describe('emailDomain', () => {
   });
 });
 
-describe('isBlockedDomain', () => {
+describe('isBlockedExactDomain', () => {
   // Both sides must go through the same normalizer. Stripping the input but not the entry would
   // make a hand-typed `provider.com.` enforced by the main app and silently inert here.
   it('matches a list entry that carries a trailing FQDN dot', () => {
-    expect(isBlockedDomain(['blocked.test.'], 'blocked.test')).toBe(true);
+    expect(isBlockedExactDomain(['blocked.test.'], 'blocked.test')).toBe(true);
   });
 
   it('matches an entry with case and whitespace', () => {
-    expect(isBlockedDomain(['  Blocked.TEST  '], 'blocked.test')).toBe(true);
+    expect(isBlockedExactDomain(['  Blocked.TEST  '], 'blocked.test')).toBe(true);
   });
 
   it('matches the WHOLE domain, not a substring', () => {
-    expect(isBlockedDomain(['ocked.test', 'test'], 'blocked.test')).toBe(false);
+    expect(isBlockedExactDomain(['ocked.test', 'test'], 'blocked.test')).toBe(false);
   });
 
   it('never matches an empty domain, whatever the list holds', () => {
-    expect(isBlockedDomain([''], '')).toBe(false);
+    expect(isBlockedExactDomain([''], '')).toBe(false);
   });
 });
 
@@ -222,8 +224,10 @@ describe('EmailDomainSuffix', () => {
    * maintains, 1,357 of which are already subdomains of a shared parent (`dynv6.net` alone has 337;
    * `co.uk` and `org.uk` are on it). Measured on production 2026-09-09.
    *
-   * These must stay in step with the main app's `matchesBlockedSuffix` — the two are the same rule
-   * in two separately-released apps, and changing one side only is how they diverge.
+   * These must stay in step with `matchesBlockedSuffix` in the main app's
+   * `src/server/services/blocklist.service.ts` — the same rule in two separately-released apps, and
+   * changing one side only is how they diverge. Keep this case table identical to the one beside
+   * that function.
    */
   it('matches the opted-in domain and anything under it', () => {
     expect(isBlockedSuffix(['farm.test'], 'farm.test')).toBe(true);
@@ -248,7 +252,23 @@ describe('EmailDomainSuffix', () => {
     expect(isBlockedSuffix(['  Farm.TEST.  '], 'a.farm.test')).toBe(true);
   });
 
-  it('an EMPTY entry matches nothing rather than everything', () => {
+  it('matches a wildcard entry that ALSO carries leading whitespace', () => {
+    // 🔴 The PRODUCT of the two cases above, and the cell where this function and the main app's
+    // `matchesBlockedSuffix` actually disagreed: `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so stripping
+    // before trimming leaves the `*.` in place and the entry matches nothing. The table above
+    // enumerated whitespace and wildcards independently and never their combination, which is how a
+    // review found this and the tests did not.
+    expect(isBlockedSuffix(['  *.farm.test'], 'a.farm.test')).toBe(true);
+    expect(isBlockedSuffix(['	*.farm.test  '], 'farm.test')).toBe(true);
+  });
+
+  it('an entry that normalizes to EMPTY matches nothing, even for a domain ending in a dot', () => {
+    // The trailing-dot domain is what makes this capable of failing. Delete the `if (!entry)` guard
+    // and a `'.'` entry reduces to `''`, whose `endsWith('.')` is TRUE for `example.test.` — every
+    // address on the site blocked by one stray character. Asserting only `example.test` here passes
+    // with the guard removed, because a normalized domain never ends in a dot; the guard exists for
+    // callers that hand this function a domain they have not normalized.
+    expect(isBlockedSuffix(['.'], 'example.test.')).toBe(false);
     expect(isBlockedSuffix([''], 'example.test')).toBe(false);
     expect(isBlockedSuffix(['   '], 'example.test')).toBe(false);
   });
@@ -276,6 +296,9 @@ describe('EmailDomainSuffix', () => {
     await getBlockedEmailDomainSuffixes();
 
     expect(h.orderBy).toHaveBeenCalledWith('id', 'asc');
+    // Pins WHICH row it read. Without this, changing the type string leaves the whole file green
+    // while the hub reads the wrong `Blocklist` row on a cold cache and enforces an empty list.
+    expect(h.where).toHaveBeenCalledWith('type', '=', 'EmailDomainSuffix');
   });
 
   it('blocks on the suffix list when the exact list misses', async () => {
