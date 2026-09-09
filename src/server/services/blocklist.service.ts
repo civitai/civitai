@@ -706,7 +706,13 @@ export function matchesBlockedSuffix(entries: string[], domain: string) {
       .toLowerCase()
       .replace(SUFFIX_ENTRY_PREFIX, '')
       .replace(TRAILING_DOTS, '');
-    if (!entry) return false;
+    // 🔴 A SINGLE LABEL IS REFUSED, and this is the only guard standing between a typo and an
+    // outage. Nothing validates what a moderator types: an entry of `com` is one keystroke from
+    // `com.example` and would refuse every email address under the whole TLD, on every signup and
+    // every email change, with a message that tells the user nothing. The exact list cannot do
+    // that — a bad entry there costs one domain — so the blast radius is new here and the refusal
+    // belongs at the enforcement point rather than only at one of the two write paths.
+    if (!entry.includes('.')) return false;
     return domain === entry || domain.endsWith(`.${entry}`);
   });
 }
@@ -743,26 +749,37 @@ export async function assertEmailAllowed(email: string) {
   // every profile-email set and every email change for its duration -- and Reddit accounts arrive
   // with no address at all, so that is the whole funnel for that provider. The auth hub's mirror of
   // this lookup already ends in `catch { return [] }` for the same reason; the two must agree.
-  let blocked: string[];
-  let blockedSuffixes: string[];
-  try {
-    // Two reads, both degrading open together: a suffix list that fails to load while the exact
-    // list succeeds would enforce half the policy and report nothing, and the halves are not
-    // independent — a domain is normally on one list precisely because it is not on the other.
-    [blocked, blockedSuffixes] = await Promise.all([
-      getBlockedEmailDomains(),
-      getBlockedEmailDomainSuffixes(),
-    ]);
-  } catch (error) {
+  // 🔴 The two reads degrade open INDEPENDENTLY, and that is the whole reason this is
+  // `allSettled` and not `Promise.all`. Failing them together means the suffix list — which starts
+  // EMPTY and may stay empty, since every entry is opted in by hand — can take the ~8,800-entry
+  // exact list down with it, so adding this feature would roughly double the rate at which the
+  // whole email check fails open while contributing no policy of its own. Whichever list loaded is
+  // still enforced. The auth hub degrades its two reads independently for the same reason; the two
+  // must agree.
+  const [exactResult, suffixResult] = await Promise.allSettled([
+    getBlockedEmailDomains(),
+    getBlockedEmailDomainSuffixes(),
+  ]);
+
+  const readOrDegradeOpen = (
+    result: PromiseSettledResult<string[]>,
+    blocklistType: BlocklistType
+  ) => {
+    if (result.status === 'fulfilled') return result.value;
     logToAxiom({
       name: 'email-blocklist-lookup-failed',
       type: 'error',
-      message: 'Email domain blocklist unreadable; signup allowed without the blocklist check',
-      details: { error: error instanceof Error ? error.message : String(error) },
+      message: 'Email domain blocklist unreadable; signup allowed without this list',
+      details: {
+        blocklistType,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      },
     }).catch(() => undefined);
-    blocked = [];
-    blockedSuffixes = [];
-  }
+    return [] as string[];
+  };
+
+  const blocked = readOrDegradeOpen(exactResult, BlocklistType.EmailDomain);
+  const blockedSuffixes = readOrDegradeOpen(suffixResult, BlocklistType.EmailDomainSuffix);
 
   // Normalize BOTH sides: the upstream sync writes lowercase today, but the same row is hand-edited
   // by moderators, and a single capital letter would silently make an entry match nothing.

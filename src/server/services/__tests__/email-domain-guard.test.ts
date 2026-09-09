@@ -260,6 +260,57 @@ describe('assertEmailAllowed', () => {
       await expect(assertEmailAllowed('someone@notfarm.test')).resolves.toBeUndefined();
     });
 
+    it('refuses a SINGLE-LABEL entry, so one typo cannot block a whole TLD', async () => {
+      // `com` is one keystroke from `com.example`, and nothing validates what a moderator types.
+      // Without the `entry.includes('.')` guard this rejects every address under `.test`.
+      setBlockedSuffixes(['test']);
+
+      await expect(assertEmailAllowed('someone@single-label.test')).resolves.toBeUndefined();
+    });
+
+    it('still enforces the EXACT list when only the suffix read fails', async () => {
+      // 🔴 The halves degrade open INDEPENDENTLY. Under `Promise.all` with one shared catch, a
+      // failure of the suffix read — which is normally an EMPTY list contributing no policy — also
+      // zeroed the ~8,800-entry exact list. Revert to `Promise.all` and this test reports an
+      // address that should have been refused resolving instead.
+      setBlockedDomains(['still-enforced.test']);
+      redisGet.mockImplementation(async (key: string) => {
+        if (key.endsWith(`:${BlocklistType.EmailDomainSuffix}`))
+          throw new Error('redis unreachable');
+        return JSON.stringify({
+          type: BlocklistType.EmailDomain,
+          data: ['still-enforced.test'],
+        });
+      });
+
+      expect(await reject('someone@still-enforced.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('still enforces the SUFFIX list when only the exact read fails', async () => {
+      // The other direction, so the pair cannot both pass by degrading everything open.
+      redisGet.mockImplementation(async (key: string) => {
+        if (key.endsWith(`:${BlocklistType.EmailDomainSuffix}`))
+          return JSON.stringify({
+            type: BlocklistType.EmailDomainSuffix,
+            data: ['suffix-survives.test'],
+          });
+        throw new Error('redis unreachable');
+      });
+
+      expect(await reject('someone@a.suffix-survives.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('checks the SUFFIX list before DNS, so a blocked subdomain never costs a lookup', async () => {
+      // Worse here than for the exact list: this list exists for owners minting FRESH subdomains,
+      // and `mxCache` keys on the full domain, so every one of them is a guaranteed cache miss and
+      // a real lookup against the 3s budget.
+      setBlockedSuffixes(['no-dns-farm.test']);
+
+      await reject('someone@a.no-dns-farm.test');
+
+      expect(resolveMx).not.toHaveBeenCalled();
+    });
+
     it('does NOT block an unrelated domain while a suffix entry is present', async () => {
       // Negative control for the whole list. A matcher that returns true unconditionally passes
       // every other test in this block.
