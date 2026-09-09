@@ -631,7 +631,7 @@ export default function AppActivityPage() {
 
           {/* 🔴 GATED, AND ITS OWN DATA SOURCE IS WHY. `ScopeGrantsPanel`'s only read is
               `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware returns
-              `[]` for a viewer without `features.appBlocks` — so ungated this panel showed
+              `[]` for a viewer without the `appBlocks` slot flag — so ungated this showed
               the "No apps installed or subscribed yet." empty state to every such viewer,
               always. Gating it displays nothing that was ever displayed. */}
           {isActivityTabVisible('permissions', visibility) && (
