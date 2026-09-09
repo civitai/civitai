@@ -108,8 +108,15 @@ keyed on the user ids in the result. That is async, but it is a second independe
 request from the browser, which is the partial-failure mode this design is trying to
 avoid, and it renders cards once without an author and again with one.
 
+**This repo already uses `transformItems`**, at `src/components/Search/search.utils2.ts:123`:
+`useHitsTransformed` and `useInfiniteHitsTransformed` wrap `useHits`/`useInfiniteHits`
+with a shared transform that dispatches through `searchIndexTransformMap` to a per-index
+function. That is the layer that should *shape* an enriched `user` object — it just
+cannot be the layer that fetches it. See "Where the fetch goes, and where the merge goes"
+below.
+
 So the choice is not "which widget do we use". The library offers exactly one place to
-put this, and the real decision is which side of the network it sits on.
+fetch, and the real decision is which side of the network it sits on.
 
 Worth knowing: Algolia documents no recipe for enriching hits from an external source.
 Their model assumes the index is the source of truth, which is precisely the assumption
@@ -131,6 +138,57 @@ because nothing about the contract changes — only where it is fulfilled.
 One consequence to note: hydrated fields arrive without highlight metadata. That is fine,
 because everything being hydrated is display-only. `user.username` — the one user field
 that is searchable — stays in the document and keeps its highlighting.
+
+## Where the fetch goes, and where the merge goes
+
+These are two different questions and the codebase already answers the second one.
+
+`transformItems` cannot fetch — but it runs **after** `searchClient.search` resolves, so
+anything that call put on the hits is already there by the time it runs. The existing
+`useHitsTransformed` / `useInfiniteHitsTransformed` layer
+(`src/components/Search/search.utils2.ts:123`) dispatches through `searchIndexTransformMap`
+to a per-index transform, which is exactly the right place to shape an enriched `user`
+object per index. Nothing about that layer needs to change its role.
+
+So the only open question is which side of the network performs the fetch, and the answer
+is not forced. `searchClient.search` is async on both sides — `resilientSearchClient`
+already awaits the base search and `await delay(250)`s between retries, so arbitrary
+async work in that seam is proven here, in production.
+
+That gives two viable placements:
+
+**(C) Merge in the browser's search client.** The wrapper queries Meilisearch, then calls
+our batched user endpoint, merges, and returns one response.
+
+**(B) Merge behind a server-side proxy.** The browser makes one call; the server runs the
+Meilisearch query and the cache reads next to each other.
+
+Both are **atomic from the widgets' point of view** — in either case InstantSearch is
+handed one complete response, or a defined fallback, and never renders a half-hydrated
+result set. The partial-state failure only appears in a third design that was rejected:
+hydrating in a React component *after* `useHits`, which does render cards once without an
+author and again with one.
+
+The merge function and the batched user endpoint are identical in both. Only their
+location differs, which makes this a deployment decision rather than an architectural
+fork — and means (C) can be built first and relocated later without rewriting the logic.
+
+### Why (B) is still the recommendation
+
+- **Latency.** (C) is necessarily two sequential round trips from the browser: it cannot
+  ask for user records until Meilisearch has said which users appear. (B) does both
+  server-side, next to Redis and next to Meilisearch, in one.
+- **Failure handling already exists server-side.** `withMeili(...)` bounds every call at
+  `MEILI_CALL_TIMEOUT_MS` and `isTransientMeiliError` classifies brownouts. The
+  browser-direct path had to reimplement a subset of that as `resilientSearchClient`
+  because it could not reach any of it.
+- **The search host and client key stop being public.**
+- It is the pattern `getAllImagesIndex` already uses for the image feed, which has never
+  had this bug.
+
+(C)'s advantage is that it is a much smaller change: no new endpoint surface, no traffic
+moved onto the app servers, no autocomplete load question to answer first. If the load
+sizing in step 2 comes back badly, (C) is the fallback rather than a redesign.
 
 ## The design: hydrate behind a server-side search proxy
 
