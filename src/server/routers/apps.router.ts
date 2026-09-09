@@ -24,6 +24,7 @@ import {
   appStorageLatencyHistogram,
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
+  appStorageUserQuotaUntrackedCounter,
 } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
@@ -497,6 +498,28 @@ export const appsStorageRouter = router({
         });
       }
 
+      // 🔴 TWO DIFFERENT BYTE UNITS LIVE IN THIS PROCEDURE. Keep them apart.
+      //
+      //   `byteSize`        — JS wire bytes, `Buffer.byteLength(JSON.stringify(v))`.
+      //                       This is the unit PER_VALUE_BYTE_CAP is enforced in and
+      //                       the unit reported back to the block, so a block can
+      //                       predict a PAYLOAD_TOO_LARGE from the value it holds.
+      //   `storedByteSize`  — what Postgres will store, `octet_length(value::text)`
+      //                       over JSONB. This is the unit `kv.size_bytes` carries
+      //                       and therefore the unit every quota COUNTER is in.
+      //
+      // They are not the same number and not a fixed multiple of each other (see
+      // the netDelta block below). Anything compared against `usedBytes` /
+      // `userUsedBytes` / a *_QUOTA_BYTES ceiling must be in the stored unit;
+      // anything compared against PER_VALUE_BYTE_CAP or handed to the block must be
+      // in the wire unit.
+      //
+      // Residual, named rather than silently fixed: PER_VALUE_BYTE_CAP is checked
+      // in the wire unit, so a single value can occupy up to ~1.5x its nominal
+      // 64KB on disk. That is pre-existing behaviour and it is NOT a ceiling
+      // bypass — both byte ceilings below are enforced in the stored unit and bind
+      // regardless. Tightening the per-value cap would refuse writes that succeed
+      // today, so it is left alone deliberately.
       const serialized = JSON.stringify(input.value ?? null);
       const byteSize = Buffer.byteLength(serialized, 'utf8');
       if (byteSize > PER_VALUE_BYTE_CAP) {
@@ -545,7 +568,6 @@ export const appsStorageRouter = router({
         user_row_count: string;
       };
       let quotaRows: QuotaRow[];
-      let userQuotaTracked = true;
       try {
         quotaRows = (
           await pool.query<QuotaRow>(
@@ -561,7 +583,6 @@ export const appsStorageRouter = router({
         ).rows;
       } catch (err) {
         if (!isUndefinedTable(err)) throw err;
-        userQuotaTracked = false;
         quotaRows = (
           await pool.query<QuotaRow>(
             `SELECT q.used_bytes::text, q.row_count::text,
@@ -575,6 +596,16 @@ export const appsStorageRouter = router({
         // Loud, because an inert gate that nobody can see is how this ships
         // twice. One line per write on an un-upgraded app is a small, bounded
         // population and exactly the signal that says "run the backfill".
+        //
+        // The Axiom line alone was NOT enough, for the same reason
+        // countStorageFault's docstring gives about faults: a state observable
+        // only by going and reading logs is not a state anything can alert on,
+        // and nothing schedules the backfill that ends it, so it can persist
+        // indefinitely with no bound. The counter is the alertable half — it is
+        // the series that says "this app has been running with its per-user
+        // sub-budget unenforced", and the series that returns to zero once the
+        // backfill has actually reached every app.
+        appStorageUserQuotaUntrackedCounter.inc({ app_block_id: appBlockId });
         logToAxiom(
           { event: 'user_quota_relation_missing', appBlockId, slug },
           STORAGE_LOG
@@ -585,19 +616,78 @@ export const appsStorageRouter = router({
       const userUsedBytes = Number(quotaRows[0]?.user_used_bytes ?? '0');
       const userRowCount = Number(quotaRows[0]?.user_row_count ?? '0');
 
-      // For an update we need the old size to know the net delta;
-      // skipping a pre-flight read on update would let an in-place
-      // shrink falsely fail the quota gate. Fetch it once cheaply.
-      const existing = (
-        await pool.query<{ size_bytes: number }>(
-          `SELECT size_bytes FROM ${schema}.kv
-            WHERE block_instance_id = $1 AND user_id = $2 AND key = $3`,
-          [blockInstanceId, userId, input.key]
+      // For an update we need the old size to know the net delta; skipping a
+      // pre-flight read on update would let an in-place shrink falsely fail the
+      // quota gate. Fetch it once cheaply — together with the NEW size, because
+      // both sides of the subtraction have to be in the counter's unit.
+      //
+      // 🔴 WHY THE NEW SIZE COMES FROM POSTGRES AND NOT FROM `byteSize`.
+      // `kv.size_bytes` is `GENERATED ALWAYS AS (octet_length(value::text))` over a
+      // JSONB column (storage-provision.service.ts), and the quota trigger sums
+      // that column, so the counters are in stored bytes. Postgres' jsonb output
+      // function is not `JSON.stringify`: it emits `, ` after every separator and
+      // `: ` after every object key. Measured against Postgres: `[1,2,3]` stores 9
+      // bytes where JSON.stringify gives 7; `{"a":1,"b":2}` stores 16 against 13; a
+      // 5,000-element integer array stores 15,000 against 10,001 — 1.4999x. Scalars
+      // (`null`, `"hello"`) agree exactly, which is why a JS-unit delta looks
+      // correct on the simplest fixtures.
+      //
+      // `byteSize - oldSize` therefore was not a measure of growth at all, and the
+      // non-increasing exemption below is built on top of that quantity. Held in
+      // the wire unit it was a repeatable bypass of BOTH byte ceilings: writing,
+      // each pass, the largest value whose WIRE size is <= the row's STORED size
+      // keeps the computed delta <= 0 forever while the stored bytes grow ~1.5x per
+      // pass, so the exemption skipped the app and per-user byte gates on every one
+      // of those writes and neither ceiling ever bound. Reproduced end to end
+      // against the provisioner's own DDL and trigger — see the seam test in
+      // `apps.router.storage.stored-units.behavior.test.ts`.
+      //
+      // So ask Postgres for the new size using the same expression the generated
+      // column uses, on the same round trip as the old size. `old_size_bytes` is
+      // NULL exactly when no row exists: `value` is NOT NULL and `size_bytes` is
+      // generated from it, so a row that exists can never carry NULL there. That
+      // NULL is what distinguishes an insert from an update.
+      //
+      // This is a PREDICTION of what the write will store, not a read of what it
+      // stored — it is evaluated in a separate statement before the INSERT. It is
+      // exact for the same reason the two agree at all: identical input text
+      // through identical casts (`$4::jsonb`, then jsonb -> text) evaluated by the
+      // same server. That identity is asserted in the seam test against rows
+      // Postgres actually wrote, rather than asserted here in prose.
+      const sizeRows = (
+        await pool.query<{ new_size_bytes: number; old_size_bytes: number | null }>(
+          `SELECT octet_length($4::jsonb::text) AS new_size_bytes,
+                  (SELECT size_bytes FROM ${schema}.kv
+                    WHERE block_instance_id = $1 AND user_id = $2 AND key = $3)
+                    AS old_size_bytes`,
+          [blockInstanceId, userId, input.key, serialized]
         )
       ).rows;
-      const oldSize = existing[0]?.size_bytes ?? 0;
-      const isInsert = existing.length === 0;
-      const netDelta = byteSize - oldSize;
+      // A `SELECT <expr>` with no FROM returns exactly one row on every Postgres,
+      // and both byte gates are computed from it. Absorbing a missing or
+      // non-numeric row into a 0 would make `netDelta` 0 or NaN, and BOTH of those
+      // sail through the gates below — 0 reads as a non-increasing write and NaN
+      // makes every `>` comparison false. Fail loudly instead; this is not a
+      // TRPCError, so `countStorageFault` records it as `outcome: 'error'`.
+      // 🔴 `Number.isFinite(Number(x))` alone is NOT enough here: `Number(null)` is
+      // 0, which is finite, so a NULL `new_size_bytes` would pass the check and
+      // then produce `netDelta === 0` — a non-increasing write, which takes the
+      // exemption and skips both byte ceilings. That is the same fail-open this
+      // guard exists to prevent, reached through the guard rather than around it.
+      // Reject the null explicitly, before the coercion.
+      const sizeRow = sizeRows[0];
+      const rawNewSize = sizeRow?.new_size_bytes ?? null;
+      const storedByteSize = Number(rawNewSize);
+      if (sizeRow == null || rawNewSize == null || !Number.isFinite(storedByteSize)) {
+        throw new Error('app storage: stored-size probe returned no usable row');
+      }
+      const rawOldSize = sizeRow.old_size_bytes ?? null;
+      const oldSize = rawOldSize == null ? 0 : Number(rawOldSize);
+      if (!Number.isFinite(oldSize)) {
+        throw new Error('app storage: stored-size probe returned a non-numeric old size');
+      }
+      const isInsert = rawOldSize == null;
+      const netDelta = storedByteSize - oldSize;
 
       // A write that does not grow the stored bytes can never push a counter past
       // a ceiling, so it must never be refused by one — and refusing it is worse
@@ -609,11 +699,25 @@ export const appsStorageRouter = router({
       // the account back under the cap is the action refused. The only other route
       // back is `storage.delete`, which the app has to expose an affordance for.
       //
+      // 🔴 THE PREMISE IS LOAD-BEARING AND IT IS A CLAIM ABOUT UNITS. The sentence
+      // above is true of `netDelta` only because `netDelta` is now
+      // `storedByteSize - oldSize`, i.e. both terms are `octet_length(value::text)`
+      // over JSONB — the exact quantity `kv.size_bytes` holds and the quota trigger
+      // sums. When the left term was a JS wire byte count the sentence was FALSE:
+      // `netDelta <= 0` was satisfiable indefinitely by writes that grew the stored
+      // bytes ~1.5x each time, and the exemption then removed both byte gates on
+      // every one of them. Do not reintroduce a wire-unit term here.
+      //
+      // The exemption is still bounded by what it cannot skip: the two row-count
+      // gates below are `isInsert`-guarded and unconditional, PER_VALUE_BYTE_CAP is
+      // enforced before any of this, and the quota trigger reconciles the counters
+      // from the rows themselves after the write.
+      //
       // `netDelta <= 0` implies an UPDATE, never an INSERT: `oldSize` is 0 on an
-      // insert and the smallest serialisable value is `null` at 4 bytes, so
-      // netDelta is >= 4 there. That is why the two row-count gates below stay
-      // unconditional — they are already `isInsert`-guarded, and a non-increasing
-      // write adds no row.
+      // insert and the smallest value Postgres will store is `null` at
+      // `octet_length('null')` = 4 bytes, so netDelta is >= 4 there. That is why
+      // the two row-count gates below stay unconditional — they are already
+      // `isInsert`-guarded, and a non-increasing write adds no row.
       const isNonIncreasing = netDelta <= 0;
 
       if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
@@ -624,7 +728,12 @@ export const appsStorageRouter = router({
             event: 'quota_exceeded',
             appBlockId,
             usedBytes,
-            attemptedBytes: byteSize,
+            // Stored bytes, not wire bytes — this sits beside `usedBytes`, which
+            // is the trigger-maintained counter, and the gate that refused is
+            // `usedBytes + netDelta`. A wire byte count here reads as the number
+            // that was compared and is not.
+            attemptedBytes: storedByteSize,
+            netDeltaBytes: netDelta,
             key: input.key,
           },
           STORAGE_LOG
@@ -647,12 +756,27 @@ export const appsStorageRouter = router({
       // app's remaining budget available to every OTHER user of the app, which is
       // the whole point — the app-wide gates alone let one account take it all.
       //
-      // `userQuotaTracked` is false only when this app's schema has no
-      // `user_quota` relation yet (see the fallback on the quota read above); the
-      // counters read zero there, so the gate would pass anyway. Naming the
-      // condition keeps "we did not enforce" distinct from "we enforced against
-      // zero", which are the same arithmetic and very different claims.
-      if (userQuotaTracked && !isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {
+      // 🔴 These two gates deliberately do NOT test `userQuotaTracked`. They used
+      // to, and it was a condition that read as a guard while guarding nothing:
+      // mutants deleting `userQuotaTracked &&` from either gate survived the full
+      // suite, because in the fallback the query returns literal '0' for both
+      // per-user counters and the arithmetic is then identical either way. Writing
+      // a condition that cannot change an outcome is worse than omitting it — it
+      // reads as coverage and stops anyone looking.
+      //
+      // Identical for a bounded reason, not by luck: `netDelta` is at most
+      // `storedByteSize`, `storedByteSize` is at most ~1.5x PER_VALUE_BYTE_CAP
+      // (64KiB, the largest jsonb expansion being the ~1.5x of a dense array), so
+      // `0 + netDelta` cannot exceed ~96KiB against a 2MiB USER_QUOTA_BYTES, and
+      // `0 + 1` cannot exceed a 1,000-row USER_ROW_LIMIT. Lowering either ceiling
+      // near those numbers would make the distinction real again; today it is not.
+      //
+      // "We did not enforce" stays distinct from "we enforced against zero" where
+      // that distinction is actually consumable: the
+      // `app_blocks_storage_user_quota_untracked_total` counter and the
+      // `user_quota_relation_missing` log on the fallback branch above. The flag
+      // itself is gone — it had no reader left that could act on it.
+      if (!isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {
         appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
         appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
         logToAxiom(
@@ -661,7 +785,9 @@ export const appsStorageRouter = router({
             appBlockId,
             userId,
             userUsedBytes,
-            attemptedBytes: byteSize,
+            // Stored bytes — same reasoning as the app-ceiling log above.
+            attemptedBytes: storedByteSize,
+            netDeltaBytes: netDelta,
             key: input.key,
           },
           STORAGE_LOG
@@ -671,7 +797,7 @@ export const appsStorageRouter = router({
           message: 'per-user storage quota exceeded',
         });
       }
-      if (userQuotaTracked && isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
+      if (isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
         appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
         appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
         throw new TRPCError({
@@ -718,7 +844,12 @@ export const appsStorageRouter = router({
           blockInstanceId,
           userId,
           key: input.key,
+          // Both units, named. `sizeBytes` is the wire size (the unit the block
+          // sees and the unit PER_VALUE_BYTE_CAP is in); `storedBytes` is what
+          // `kv.size_bytes` and every quota counter will carry. Correlating a
+          // write against quota growth needs the second one.
           sizeBytes: byteSize,
+          storedBytes: storedByteSize,
           isInsert,
         },
         STORAGE_LOG

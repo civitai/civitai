@@ -108,7 +108,11 @@ import { appsRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
 // vi.fn(), so the refusal-instrumentation assertions below can read it.
-import { appStorageOpsCounter, appStorageQuotaExceededCounter } from '~/server/prom/client';
+import {
+  appStorageOpsCounter,
+  appStorageQuotaExceededCounter,
+  appStorageUserQuotaUntrackedCounter,
+} from '~/server/prom/client';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -157,6 +161,65 @@ function fakeCtx(user: unknown = SESSION_USER) {
     features: {} as never,
     track: undefined,
   };
+}
+
+/**
+ * The `set` path's stored-size probe:
+ *   `SELECT octet_length($4::jsonb::text) AS new_size_bytes,
+ *           (SELECT size_bytes FROM …) AS old_size_bytes`
+ *
+ * 🔴 BOTH NUMBERS ARE STORED BYTES — `octet_length(value::text)` over JSONB — and
+ * that is NOT `Buffer.byteLength(JSON.stringify(value))`. Postgres' jsonb output
+ * function emits `, ` after every separator and `: ` after every object key, so
+ * for anything but a scalar the stored size is LARGER, by up to ~1.5x.
+ *
+ * That distinction is why this suite could not see the deploy-blocking defect it
+ * was supposed to cover. Every fixture here used to supply `size_bytes` as a bare
+ * number (61_440, 1_002, 5_000) that happened to be in the same unit as the wire
+ * size of the value the test wrote, so the gate was never handed a real jsonb
+ * size and a gate comparing the two units was indistinguishable from a correct
+ * one. The pool is a mock, so NOTHING in this file can check the relationship
+ * between the units — it is pinned against real Postgres in
+ * `apps.router.storage.stored-units.behavior.test.ts`.
+ *
+ * What this file can do, and now does, is refuse to let the two units coincide by
+ * accident: `oldStored` is always stated explicitly in the stored unit, and the
+ * default `stored` below is a value no test's wire size equals.
+ */
+function sizeProbe(opts: { stored?: number; oldStored?: number | null } = {}) {
+  return {
+    rows: [
+      {
+        new_size_bytes: opts.stored ?? DEFAULT_STORED_BYTES,
+        old_size_bytes: opts.oldStored ?? null,
+      },
+    ],
+    rowCount: 1,
+  };
+}
+
+/**
+ * Deliberately equal to no wire size any test in this file writes, so a gate that
+ * silently fell back to wire bytes cannot produce the same arithmetic. Small
+ * enough to sit far under both byte ceilings, so it never perturbs a test that is
+ * about something else.
+ */
+const DEFAULT_STORED_BYTES = 777;
+
+/** An array of `n` ones: wire size `2n + 1`, stored size `3n`. */
+const ones = (n: number) => Array.from({ length: n }, () => 1);
+
+/** True for the stored-size probe statement. */
+const isSizeProbe = (sql: unknown) => String(sql).includes('octet_length(');
+
+/**
+ * Default pool routing. `mockResolvedValueOnce` still takes precedence, so a test
+ * that queues an explicit chain is unaffected; this only supplies a well-formed
+ * probe answer to the tests that never cared about sizes.
+ */
+async function defaultPoolQuery(sql: string) {
+  if (isSizeProbe(sql)) return sizeProbe();
+  return { rows: [], rowCount: 0 };
 }
 
 beforeEach(() => {
@@ -217,7 +280,7 @@ beforeEach(() => {
   // guard tests override with a non-pending / missing status.
   mockDbRead.appBlockPublishRequest.findUnique.mockReset();
   mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'pending' });
-  mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  mockPool.query.mockImplementation(defaultPoolQuery);
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockLogToAxiom.mockResolvedValue(undefined);
 });
@@ -346,8 +409,8 @@ describe('apps.storage shared gates', () => {
     mockPool.query
       // quota row
       .mockResolvedValueOnce({ rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 })
-      // no existing row for this key
-      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      // size probe: no existing row for this key
+      .mockResolvedValueOnce(sizeProbe());
 
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } });
@@ -641,8 +704,8 @@ describe('apps.storage.set', () => {
         rows: [{ used_bytes: String(50 * 1024 * 1024 - 100), row_count: '1' }],
         rowCount: 1,
       })
-      // no existing row for this key
-      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      // size probe: no existing row for this key
+      .mockResolvedValueOnce(sizeProbe());
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
@@ -658,8 +721,8 @@ describe('apps.storage.set', () => {
         rows: [{ used_bytes: '0', row_count: '0' }],
         rowCount: 1,
       })
-      // existing row
-      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      // size probe: no existing row
+      .mockResolvedValueOnce(sizeProbe());
 
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.set({
@@ -697,7 +760,7 @@ describe('apps.storage.set', () => {
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
       mockPool.query
         .mockResolvedValueOnce({ rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+        .mockResolvedValueOnce(sizeProbe());
       const caller = appsRouter.createCaller(fakeCtx() as never);
       await caller.storage.set({ blockToken: 't', key, value: 'v' });
     }
@@ -735,7 +798,8 @@ describe('apps.storage.set', () => {
           rowCount: 1,
         };
       }
-      // The existing-row lookup: fresh key, so no row.
+      // The stored-size probe: fresh key, so no existing row.
+      if (isSizeProbe(sql)) return sizeProbe();
       return { rows: [], rowCount: 0 };
     };
   }
@@ -832,12 +896,14 @@ describe('apps.storage.set', () => {
           rowCount: 1,
         };
       }
-      return { rows: [{ size_bytes: 5000 }], rowCount: 1 };
+      // An existing row of 5,000 STORED bytes, shrinking to 3,000 — so the byte
+      // gate is exempt and only the row gate is under test here.
+      return sizeProbe({ stored: 3_000, oldStored: 5_000 });
     });
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'short' })
+      caller.storage.set({ blockToken: 't', key: 'k', value: ones(1000) })
     ).resolves.toMatchObject({ ok: true });
   });
 
@@ -880,13 +946,16 @@ describe('apps.storage.set', () => {
           rowCount: 1,
         };
       }
-      // An existing, much larger row — so this write is a shrink.
-      return { rows: [{ size_bytes: 61_440 }], rowCount: 1 };
+      // An existing, much larger row — so this write is a shrink IN STORED BYTES,
+      // which is the unit the counter and the ceiling are both in. 500 ones
+      // occupy 1,500 stored bytes against a 1,001-byte wire form, so a gate that
+      // slipped back to wire bytes would be computing a different delta here.
+      return sizeProbe({ stored: 1_500, oldStored: 61_440 });
     });
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(1000) })
+      caller.storage.set({ blockToken: 't', key: 'k', value: ones(500) })
     ).resolves.toMatchObject({ ok: true });
     // The write reached the transaction rather than being short-circuited.
     expect(mockPool.connect).toHaveBeenCalled();
@@ -912,14 +981,16 @@ describe('apps.storage.set', () => {
           rowCount: 1,
         };
       }
-      // `'x'.repeat(1000)` serialises to 1002 bytes — the exact size of the
-      // replacement below, so the delta is zero rather than merely small.
-      return { rows: [{ size_bytes: 1_002 }], rowCount: 1 };
+      // 500 ones occupy 1,500 STORED bytes — the exact stored size of the
+      // replacement below, so the delta is zero rather than merely small. Stated
+      // in stored bytes: the wire form is 1,001, so a wire-unit gate would see
+      // this as a 499-byte shrink and pass for the wrong reason.
+      return sizeProbe({ stored: 1_500, oldStored: 1_500 });
     });
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'y'.repeat(1000) })
+      caller.storage.set({ blockToken: 't', key: 'k', value: ones(500) })
     ).resolves.toMatchObject({ ok: true });
   });
 
@@ -944,12 +1015,14 @@ describe('apps.storage.set', () => {
           rowCount: 1,
         };
       }
-      return { rows: [{ size_bytes: 1_002 }], rowCount: 1 };
+      // Same 1,500 stored bytes as the same-size case above; the write below is a
+      // genuine GROWTH in stored bytes (2,500 ones = 7,500 stored).
+      return sizeProbe({ stored: 7_500, oldStored: 1_500 });
     });
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(5000) })
+      caller.storage.set({ blockToken: 't', key: 'k', value: ones(2500) })
     ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
   });
 
@@ -977,10 +1050,13 @@ describe('apps.storage.set', () => {
         ],
         rowCount: 1,
       })
-      .mockResolvedValueOnce({ rows: [{ size_bytes: 61_440 }], rowCount: 1 });
+      // 61,440 stored bytes shrinking to 1,500 — a ~60KB shrink against a 256KB
+      // breach, so the projected total is still ~196KB over the ceiling and only
+      // the exemption can let it through.
+      .mockResolvedValueOnce(sizeProbe({ stored: 1_500, oldStored: 61_440 }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(1000) })
+      caller.storage.set({ blockToken: 't', key: 'k', value: ones(500) })
     ).resolves.toMatchObject({ ok: true });
   });
 
@@ -1006,7 +1082,7 @@ describe('apps.storage.set', () => {
         ],
         rowCount: 1,
       })
-      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      .mockResolvedValueOnce(sizeProbe());
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
@@ -1057,6 +1133,7 @@ describe('apps.storage.set', () => {
             rowCount: 1,
           };
         }
+        if (isSizeProbe(sql)) return sizeProbe();
         return { rows: [], rowCount: 0 };
       };
     }
@@ -1098,6 +1175,37 @@ describe('apps.storage.set', () => {
         expect.objectContaining({ event: 'user_quota_relation_missing', appBlockId: 'apb_test' }),
         expect.anything()
       );
+    });
+
+    // …and ALERTABLE, not only greppable. The log line alone made the inert
+    // sub-quota visible to a human who went looking, which is the state
+    // `countStorageFault`'s docstring argues is unacceptable for a fault: nothing
+    // can be alerted on it, and nothing schedules the backfill that ends it, so
+    // the app can serve unmetered indefinitely. Its own series is what closes it —
+    // deliberately not an `outcome` on the ops counter, where it would be
+    // invisible among ordinary successful writes.
+    it('counts the untracked write on its own series, labelled by app', async () => {
+      const untrackedInc = vi.mocked(appStorageUserQuotaUntrackedCounter.inc);
+      untrackedInc.mockClear();
+      mockPool.query.mockImplementation(poolMissingUserQuota());
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
+      expect(untrackedInc).toHaveBeenCalledWith({ app_block_id: 'apb_test' });
+      expect(untrackedInc).toHaveBeenCalledTimes(1);
+    });
+
+    // The other half: a NORMAL write must not touch that series, or it stops
+    // meaning "this app is unmetered" and an alert on it fires on every write.
+    it('does NOT count the untracked series when user_quota is present', async () => {
+      const untrackedInc = vi.mocked(appStorageUserQuotaUntrackedCounter.inc);
+      untrackedInc.mockClear();
+      useSubjectFromSub();
+      mockPool.query.mockImplementation(quotaPoolFor({ 42: 0 }));
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
+      expect(untrackedInc).not.toHaveBeenCalled();
     });
 
     // The fallback must not swallow a genuinely broken schema: `quota` missing
@@ -1168,7 +1276,7 @@ describe('apps.storage.set', () => {
         ],
         rowCount: 1,
       })
-      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      .mockResolvedValueOnce(sizeProbe());
     mockClient.query.mockImplementation(async (sql: string) => {
       if (sql.includes('INSERT INTO')) throw new Error('deadlock detected');
       return { rows: [], rowCount: 0 };
@@ -1206,6 +1314,72 @@ describe('apps.storage.set', () => {
     expect(inc).not.toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
   });
 
+  // The refusal's own log has to be readable. `userUsedBytes` is the
+  // trigger-maintained counter (stored bytes) and the gate that refused is
+  // `userUsedBytes + netDelta`, so `attemptedBytes` must be in the SAME unit — a
+  // wire byte count there reads as the number that was compared and is not, by up
+  // to 1.5x. `quotaPoolFor` answers the probe with DEFAULT_STORED_BYTES for a
+  // fresh key, which is not the wire size of the value written.
+  it('logs the refusal in STORED bytes, the unit the gate actually compared', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const value = 'x'.repeat(500);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value })
+    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    // The wire size and the stored size are different numbers here, which is what
+    // makes the assertion able to tell them apart.
+    expect(Buffer.byteLength(JSON.stringify(value), 'utf8')).not.toBe(DEFAULT_STORED_BYTES);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'user_quota_exceeded',
+        attemptedBytes: DEFAULT_STORED_BYTES,
+        netDeltaBytes: DEFAULT_STORED_BYTES,
+        userUsedBytes: USER_CAP_BYTES - 10,
+      }),
+      expect.anything()
+    );
+  });
+
+  // ── The stored-size probe must FAIL LOUD, never absorb ─────────────────────
+  //
+  // Both byte ceilings are computed from this one row. Absorbing a missing or
+  // non-numeric row into a 0 makes `netDelta` 0 or NaN, and BOTH of those sail
+  // through every gate below it — 0 reads as a non-increasing write and takes the
+  // exemption, NaN makes every `>` comparison false. So the failure mode of a
+  // silent fallback here is not "a refused write", it is "an unmetered write",
+  // which is the same class as the defect this probe exists to fix.
+  //
+  // Killing mutation: replacing the throw with `?? 0` turns BOTH cases below
+  // green-and-wrong — the write is accepted with the gates skipped.
+  it.each([
+    ['no row at all', { rows: [] as unknown[], rowCount: 0 }],
+    ['a non-numeric new size', { rows: [{ new_size_bytes: null, old_size_bytes: null }], rowCount: 1 }],
+  ])('refuses the write when the stored-size probe returns %s', async (_label, probeResult) => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (isSizeProbe(sql)) return probeResult;
+      return {
+        rows: [
+          { used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' },
+        ],
+        rowCount: 1,
+      };
+    });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toThrow('stored-size probe returned no usable row');
+    // It is a FAULT, not a refusal — so it lands on the error series an alert can
+    // watch, and the write never reached the transaction.
+    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
   it('uses the net delta from an existing row to size the quota check', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     // Pretend used_bytes is the per-app limit; the only reason this write
@@ -1216,11 +1390,13 @@ describe('apps.storage.set', () => {
         rows: [{ used_bytes: String(50 * 1024 * 1024), row_count: '1' }],
         rowCount: 1,
       })
-      .mockResolvedValueOnce({ rows: [{ size_bytes: 5000 }], rowCount: 1 });
+      // Both numbers in STORED bytes: an existing 5,000-byte row replaced by a
+      // 300-byte one.
+      .mockResolvedValueOnce(sizeProbe({ stored: 300, oldStored: 5_000 }));
 
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: 'short' })
+      caller.storage.set({ blockToken: 't', key: 'k', value: ones(100) })
     ).resolves.toMatchObject({ ok: true });
   });
 });
@@ -1415,8 +1591,8 @@ describe('apps.storage — run-for-real preview namespace', () => {
 
   it('SET succeeds for a PENDING app: writes to the preview schema, self-bound to the mod', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
-    // quota pre-read + existing-size read → both empty (fresh key, under quota).
-    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    // quota pre-read empty (under quota) + a stored-size probe for a fresh key.
+    mockPool.query.mockImplementation(defaultPoolQuery);
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const res = await caller.storage.set({ blockToken: 't', key: 'note', value: { a: 1 } });
     expect(res.ok).toBe(true);

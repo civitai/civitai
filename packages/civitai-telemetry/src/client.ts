@@ -544,6 +544,29 @@ export const appStorageQuotaExceededCounter = registerCounterWithLabels({
   labelNames: ['app_block_id', 'ceiling'] as const,
 });
 
+// App Blocks KV writes served against a schema that has no `user_quota` relation
+// yet, i.e. writes on which the per-USER sub-budget was NOT enforced.
+//
+// `user_quota` is created by AppStorageProvisioner.provision, whose only callers
+// are new-version approval and a manual admin backfill endpoint — nothing
+// schedules either, so an app provisioned before the table existed keeps serving
+// writes with the sub-budget inert, indefinitely and by default. The set path
+// falls back rather than failing closed (refusing writes for want of a counter
+// that does not exist turns a missing upgrade into an outage), which means the
+// inert state is silent by construction unless something counts it.
+//
+// 🔴 It is deliberately its OWN series and not an `outcome` on
+// app_blocks_storage_ops_total. A state visible only as some other series
+// changing shape is not alertable — the same argument countStorageFault makes
+// about faults being visible solely as the `ok` series falling to zero. This is
+// the series to alert on ("some app has been running unmetered for N days") and
+// the series that goes to zero when the backfill has actually reached everything.
+export const appStorageUserQuotaUntrackedCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_user_quota_untracked_total',
+  help: 'App Blocks KV writes served without a per-user quota relation (sub-budget not enforced; app needs the storage backfill)',
+  labelNames: ['app_block_id'] as const,
+});
+
 export const appStorageLatencyHistogram = registerHistogram({
   name: 'app_blocks_storage_latency_seconds',
   help: 'App Blocks KV procedure latency',
