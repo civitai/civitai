@@ -1,3 +1,8 @@
+---
+name: rgb-proxy
+description: Set up and manage RGB mode for local development — test green, blue, and red domains simultaneously. Use when the user asks to "set up RGB mode", "enable RGB proxy", "test green/blue/red domains", or "run RGB mode".
+---
+
 # RGB Proxy
 
 Set up and manage RGB mode for local development — test green, blue, and red domains simultaneously.
