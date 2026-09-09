@@ -1,4 +1,4 @@
-import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
+import { Avatar, Box, Button, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -719,6 +719,15 @@ export function PageBlockHost({
   const reviewNack = reviewMode && !reviewRunForReal;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  /**
+   * The viewer dismissed the missing-permissions notice for this mount.
+   *
+   * Per-mount and deliberately NOT persisted: the notice is the only thing
+   * standing between "the app silently cannot do the thing" and the viewer, so a
+   * remembered dismissal would make the hole permanent again for exactly the
+   * people who have already met it once.
+   */
+  const [consentNoticeDismissed, setConsentNoticeDismissed] = useState(false);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1592,6 +1601,33 @@ export function PageBlockHost({
   // server-known truth), NOT any scopes the block claims; the gate also pins
   // status === 'ready' so a pre-handshake block can't pop a permission modal
   // before any interaction (same posture as NAVIGATE). On grant we re-mint the
+  /**
+   * Open the host's consent UI for a set of withheld scopes.
+   *
+   * 🔴 ONE OPENER, TWO CALLERS, ON PURPOSE. The block-initiated REQUEST_CONSENT
+   * handler below and the host's own missing-permissions notice must build
+   * IDENTICAL props — a second inline `dialogStore.trigger` would be the same
+   * rule in two places, and the two would drift on the first prop that changes.
+   */
+  const openConsentModal = useCallback(
+    (scopes: string[]) => {
+      dialogStore.trigger({
+        component: BlockConsentModal,
+        props: {
+          appBlockId,
+          // PageBlockHost surfaces the app name as `appName` (the model host
+          // uses `install.manifest.name`).
+          blockName: appName,
+          missingScopes: scopes,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        },
+      });
+    },
+    [appBlockId, appName, onConsentGranted]
+  );
+
   // token (onConsentGranted → useBlockToken.refresh); the new scopes flow to the
   // iframe via the TOKEN_REFRESH push above and the block retries — there is no
   // host→block reply (fire-and-forget).
@@ -1665,19 +1701,7 @@ export function PageBlockHost({
 
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
-        dialogStore.trigger({
-          component: BlockConsentModal,
-          props: {
-            appBlockId,
-            // PageBlockHost surfaces the app name as `appName` (the model host
-            // uses `install.manifest.name`).
-            blockName: appName,
-            missingScopes: scopesToGrant,
-            onGranted: () => {
-              onConsentGranted?.();
-            },
-          },
-        });
+        openConsentModal(scopesToGrant);
         return;
       }
       // Issue B — nothing is grantable-via-consent. Distinguish the BENIGN case
@@ -4130,10 +4154,16 @@ export function PageBlockHost({
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent
-      // is NOT terminal here), but a block requesting an ungranted consent-gated
-      // scope drives its own REQUEST_CONSENT against the missing set. This makes
-      // the host-known signal visible to the block frame / debugging rather than
-      // silently swallowed.
+      // is NOT terminal here), and a block requesting an ungranted consent-gated
+      // scope drives its own REQUEST_CONSENT against the missing set.
+      //
+      // ⚠️ THIS ATTRIBUTE IS OBSERVABILITY, NOT THE BACKSTOP, AND AN EARLIER
+      // VERSION OF THIS COMMENT LEFT THAT AMBIGUOUS. For a long time it was the
+      // ONLY thing `needsConsent` reached: nothing read it, and the modal opened
+      // only when a block PULLED it, so any app that never sent REQUEST_CONSENT
+      // was silently broken with no host-side signal to the viewer at all. The
+      // notice rendered below the chrome is the backstop; this stays for
+      // debugging and for tests.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
       <AppBlockChrome
@@ -4149,6 +4179,82 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         canOpenPage={canOpenPage}
       />
+      {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. The mint is FAIL-CLOSED on a missing
+          `app_user_scope_grants` row, so a viewer who has never consented gets a
+          token with every consent-gated scope withheld — and until this existed,
+          the ONLY thing that could tell them was the block itself, via
+          REQUEST_CONSENT. An app that did not think to ask left the viewer with a
+          working-looking control that could never succeed.
+
+          Measured 2026-09-08 on `playable-collections`: a real 2-Buzz tip was
+          refused on both legs at the scope gate, the Buzz ledger confirms nothing
+          moved, and the viewer saw only "None of that tip came back confirmed" —
+          no prompt, no explanation, permanently. `social:tip:self` was granted on
+          ONE row in the whole grants table, so that was the ORDINARY path.
+
+          🔴 A NOTICE, NOT AN AUTO-OPENED MODAL, DELIBERATELY. A block can be fully
+          usable unconsented — `collections:read:self` is consent-exempt, so
+          `playable-collections` browses public collections fine with no grant at
+          all — and an unconditional modal would interrupt every viewer of every
+          app that merely REQUESTS a consent-gated scope. The viewer decides.
+
+          Gated through `resolveRequestConsent`, the SAME predicate the
+          block-initiated path uses, so the two cannot disagree about when consent
+          is offerable: it requires `ready` (no notice over a still-loading block)
+          and a non-empty missing set.
+
+          Through `toHostGateStatus` for the same reason the message handlers go
+          through it: this component's `Status` carries an extra `'error'` member
+          that `HostStatus` does not, so the converter is the one place that
+          decides how it maps. A cast here would have compiled and silently
+          disagreed with every other gate. (`pnpm typecheck` caught exactly that —
+          the first version of this passed `status` raw.) */}
+      {!consentNoticeDismissed &&
+        needsConsent &&
+        resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []) != null && (
+          <Box
+            role="status"
+            data-testid="block-consent-notice"
+            px="md"
+            py="xs"
+            style={{
+              borderBottom: '1px solid var(--mantine-color-default-border)',
+              background: 'var(--mantine-color-body)',
+            }}
+          >
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Text size="sm">
+                {appName} is missing permissions it needs to work fully.
+              </Text>
+              <Group gap="xs" wrap="nowrap">
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  data-testid="block-consent-notice-review"
+                  onClick={() => {
+                    // Recomputed at CLICK time, not captured at render: a
+                    // TOKEN_REFRESH between the two can shrink the missing set,
+                    // and granting a scope the viewer already has is a worse
+                    // prompt than no prompt.
+                    const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
+                    if (scopes != null) openConsentModal(scopes);
+                  }}
+                >
+                  Review permissions
+                </Button>
+                <Button
+                  size="compact-sm"
+                  variant="subtle"
+                  aria-label="Dismiss the missing-permissions notice"
+                  data-testid="block-consent-notice-dismiss"
+                  onClick={() => setConsentNoticeDismissed(true)}
+                >
+                  Dismiss
+                </Button>
+              </Group>
+            </Group>
+          </Box>
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

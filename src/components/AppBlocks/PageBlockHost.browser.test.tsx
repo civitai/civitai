@@ -1388,3 +1388,100 @@ describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
     helloSpy.mockRestore();
   });
 });
+
+// ===========================================================================
+// THE MISSING-PERMISSIONS BACKSTOP (clawgate 545)
+//
+// 🔴 REGRESSION, NOT AN INVARIANT GUARD. Before this existed, `needsConsent`
+// reached exactly one thing — the `data-needs-consent` attribute — and nothing
+// read it. The consent modal opened ONLY when a block PULLED it via
+// REQUEST_CONSENT, so an app that never asked left the viewer with a
+// working-looking control that could not succeed and no way to learn why.
+// The first test below FAILS on pre-change code: no notice ever rendered.
+//
+// Every case here drives to READY and posts NOTHING from the block. That is the
+// whole point: the host must act on its own.
+// ===========================================================================
+
+describe('PageBlockHost missing-permissions notice (the host-side backstop)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    showNotificationSpy.mockClear();
+  });
+
+  const noticeQuery = () => page.getByTestId('block-consent-notice').query();
+
+  test('🔴 renders after BLOCK_READY with NO message from the block', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    // No dialog yet — the notice offers, it does not interrupt.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('Review opens the dialog with the SERVER-KNOWN missing set, same props as the block path', async () => {
+    const onConsentGranted = vi.fn();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={onConsentGranted} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+
+    await page.getByTestId('block-consent-notice-review').click();
+
+    expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    const dialogProps = useDialogStore.getState().dialogs[0].props as {
+      appBlockId: string;
+      blockName?: string;
+      missingScopes: string[];
+      onGranted: () => void;
+    };
+    // Identical to what REQUEST_CONSENT builds — one opener, two callers.
+    expect(dialogProps.missingScopes).toEqual(['ai:write:budgeted']);
+    expect(dialogProps.appBlockId).toBe('apb_test');
+    expect(dialogProps.blockName).toBe('Budgeted Generator');
+    expect(onConsentGranted).not.toHaveBeenCalled();
+    dialogProps.onGranted();
+    expect(onConsentGranted).toHaveBeenCalledTimes(1);
+  });
+
+  test('Dismiss removes it, and it does not come back on its own', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+
+    await page.getByTestId('block-consent-notice-dismiss').click();
+
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+    // Nothing re-renders it: give the host a beat to prove it stays gone.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+    // Dismissing is not consenting.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('NEGATIVE CONTROL — nothing missing, no notice', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    // The positive cases above prove the notice CAN render after driveToReady,
+    // so this zero is a reading rather than a silence.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
+  test('not before BLOCK_READY — no notice over a still-loading block', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    // Deliberately NOT driving to ready.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+});
