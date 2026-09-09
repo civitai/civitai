@@ -14,6 +14,8 @@ export interface TrainingRunPayload {
   version?: string;
   engine?: string;
   model?: string;
+  /** The `Custom…` base — a Civitai model AIR the user pasted to train on, overriding the ecosystem base. */
+  customModel?: string;
   steps: number;
   epochs: number;
   unetLr: number;

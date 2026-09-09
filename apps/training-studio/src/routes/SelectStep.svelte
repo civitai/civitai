@@ -11,6 +11,7 @@
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
     CUSTOM_MODEL_SURCHARGE,
     MEDIA_OPTIONS,
@@ -25,6 +26,7 @@
     MAX_RUNS,
     cardFromPrice,
     isCustom,
+    isValidAir,
     labelNoun,
     labelOptions,
     newRun,
@@ -134,6 +136,11 @@
   function pickVersion(runIndex: number, versionKey: string) {
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
   }
+  function setCustomAir(runIndex: number, value: string) {
+    runs = runs.map((r, i) => (i === runIndex ? { ...r, customAir: value } : r));
+  }
+  // A Custom run needs a valid pasted AIR before it can continue.
+  const customIncomplete = $derived(runs.some((r) => isCustom(r) && !isValidAir(r.customAir ?? '')));
 
   function addRun() {
     if (runs.length >= MAX_RUNS) return;
@@ -188,6 +195,32 @@
   {:else}
     <span class="whitespace-nowrap font-mono {size} text-dark-2">—</span>
   {/if}
+{/snippet}
+
+<!-- The Custom… base: paste a Civitai model AIR to train on (we don't have a model picker yet). -->
+{#snippet customAirInput(run: Run, runIndex: number)}
+  <div class="mt-2.5">
+    <label
+      for={`custom-air-${run.id}`}
+      class="font-mono text-[10px] uppercase tracking-wider text-dark-2"
+    >
+      Civitai model AIR
+    </label>
+    <Input
+      id={`custom-air-${run.id}`}
+      value={run.customAir ?? ''}
+      oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+      placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
+      class="mt-1 font-mono text-xs"
+    />
+    <p class="mt-1 text-[10px] leading-snug text-dark-2">
+      {#if run.customAir && !isValidAir(run.customAir)}
+        <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
+      {:else}
+        Paste the AIR of a Civitai model to train on (copy it from the model's page).
+      {/if}
+    </p>
+  </div>
 {/snippet}
 
 <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -434,6 +467,9 @@
               {/each}
             </div>
           {/if}
+          {#if isCustom(primary)}
+            {@render customAirInput(primary, 0)}
+          {/if}
         </div>
       {/if}
     </div>
@@ -525,6 +561,9 @@
                   </button>
                 {/each}
               </div>
+              {#if isCustom(r)}
+                {@render customAirInput(r, ri)}
+              {/if}
             </div>
           {/each}
           <button
@@ -569,9 +608,18 @@
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
       final price after your data &amp; settings
     </div>
-    <Button class="mt-4 w-full" onclick={() => onContinue({ media, loraType, runs })}>
+    <Button
+      class="mt-4 w-full"
+      disabled={customIncomplete}
+      onclick={() => onContinue({ media, loraType, runs })}
+    >
       Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
     </Button>
+    {#if customIncomplete}
+      <p class="mt-1.5 text-center font-mono text-[11px] text-buzz">
+        Paste a Civitai model AIR for the custom base to continue.
+      </p>
+    {/if}
     <p
       class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-[11px] text-dark-2"
     >

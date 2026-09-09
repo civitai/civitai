@@ -34,6 +34,8 @@ export interface TrainingRunInput {
   engine?: string;
   /** Base checkpoint AIR — required by the flux2 path. */
   model?: string;
+  /** The `Custom…` base: a Civitai model AIR to train on, overriding the ecosystem's default base. */
+  customModel?: string;
   steps: number;
   epochs: number;
   unetLr: number;
@@ -89,7 +91,8 @@ function buildStep(run: TrainingRunInput): WorkflowStepTemplate {
         priority: 'normal',
         input: {
           engine: run.engine,
-          model: run.model,
+          // A pasted custom base overrides the version's default checkpoint AIR.
+          model: run.customModel ?? run.model,
           loraName: run.trigger || run.meta.name || 'lora',
           trainingData,
           trainingDataImagesCount: run.items.length,
@@ -103,6 +106,8 @@ function buildStep(run: TrainingRunInput): WorkflowStepTemplate {
         input: {
           engine: 'ai-toolkit',
           ecosystem: run.ecosystem,
+          // A pasted custom model is the base checkpoint to train on (the ecosystem otherwise resolves it).
+          ...(run.customModel ? { model: run.customModel } : {}),
           ...(run.modelVariant ? { modelVariant: run.modelVariant } : {}),
           ...(run.version ? { version: run.version } : {}),
           steps: run.steps,

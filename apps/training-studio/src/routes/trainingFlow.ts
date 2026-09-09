@@ -24,6 +24,13 @@ export interface Run {
   id: number;
   cardType: string;
   versionKey: string;
+  /** For the `Custom…` version: the AIR of a Civitai model to train on, pasted by the user. */
+  customAir?: string;
+}
+
+/** A pasted custom-model AIR looks usable (urn:air:…). Not exhaustive — the orchestrator is the real check. */
+export function isValidAir(air: string): boolean {
+  return /^urn:air:[^\s]+$/.test(air.trim());
 }
 
 /** The user-facing noun for a card's label format — the single mapping from the `label`
@@ -288,6 +295,7 @@ export function buildTrainingRuns(
       version: version.version,
       engine: version.engine,
       model: version.air,
+      customModel: isCustom(run) ? run.customAir?.trim() : undefined,
       steps: params.steps,
       epochs: params.epochs,
       unetLr: num(params.unetLr, 0.0004),
