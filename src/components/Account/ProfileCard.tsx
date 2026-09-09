@@ -22,6 +22,7 @@ import { usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 
 const schema = z.object({
   id: z.number(),
@@ -32,7 +33,7 @@ const emailChangeSchema = z.object({
   newEmail: z.string().email('Please enter a valid email address'),
 });
 
-export function ProfileCard() {
+export function ProfileCard({ flat }: { flat?: boolean } = {}) {
   const queryUtils = trpc.useUtils();
   const session = useCurrentUser();
   const { data } = useSession();
@@ -40,7 +41,11 @@ export function ProfileCard() {
 
   const currentUser = data?.user;
 
-  const { mutate, isPending: isLoading, error } = trpc.user.update.useMutation({
+  const {
+    mutate,
+    isPending: isLoading,
+    error,
+  } = trpc.user.update.useMutation({
     async onSuccess(user) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       await queryUtils.user.getById.invalidate({ id: user.id });
@@ -78,19 +83,19 @@ export function ProfileCard() {
     mode: 'onChange',
   });
 
-  return (
-    <Card withBorder>
-      <Form
-        form={form}
-        onSubmit={(data) => {
-          const { id, username } = data;
-          mutate({
-            id,
-            username,
-          });
-        }}
-      >
-        <Stack>
+  const formBody = (
+    <Form
+      form={form}
+      onSubmit={(data) => {
+        const { id, username } = data;
+        mutate({
+          id,
+          username,
+        });
+      }}
+    >
+      <Stack>
+        {!flat && (
           <Group justify="space-between">
             <Title order={2}>Account Info</Title>
             <Button
@@ -104,11 +109,22 @@ export function ProfileCard() {
               Customize profile
             </Button>
           </Group>
-          {error && (
-            <Alert color="red" variant="light">
-              {error.data?.code === 'CONFLICT' ? 'That username is already taken' : error.message}
-            </Alert>
-          )}
+        )}
+        {error && (
+          <Alert color="red" variant="light">
+            {error.data?.code === 'CONFLICT' ? 'That username is already taken' : error.message}
+          </Alert>
+        )}
+        {flat ? (
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="flex-1">
+              <InputText name="username" label="Username" required />
+            </div>
+            <div className="flex-1">
+              <TextInput label="Account email" value={currentUser?.email ?? ''} disabled readOnly />
+            </div>
+          </div>
+        ) : (
           <Grid>
             <Grid.Col span={12}>
               <InputText name="username" label="Username" required />
@@ -148,8 +164,34 @@ export function ProfileCard() {
               </Button>
             </Grid.Col>
           </Grid>
-        </Stack>
-      </Form>
+        )}
+        {flat && (
+          <Group justify="flex-end" gap="sm">
+            <Button
+              variant="default"
+              size="compact-sm"
+              leftSection={<IconMail size={14} />}
+              onClick={openEmailModal}
+            >
+              Change email
+            </Button>
+            <Button
+              type="submit"
+              size="compact-sm"
+              loading={isLoading}
+              disabled={!form.formState.isDirty}
+            >
+              Save changes
+            </Button>
+          </Group>
+        )}
+      </Stack>
+    </Form>
+  );
+
+  return (
+    <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? 'transparent' : undefined}>
+      {flat ? <SettingsSection title="Account info">{formBody}</SettingsSection> : formBody}
 
       {/* Email Change Modal */}
       <Modal

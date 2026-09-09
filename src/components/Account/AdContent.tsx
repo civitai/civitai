@@ -2,8 +2,9 @@ import { Switch } from '@mantine/core';
 import React from 'react';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
 
-export function AdContent() {
+export function AdContent({ flat }: { flat?: boolean } = {}) {
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const setState = useBrowsingSettings((x) => x.setState);
 
@@ -17,6 +18,23 @@ export function AdContent() {
     setState({ allowAds: e.target.checked });
     // updateUserSettingsMutation.mutate({ allowAds: e.target.checked });
   };
+
+  if (flat)
+    return (
+      <SettingsSection title="Ads">
+        <SettingRow
+          label="Allow on-site ads"
+          description="Supports the site."
+          control={
+            <Switch
+              checked={allowAds}
+              onChange={handleToggleAds}
+              disabled={updateUserSettingsMutation.isPending}
+            />
+          }
+        />
+      </SettingsSection>
+    );
 
   return (
     <div className="flex size-full flex-col justify-center">
