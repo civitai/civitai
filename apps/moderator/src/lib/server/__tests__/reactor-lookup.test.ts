@@ -82,7 +82,9 @@ describe('getReactors', () => {
     await runReactors(3);
 
     const q = chQueries[0];
-    expect(q).toContain('ORDER BY count / total DESC');
+    // The floor leads the ordering so the surviving rows come first, but concentration is still what
+    // ranks them against each other.
+    expect(q).toMatch(/ORDER BY count >= \d+ DESC, count \/ total DESC/);
     // 🔴 The revert that costs the page its purpose. Ranking by raw count and cutting at the limit
     // drops a 100%-on-one-creator account with 31 reactions — rank 151 by count on the measured
     // case — while keeping thirteen ordinary accounts with 380-410 each.
@@ -101,12 +103,74 @@ describe('getReactors', () => {
     expect(q).not.toMatch(/WHERE[^]*ownerId = 2832460/);
   });
 
-  it('applies the volume floor', async () => {
-    await runReactors(3, 5);
+  it('applies the volume floor, and reports how many accounts it removed', async () => {
+    chRows.push([
+      {
+        userId: '1',
+        count: '9',
+        entities: '9',
+        total: '20',
+        owners: '3',
+        matched: '1',
+        reactors: '4',
+      },
+      {
+        userId: '2',
+        count: '1',
+        entities: '1',
+        total: '80',
+        owners: '60',
+        matched: '1',
+        reactors: '4',
+      },
+    ]);
 
-    // Without it, concentration ordering puts accounts that reacted ONCE — trivially "100%" — at the
-    // head of the list; 15 of the 20 such rows on the measured account were single reactions.
-    expect(chQueries[0]).toContain('HAVING count >= 5');
+    const report = await runReactors(3, 5);
+
+    // Without the floor, concentration ordering puts accounts that reacted ONCE — trivially "100%" —
+    // at the head of the list; 15 of the 20 such rows on the measured account were single reactions.
+    expect(report.actors.map((a) => a.userId)).toEqual([1]);
+    expect(report.total).toBe(1);
+    expect(report.belowFloor).toBe(3);
+    // 🔴 The two counts above are arithmetic on fields the FIXTURE supplies, so they say nothing about
+    // the SQL that derives them. Both windows must be asserted on the statement: `count() OVER ()` in
+    // place of the `sum(count >= n) OVER ()` pins `belowFloor` at 0 forever — the banner never renders
+    // and the silent empty page this whole change exists to fix comes straight back, green.
+    expect(chQueries[0]).toContain('sum(count >= 5) OVER () AS matched');
+    expect(chQueries[0]).toContain('count() OVER () AS reactors');
+    expect(chQueries[0]).not.toMatch(/count\(\) OVER \(\) AS matched/);
+  });
+
+  it('reports the floor cost even when NOTHING clears the floor', async () => {
+    chRows.push([
+      {
+        userId: '2',
+        count: '1',
+        entities: '1',
+        total: '80',
+        owners: '60',
+        matched: '0',
+        reactors: '900',
+      },
+    ]);
+
+    const report = await runReactors(3, 5);
+
+    // 🔴 The revert this catches: applying the floor as a `WHERE` inside the query. That returns no
+    // rows at all, so both window counts read 0 and the page reports "nobody is boosting this
+    // creator" for the case where 900 accounts are — one reaction each, which is what a wide farm
+    // looks like and what concentration cannot rank.
+    expect(report.actors).toEqual([]);
+    expect(report.total).toBe(0);
+    expect(report.belowFloor).toBe(900);
+    // Asserted on the SQL as well as the result: the fake returns its canned rows whatever the query
+    // says, so it cannot simulate a floor moved back into the database, and the assertions above
+    // would stay green through exactly that revert.
+    // The negative is anchored rather than a `[2-9]` class: `HAVING count >= 12` satisfies a substring
+    // check for `>= 1` AND misses that class, so the guard would go vacuous the day the floor default
+    // reaches double digits.
+    expect(chQueries[0]).toMatch(/HAVING count >= 1$/m);
+    expect(chQueries[0]).not.toMatch(/(HAVING|WHERE) count >= (?!1$)\d+/m);
   });
 
   it('bounds the pass by the window', async () => {
@@ -118,7 +182,15 @@ describe('getReactors', () => {
 
   it('reports the population over the floor, not the page size', async () => {
     chRows.push([
-      { userId: '1', count: '9', entities: '9', total: '9', owners: '1', matched: '1340' },
+      {
+        userId: '1',
+        count: '9',
+        entities: '9',
+        total: '9',
+        owners: '1',
+        matched: '1340',
+        reactors: '1400',
+      },
     ]);
     const report = await getInflationActors(2832460, {
       category: 'reactions',
@@ -128,6 +200,28 @@ describe('getReactors', () => {
 
     // `.length` here would render the cap as the answer — "100 reactors" on a creator with 1,340.
     expect(report?.total).toBe(1340);
+  });
+});
+
+describe('getStickerPlacers', () => {
+  it('reads every placer and applies the floor and the cap in JS', async () => {
+    const report = await getInflationActors(2832460, {
+      category: 'stickers',
+      days: 3,
+      minCount: 5,
+    });
+
+    // The driver answers with no rows, so the chain stops at the early return and compiles exactly one
+    // statement — asserted, because a count left unchecked is how a suite passes over a query that was
+    // never built.
+    expect(pgQueries).toHaveLength(1);
+    // 🔴 A `having` or a `limit` here is the revert. Both make the rows under the floor unreadable, so
+    // `belowFloor` is stuck at 0 and the page loses the only thing that tells a moderator its default
+    // is why the table is empty — the same defect the reactions branch was just fixed for.
+    expect(pgQueries[0]).toContain('"Placement"');
+    expect(pgQueries[0]).not.toMatch(/having/i);
+    expect(pgQueries[0]).not.toMatch(/limit/i);
+    expect(report.belowFloor).toBe(0);
   });
 });
 
