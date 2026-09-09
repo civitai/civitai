@@ -229,12 +229,14 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
   } else if (aiToolkitParams.ecosystem === 'anima') {
-    // Anima accepts a `model` (the official base AIR, or a custom Anima
-    // checkpoint which the orchestrator trains over the base Anima repo).
-    trainingInput = {
-      ...trainingInput,
-      model,
-    } as AnimaAiToolkitTrainingInput;
+    // The civitai Anima AIR is the sample-image diffusion model, not the trainer base; sending it
+    // here bills its per-image license fee once per epoch checkpoint.
+    if (model !== trainingModelInfo.anima.air) {
+      trainingInput = {
+        ...trainingInput,
+        model,
+      } as AnimaAiToolkitTrainingInput;
+    }
   }
 
   // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
