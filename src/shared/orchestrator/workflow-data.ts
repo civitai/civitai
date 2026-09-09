@@ -214,6 +214,8 @@ export class StepData {
       case 'videoUpscaler':
       case 'videoEnhancement':
       case 'videoInterpolation':
+      // preprocessVideo emits a VideoBlob.
+      case 'preprocessVideo':
         return 'video';
       case 'aceStepAudio':
       case 'miniMaxMusic3':

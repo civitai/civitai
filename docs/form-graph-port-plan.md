@@ -285,8 +285,8 @@ per-graph scopes. The lib grew `defineGraph({ scope })` (graph-level default sco
 field `scope` — including `[]`, the bare-key opt-out — wins; mounted children
 keep their own fn). The layout, mirroring v1's groups: every family graph and
 branch member carries `defineGraph({ scope: familyScope })` (ecosystem group id, else key —
-wan versions and klein variants share buckets); `SEED` and `controlNetsDef`
-opt out to bare keys (v1 stores them globally); images/video wrap their def fns
+wan versions and klein variants share buckets); `SEED`, `controlNetsDef` and
+`controlVideoDef` opt out to bare keys (v1 stores them globally); images/video wrap their def fns
 in `workflowScoped` (per-workflow buckets); the hubs scope `ecosystem` per
 output type, `quantity` per workflow only on draft, `enhancedCompatibility`
 per family bucket; and the turbo-variant families (zimage/boogu/krea2/anima/ernie/lens/mage-flow — all seven ported
@@ -464,7 +464,7 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | video: sora2 | DONE | DONE | AR options per resolution (txt2vid only), usePro, durations 4/8 |
 | video: hunyuan (HyV1) | DONE | DONE | cfg/steps presets, familyResources, 480p AR set |
 | video: flux3-video | DONE | DONE | First/Last frame slots on img2vid; v1's draft→resolution forward dep is dead, resolution unconditional (probed) |
-| video: minimax (MiniMaxH3, api/comfy) | DONE | DONE | tagged branch on version: comfy carries loras/seed/turbo-shaped steps, api is bare; ref2vid takes up to 9 refs (`variantOf`, NOT a prefix match — bit us) |
+| video: minimax (MiniMaxH3, api/comfy) | DONE | DONE | tagged branch on version: comfy carries loras/seed/turbo-shaped steps, api is bare; ref2vid takes up to 9 refs (`variantOf`, NOT a prefix match — bit us). `controlVideo` (H3 Fun ControlNet Union) is comfy + txt2vid only — the control operation REPLACES imageToVideo, so there is no frame/reference slot to share it with; its five preprocessor keys are the `preprocessVideo` set, not the image ControlNet set |
 | video: happy-horse (v1.0/v1.1) | DONE | DONE | AR family keyed `resolution|version` (v1.1 widens the set); vid2vid:edit carries video + refs + audioSetting |
 | video: veo3 (fast/standard) | DONE | DONE | workflowVersions inert (same list both workflows); ref2vid pins duration to 8s at the boundary; version enum defaults '3.1' (3.0 endpoints retired) |
 | video: vidu (Q1/Q3) | DONE | DONE | image-driven workflows emit NO aspectRatio (v1 hides the node; handler derives from source — probed); Q3 ref2vid rewrites to img2vid in `reconcile.ts`; Q3 resolution-scaled AR dims |
@@ -475,7 +475,7 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | model3d: polygen (Meshy v6/v7) | DONE | DONE | `polygenVersion` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
 | model3d: tripo / hunyuan3d / pixal3d / trellis2 | DONE | DONE | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |
 | model3d hub | DONE | DONE | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
-| standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate, img2meta, prompt:enhance) | DONE | DONE | seven arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from the v1 module (they mirror @civitai/client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
+| standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate / preprocess, img2meta, prompt:enhance) | DONE | DONE | eight arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from the v1 module (they mirror @civitai/client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
 
 ---
 

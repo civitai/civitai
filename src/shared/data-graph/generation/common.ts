@@ -33,6 +33,7 @@ import {
   type ControlNetPreprocessorKey,
   type ControlNetCategory,
   type ControlNetPreprocessorInfo,
+  type VideoControlNetPreprocessorKey,
 } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
@@ -1670,6 +1671,149 @@ export function controlNetsNode({
       step: {
         min: CONTROLNET_STEP_MIN,
         max: CONTROLNET_STEP_MAX,
+        step: 0.05,
+      },
+    },
+  };
+}
+
+// =============================================================================
+// Control Video Node Builder
+// =============================================================================
+
+/**
+ * Control strength bounds. The H3 Fun ControlNet Union treats 1.0 as the
+ * strongest control and weakens below it, so 1 is a ceiling rather than the
+ * middle of a range — unlike the image ControlNet weight, which goes to 2.
+ */
+const CONTROL_VIDEO_STRENGTH_MIN = 0;
+const CONTROL_VIDEO_STRENGTH_MAX = 1;
+const CONTROL_VIDEO_STRENGTH_DEFAULT = 1;
+const CONTROL_VIDEO_PERCENT_MIN = 0;
+const CONTROL_VIDEO_PERCENT_MAX = 1;
+
+const controlVideoInputSchema = z.object({
+  preprocessor: z.string(),
+  mode: z.enum(controlNetModes).optional(),
+  // Optional on input so a preprocessor can be picked before the upload lands;
+  // the output transform drops the whole node until a video arrives.
+  video: z.union([z.string(), videoValueSchema]).optional(),
+  strength: z.coerce
+    .number()
+    .min(CONTROL_VIDEO_STRENGTH_MIN)
+    .max(CONTROL_VIDEO_STRENGTH_MAX)
+    .optional(),
+  startPercent: z.coerce
+    .number()
+    .min(CONTROL_VIDEO_PERCENT_MIN)
+    .max(CONTROL_VIDEO_PERCENT_MAX)
+    .optional(),
+  endPercent: z.coerce
+    .number()
+    .min(CONTROL_VIDEO_PERCENT_MIN)
+    .max(CONTROL_VIDEO_PERCENT_MAX)
+    .optional(),
+});
+
+const controlVideoOutputSchema = z.object({
+  preprocessor: z.string(),
+  mode: z.enum(controlNetModes),
+  video: videoValueSchema,
+  strength: z.number().min(CONTROL_VIDEO_STRENGTH_MIN).max(CONTROL_VIDEO_STRENGTH_MAX),
+  startPercent: z.number().min(CONTROL_VIDEO_PERCENT_MIN).max(CONTROL_VIDEO_PERCENT_MAX),
+  endPercent: z.number().min(CONTROL_VIDEO_PERCENT_MIN).max(CONTROL_VIDEO_PERCENT_MAX),
+});
+
+/** Runtime value type for the controlVideo node. */
+export type ControlVideoNodeValue = z.infer<typeof controlVideoOutputSchema>;
+
+/**
+ * Creates a controlVideo node — the video counterpart to `controlNetsNode`.
+ *
+ * Single entry rather than an array: the orchestrator's control-video input
+ * carries `video`/`strength`/`startPercent`/`endPercent` as flat fields, so
+ * there is nothing to stack.
+ *
+ * `preprocessor` selects which `preprocessVideo` kind runs upstream in `auto`
+ * mode; in `preprocessed` mode it does not reach the request at all.
+ */
+export function controlVideoNode({
+  preprocessors,
+}: {
+  preprocessors: readonly VideoControlNetPreprocessorKey[];
+}) {
+  const seen = new Set<VideoControlNetPreprocessorKey>();
+  const validKeys: VideoControlNetPreprocessorKey[] = [];
+  for (const key of preprocessors) {
+    if (seen.has(key)) continue;
+    if (!controlNetPreprocessors[key]) continue;
+    seen.add(key);
+    validKeys.push(key);
+  }
+
+  const options = validKeys.map((key) => toPreprocessorOption(key, controlNetPreprocessors[key]));
+
+  const groupMap = new Map<ControlNetCategory, ControlNetPreprocessorOption[]>();
+  for (const opt of options) {
+    const bucket = groupMap.get(opt.category);
+    if (bucket) bucket.push(opt);
+    else groupMap.set(opt.category, [opt]);
+  }
+  const groups: ControlNetPreprocessorGroup[] = [...groupMap.entries()].map(([category, opts]) => ({
+    category,
+    label: controlNetCategoryLabels[category],
+    options: opts,
+  }));
+
+  const allowedKeys = new Set<string>(validKeys);
+  const refinedInputSchema = controlVideoInputSchema.refine(
+    (e) => allowedKeys.has(e.preprocessor),
+    { message: 'Unsupported ControlNet preprocessor for this model', path: ['preprocessor'] }
+  );
+
+  return {
+    input: refinedInputSchema.optional().transform((entry) => {
+      if (!entry) return undefined;
+      const video = typeof entry.video === 'string' ? { url: entry.video } : entry.video;
+      const info = controlNetPreprocessors[entry.preprocessor as ControlNetPreprocessorKey];
+      const mode: ControlNetMode = info?.requiresPreprocessedImage
+        ? 'preprocessed'
+        : entry.mode ?? 'auto';
+      return {
+        preprocessor: entry.preprocessor,
+        mode,
+        video: video?.url ? video : undefined,
+        strength: entry.strength ?? CONTROL_VIDEO_STRENGTH_DEFAULT,
+        startPercent: entry.startPercent ?? CONTROL_VIDEO_PERCENT_MIN,
+        endPercent: entry.endPercent ?? CONTROL_VIDEO_PERCENT_MAX,
+      };
+    }),
+    // A staged entry with no video is dropped rather than failing validation —
+    // ControlNet is opt-in, so "not filled in" means "not used".
+    output: z
+      .unknown()
+      .optional()
+      .transform((entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        !!(entry as { video?: { url?: string } }).video?.url
+          ? entry
+          : undefined
+      )
+      .pipe(controlVideoOutputSchema.optional()),
+    defaultValue: undefined,
+    meta: {
+      options,
+      groups,
+      strength: {
+        min: CONTROL_VIDEO_STRENGTH_MIN,
+        max: CONTROL_VIDEO_STRENGTH_MAX,
+        default: CONTROL_VIDEO_STRENGTH_DEFAULT,
+        step: 0.05,
+      },
+      percent: {
+        min: CONTROL_VIDEO_PERCENT_MIN,
+        max: CONTROL_VIDEO_PERCENT_MAX,
         step: 0.05,
       },
     },

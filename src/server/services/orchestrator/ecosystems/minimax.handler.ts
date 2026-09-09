@@ -16,6 +16,10 @@ import type {
   MiniMaxH3VideoGenInput,
   VideoGenStepTemplate,
 } from '@civitai/client';
+import type {
+  ComfyMiniMaxH3ControlVideoInput,
+  PreprocessVideoStepTemplate,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { resolveImageDimensions } from '~/utils/aspect-ratio-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -24,6 +28,7 @@ import {
   minimaxComfyAspectRatios,
   minimaxComfyDefaultAspectRatio,
 } from '~/shared/data-graph/generation/minimax-graph';
+import { buildControlVideoStep } from './control-video.helper';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -33,7 +38,10 @@ type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMaxH3' };
 /**
  * Creates videoGen input for the MiniMax ecosystem.
  */
-export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplate]>((data, ctx) => {
+export const createMiniMaxInput = defineHandler<
+  MiniMaxCtx,
+  (VideoGenStepTemplate | PreprocessVideoStepTemplate)[]
+>((data, ctx) => {
   const images = data.images;
   const isRef2Vid = data.workflow === 'img2vid:ref2vid';
   const hasImages = !!images?.length;
@@ -73,6 +81,28 @@ export const createMiniMaxInput = defineHandler<MiniMaxCtx, [VideoGenStepTemplat
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
           }) as ComfyMiniMaxH3ReferenceToVideoInput,
+        },
+      ];
+    }
+
+    // Gated to txt2vid in the graph; re-checked because a stale value reaching
+    // here would fail as lost user input rather than as an error.
+    const controlVideo =
+      data.workflow === 'txt2vid'
+        ? buildControlVideoStep(data.controlVideo, ctx.baseStepIndex)
+        : undefined;
+    if (controlVideo) {
+      return [
+        ...controlVideo.preprocessSteps,
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...shared,
+            operation: 'controlVideo',
+            ...controlVideo.control,
+            width: data.aspectRatio?.width,
+            height: data.aspectRatio?.height,
+          }) as ComfyMiniMaxH3ControlVideoInput,
         },
       ];
     }

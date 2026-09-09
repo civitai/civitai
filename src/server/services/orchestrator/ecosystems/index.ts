@@ -25,6 +25,7 @@ import type {
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
+import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -97,7 +98,10 @@ export type StepInput =
   | MiniMaxMusic3StepTemplate
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
-  | PreprocessImageStepTemplate;
+  | PreprocessImageStepTemplate
+  // Sourced from @civitai/orchestration-client: the pinned @civitai/client
+  // predates preprocessVideo and has no equivalent type.
+  | PreprocessVideoStepTemplate;
 
 /** Validated output from the generation graph with ecosystem */
 export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
