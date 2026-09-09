@@ -140,8 +140,6 @@ export function MembershipGiftsCard({
 
   if (!features.giftMemberships || isLoading || rows.length === 0) return null;
 
-  // The gift page already lists these with room to breathe; the settings pane points at it rather
-  // than carrying a second paginated table.
   if (pointer)
     return (
       <PointerCard

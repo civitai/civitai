@@ -50,8 +50,6 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           <ProfileCard flat />
           <SocialProfileCard flat />
           {features.strikes && <StrikesCard flat />}
-          {/* Two pointer rows, not two sections — the section gap between them read as a gap
-              between topics when they are the same kind of thing. */}
           <div className="flex flex-col gap-3">
             <RefreshSessionCard flat />
             <DeleteCard flat />
@@ -71,8 +69,8 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
     case 'creator':
       return (
         <SettingsStack>
-          {/* Ungated on purpose: the card self-gates, and it still owes us the sticker-inventory
-              pointer when every creator-control flag is off. */}
+          {/* Ungated on purpose: the card self-gates, and still owes the sticker pointer with
+              every flag off. */}
           <CreatorControlsCard flat stickerFooter={<StickerInventoryCard flat />} />
         </SettingsStack>
       );

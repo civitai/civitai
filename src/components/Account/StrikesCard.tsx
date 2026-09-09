@@ -11,6 +11,8 @@ import { UserScoreDisplay } from './UserScoreDisplay';
 // The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
 // rows link to `#creator-score`. Both targets only render their `id` once data loads, so the
 // browser's native hash scroll fires too early. Module-level so the ref identity stays stable.
+// Legacy page only — the v2 shell maps these anchors to a section and drops the fragment
+// (`legacyAnchorSections` in account-sections.ts), so these refs are dead on the pane.
 function scrollIfHashed(hash: string) {
   return (node: HTMLElement | null) => {
     if (node && typeof window !== 'undefined' && window.location.hash === hash) {

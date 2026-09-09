@@ -2,10 +2,6 @@ import { Chip, Group } from '@mantine/core';
 import { useQueryHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
 
-/**
- * Chips rather than a checkbox column: four stacked rows cost more height than the choice is worth,
- * and every one of them said "Hide …" down the left edge.
- */
 export function BrowsingCategories() {
   const { data, isLoading } = useQueryHiddenPreferences();
 

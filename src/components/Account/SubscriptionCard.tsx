@@ -197,8 +197,6 @@ function SubscriptionRow({
             </Text>
           </AlertWithIcon>
         )}
-        {/* Stacks on a phone: the plan name, its colour pill, the price and the renewal date do not
-            fit beside a button at 390px, and nowrap turned each of them into two lines. */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <Group wrap="nowrap" gap="sm" style={{ minWidth: 0, flex: 1 }}>
             {image && (

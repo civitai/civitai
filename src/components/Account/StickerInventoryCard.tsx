@@ -24,8 +24,7 @@ export function StickerInventoryCard({ flat }: { flat?: boolean } = {}) {
 
   if (!features.stickers) return null;
 
-  // The Stickerbook browses the same inventory better than a column of rows does, so the pane
-  // points at it. Without that page there is nowhere to point, so the list stays.
+  // Without the Stickerbook page there is nowhere to point, so the inline list stays.
   if (flat && features.stickerBook && currentUser?.username)
     return (
       <PointerCard

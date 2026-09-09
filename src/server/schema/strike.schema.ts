@@ -10,13 +10,11 @@ export const strikeStatusColorScheme: Record<string, MantineColor> = {
 };
 
 /**
- * Standing is derived from active strike POINTS, not from the strike count — a single strike can
- * carry several. Two surfaces show it (the account overview tile and the Profile pane's badge), so
- * the thresholds live here rather than in whichever of them was written first.
+ * Derived from active strike POINTS, not the strike count — a single strike can carry several.
  */
 export function accountStandingFromPoints(points: number): {
   label: string;
-  /** For a control already captioned "Account standing", where the noun would repeat and wrap. */
+  /** No "standing" noun, for a caption that already carries it. */
   short: string;
   color: MantineColor;
   good: boolean;

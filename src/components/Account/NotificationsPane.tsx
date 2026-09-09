@@ -29,7 +29,6 @@ import {
   optInNotificationTypes,
 } from '~/server/notifications/utils.notifications';
 
-/** Falls back to the generic glyph, so a category added server-side still renders a row. */
 const categoryIcons: Record<string, Icon> = {
   Comment: IconMessage,
   Update: IconRefresh,
@@ -79,8 +78,8 @@ export function NotificationsPane() {
             />
           }
         />
-        {/* The default rendering puts its switch first; the render prop keeps this row
-            label-left / control-right like every other one. */}
+        {/* Default branch is a raw Group with the switch first, which the section's Switch
+            overrides can't reach. */}
         <NewsletterToggle>
           {({ subscribed, isLoading: newsletterLoading, setSubscribed }) => (
             <SettingRow

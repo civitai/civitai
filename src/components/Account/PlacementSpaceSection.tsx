@@ -128,8 +128,7 @@ export function PlacementSpaceSection({
     },
   });
 
-  // The footer (the sticker-inventory pointer) is not gated on placement, so it outlives the
-  // section that hosts it — without this it vanishes whenever the controls cannot render.
+  // The sticker-inventory footer isn't gated on placement, so it must survive these early returns.
   if (!enabled || !currentUser) return <>{footer}</>;
   // `spaces` is undefined in every terminal state except success — in flight
   // AND after the retries are exhausted — and undefined is indistinguishable

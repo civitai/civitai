@@ -46,25 +46,24 @@ function useLegacyAnchorRedirect() {
   }, [router.isReady]);
 }
 
-/** Breathing room between whatever the rail is pinned under and its first item. */
 const RAIL_STICKY_GAP = 16;
 
 /**
  * The subnav is `sticky top-0` inside the scroll area and hides by translating itself off screen,
- * so it keeps its layout box either way. A fixed sticky offset for the rail therefore leaves a gap
- * the height of the subnav once it retracts. Track where its bottom edge actually is instead.
+ * so it keeps its layout box either way. A fixed sticky offset therefore leaves a gap the height of
+ * the subnav once it retracts. Track where its bottom edge actually is instead.
  */
-function useStickyTop() {
-  const [top, setTop] = useState(RAIL_STICKY_GAP);
+function useSubnavBottom() {
+  const [bottom, setBottom] = useState(0);
   const frame = useRef<number>();
 
   const measure = useCallback((node: HTMLElement) => {
     if (frame.current) cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => {
       const subnav = node.querySelector<HTMLElement>('[data-subnav]');
-      if (!subnav) return setTop(RAIL_STICKY_GAP);
+      if (!subnav) return setBottom(0);
       const offset = subnav.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
-      setTop(Math.max(0, Math.round(offset)) + RAIL_STICKY_GAP);
+      setBottom(Math.max(0, Math.round(offset)));
     });
   }, []);
 
@@ -77,7 +76,7 @@ function useStickyTop() {
     };
   }, [ref, measure]);
 
-  return top;
+  return bottom;
 }
 
 function SectionLink({ section, active }: { section: AccountSection; active: boolean }) {
@@ -221,7 +220,6 @@ function MobileIndex() {
                 return (
                   <NextLink
                     key={section.id}
-                    // The index IS this menu on mobile, so Overview cannot link to it.
                     href={section.path ? getAccountSectionHref(section) : getOverviewHref()}
                     className={clsx(
                       'flex items-center gap-3 bg-white px-3.5 py-3 text-sm font-medium text-dark-9 no-underline dark:bg-dark-6 dark:text-gray-0',
@@ -255,7 +253,7 @@ export function AccountLayout({
   children: React.ReactNode;
 }) {
   useLegacyAnchorRedirect();
-  const stickyTop = useStickyTop();
+  const subnavBottom = useSubnavBottom();
   const isMobile = useIsMobile({ breakpoint: 'md' });
 
   if (isMobile) {
@@ -277,7 +275,7 @@ export function AccountLayout({
           // Pinned to the same edge the desktop rail tracks, so it follows the subnav up as that
           // retracts rather than leaving a gap or hiding under it.
           className="sticky z-10 flex items-center gap-3 border-b border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-6"
-          style={{ top: stickyTop - RAIL_STICKY_GAP }}
+          style={{ top: subnavBottom }}
         >
           <NextLink
             href="/user/account"
@@ -300,7 +298,7 @@ export function AccountLayout({
   return (
     <div className="mx-auto flex w-full max-w-[1020px] gap-10 px-4 py-6 md:px-8">
       <aside className="w-[260px] shrink-0">
-        <div className="sticky" style={{ top: stickyTop }}>
+        <div className="sticky" style={{ top: subnavBottom + RAIL_STICKY_GAP }}>
           <AccountNav activeId={section.id} />
         </div>
       </aside>

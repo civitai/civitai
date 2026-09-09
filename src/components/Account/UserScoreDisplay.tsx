@@ -68,7 +68,6 @@ export function UserScoreDisplay({
   showReports?: boolean;
   /** Drop the panel chrome when the caller already provides it. */
   flat?: boolean;
-  /** Off where the column is wide enough for the exact figure. */
   abbreviate?: boolean;
 }) {
   if (!scores) {

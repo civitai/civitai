@@ -82,8 +82,6 @@ export function SocialProfileCard({ flat }: { flat?: boolean } = {}) {
     );
   };
 
-  // A labelled run of rows inside the one section, not a section of its own — social and
-  // sponsorship links share the "Creator profile" heading.
   const renderGroup = (type: LinkType, label: string) => {
     const links = linksFor(type);
     return (

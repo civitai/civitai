@@ -82,7 +82,9 @@ Realtime delivery is via Signals — the fan-out worker POSTs per affected user,
 
 ## User settings
 
-`src/components/Account/NotificationsCard.tsx`. Settings are stored in `UserNotificationSettings`
+`src/components/Account/NotificationsCard.tsx` (legacy page) and
+`src/components/Account/NotificationsPane.tsx` (the `accountSettingsV2` pane) — **both**, until the
+flag is retired. Settings are stored in `UserNotificationSettings`
 (the one table still in the main schema); a row means opted **out**, except for `optIn` types — see
 `NotificationProcessor.optIn` in `base.notifications.ts`.
 
@@ -98,7 +100,8 @@ WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = <rec
 
 Omit it and the toggle renders, saves, and does nothing.
 `src/server/notifications/__tests__/notification-settings-polarity.test.ts` is the guard, and it runs
-in `pnpm run test:lint-rules`. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
+in `pnpm run test:lint-rules`. Its file lists name `NotificationsCard.tsx` only — the
+`accountSettingsV2` pane is not yet covered. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
 there rather than shipping unmuteable.
 
 ## Caching

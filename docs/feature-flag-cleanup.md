@@ -23,8 +23,11 @@ Also check the `FliptFlag` enum in [src/server/flipt/client.ts](../src/server/fl
 | Flag         | Status                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------- |
 | `imageIndex` | ✅ Removed — zero consumers                                                            |
-| `apiKeys`    | ❌ Restored — destructured in [user/account.tsx:30](../src/pages/user/account.tsx#L30) |
-| `oauthApps`  | ❌ Restored — destructured in [user/account.tsx:30](../src/pages/user/account.tsx#L30) |
+| `apiKeys`    | ❌ Restored — gates `ApiKeysCard` in [AccountPanes.tsx:92](../src/components/Account/AccountPanes.tsx#L92) and [LegacyAccountPage.tsx:62](../src/components/Account/LegacyAccountPage.tsx#L62) |
+| `oauthApps`  | ❌ Restored — gates `OAuthAppsCard` + `ConnectedAppsCard` in [AccountPanes.tsx:93-94](../src/components/Account/AccountPanes.tsx#L93) and [LegacyAccountPage.tsx:63-64](../src/components/Account/LegacyAccountPage.tsx#L63) |
+
+⚠️ Every account-page flag has **two** consumers while `accountSettingsV2` is alive — the pane
+(`AccountPanes.tsx`) and the fallback (`LegacyAccountPage.tsx`). One grep hit is not the whole answer.
 
 `apiKeys: ['public']` is decorative-only (always-true gate); see Tier 4.
 

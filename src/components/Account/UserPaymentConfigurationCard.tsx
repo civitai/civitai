@@ -30,7 +30,6 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
-/** In a flat pane the provider is one row of the Payouts section, not a card of its own. */
 const ProviderHeading = ({ flat, children }: { flat?: boolean; children: React.ReactNode }) =>
   flat ? (
     <Text size="sm" fw={500}>

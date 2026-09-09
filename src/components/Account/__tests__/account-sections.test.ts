@@ -27,8 +27,7 @@ describe('account section registry', () => {
     expect(resolveAccountSection('not-a-section')).toBeUndefined();
   });
 
-  // On mobile the index renders the section MENU, so an overview reachable only at the index is
-  // an overview with no way in. Deleting the alias resolves that URL to a 404, not to the overview.
+  // Deleting the alias resolves `/user/account/overview` to a 404, not to the overview.
   it('resolves the overview alias, and it is not the index href', () => {
     expect(resolveAccountSection('overview')?.id).toBe('overview');
     expect(getOverviewHref()).toBe('/user/account/overview');

@@ -9,9 +9,6 @@ import { NextLink } from '~/components/NextLink/NextLink';
  * The settings panes deliberately carry no `Card`. Twenty-three bordered boxes stacked down a page
  * is what made the old one read as a pile; sections separated by a rule and a heading give the same
  * grouping without the chrome.
- *
- * A section draws exactly ONE rule — under its own heading. Rows are separated by space, not by
- * more rules: a pane of eight rows had nine of them and read as a table nobody asked for.
  */
 export function SettingsSection({
   title,
@@ -29,8 +26,6 @@ export function SettingsSection({
   return (
     <section className={clsx('flex flex-col', className)}>
       {(title || description || action) && (
-        // The action shares the TITLE's line only. Sharing the whole block narrowed the description
-        // to a third of the column and wrapped it to three lines on a phone.
         <div className="flex flex-col gap-0.5 pb-2">
           {(title || action) && (
             <div className="flex items-center justify-between gap-3">
@@ -59,9 +54,8 @@ export function SettingsSection({
           // repo already — see the `getStaticClassNames` note in globals.css.
           '[&_.mantine-Switch-body]:w-full [&_.mantine-Switch-body]:flex-row-reverse [&_.mantine-Switch-body]:items-center [&_.mantine-Switch-body]:justify-between [&_.mantine-Switch-body]:gap-6',
           '[&_.mantine-Switch-labelWrapper]:flex-1',
-          // Mantine's label padding is the gap to the track it normally sits beside. Reversed, it
-          // becomes an indent that pushes a switch row's label off the column every other row
-          // shares.
+          // Mantine's label padding is the gap to the track. Reversed, it becomes an indent off
+          // the row column.
           '[&_.mantine-Switch-description]:ps-0 [&_.mantine-Switch-label]:ps-0'
         )}
       >
@@ -74,8 +68,6 @@ export function SettingsSection({
 /**
  * `control` sits right of the label on a wide row and drops beneath it on a narrow one. Anything
  * that needs the full width regardless — a tag picker, a list — should use `block` instead.
- *
- * A row carries no vertical padding of its own; the section's `gap` spaces them.
  */
 export function SettingRow({
   label,
@@ -116,8 +108,7 @@ export function SettingRow({
     <div
       className={clsx(
         'flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6',
-        // A switch is narrow enough to sit beside its label at any width, and stacking it put the
-        // track under the description on the left, where it read as belonging to the next row.
+        // Stacking put the track under the description, where it read as the next row's.
         'has-[.mantine-Switch-root]:flex-row has-[.mantine-Switch-root]:items-center has-[.mantine-Switch-root]:justify-between has-[.mantine-Switch-root]:gap-4'
       )}
     >
@@ -134,14 +125,14 @@ export function SettingRow({
         )}
       </div>
       {control && (
-        // `text-right` handles inline controls (a button); `[&>*]:ml-auto` handles the block ones
-        // that shrank to their content — a switch, or the fixed-width Skeleton wrapping one.
+        // `[&>*]:ml-auto` for block controls that shrink to content — a switch, or the
+        // fixed-width Skeleton around one.
         <div
           className={clsx(
             'shrink-0 text-right sm:min-w-[180px] [&>*]:ml-auto',
-            // The section's Switch overrides exist for switches that ARE the row (Preferences).
-            // A switch handed to `control` has no label of its own, so those stretch it past the
-            // section's right edge — undo them here and let it shrink to the track.
+            // The section's Switch overrides target switches that ARE the row. A switch in
+            // `control` has no label, so they stretch it past the section's edge — undo them and
+            // let it shrink to the track.
             '[&_.mantine-Switch-body]:!w-auto [&_.mantine-Switch-body]:!flex-row [&_.mantine-Switch-body]:!gap-0 [&_.mantine-Switch-root]:!w-fit'
           )}
         >
@@ -165,9 +156,6 @@ export function SettingsStack({ children }: { children: React.ReactNode }) {
  * Cards that predate the flat panes take a `flat` prop rather than being forked: the legacy page
  * still mounts them inside `Card` chrome while the flag is alive, and two copies of a settings form
  * is exactly how one of them silently loses a field.
- *
- * The body is one block, not a run of `SettingRow`s — these cards already lay their own contents out
- * and space them with a `Stack`.
  */
 export function CardOrSection({
   flat,
@@ -203,7 +191,6 @@ export function CardOrSection({
   );
 }
 
-/** For a pane whose settings something else in the UI can override for a session. */
 export function SettingsNote({
   icon,
   children,
@@ -221,10 +208,7 @@ export function SettingsNote({
   );
 }
 
-/**
- * A row that sends you somewhere else rather than changing anything here. Kept as a bordered box on
- * purpose: the flat sections carry settings, so a box reads as "this is a door, not a control".
- */
+/** A row that sends you somewhere else rather than changing anything here. */
 export function PointerCard({
   icon,
   title,
@@ -241,8 +225,6 @@ export function PointerCard({
   tone?: 'default' | 'danger';
 }) {
   const danger = tone === 'danger';
-  // The action drops below on a phone: squeezed between the icon and a button, the text column was
-  // down to two or three words a line.
   const body = (
     <>
       <div className="flex items-center gap-3.5">

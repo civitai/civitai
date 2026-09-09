@@ -216,8 +216,8 @@ export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
                         </LegacyActionIcon>
                       </Group>
 
-                      {/* Created · last used · spend limit. Wraps: the limit's meter and its
-                          nowrap "n / m per 24h" cannot share a phone-width line with two dates. */}
+                      {/* Must wrap: the spend-limit meter and its nowrap "n / m per 24h" can't
+                          share a phone-width line with two dates. */}
                       <Group gap="md" align="center">
                         <Group gap={4} wrap="nowrap">
                           <IconCalendar size={12} color="var(--mantine-color-dimmed)" />
