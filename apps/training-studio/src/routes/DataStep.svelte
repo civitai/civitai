@@ -5,6 +5,7 @@
   import {
     IconSparkles,
     IconArchive,
+    IconRepeat,
     IconUpload,
     IconPhoto,
     IconTag,
@@ -45,6 +46,7 @@
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
@@ -363,6 +365,7 @@
   }
 
   let genPickerOpen = $state(false);
+  let reuseOpen = $state(false);
   function addFromGenerations(items: GenerationItem[]) {
     addFromBlobs(
       items.map((i) => ({
@@ -484,6 +487,9 @@
     </Button>
     <Button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <IconArchive size={15} stroke={2} class="mr-1.5 inline" />{importing ? 'Importing…' : 'Import .zip'}
+    </Button>
+    <Button variant="outline" onclick={() => (reuseOpen = true)}>
+      <IconRepeat size={15} stroke={2} class="mr-1.5 inline" />Reuse a dataset
     </Button>
   </div>
 
@@ -822,3 +828,4 @@
 />
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
+<ReuseDatasetModal bind:open={reuseOpen} onReuse={addFromBlobs} />

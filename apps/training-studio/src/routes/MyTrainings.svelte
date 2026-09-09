@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { IconAlertTriangle, IconPlus } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { remixFromRun } from '$lib/reuse';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
@@ -96,13 +98,31 @@
             <Button variant="outline" size="sm">Generate</Button>
           {/if}
           {#if r.state === 'ready'}
-            <Button variant="outline" size="sm">Train further</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => r.workflowId && goto(`/${r.workflowId}#train-further`)}
+            >
+              Train further
+            </Button>
           {/if}
           {#if r.state !== 'failed'}
-            <Button variant="outline" size="sm">Remix</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => r.workflowId && remixFromRun(r.workflowId)}
+            >
+              Remix
+            </Button>
           {/if}
           {#if r.state === 'failed'}
-            <Button variant="outline" size="sm">Retry</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => r.workflowId && remixFromRun(r.workflowId)}
+            >
+              Retry
+            </Button>
           {/if}
         </div>
       </div>

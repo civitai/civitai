@@ -258,3 +258,13 @@ export async function getTrainingWorkflow(
   }
   return workflowToDetail(data);
 }
+
+/** A run's dataset (blob airs + captions) — for Remix / "reuse a dataset". Empty for a run whose dataset
+ *  isn't blob-backed (older or Flux.2). The token scopes to the caller, so this only reads their own runs. */
+export async function getRunDataset(
+  token: string,
+  workflowId: string
+): Promise<{ air: string; caption: string }[]> {
+  const detail = await getTrainingWorkflow(token, workflowId);
+  return detail?.dataset ?? [];
+}

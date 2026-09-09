@@ -27,6 +27,7 @@
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import { overallProgressPct, type TrainingDetailEpoch } from '$lib/data/trainingRows';
+  import { handoffReuse, continueRun } from '$lib/reuse';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -214,14 +215,33 @@
   // uploaded + scanned — no re-upload), handed to the new flow via sessionStorage; the flow pre-fills the
   // Data step once a model is picked. Captions come along; the user re-picks the model.
   function reuseDataset() {
-    const payload = d.dataset.map((item, i) => ({
-      air: item.air,
-      caption: item.caption,
-      name: `image ${i + 1}`,
-      previewUrl: datasetSrc(item.air),
-    }));
-    sessionStorage.setItem('ts:reuse-dataset', JSON.stringify(payload));
-    void goto('/new');
+    handoffReuse(
+      d.dataset.map((item, i) => ({
+        air: item.air,
+        caption: item.caption,
+        name: `image ${i + 1}`,
+        previewUrl: datasetSrc(item.air),
+      }))
+    );
+  }
+
+  // Keep training: continue from the recommended checkpoint with more epochs (same dataset + settings),
+  // landing on the new run. `publishTarget` is the latest checkpoint that has downloadable weights.
+  let furtherEpochs = $state(5);
+  let continuing = $state(false);
+  let continueError = $state('');
+  async function trainFurther() {
+    if (!publishTarget || continuing) return;
+    continuing = true;
+    continueError = '';
+    try {
+      const id = await continueRun(d.workflowId, publishTarget.number, Number(furtherEpochs) || 5);
+      await goto(`/${id}`);
+    } catch (err) {
+      continueError = err instanceof Error ? err.message : 'Could not start training';
+    } finally {
+      continuing = false;
+    }
   }
 
   function openPublish() {
@@ -563,6 +583,40 @@
           </div>
         </div>
       {/if}
+    {/if}
+
+    {#if publishTarget}
+      <div id="train-further" class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="min-w-0">
+            <h3 class="m-0 flex items-center gap-1.5 text-base font-semibold text-white">
+              <IconRepeat size={16} stroke={2} class="text-dark-2" />Train further
+            </h3>
+            <p class="mt-1 text-[13px] text-dark-2">
+              Don't love the progression yet? Continue from the
+              <IconStarFilled size={11} class="inline text-buzz" /> recommended checkpoint (epoch {publishTarget.number})
+              with more epochs — same dataset and settings, starts a new run.
+            </p>
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <label for="further-epochs" class="font-mono text-[11px] text-dark-2">+ epochs</label>
+            <Input
+              id="further-epochs"
+              type="number"
+              min={1}
+              max={20}
+              bind:value={furtherEpochs}
+              class="w-20"
+            />
+            <Button onclick={trainFurther} disabled={continuing}>
+              {continuing ? 'Starting…' : 'Train further'}
+            </Button>
+          </div>
+        </div>
+        {#if continueError}
+          <p class="mt-2 font-mono text-[11px] text-red-400">{continueError}</p>
+        {/if}
+      </div>
     {/if}
 
     <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-7 px-4 py-3">

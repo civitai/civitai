@@ -46,6 +46,8 @@ export interface TrainingRunInput {
   trigger: string;
   items: TrainingItem[];
   prompts: string[];
+  /** A previous checkpoint's blob-reference AIR to continue training from ("keep training"); omit for fresh. */
+  continueFrom?: string;
   /** Which Buzz accounts to charge, in priority order (the user's choice on Review). Validated + defaulted
    *  server-side — never trusted from the client body. */
   currencies?: string[];
@@ -114,6 +116,8 @@ function buildStep(run: TrainingRunInput): WorkflowStepTemplate {
           networkAlpha: run.networkAlpha,
           resolution: run.resolution,
           triggerWord: run.trigger,
+          // "Keep training": continue from a previous checkpoint's weights instead of the base model.
+          ...(run.continueFrom ? { continueFrom: run.continueFrom } : {}),
           ...(TRACE_MODE !== 'none' ? { trace: TRACE_MODE } : {}),
           trainingData,
           samples: { prompts: run.prompts },
@@ -177,6 +181,106 @@ export async function submitTraining(
     query: { wait: 0 },
   });
   if (!data?.id) throw new Error(`training submit failed: ${describeSubmitError(error)}`);
+  return data.id;
+}
+
+type EpochOutput = {
+  epochNumber?: number;
+  model?: { id?: string; url?: string | null; available?: boolean };
+};
+
+// `continueFrom` is a blob-reference AIR to the epoch's trained LoRA (the SDK: "Accepts an AIR urn
+// urn:air:other:other:orchestrator:blob@{blobKey}"), built from the epoch model's blob key (`model.id`).
+const BLOB_AIR_PREFIX = 'urn:air:other:other:orchestrator:blob@';
+
+/** "Keep training": submit a NEW run that continues from an existing checkpoint's weights — same dataset and
+ *  hyperparameters as the source run, plus `continueFrom` and a fresh epoch budget. Reconstructs the submit
+ *  from the source workflow's own training step (ai-toolkit only), so no client re-upload. Returns the new
+ *  workflow id. */
+export async function continueTraining(
+  token: string,
+  userId: number,
+  opts: { workflowId: string; fromEpoch: number; addEpochs: number; currencies?: string[] }
+): Promise<string> {
+  const client = orchestratorClient(token);
+  const { data: wf, error: getError } = await getWorkflow({
+    client,
+    path: { workflowId: opts.workflowId },
+  });
+  if (!wf)
+    throw new Error(`keep training: source run not found (${describeSubmitError(getError)})`);
+
+  const step =
+    wf.steps?.find((s) => (s as { $type?: string }).$type === 'training') ?? wf.steps?.[0];
+  const input = (step as { input?: Record<string, unknown> } | undefined)?.input;
+  const output = (step as { output?: { epochs?: EpochOutput[] } } | undefined)?.output;
+  if (!input || input.engine !== 'ai-toolkit')
+    throw new Error('keep training: only ai-toolkit runs can continue from a checkpoint');
+
+  const epoch = (output?.epochs ?? []).find(
+    (e) => e.epochNumber === opts.fromEpoch && e.model?.available && typeof e.model.id === 'string'
+  );
+  const modelKey = epoch?.model?.id;
+  if (!modelKey) throw new Error('keep training: that checkpoint has no downloadable weights yet');
+  const continueFrom = `${BLOB_AIR_PREFIX}${modelKey}`;
+
+  const origEpochs = Number(input.epochs) || 10;
+  const origSteps = Number(input.steps) || 0;
+  // Keep the per-epoch step density of the source run for the added epochs.
+  const steps = origSteps
+    ? Math.max(1, Math.round((origSteps / origEpochs) * opts.addEpochs))
+    : undefined;
+
+  const srcMeta = (wf.metadata ?? {}) as TrainingStudioMeta;
+  const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
+  const metadata: TrainingStudioMeta = { ...srcMeta, name: name ?? srcMeta.name, v: META_VERSION };
+  const slug = name ? nameSlug(name) : '';
+  const callbacks = workflowSignalCallbacks(userId);
+
+  // Only the fields we submit (mirrors buildStep) — never the server-computed read-only ones the orch echoes
+  // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
+  const continuedInput = {
+    engine: 'ai-toolkit',
+    ecosystem: input.ecosystem,
+    ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
+    ...(input.version ? { version: input.version } : {}),
+    ...(steps ? { steps } : {}),
+    epochs: opts.addEpochs,
+    batchSize: input.batchSize,
+    lr: input.lr,
+    textEncoderLr: input.textEncoderLr,
+    trainTextEncoder: input.trainTextEncoder,
+    lrScheduler: input.lrScheduler,
+    optimizerType: input.optimizerType,
+    networkDim: input.networkDim,
+    networkAlpha: input.networkAlpha,
+    resolution: input.resolution,
+    triggerWord: input.triggerWord,
+    continueFrom,
+    ...(TRACE_MODE !== 'none' ? { trace: TRACE_MODE } : {}),
+    trainingData: input.trainingData,
+    samples: input.samples,
+  };
+  const continuedStep = {
+    $type: 'training',
+    priority: 'normal',
+    input: continuedInput,
+  } as unknown as WorkflowStepTemplate;
+
+  const { data, error } = await submitWorkflow({
+    client,
+    body: {
+      tags: slug
+        ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
+        : [CIVITAI_TAG, TRAINING_TAG],
+      metadata: metadata as Record<string, unknown>,
+      steps: [continuedStep],
+      currencies: resolveCurrencies(opts.currencies),
+      ...(callbacks ? { callbacks } : {}),
+    },
+    query: { wait: 0 },
+  });
+  if (!data?.id) throw new Error(`keep training: submit failed (${describeSubmitError(error)})`);
   return data.id;
 }
 
