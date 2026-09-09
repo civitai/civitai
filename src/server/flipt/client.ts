@@ -115,7 +115,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // the entity is the content OWNER and no SessionUser for the owner is on hand there. Every
   // identity/tier/cohort segment in flipt-state is a STRING_COMPARISON constraint that reads the
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
-  // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
+  // off". Nothing checks that automatically — the source gate that did was removed 2026-09-09.
   TEXT_BLURBS = 'text-blurbs',
 
   // 🔴 BOOLEAN ONLY — neither a segment NOR a percentage rollout works on this one.
@@ -231,7 +231,8 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // It returns the flag's base `enabled` value instead, which is indistinguishable
 // from an honest "this user is not in the segment" — no error, no log line. Pass
 // `buildFliptContext(user)`, or at minimum the properties you actually know.
-// Enforced by `src/server/flipt/__tests__/flipt-eval-context.test.ts`.
+// The mechanism is pinned by `src/server/flipt/__tests__/flipt-eval-context.test.ts`; call sites
+// are not scanned for it any more (source gate removed 2026-09-09).
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;
