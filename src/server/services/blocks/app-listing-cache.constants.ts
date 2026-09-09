@@ -39,14 +39,35 @@
  *
  * A bust is needed when a write moves something the CACHED STATEMENT itself reads:
  *   · catalog MEMBERSHIP — `al.status` (approved-only), `al.kind`, `al.revision_of_id`,
- *     and `ab.current_version_deployed_at` (the onsite deploy gate);
+ *     and, through the deploy gate, `al.app_block_id` (the join key onto `app_blocks`)
+ *     plus `ab.current_version_deployed_at`;
  *   · a FILTER axis — `al.category`, `al.content_rating` (the maturity gate);
  *   · a `sort_key` input — `al.name`, `al.created_at`, or the `app_listing_metrics`
  *     rollup.
  *
+ * `al.app_block_id` is on that list because the statement reads it, not because anything
+ * moves it today: the only write of the column onto an EXISTING row is `approveRequest`'s
+ * link step, guarded `where: { status: 'draft' }`, and it busts anyway; every other write
+ * of it is a `create` that mints at `status:'draft'`. It is listed so the next writer of
+ * the column is checked against the rule rather than against a list it is missing from.
+ *
+ * 🔴 TWO CACHED AXES DO NOT LIVE ON `app_listings`, AND BOTH HAVE LIVE NON-BUSTING
+ * WRITERS. The `app_listing_metrics` rollup feeds `sort='top-rated'` (thumbs) and
+ * `sort='popular'` (`install_count`), and it is written by
+ * `app-listing-review.service.ts` on every review vote (which busts only the
+ * recommend-MEAN tag) and by `~/server/metrics/appListing.metrics.sql.ts` on the metric
+ * job (which busts nothing). That is DELIBERATE and is the right trade — busting the
+ * catalog per vote or per metric pass would defeat the cache, while the cost is bounded
+ * at one `CacheTTL.sm` window of SORT lag, with no row appearing, disappearing or
+ * changing maturity. It is called out because the "moves something the statement reads
+ * ⇒ bust" rule above is, by design, not applied to them, and a reader applying it to a
+ * metrics writer would reach the wrong conclusion.
+ *
  * The asserted, mechanical form of that rule — every `AppListing` writer either busts
  * or is on an `EXEMPT` list with a reason — lives in
- * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
+ * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`. Note the
+ * scope: it enumerates writers through the `appListing` Prisma delegate, so neither
+ * off-table writer above is inside any guard it provides.
  */
 export const APP_LISTING_CATALOG_TAG = 'app-listing:catalog';
 

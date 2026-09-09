@@ -375,7 +375,7 @@ describe('/apps catalog cache — the key separates viewers', () => {
     const prefixes: string[] = [];
     for (const shape of shapes) prefixes.push(await prefixFor(shape));
     // The prefix must carry MORE than `<key>:<version>` — i.e. the axes are actually in
-    // there, rather than the five shapes happening to differ for some other reason.
+    // there, rather than the six shapes happening to differ for some other reason.
     for (const p of prefixes) {
       expect(
         p.split(':').length,

@@ -833,9 +833,12 @@ function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
  * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
  * statement reads
  * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
- * `ab.current_version_deployed_at` and the `sort_key` inputs (`al.name`,
- * `al.created_at`, the metric rollup) — and nothing else. Every other column on the
- * card is hydrated live below the cache and can never be served stale.
+ * `al.app_block_id` + `ab.current_version_deployed_at` (the deploy gate and its join
+ * key) and the `sort_key` inputs (`al.name`, `al.created_at`, the metric rollup) — and
+ * nothing else. Every other column on the card is hydrated live below the cache and can
+ * never be served stale. ⚠️ The metric rollup is on `app_listing_metrics`, not on this
+ * table, and its two writers deliberately do NOT bust; `APP_LISTING_CATALOG_TAG`'s
+ * header in `app-listing-cache.constants.ts` states that exception in full.
  *
  * Some busts ARE kept on paths that are inert today, as cheap defence-in-depth against
  * a future edit promoting the row into the catalog: `updateListing`'s `removed` and

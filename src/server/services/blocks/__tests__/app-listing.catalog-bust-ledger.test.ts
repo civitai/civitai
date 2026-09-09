@@ -71,23 +71,47 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
  * named `appListing`. A raw `$executeRaw` UPDATE against `app_listings`, or a write
  * behind a dynamically-named delegate, is invisible to it. No claim is made about those.
  *
+ * 🔴 AND TWO CACHED AXES DO NOT LIVE ON THIS TABLE AT ALL, so the scan can enumerate NO
+ * writers for them — a stronger blind spot than the one above, because the writers are
+ * ordinary, present, and busting nothing:
+ *   · the `app_listing_metrics` ROLLUP that feeds `sort='top-rated'` and `sort='popular'`.
+ *     `app-listing-review.service.ts::applyRecommendMetricDelta` writes
+ *     `thumbsUp/DownCount` on every review vote and busts only the recommend-MEAN tag;
+ *     `~/server/metrics/appListing.metrics.sql.ts` raw-upserts `install_count` — the
+ *     whole `sort='popular'` key and the `top-rated` tiebreak — on the metric job, and
+ *     busts nothing. (`open_count`, upserted alongside it, is NOT a cached axis: no
+ *     `sort_key` reads it.)
+ *   · nothing else — `ab.current_version_deployed_at` lives on `app_blocks`, but its one
+ *     writer IS covered, via `build-callback.ts::watchApplyJobAndRecord` in `LEDGER`.
+ * Both metric behaviours are DELIBERATE and are the right trade: busting the catalog on
+ * every review vote or metric-job pass would defeat the cache outright, and the cost is
+ * bounded at `CacheTTL.sm` of SORT lag — no row appears, disappears, or changes maturity.
+ * That is a decision, not a gap; but it means the "reads exactly … and NOTHING else" rule
+ * stated below is violated BY DESIGN on those two, and a reader applying the rule to a
+ * metrics writer would reach the wrong conclusion.
+ *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHEN THIS GOES RED
  * ─────────────────────────────────────────────────────────────────────────────
  * · You added an `AppListing` mutation → either call `bustAppListingCatalogCache()`
  *   from it and add its `<file>::<fn>` to `LEDGER`, or add it to `EXEMPT` with a
- *   one-line reason saying which cached axis it provably does NOT move.
+ *   one-line reason clearing one of the two bars stated there.
  * · You removed a bust → prove the mutation cannot change catalog membership or a
  *   CACHED axis (`al.status`, `al.kind`, `al.category`, `al.content_rating`,
- *   `al.revision_of_id`, `ab.current_version_deployed_at`, or the `sort_key` inputs
- *   `al.name` / `al.created_at` / the metric rollup) — remembering that every
- *   PROJECTION field on the card is hydrated live and can never be stale — then move
- *   the row from `LEDGER` to `EXEMPT` in the same commit.
+ *   `al.revision_of_id`, `al.app_block_id`, `ab.current_version_deployed_at`, or the
+ *   `sort_key` inputs `al.name` / `al.created_at` / the metric rollup) — remembering
+ *   that every PROJECTION field on the card is hydrated live and can never be stale —
+ *   then move the row from `LEDGER` to `EXEMPT` in the same commit.
+ * · You added a caller to an `EXEMPT` bar-2 helper → see `CALLER_BUSTS`. That caller
+ *   need not write the table itself, which is exactly why prose could not hold it.
  * · You RENAMED the buster → the scan finds zero and the positive control below fires
  *   first, naming the instrument rather than the code.
  * · A site reports `<unattributed>` → the parser could not name its enclosing
  *   function. That is a defect in THIS FILE, not in the code under scan; fix
  *   `classifyBrace` rather than working around it.
+ * · A file fails the BRACE-BALANCE check → `stripCommentsAndStrings` left an unmatched
+ *   `{` or `}` behind (a regex literal is the known shape), so `buildFrames` would
+ *   mis-nest and attribute a write to the wrong real function. See `buildFrames`.
  */
 
 const ROOT = process.cwd();
@@ -113,9 +137,16 @@ const FILES = ROOTS.flatMap((r) => walk(join(ROOT, r)))
   .filter((f) => !/(^|\/)(__tests__|__mocks__|tests?)\/|\.(test|spec)\.tsx?$/.test(f));
 
 /**
- * A CALL, not a mention. `stripCommentsAndStrings` removes the prose (this codebase
- * discusses the buster at length in comments), and the `\(` requires an invocation, so
- * the `import { … }` line and the `export async function` definition are both excluded.
+ * A CALL, not a mention. Three separate exclusions, and they are NOT interchangeable —
+ * an earlier version of this comment credited `\(` with all of them, which is wrong in a
+ * way that invites deleting the one that matters:
+ *   · PROSE — removed by `stripCommentsAndStrings` (this codebase discusses the buster
+ *     at length in comments);
+ *   · the `import { … }` line — excluded by `\(`, since a specifier is not an invocation;
+ *   · the `export async function bustAppListingCatalogCache(…)` DECLARATION — NOT
+ *     excluded by `\(`, because a declaration's own parameter list matches `name\s*\(`
+ *     exactly like a call. The `\bfunction\s+$` lookback in `scan` is what drops it, as
+ *     that line's own comment says.
  */
 const CALL_RE = /\bbustAppListingCatalogCache\s*\(/g;
 
@@ -306,11 +337,47 @@ const classifyBrace = (code: string, braceIdx: number): Omit<Frame, 'start' | 'e
   return null;
 };
 
-const buildFrames = (code: string): Frame[] => {
+type Walk = {
+  frames: Frame[];
+  /** `#{` − `#}` over the whole file. Non-zero ⇒ the frames below are mis-nested. */
+  braceDelta: number;
+  /** The lowest depth the walk reached. Negative ⇒ a `}` arrived with no open frame. */
+  minDepth: number;
+};
+
+/**
+ * 🔴 THE FRAMES ARE ONLY AS GOOD AS THE STRIPPER, AND THE STRIPPER DOES NOT KNOW ABOUT
+ * REGEX LITERALS. `stripCommentsAndStrings` removes comments, template literals and
+ * quoted strings; a `{` or `}` inside a REGEX literal — `/^\s*\{/` — survives. One stray
+ * brace re-nests every frame after it, and the failure is SILENT AND WORSE THAN A CRASH:
+ * a write is not reported as `<unattributed>`, it is attributed to a DIFFERENT REAL
+ * FUNCTION, which then reads as covered because that function is in `LEDGER`/`EXEMPT`.
+ *
+ * Measured on this branch: inserting `const _jsonHead = /^\s*\{/;` into `acceptTransfer`
+ * (`app-ownership-transfer.service.ts`, a file with no bust sites, so the `LEDGER`
+ * equality pin cannot see the collapse) and appending an un-busting `forgetfulDelist()`
+ * that flips an approved row to `removed` left the ledger at 8 passed / 0 failed — the
+ * new writer folded into `acceptTransfer`, which is `EXEMPT`. That is exactly the writer
+ * this file exists to catch. The same mutant with a BALANCED regex fails correctly, so
+ * the brace is the variable, not the mutation.
+ *
+ * 🔴 SO THE WALK REPORTS ITS OWN BALANCE AND A TEST BELOW FAILS ON IT. That is the fix
+ * rather than teaching the stripper about regex literals, because a balance check cannot
+ * be walked by a shape nobody thought of: any construct that leaks an unmatched brace —
+ * regex literal or otherwise — is caught, whereas a regex-literal stripper only closes
+ * the one shape we happen to have seen (and `/` is genuinely ambiguous with division, so
+ * it would be a heuristic in a module two OTHER guards also depend on). 39 of the 5,123
+ * files in the tree do not balance after stripping; none contributes a site today, and
+ * each becomes a red build the day it gains one.
+ */
+const buildFrames = (code: string): Walk => {
   const frames: Frame[] = [];
   const stack: Frame[] = [];
+  let depth = 0;
+  let minDepth = 0;
   for (let i = 0; i < code.length; i++) {
     if (code[i] === '{') {
+      depth++;
       const hit = classifyBrace(code, i);
       const frame: Frame = {
         start: i,
@@ -325,13 +392,32 @@ const buildFrames = (code: string): Frame[] => {
       stack.push(frame);
       frames.push(frame);
     } else if (code[i] === '}') {
+      depth--;
+      if (depth < minDepth) minDepth = depth;
       const frame = stack.pop();
       if (frame) frame.end = i;
     }
   }
-  return frames;
+  return { frames, braceDelta: depth, minDepth };
 };
 
+/** Does this file's stripped text brace-balance? `minDepth` catches a `+1/−1` that cancels. */
+const braceImbalance = (walk: Walk): string | null =>
+  walk.braceDelta === 0 && walk.minDepth === 0
+    ? null
+    : `delta ${walk.braceDelta > 0 ? '+' : ''}${walk.braceDelta}, min depth ${walk.minDepth}`;
+
+/**
+ * `<unattributed>` vs `<module scope>` — these are DIFFERENT verdicts and only one is a
+ * defect, which is why the "every site resolves" test below filters for the first alone.
+ *   · `<unattributed>` — the site IS inside braces and the parser could not name the
+ *     frame. A parse failure; fix `classifyBrace`.
+ *   · `<module scope>` — the site is inside no braces at all, i.e. a genuine top-level
+ *     write. That is a correct answer, not a parse failure, and it needs no guard of its
+ *     own: `<file>::<module scope>` can never be in `LEDGER` (a top-level statement
+ *     cannot call the buster meaningfully) and would have to be typed by hand into
+ *     `EXEMPT`, so the headline coverage guard reports it, loudly and by name.
+ */
 const attribute = (frames: Frame[], index: number): string => {
   const enclosing = frames
     .filter((f) => f.start < index && index < f.end)
@@ -343,14 +429,30 @@ const attribute = (frames: Frame[], index: number): string => {
   return cls ? `${cls.name}::${outer.name}` : outer.name;
 };
 
-/** `{ busts, writes }` — both as sorted, de-duplicated `<file>::<fn>` sets. */
-const scan = (files: string[]) => {
+/** A CALL to `name`, excluding its own declaration — the `CALL_RE` rule, generalised. */
+const callsOf = (code: string, name: string) =>
+  [...code.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))].filter(
+    (m) => !/\bfunction\s+$/.test(code.slice(Math.max(0, m.index - 40), m.index))
+  );
+
+/**
+ * `{ busts, writes, helperCallers, imbalanced }` — the first three as sorted,
+ * de-duplicated `<file>::<fn>` sets, `imbalanced` as `<file> (…)` strings.
+ */
+const scan = (files: string[], helpers: string[]) => {
   const busts: string[] = [];
   const writes: string[] = [];
+  const helperCallers: Record<string, string[]> = Object.fromEntries(helpers.map((h) => [h, []]));
+  const imbalanced: string[] = [];
   for (const file of files) {
     const source = readFileSync(join(ROOT, file), 'utf8');
-    // Cheap pre-filter: skip the ~99% of files that mention neither.
-    if (!source.includes('bustAppListingCatalogCache') && !source.includes('appListing.')) continue;
+    // Cheap pre-filter: skip the ~99% of files that mention none of them.
+    if (
+      !source.includes('bustAppListingCatalogCache') &&
+      !source.includes('appListing.') &&
+      !helpers.some((h) => source.includes(h))
+    )
+      continue;
     const code = stripCommentsAndStrings(source);
     CALL_RE.lastIndex = 0;
     WRITE_RE.lastIndex = 0;
@@ -359,14 +461,28 @@ const scan = (files: string[]) => {
       (m) => !/\bfunction\s+$/.test(code.slice(Math.max(0, m.index - 40), m.index))
     );
     const writeHits = [...code.matchAll(WRITE_RE)];
-    if (!bustHits.length && !writeHits.length) continue;
-    const frames = buildFrames(code);
+    const helperHits = helpers.map((h) => [h, callsOf(code, h)] as const);
+    if (!bustHits.length && !writeHits.length && !helperHits.some(([, hits]) => hits.length))
+      continue;
+    const walk = buildFrames(code);
+    // Recorded, NOT skipped: attribution still runs, so exactly one test goes red and it
+    // is the one that names the real cause. Skipping would empty this file's sets and
+    // fire the LEDGER-equality guard too, for the same single finding.
+    const imbalance = braceImbalance(walk);
+    if (imbalance) imbalanced.push(`${file} (${imbalance})`);
+    const { frames } = walk;
     for (const m of bustHits) busts.push(`${file}::${attribute(frames, m.index)}`);
     for (const m of writeHits) writes.push(`${file}::${attribute(frames, m.index)}`);
+    for (const [h, hits] of helperHits)
+      for (const m of hits) helperCallers[h].push(`${file}::${attribute(frames, m.index)}`);
   }
   return {
     busts: [...new Set(busts)].sort(),
     writes: [...new Set(writes)].sort(),
+    helperCallers: Object.fromEntries(
+      Object.entries(helperCallers).map(([h, c]) => [h, [...new Set(c)].sort()])
+    ) as Record<string, string[]>,
+    imbalanced: imbalanced.sort(),
   };
 };
 
@@ -410,13 +526,32 @@ const LEDGER = [
 /**
  * 🔴 `AppListing` WRITERS THAT DELIBERATELY DO NOT BUST, each with the reason.
  *
- * The bar for a row here is that the write provably cannot move a CACHED axis of the
- * `/apps` keyset statement. That statement reads exactly: `al.id`, `al.status`,
- * `al.revision_of_id`, `al.kind`, `al.category`, `al.content_rating` (via
- * `listingMatureFilter`), `ab.current_version_deployed_at`, and the `sort_key` inputs
- * (`al.name`, `al.created_at`, the `app_listing_metrics` rollup). It reads NOTHING
- * else — every other column on the card is hydrated live below the cache and can never
- * be served stale.
+ * 🔴 THERE ARE TWO BARS, NOT ONE, AND A ROW MUST SAY WHICH IT CLEARS. An earlier version
+ * of this preamble stated only the first ("the write provably cannot move a CACHED
+ * axis") while the list already granted the second — so one row was exempt on an
+ * argument the stated bar does not admit, and a reader checking the list against the
+ * rule would have found a contradiction rather than the real reasoning:
+ *
+ *   1. CANNOT-MOVE — the write provably cannot move a cached axis. Every row below
+ *      except one clears this bar, and it is the bar to prefer.
+ *   2. CALLER-BUSTS — the write DOES move a cached axis, but it is an in-tx helper and
+ *      every one of its callers busts after the commit. This is strictly weaker: it
+ *      rests on a claim about the CALLER SET, which prose cannot hold and a reader
+ *      cannot check. A row claiming it MUST also appear in `CALLER_BUSTS` below, which
+ *      pins the caller set mechanically. Today exactly one row does
+ *      (`reDeriveContentRatingForModLiveEdit`). `routeRepublishToReviewInTx` also cites
+ *      its caller, but it independently clears bar 1 — its `where` selects
+ *      `status:'removed'`, so the row it moves is not a catalog member either way — so
+ *      it needs no pin.
+ *
+ * The cached statement reads exactly: `al.id`, `al.status`, `al.revision_of_id`,
+ * `al.kind`, `al.category`, `al.content_rating` (via `listingMatureFilter`),
+ * `al.app_block_id` (the join key onto `app_blocks` for the deploy gate),
+ * `ab.current_version_deployed_at`, and the `sort_key` inputs (`al.name`,
+ * `al.created_at`, the `app_listing_metrics` rollup). It reads NOTHING else — every
+ * other column on the card is hydrated live below the cache and can never be served
+ * stale. ⚠️ Two of those axes are not on this table and this scan cannot see their
+ * writers; the header's blind-spot section says which, and why that is deliberate.
  *
  * Each reason below was re-derived against the code at this commit, not inherited.
  */
@@ -424,9 +559,11 @@ const EXEMPT: Record<string, string> = {
   'src/server/services/blocks/app-listing-assets.service.ts::backfillListingAssets':
     'writes only `coverId` / `iconId`, both hydrated projection fields — no cached axis.',
   'src/server/services/blocks/app-listing-assets.service.ts::reDeriveContentRatingForModLiveEdit':
-    'DOES raise `content_rating`, but it is an in-tx helper with exactly three callers ' +
-    '(`setListingIcon`, `setListingCover`, `addListingScreenshot`) and all three bust ' +
-    'post-commit — a bust inside the tx would also fire on a rollback.',
+    'BAR 2 (CALLER-BUSTS), the only row here that is: it DOES raise `content_rating`. ' +
+    'Every caller busts post-commit — a bust inside the tx would also fire on a ' +
+    'rollback — and the caller set is pinned in `CALLER_BUSTS`, not asserted here in ' +
+    'prose, because a fourth caller is invisible to the writer scan (it issues no ' +
+    '`appListing.` write of its own).',
   'src/server/services/blocks/app-ownership-transfer.service.ts::acceptTransfer':
     'writes only `userId`; the cached statement never reads ownership and no sort or ' +
     'filter keys on it (same argument `claimListing` makes for its own inert bust).',
@@ -455,8 +592,40 @@ const EXEMPT: Record<string, string> = {
     'path that promotes it, and it busts.',
 };
 
+/**
+ * 🔴 THE CALLER SETS THAT BAR 2 OF `EXEMPT` RESTS ON.
+ *
+ * A helper listed here moves a cached axis and is exempt only because every caller busts
+ * after the commit. Nothing in the writer scan can see that: the dangerous new caller is
+ * one that runs the helper inside its own `dbWrite.$transaction` and issues NO
+ * `appListing.` write of its own, so it never enters `WRITERS` and no guard in this file
+ * mentions it.
+ *
+ * Measured on this branch: a fourth caller of exactly that shape, with no bust, left the
+ * ledger at 8 passed / 0 failed and the function absent from `WRITERS` entirely. If it
+ * landed, a moderator raising an approved listing `g`→`r` would sit in the cached SFW
+ * page for the full `CacheTTL.sm` — verbatim the narrative in this file's own header.
+ *
+ * So the set is pinned: every caller must be a `LEDGER` bust site, AND the set must be
+ * exactly what is recorded. The second half is bookkeeping, not safety — a fourth
+ * BUSTING caller is fine and its red is "record the decision", the same contract the
+ * `LEDGER` set assertion states for a new bust.
+ */
+const CALLER_BUSTS: Record<string, string[]> = {
+  reDeriveContentRatingForModLiveEdit: [
+    'src/server/services/blocks/app-listing-assets.service.ts::addListingScreenshot',
+    'src/server/services/blocks/app-listing-assets.service.ts::setListingCover',
+    'src/server/services/blocks/app-listing-assets.service.ts::setListingIcon',
+  ].sort(),
+};
+
 describe('🔴 /apps catalog freshness ledger', () => {
-  const { busts: SITES, writes: WRITERS } = scan(FILES);
+  const {
+    busts: SITES,
+    writes: WRITERS,
+    helperCallers: HELPER_CALLERS,
+    imbalanced: IMBALANCED,
+  } = scan(FILES, Object.keys(CALLER_BUSTS));
 
   /**
    * 🔴 INSTRUMENT FIRST. Every assertion below is a set comparison, and a scan wired to
@@ -519,7 +688,7 @@ describe('🔴 /apps catalog freshness ledger', () => {
       '}',
     ].join('\n');
     const code = stripCommentsAndStrings(sample);
-    const frames = buildFrames(code);
+    const { frames } = buildFrames(code);
     const bustHits = [...code.matchAll(new RegExp(CALL_RE.source, 'g'))]
       .filter((m) => !/\bfunction\s+$/.test(code.slice(Math.max(0, m.index - 40), m.index)))
       .map((m) => attribute(frames, m.index));
@@ -563,6 +732,53 @@ describe('🔴 /apps catalog freshness ledger', () => {
   });
 
   /**
+   * 🔴 CONTROL ON THE BRACE-BALANCE CHECK ITSELF, in both directions and on the EXACT
+   * shape that walked the ledger. A balance check that cannot go red would be the same
+   * decorative guard this file was rewritten to remove.
+   */
+  it('POSITIVE + NEGATIVE CONTROL: the brace walk sees an unmatched brace in a regex', () => {
+    const withRegex = (re: string) =>
+      buildFrames(
+        stripCommentsAndStrings(
+          ['export function f() {', `  const head = ${re};`, '  return head;', '}'].join('\n')
+        )
+      );
+    // The stripper removes comments/strings/templates — NOT regex literals. A brace
+    // inside one survives, and it is the leak this check exists for.
+    const unbalanced = withRegex('/^\\s*\\{/');
+    expect(
+      braceImbalance(unbalanced),
+      'the walk no longer notices an unmatched `{` left behind by a regex literal — ' +
+        'either the stripper started removing regexes (then say so and delete this ' +
+        'control) or the balance accounting is broken.'
+    ).toBe('delta +1, min depth 0');
+    // Same construct, balanced: the check must NOT fire, or it is noise that gets muted.
+    expect(braceImbalance(withRegex('/^\\s*\\{\\}/'))).toBeNull();
+    // A stray CLOSER followed by a stray OPENER cancels in the delta, so `minDepth` is
+    // the half that catches it — a `+1/−1` pair mis-nests just as badly as a lone `+1`.
+    expect(
+      braceImbalance(buildFrames(stripCommentsAndStrings('const a = /\\}/;\nconst b = /\\{/;\n')))
+    ).toBe('delta 0, min depth -1');
+  });
+
+  /**
+   * 🔴 THE FRAMES ARE ONLY TRUSTWORTHY IF THE FILE BALANCES. An unmatched brace surviving
+   * the stripper re-nests everything after it, and a write then reports a DIFFERENT REAL
+   * FUNCTION — no `<unattributed>`, no error, and the coverage guard reads as satisfied
+   * because the name it landed on is in `LEDGER`/`EXEMPT`. See `buildFrames`.
+   */
+  it('🔴 every scanned file brace-balances after stripping', () => {
+    expect(
+      IMBALANCED,
+      'these files still hold an unmatched `{`/`}` after `stripCommentsAndStrings`, so ' +
+        'their frames mis-nest and every attribution in them is unsound. The known ' +
+        'shape is a brace inside a REGEX LITERAL, which the stripper does not remove. ' +
+        'Fix the stripper (or the file), NOT this list — skipping the file would hide ' +
+        'exactly the un-busted writer this ledger exists to catch.'
+    ).toEqual([]);
+  });
+
+  /**
    * 🔴 FAIL LOUDLY RATHER THAN NAME THE WRONG FUNCTION. `<unattributed>` means the
    * backward parse hit a shape it does not model; every verdict below would then be
    * computed against a name that does not exist in the file.
@@ -593,6 +809,38 @@ describe('🔴 /apps catalog freshness ledger', () => {
         'to `LEDGER`. If it provably cannot, add it to `EXEMPT` with the reason. Every ' +
         'other column on the card is hydrated live and can never be stale.'
     ).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF THE COVERAGE RULE — the one the writer scan is BLIND to. See
+   * `CALLER_BUSTS`: a `EXEMPT` bar-2 row is only sound while every caller busts, and a
+   * new caller that writes nothing itself never appears in `WRITERS`.
+   */
+  it('🔴 every CALLER of an exempt-by-caller helper busts, and the caller set is pinned', () => {
+    for (const [helper, recorded] of Object.entries(CALLER_BUSTS)) {
+      const callers = HELPER_CALLERS[helper] ?? [];
+      // Instrument first: a rename makes the scan find zero, which would pass both
+      // assertions below vacuously if `recorded` were also emptied.
+      expect(
+        callers.length,
+        `no call sites found for \`${helper}\`. Either it was renamed (rename it here ` +
+          'too) or it is gone (delete its `EXEMPT` row and this entry).'
+      ).toBeGreaterThan(0);
+      expect(
+        callers.filter((c) => !SITES.includes(c)),
+        `these functions call \`${helper}\`, which RAISES a cached axis inside the ` +
+          "caller's transaction, and do NOT call `bustAppListingCatalogCache()`. That " +
+          'is the whole basis of its `EXEMPT` row. Bust after the commit and add the ' +
+          'caller to `LEDGER` — a bust inside the tx would fire on a rollback too.'
+      ).toEqual([]);
+      expect(
+        callers,
+        `the caller set of \`${helper}\` changed. Every caller busts (asserted above), ` +
+          'so this is bookkeeping: record the new one here in the same commit, exactly ' +
+          'as `LEDGER` requires for a new bust site. Do not widen it without reading ' +
+          'why the row is exempt.'
+      ).toEqual(recorded);
+    }
   });
 
   it('the set of catalog-bust call sites is EXACTLY the ledger', () => {
@@ -631,6 +879,15 @@ describe('🔴 /apps catalog freshness ledger', () => {
         `EXEMPT["${key}"] needs a real reason, not a placeholder`
       ).toBeGreaterThan(40);
     }
+    // The two lists are one mechanism: a `CALLER_BUSTS` pin exists to hold up a bar-2
+    // `EXEMPT` row, so a pin with no row is dead weight nobody will maintain.
+    expect(
+      Object.keys(CALLER_BUSTS).filter(
+        (h) => !Object.keys(EXEMPT).some((k) => k.endsWith(`::${h}`))
+      ),
+      '`CALLER_BUSTS` pins a helper that is not on `EXEMPT`. Either it now busts (drop ' +
+        'the pin) or its row was deleted (drop the pin).'
+    ).toEqual([]);
   });
 
   /**
