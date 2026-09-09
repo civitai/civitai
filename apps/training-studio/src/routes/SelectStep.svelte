@@ -433,7 +433,7 @@
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {#if card.versions.length > 1}
+          {#if versionsFor(card).length > 1}
             <div class="mt-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
