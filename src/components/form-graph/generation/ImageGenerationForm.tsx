@@ -338,6 +338,23 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={imageHub}
+        name="resolution"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Resolution</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
+                label: o.label,
+                value: o.value,
+              }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={imageHub}
         name="aspectRatio"
         render={({ value, meta, onChange }) => {
           const priorityOptions =
@@ -355,23 +372,6 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             />
           );
         }}
-      />
-      <Controller
-        graph={imageHub}
-        name="resolution"
-        render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
-        )}
       />
       <Controller
         graph={imageHub}

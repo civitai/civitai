@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defineGraph } from 'form-graph';
+import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { SEED, aspectRatioDef, enumDef, imagesDef, workflowScoped } from '../defs';
 import {
@@ -70,10 +70,29 @@ const krea2AspectRatioDimensions: Record<string, { width: number; height: number
   '9:16': { width: 768, height: 1376 },
 };
 
-const krea2AspectRatioOptions = Object.keys(krea2AspectRatioDimensions).map((ratio) => {
-  const { width, height } = krea2AspectRatioDimensions[ratio]!;
-  return { label: ratio, value: ratio, width, height };
-});
+/** 2K doubles each ~1MP bucket to ~4MP. */
+const krea2ResolutionOptions = [
+  { label: '1K', value: '1K' },
+  { label: '2K', value: '2K' },
+] as const;
+
+const krea2AspectRatioOptionsFor = (scale: number) =>
+  Object.keys(krea2AspectRatioDimensions).map((ratio) => {
+    const { width, height } = krea2AspectRatioDimensions[ratio]!;
+    return { label: ratio, value: ratio, width: width * scale, height: height * scale };
+  });
+
+const krea2AspectRatioOptionsByResolution: Record<
+  string,
+  ReturnType<typeof krea2AspectRatioOptionsFor>
+> = {
+  '1K': krea2AspectRatioOptionsFor(1),
+  '2K': krea2AspectRatioOptionsFor(2),
+};
+
+/** Edit and community checkpoints are comfy-only, so they keep the tier too. */
+const krea2UsesComfyEngine = (modelId?: number, workflow?: string) =>
+  workflow === 'img2img:edit' || modelId == null || !krea2VersionIdToSize.has(modelId);
 
 const krea2PriorityRatios = ['16:9', '4:3', '1:1', '4:5', '9:16'];
 
@@ -207,6 +226,17 @@ const editRaw = defineGraph<Krea2VariantExt>()
 /** Tagged: v1's `krea2Variant` computed becomes the branch key. */
 const variants = branch('krea2Variant', variantOf, { fal, raw, turbo, editRaw, editTurbo });
 
+const RESOLUTION = enumDef({ options: krea2ResolutionOptions, default: '1K' });
+
+const AR = defFamily((resolution: string) =>
+  aspectRatioDef({
+    options:
+      krea2AspectRatioOptionsByResolution[resolution] ?? krea2AspectRatioOptionsByResolution['1K']!,
+    default: '1:1',
+    priorityOptions: krea2PriorityRatios,
+  })
+);
+
 export const krea2 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) => {
     const isEdit = _ext.workflow === 'img2img:edit';
@@ -218,14 +248,10 @@ export const krea2 = defineGraph<FamilyExt>({ scope: familyScope })
       defaultModelId: isEdit ? KREA2_EDIT_DEFAULT_VERSION_ID : krea2VersionIds.raw,
     });
   })
-  .field(
-    'aspectRatio',
-    aspectRatioDef({
-      options: krea2AspectRatioOptions,
-      default: '1:1',
-      priorityOptions: krea2PriorityRatios,
-    })
+  .field('resolution', ({ model, _ext }) =>
+    krea2UsesComfyEngine(modelIdOf(model) ?? undefined, _ext.workflow) ? RESOLUTION : null
   )
+  .field('aspectRatio', ({ resolution }) => AR(resolution ?? '1K'))
   .use(variants)
   // negativePrompt exists only in the comfy variants; its in-branch snippet
   // registration never fires

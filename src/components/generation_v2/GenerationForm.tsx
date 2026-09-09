@@ -1772,6 +1772,25 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Resolution */}
+            <Controller
+              graph={graph}
+              name="resolution"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Resolution</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
+
             {/* Aspect ratio */}
             <Controller
               graph={graph}
@@ -1855,25 +1874,6 @@ export function GenerationForm() {
                     ))}
                   </Group>
                 </Radio.Group>
-              )}
-            />
-
-            {/* Resolution (Wan/Sora video quality) */}
-            <Controller
-              graph={graph}
-              name="resolution"
-              render={({ value, meta, onChange }) => (
-                <div className="flex flex-col gap-1">
-                  <Input.Label>Resolution</Input.Label>
-                  <SegmentedControlWrapper
-                    value={value}
-                    onChange={(v) => onChange(v as typeof value)}
-                    data={meta.options.map((o: { label: string; value: string }) => ({
-                      label: o.label,
-                      value: o.value,
-                    }))}
-                  />
-                </div>
               )}
             />
 

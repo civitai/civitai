@@ -203,6 +203,9 @@ const KREA2_ONLY_SHAPES: AnyRecord[] = [
     styleReferences: [{ image: 'https://example.com/s.png', strength: 0.7 }, {}],
   },
   { prompt: 'a cat', model: 3072332 }, // comfy turbo
+  { prompt: 'a cat', model: 3072332, resolution: '2K' }, // comfy 2K tier
+  { prompt: 'a cat', model: 2983023, resolution: '2K' }, // FAL: no tier to accept
+  { prompt: 'a cat', model: 2983023, images: [IMG], resolution: '2K' }, // edit keeps the tier
   { prompt: 'a cat', model: 2983023, images: [IMG] }, // fal model where edit rows substitute
   // community checkpoints (unknown ids): comfy-only, so they fall to the RAW
   // full-step build — and to editRaw on edit (kaydaxter's custom-checkpoint fix)
