@@ -8,7 +8,7 @@
 --   HSET system:feed-shadow sampleRate 0.01 timeoutMs 2500 maxInflight 32   -- 1% trickle
 --   HSET system:feed-shadow sampleRate 0                                     -- off
 --
--- FEED_SHADOW_URL (env) is the candidate's base URL; unset leaves shadow mode inert.
+-- FEED_SERVICE_URL (env) is the feed service base URL; unset leaves shadow mode inert.
 
 CREATE TABLE IF NOT EXISTS default.feedShadow
 (

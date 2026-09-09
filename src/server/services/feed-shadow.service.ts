@@ -39,7 +39,9 @@ export type FeedShadowConfig = {
 
 const SHADOW_OFF: FeedShadowConfig = { sampleRate: 0, until: 0, timeoutMs: 2500, maxInflight: 32 };
 
-export function parseShadowConfig(raw: Record<string, string> | null | undefined): FeedShadowConfig {
+export function parseShadowConfig(
+  raw: Record<string, string> | null | undefined
+): FeedShadowConfig {
   const rate = Number(raw?.sampleRate ?? 0);
   const untilRaw = raw?.until?.trim();
   let until = Number.POSITIVE_INFINITY;
@@ -49,8 +51,14 @@ export function parseShadowConfig(raw: Record<string, string> | null | undefined
   return {
     sampleRate: Number.isFinite(rate) ? Math.min(Math.max(rate, 0), 1) : 0,
     until: Number.isNaN(until) ? 0 : until,
-    timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 10_000) : SHADOW_OFF.timeoutMs,
-    maxInflight: Number.isInteger(maxInflight) && maxInflight > 0 ? Math.min(maxInflight, 256) : SHADOW_OFF.maxInflight,
+    timeoutMs:
+      Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? Math.min(timeoutMs, 10_000)
+        : SHADOW_OFF.timeoutMs,
+    maxInflight:
+      Number.isInteger(maxInflight) && maxInflight > 0
+        ? Math.min(maxInflight, 256)
+        : SHADOW_OFF.maxInflight,
   };
 }
 
@@ -61,7 +69,13 @@ const SORTS: Record<string, string> = {
   Newest: 'newest',
   Oldest: 'oldest',
 };
-const PERIOD_DAYS: Record<string, number | undefined> = { Day: 1, Week: 7, Month: 30, Year: 365, AllTime: undefined };
+const PERIOD_DAYS: Record<string, number | undefined> = {
+  Day: 1,
+  Week: 7,
+  Month: 30,
+  Year: 365,
+  AllTime: undefined,
+};
 const LEVELS = [1, 2, 4, 8, 16, 32];
 // Filters the candidate has no dimension for; the app resolves the server-side lists
 // (followed, hidden, newCreators) inside the search functions, out of this hook's reach.
@@ -93,14 +107,35 @@ const UNSUPPORTED_FLAGS = [
 ] as const;
 
 const present = (v: unknown) =>
-  !(v === undefined || v === null || v === false || v === 0 || v === '' || (Array.isArray(v) && v.length === 0));
+  !(
+    v === undefined ||
+    v === null ||
+    v === false ||
+    v === 0 ||
+    v === '' ||
+    (Array.isArray(v) && v.length === 0)
+  );
 const ints = (v: unknown): number[] =>
   Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n) && n > 0) : [];
 
 export type FeedQueryMapping = { ok: true; query: string } | { ok: false; reason: string };
+export type FeedQueryMode = 'shadow' | 'primary';
+
+// A feed-served page continues with the feed's own keyset cursor. It carries no `|` on
+// purpose: getAllImagesIndex splits the client cursor on `|` and reads numbers, so a
+// feed cursor handed to the Meilisearch path parses as offset 0, a clean restart.
+const FEED_CURSOR_RE = /^feed:(\d{1,16}):(\d{1,12})$/;
+export const encodeFeedCursor = (next: string) => `feed:${next.replace('|', ':')}`;
+export function parseFeedCursor(cursor: unknown): string | undefined {
+  const m = typeof cursor === 'string' ? FEED_CURSOR_RE.exec(cursor) : null;
+  return m ? `${m[1]}|${m[2]}` : undefined;
+}
 
 /** The candidate's query for a search input, or the first reason it cannot be expressed. */
-export function mapSearchInputToFeedQuery(input: CapturableSearchInput): FeedQueryMapping {
+export function mapSearchInputToFeedQuery(
+  input: CapturableSearchInput,
+  mode: FeedQueryMode = 'shadow'
+): FeedQueryMapping {
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
@@ -108,7 +143,10 @@ export function mapSearchInputToFeedQuery(input: CapturableSearchInput): FeedQue
   let offset = 0;
   let before: number | undefined;
   const cursor = input.cursor;
-  if (typeof cursor === 'string' && cursor) {
+  const feedCursor = parseFeedCursor(cursor);
+  if (feedCursor) {
+    if (mode !== 'primary') return skip('cursor:feed');
+  } else if (typeof cursor === 'string' && cursor) {
     const m = /^(\d{1,12})\|(\d{1,15})$/.exec(cursor);
     if (!m) return skip('cursor:unparsed');
     offset = Number(m[1]);
@@ -130,13 +168,19 @@ export function mapSearchInputToFeedQuery(input: CapturableSearchInput): FeedQue
   if (tags.length > 100) return skip('tags>100');
   if (excludedTags.length > 100) return skip('excludedTags>100');
   const types = Array.isArray(input.types) ? input.types.map(String) : [];
-  if (types.some((t) => !['image', 'video', 'audio'].includes(t))) return skip(`types:${types.join(',')}`);
+  if (types.some((t) => !['image', 'video', 'audio'].includes(t)))
+    return skip(`types:${types.join(',')}`);
 
   let versionIds: number[] | undefined;
   if (present(input.modelVersionId)) versionIds = [Number(input.modelVersionId)];
   else if (present(input.modelId)) return skip('modelId');
   const userId = present(input.userId) ? Number(input.userId) : undefined;
-  const visibility = input.notPublished === true ? 'unpublished' : input.scheduled === true ? 'scheduled' : undefined;
+  const visibility =
+    input.notPublished === true
+      ? 'unpublished'
+      : input.scheduled === true
+      ? 'scheduled'
+      : undefined;
   if (visibility && !userId) return skip(`flag:${visibility}:no-user`);
 
   const params = new URLSearchParams();
@@ -149,7 +193,9 @@ export function mapSearchInputToFeedQuery(input: CapturableSearchInput): FeedQue
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
   if (types.length) params.set('types', types.join(','));
-  const baseModels = Array.isArray(input.baseModels) ? input.baseModels.map(String).filter(Boolean) : [];
+  const baseModels = Array.isArray(input.baseModels)
+    ? input.baseModels.map(String).filter(Boolean)
+    : [];
   if (baseModels.length) params.set('baseModels', baseModels.join(','));
   const tools = ints(input.tools);
   if (tools.length) params.set('tools', tools.join(','));
@@ -162,14 +208,17 @@ export function mapSearchInputToFeedQuery(input: CapturableSearchInput): FeedQue
   params.set('sort', sort);
   const days = PERIOD_DAYS[period];
   if (days) params.set('periodDays', String(days));
-  const limit = typeof input.limit === 'number' && input.limit > 0 ? Math.min(input.limit, 200) : 100;
+  const limit =
+    typeof input.limit === 'number' && input.limit > 0 ? Math.min(input.limit, 200) : 100;
   params.set('limit', String(limit));
-  if (offset) params.set('offset', String(offset));
+  if (feedCursor) params.set('cursor', feedCursor);
+  else if (offset) params.set('offset', String(offset));
   if (before) params.set('before', String(before));
   return { ok: true, query: params.toString() };
 }
 
 export type FeedAnswer = {
+  nextCursor?: string;
   status: number;
   ms: number;
   ids: number[];
@@ -237,7 +286,9 @@ export function buildFeedShadowRow(
   answer?: FeedAnswer
 ): FeedShadowRow {
   const base = buildFeedRequestRow(input, outcome, at, traceId);
-  const cmp = answer ? compareIds(base.resultIds, answer.ids) : { overlap: 0, overlapTop10: 0, firstMismatch: -1 };
+  const cmp = answer
+    ? compareIds(base.resultIds, answer.ids)
+    : { overlap: 0, overlapTop10: 0, firstMismatch: -1 };
   return {
     time: base.time,
     traceId,
@@ -372,7 +423,8 @@ export function createFeedShadow(deps: ShadowDeps): FeedShadow {
       try {
         answer = await deps.fetchFeed(mapping.query, config.timeoutMs);
       } catch (e) {
-        const timedOut = (e as Error)?.name === 'TimeoutError' || (e as Error)?.name === 'AbortError';
+        const timedOut =
+          (e as Error)?.name === 'TimeoutError' || (e as Error)?.name === 'AbortError';
         requestCounter.inc({ outcome: timedOut ? 'timeout' : 'error' });
         answer = { status: timedOut ? 504 : 0, ms: now() - at, ids: [] };
       } finally {
@@ -408,21 +460,35 @@ const disabledShadow: FeedShadow = {
   dropped: 0,
 };
 
-export async function fetchFeedAnswer(baseUrl: string, query: string, timeoutMs: number): Promise<FeedAnswer> {
+export async function fetchFeedAnswer(
+  baseUrl: string,
+  query: string,
+  timeoutMs: number,
+  source: FeedQueryMode = 'shadow'
+): Promise<FeedAnswer> {
   const started = Date.now();
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/feed?${query}`, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'x-request-source': 'shadow' },
+    headers: { 'x-request-source': source },
   });
   const ms = Date.now() - started;
   if (!res.ok) return { status: res.status, ms, ids: [] };
   const body = (await res.json()) as {
     items?: number[];
+    nextCursor?: string;
     route?: string;
     estimate?: number;
     candidates?: number;
   };
-  return { status: res.status, ms, ids: ints(body.items), route: body.route, estimate: body.estimate, candidates: body.candidates };
+  return {
+    status: res.status,
+    ms,
+    ids: ints(body.items),
+    nextCursor: typeof body.nextCursor === 'string' ? body.nextCursor : undefined,
+    route: body.route,
+    estimate: body.estimate,
+    candidates: body.candidates,
+  };
 }
 
 let instance: FeedShadow | undefined;
@@ -430,7 +496,7 @@ let instance: FeedShadow | undefined;
 export function feedShadow(): FeedShadow {
   if (instance) return instance;
   const client = clickhouse;
-  const baseUrl = env.FEED_SHADOW_URL;
+  const baseUrl = env.FEED_SERVICE_URL;
   if (!client || !baseUrl) return (instance = disabledShadow);
   return (instance = createFeedShadow({
     getConfig: createTtlMemo(async () => {

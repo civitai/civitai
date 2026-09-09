@@ -5,26 +5,35 @@ import {
   buildFeedShadowRow,
   compareIds,
   createFeedShadow,
+  encodeFeedCursor,
   mapSearchInputToFeedQuery,
+  parseFeedCursor,
   parseShadowConfig,
   type FeedShadowConfig,
   type FeedShadowRow,
 } from '../feed-shadow.service';
 
 const T0 = Date.UTC(2026, 8, 9, 12, 0, 0);
-const ALWAYS: FeedShadowConfig = { sampleRate: 1, until: Number.POSITIVE_INFINITY, timeoutMs: 1000, maxInflight: 2 };
+const ALWAYS: FeedShadowConfig = {
+  sampleRate: 1,
+  until: Number.POSITIVE_INFINITY,
+  timeoutMs: 1000,
+  maxInflight: 2,
+};
 const outcome = { source: 'getImagesFromSearch' as const, elapsedMs: 12, resultIds: [3, 1, 2] };
 const base = { sort: 'Most Reactions', period: 'Week', browsingLevel: 31, limit: 100 };
 
 describe('parseShadowConfig', () => {
   it('is off when missing and clamps the knobs', () => {
     expect(parseShadowConfig(null).sampleRate).toBe(0);
-    expect(parseShadowConfig({ sampleRate: '0.05', timeoutMs: '99999', maxInflight: '0' })).toEqual({
-      sampleRate: 0.05,
-      until: Number.POSITIVE_INFINITY,
-      timeoutMs: 10_000,
-      maxInflight: 32,
-    });
+    expect(parseShadowConfig({ sampleRate: '0.05', timeoutMs: '99999', maxInflight: '0' })).toEqual(
+      {
+        sampleRate: 0.05,
+        until: Number.POSITIVE_INFINITY,
+        timeoutMs: 10_000,
+        maxInflight: 32,
+      }
+    );
   });
 });
 
@@ -68,12 +77,31 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(reason({ notPublished: true })).toBe('flag:unpublished:no-user');
     expect(reason({ notPublished: true, userId: 3 })).toBe('ok');
   });
+
+  it('continues a feed-served page only when the feed is primary', () => {
+    const input = { ...base, cursor: 'feed:17808:68701222', offset: 300 };
+    expect(mapSearchInputToFeedQuery(input)).toEqual({ ok: false, reason: 'cursor:feed' });
+    const m = mapSearchInputToFeedQuery(input, 'primary');
+    const q = m.ok ? new URLSearchParams(m.query) : new URLSearchParams();
+    expect(q.get('cursor')).toBe('17808|68701222');
+    expect(q.has('offset')).toBe(false);
+    expect(encodeFeedCursor('1788000012345|42')).toBe('feed:1788000012345:42');
+    expect(parseFeedCursor('400|1788000012345')).toBeUndefined();
+  });
 });
 
 describe('compareIds', () => {
   it('measures overlap, top-10 overlap and the first order break', () => {
-    expect(compareIds([1, 2, 3, 4], [1, 2, 4, 9])).toEqual({ overlap: 0.75, overlapTop10: 0.75, firstMismatch: 2 });
-    expect(compareIds([1, 2], [1, 2, 3])).toEqual({ overlap: 1, overlapTop10: 1, firstMismatch: -1 });
+    expect(compareIds([1, 2, 3, 4], [1, 2, 4, 9])).toEqual({
+      overlap: 0.75,
+      overlapTop10: 0.75,
+      firstMismatch: 2,
+    });
+    expect(compareIds([1, 2], [1, 2, 3])).toEqual({
+      overlap: 1,
+      overlapTop10: 1,
+      firstMismatch: -1,
+    });
     expect(compareIds([], [])).toEqual({ overlap: 1, overlapTop10: 1, firstMismatch: -1 });
     expect(compareIds([], [5]).overlap).toBe(0);
   });
@@ -81,8 +109,14 @@ describe('compareIds', () => {
 
 describe('feedShadow row ↔ DDL parity', () => {
   it('writes exactly the columns the table declares', () => {
-    const sql = readFileSync(path.resolve(__dirname, '../../clickhouse/migrations/2026-09-09-feed-shadow.sql'), 'utf8');
-    const body = sql.slice(sql.indexOf('feedShadow\n(') + 'feedShadow\n('.length, sql.indexOf('\n)\nENGINE'));
+    const sql = readFileSync(
+      path.resolve(__dirname, '../../clickhouse/migrations/2026-09-09-feed-shadow.sql'),
+      'utf8'
+    );
+    const body = sql.slice(
+      sql.indexOf('feedShadow\n(') + 'feedShadow\n('.length,
+      sql.indexOf('\n)\nENGINE')
+    );
     const columns = body
       .split('\n')
       .map((l) => l.trim())
@@ -94,7 +128,17 @@ describe('feedShadow row ↔ DDL parity', () => {
 });
 
 describe('createFeedShadow', () => {
-  function harness(config: FeedShadowConfig, fetchFeed = async () => ({ status: 200, ms: 5, ids: [3, 1, 9], route: 'r', estimate: 1, candidates: 2 })) {
+  function harness(
+    config: FeedShadowConfig,
+    fetchFeed = async () => ({
+      status: 200,
+      ms: 5,
+      ids: [3, 1, 9],
+      route: 'r',
+      estimate: 1,
+      candidates: 2,
+    })
+  ) {
     const batches: FeedShadowRow[][] = [];
     const shadow = createFeedShadow({
       getConfig: async () => config,
