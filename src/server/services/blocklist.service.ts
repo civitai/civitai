@@ -692,6 +692,11 @@ const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
  * registrable domain owned by someone else.
  *
  * Exported for the guard tests — the branch that distinguishes those two is the whole rule.
+ *
+ * Twin of `isBlockedSuffix` in the auth hub's `apps/auth/src/lib/server/auth/blocklist.ts`. One rule
+ * in two separately-released apps: normalize BEFORE stripping the prefix (the regex is `^`-anchored,
+ * so a leading space would otherwise leave the `*.` in place and the entry would match nothing), and
+ * keep the case table in `__tests__/email-domain-guard.test.ts` identical to the hub's.
  */
 export function matchesBlockedSuffix(entries: string[], domain: string) {
   if (!domain) return false;

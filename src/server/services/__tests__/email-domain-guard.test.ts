@@ -17,7 +17,7 @@ import { TRPCError } from '@trpc/server';
 const resolveMx = vi.hoisted(() => vi.fn());
 vi.mock('dns/promises', () => ({ default: { resolveMx }, resolveMx }));
 
-import { assertEmailAllowed } from '../blocklist.service';
+import { assertEmailAllowed, matchesBlockedSuffix } from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -228,6 +228,10 @@ describe('assertEmailAllowed', () => {
    *
    * If you are here to delete this list and "just match subdomains everywhere", that is the change
    * these tests exist to stop.
+   *
+   * This case table is the twin of the one in `apps/auth/src/lib/server/auth/__tests__/blocklist.test.ts`,
+   * beside the hub's `isBlockedSuffix`. Keep the two identical — one rule, two separately-released
+   * apps, and they have already disagreed once on a cell only one of them covered.
    */
   describe('EmailDomainSuffix', () => {
     it('blocks a subdomain of an opted-in entry', async () => {
@@ -275,6 +279,18 @@ describe('assertEmailAllowed', () => {
       expect(await reject('someone@exact-only.test')).toBeInstanceOf(TRPCError);
     });
 
+    it('matches a wildcard entry that ALSO carries leading whitespace', async () => {
+      // 🔴 The PRODUCT of the two cases below, and the cell where this rule and the hub's
+      // `isBlockedSuffix` (apps/auth/src/lib/server/auth/blocklist.ts) actually disagreed: the hub
+      // stripped the `^`-anchored prefix from the RAW string, so the `*.` survived and the entry
+      // matched nothing. Both sides now normalize first. The table below enumerated whitespace and
+      // wildcards independently and never their combination, which is how a review found this and
+      // the tests did not.
+      setBlockedSuffixes(['  *.combo-written.test']);
+
+      expect(await reject('someone@a.combo-written.test')).toBeInstanceOf(TRPCError);
+    });
+
     it('matches an entry a moderator wrote as a wildcard or with a leading dot', async () => {
       // `*.x` and `.x` are how someone writes "and its subdomains" by hand. Unstripped, both are
       // entries that match no address at all, and a suffix entry has no feedback but accounts
@@ -291,12 +307,14 @@ describe('assertEmailAllowed', () => {
       expect(await reject('someone@a.suffix-messy.test')).toBeInstanceOf(TRPCError);
     });
 
-    it('an EMPTY entry matches nothing rather than everything', async () => {
-      // `''` normalizes to `''`, and `domain.endsWith('.')` is false, but an implementation that
-      // returned early on a falsy entry the other way would block every address on the site.
-      setBlockedSuffixes(['']);
-
-      await expect(assertEmailAllowed('someone@empty-entry-allowed.test')).resolves.toBeUndefined();
+    it('an entry that normalizes to EMPTY matches nothing, even for an unnormalized domain', () => {
+      // Called DIRECTLY, because that is what makes it capable of failing. Through
+      // `assertEmailAllowed` the domain always has its trailing dots stripped, so `endsWith('.')`
+      // is false and this assertion passes with the `if (!entry)` guard deleted. Handed a domain
+      // nobody normalized, a `'.'` entry without that guard blocks every address on the site.
+      expect(matchesBlockedSuffix(['.'], 'example.test.')).toBe(false);
+      expect(matchesBlockedSuffix([''], 'example.test')).toBe(false);
+      expect(matchesBlockedSuffix(['   '], 'example.test')).toBe(false);
     });
   });
 });
