@@ -43,31 +43,36 @@ const OWNED_ENTITY_CAP = 10_000;
 /**
  * Measured on the prod replica: `Collection_userId_idx` cost 6.77 / 0.51 ms,
  * `Bounty_userId_idx` 3.57 / 0.02 ms, `ComicProject_userId_idx` 2.50 / 0.02 ms.
+ *
+ * 🔴 `index` is a THUNK, not the handle. `user.service` is a hub, so this module loads
+ * into ~21 suites that hand-list their `~/server/search-index` mock; reading a handle
+ * here would be a module-scope access and vitest throws `No "<name>" export is defined on
+ * the mock` at import time. That fails the suite with ZERO tests collected — a shape that
+ * reads as a pass to anything checking a count.
  */
 const OWNED_ENTITIES = [
   {
     name: 'collections',
-    index: collectionsSearchIndex,
+    index: () => collectionsSearchIndex,
     ownedBy: (userId: number) =>
       dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Collection" WHERE "userId" = ${userId} LIMIT ${OWNED_ENTITY_CAP + 1}`,
   },
   {
     name: 'bounties',
-    index: bountiesSearchIndex,
+    index: () => bountiesSearchIndex,
     ownedBy: (userId: number) =>
       dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Bounty" WHERE "userId" = ${userId} LIMIT ${OWNED_ENTITY_CAP + 1}`,
   },
   {
     name: 'comics',
-    index: comicsSearchIndex,
+    index: () => comicsSearchIndex,
     ownedBy: (userId: number) =>
       dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "ComicProject" WHERE "userId" = ${userId} LIMIT ${OWNED_ENTITY_CAP + 1}`,
   },
 ] as const;
-
 
 function logFailure(name: string, source: string, message: string, error: unknown) {
   logToAxiom({
@@ -131,9 +136,9 @@ export async function queueOwnerAvatarReindex({
     try {
       // Unchunked: `addToQueue` already splits at 10,000, which is the cap, so chunking
       // here would only turn one `sAdd` into many bucket-read round trips.
-      await entity.index.queueUpdate(
-        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-      );
+      await entity
+        .index()
+        .queueUpdate(ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })));
       queued[entity.name] = ids.length;
     } catch (error) {
       logFailure(
