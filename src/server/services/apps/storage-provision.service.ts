@@ -85,6 +85,21 @@ export const AppStorageProvisioner = {
         )
       `);
 
+      // Per-USER sub-budget beneath the app ceiling. `quota` is keyed on the app
+      // alone while `kv` rows are keyed per user, so without this one account can
+      // spend the whole app budget and — since only the owning user may delete
+      // their own rows — no other user of the app can ever reclaim it.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.user_quota (
+          app_block_id text NOT NULL,
+          user_id integer NOT NULL,
+          used_bytes bigint NOT NULL DEFAULT 0,
+          row_count bigint NOT NULL DEFAULT 0,
+          updated_at timestamptz DEFAULT now() NOT NULL,
+          PRIMARY KEY (app_block_id, user_id)
+        )
+      `);
+
       // ── SHARED (app-global / cross-user) storage tables ────────────────────
       // The public-write surface (voting + community lists). Distinct from the
       // per-user `kv` table above: rows are app-global, readable by all users of
@@ -205,6 +220,71 @@ export const AppStorageProvisioner = {
         FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_quota_trigger()
       `);
 
+      // Per-user counter, maintained in the SAME transaction as the write so the
+      // `set` gate reads a counter instead of SUM()ing the writer's rows.
+      //
+      // A SEPARATE function from kv_quota_trigger, bound to `kv` ONLY: it reads
+      // NEW/OLD.user_id, and `shared_kv` (which reuses kv_quota_trigger) has
+      // `author_user_id` instead. plpgsql resolves record fields at runtime, so
+      // folding this into the shared function would throw on every shared append.
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${schema}.kv_user_quota_trigger() RETURNS trigger AS $fn$
+        DECLARE
+          v_app_block_id text := current_setting('app.current_app_block_id', true);
+        BEGIN
+          IF v_app_block_id IS NULL OR v_app_block_id = '' THEN
+            RETURN NULL;
+          END IF;
+          IF TG_OP = 'INSERT' THEN
+            INSERT INTO ${schema}.user_quota (app_block_id, user_id, used_bytes, row_count)
+            VALUES (v_app_block_id, NEW.user_id, NEW.size_bytes, 1)
+            ON CONFLICT (app_block_id, user_id) DO UPDATE
+              SET used_bytes = user_quota.used_bytes + EXCLUDED.used_bytes,
+                  row_count  = user_quota.row_count + EXCLUDED.row_count,
+                  updated_at = now();
+          ELSIF TG_OP = 'UPDATE' THEN
+            UPDATE ${schema}.user_quota
+               SET used_bytes = used_bytes + (NEW.size_bytes - OLD.size_bytes),
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id AND user_id = NEW.user_id;
+          ELSIF TG_OP = 'DELETE' THEN
+            UPDATE ${schema}.user_quota
+               SET used_bytes = used_bytes - OLD.size_bytes,
+                   row_count  = row_count - 1,
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id AND user_id = OLD.user_id;
+          END IF;
+          RETURN NULL;
+        END $fn$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS kv_user_quota_trg ON ${schema}.kv`);
+      await client.query(`
+        CREATE TRIGGER kv_user_quota_trg
+        AFTER INSERT OR UPDATE OR DELETE ON ${schema}.kv
+        FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_user_quota_trigger()
+      `);
+
+      // Seed the counter from rows written BEFORE user_quota existed. Without
+      // this every pre-existing user starts at 0 and their historic bytes never
+      // count against the sub-budget. The anti-join seeds only users that have no
+      // counter row yet, so a live counter is never clobbered and an app whose
+      // users are already seeded costs one index probe per user rather than a
+      // recount. NOT conditioned on the table being empty: the first write after
+      // the deploy creates one user's row, and an emptiness guard would then skip
+      // every remaining user forever.
+      await client.query(
+        `INSERT INTO ${schema}.user_quota (app_block_id, user_id, used_bytes, row_count)
+         SELECT $1, k.user_id, COALESCE(sum(k.size_bytes), 0), count(*)
+           FROM ${schema}.kv k
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${schema}.user_quota u
+             WHERE u.app_block_id = $1 AND u.user_id = k.user_id
+          )
+          GROUP BY k.user_id
+         ON CONFLICT (app_block_id, user_id) DO NOTHING`,
+        [appBlockId]
+      );
+
       // Reuse the SAME quota-trigger function on shared_kv (it only touches
       // ${schema}.quota + NEW/OLD.size_bytes + row_count — all present on
       // shared_kv). Shared writes SET LOCAL app.current_app_block_id in-txn just
@@ -294,10 +374,17 @@ export const AppStorageProvisioner = {
     const schema = reviewPreviewSchemaIdent(publishRequestId); // "apprev_<norm>"
     const pool = requireAppsDb();
 
-    // Fast path — skip the DDL transaction entirely once the preview schema
-    // exists (a review session issues many storage ops against the same schema).
+    // Fast path — skip the DDL transaction entirely once the preview schema is at
+    // the current shape (a review session issues many storage ops against the same
+    // schema). Probes `user_quota`, the newest table, NOT the schema: a preview
+    // provisioned by an earlier build exists but has no per-user counter, and a
+    // schema-level probe would fast-path past the upgrade and leave every write in
+    // that still-pending review hitting a missing relation.
     const existing = await pool.query<{ exists: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS exists`,
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.tables
+          WHERE table_schema = $1 AND table_name = 'user_quota'
+       ) AS exists`,
       [`apprev_${norm}`]
     );
     if (existing.rows[0]?.exists) return { schema };
@@ -331,6 +418,16 @@ export const AppStorageProvisioner = {
           used_bytes bigint NOT NULL DEFAULT 0,
           row_count bigint NOT NULL DEFAULT 0,
           updated_at timestamptz DEFAULT now() NOT NULL
+        )
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.user_quota (
+          app_block_id text NOT NULL,
+          user_id integer NOT NULL,
+          used_bytes bigint NOT NULL DEFAULT 0,
+          row_count bigint NOT NULL DEFAULT 0,
+          updated_at timestamptz DEFAULT now() NOT NULL,
+          PRIMARY KEY (app_block_id, user_id)
         )
       `);
       // Same quota trigger as provision() — folds preview bytes/rows into the
@@ -370,6 +467,56 @@ export const AppStorageProvisioner = {
         AFTER INSERT OR UPDATE OR DELETE ON ${schema}.kv
         FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_quota_trigger()
       `);
+      // Per-user sub-budget, same shape as provision(). See the note there on why
+      // this is a separate function from kv_quota_trigger.
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${schema}.kv_user_quota_trigger() RETURNS trigger AS $fn$
+        DECLARE
+          v_app_block_id text := current_setting('app.current_app_block_id', true);
+        BEGIN
+          IF v_app_block_id IS NULL OR v_app_block_id = '' THEN
+            RETURN NULL;
+          END IF;
+          IF TG_OP = 'INSERT' THEN
+            INSERT INTO ${schema}.user_quota (app_block_id, user_id, used_bytes, row_count)
+            VALUES (v_app_block_id, NEW.user_id, NEW.size_bytes, 1)
+            ON CONFLICT (app_block_id, user_id) DO UPDATE
+              SET used_bytes = user_quota.used_bytes + EXCLUDED.used_bytes,
+                  row_count  = user_quota.row_count + EXCLUDED.row_count,
+                  updated_at = now();
+          ELSIF TG_OP = 'UPDATE' THEN
+            UPDATE ${schema}.user_quota
+               SET used_bytes = used_bytes + (NEW.size_bytes - OLD.size_bytes),
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id AND user_id = NEW.user_id;
+          ELSIF TG_OP = 'DELETE' THEN
+            UPDATE ${schema}.user_quota
+               SET used_bytes = used_bytes - OLD.size_bytes,
+                   row_count  = row_count - 1,
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id AND user_id = OLD.user_id;
+          END IF;
+          RETURN NULL;
+        END $fn$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS kv_user_quota_trg ON ${schema}.kv`);
+      await client.query(`
+        CREATE TRIGGER kv_user_quota_trg
+        AFTER INSERT OR UPDATE OR DELETE ON ${schema}.kv
+        FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_user_quota_trigger()
+      `);
+      await client.query(
+        `INSERT INTO ${schema}.user_quota (app_block_id, user_id, used_bytes, row_count)
+         SELECT $1, k.user_id, COALESCE(sum(k.size_bytes), 0), count(*)
+           FROM ${schema}.kv k
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${schema}.user_quota u
+             WHERE u.app_block_id = $1 AND u.user_id = k.user_id
+          )
+          GROUP BY k.user_id
+         ON CONFLICT (app_block_id, user_id) DO NOTHING`,
+        [publishRequestId]
+      );
       await client.query(
         `INSERT INTO ${schema}.quota (app_block_id) VALUES ($1) ON CONFLICT (app_block_id) DO NOTHING`,
         [publishRequestId]
@@ -467,6 +614,43 @@ export const AppStorageProvisioner = {
     const result = await pool.query<{ used_bytes: string; row_count: string }>(
       `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
       [appBlockId]
+    );
+    if (result.rows.length === 0) return { usedBytes: 0, rowCount: 0 };
+    return {
+      usedBytes: Number(result.rows[0].used_bytes ?? '0'),
+      rowCount: Number(result.rows[0].row_count ?? '0'),
+    };
+  },
+
+  /**
+   * One user's usage inside an app. Same information_schema guard as `getQuota`:
+   * a slug whose schema was never provisioned returns null rather than raising a
+   * relation-doesn't-exist. A provisioned app with no rows for this user returns
+   * zeroes — the counter row is created by the first write, not at provision.
+   */
+  async getUserQuota({
+    appBlockId,
+    slug,
+    userId,
+  }: ProvisionOpts & { userId: number }): Promise<{ usedBytes: number; rowCount: number } | null> {
+    if (!isValidAppSlug(slug)) {
+      throw new Error(`AppStorageProvisioner.getUserQuota: invalid slug ${JSON.stringify(slug)}`);
+    }
+    const schema = appSchemaIdent(slug);
+    const pool = requireAppsDb();
+    const schemaExists = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.tables
+          WHERE table_schema = $1 AND table_name = 'user_quota'
+       ) AS exists`,
+      [`app_${slug}`]
+    );
+    if (!schemaExists.rows[0]?.exists) return null;
+
+    const result = await pool.query<{ used_bytes: string; row_count: string }>(
+      `SELECT used_bytes::text, row_count::text FROM ${schema}.user_quota
+        WHERE app_block_id = $1 AND user_id = $2`,
+      [appBlockId, userId]
     );
     if (result.rows.length === 0) return { usedBytes: 0, rowCount: 0 };
     return {

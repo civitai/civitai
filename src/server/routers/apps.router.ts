@@ -15,6 +15,7 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
@@ -165,6 +166,18 @@ const PER_VALUE_BYTE_CAP = 64 * 1024;
 // keeps row_count current; gate runs on the cheap counter read.
 const APP_ROW_LIMIT = 1_000_000;
 
+// Per-USER sub-budget beneath the two app ceilings above. Both app budgets are
+// keyed on app_block_id while `kv` rows are keyed per user, so before these
+// existed one account could spend the entire app budget and — because only the
+// owning user may delete their own rows — no other user of the app could ever
+// reclaim it. These are an outlier clamp, not a fair share: a fair share of
+// 50MB across a popular app's user count lands below a single PER_VALUE_BYTE_CAP
+// write. 1MB is ~16 max-size values or ~1000 typical settings blobs, well past
+// any plausible per-user workload, and it takes 50 distinct accounts rather than
+// one to exhaust the app. Same ratio logic for the rows: 1000 accounts, not one.
+const USER_QUOTA_BYTES = 1024 * 1024;
+const USER_ROW_LIMIT = 1_000;
+
 const STORAGE_LOG = 'app-storage-trpc';
 
 // H2: evaluated with the request user's context (`ctx.user`) so the live
@@ -217,6 +230,18 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
       code: 'INTERNAL_SERVER_ERROR',
       message: 'block id is not a valid storage slug',
     });
+  }
+
+  // Per-instance revocation. `verifyBlockToken` checks the signature and expiry
+  // and nothing else, so without this an uninstall, a mod toggling the instance
+  // off, or a publisher ban leaves every already-minted token reading and writing
+  // until natural expiry. The REST `withBlockScope` middleware and
+  // `resolveSharedContext` both enforce it; this path was the remaining gap.
+  // Placed before the run-for-real branch so it binds EVERY storage op, not only
+  // the approved-app ones.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 
   // The DECLARED-scope gate (A5 / design-gaps H4). Reads need apps:storage:read;
@@ -433,14 +458,32 @@ export const appsStorageRouter = router({
       // out of date (a near-simultaneous write from another tab); we
       // accept a single value's overshoot in exchange for not holding a
       // row lock for the duration of the write.
+      //
+      // The caller's own counter rides along on the SAME round trip via a LEFT
+      // JOIN, so the per-user gate below costs no extra query and no SUM() over
+      // the writer's rows — the counter is maintained by kv_user_quota_trigger in
+      // the same transaction as the write.
       const quotaRows = (
-        await pool.query<{ used_bytes: string; row_count: string }>(
-          `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
-          [appBlockId]
+        await pool.query<{
+          used_bytes: string;
+          row_count: string;
+          user_used_bytes: string;
+          user_row_count: string;
+        }>(
+          `SELECT q.used_bytes::text, q.row_count::text,
+                  COALESCE(u.used_bytes, 0)::text AS user_used_bytes,
+                  COALESCE(u.row_count, 0)::text  AS user_row_count
+             FROM ${schema}.quota q
+             LEFT JOIN ${schema}.user_quota u
+               ON u.app_block_id = q.app_block_id AND u.user_id = $2
+            WHERE q.app_block_id = $1`,
+          [appBlockId, userId]
         )
       ).rows;
       const usedBytes = Number(quotaRows[0]?.used_bytes ?? '0');
       const rowCount = Number(quotaRows[0]?.row_count ?? '0');
+      const userUsedBytes = Number(quotaRows[0]?.user_used_bytes ?? '0');
+      const userRowCount = Number(quotaRows[0]?.user_row_count ?? '0');
 
       // For an update we need the old size to know the net delta;
       // skipping a pre-flight read on update would let an in-place
@@ -480,6 +523,37 @@ export const appsStorageRouter = router({
         throw new TRPCError({
           code: 'PAYLOAD_TOO_LARGE',
           message: 'app row limit exceeded',
+        });
+      }
+
+      // Sub-budget beneath the two app ceilings above: refusing here leaves the
+      // app's remaining budget available to every OTHER user of the app, which is
+      // the whole point — the app-wide gates alone let one account take it all.
+      if (userUsedBytes + netDelta > USER_QUOTA_BYTES) {
+        appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
+        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId });
+        logToAxiom(
+          {
+            event: 'user_quota_exceeded',
+            appBlockId,
+            userId,
+            userUsedBytes,
+            attemptedBytes: byteSize,
+            key: input.key,
+          },
+          STORAGE_LOG
+        ).catch(() => undefined);
+        throw new TRPCError({
+          code: 'PAYLOAD_TOO_LARGE',
+          message: 'per-user storage quota exceeded',
+        });
+      }
+      if (isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
+        appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
+        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId });
+        throw new TRPCError({
+          code: 'PAYLOAD_TOO_LARGE',
+          message: 'per-user row limit exceeded',
         });
       }
 
@@ -687,9 +761,21 @@ export const appsStorageRouter = router({
     }),
 
   /**
-   * Diagnostic / future quota-aware UI. Returns the live quota row plus
-   * the v0 limits so a settings panel can show "used 12 MB of 50 MB"
-   * without hard-coding the cap on the client.
+   * The CALLER'S OWN usage against their own caps, so a settings panel can show
+   * "used 12 KB of 1 MB" without hard-coding the cap on the client.
+   *
+   * Deliberately NOT the app-wide aggregate it used to return. This procedure is
+   * reachable by everyone who may RUN the app, and the app aggregate sums other
+   * users' rows — a cross-user readout on the one surface whose entire invariant
+   * is that a caller only ever sees their own data. It was not actionable either:
+   * only the owning user can delete their own rows, so a consumer shown "49 of
+   * 50 MB used" cannot free any of it. `AppStorageProvisioner.getQuota` still
+   * reads the app aggregate and is retained for the moderator surface; no tRPC
+   * procedure exposes it.
+   *
+   * Field names are unchanged, so the host bridge and the SDK's
+   * APP_STORAGE_QUOTA_RESULT contract carry through untouched; what moved is the
+   * scope each number describes.
    */
   getQuota: publicProcedure
     .use(enforceAppBlocksFlag)
@@ -697,19 +783,23 @@ export const appsStorageRouter = router({
     .query(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'getQuota' });
       try {
-        const { slug, schema, appBlockId, reviewPreview } = await resolveStorageContext(
+        const { userId, slug, schema, appBlockId, reviewPreview } = await resolveStorageContext(
           input.blockToken,
           'getQuota'
         );
         let quota: { usedBytes: number; rowCount: number } | null;
-        if (reviewPreview) {
-          // Read the preview schema's own quota row directly (the schema is
+        if (userId == null) {
+          // Anon has no rows of its own; the per-user path has no anon storage.
+          quota = { usedBytes: 0, rowCount: 0 };
+        } else if (reviewPreview) {
+          // Read the preview schema's own counter directly (the schema is
           // provisioned by resolveStorageContext, so it always exists here).
           const pool = requireAppsDb();
           const rows = (
             await pool.query<{ used_bytes: string; row_count: string }>(
-              `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
-              [appBlockId]
+              `SELECT used_bytes::text, row_count::text FROM ${schema}.user_quota
+                WHERE app_block_id = $1 AND user_id = $2`,
+              [appBlockId, userId]
             )
           ).rows;
           quota = {
@@ -717,14 +807,14 @@ export const appsStorageRouter = router({
             rowCount: Number(rows[0]?.row_count ?? '0'),
           };
         } else {
-          quota = await AppStorageProvisioner.getQuota({ slug, appBlockId });
+          quota = await AppStorageProvisioner.getUserQuota({ slug, appBlockId, userId });
         }
         appStorageOpsCounter.inc({ op: 'getQuota', outcome: 'ok' });
         return {
           usedBytes: quota?.usedBytes ?? 0,
           rowCount: quota?.rowCount ?? 0,
-          limitBytes: APP_QUOTA_BYTES,
-          limitRows: APP_ROW_LIMIT,
+          limitBytes: USER_QUOTA_BYTES,
+          limitRows: USER_ROW_LIMIT,
         };
       } finally {
         stopTimer();

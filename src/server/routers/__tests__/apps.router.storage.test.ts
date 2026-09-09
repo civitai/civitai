@@ -21,6 +21,8 @@ const {
   mockGetSessionUser,
   mockIsAppBlocksAuthorEnabled,
   mockRecordScopeInvocation,
+  mockIsRevoked,
+  mockGetUserQuota,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -54,8 +56,14 @@ const {
     mockGetSessionUser: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockRecordScopeInvocation: vi.fn(async () => undefined),
+    mockIsRevoked: vi.fn(async () => false),
+    mockGetUserQuota: vi.fn(),
   };
 });
+
+vi.mock('~/server/services/block-revocation.service', () => ({
+  BlockRevocation: { isRevoked: (...args: unknown[]) => mockIsRevoked(...args) },
+}));
 
 // W13 — the set/delete happy paths fire recordScopeInvocation (detached) with a
 // structured `detail`. Mock it so the detached write settles promptly AND we can
@@ -85,6 +93,7 @@ vi.mock('~/server/db/appsDb', () => ({
 vi.mock('~/server/services/apps/storage-provision.service', () => ({
   AppStorageProvisioner: {
     getQuota: (...args: unknown[]) => mockGetQuota(...args),
+    getUserQuota: (...args: unknown[]) => mockGetUserQuota(...args),
     provisionReviewPreview: (...args: unknown[]) => mockProvisionReviewPreview(...args),
   },
 }));
@@ -160,6 +169,9 @@ beforeEach(() => {
   mockClient.query.mockReset();
   mockClient.release.mockClear();
   mockGetQuota.mockReset();
+  mockGetUserQuota.mockReset();
+  mockIsRevoked.mockReset();
+  mockIsRevoked.mockResolvedValue(false);
   mockLogToAxiom.mockReset();
   mockGetUserById.mockReset();
   mockGetSessionUser.mockReset();
@@ -225,6 +237,51 @@ describe('apps.storage shared gates', () => {
     await expect(
       caller.storage.get({ blockToken: 't', key: 'k' })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  // A revoked instance must lose storage access IMMEDIATELY, not at token expiry.
+  // Every op, not just the writes: a read of the user's own rows is still access
+  // granted by an install that no longer exists.
+  it.each([
+    ['get', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.get({ blockToken: 't', key: 'k' })],
+    ['set', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.set({ blockToken: 't', key: 'k', value: 'v' })],
+    ['delete', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.delete({ blockToken: 't', key: 'k' })],
+    ['list', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' })],
+    ['getQuota', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' })],
+  ] as const)('rejects a revoked block instance on %s', async (_op, call) => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockIsRevoked.mockResolvedValueOnce(true);
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(call(caller)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'block instance revoked',
+    });
+    // Refused before any datastore access — not merely refused on the way out.
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('checks revocation against the token claim, and lets a live instance through', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).resolves.toEqual({ value: 1 });
+    expect(mockIsRevoked).toHaveBeenCalledWith('mbi_inst');
+  });
+
+  // The run-for-real review branch returns before the approved-app checks, so it
+  // needs its own case: a revocation placed after that branch would not bind it.
+  it('rejects a revoked instance on the run-for-real preview branch too', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      validClaims({ reviewRunForReal: true, appBlockId: 'pubreq_01hzzz' })
+    );
+    mockIsRevoked.mockResolvedValueOnce(true);
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'block instance revoked',
+    });
+    expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
   });
 
   it('rejects when the AppBlock row is missing (NOT_FOUND)', async () => {
@@ -654,6 +711,149 @@ describe('apps.storage.set', () => {
     expect(calls.map((c) => c.detail?.key)).toEqual(['alpha', 'beta']);
   });
 
+  // ── Per-USER sub-budget ────────────────────────────────────────────────────
+  // Literals, not imports from the router: an expectation derived from the
+  // constant it tests moves with the constant and asserts nothing.
+  const USER_CAP_BYTES = 1024 * 1024;
+  const USER_CAP_ROWS = 1_000;
+  const APP_CAP_BYTES = 50 * 1024 * 1024;
+
+  /** App budget with plenty of room; per-user usage supplied per subject id. */
+  function quotaPoolFor(userBytes: Record<number, number>, userRows: Record<number, number> = {}) {
+    return async (sql: string, params?: unknown[]) => {
+      if (sql.includes('.quota q')) {
+        const uid = Number((params ?? [])[1]);
+        return {
+          rows: [
+            {
+              used_bytes: String(40 * 1024 * 1024),
+              row_count: '2000',
+              user_used_bytes: String(userBytes[uid] ?? 0),
+              user_row_count: String(userRows[uid] ?? 0),
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      // The existing-row lookup: fresh key, so no row.
+      return { rows: [], rowCount: 0 };
+    };
+  }
+
+  /** Route the subject id through the token's `sub` so two users can be modelled. */
+  function useSubjectFromSub() {
+    mockParseSubjectUserId.mockImplementation((sub: string) =>
+      sub === 'anon' ? null : Number(String(sub).split(':')[1])
+    );
+    mockGetSessionUser.mockImplementation(async (id: number) => ({ id, isModerator: false }));
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    runEnabledUserIds.add(43);
+  }
+
+  // The whole point of the sub-budget: one user exhausting their own cap must
+  // NOT consume the app budget the rest of the app's users depend on. Both legs
+  // run against the SAME app state, in one test — the relationship is the claim,
+  // and two independently-passing tests would not pin it.
+  it('refuses the user at their cap while another user of the SAME app still writes', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10, 43: 0 }));
+
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).rejects.toMatchObject({
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'per-user storage quota exceeded',
+    });
+
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:43' }));
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  // Reachability: the refusal must come from the per-user gate on an input that
+  // clears every earlier check, including the app-wide one. 500 bytes against a
+  // 40MB/50MB app is nowhere near the app ceiling, so only the sub-budget can
+  // refuse it.
+  it('the app-wide gate would ALLOW the write the per-user gate refuses', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    // App headroom at the moment of refusal, stated so the test carries its scope.
+    expect(40 * 1024 * 1024 + 500).toBeLessThan(APP_CAP_BYTES);
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('allows a write that fits inside the per-user cap', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 4096 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('refuses an INSERT past the per-user row cap', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: 0 }, { 42: USER_CAP_ROWS }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })
+    ).rejects.toMatchObject({
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'per-user row limit exceeded',
+    });
+  });
+
+  // An in-place shrink at the row cap is an UPDATE, not an INSERT — it must not
+  // be refused, or a user at their row cap can never edit what they already have.
+  it('lets a user at the row cap overwrite an existing key', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('.quota q')) {
+        const uid = Number((params ?? [])[1]);
+        return {
+          rows: [
+            {
+              used_bytes: '0',
+              row_count: '0',
+              user_used_bytes: uid === 42 ? String(USER_CAP_BYTES - 10) : '0',
+              user_row_count: String(USER_CAP_ROWS),
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [{ size_bytes: 5000 }], rowCount: 1 };
+    });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'short' })
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('reads the per-user counter for the SUBJECT, keyed on the app not the instance', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: 0 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
+    const quotaCall = (mockPool.query.mock.calls as Array<[string, unknown[]]>).find(([s]) =>
+      s.includes('.quota q')
+    );
+    expect(quotaCall?.[0]).toContain('user_quota');
+    expect(quotaCall?.[1]).toEqual(['apb_test', 42]);
+  });
+
   it('uses the net delta from an existing row to size the quota check', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     // Pretend used_bytes is the per-app limit; the only reason this write
@@ -773,30 +973,58 @@ describe('apps.storage.list', () => {
 });
 
 describe('apps.storage.getQuota', () => {
-  it('proxies the provisioner snapshot + ships the v0 limits', async () => {
+  it('reports the CALLERS own usage against the per-user caps', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetQuota.mockResolvedValueOnce({ usedBytes: 12345, rowCount: 7 });
+    mockGetUserQuota.mockResolvedValueOnce({ usedBytes: 12345, rowCount: 7 });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.getQuota({ blockToken: 't' });
     expect(out).toEqual({
       usedBytes: 12345,
       rowCount: 7,
-      limitBytes: 50 * 1024 * 1024,
-      limitRows: 1_000_000,
+      limitBytes: 1024 * 1024,
+      limitRows: 1_000,
     });
-    expect(mockGetQuota).toHaveBeenCalledWith({
+    expect(mockGetUserQuota).toHaveBeenCalledWith({
       slug: 'generate_from_model',
       appBlockId: 'apb_test',
+      userId: 42,
     });
+  });
+
+  // The app aggregate sums other users' rows. This procedure is reachable by
+  // everyone who may RUN the app, so it must not read that aggregate at all —
+  // not merely decline to return it.
+  it('never reads the app-wide aggregate', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetUserQuota.mockResolvedValueOnce({ usedBytes: 1, rowCount: 1 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const out = await caller.storage.getQuota({ blockToken: 't' });
+    expect(mockGetQuota).not.toHaveBeenCalled();
+    expect(out.limitBytes).toBe(1024 * 1024);
+    expect(out.limitBytes).not.toBe(50 * 1024 * 1024);
   });
 
   it('returns zeroes when the schema isnt provisioned yet', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetQuota.mockResolvedValueOnce(null);
+    mockGetUserQuota.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.getQuota({ blockToken: 't' });
     expect(out.usedBytes).toBe(0);
     expect(out.rowCount).toBe(0);
+  });
+
+  it('returns zeroes for an anon subject without touching the datastore', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const out = await caller.storage.getQuota({ blockToken: 't' });
+    expect(out).toEqual({
+      usedBytes: 0,
+      rowCount: 0,
+      limitBytes: 1024 * 1024,
+      limitRows: 1_000,
+    });
+    expect(mockGetUserQuota).not.toHaveBeenCalled();
+    expect(mockGetQuota).not.toHaveBeenCalled();
   });
 });
 
