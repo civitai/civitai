@@ -656,8 +656,11 @@ node .claude/skills/dev-server/cli.mjs wt stale        # what's finished, and wh
 node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlinks links, deletes, prunes
 ```
 
-`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), and a tree with a
-running dev server (`--stop-server`). It deletes the branch only when `gh` reports a **merged** PR, keeps
+`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), a tree with a
+running dev server (`--stop-server`), and a tree the dev-server daemon itself is running from. `wt stale`
+applies that last one too — and when the daemon does not answer where it runs from, it clears **no** tree,
+because a daemon that could not be asked has not been ruled out. It deletes the branch only when `gh`
+reports a **merged** PR, keeps
 it when commits exist on no remote, and prints the SHA when it does delete. Left alone, worktrees
 accumulate: 22 stale ones were removed in one sweep on 2026-08-12, 15 with already-merged PRs.
 

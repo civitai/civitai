@@ -197,7 +197,13 @@ async function fetchRunning(daemonRequest) {
 // tell the reader the daemon has been ruled out, which is the confidently-wrong message this
 // replaces.
 export async function daemonRunningFrom(target, daemonRequest) {
-  const res = await daemonRequest('/');
+  return daemonHeldFrom(await daemonRequest('/'), target);
+}
+
+// The same verdict from an already-fetched `/`, so `wt stale` asks once for a dozen trees instead of
+// once per tree. Split rather than copied: paths.mjs exists because a `wt rm` and a `wt stale` that
+// disagree about which tree the daemon is in is the failure both are meant to prevent.
+export function daemonHeldFrom(res, target) {
   const skillDir = res.ok ? res.data?.skillDir : null;
   if (!skillDir) return { holder: null, checked: false };
   // Its script AND its working directory: either one alone keeps the directory open. A daemon
@@ -210,6 +216,21 @@ export async function daemonRunningFrom(target, daemonRequest) {
     holder: held ? { pid: res.data.pid, reason: `${held[0]}: ${held[1]}` } : null,
     checked: true,
   };
+}
+
+// Why this tree cannot be removed on the daemon's account, or null when it can.
+//
+// 🔴 UNKNOWN IS NOT NO. A daemon too old to report `skillDir` answers `/` with a bare pid, and the
+// whole of 868kzk7pf is those two being indistinguishable: `wt stale` called a tree safe while the
+// daemon ran out of it, `wt rm` unlinked 7794 reparse points and then failed EBUSY. So an
+// unanswered check keeps the tree in KEEP and says which of the two it is.
+export function daemonBlockReason(daemon) {
+  if (!daemon) return null;
+  if (daemon.holder)
+    return `hosts the dev-server daemon (pid ${daemon.holder.pid}) - ${daemon.holder.reason}`;
+  if (!daemon.checked)
+    return 'the dev-server daemon could not be asked where it runs from (down, unreachable, or too old to report it) - NOT ruled out';
+  return null;
 }
 
 // Main-app sessions AND app sessions, because both hold a port and a live process in this tree.
@@ -245,6 +266,7 @@ export async function inspect(primary, daemonRequest) {
   const trees = listWorktrees(primary);
   const primaryPath = primaryOf(trees, primary);
   const running = await fetchRunning(daemonRequest);
+  const daemonRoot = await daemonRequest('/');
   const rows = [];
   for (const t of trees) {
     const isPrimary = samePath(t.path, primaryPath);
@@ -261,6 +283,7 @@ export async function inspect(primary, daemonRequest) {
       unpushed: t.branch ? unpushedCount(t.branch, primary) : null,
       lastCommit: lastCommit(t.path),
       sessions: sessions.map((s) => ({ id: s.id, port: s.port, status: s.status })),
+      daemon: daemonHeldFrom(daemonRoot, t.path),
     });
   }
   return rows;
@@ -270,10 +293,25 @@ export async function cmdStale(primary, daemonRequest) {
   const rows = await inspect(primary, daemonRequest);
   const candidates = rows.filter((r) => !r.isPrimary);
 
-  const removable = candidates.filter((r) => r.mergedPr && !r.dirty && r.sessions.length === 0);
+  const removable = candidates.filter(
+    (r) => r.mergedPr && !r.dirty && r.sessions.length === 0 && !daemonBlockReason(r.daemon)
+  );
   const blocked = candidates.filter((r) => !removable.includes(r));
 
-  console.log(`\nSAFE TO REMOVE (${removable.length}) - merged PR, clean tree, no dev server\n`);
+  // Once, not once per row: an unanswered `/` is one fact about the daemon, and it lands on every
+  // tree at the same time. The rows below then say only that it applies to them.
+  const daemonUnasked = candidates.length && candidates.every((r) => !r.daemon?.checked);
+  if (daemonUnasked) {
+    console.log(
+      '\n[!] the dev-server daemon did not say where it runs from, so NO tree can be cleared of\n' +
+        '    hosting it. It is either down, unreachable, or older than the fix that made it report\n' +
+        '    (PR #4641) - a daemon started before that stays old until it is restarted.'
+    );
+  }
+
+  console.log(
+    `\nSAFE TO REMOVE (${removable.length}) - merged PR, clean tree, no dev server, not hosting the daemon\n`
+  );
   if (!removable.length) console.log('  (none)');
   for (const r of removable) {
     const age = r.lastCommit ? r.lastCommit.slice(0, 10) : '?';
@@ -291,6 +329,8 @@ export async function cmdStale(primary, daemonRequest) {
       why.push(`dev server ${r.sessions.map((s) => `${s.id}:${s.port}`).join(',')}`);
     if (r.dirty) why.push(`${r.dirty} uncommitted`);
     if (!r.mergedPr) why.push(r.prLabel);
+    const daemonWhy = daemonBlockReason(r.daemon);
+    if (daemonWhy) why.push(daemonUnasked ? 'daemon NOT ruled out (see above)' : daemonWhy);
     console.log(`  ${r.path}`);
     console.log(`      ${r.branch || '(detached)'}  ${why.join('; ')}`);
   }

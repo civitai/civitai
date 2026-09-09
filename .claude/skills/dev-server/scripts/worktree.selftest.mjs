@@ -13,7 +13,7 @@
  * A revert fails on the label text, not on a count, so the failing line names the wrong string.
  */
 
-import { describePrRows, describePrune } from './worktree.mjs';
+import { daemonBlockReason, daemonHeldFrom, describePrRows, describePrune } from './worktree.mjs';
 
 let failures = 0;
 function check(name, actual, expected) {
@@ -109,6 +109,69 @@ check(
   'pruned (could not tell whose): Something git has never printed'
 );
 check('empty prune output says so', describePrune('', ADMIN)[0], 'pruned: no stale worktree registrations');
+
+// 868kzk7pf: `wt stale` called a tree safe while the daemon ran out of it, because it asked about
+// dev servers and never about the daemon's own home. These pin the three answers apart — HELD, and
+// the two that both used to print nothing: ruled out, and never asked.
+const TREE = 'C:\\Dev\\Repos\\work\\worktrees\\mine';
+const PRIMARY = 'C:\\Dev\\Repos\\work\\model-share';
+const skill = (root) => `${root}\\.claude\\skills\\dev-server`;
+const root = (data) => ({ ok: true, data });
+
+check(
+  'a daemon whose script is in the tree is the holder',
+  daemonHeldFrom(root({ pid: 7, skillDir: skill(TREE), cwd: PRIMARY }), TREE).holder?.reason,
+  `its running script: ${skill(TREE)}`
+);
+// Started by hand from inside the tree: it runs the primary's script and pins by cwd alone. Checking
+// only skillDir reports that tree as free while a delete on it cannot succeed.
+check(
+  'and so is one merely CWD\u2019d there',
+  daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: TREE }), TREE).holder?.reason,
+  `its working directory: ${TREE}`
+);
+check(
+  'a daemon at the primary holds nothing',
+  daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY }), TREE).holder,
+  null
+);
+check(
+  'and that verdict is a checked one',
+  daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY }), TREE).checked,
+  true
+);
+// The live case on 2026-09-09: pid 46332 predates PR #4641, so `/` answers with a bare pid. No
+// holder is reported and none has been ruled out either.
+check(
+  'a daemon too old to report is NOT ruled out',
+  daemonHeldFrom(root({ pid: 46332 }), TREE).checked,
+  false
+);
+check('nor is an unreachable one', daemonHeldFrom({ ok: false }, TREE).checked, false);
+// `worktrees/mine1` is a real neighbour of `worktrees/mine` here — git de-duplicates a colliding
+// basename that way — so a prefix match would blame the wrong agent's tree.
+check(
+  'a sibling sharing a path prefix is not this tree',
+  daemonHeldFrom(root({ pid: 7, skillDir: skill(`${TREE}1`), cwd: `${TREE}1` }), TREE).holder,
+  null
+);
+
+check(
+  'the holder blocks removal, naming the pid',
+  daemonBlockReason(daemonHeldFrom(root({ pid: 7, skillDir: skill(TREE), cwd: PRIMARY }), TREE)),
+  `hosts the dev-server daemon (pid 7) - its running script: ${skill(TREE)}`
+);
+check(
+  'a ruled-out daemon blocks nothing',
+  daemonBlockReason(daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY }), TREE)),
+  null
+);
+// The whole ticket in one assertion: unknown must not read as no.
+check(
+  'and an unanswered check blocks removal too',
+  daemonBlockReason(daemonHeldFrom(root({ pid: 46332 }), TREE))?.includes('NOT ruled out'),
+  true
+);
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall green');
 process.exit(failures ? 1 : 0);
