@@ -18,6 +18,12 @@ const REPORT_SAMPLE_SIZE = 25;
 // createdDate window prunes without being able to change which rows match.
 const DATE_BOUND_SLACK_DAYS = 3;
 
+// The clustering day is the previous COMPLETE one. `createdDate > subtractDays(now(), 1)` reads
+// as "the last 24 hours" and is not: `createdDate` is a Date, so the comparison happens at
+// midnight and the predicate collapses to "today" — three hours of data at the 03:00 cron, against
+// thresholds that only make sense over a day. Fixing the day to yesterday also makes a run
+// reproducible, since what it sees no longer depends on the hour it fired.
+
 export const rewardsAbusePrevention = createJob(
   'rewards-abuse-prevention',
   '0 3 * * *',
@@ -92,7 +98,7 @@ export const rewardsAbusePrevention = createJob(
         ip,
         ${exclusivity.select}
       FROM buzzEvents be
-      WHERE createdDate > subtractDays(now(), 1)
+      WHERE createdDate = subtractDays(toDate(now()), 1)
       AND time > subtractDays(now(), ${DATE_BOUND_SLACK_DAYS})
       ${exclusivity.where}
       AND ip NOT IN (${excludedIps})
@@ -264,6 +270,9 @@ async function logDecisions({
  * every account has its own cap, so the IP's total cannot answer it.
  *
  *
+ * The window is `cap_days_window` COMPLETE days ending on the clustering day, for the same reason
+ * that day is fixed rather than rolling — see the note on DATE_BOUND_SLACK_DAYS.
+ *
  * A cap-day compares the day against the account's OWN ceiling, both sides multiplied: a member
  * on a 1.5x multiplier is capped at 150, so being paid 100 is not a cap-day. `awardAmount` carries
  * the base award except on the one grant a day the cap trims, which stores the multiplied value
@@ -281,7 +290,7 @@ function buildPersistenceGate(abuseLimits: AbuseLimits, typePredicate: string) {
             sum(if(be.multiplier = 1, be.awardAmount, ceil(be.awardAmount * be.multiplier))) AS day_awarded,
             ceil(${cap} * max(be.multiplier)) AS day_cap
           FROM buzzEvents be
-          WHERE createdDate > subtractDays(now(), ${window})
+          WHERE createdDate BETWEEN subtractDays(toDate(now()), ${window}) AND subtractDays(toDate(now()), 1)
           AND time > subtractDays(now(), ${window + DATE_BOUND_SLACK_DAYS})
           AND ${typePredicate}
           AND awardAmount > 0

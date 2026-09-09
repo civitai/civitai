@@ -183,6 +183,16 @@ describe('rewards-abuse-prevention — detection shape', () => {
     expect(sql).not.toContain('AND startsWith');
   });
 
+  it('clusters over the previous COMPLETE day, not whatever is left of today', async () => {
+    await runWith({ award_types: ['dailyBoost'] });
+
+    // `createdDate > subtractDays(now(), 1)` reads as "the last 24 hours" and is not: createdDate
+    // is a Date, so the comparison lands on midnight and the predicate collapses to "today" —
+    // three hours of data at the 03:00 cron, against thresholds that assume a day.
+    expect(outerWhereOf(sqlOf())).toContain('createdDate = subtractDays(toDate(now()), 1)');
+    expect(outerWhereOf(sqlOf())).not.toContain('createdDate > subtractDays(now(), 1)');
+  });
+
   it('emits a cluster-size ceiling when max_user_count is set', async () => {
     await runWith({ max_user_count: 5 });
 
@@ -286,7 +296,7 @@ describe('rewards-abuse-prevention — scan bounds and config safety', () => {
     await runWith({});
 
     const sql = sqlOf();
-    expect(sql).toContain('createdDate > subtractDays(now(), 1)');
+    expect(sql).toContain('createdDate = subtractDays(toDate(now()), 1)');
     // `createdDate` is MATERIALIZED and prunes nothing; without this the scan reads the
     // whole table rather than the window it claims to.
     expect(sql).toContain('time > subtractDays(now(), 3)');
@@ -421,14 +431,18 @@ describe('rewards-abuse-prevention — per-account persistence gate', () => {
     const sql = sqlOf();
     expect(sql).toContain('GROUP BY toUserId, day');
     expect(sql).toContain('HAVING countIf(day_awarded >= day_cap) >= 10');
-    expect(sql).toContain('createdDate > subtractDays(now(), 30)');
+    expect(sql).toContain(
+      'createdDate BETWEEN subtractDays(toDate(now()), 30) AND subtractDays(toDate(now()), 1)'
+    );
   });
 
   it('bounds the wider window on the partition key as well as on createdDate', async () => {
     await runWith({ ...prefixConfig, min_cap_days: 10, cap_days_window: 14 });
 
     const sql = sqlOf();
-    expect(sql).toContain('createdDate > subtractDays(now(), 14)');
+    expect(sql).toContain(
+      'createdDate BETWEEN subtractDays(toDate(now()), 14) AND subtractDays(toDate(now()), 1)'
+    );
     // Why wider than the window: see DATE_BOUND_SLACK_DAYS.
     expect(sql).toContain('time > subtractDays(now(), 17)');
   });
