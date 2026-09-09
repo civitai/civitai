@@ -311,10 +311,10 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     expect(pageTab('Hidden'), 'the Hidden tab must be hidden without appBlocks').toBeUndefined();
     // 🔴 `Apps & permissions` IS GATED TOO, and its DATA SOURCE is the reason. The panel's
     // only read is `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware
-    // returns `[]` for exactly this viewer — so ungated the tab showed them the "No apps
-    // installed or subscribed yet." empty state, always. There was no cohort for whom it
-    // held content. (An earlier revision of this file argued the opposite; that premise
-    // was false at the data layer and is retracted.)
+    // returns `[]` for exactly this viewer — so ungated the tab showed them its installs
+    // empty state, always. There was no cohort for whom it held content. (An earlier
+    // revision of this file argued the opposite; that premise was false at the data layer
+    // and is retracted.)
     expect(
       pageTab('Apps & permissions'),
       'the permissions tab must be hidden without appBlocks — its own query refuses'
@@ -598,5 +598,66 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     await input.clear();
     await input.fill('5');
     await expect.element(page.getByTestId('app-budget-low-warning')).toBeInTheDocument();
+  });
+});
+
+/**
+ * 🔴 THE PERMISSIONS TAB MUST NOT INSTRUCT AN ACTION THAT DOES NOT DO WHAT IT SAYS.
+ *
+ * The retracted copy read: "This is a reflection of the current state — to revoke access,
+ * remove the install or subscription on the Installs tab." Removing an install does NOT
+ * revoke the scope grant. `BlockRegistry.deleteSubscription` deletes the
+ * `block_user_subscriptions` row and nothing else; `uninstallFromModel` additionally
+ * revokes the block INSTANCE token, which invalidates already-minted tokens but leaves the
+ * consent row intact. The grant lives in `app_user_scope_grants`, whose only writes in the
+ * entire repo are the two in `~/server/services/blocks/scope-grant.service.ts`, both
+ * setting `revokedAt: null`. Nothing writes a non-null `revoked_at`; nothing deletes a row.
+ * So the scopes survive the uninstall and the next mint carries them with no fresh prompt.
+ *
+ * 🔴 PINNED AS THE WHOLE NORMALISED STRING, DELIBERATELY. The artifact under test is
+ * PROSE, so a guard on keywords is walkable by rewording — a future edit could reintroduce
+ * "remove the install to revoke" without tripping any `/revoke/`-shaped matcher, because
+ * the honest copy contains that word too. Pinning the whole sentence means a cosmetic
+ * reword fails this test; that cost is the price of a machine-readable claim about what
+ * the page tells users. If you are here because you reworded it, re-read the paragraph
+ * above and confirm your new wording is still TRUE before updating the literal.
+ */
+describe('🔴 the revoke instruction is retracted, not reworded', () => {
+  const PERMISSIONS_TAB_COPY =
+    "The apps you've installed or subscribed to, the permissions each one declares it may " +
+    'use, and where you have it. Removing an install on the Installs tab takes the app off ' +
+    'that surface, but it does not withdraw a permission you have already granted — ' +
+    'withdrawing one is not possible yet. Recent activity is the full record of what apps ' +
+    'have actually done on your account.';
+
+  test('the panel states plainly that withdrawing a permission is not possible', async () => {
+    // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the
+    // DOM without a click — the same property the marketplace-anchor count above relies on.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY)).toBeInTheDocument();
+  });
+
+  test('🔴 …and the retracted sentence is nowhere on the page', async () => {
+    // A second, cheaper tripwire aimed at a LITERAL revert (a `git revert`, a bad merge
+    // resolution) rather than at a reword — the pin above is what covers rewording. Kept
+    // because the two fail with very different messages, and this one names the defect.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY)).toBeInTheDocument();
+    expect(
+      document.body.textContent ?? '',
+      'the copy instructs an uninstall as a way to revoke access, which it is not'
+    ).not.toContain('to revoke access, remove the install');
+  });
+
+  test('🔴 POSITIVE CONTROL: the body text really is readable from here', async () => {
+    // Without this, the `not.toContain` above passes for a page that rendered nothing at
+    // all — the reassuring-zero shape. Assert a string the page MUST carry, taken from a
+    // different panel so it cannot be satisfied by the copy under test.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY)).toBeInTheDocument();
+    expect(document.body.textContent ?? '').toContain('Recent actions apps have taken');
   });
 });
