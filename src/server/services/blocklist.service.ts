@@ -134,8 +134,9 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         // ⚠️ The create below is NOT serialised. `FOR UPDATE` locks nothing when it matches
         // nothing, so two concurrent no-id upserts for a type with no row both reach it and the
         // type ends up with two. Unreachable from this app — the only caller always passes an id —
-        // but the spoke's twin is reachable, and the closes are a unique index on `Blocklist.type`
-        // or an advisory lock on the type, not this predicate.
+        // but the spoke's twin is reachable, and the close is a unique index on `Blocklist.type`,
+        // not this predicate. That index is migration `20260909220000_blocklist_type_unique`; until
+        // it is applied by hand this branch can still produce a second row.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;
@@ -185,8 +186,8 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  * union the rows: for a deny-list a union blocks more, but for the benign lists a union
  * strips more, which is a moderation bypass — one helper cannot silently pick a safe
  * direction for both. Nor does it throw: this read gates account signup, so a duplicate
- * row would become an outage. Deterministic-and-loud is the compromise until the rows are
- * merged and a unique index on `type` makes it unrepresentable.
+ * row would become an outage. Deterministic-and-loud is the compromise until migration
+ * `20260909220000_blocklist_type_unique` is applied by hand and makes it unrepresentable.
  */
 async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
   const rows = await dbWrite.blocklist.findMany({
@@ -674,12 +675,46 @@ export async function getBlockedEmailDomains() {
   return await getBlocklistData(BlocklistType.EmailDomain);
 }
 
+export async function getBlockedEmailDomainSuffixes() {
+  return await getBlocklistData(BlocklistType.EmailDomainSuffix);
+}
+
 /**
- * Reject an email address whose domain is blocklisted or publishes no MX record.
+ * `*.evil.example` and `.evil.example` are how a moderator writes "and its subdomains" by hand, and
+ * both would otherwise be an entry that matches no address at all — silently, since a suffix entry
+ * has no other feedback than accounts continuing to arrive.
+ */
+const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
+
+/**
+ * The domain itself, or anything under it. `endsWith('.' + entry)` and not `endsWith(entry)`: the
+ * latter matches `notfhbsfg.buzz` against an entry of `fhbsfg.buzz`, which is a different
+ * registrable domain owned by someone else.
  *
- * The two halves catch different things and neither subsumes the other: the blocklist covers the
- * ~8,500 KNOWN disposable providers, which are real domains that accept mail; the MX check covers
- * INVENTED domains, which no list can ever enumerate. The auth hub's magic-link action has had the
+ * Exported for the guard tests — the branch that distinguishes those two is the whole rule.
+ */
+export function matchesBlockedSuffix(entries: string[], domain: string) {
+  if (!domain) return false;
+  return entries.some((raw) => {
+    const entry = raw
+      .trim()
+      .toLowerCase()
+      .replace(SUFFIX_ENTRY_PREFIX, '')
+      .replace(TRAILING_DOTS, '');
+    if (!entry) return false;
+    return domain === entry || domain.endsWith(`.${entry}`);
+  });
+}
+
+/**
+ * Reject an email address whose domain is blocklisted, is under a blocklisted suffix, or publishes
+ * no MX record.
+ *
+ * The halves catch different things and none subsumes the others: the exact list covers the ~8,800
+ * KNOWN disposable providers, which are real domains that accept mail; the MX check covers INVENTED
+ * domains, which no list can ever enumerate; the suffix list covers a domain whose owner mints fresh
+ * SUBDOMAINS, each real and each publishing MX, so neither of the other two ever sees it twice.
+ * The auth hub's magic-link action has had the
  * blocklist half since the login cutover and its email path is the one at zero — every remaining
  * writer of `User.email` (onboarding, profile update, email change) is free text that is never
  * verified, so those need both.
@@ -704,8 +739,15 @@ export async function assertEmailAllowed(email: string) {
   // with no address at all, so that is the whole funnel for that provider. The auth hub's mirror of
   // this lookup already ends in `catch { return [] }` for the same reason; the two must agree.
   let blocked: string[];
+  let blockedSuffixes: string[];
   try {
-    blocked = await getBlockedEmailDomains();
+    // Two reads, both degrading open together: a suffix list that fails to load while the exact
+    // list succeeds would enforce half the policy and report nothing, and the halves are not
+    // independent — a domain is normally on one list precisely because it is not on the other.
+    [blocked, blockedSuffixes] = await Promise.all([
+      getBlockedEmailDomains(),
+      getBlockedEmailDomainSuffixes(),
+    ]);
   } catch (error) {
     logToAxiom({
       name: 'email-blocklist-lookup-failed',
@@ -714,11 +756,15 @@ export async function assertEmailAllowed(email: string) {
       details: { error: error instanceof Error ? error.message : String(error) },
     }).catch(() => undefined);
     blocked = [];
+    blockedSuffixes = [];
   }
 
   // Normalize BOTH sides: the upstream sync writes lowercase today, but the same row is hand-edited
   // by moderators, and a single capital letter would silently make an entry match nothing.
   if (blocked.some((entry) => entry.trim().toLowerCase().replace(TRAILING_DOTS, '') === domain))
+    throw throwBadRequestError('Please use a different email address');
+
+  if (matchesBlockedSuffix(blockedSuffixes, domain))
     throw throwBadRequestError('Please use a different email address');
 
   if (!(await domainAcceptsMail(domain)))

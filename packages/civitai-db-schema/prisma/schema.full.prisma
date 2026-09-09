@@ -5711,7 +5711,7 @@ model Blocklist {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  type      String
+  type      String   @unique
   data      String[]
 }
 

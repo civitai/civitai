@@ -23,8 +23,35 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const redisGet = redisMock.redis.get;
 
+/**
+ * Keyed by the Redis key, not a single payload for every read. `assertEmailAllowed` reads TWO
+ * lists now, and a mock that answers both with the same array makes the exact list behave like a
+ * suffix list — under which "matches the WHOLE domain, not a substring of it" below passes for the
+ * wrong reason, or fails for one. The two lists are separate rows in production and have to be
+ * separate here.
+ */
+let blockedDomains: string[] = [];
+let blockedSuffixes: string[] = [];
+
+function installBlocklistReads() {
+  redisGet.mockImplementation(async (key: string) => {
+    // `:EmailDomain` is a PREFIX of `:EmailDomainSuffix`, so the suffix key must be tested first.
+    const isSuffix = key.endsWith(`:${BlocklistType.EmailDomainSuffix}`);
+    return JSON.stringify({
+      type: isSuffix ? BlocklistType.EmailDomainSuffix : BlocklistType.EmailDomain,
+      data: isSuffix ? blockedSuffixes : blockedDomains,
+    });
+  });
+}
+
 function setBlockedDomains(domains: string[]) {
-  redisGet.mockResolvedValue(JSON.stringify({ type: BlocklistType.EmailDomain, data: domains }));
+  blockedDomains = domains;
+  installBlocklistReads();
+}
+
+function setBlockedSuffixes(suffixes: string[]) {
+  blockedSuffixes = suffixes;
+  installBlocklistReads();
 }
 
 function dnsError(code: string) {
@@ -47,6 +74,7 @@ describe('assertEmailAllowed', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setBlockedDomains([]);
+    setBlockedSuffixes([]);
     resolveMx.mockResolvedValue([{ exchange: 'mx.example.com', priority: 10 }]);
   });
 
@@ -190,5 +218,85 @@ describe('assertEmailAllowed', () => {
     setBlockedDomains(['blocked-input-space.test']);
 
     expect(await reject('someone@ blocked-input-space.test ')).toBeInstanceOf(TRPCError);
+  });
+
+  /**
+   * The suffix list is a SEPARATE, opt-in list. `EmailDomain` stays exact-match on purpose: making
+   * it cover subdomains would apply suffix semantics to the ~8,800 entries the weekly upstream sync
+   * maintains, 1,357 of which are themselves subdomains of a shared parent (`dynv6.net` alone has
+   * 337, and `co.uk` and `org.uk` are on it). Measured on production 2026-09-09.
+   *
+   * If you are here to delete this list and "just match subdomains everywhere", that is the change
+   * these tests exist to stop.
+   */
+  describe('EmailDomainSuffix', () => {
+    it('blocks a subdomain of an opted-in entry', async () => {
+      setBlockedSuffixes(['suffix-farm.test']);
+
+      expect(await reject('someone@aftvyzuh.suffix-farm.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('blocks a DEEP subdomain of an opted-in entry', async () => {
+      setBlockedSuffixes(['suffix-farm.test']);
+
+      expect(await reject('someone@a.b.c.suffix-farm.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('blocks the opted-in domain itself, not only its subdomains', async () => {
+      setBlockedSuffixes(['suffix-apex.test']);
+
+      expect(await reject('someone@suffix-apex.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('does NOT block a different registrable domain that merely ENDS with the entry', async () => {
+      // The branch that separates `endsWith('.' + entry)` from `endsWith(entry)`. Without the dot,
+      // an entry of `farm.test` also blocks `notfarm.test`, which belongs to someone else.
+      setBlockedSuffixes(['farm.test']);
+
+      await expect(assertEmailAllowed('someone@notfarm.test')).resolves.toBeUndefined();
+    });
+
+    it('does NOT block an unrelated domain while a suffix entry is present', async () => {
+      // Negative control for the whole list. A matcher that returns true unconditionally passes
+      // every other test in this block.
+      setBlockedSuffixes(['suffix-farm.test']);
+
+      await expect(assertEmailAllowed('someone@unrelated-allowed.test')).resolves.toBeUndefined();
+    });
+
+    it('leaves EmailDomain exact-matching alone — a subdomain of an EXACT entry is still allowed', async () => {
+      // 🔴 DELIBERATE, and the reason the suffix list is a separate type. Do not "fix" this by
+      // making the exact list cover subdomains: it would apply to every entry the upstream sync
+      // adds, including shared hosts like `dynv6.net`, `co.uk` and `org.uk`.
+      setBlockedDomains(['exact-only.test']);
+      setBlockedSuffixes([]);
+
+      await expect(assertEmailAllowed('someone@sub.exact-only.test')).resolves.toBeUndefined();
+      expect(await reject('someone@exact-only.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('matches an entry a moderator wrote as a wildcard or with a leading dot', async () => {
+      // `*.x` and `.x` are how someone writes "and its subdomains" by hand. Unstripped, both are
+      // entries that match no address at all, and a suffix entry has no feedback but accounts
+      // continuing to arrive.
+      setBlockedSuffixes(['*.wildcard-written.test', '.dot-written.test']);
+
+      expect(await reject('someone@a.wildcard-written.test')).toBeInstanceOf(TRPCError);
+      expect(await reject('someone@a.dot-written.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('matches an entry with mixed case, whitespace, or a trailing dot', async () => {
+      setBlockedSuffixes(['  Suffix-Messy.TEST.  ']);
+
+      expect(await reject('someone@a.suffix-messy.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('an EMPTY entry matches nothing rather than everything', async () => {
+      // `''` normalizes to `''`, and `domain.endsWith('.')` is false, but an implementation that
+      // returned early on a falsy entry the other way would block every address on the site.
+      setBlockedSuffixes(['']);
+
+      await expect(assertEmailAllowed('someone@empty-entry-allowed.test')).resolves.toBeUndefined();
+    });
   });
 });
