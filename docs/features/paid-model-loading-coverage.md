@@ -55,7 +55,9 @@ This is the thing an earlier reading of these docs got wrong, and it inverted a 
 | `CoveredCheckpoint` | 514 rows | Auction-won community checkpoints — a **residency proxy**. Written and pruned weekly by `handle-auctions.ts`. **This is what paid loading replaces.** (638 versions are covered *as checkpoints* — the rest come from `EcosystemCheckpoints`.) |
 | `EcosystemCheckpoints` | 125 | The generator's **default model per ecosystem**. **62 of the 63 checkpoint defaults are covered through it — and zero through `CoveredCheckpoint`.** Not a loophole; the registry that keeps the generator working. |
 
-Dropping `CoveredCheckpoint` is the feature. Dropping `EcosystemCheckpoints` would remove the
+Dropping `CoveredCheckpoint` **as a conjunct** is the feature — it no longer gates anything. It
+survives as a *disjunct* excusing 6 auction-resident checkpoints from the SafeTensor requirement, and
+is deleted when the auction stops writing rows. Dropping `EcosystemCheckpoints` would remove the
 default model from half the ecosystems the generator supports — see
 [the defaults audit](#the-defaults-audit).
 
@@ -89,8 +91,23 @@ contributes. Earlier drafts of these docs used 514 for both, which is what made 
 fail to add up.
 
 155 published, licensed, standard checkpoints on supported base models were blocked **only** by file
-format: 132 Diffusers, 21 Core ML, 2 ONNX. Diffusers is loadable (Justin, 2026-09-08); Core ML and
-ONNX are inference-runtime formats rather than servable weights and stay excluded.
+format under `GenerationCoverage`: 132 Diffusers, 21 Core ML, 2 ONNX.
+
+⚠️ **Diffusers was ruled loadable (Justin, 2026-09-08) and then narrowed back out for CHECKPOINTS on
+2026-09-09.** The loader serves SafeTensor only, so the checkpoint branch of `GenerationCoverageNext`
+now requires a SafeTensor weight file (migration
+`20260909180000_generation_coverage_next_safetensor_checkpoints`) and `checkLoadable` in
+`resource-load.service.ts` refuses everything else with `unsupported-format`. Diffusers remains
+accepted for **every other model type** — the shared `EXISTS` is unchanged, so the Core ML / ONNX
+deny-list still governs LoRA/TI/VAE/LoCon/DoRA/Upscaler.
+
+🔴 **The SafeTensor narrowing took 2,242 checkpoints back out.** Measured 2026-09-09 against the
+production replica: covered checkpoints **33,811 -> 31,569**, total view rows **933,851 -> 931,609**
+(every row of the delta a checkpoint; textual inversions unchanged at 6,299, all 514 auction rows
+retained). 834 of the 2,242 have any generation history — 6.5M lifetime generations, 0.43% of all
+checkpoint generation. Scoping matters: putting the rule on the shared `EXISTS` instead would have
+removed 3,287 textual inversions carrying **1.39 billion** generations, more than every SafeTensor TI
+combined.
 
 ### The loader population, split by bucket
 

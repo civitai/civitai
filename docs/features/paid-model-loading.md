@@ -240,15 +240,18 @@ The premise of the feature is that the generator stops being restricted to a cur
 2026-09-08 this is scoped and decided; the full model, the audit and every measured number live in
 [paid-model-loading-coverage.md](paid-model-loading-coverage.md). In short:
 
-- **`CoveredCheckpoint` goes away.** It is the auction's residency proxy, it has four uses and all
-  four are generation, and dropping it widens covered checkpoints by roughly two orders of magnitude
-  ([the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)).
+- **`CoveredCheckpoint` stops gating.** It is the auction's residency proxy, it has four uses and all
+  four are generation, and removing it *as a conjunct* widens covered checkpoints by roughly two
+  orders of magnitude ([the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)). It
+  remains as a *disjunct* excusing 6 auction-resident checkpoints from the SafeTensor rule, and is
+  deleted with the auction.
 - **`EcosystemCheckpoints` stays.** It is the generator's default model per ecosystem — 62 of the 63
   checkpoint defaults are covered through it and none through `CoveredCheckpoint`. Removing it would
   strip the default model from half the supported ecosystems.
 - **`GenerationBaseModel` stays as the gate.** It marks the base models where the orchestrator has
   extended checkpoint/diffuser support, i.e. where community models can run.
-- **Diffusers becomes loadable**; Core ML and ONNX stay excluded.
+- **Checkpoints must carry a SafeTensor weight file** (2026-09-09); GGUF, PickleTensor, Diffusers,
+  Core ML, ONNX and unset are all unloadable. Diffusers stays accepted for every other type.
 - **File-less models never touch the loader**, and "file-less" means *no loadable file*, not *no file
   row* — 36 API models carry a `Training Data` archive and would otherwise read as loadable.
 
@@ -343,7 +346,9 @@ deciding anything.
 - **`CoveredCheckpoint` stops gating generation**; `EcosystemCheckpoints` and `GenerationBaseModel`
   stay. Coverage means *allowed to generate*; residency is the orchestrator's axis.
 - **Only base models in `GenerationBaseModel` are loadable.** Everything else is out of scope for v1.
-- A checkpoint needs a **correct model file** to be loadable; file-less API models never are.
+- A checkpoint needs a **SafeTensor** weight file to be loadable (2026-09-09); file-less API models
+  never are, and a GGUF/PickleTensor/Diffusers checkpoint gets a different refusal —
+  `UNLOADABLE_MESSAGES` in `resource-load.service.ts` is the single source of both.
 - A load that never finishes is **refunded**.
 - The purchase path refuses anything **not in `GenerationCoverageNext`** (composed with ecosystem
   type support by `isGenerationEligible`), which is how the `RentCivit` rule is enforced without
