@@ -204,10 +204,10 @@ async function scalar(sql: string, params: unknown[] = []): Promise<number> {
 
 /** The trigger-maintained per-user counter. */
 const userUsedBytes = () =>
-  scalar(
-    `SELECT used_bytes FROM ${SCHEMA}.user_quota WHERE app_block_id = $1 AND user_id = $2`,
-    [APP_BLOCK_ID, USER_ID]
-  );
+  scalar(`SELECT used_bytes FROM ${SCHEMA}.user_quota WHERE app_block_id = $1 AND user_id = $2`, [
+    APP_BLOCK_ID,
+    USER_ID,
+  ]);
 
 /** The same quantity recomputed from the rows — a different mechanism. */
 const recomputedBytes = () =>
@@ -392,9 +392,9 @@ describe('storage.set quota arithmetic vs the bytes Postgres stores', () => {
     expect(refused).toBeGreaterThan(0);
     // The row population never moved: these were all updates, so no row gate
     // could have been what stopped the walk.
-    await expect(scalar(`SELECT count(*) FROM ${SCHEMA}.kv WHERE user_id = $1`, [USER_ID])).resolves.toBe(
-      KEYS
-    );
+    await expect(
+      scalar(`SELECT count(*) FROM ${SCHEMA}.kv WHERE user_id = $1`, [USER_ID])
+    ).resolves.toBe(KEYS);
   });
 
   /**
