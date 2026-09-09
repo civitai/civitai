@@ -4,8 +4,11 @@ import {
   ACTIVITY_TAB_VALUES,
   activityTabQuery,
   DEFAULT_ACTIVITY_TAB,
+  INSTALL_GATED_ACTIVITY_TABS,
   isActivityTab,
+  isActivityTabVisible,
   resolveActivityTab,
+  visibleActivityTabs,
 } from '~/components/Apps/appsActivityTabs';
 
 /**
@@ -63,9 +66,58 @@ describe('isActivityTab', () => {
   });
 });
 
+describe('tab visibility', () => {
+  const OPEN = { canSeeInstallOnlyTabs: true };
+  const SLOTLESS = { canSeeInstallOnlyTabs: false };
+
+  it('🔴 the install-gated ledger is exactly the two SLOT-INSTALL tabs', () => {
+    // Pinned as a ledger, not a floor: this set decides both what the page renders AND
+    // what `?tab=` honours, so a silent addition or removal must fail here first.
+    expect([...INSTALL_GATED_ACTIVITY_TABS]).toEqual(['subscriptions', 'hidden']);
+  });
+
+  it('🔴 `permissions` is NOT gated — the consent/audit surface stays reachable', () => {
+    // A full-page app (`appBlocksPages`) invokes scopes with no install row, so a
+    // page-only viewer has grants to read and revoke here. This is the deliberate
+    // asymmetry with the two tabs above; do not unify the predicates.
+    expect(isActivityTabVisible('permissions', SLOTLESS)).toBe(true);
+    expect(isActivityTabVisible('activity', SLOTLESS)).toBe(true);
+  });
+
+  it('a slot-flag viewer sees every tab; a page-only viewer sees the ungated two', () => {
+    expect([...visibleActivityTabs(OPEN)]).toEqual([...ACTIVITY_TAB_VALUES]);
+    expect([...visibleActivityTabs(SLOTLESS)]).toEqual(['activity', 'permissions']);
+  });
+
+  it('🔴 THE FLOOR IS 2 — which is why the page has no `< 2` bar collapse', () => {
+    // `AppsSubNav` hides its bar below two rows. This bar has no such branch because
+    // the state is unreachable: `activity` and `permissions` are both ungated, and the
+    // page 404s (`canAccessAppsActivity`) for anyone holding neither runtime flag. A
+    // collapse would be a branch that can never execute — coverage-shaped and inert.
+    //
+    // 🔴 THIS TEST IS THE TRIPWIRE. Gate `permissions` (or `activity`) and the floor
+    // drops to 1, this goes red, and the collapse becomes real, reachable work.
+    for (const opts of [OPEN, SLOTLESS]) {
+      expect(visibleActivityTabs(opts).length).toBeGreaterThanOrEqual(2);
+    }
+    // …and the minimum is exactly 2, not vacuously large: naming it pins WHICH viewer
+    // is the worst case, so a later gate cannot pass by shrinking a different arm.
+    expect(visibleActivityTabs(SLOTLESS).length).toBe(2);
+  });
+
+  it('🔴 the DEFAULT tab is visible to EVERY viewer — the fallback must land somewhere', () => {
+    // `resolveActivityTab` returns `DEFAULT_ACTIVITY_TAB` for a tab the viewer cannot
+    // see. If the default were itself gated, the fallback would hand Mantine a value
+    // absent from the rendered list: the exact blank page it exists to prevent.
+    for (const opts of [OPEN, SLOTLESS]) {
+      expect(isActivityTabVisible(DEFAULT_ACTIVITY_TAB, opts)).toBe(true);
+    }
+  });
+});
+
 describe('resolveActivityTab', () => {
-  const OPEN = { canSeeInstalls: true };
-  const SLOTLESS = { canSeeInstalls: false };
+  const OPEN = { canSeeInstallOnlyTabs: true };
+  const SLOTLESS = { canSeeInstallOnlyTabs: false };
 
   it('an absent / unknown / prototype-key value falls back to the default', () => {
     for (const raw of [undefined, null, '', 'nope', 'constructor', '__proto__', 7]) {
@@ -92,11 +144,20 @@ describe('resolveActivityTab', () => {
     // That tab is not rendered for them, so selecting it would leave the bar with no
     // active tab over an empty panel — a blank page with no error. This is a link a
     // page-only viewer can legitimately receive.
-    expect(resolveActivityTab('subscriptions', SLOTLESS)).toBe('activity');
-    // …and the OTHER tabs are unaffected by that flag — the fallback is scoped to the
-    // gated tab, not applied to everything.
+    //
+    // 🔴 RED AT `origin/main` FOR `hidden`: the resolver tested `first ===
+    // 'subscriptions'` by NAME, so gating `hidden` shipped precisely that blank page.
+    // Looping the ledger is what keeps this honest when a third tab is gated.
+    for (const tab of INSTALL_GATED_ACTIVITY_TABS) {
+      expect(resolveActivityTab(tab, SLOTLESS), `${tab} must fall back`).toBe('activity');
+      // NEGATIVE CONTROL: with the flag, the SAME value is honoured — so the assertion
+      // above cannot be satisfied by a resolver that always returns the default.
+      expect(resolveActivityTab(tab, OPEN), `${tab} must be honoured`).toBe(tab);
+    }
+    // …and the UNGATED tabs are unaffected by that flag — the fallback is scoped to the
+    // ledger, not applied to everything.
     expect(resolveActivityTab('permissions', SLOTLESS)).toBe('permissions');
-    expect(resolveActivityTab('hidden', SLOTLESS)).toBe('hidden');
+    expect(resolveActivityTab('activity', SLOTLESS)).toBe('activity');
   });
 });
 

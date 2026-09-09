@@ -23,6 +23,14 @@ import type * as TrpcMod from '~/utils/trpc';
  *   · `no header CTA` — main renders `actions={<Button …>Browse marketplace</Button>}`.
  * The exact per-test messages are in the PR body.
  *
+ * ── LATER ADDITION: the `Hidden` tab joins the SLOT gate ──────────────────────
+ * `Hidden` lists slot installs the viewer has hidden from their model pages, so it now
+ * carries `features.appBlocks` exactly as `Installs` does. Its red-at-previous-state is
+ * `the exact ledger` case below (which asserted a three-tab list) and the stale-link
+ * case, which rendered a bar with NOTHING selected until `resolveActivityTab` stopped
+ * testing the gated tab BY NAME. `Apps & permissions` stays ungated on purpose — see
+ * the comment on that assertion.
+ *
  * ── WHY THE MOCKS ARE THESE MOCKS ─────────────────────────────────────────────
  * The page module calls `createServerSideProps` at import time, which pulls the server
  * graph into a browser bundle — stubbed, exactly as `AppsWideLayout.geometry.test.tsx`
@@ -224,18 +232,19 @@ describe('the page opens on Recent activity', () => {
   });
 });
 
-describe('🔴 the Installs tab is gated on the SLOT flag', () => {
+describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
   test('present for a viewer WITH appBlocks', async () => {
     mocks.flags = { appBlocks: true, appBlocksPages: false, appListings: true };
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(pageTab('Installs'), 'a slot-flag viewer must get the Installs tab').toBeDefined();
+    expect(pageTab('Hidden'), 'a slot-flag viewer must get the Hidden tab').toBeDefined();
   });
 
   test('🔴 ABSENT for a viewer with appBlocksPages but NOT appBlocks', async () => {
     // The cohort criterion 2 widened the page for. They have activity and no slot
-    // install, so the tab's own content — subscriptions and per-model installs — is
-    // exactly what they cannot have.
+    // install, so those tabs' own content — subscriptions, per-model installs, and the
+    // per-model installs they have HIDDEN — is exactly what they cannot have.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
@@ -243,12 +252,56 @@ describe('🔴 the Installs tab is gated on the SLOT flag', () => {
       pageTab('Installs'),
       'the Installs tab must be hidden without appBlocks'
     ).toBeUndefined();
-    // …and the page is still a page: the other three tabs render.
+    expect(pageTab('Hidden'), 'the Hidden tab must be hidden without appBlocks').toBeUndefined();
+    // 🔴 THE WHOLE LIST, NOT JUST THE ABSENCES — pinned as an exact ledger so that
+    // gating a THIRD tab cannot slip through green, and so the floor below is visible.
+    //
+    // 🔴 `Apps & permissions` SURVIVES DELIBERATELY. Scope grants are the consent/audit
+    // surface: this very viewer invokes scopes through full-page apps with no install
+    // row, so gating it would hide the record of access from the people it records.
+    // That asymmetry is the decision — do not unify it with the two tabs above.
     expect(pageTabs().map((el) => el.textContent?.trim())).toEqual([
       'Recent activity',
       'Apps & permissions',
-      'Hidden',
     ]);
+  });
+
+  test('🔴 a stale `?tab=hidden` link renders a PAGE, not an empty bar', async () => {
+    // THE SYMPTOM the resolver fix exists to prevent, asserted where it is actually
+    // felt. `?tab=hidden` is a link this viewer can legitimately hold — a teammate's
+    // share, a bookmark from before a flag moved, their own history. Before the
+    // resolver widened, `hidden` was handed to `Tabs.value` while no such tab was
+    // rendered, and Mantine drew a bar with NOTHING selected over an empty panel: a
+    // blank page with no error and no console warning.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
+    router.query = { tab: 'hidden' };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    // A tab is SELECTED at all — this is the half that was empty.
+    expect(selectedPageTab(), 'some tab must be selected').toBeDefined();
+    expect(selectedPageTab()?.textContent?.trim()).toBe('Recent activity');
+  });
+
+  test('🔴 …and the SAME link still selects Hidden for a viewer who HAS the flag', async () => {
+    // NEGATIVE CONTROL for the fallback above: without it, a page that ignored `?tab=`
+    // entirely, or one that hard-coded the default, would pass that test.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    router.query = { tab: 'hidden' };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    expect(selectedPageTab()?.textContent?.trim()).toBe('Hidden');
+  });
+
+  test('🔴 the bar has NO `< 2` collapse because 2 is the FLOOR, not a case', async () => {
+    // `AppsSubNav` hides its bar below two rows. This bar cannot reach that state: the
+    // slotless viewer above is the WORST case and still gets two tabs, and a viewer
+    // with neither runtime flag gets `<NotFound />` (the negative control below), not a
+    // one-tab bar. So a collapse here would be a branch that never executes.
+    // `appsActivityTabs.test.ts` holds the unit-tier tripwire on that floor.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    expect(pageTabs().length, 'the minimum rendered tab count is 2').toBe(2);
   });
 
   test('🔴 …and the page still LOADS for that viewer (criterion 2, client half)', async () => {

@@ -480,18 +480,22 @@ function HiddenBlocksPanel() {
 export default function AppActivityPage() {
   const features = useFeatureFlags();
   const router = useRouter();
-  // 🔴 The Installs tab's gate is the `appBlocks` SLOT flag; the PAGE's is
+  // 🔴 The install-only tabs' gate is the `appBlocks` SLOT flag; the PAGE's is
   // `appBlocks || appBlocksPages`. A tab's predicate is its content's own gate,
   // restated — and this one is NON-VACUOUS only because the page gate widened.
-  const canSeeInstalls = !!features.appBlocks;
+  // `INSTALL_GATED_ACTIVITY_TABS` is the ledger of which tabs that covers
+  // (`subscriptions` + `hidden`, both slot-install surfaces) and the resolver reads the
+  // SAME predicate, so a `?tab=` deep link can never select a tab this page did not
+  // render. `permissions` is deliberately NOT in it — see that constant's comment.
+  const canSeeInstallOnlyTabs = !!features.appBlocks;
   const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: canSeeInstalls,
+    enabled: canSeeInstallOnlyTabs,
   });
 
   // 🔴 URL-backed, controlled tabs. `resolveActivityTab` returns the default for an
   // absent value, so an empty first-render `router.query` renders what SSR did.
   const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], {
-    canSeeInstalls,
+    canSeeInstallOnlyTabs,
   });
 
   const groupedApps = useMemo(() => groupSubscriptionsByApp(subs ?? []), [subs]);
@@ -555,18 +559,34 @@ export default function AppActivityPage() {
             <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
               Recent activity
             </Tabs.Tab>
-            {canSeeInstalls && (
+            {canSeeInstallOnlyTabs && (
               <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
                 Installs
               </Tabs.Tab>
             )}
+            {/* 🔴 UNGATED ON PURPOSE, unlike its two neighbours. Scope grants are the
+                consent/audit surface: a full-page app (`appBlocksPages`) invokes scopes
+                with no install row, so a viewer holding only the page flag has grants
+                here and nothing on `Installs` to reach them through. Gating this would
+                hide the record of access from the people whose access it records. */}
             <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
               Apps & permissions
             </Tabs.Tab>
-            <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
-              Hidden
-            </Tabs.Tab>
+            {/* Hidden lists SLOT installs the viewer has hidden from their model pages,
+                so it carries the slot flag exactly as `Installs` does. */}
+            {canSeeInstallOnlyTabs && (
+              <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
+                Hidden
+              </Tabs.Tab>
+            )}
           </Tabs.List>
+
+          {/* 🔴 NO `< 2` COLLAPSE HERE, and its absence is deliberate. `AppsSubNav`
+              hides its bar below two rows; this bar cannot reach that state — `activity`
+              and `permissions` are both ungated and the page 404s for anyone holding
+              neither runtime flag, so the floor is 2. A collapse would be a branch that
+              never executes. If `permissions` is ever gated, the floor test in
+              `appsActivityTabs.test.ts` goes red — add the collapse then. */}
 
           <Tabs.Panel value="activity" pt="md">
             <Stack gap="sm">
@@ -580,7 +600,7 @@ export default function AppActivityPage() {
 
           {/* 🔴 THE PANEL IS GATED TOO. A `Tabs.Panel` with no tab is unreachable but
               still MOUNTS its children on every render. */}
-          {canSeeInstalls && (
+          {canSeeInstallOnlyTabs && (
             <Tabs.Panel value="subscriptions" pt="md">
               {isLoading ? (
                 <Center py="xl">
@@ -611,16 +631,20 @@ export default function AppActivityPage() {
             </Stack>
           </Tabs.Panel>
 
-          <Tabs.Panel value="hidden" pt="md">
-            <Stack gap="sm">
-              <Text size="sm" c="dimmed">
-                Apps you've hidden on this device. Hiding is local to your browser — it never
-                affects the publisher's install or other viewers. Restore one to have it show on its
-                model page again.
-              </Text>
-              <HiddenBlocksPanel />
-            </Stack>
-          </Tabs.Panel>
+          {/* 🔴 THE PANEL IS GATED TOO — same reason as `subscriptions` above: an
+              unreachable `Tabs.Panel` still MOUNTS its children on every render. */}
+          {canSeeInstallOnlyTabs && (
+            <Tabs.Panel value="hidden" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  Apps you've hidden on this device. Hiding is local to your browser — it never
+                  affects the publisher's install or other viewers. Restore one to have it show on
+                  its model page again.
+                </Text>
+                <HiddenBlocksPanel />
+              </Stack>
+            </Tabs.Panel>
+          )}
         </Tabs>
       </AppsPageLayout>
     </>
