@@ -26,6 +26,7 @@ import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
 import { imagePreprocessGraph } from './image-preprocess-graph';
+import { videoPreprocessGraph } from './video-preprocess-graph';
 import { metadataExtractionGraph } from './metadata-extraction-graph';
 import { promptEnhancementGraph } from './prompt-enhancement-graph';
 import { ecosystemGraph } from './ecosystem-graph';
@@ -279,6 +280,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     { values: ['img2img:upscale'] as const, graph: imageUpscaleGraph },
     { values: ['img2img:remove-background'] as const, graph: imageRemoveBackgroundGraph },
     { values: ['img2img:preprocess'] as const, graph: imagePreprocessGraph },
+    { values: ['vid2vid:preprocess'] as const, graph: videoPreprocessGraph },
     // Utility workflows (no ecosystem support, no submission)
     { values: ['img2meta'] as const, graph: metadataExtractionGraph },
     { values: ['prompt:enhance'] as const, graph: promptEnhancementGraph },

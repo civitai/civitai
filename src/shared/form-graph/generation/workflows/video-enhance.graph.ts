@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { VIDEO } from '../defs';
+import { VIDEO, sliderDef } from '../defs';
+import {
+  videoPreprocessKindParamSpecs,
+  videoPreprocessKinds,
+} from '~/shared/data-graph/generation/video-preprocess-graph';
+
+const videoKindParamsSchema = z.record(z.string(), z.unknown());
 
 /**
  * The video enhancement workflows, ported from `video-upscale-graph.ts` and
@@ -115,3 +121,27 @@ export const videoInterpolation = defineGraph<GenerationCtx>()
     if (!fps) return undefined;
     return interpolationFactor * fps;
   });
+
+/**
+ * The standalone control-preprocessor workflow for video (vid2vid:preprocess),
+ * ported from `video-preprocess-graph.ts`. Same field names as the image
+ * preprocess arm — they sit in different branch arms, so the narrower video
+ * kind enum does not collide with the image one.
+ */
+export const videoPreprocess = defineGraph<GenerationCtx>()
+  .field('video', VIDEO)
+  .field('preprocessKind', {
+    input: z.enum(videoPreprocessKinds).optional(),
+    output: z.enum(videoPreprocessKinds),
+    default: videoPreprocessKinds[0],
+    meta: { options: videoPreprocessKinds.map((value) => ({ label: value, value })) },
+  })
+  .field('preprocessResolution', sliderDef({ min: 64, max: 2048, step: 8, default: 512 }))
+  .field('kindParams', ({ preprocessKind }) => ({
+    input: videoKindParamsSchema.optional(),
+    output: videoKindParamsSchema,
+    default: {} as Record<string, unknown>,
+    meta: {
+      specs: preprocessKind ? videoPreprocessKindParamSpecs[preprocessKind] ?? [] : [],
+    },
+  }));

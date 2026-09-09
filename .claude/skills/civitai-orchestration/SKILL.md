@@ -295,6 +295,10 @@ Image/Video generation steps you might encounter:
 - `videoInterpolation` - Frame interpolation
 - `convertImage` - Convert image formats
 - `comfy` - ComfyUI workflow execution
+- `preprocessImage` - ControlNet preprocessor over an image (output is a `blob`, an image)
+- `preprocessVideo` - ControlNet preprocessor over a video (output is a `blob`, a VideoBlob)
+- `aceStepAudio` - Audio generation; blob is AudioBlob, or VideoBlob in cover-image mode
+- `miniMaxMusic3` - Music generation
 
 ## Examples
 

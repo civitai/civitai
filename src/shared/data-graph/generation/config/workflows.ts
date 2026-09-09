@@ -362,6 +362,15 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [],
   },
 
+  'vid2vid:preprocess': {
+    label: 'Control Preprocessor',
+    description: 'Run a ControlNet preprocessor on a video (canny, pose, depth, etc.)',
+    category: 'video',
+    showBackButton: true,
+    ecosystemIds: [],
+    isNew: true,
+  },
+
   'vid2vid:edit': {
     label: 'Edit Video',
     description: 'Edit a video with AI',
