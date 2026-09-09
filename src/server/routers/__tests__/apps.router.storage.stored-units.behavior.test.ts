@@ -1,5 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Booting PGlite (WASM Postgres) and driving a few hundred writes through it can
 // exceed the default 10s hook/test timeouts on a contended runner. Relaxing them
@@ -81,21 +83,23 @@ const fakePool = {
   query: (sql: string, params?: unknown[]) => runSql(sql, params),
 };
 
-const { mockVerifyBlockToken, mockDbRead, mockIsRevoked, mockLogToAxiom } = vi.hoisted(() => ({
+const { mockVerifyBlockToken, mockIsRevoked } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
-  mockDbRead: {
-    appBlock: { findUnique: vi.fn() },
-    appBlockPublishRequest: { findUnique: vi.fn() },
-  },
   mockIsRevoked: vi.fn(async () => false),
-  // Spied, not silenced: the `set` log's `storedBytes` is the only place the
-  // router's OWN predicted stored size is observable from outside. Without it a
-  // test can only read `kv.size_bytes` and the trigger-maintained counter, both
-  // of which are computed by Postgres and are therefore identical whether the
-  // router predicted correctly or not — measured, a mutant that dropped the
-  // `::jsonb` cast from the probe survived every assertion built on those two.
-  mockLogToAxiom: vi.fn(async () => undefined),
 }));
+
+// `~/server/db/client` and `~/server/logging/client` are mocked ONCE, globally, in
+// src/__tests__/setup.ts — a per-file `vi.mock` of either is a `no-direct-shared-module-mock`
+// violation (under `isolate: false` it freezes this file's mock shape into every later file
+// in the same worker). Declare behaviour on the canonical objects instead. The sibling
+// fixture suite predates that rule and is grandfathered on the allowlist; a new file is not.
+//
+// `loggingMock.logToAxiom` is SPIED here, not merely silenced: the `set` log's `storedBytes`
+// is the only place the router's OWN predicted stored size is observable from outside. Without
+// it a test can only read `kv.size_bytes` and the trigger-maintained counter, both of which are
+// computed by Postgres and are therefore identical whether the router predicted correctly or
+// not — measured, a mutant that dropped the `::jsonb` cast from the probe survived every
+// assertion built on those two.
 
 // Everything that is NOT the storage arithmetic or the database is stubbed. In
 // particular `~/server/services/apps/storage-provision.service` is deliberately
@@ -107,7 +111,6 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (sub: string) => (sub === 'anon' ? null : Number(String(sub).split(':')[1])),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: async () => true,
   isAppBlocksAuthorEnabled: async () => true,
@@ -123,9 +126,6 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 }));
 vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: async () => undefined,
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => mockLogToAxiom(...(args as [])),
 }));
 
 const { appsRouter } = await import('../apps.router');
@@ -231,13 +231,16 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   mockVerifyBlockToken.mockReset();
-  mockLogToAxiom.mockClear();
+  loggingMock.logToAxiom.mockClear();
   mockIsRevoked.mockReset();
   mockIsRevoked.mockResolvedValue(false);
-  mockDbRead.appBlock.findUnique.mockReset();
-  mockDbRead.appBlock.findUnique.mockResolvedValue({ id: APP_BLOCK_ID, status: 'approved' });
-  mockDbRead.appBlockPublishRequest.findUnique.mockReset();
-  mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'pending' });
+  // The approved-app lookup is on the REPLICA (dbRead); the run-for-real pubreq
+  // status is read from the PRIMARY (dbWrite). The canonical mock keeps the two
+  // DISTINCT, so naming the wrong one silently leaves the router seeing a null.
+  dbMock.dbRead.appBlock.findUnique.mockReset();
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: APP_BLOCK_ID, status: 'approved' });
+  dbMock.dbWrite.appBlockPublishRequest.findUnique.mockReset();
+  dbMock.dbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'pending' });
 
   // Real DDL, real generated column, real trigger. Idempotent, so re-provisioning
   // per test is safe; the tables are truncated so each test starts from zero.
@@ -310,7 +313,7 @@ describe('storage.set quota arithmetic vs the bytes Postgres stores', () => {
     expect(stored).not.toBe(wire);
 
     // The router's OWN predicted size, against what Postgres actually stored.
-    const setLog = mockLogToAxiom.mock.calls
+    const setLog = loggingMock.logToAxiom.mock.calls
       .map(([payload]) => payload as { event?: string; storedBytes?: number; sizeBytes?: number })
       .find((payload) => payload?.event === 'set');
     expect(setLog).toBeDefined();
