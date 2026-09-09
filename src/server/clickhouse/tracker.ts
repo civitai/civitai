@@ -66,7 +66,15 @@ const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 // dead-letter queue: `pageViews` was the only table still losing rows, ALL of it to this
 // — 21 of 26 sampled rows carried a `duration` above the UInt32 ceiling (values of
 // 50–144 days in ms, from an accumulator that appears never to reset) and 5 carried
-// window dimensions above Int16 (up to 183,800 × 102,200 px).
+// window dimensions above Int16 — widths to 183,800 px and heights to 211,900 px. (Those
+// two extremes come from DIFFERENT rows; no single row was 183,800 × 102,200, which is
+// how an earlier draft of this comment stated it.)
+//
+// ⚠️ THIS CLOSES THE NUMERIC-WIDTH HALF ONLY. A wrong-TYPE value destroys the row in
+// exactly the same silent way and is NOT addressed here: `/api/internal/ping` type-asserts
+// its JSON body rather than parsing it, so `ads: "true"` (a string into a `Bool` column)
+// is forwarded as-is and rejected identically. Closing that needs a schema parse at the
+// endpoint, not another clamp here.
 //
 // The corroborating tell, if you ever want to check another column for the same thing:
 // the live `duration` maximum sat at 4,264,810,774 — 99.3% of the UInt32 ceiling and
@@ -76,8 +84,25 @@ const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 // taking ~55.7M rows/7d, to preserve values that are junk on their face.
 // WHY CLAMP RATHER THAN DROP THE ROW: the outlier is ONE metric on an otherwise-good row
 // — path, host, country and userId are all fine — so saturating that field keeps the
-// page view countable instead of discarding it. Saturation is also honest here: the
-// stored distribution was ALREADY clipped at this bound, just by silent loss instead.
+// page view countable instead of discarding it.
+//
+// 🔴 CLAMPING CHANGES THE `duration` DISTRIBUTION, AND ANY AGGREGATE OVER IT.
+// An earlier draft of this comment claimed saturation was "honest here, because the
+// stored distribution was ALREADY clipped at this bound, just by silent loss instead."
+// That is FALSE and is recorded here so nobody derives it again: dropping a row REMOVES
+// it from the distribution, clamping INSERTS it at the maximum. Truncation and
+// winsorization are different operations with different means.
+//
+// The practical consequence, because the clamped value is 4–5 orders of magnitude above
+// a typical page duration: a handful of clamped rows per week visibly moves
+// `avg(duration)` over a ~55.7M-row/7d table. So:
+//   * `duration = 4294967295` is a SATURATION SENTINEL, not a measurement. Any mean,
+//     percentile or max over `pageViews.duration` should exclude it.
+//   * This also destroys, for THIS column, the diagnostic described above — the max will
+//     now sit exactly AT the bound by construction, so it no longer distinguishes a
+//     clipped tail from a healthy one. Use the sentinel count instead.
+// No in-repo consumer reads `pageViews.duration` (checked); external dashboards were not
+// enumerated, so this is stated as a property of the change rather than a known impact.
 const UINT32_MAX = 4_294_967_295;
 const INT16_MAX = 32_767;
 

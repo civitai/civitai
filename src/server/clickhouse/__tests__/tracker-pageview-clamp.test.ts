@@ -111,7 +111,12 @@ describe('pageView emits through the clamp', () => {
   // the COMMENT and failed against a correct implementation — a grep cannot tell code from
   // prose. (This repo has hit that exact shape before, counting `as ReactionType` in a
   // docstring that explained its own removal.)
+  // Block comments are stripped as well as line comments. An earlier version handled
+  // only `//`, so rewriting the hazard comment as JSDoc would have made the
+  // `.not.toContain('...values')` assertion below fail against correct code — the very
+  // defect this stripper was added to fix, reintroduced in a different comment syntax.
   const emitBlock = rawBlock
+    .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .filter((line) => !line.trim().startsWith('//'))
     .join('\n');
@@ -119,11 +124,17 @@ describe('pageView emits through the clamp', () => {
   it('positive control: the comment stripper is not eating the code', () => {
     // Without this, a stripper bug that returned '' would make every `.not.toContain`
     // below pass vacuously — the failure mode that makes a negative assertion worthless.
+    //
+    // 🔴 It asserts the CODE SURVIVED, never that a comment was removed. An earlier
+    // version also required `emitBlock.length < rawBlock.length`, which coupled suite
+    // health to the presence of at least one `//` line inside the method: deleting only
+    // the comments, leaving the destructure and all three clamps byte-identical, turned
+    // the suite RED against a correct implementation. A guard that fails on correct code
+    // is worse than no guard — it trains the reader to ignore it.
     expect(emitBlock).toContain('public pageView(');
     expect(emitBlock).toContain('return this.send(');
+    expect(emitBlock).toContain('clampToColumn(');
     expect(emitBlock.length).toBeGreaterThan(200);
-    // And it must genuinely have removed something, or it is not stripping at all.
-    expect(emitBlock.length).toBeLessThan(rawBlock.length);
   });
 
   it('clamps all three narrow columns', () => {
