@@ -133,9 +133,10 @@ const WRITE_RE =
 // ENCLOSING-FUNCTION ATTRIBUTION
 // ---------------------------------------------------------------------------
 /**
- * 🔴 THIS IS A BACKWARD PARSE, NOT A PATTERN LIST — because two earlier pattern lists
- * each mis-attributed silently, in a different shape, and a silent wrong name is the
- * worst output this file can produce (it sends the reader to an unrelated function).
+ * 🔴 THIS IS A BACKWARD PARSE, NOT A PATTERN LIST — because THREE earlier pattern
+ * versions each mis-attributed silently, in a different shape, and a silent wrong name
+ * is the worst output this file can produce (it sends the reader to a function that had
+ * nothing to do with the site).
  *
  * The shapes that already bit us:
  *   · a two-space-indented `name(` alternative added to name class methods also matched
@@ -143,8 +144,8 @@ const WRITE_RE =
  *     called `if`;
  *   · dropping that alternative and anchoring at column 0 made class methods invisible
  *     instead: re-adding the bust inside `BlockRegistry.setMarketplaceMeta` reported it
- *     as `block-registry.service.ts::resolveRenderMode`, an unrelated top-level helper
- *     forty lines earlier — while a comment at that call site instructs a future
+ *     as `block-registry.service.ts::resolveRenderMode`, a top-level helper that is not
+ *     even nearby in that file — while a comment at that call site instructs a future
  *     maintainer to add exactly that function to this ledger;
  *   · a leftmost-match regex over a lookback window jumped to the PREVIOUS function
  *     whenever the signature contained an object-type parameter (`function f(opts: {`),
@@ -167,7 +168,6 @@ const RESERVED = new Set([
   'default', 'static', 'async', 'get', 'set',
 ]); // prettier-ignore
 
-const TYPE_CHARS = /[\w$\s.<>,[\]|&?]/;
 const isWs = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
 const isIdent = (c: string) => /[\w$]/.test(c);
 

@@ -830,7 +830,8 @@ function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
  * listing-state mutation busts". Several call sites used to invoke the latter as a
  * "uniform rule"; it is not uniform, and stating it that way made a reader's model of
  * the cache wrong in the expensive direction — it implies that a writer WITHOUT a bust
- * is a bug, when a whole enumerated list of them are deliberate and correct. The cached statement reads
+ * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
+ * statement reads
  * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
  * `ab.current_version_deployed_at` and the `sort_key` inputs (`al.name`,
  * `al.created_at`, the metric rollup) — and nothing else. Every other column on the
@@ -838,9 +839,14 @@ function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
  *
  * Some busts ARE kept on paths that are inert today, as cheap defence-in-depth against
  * a future edit promoting the row into the catalog: `updateListing`'s `removed` and
- * `draft`/`pending` branches, its material-shadow branch, `submitListingRevision`, and
- * `claimListing`. Each says so at its own call site. They are a judgement, not the
- * rule.
+ * `draft`/`pending` branches, its material-shadow branch, `submitListingRevision`,
+ * `rejectExternalRequest` and `claimListing`. Each says so at its own call site. They
+ * are a judgement, not the rule.
+ *
+ * ⚠️ THAT LIST IS PROSE AND NOTHING ASSERTS ON IT. The ledger pins WHICH functions bust
+ * and which are `EXEMPT`; it does not pin which of the busts are inert, because that is
+ * a claim about the SQL a branch can write rather than about a call site. Re-derive it
+ * from the call-site comments rather than trusting the enumeration here.
  *
  * The asserted form of the rule — every `AppListing` writer either busts or is on an
  * `EXEMPT` list with a reason — is
