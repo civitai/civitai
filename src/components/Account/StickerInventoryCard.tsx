@@ -1,17 +1,21 @@
 import { Badge, Button, Card, Group, Loader, Popover, Stack, Text, Title } from '@mantine/core';
+import { IconSticker } from '@tabler/icons-react';
 import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { PointerCard } from '~/components/Account/SettingsLayout';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { stickerSurfaceLabels, STICKER_SIZE } from '~/shared/utils/sticker-token';
 import { trpc } from '~/utils/trpc';
 
 const { charged, free } = stickerSurfaceLabels();
 
-export function StickerInventoryCard() {
+export function StickerInventoryCard({ flat }: { flat?: boolean } = {}) {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const [toppingUp, setToppingUp] = useState<number | null>(null);
   const { sticker, isLoading } = useOwnedSticker();
   const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
@@ -20,13 +24,25 @@ export function StickerInventoryCard() {
 
   if (!features.stickers) return null;
 
+  // The Stickerbook browses the same inventory better than a column of rows does, so the pane
+  // points at it. Without that page there is nowhere to point, so the list stays.
+  if (flat && features.stickerBook && currentUser?.username)
+    return (
+      <PointerCard
+        icon={<IconSticker size={18} />}
+        title="Your sticker inventory"
+        description="Browse and manage your stickers in the Stickerbook."
+        href={`/user/${currentUser.username}/sticker-book`}
+      />
+    );
+
   // null remaining = unlimited; a missing row means the balance hasn't loaded.
   const balances = new Map((balanceRows ?? []).map((b) => [b.cosmeticId, b.remaining]));
 
   return (
-    <Card withBorder id="stickers">
+    <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? 'transparent' : undefined} id="stickers">
       <Stack>
-        <Title order={2}>Stickers</Title>
+        <Title order={flat ? 3 : 2}>Stickers</Title>
         <Text size="sm" c="dimmed">
           Stickers you own. A use is spent each time you place one in {charged.join(', ')}; using
           them in {free.join(', ')} is free.

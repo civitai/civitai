@@ -1,10 +1,11 @@
 import { Badge, Card, Divider, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { strikeStatusColorScheme } from '~/server/schema/strike.schema';
+import { accountStandingFromPoints, strikeStatusColorScheme } from '~/server/schema/strike.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
 // The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
@@ -30,8 +31,15 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
   });
 
   if (summaryLoading) {
+    if (flat)
+      return (
+        <SettingsSection title="Account standing">
+          <Loader size="sm" />
+        </SettingsSection>
+      );
+
     return (
-      <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? "transparent" : undefined}>
+      <Card withBorder>
         <Stack>
           <Title order={2}>Account Standing</Title>
           <Loader size="sm" />
@@ -41,12 +49,104 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
   }
 
   const points = summary?.totalActivePoints ?? 0;
-  const standingColor = points === 0 ? 'green' : points === 1 ? 'yellow' : 'red';
-  const standingLabel = points === 0 ? 'Good Standing' : points === 1 ? 'Warning' : 'Restricted';
+  const { label: standingLabel, color: standingColor } = accountStandingFromPoints(points);
   const strikes = strikesData?.strikes ?? [];
 
+  const standingBadges = (
+    <Group gap="xs" wrap="nowrap">
+      <Badge
+        color={standingColor}
+        size="md"
+        variant="light"
+        leftSection={points === 0 ? <IconCheck size={14} /> : undefined}
+      >
+        {standingLabel}
+      </Badge>
+      {points > 0 && (
+        <Badge color={standingColor} size="md" variant="light">
+          {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+        </Badge>
+      )}
+    </Group>
+  );
+
+  const strikeList = strikesLoading ? (
+    <Loader size="sm" />
+  ) : strikes.length === 0 ? null : (
+    <Stack gap="sm">
+      {strikes.map((strike) => (
+        <Paper key={strike.id} withBorder p="md" radius="md">
+          <Stack gap="xs">
+            <Group gap="xs" wrap="nowrap">
+              <div
+                role="img"
+                aria-label={strike.status === 'Active' ? 'Active strike' : 'Inactive strike'}
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  backgroundColor:
+                    strike.status === 'Active'
+                      ? 'var(--mantine-color-red-filled)'
+                      : 'var(--mantine-color-gray-filled)',
+                  flexShrink: 0,
+                }}
+              />
+              <Text size="sm" fw={600} style={{ flex: 1 }}>
+                {getDisplayName(strike.reason)}
+              </Text>
+              <Badge
+                color={strikeStatusColorScheme[strike.status] ?? 'gray'}
+                size="sm"
+                variant="light"
+              >
+                {strike.points} {strike.points === 1 ? 'pt' : 'pts'}
+              </Badge>
+            </Group>
+
+            <Text size="sm" c="dimmed">
+              {strike.description}
+            </Text>
+
+            <Group justify="space-between">
+              <Text size="xs" c="dimmed">
+                Issued: {formatDate(strike.createdAt)}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Expires: {formatDate(strike.expiresAt)}
+              </Text>
+            </Group>
+          </Stack>
+        </Paper>
+      ))}
+    </Stack>
+  );
+
+  if (flat)
+    return (
+      <div id="strikes" ref={scrollToStrikes}>
+        <SettingsSection title="Account standing">
+          <div id="creator-score" ref={scrollToCreatorScore}>
+            <UserScoreDisplay scores={scores} flat abbreviate={false} />
+          </div>
+          <SettingRow
+            label="Strikes"
+            description={
+              strikesLoading
+                ? undefined
+                : strikes.length === 0
+                ? 'No active strikes.'
+                : `${strikes.length} active ${strikes.length === 1 ? 'strike' : 'strikes'}.`
+            }
+            control={standingBadges}
+          />
+          {strikes.length > 0 && strikeList}
+        </SettingsSection>
+      </div>
+    );
+
   return (
-    <Card withBorder={!flat} id="strikes" ref={scrollToStrikes} p={flat ? 0 : undefined} bg={flat ? "transparent" : undefined}>
+    <Card withBorder id="strikes" ref={scrollToStrikes}>
       <Stack gap="lg">
         {/* Header — the standing badge now lives beside the Strikes subheading below,
             since it's derived purely from strike points, not the Creator Score. Keeping

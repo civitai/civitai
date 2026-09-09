@@ -1,9 +1,12 @@
-import { Text, Stack, Checkbox } from '@mantine/core';
+import { Chip, Group } from '@mantine/core';
 import { useQueryHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
 
+/**
+ * Chips rather than a checkbox column: four stacked rows cost more height than the choice is worth,
+ * and every one of them said "Hide …" down the left edge.
+ */
 export function BrowsingCategories() {
-  // const { classes, cx } = useStyles();
   const { data, isLoading } = useQueryHiddenPreferences();
 
   const toggleHiddenTagsMutation = useToggleHiddenPreferences();
@@ -14,54 +17,25 @@ export function BrowsingCategories() {
   };
 
   return (
-    <Stack>
+    <Group gap="xs">
       {toggleableBrowsingCategories.map((category) => {
         const checked = category.relatedTags.every((tag) =>
           data.hiddenTags.find((hidden) => hidden.id === tag.id)
         );
 
         return (
-          <Checkbox
+          <Chip
             key={category.title}
+            size="sm"
+            radius="sm"
             checked={checked}
-            onChange={(e) => toggle(e.target.checked, category.relatedTags)}
             disabled={isLoading}
-            label={
-              <Text size="sm" fw={500}>
-                {category.title}
-              </Text>
-            }
-          />
+            onChange={(value) => toggle(value, category.relatedTags)}
+          >
+            {category.title}
+          </Chip>
         );
       })}
-    </Stack>
+    </Group>
   );
-
-  // return (
-  //   <Paper p={0} className={classes.root} withBorder>
-  //     {toggleableBrowsingCategories.map((category) => {
-  //       const checked = category.relatedTags.every((tag) =>
-  //         data.hiddenTags.find((hidden) => hidden.id === tag.id)
-  //       );
-
-  //       return (
-  //         <Group
-  //           justify="space-between"
-  //           key={category.title}
-  //           className={cx({ [classes.active]: checked })}
-  //           py="sm"
-  //           px="md"
-  //           onClick={() => toggle(!checked, category.relatedTags)}
-  //         >
-  //           <Text fw={500}>{category.title}</Text>
-  //           <Switch
-  //             checked={checked}
-  //             onChange={(e) => toggle(e.target.checked, category.relatedTags)}
-  //             disabled={isLoading}
-  //           />
-  //         </Group>
-  //       );
-  //     })}
-  //   </Paper>
-  // );
 }

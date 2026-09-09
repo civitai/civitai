@@ -13,9 +13,9 @@ import {
   ThemeIcon,
   Alert,
 } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconTrash } from '@tabler/icons-react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
-import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { PointerCard } from '~/components/Account/SettingsLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -226,17 +226,22 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
       </Modal>
 
       {flat ? (
-        <SettingsSection title="Delete account">
-          <SettingRow
-            label="Delete your account"
-            description="Once you delete your account, there is no going back. Please be certain when taking this action."
-            control={
-              <Button variant="outline" color="red" size="compact-sm" onClick={handleDeleteClick}>
-                Delete account
-              </Button>
-            }
-          />
-        </SettingsSection>
+        <PointerCard
+          tone="danger"
+          icon={<IconAlertTriangle size={18} />}
+          title="Delete account"
+          description="You choose what happens to your models and images. This cannot be undone."
+          action={
+            <Button
+              color="red"
+              size="compact-sm"
+              leftSection={<IconTrash size={14} />}
+              onClick={handleDeleteClick}
+            >
+              Delete account
+            </Button>
+          }
+        />
       ) : (
         <Card withBorder>
           <Stack>

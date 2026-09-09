@@ -32,6 +32,18 @@ export const assistantToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key === 'assistant'
 );
 
+/**
+ * Which pane section a toggleable flag belongs to. Anything not named here lands in Features, so a
+ * flag added to `featureFlags` shows up somewhere rather than silently disappearing from the pane.
+ */
+const mediaFeatureKeys: string[] = ['largerGenerationImages', 'nativeVideoControls'];
+export const mediaToggleableFeatures = toggleableFeatures.filter((feature) =>
+  mediaFeatureKeys.includes(feature.key)
+);
+export const otherToggleableFeatures = toggleableFeatures.filter(
+  (feature) => !mediaFeatureKeys.includes(feature.key)
+);
+
 export function SettingsCard() {
   const user = useCurrentUser();
   const queryUtils = trpc.useUtils();
@@ -229,7 +241,7 @@ export function SwipeGalleryCardsToggle() {
     <Switch
       name="swipeGalleryCards"
       label="Swipe between images on gallery cards"
-      description="Drag left or right on a gallery post to move through its images instead of using the arrows. May feel slower on long feeds or older devices."
+      description="Swipe through a post's images instead of using the arrows."
       checked={swipeGalleryCards ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}
@@ -252,7 +264,7 @@ export function StickerMotionToggle() {
     <Switch
       name="stickerMotion"
       label="Animate stickers placed on images"
-      description="Placed stickers pop in and drift gently. Turn this off to keep them still — they stay visible either way. Already off if your device asks for reduced motion."
+      description="Off keeps them still; they stay visible either way."
       // Stored as an opt-out so the default costs no row, and so a creator who
       // never opens this page gets the animation rather than a silent no.
       checked={!(disableStickerMotion ?? false)}
@@ -271,7 +283,7 @@ export function HideBlueBuzzToggle() {
     <Switch
       name="hideBlueBuzzInHeader"
       label="Hide Blue Buzz in the header"
-      description="The header adds your Blue Buzz into one balance with the rest. Turn this on to leave it out and show only the rest. Your Blue Buzz is still yours to spend, and the account menu lists both either way."
+      description="Leaves it out of the header balance. You can still spend it."
       checked={hideBlueBuzzInHeader ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
@@ -298,7 +310,7 @@ export function EarlyAdopterToggle() {
     <Switch
       name="isEarlyAdopter"
       label="Join the early-adopter program"
-      description="Get in-progress features before they roll out to everyone. They may be rough, change without notice, or be withdrawn. Turn this off any time to go back to the standard experience."
+      description="Features before they roll out. They may be rough or change without notice."
       checked={isEarlyAdopter ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ isEarlyAdopter: e.target.checked })}

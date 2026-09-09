@@ -6,10 +6,11 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { toHideableOptions } from '~/components/Account/hidden-users-options';
 import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 
 import { trpc } from '~/utils/trpc';
 
-export function HiddenUsersSection() {
+export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -55,6 +56,59 @@ export function HiddenUsersSection() {
     setSearch('');
   };
 
+  const sortField = (
+    <Select
+      size="xs"
+      value={sort}
+      onChange={(val) => setSort(val ?? 'newest')}
+      data={[
+        { label: 'Recently Added', value: 'newest' },
+        { label: 'Oldest Added', value: 'oldest' },
+        { label: 'A-Z', value: 'alphaAsc' },
+        { label: 'Z-A', value: 'alphaDesc' },
+      ]}
+      style={{ width: 160 }}
+    />
+  );
+
+  const searchField = (
+    <Autocomplete
+      name="tag"
+      ref={searchInputRef}
+      placeholder="Search users to hide"
+      data={options}
+      value={search}
+      onChange={setSearch}
+      leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+      onOptionSubmit={(value: string) => {
+        const { id } = options.find((x) => x.value === value) ?? {};
+        if (!id) return;
+        handleToggleBlocked({ id, username: value });
+        searchInputRef.current?.focus();
+      }}
+    />
+  );
+
+  if (flat)
+    return (
+      <SettingsSection
+        title="Hidden users"
+        description="Their models, images and comments are hidden from you."
+        action={sortField}
+      >
+        <div className="flex flex-col gap-3">
+          {searchField}
+          <BasicMasonryGrid
+            items={sortedHiddenUsers}
+            render={UserBadge}
+            maxHeight={250}
+            columnGutter={4}
+            columnWidth={140}
+          />
+        </div>
+      </SettingsSection>
+    );
+
   return (
     <Card withBorder>
       <Card.Section withBorder inheritPadding py="xs">
@@ -70,7 +124,7 @@ export function HiddenUsersSection() {
               { label: 'A-Z', value: 'alphaAsc' },
               { label: 'Z-A', value: 'alphaDesc' },
             ]}
-            style={{ width: 120 }}
+            style={{ width: 160 }}
           />
         </Group>
       </Card.Section>

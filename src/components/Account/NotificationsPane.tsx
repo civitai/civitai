@@ -1,9 +1,23 @@
-import { Badge, Card, Checkbox, Group, Stack, Text, UnstyledButton } from '@mantine/core';
-import { IconBellOff, IconChevronRight } from '@tabler/icons-react';
+import { Badge, Checkbox, Text, UnstyledButton } from '@mantine/core';
+import type { Icon } from '@tabler/icons-react';
+import {
+  IconBellOff,
+  IconBolt,
+  IconChevronRight,
+  IconCircleDot,
+  IconMessage,
+  IconPalette,
+  IconRefresh,
+  IconSettings,
+  IconTargetArrow,
+  IconTrophy,
+  IconUserPlus,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useState } from 'react';
 
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
+import { SettingRow, SettingsSection, SettingsStack } from '~/components/Account/SettingsLayout';
 import {
   useNotificationSettings,
   useToggleNotificationSetting,
@@ -14,6 +28,18 @@ import {
   notificationTypes,
   optInNotificationTypes,
 } from '~/server/notifications/utils.notifications';
+
+/** Falls back to the generic glyph, so a category added server-side still renders a row. */
+const categoryIcons: Record<string, Icon> = {
+  Comment: IconMessage,
+  Update: IconRefresh,
+  Creator: IconPalette,
+  System: IconSettings,
+  Milestone: IconTrophy,
+  Bounty: IconTargetArrow,
+  Referral: IconUserPlus,
+  Buzz: IconBolt,
+};
 
 export function NotificationsPane() {
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
@@ -40,45 +66,56 @@ export function NotificationsPane() {
   };
 
   return (
-    <>
-      <Card withBorder padding="lg">
-        <Stack gap="sm">
-          <Text fw={600}>Delivery</Text>
-          <Group justify="space-between" wrap="nowrap">
-            <div>
-              <Text size="sm" fw={500}>
-                On-site notifications
-              </Text>
-              <Text size="xs" c="dimmed">
-                The bell in the header. Off silences every category below.
-              </Text>
-            </div>
+    <SettingsStack>
+      <SettingsSection title="Delivery">
+        <SettingRow
+          label="On-site notifications"
+          description="The bell in the header. Off silences every category below."
+          control={
             <SkeletonSwitch
               loading={isLoading}
               checked={hasNotifications ?? false}
               onChange={(e) => toggleAll(e.target.checked)}
             />
-          </Group>
-          <NewsletterToggle description="Product news and announcements, sent by email. Separate from the notifications below." />
-        </Stack>
-      </Card>
+          }
+        />
+        {/* The default rendering puts its switch first; the render prop keeps this row
+            label-left / control-right like every other one. */}
+        <NewsletterToggle>
+          {({ subscribed, isLoading: newsletterLoading, setSubscribed }) => (
+            <SettingRow
+              label="Newsletter"
+              description="Product news by email. Separate from the categories below."
+              control={
+                <SkeletonSwitch
+                  loading={newsletterLoading}
+                  checked={subscribed}
+                  onChange={(e) => setSubscribed(e.target.checked)}
+                />
+              }
+            />
+          )}
+        </NewsletterToggle>
+      </SettingsSection>
 
       {!hasNotifications ? (
-        <Card withBorder padding="lg">
-          <Group wrap="nowrap">
-            <IconBellOff size={24} strokeWidth={2} />
-            <Text style={{ lineHeight: 1.3 }}>All non-essential notifications are turned off</Text>
-          </Group>
-        </Card>
+        <div className="flex items-center gap-3 rounded-md border border-gray-3 bg-white p-4 dark:border-dark-4 dark:bg-dark-6">
+          <IconBellOff size={22} strokeWidth={2} className="shrink-0" />
+          <Text size="sm">All non-essential notifications are turned off</Text>
+        </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
           {Object.entries(notificationCategoryTypes).map(([category, settings]) => {
             const isOpen = expanded === category;
             const enabled = settings.filter((x) => notificationSettings[x.type]).length;
             const categoryOn = hasCategory[category];
+            const CategoryIcon = categoryIcons[category] ?? IconCircleDot;
 
             return (
-              <Card key={category} withBorder padding={0} className="overflow-hidden">
+              <div
+                key={category}
+                className="overflow-hidden rounded-md border border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-6"
+              >
                 <div
                   className={clsx(
                     'flex items-center gap-3 px-4 py-3',
@@ -92,8 +129,12 @@ export function NotificationsPane() {
                   >
                     <IconChevronRight
                       size={16}
-                      className={clsx('transition-transform', isOpen && 'rotate-90')}
+                      className={clsx(
+                        'shrink-0 text-gray-6 transition-transform dark:text-dark-2',
+                        isOpen && 'rotate-90'
+                      )}
                     />
+                    <CategoryIcon size={18} className="shrink-0 text-gray-6 dark:text-dark-2" />
                     <Text size="sm" fw={600} className="flex-1 text-left">
                       {category}
                     </Text>
@@ -109,7 +150,7 @@ export function NotificationsPane() {
                 </div>
 
                 {isOpen && (
-                  <div className="flex flex-col gap-2.5 px-4 pb-4 pt-1">
+                  <div className="flex flex-col gap-2.5 p-4">
                     {!categoryOn && (
                       <Text size="xs" c="dimmed">
                         This category is off, so none of these are sent.
@@ -126,11 +167,11 @@ export function NotificationsPane() {
                     ))}
                   </div>
                 )}
-              </Card>
+              </div>
             );
           })}
         </div>
       )}
-    </>
+    </SettingsStack>
   );
 }

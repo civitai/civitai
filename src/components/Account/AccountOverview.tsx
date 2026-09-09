@@ -7,7 +7,9 @@ import {
   IconEye,
   IconKey,
   IconMailCheck,
+  IconPencilMinus,
   IconShieldCheck,
+  IconShieldExclamation,
   IconUserCircle,
 } from '@tabler/icons-react';
 import React from 'react';
@@ -15,11 +17,16 @@ import React from 'react';
 import { accountSections, getAccountSectionHref } from '~/components/Account/account-sections';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { accountStandingFromPoints } from '~/server/schema/strike.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -53,6 +60,13 @@ function StatTile({
   );
 }
 
+/** Tailwind only emits classes it can see literally, so the standing colours cannot be templated. */
+const standingTextClass: Record<string, string> = {
+  green: 'text-green-6',
+  yellow: 'text-yellow-6',
+  red: 'text-red-6',
+};
+
 const quickLinks: { id: string; icon: React.ReactNode }[] = [
   { id: 'notifications', icon: <IconBell size={18} /> },
   { id: 'content', icon: <IconEye size={18} /> },
@@ -67,12 +81,19 @@ export function AccountOverview() {
   const { data: strikeSummary } = trpc.strike.getMyStrikeSummary.useQuery(undefined, {
     enabled: !!currentUser && features.strikes,
   });
+  // Equipped cosmetics aren't on the session user, so the nameplate and badge need the profile.
+  const { data: profile } = trpc.userProfile.get.useQuery(
+    { username: currentUser?.username ?? '' },
+    { enabled: !!currentUser?.username }
+  );
+  const { subscription } = useActiveSubscription({ includeBuzzPurchase: true });
 
   if (!currentUser) return null;
 
   const emailVerified = !!currentUser.emailVerified;
-  const activeStrikes = strikeSummary?.activeStrikes ?? 0;
-  const score = creatorScoreFromMeta(currentUser.meta);
+  const standing = accountStandingFromPoints(strikeSummary?.totalActivePoints ?? 0);
+  const StandingIcon = standing.good ? IconShieldCheck : IconShieldExclamation;
+  const tierBadge = subscription ? getPlanDetails(subscription.product, features).image : undefined;
   const funded = (buzz?.accounts ?? []).filter((account) => account.balance > 0);
 
   return (
@@ -86,19 +107,29 @@ export function AccountOverview() {
       )}
 
       <Card withBorder padding="lg">
-        <div className="flex flex-wrap items-center gap-4">
-          <UserAvatar user={currentUser} size="lg" />
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <Text size="xl" fw={700}>
-              {currentUser.username}
-            </Text>
-            <Text size="sm" c="dimmed">
-              {currentUser.email}
-              {currentUser.createdAt && ` · Member since ${formatDate(currentUser.createdAt)}`}
-            </Text>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-4">
+            <UserAvatar user={currentUser} size="lg" />
+            <div className="flex min-w-0 flex-col gap-1">
+              <Username
+                username={currentUser.username}
+                cosmetics={profile?.cosmetics}
+                size="xl"
+                badgeSize={26}
+              />
+              <Text size="sm" c="dimmed">
+                {currentUser.email}
+                {currentUser.createdAt && ` · Member since ${formatDate(currentUser.createdAt)}`}
+              </Text>
+            </div>
           </div>
-          <Button component={NextLink} href={`/user/${currentUser.username}`} variant="default">
-            View profile
+          <Button
+            variant="default"
+            leftSection={<IconPencilMinus size={16} />}
+            onClick={() => openUserProfileEditModal()}
+            className="shrink-0"
+          >
+            Customize profile
           </Button>
         </div>
       </Card>
@@ -106,8 +137,14 @@ export function AccountOverview() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatTile
           label="Membership"
-          href="/pricing"
-          icon={<IconUserCircle size={16} className="text-yellow-6" />}
+          href="/user/membership"
+          icon={
+            tierBadge ? (
+              <EdgeMedia src={tierBadge} width={40} className="size-5" />
+            ) : (
+              <IconUserCircle size={16} className="text-yellow-6" />
+            )
+          }
         >
           <Text size="lg" fw={700} tt="capitalize">
             {currentUser.tier ?? 'Free'}
@@ -139,21 +176,14 @@ export function AccountOverview() {
         </StatTile>
 
         <StatTile
-          label={features.strikes ? 'Account standing' : 'Creator score'}
+          label="Standing"
           href={getAccountSectionHref(
             accountSections.find((section) => section.id === 'profile') ?? accountSections[0]
           )}
-          icon={
-            <IconShieldCheck
-              size={16}
-              className={activeStrikes > 0 ? 'text-yellow-6' : 'text-teal-6'}
-            />
-          }
+          icon={<StandingIcon size={16} className={standingTextClass[standing.color]} />}
         >
-          <Text size="lg" fw={700} c={activeStrikes > 0 ? 'yellow.6' : undefined}>
-            {features.strikes && activeStrikes > 0
-              ? `${activeStrikes} strike${activeStrikes === 1 ? '' : 's'}`
-              : score.toLocaleString()}
+          <Text size="lg" fw={700} c={`${standing.color}.6`}>
+            {standing.short}
           </Text>
         </StatTile>
 
@@ -165,11 +195,11 @@ export function AccountOverview() {
           icon={
             <IconMailCheck
               size={16}
-              className={emailVerified ? 'text-teal-6' : 'text-yellow-6'}
+              className={emailVerified ? 'text-green-6' : 'text-yellow-6'}
             />
           }
         >
-          <Text size="lg" fw={700} c={emailVerified ? 'teal.6' : 'yellow.6'}>
+          <Text size="lg" fw={700} c={emailVerified ? 'green.6' : 'yellow.6'}>
             {emailVerified ? 'Verified' : 'Unverified'}
           </Text>
         </StatTile>

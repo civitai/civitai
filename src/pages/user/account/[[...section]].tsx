@@ -36,7 +36,7 @@ export default function Account() {
 
     const copy = accountPaneCopy[section.id];
     return (
-      <AccountLayout section={section} title={copy.title}>
+      <AccountLayout section={section} title={copy.title} isIndex={!slug}>
         <AccountPane sectionId={section.id} />
       </AccountLayout>
     );

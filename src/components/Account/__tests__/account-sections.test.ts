@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accountSections,
   getAccountSectionHref,
+  getOverviewHref,
   legacyAnchorSections,
   resolveAccountSection,
   resolveLegacyAnchor,
@@ -24,6 +25,14 @@ describe('account section registry', () => {
     expect(resolveAccountSection('')?.id).toBe('overview');
     expect(resolveAccountSection('billing')?.id).toBe('billing');
     expect(resolveAccountSection('not-a-section')).toBeUndefined();
+  });
+
+  // On mobile the index renders the section MENU, so an overview reachable only at the index is
+  // an overview with no way in. Deleting the alias resolves that URL to a 404, not to the overview.
+  it('resolves the overview alias, and it is not the index href', () => {
+    expect(resolveAccountSection('overview')?.id).toBe('overview');
+    expect(getOverviewHref()).toBe('/user/account/overview');
+    expect(getAccountSectionHref(accountSections[0])).toBe('/user/account');
   });
 
   it('builds hrefs without a trailing slash on the index', () => {

@@ -47,11 +47,15 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
     case 'profile':
       return (
         <SettingsStack>
-          <ProfileCard />
-          <SocialProfileCard />
+          <ProfileCard flat />
+          <SocialProfileCard flat />
           {features.strikes && <StrikesCard flat />}
-          <RefreshSessionCard flat />
-          <DeleteCard flat />
+          {/* Two pointer rows, not two sections — the section gap between them read as a gap
+              between topics when they are the same kind of thing. */}
+          <div className="flex flex-col gap-3">
+            <RefreshSessionCard flat />
+            <DeleteCard flat />
+          </div>
         </SettingsStack>
       );
 
@@ -67,30 +71,29 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
     case 'creator':
       return (
         <SettingsStack>
-          {(features.creatorControls || features.stickerPlacement || features.remixGallery) && (
-            <CreatorControlsCard />
-          )}
-          <StickerInventoryCard />
+          {/* Ungated on purpose: the card self-gates, and it still owes us the sticker-inventory
+              pointer when every creator-control flag is off. */}
+          <CreatorControlsCard flat stickerFooter={<StickerInventoryCard flat />} />
         </SettingsStack>
       );
 
     case 'billing':
       return (
         <SettingsStack>
-          <SubscriptionCard />
-          <MembershipGiftsCard />
-          <PaymentMethodsCard />
-          <UserPaymentConfigurationCard />
+          <SubscriptionCard flat />
+          <PaymentMethodsCard flat />
+          <UserPaymentConfigurationCard flat />
+          <MembershipGiftsCard pointer />
         </SettingsStack>
       );
 
     case 'security':
       return (
         <SettingsStack>
-          <AccountsCard />
-          {features.apiKeys && <ApiKeysCard />}
-          {features.oauthApps && <OAuthAppsCard />}
-          {features.oauthApps && <ConnectedAppsCard />}
+          <AccountsCard flat />
+          {features.apiKeys && <ApiKeysCard flat />}
+          {features.oauthApps && <OAuthAppsCard flat />}
+          {features.oauthApps && <ConnectedAppsCard flat />}
         </SettingsStack>
       );
 

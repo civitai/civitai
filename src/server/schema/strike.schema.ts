@@ -10,6 +10,23 @@ export const strikeStatusColorScheme: Record<string, MantineColor> = {
 };
 
 /**
+ * Standing is derived from active strike POINTS, not from the strike count — a single strike can
+ * carry several. Two surfaces show it (the account overview tile and the Profile pane's badge), so
+ * the thresholds live here rather than in whichever of them was written first.
+ */
+export function accountStandingFromPoints(points: number): {
+  label: string;
+  /** For a control already captioned "Account standing", where the noun would repeat and wrap. */
+  short: string;
+  color: MantineColor;
+  good: boolean;
+} {
+  if (points === 0) return { label: 'Good standing', short: 'Good', color: 'green', good: true };
+  if (points === 1) return { label: 'Warning', short: 'Warning', color: 'yellow', good: false };
+  return { label: 'Restricted', short: 'Restricted', color: 'red', good: false };
+}
+
+/**
  * Sanitized, user-facing label per StrikeReason. Mirrors `publicBanReasonLabel`
  * in `banReasonDetails`: this is the only reason text emailed to the user (the
  * free-text `UserStrike.description` is kept for in-app/Retool but never sent in

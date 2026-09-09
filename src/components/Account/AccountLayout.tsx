@@ -1,4 +1,5 @@
-import { Badge, Text, TextInput } from '@mantine/core';
+import type { MantineSize } from '@mantine/core';
+import { Badge, CloseButton, Text, TextInput } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
@@ -8,8 +9,8 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import type { AccountSection } from '~/components/Account/account-sections';
 import {
   accountSectionGroups,
-  accountSections,
   getAccountSectionHref,
+  getOverviewHref,
   resolveLegacyAnchor,
   searchAccountSections,
 } from '~/components/Account/account-sections';
@@ -45,22 +46,25 @@ function useLegacyAnchorRedirect() {
   }, [router.isReady]);
 }
 
+/** Breathing room between whatever the rail is pinned under and its first item. */
+const RAIL_STICKY_GAP = 16;
+
 /**
  * The subnav is `sticky top-0` inside the scroll area and hides by translating itself off screen,
  * so it keeps its layout box either way. A fixed sticky offset for the rail therefore leaves a gap
  * the height of the subnav once it retracts. Track where its bottom edge actually is instead.
  */
 function useStickyTop() {
-  const [top, setTop] = useState(0);
+  const [top, setTop] = useState(RAIL_STICKY_GAP);
   const frame = useRef<number>();
 
   const measure = useCallback((node: HTMLElement) => {
     if (frame.current) cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => {
       const subnav = node.querySelector<HTMLElement>('[data-subnav]');
-      if (!subnav) return setTop(0);
+      if (!subnav) return setTop(RAIL_STICKY_GAP);
       const offset = subnav.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
-      setTop(Math.max(0, Math.round(offset)));
+      setTop(Math.max(0, Math.round(offset)) + RAIL_STICKY_GAP);
     });
   }, []);
 
@@ -95,20 +99,49 @@ function SectionLink({ section, active }: { section: AccountSection; active: boo
   );
 }
 
+function SettingSearchInput({
+  value,
+  onChange,
+  size,
+  mb,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  size?: MantineSize;
+  mb?: number;
+}) {
+  return (
+    <TextInput
+      size={size}
+      placeholder="Find a setting"
+      value={value}
+      onChange={(event) => onChange(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onChange('');
+      }}
+      leftSection={<IconSearch size={15} />}
+      rightSection={
+        value ? (
+          <CloseButton
+            size="sm"
+            variant="transparent"
+            aria-label="Clear search"
+            onClick={() => onChange('')}
+          />
+        ) : null
+      }
+      mb={mb}
+    />
+  );
+}
+
 function AccountNav({ activeId }: { activeId: string }) {
   const [query, setQuery] = useState('');
   const matches = useMemo(() => searchAccountSections(query), [query]);
 
   return (
     <nav className="flex flex-col gap-0.5" aria-label="Account settings">
-      <TextInput
-        size="sm"
-        placeholder="Find a setting"
-        value={query}
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        leftSection={<IconSearch size={15} />}
-        mb={4}
-      />
+      <SettingSearchInput size="sm" value={query} onChange={setQuery} mb={4} />
       {matches.length === 0 && (
         <Text size="sm" c="dimmed" px="sm" py="xs">
           Nothing matches “{query}”.
@@ -142,7 +175,7 @@ function MobileIndex() {
     <div className="flex flex-col gap-4">
       {currentUser && (
         <NextLink
-          href={`/user/${currentUser.username}`}
+          href={getOverviewHref()}
           className="flex items-center gap-3 rounded-md border border-gray-3 bg-white p-3 no-underline dark:border-dark-4 dark:bg-dark-6"
         >
           <UserAvatar user={currentUser} size="md" />
@@ -166,12 +199,7 @@ function MobileIndex() {
         </NextLink>
       )}
 
-      <TextInput
-        placeholder="Find a setting"
-        value={query}
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        leftSection={<IconSearch size={15} />}
-      />
+      <SettingSearchInput value={query} onChange={setQuery} />
 
       {matches.length === 0 && (
         <Text size="sm" c="dimmed">
@@ -180,9 +208,7 @@ function MobileIndex() {
       )}
 
       {accountSectionGroups.map((group) => {
-        const sections = matches.filter(
-          (section) => section.group === group.id && section.path !== ''
-        );
+        const sections = matches.filter((section) => section.group === group.id);
         if (!sections.length) return null;
         return (
           <div key={group.id} className="flex flex-col gap-1.5">
@@ -195,7 +221,8 @@ function MobileIndex() {
                 return (
                   <NextLink
                     key={section.id}
-                    href={getAccountSectionHref(section)}
+                    // The index IS this menu on mobile, so Overview cannot link to it.
+                    href={section.path ? getAccountSectionHref(section) : getOverviewHref()}
                     className={clsx(
                       'flex items-center gap-3 bg-white px-3.5 py-3 text-sm font-medium text-dark-9 no-underline dark:bg-dark-6 dark:text-gray-0',
                       index > 0 && 'border-t border-gray-3 dark:border-dark-4'
@@ -218,42 +245,48 @@ function MobileIndex() {
 export function AccountLayout({
   section,
   title,
+  isIndex,
   children,
 }: {
   section: AccountSection;
   title: string;
+  /** Whether the URL is the bare index, not whether the section happens to live there. */
+  isIndex: boolean;
   children: React.ReactNode;
 }) {
   useLegacyAnchorRedirect();
   const stickyTop = useStickyTop();
   const isMobile = useIsMobile({ breakpoint: 'md' });
-  const isIndex = !section.path;
 
   if (isMobile) {
+    if (isIndex)
+      return (
+        <div className="mx-auto flex w-full max-w-[1020px] flex-col p-4">
+          <Text component="h1" className="mb-4 text-xl font-bold">
+            Manage account
+          </Text>
+          <MobileIndex />
+        </div>
+      );
+
     return (
-      <div className="mx-auto flex w-full max-w-[1020px] flex-col px-4 py-4">
-        {isIndex ? (
-          <>
-            <Text component="h1" className="mb-4 text-xl font-bold">
-              Manage account
-            </Text>
-            <MobileIndex />
-          </>
-        ) : (
-          <>
-            <NextLink
-              href="/user/account"
-              className="mb-2 inline-flex items-center gap-1 text-sm text-blue-6 no-underline"
-            >
-              <IconChevronLeft size={16} />
-              Manage account
-            </NextLink>
-            <Text component="h1" className="mb-4 text-xl font-bold">
-              {title}
-            </Text>
-            <div className="flex flex-col gap-4">{children}</div>
-          </>
-        )}
+      // `-mt-3` cancels the subnav's own `mb-3` (see AppLayout). The bar pins flush to the subnav
+      // once stuck, so without this it starts 12px lower and jumps up on the first scroll.
+      <div className="mx-auto -mt-3 flex w-full max-w-[1020px] flex-col">
+        <div
+          // Pinned to the same edge the desktop rail tracks, so it follows the subnav up as that
+          // retracts rather than leaving a gap or hiding under it.
+          className="sticky z-10 flex items-center gap-3 border-b border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-6"
+          style={{ top: stickyTop - RAIL_STICKY_GAP }}
+        >
+          <NextLink href="/user/account" aria-label="Manage account" className="flex text-dark-9 dark:text-gray-0">
+            <IconChevronLeft size={22} />
+          </NextLink>
+          <Text component="h1" className="text-base font-semibold">
+            {title}
+          </Text>
+        </div>
+        <div className="flex flex-col gap-4 p-4">{children}</div>
       </div>
     );
   }

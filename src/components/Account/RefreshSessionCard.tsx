@@ -1,23 +1,23 @@
 import { Button, Card, Stack, Text, Title } from '@mantine/core';
+import { IconRefresh } from '@tabler/icons-react';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
-import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { PointerCard } from '~/components/Account/SettingsLayout';
 
 export function RefreshSessionCard({ flat }: { flat?: boolean }) {
   const { refreshSession } = useRefreshSession();
 
   if (flat)
     return (
-      <SettingsSection title="Session">
-        <SettingRow
-          label="Refresh my session"
-          description="Reloads your account data. Safe to run any time — nothing changes."
-          control={
-            <Button variant="default" size="compact-sm" onClick={refreshSession}>
-              Refresh
-            </Button>
-          }
-        />
-      </SettingsSection>
+      <PointerCard
+        icon={<IconRefresh size={18} />}
+        title="Refresh my session"
+        description="Reloads your account data. Safe to run any time."
+        action={
+          <Button variant="default" size="compact-sm" onClick={refreshSession}>
+            Refresh
+          </Button>
+        }
+      />
     );
 
   return (

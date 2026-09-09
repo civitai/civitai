@@ -12,8 +12,8 @@ import {
   StickerMotionToggle,
   SwipeGalleryCardsToggle,
   ToggleableFeatures,
-  assistantToggleableFeatures,
-  normalizedToggleableFeatures,
+  mediaToggleableFeatures,
+  otherToggleableFeatures,
 } from '~/components/Account/SettingsCard';
 import { SettingRow, SettingsSection, SettingsStack } from '~/components/Account/SettingsLayout';
 import { GenerationSettings } from '~/components/Generation/GenerationSettings';
@@ -26,75 +26,72 @@ export function PreferencesPane() {
 
   return (
     <SettingsStack>
-          <SettingsSection title="Media playback">
-            <SettingRow block>
-              <AutoplayGifsToggle />
-            </SettingRow>
-            <SettingRow block>
-              <SwipeGalleryCardsToggle />
-            </SettingRow>
-            <SettingRow block>
-              <StickerMotionToggle />
-            </SettingRow>
-            <SettingRow
-              label="Preferred image format"
-              description="Used when the site can choose, and when you download."
-              control={<ImageFormatSelect />}
-            />
-          </SettingsSection>
+      <SettingsSection title="Media playback">
+        <SettingRow block>
+          <AutoplayGifsToggle />
+        </SettingRow>
+        <SettingRow block>
+          <SwipeGalleryCardsToggle />
+        </SettingRow>
+        <SettingRow block>
+          <StickerMotionToggle />
+        </SettingRow>
+        {mediaToggleableFeatures.map((feature) => (
+          <SettingRow block key={feature.key}>
+            <ToggleableFeatures data={[feature]} />
+          </SettingRow>
+        ))}
+      </SettingsSection>
 
-          <SettingsSection title="Generation">
-            <SettingRow block>
-              <GenerationSettings />
-            </SettingRow>
-          </SettingsSection>
-          <SettingsSection
-            title="Model files"
-            description="Defaults for the download button. You can still pick per file."
-          >
-            <SettingRow label="Preferred format" control={<ModelFileFormatSelect />} />
-            <SettingRow
-              label="Preferred precision"
-              description="fp16 halves the size of most checkpoints."
-              control={<ModelPrecisionSelect />}
-            />
-            {user?.filePreferences?.format === 'GGUF' && (
-              <SettingRow
-                label="Preferred quant type"
-                description="Quality against size. Q8_0 is the best quality, Q2_K the smallest."
-                control={<ModelQuantTypeSelect />}
-              />
-            )}
-          </SettingsSection>
+      <SettingsSection title="Generation">
+        <SettingRow block>
+          <GenerationSettings />
+        </SettingRow>
+      </SettingsSection>
 
-          {!!assistantToggleableFeatures.length && (
-            <SettingsSection title="Assistant">
-              <SettingRow block>
-                <ToggleableFeatures data={assistantToggleableFeatures} />
-              </SettingRow>
-              <SettingRow
-                label="Personality"
-                description="Available to subscribers."
-                control={<AssistantPersonalitySelect />}
-              />
-            </SettingsSection>
-          )}
+      <SettingsSection title="File preferences" description="Defaults for the download button.">
+        <SettingRow
+          label="Preferred image format"
+          description="Used on site and for downloads."
+          control={<ImageFormatSelect />}
+        />
+        <SettingRow label="Preferred model format" control={<ModelFileFormatSelect />} />
+        <SettingRow
+          label="Preferred precision"
+          description="fp16 halves the size of most checkpoints."
+          control={<ModelPrecisionSelect />}
+        />
+        {user?.filePreferences?.format === 'GGUF' && (
+          <SettingRow
+            label="Preferred quant type"
+            description="Q8_0 is the best quality, Q2_K the smallest."
+            control={<ModelQuantTypeSelect />}
+          />
+        )}
+      </SettingsSection>
 
-          <SettingsSection title="Features">
-            {flags.buzz && (
-              <SettingRow block>
-                <HideBlueBuzzToggle />
-              </SettingRow>
-            )}
-            <SettingRow block>
-              <EarlyAdopterToggle />
-            </SettingRow>
-            {normalizedToggleableFeatures.length > 0 && (
-              <SettingRow block>
-                <ToggleableFeatures data={normalizedToggleableFeatures} />
-              </SettingRow>
-            )}
-          </SettingsSection>
+      <SettingsSection title="Features">
+        {otherToggleableFeatures.map((feature) => (
+          <SettingRow block key={feature.key}>
+            <ToggleableFeatures data={[feature]} />
+          </SettingRow>
+        ))}
+        {flags.assistant && (
+          <SettingRow
+            label="Assistant personality"
+            description="Available to subscribers."
+            control={<AssistantPersonalitySelect />}
+          />
+        )}
+        {flags.buzz && (
+          <SettingRow block>
+            <HideBlueBuzzToggle />
+          </SettingRow>
+        )}
+        <SettingRow block>
+          <EarlyAdopterToggle />
+        </SettingRow>
+      </SettingsSection>
     </SettingsStack>
   );
 }

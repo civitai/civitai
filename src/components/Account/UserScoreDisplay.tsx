@@ -60,13 +60,19 @@ const reportCategories = [
 export function UserScoreDisplay({
   scores,
   showReports = false,
+  flat = false,
+  abbreviate = true,
 }: {
   scores: Scores | null | undefined;
   showReports?: boolean;
+  /** Drop the panel chrome when the caller already provides it. */
+  flat?: boolean;
+  /** Off where the column is wide enough for the exact figure. */
+  abbreviate?: boolean;
 }) {
   if (!scores) {
     return (
-      <Paper withBorder p="md" radius="md">
+      <Paper withBorder={!flat} p={flat ? 0 : 'md'} radius="md">
         <Text size="sm" c="dimmed" ta="center">
           Score not yet available
         </Text>
@@ -86,7 +92,7 @@ export function UserScoreDisplay({
   const reportsAgainstScore = scores.reportsAgainst ?? 0;
 
   return (
-    <Paper withBorder p="md" radius="md">
+    <Paper withBorder={!flat} p={flat ? 0 : 'md'} radius="md">
       <Stack gap="md">
         <Stack gap={4} align="center">
           <Tooltip label={`${Math.round(total).toLocaleString()} points`} withArrow>
@@ -97,7 +103,9 @@ export function UserScoreDisplay({
               lh={1.2}
               style={{ cursor: 'help' }}
             >
-              {abbreviateNumber(total, { decimals: 1 })}
+              {abbreviate
+                ? abbreviateNumber(total, { decimals: 1 })
+                : Math.round(total).toLocaleString()}
             </Text>
           </Tooltip>
           <Text size="sm" c="dimmed">

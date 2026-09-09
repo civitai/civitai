@@ -10,9 +10,11 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -52,7 +54,10 @@ const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SUR
  * rather than rounded on sight, because silently rewriting it is how a creator
  * finds out from their earnings.
  */
-export function PlacementSpaceSection() {
+export function PlacementSpaceSection({
+  flat,
+  footer,
+}: { flat?: boolean; footer?: ReactNode } = {}) {
   const { pendingPlacements } = useQueryNotificationsCount();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -123,13 +128,15 @@ export function PlacementSpaceSection() {
     },
   });
 
-  if (!enabled || !currentUser) return null;
+  // The footer (the sticker-inventory pointer) is not gated on placement, so it outlives the
+  // section that hosts it — without this it vanishes whenever the controls cannot render.
+  if (!enabled || !currentUser) return <>{footer}</>;
   // `spaces` is undefined in every terminal state except success — in flight
   // AND after the retries are exhausted — and undefined is indistinguishable
   // from "no row". Rendering against either would seed the defaults and let one
   // click write `review` over a space the creator had explicitly closed. A
   // failed read is not permission to assume they have no preference.
-  if (spacesPending || spacesFailed) return null;
+  if (spacesPending || spacesFailed) return <>{footer}</>;
 
   const cap = range?.max ?? 0;
   const freeSlotCap = range?.freeSlotCap ?? 0;
@@ -176,23 +183,21 @@ export function PlacementSpaceSection() {
         !stored && nextPrice === DEFAULT_PRICE ? undefined : nextPrice === '' ? null : nextPrice,
     });
 
-  return (
-    <>
-      <Divider
-        label={
-          <Group gap={4} wrap="nowrap">
-            Stickers on your images
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
-              <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
-                Let other people pay to place a sticker on your work. You keep most of what they
-                pay, and you can decline anything you don&apos;t want. Individual posts and images
-                can override this.
-              </Text>
-            </InfoPopover>
-          </Group>
-        }
-      />
+  const heading = (
+    <Group gap={4} wrap="nowrap">
+      Stickers on your images
+      <InfoPopover size="xs" iconProps={{ size: 14 }} width={320}>
+        <Text size="sm" maw={300} style={{ whiteSpace: 'normal' }}>
+          Let other people pay to place a sticker on your work. You keep most of what they pay, and
+          you can decline anything you don&apos;t want. Individual posts and images can override
+          this.
+        </Text>
+      </InfoPopover>
+    </Group>
+  );
 
+  const body = (
+    <>
       <SegmentedControl
         value={mode}
         onChange={(value) => {
@@ -348,6 +353,23 @@ export function PlacementSpaceSection() {
           </Text>
         </Alert>
       )}
+    </>
+  );
+
+  if (flat)
+    return (
+      <SettingsSection title={heading}>
+        <div className="flex flex-col gap-4">
+          {body}
+          {footer}
+        </div>
+      </SettingsSection>
+    );
+
+  return (
+    <>
+      <Divider label={heading} />
+      {body}
     </>
   );
 }

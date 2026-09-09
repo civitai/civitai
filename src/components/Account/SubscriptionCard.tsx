@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Stack,
   Center,
   Loader,
@@ -33,10 +32,11 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
-export function SubscriptionCard() {
+export function SubscriptionCard({ flat }: { flat?: boolean } = {}) {
   const [mainBuzzType] = useAvailableBuzz();
   const otherBuzzType: BuzzSpendType = mainBuzzType === 'green' ? 'yellow' : 'green';
 
@@ -73,11 +73,9 @@ export function SubscriptionCard() {
   }
 
   return (
-    <Card withBorder>
+    <CardOrSection flat={flat} title="Membership" id="manage-subscription">
       <Stack gap="md">
-        <Title id="manage-subscription" order={2}>
-          Membership
-        </Title>
+        {!flat && <Title order={2}>Membership</Title>}
         {isLoading ? (
           <Center p="xl">
             <Loader />
@@ -100,7 +98,7 @@ export function SubscriptionCard() {
           ))
         )}
       </Stack>
-    </Card>
+    </CardOrSection>
   );
 }
 
@@ -209,7 +207,9 @@ function SubscriptionRow({
             </Text>
           </AlertWithIcon>
         )}
-        <Group justify="space-between" wrap="nowrap" align="center" gap="sm">
+        {/* Stacks on a phone: the plan name, its colour pill, the price and the renewal date do not
+            fit beside a button at 390px, and nowrap turned each of them into two lines. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <Group wrap="nowrap" gap="sm" style={{ minWidth: 0, flex: 1 }}>
             {image && (
               <Box w={40} style={{ flexShrink: 0 }}>
@@ -236,7 +236,7 @@ function SubscriptionRow({
                 </Box>
               </Group>
               {priceText && (
-                <Group gap={6} wrap="nowrap">
+                <Group gap={6}>
                   <Text size="sm" c="dimmed" lh={1.2}>
                     {priceText}
                   </Text>
@@ -255,8 +255,8 @@ function SubscriptionRow({
               )}
             </Stack>
           </Group>
-          {manageButton}
-        </Group>
+          <div className="shrink-0 self-end sm:self-auto">{manageButton}</div>
+        </div>
         {nextBuzzDelivery && (
           <Group gap={6} wrap="nowrap">
             <Text size="xs" c="dimmed" lh={1.2}>

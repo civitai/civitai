@@ -153,12 +153,25 @@ export function searchAccountSections(query: string) {
 
 export const defaultAccountSection = accountSections[0];
 
+/**
+ * Overview lives at the index on desktop, but on mobile the index is the section MENU — so the
+ * overview needs a URL of its own or there is no way to reach it. `/user/account/overview` is that
+ * URL, and it renders the overview on both.
+ */
+export const overviewSectionPath = 'overview';
+
 export function getAccountSectionHref(section: AccountSection) {
   return section.path ? `/user/account/${section.path}` : '/user/account';
 }
 
+/** The overview's own URL, as opposed to the index it shares on desktop. */
+export function getOverviewHref() {
+  return `/user/account/${overviewSectionPath}`;
+}
+
 export function resolveAccountSection(path: string | undefined) {
   if (!path) return defaultAccountSection;
+  if (path === overviewSectionPath) return defaultAccountSection;
   return accountSections.find((section) => section.path === path);
 }
 
