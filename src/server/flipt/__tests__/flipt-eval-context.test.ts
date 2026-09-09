@@ -107,7 +107,31 @@ function splitArgs(src: string, open: number): string[] | null {
   return null;
 }
 
-type EvalCall = { site: string; key: string; fn: string; argc: number };
+type EvalCall = { site: string; key: string; enclosing: string; fn: string; argc: number };
+
+/**
+ * The top-level declaration a call sits inside — what a ledger row NAMES.
+ *
+ * Deliberately crude: nearest preceding declaration anchored at column 0, so a nested arrow or an
+ * object property cannot claim a site. `src/server/services/blocks/__tests__/` has a careful
+ * brace-depth version of this; it is not exported, and neither copying 60 lines nor extracting a
+ * shared test helper belongs in a change about a ledger key. What makes a crude parser safe here is
+ * that every name it produces is PINNED in the ledger below, so drift fails loudly by name instead
+ * of quietly widening what a row forgives.
+ *
+ * 🔴 `<unattributed>` is a FAILURE, never a forgiveness — see the assertion that rejects it. A row
+ * that covered a site the parser could not name would be the cardinality bug again with more steps.
+ */
+const DECLARATION =
+  /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([\w$]+)|^(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=|^(?:export\s+)?(?:abstract\s+)?class\s+([\w$]+)/gm;
+
+function enclosingDeclaration(before: string): string {
+  DECLARATION.lastIndex = 0;
+  let last: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = DECLARATION.exec(before))) last = m;
+  return last ? last[1] || last[2] || last[3] : '<unattributed>';
+}
 
 /**
  * What a ledger row is addressed by: the file, and the flag expression as written.
@@ -148,6 +172,7 @@ function scanEvalCalls(): { calls: EvalCall[]; scanned: number } {
       calls.push({
         site: `${rel}:${line}`,
         key: ledgerKey(rel, args[0] ?? '(no argument)'),
+        enclosing: enclosingDeclaration(src.slice(0, m.index)),
         fn: m[1],
         argc: args.length,
       });
@@ -168,14 +193,27 @@ function scanEvalCalls(): { calls: EvalCall[]; scanned: number } {
  * deliberately hoisted out of per-flag work, and the dispute helper has a bare
  * `userId` and no `SessionUser` to build a truthful context from.
  */
-type LedgerRow = { count: number; reason: string };
+type LedgerRow = { fns: string[]; reason: string };
 
 /**
- * 🔴 `count` IS LOAD-BEARING. A row forgives the sites it names and no more: keying on file+flag
- * alone would mean a FOURTH uncontexted evaluation of an already-ledgered flag, in an
- * already-ledgered file, arrives pre-forgiven — the gate going silent for exactly the violation it
- * exists to catch. The count assertion below fails when the number moves, in either direction, and
- * names the lines it found.
+ * 🔴 `fns` IS LOAD-BEARING, and it is why a row is not just `file#flag`. A row forgives the sites it
+ * NAMES and no more. Keying on file+flag alone would mean a further uncontexted evaluation of an
+ * already-ledgered flag, in an already-ledgered file, arrives pre-forgiven — the gate going silent
+ * for exactly the violation it exists to catch. A bare COUNT is not enough either: swapping one
+ * ledgered site for a genuinely new one keeps the number and forgives a site nobody reviewed.
+ *
+ * So each row lists the enclosing declarations it covers, and the assertion below compares that set
+ * both ways. `<file>::<enclosing function>` is how the ledgers in
+ * `src/server/services/blocks/__tests__/` already address their sites; this is that, with the flag
+ * kept in the key.
+ *
+ * 🔴 RAISING A ROW IS NOT A FORMALITY. Adding a name means the existing `reason` now speaks for that
+ * site too — so check it applies to the new one verbatim, not merely that the flag still has no
+ * segment rollout. That judgement is the whole value of the row.
+ *
+ * ⚠️ The trade this makes: renaming one of these functions renames its row, and that is a conflict.
+ * It is a rare, loud breakage in place of a frequent silent one — the line-number scheme was
+ * renumbered 19 times in three weeks, and a 20th time while this was being written.
  */
 const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, LedgerRow> = {
   // flag `article-rating-dispute`: enabled=true, 0 rules, 0 rollouts → answers
@@ -183,19 +221,23 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, LedgerRow> = {
   // with only `pending.userId` in hand; building a real context would cost a
   // user fetch. Revisit the moment this flag gains a rollout.
   'server/services/article-rating-review.helpers.ts#FLIPT_FEATURE_FLAGS.ARTICLE_RATING_DISPUTE': {
-    count: 1,
+    fns: ['maybeAutoResolveDisputeAfterScan'],
     reason: 'article-rating-dispute has no segment rollouts; background path with no SessionUser',
   },
   // flag `feed-fetch-filter-in-post`: enabled=true, 0 rules, 0 rollouts.
   'server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_POST_FILTER': {
-    count: 1,
+    fns: ['searchImages'],
     reason: 'feed-fetch-filter-in-post has no segment rollouts; hot feed path',
   },
   // flag `feed-image-existence`: enabled=true, 0 rules, 0 rollouts. Three sites,
-  // same reason at each — which is why they share a row, and why the count is
-  // the thing that notices a fourth.
+  // same reason at each — which is why they share a row, and why the row names
+  // all three rather than counting them.
   'server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE': {
-    count: 3,
+    fns: [
+      'getImagesFromFeedSearch',
+      'getImagesFromSearchPreFilter',
+      'getImagesFromSearchPostFilter',
+    ],
     reason: 'feed-image-existence has no segment rollouts; hot feed path',
   },
   // flags `model-text-moderation-xguard` / `-apply`: both enabled=true, 0 rules,
@@ -213,13 +255,13 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, LedgerRow> = {
   // The caveat above still applies with force: if either flag ever gains a SEGMENT
   // rollout it will silently match nothing here. A percentage rollout is fine.
   'server/services/model-moderation.adapter.ts#FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD': {
-    count: 1,
+    fns: ['submitEnabled'],
     reason:
       'model-text-moderation-xguard has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
   },
   'server/services/model-moderation.adapter.ts#FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD_APPLY':
     {
-      count: 1,
+      fns: ['recordForensics'],
       reason:
         'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
     },
@@ -235,7 +277,7 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, LedgerRow> = {
   // matches nothing here and looks exactly like "blurbs are off". The full warning is on
   // FLIPT_FEATURE_FLAGS.TEXT_BLURBS, which is where someone running the ramp will look.
   'server/services/blurb-materialize.service.ts#FLIPT_FEATURE_FLAGS.TEXT_BLURBS': {
-    count: 1,
+    fns: ['expandBlurbs'],
     reason:
       'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
   },
@@ -273,6 +315,22 @@ describe('flipt evaluation context — source gate', () => {
     ).toBe(2);
   });
 
+  it('still addresses sites as file#flag, by an enclosing declaration it can name', () => {
+    // Named separately from the pair above because a scanner emitting a constant or undefined key
+    // fails THAT test with `expected undefined to be 3` — a message about argument counts, which
+    // sends the reader nowhere near the key. This one says what actually broke.
+    const byKey = new Map(calls.map((c) => [c.key, c]));
+    expect(
+      byKey.has('server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_POST_FILTER'),
+      'ledgerKey no longer produces `file#flag`, so every row in the ledger addresses nothing.'
+    ).toBe(true);
+    expect(
+      byKey.get('server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_POST_FILTER')?.enclosing,
+      'the enclosing-declaration parser no longer names this site, so every ledger row that ' +
+        'names a function is addressing nothing.'
+    ).toBe('searchImages');
+  });
+
   it('adds no Flipt evaluation that names an entity but passes no context', () => {
     const unledgered = calls
       .filter((c) => c.argc === 2 && !(c.key in ENTITY_WITHOUT_CONTEXT_LEDGER))
@@ -287,46 +345,114 @@ describe('flipt evaluation context — source gate', () => {
         '"the subject is not in the segment". Pass `buildFliptContext(user)`, or the ' +
         'properties you actually know; if the flag genuinely has no segment rollout, add ' +
         'the site to ENTITY_WITHOUT_CONTEXT_LEDGER with the reason you checked, keyed by ' +
-        'file#flag and with its count.'
+        'file#flag and naming the enclosing function.'
     ).toEqual([]);
   });
 
-  it('keeps the ledger honest — a fixed or moved site must be removed from it', () => {
+  it('keeps the ledger honest — a fixed or deleted site must be removed from it', () => {
     // The direction that gets left out. Without it the ledger silently becomes a
-    // list of line numbers that stopped meaning anything, and the next reviewer
-    // reads five accepted exceptions that are no longer there.
+    // list of exceptions that are no longer there, and the next reviewer reads
+    // six accepted judgements that describe nothing.
     const bare = new Set(calls.filter((c) => c.argc === 2).map((c) => c.key));
     const stale = Object.keys(ENTITY_WITHOUT_CONTEXT_LEDGER)
       .filter((key) => !bare.has(key))
       .sort();
     expect(
       stale,
-      'A ledgered file+flag no longer passes an entityId without a context — it was fixed ' +
-        'or deleted. Drop its row. (A line number moving is no longer this test’s business.)'
+      'A ledgered file+flag no longer passes an entityId without a context. Either it was ' +
+        'fixed or deleted — drop its row — or the flag expression was respelled, or the file ' +
+        'was moved or split, in which case re-key the row. (A line number moving is no longer ' +
+        'this test’s business.)'
     ).toEqual([]);
   });
 
-  it('counts the sites in each ledgered row, so a NEW one is not pre-forgiven', () => {
-    // Without this, a row keyed on file+flag forgives every site in that file that
-    // evaluates that flag — including the fourth one somebody adds next month. The
-    // gate would go silent for exactly the violation it exists to catch.
-    const bareByKey = new Map<string, string[]>();
+  it('forgives only the declarations a row NAMES, so a new or swapped site is not pre-forgiven', () => {
+    // A row keyed on file+flag would otherwise forgive every site in that file evaluating that
+    // flag, including ones nobody reviewed. A cardinality would not be enough either: swapping one
+    // ledgered site for a new one keeps the number. So the row names the declarations, and this
+    // compares that set both ways.
+    const bareByKey = new Map<string, EvalCall[]>();
     for (const c of calls.filter((c) => c.argc === 2)) {
-      bareByKey.set(c.key, [...(bareByKey.get(c.key) ?? []), c.site]);
+      bareByKey.set(c.key, [...(bareByKey.get(c.key) ?? []), c]);
     }
+    const describeFound = (found: EvalCall[]) =>
+      found.map((c) => `${c.enclosing} (${c.site})`).join(', ') || '(none)';
     const wrong = Object.entries(ENTITY_WITHOUT_CONTEXT_LEDGER)
-      .map(([key, row]) => ({ key, row, sites: bareByKey.get(key) ?? [] }))
-      .filter(({ row, sites }) => sites.length !== row.count)
+      .map(([key, row]) => ({ key, row, found: bareByKey.get(key) ?? [] }))
+      .filter(
+        ({ row, found }) =>
+          [...row.fns].sort().join('|') !==
+          found
+            .map((c) => c.enclosing)
+            .sort()
+            .join('|')
+      )
       .map(
-        ({ key, row, sites }) =>
-          `${key}: ledger says ${row.count}, found ${sites.length} at ${sites.join(', ')}`
+        ({ key, row, found }) =>
+          `${key}: ledger names ${[...row.fns].sort().join(', ')}; found ${describeFound(found)}`
       )
       .sort();
     expect(
       wrong,
-      'The number of context-less evaluations in a ledgered file+flag has changed. If a NEW ' +
-        'one was added, it is NOT covered by the existing reason — check the flag still has no ' +
-        'segment rollout, then raise the count. If one was removed or fixed, lower it.'
+      'The context-less evaluations in a ledgered file+flag are no longer the ones its row ' +
+        'names. A NEW or MOVED site is NOT covered by the existing reason — check the flag still ' +
+        'has no segment rollout AND that the reason applies to this site verbatim, then add its ' +
+        'declaration. If one was fixed or removed, drop its name.'
+    ).toEqual([]);
+  });
+
+  it('refuses to forgive a site whose enclosing declaration it could not name', () => {
+    // 🔴 `<unattributed>` must FAIL, never forgive. A row covering a site the parser could not
+    // name is the cardinality bug again with more steps — the ledger would say which functions it
+    // reviewed while silently standing for one it cannot point at.
+    //
+    // A call nested inside a closure is attributed to the top-level declaration containing it,
+    // which is what a row should name; this fires for a call with no declaration before it at all.
+    const unnamed = calls
+      .filter((c) => c.argc === 2 && c.enclosing === '<unattributed>')
+      .map((c) => c.site)
+      .sort();
+    expect(
+      unnamed,
+      'A context-less Flipt evaluation has no top-level declaration before it — it sits at ' +
+        'module scope, or in a shape the parser does not handle. It CANNOT be ledgered as-is: ' +
+        'move the call under a named declaration, or teach the parser that shape. Do not widen ' +
+        'a row to swallow it.'
+    ).toEqual([]);
+  });
+
+  it('ledgers only a real flag constant or a literal, never a computed key', () => {
+    // A computed first argument (`isFlipt(flagFor(area), id)`) is ONE key standing for N runtime
+    // flags, and the set can grow with no source change here at all — so no assertion in this file
+    // could notice. Reading the enum from source rather than importing it keeps this a source gate
+    // with no module side effects, and catches an enum member renamed out from under a row.
+    const members = new Set(
+      [
+        ...readFileSync(path.join(SRC, 'server/flipt/client.ts'), 'utf8').matchAll(
+          /^\s{2}([A-Z][A-Z0-9_]*)\s*=\s*'/gm
+        ),
+      ].map((m) => m[1])
+    );
+    expect(
+      members.size,
+      'no FLIPT_FEATURE_FLAGS members were read from client.ts — the reader broke, so the check ' +
+        'below would pass vacuously'
+    ).toBeGreaterThan(40);
+    const bad = Object.keys(ENTITY_WITHOUT_CONTEXT_LEDGER)
+      .map((key) => ({ key, expr: key.slice(key.indexOf('#') + 1) }))
+      .filter(({ expr }) => {
+        if (/^'[^']*'$/.test(expr) || /^"[^"]*"$/.test(expr)) return false;
+        const m = /^FLIPT_FEATURE_FLAGS\.([A-Z][A-Z0-9_]*)$/.exec(expr);
+        return !m || !members.has(m[1]);
+      })
+      .map(({ key }) => key)
+      .sort();
+    expect(
+      bad,
+      'A ledger row is keyed on something that is not a known FLIPT_FEATURE_FLAGS member or a ' +
+        'string literal. Either the member was renamed — re-key the row — or the site passes a ' +
+        'COMPUTED key, which cannot be ledgered, because one row would forgive every flag that ' +
+        'expression can produce and nothing here could see the set grow.'
     ).toEqual([]);
   });
 });
