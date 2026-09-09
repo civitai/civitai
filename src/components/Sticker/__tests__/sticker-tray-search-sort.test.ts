@@ -26,6 +26,12 @@ const mocks = vi.hoisted(() => ({
   attribution: [] as { id: number; creatorId: number | null }[],
   /** One entry per attribution REQUEST built, so the gate and the chunking are both observable. */
   attributionRequests: [] as number[][],
+  /**
+   * Stands in for React Query's `dataUpdatedAt`, which the hook memoises on.
+   * A CONSTANT here would make the fake unable to express "the answer changed",
+   * and the tray would look as though it never reacted to a refetch.
+   */
+  attributionVersion: 1,
 }));
 
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
@@ -86,7 +92,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       for (const request of requests) mocks.attributionRequests.push(request.ids);
       return requests.map((request) => ({
         data: mocks.attribution.filter((row) => request.ids.includes(row.id)),
-        dataUpdatedAt: 1,
+        dataUpdatedAt: mocks.attributionVersion,
         isLoading: false,
       }));
     },
@@ -124,21 +130,26 @@ const OWNED = [
   sticker(13, 'November', 'mike'),
 ];
 
-const render = async () => {
+const tray = () =>
+  createElement(MantineProvider, null, createElement(StickerPlacementTray, { imageId: IMAGE_ID }));
+
+/**
+ * Returns the root as well as the container: one test has to re-render into the
+ * SAME root to reach the state where the query data changes under a mounted
+ * tray, which a second `createRoot` would not reproduce.
+ */
+const renderRoot = async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  const root = createRoot(container);
   await act(async () => {
-    createRoot(container).render(
-      createElement(
-        MantineProvider,
-        null,
-        createElement(StickerPlacementTray, { imageId: IMAGE_ID })
-      )
-    );
+    root.render(tray());
   });
-  return container;
+  return { container, root };
 };
+
+const render = async () => (await renderRoot()).container;
 
 const slugs = (container: HTMLElement) =>
   Array.from(container.querySelectorAll('img[alt^=":"]')).map((img) =>
@@ -161,10 +172,20 @@ const type = async (container: HTMLElement, value: string) => {
 beforeEach(() => {
   mocks.owned = OWNED;
   mocks.recentUse = [];
-  mocks.attribution = [];
+  setAttribution([]);
   mocks.attributionRequests = [];
   document.body.innerHTML = '';
 });
+
+/**
+ * Attribution has to move through a version bump, because the hook memoises on
+ * `dataUpdatedAt` exactly as it would against React Query. Assigning the array
+ * alone leaves the tray showing the previous answer.
+ */
+const setAttribution = (rows: { id: number; creatorId: number | null }[]) => {
+  mocks.attribution = rows;
+  mocks.attributionVersion += 1;
+};
 
 /** The chip's input is visually hidden, so it is driven rather than clicked. */
 const toggleMineOnly = async (container: HTMLElement) => {
@@ -190,11 +211,11 @@ const toggleMineOnly = async (container: HTMLElement) => {
  */
 describe('the tray can narrow to stickers you made', () => {
   it('shows only the ones the viewer created', async () => {
-    mocks.attribution = [
+    setAttribution([
       { id: OWNED[2].id, creatorId: 7 },
       { id: OWNED[5].id, creatorId: 7 },
       { id: OWNED[8].id, creatorId: 999 },
-    ];
+    ]);
     const container = await render();
     expect(slugs(container)).toHaveLength(OWNED.length);
 
@@ -205,7 +226,7 @@ describe('the tray can narrow to stickers you made', () => {
   });
 
   it('draws no chip for someone who created none of them', async () => {
-    mocks.attribution = [{ id: OWNED[0].id, creatorId: 999 }];
+    setAttribution([{ id: OWNED[0].id, creatorId: 999 }]);
     const container = await render();
 
     // The search control proves the threshold controls rendered at all, so this
@@ -238,6 +259,58 @@ describe('the tray can narrow to stickers you made', () => {
   });
 
   /**
+   * 🔴 DO NOT SIMPLIFY `mineOnly` BACK TO THE RAW TOGGLE. This is the test that
+   * says why the tray derives it as `mineOnlyRequested && madeByYou.size > 0`
+   * instead of using the state directly.
+   *
+   * The chip is drawn on the same predicate, so with the raw toggle the two can
+   * come apart: buying a sticker from the shop panel above the tray prepends an
+   * id, which remints every attribution chunk key, so the creator set empties for
+   * a beat. The chip unmounts, the filter stays on, and the tray sits showing
+   * nothing with no control on screen to clear it — on the paid surface, right
+   * after money moved. Deriving it makes that state unrepresentable.
+   */
+  it('un-filters rather than stranding an empty tray when the creator set empties', async () => {
+    setAttribution([
+      { id: OWNED[2].id, creatorId: 7 },
+      { id: OWNED[5].id, creatorId: 7 },
+    ]);
+    const { container, root } = await renderRoot();
+    await toggleMineOnly(container);
+    expect(slugs(container)).toEqual([OWNED[2].slug, OWNED[5].slug]);
+
+    // What a purchase does: same mounted tray, creator set gone.
+    setAttribution([]);
+    await act(async () => {
+      root.render(tray());
+    });
+
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    // The whole collection, not zero tiles. Named by count AND by a member, so a
+    // revert fails saying the tray is empty rather than "expected 0 to be 14".
+    expect(slugs(container)).toHaveLength(OWNED.length);
+    expect(slugs(container)).toContain(OWNED[0].slug);
+  });
+
+  it('and the same sequence without the toggle looks identical — the control', async () => {
+    // Without this, the assertion above would pass for a tray that simply never
+    // filtered in the first place.
+    setAttribution([
+      { id: OWNED[2].id, creatorId: 7 },
+      { id: OWNED[5].id, creatorId: 7 },
+    ]);
+    const { container, root } = await renderRoot();
+    expect(slugs(container)).toHaveLength(OWNED.length);
+
+    setAttribution([]);
+    await act(async () => {
+      root.render(tray());
+    });
+
+    expect(slugs(container)).toHaveLength(OWNED.length);
+  });
+
+  /**
    * 🔴 THE CAP IS SILENT, WHICH IS WHY THIS IS PINNED. `getStickerCosmeticsSchema`
    * maxes `ids` at 100; a single request carrying more fails zod, and a failed
    * query is indistinguishable from "you made none" — the chip simply never
@@ -250,9 +323,13 @@ describe('the tray can narrow to stickers you made', () => {
 
     const oversized = mocks.attributionRequests.filter((ids) => ids.length > STICKER_OFFER_LIMIT);
     expect(oversized.map((ids) => ids.length)).toEqual([]);
-    // Every id still asked about exactly once — chunking that drops or repeats
-    // ids would leave the filter quietly wrong rather than absent.
-    expect(mocks.attributionRequests.flat()).toHaveLength(250);
+    // Every id asked about exactly once. The length alone would pass for a
+    // chunker that dropped one id and repeated another, which is the shape that
+    // leaves the filter quietly WRONG rather than absent — so the set is
+    // compared too, and the length kept to catch a duplicate the set would hide.
+    const asked = mocks.attributionRequests.flat();
+    expect(asked).toHaveLength(250);
+    expect(new Set(asked)).toEqual(new Set(mocks.owned.map((option) => option.id)));
   });
 });
 
