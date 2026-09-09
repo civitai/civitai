@@ -54,9 +54,11 @@ export interface TrainingRow {
    * shows an indeterminate bar rather than a misleading percentage. */
   progressPct: number;
   progress: string;
-  /** Real sample-image URLs from a finished run's last epoch (the list shows these instead of the
-   * gradient placeholders). Empty until a run produces samples. */
+  /** Real sample URLs from a finished run's last epoch (the list shows these instead of the gradient
+   * placeholders). Empty until a run produces samples. */
   sampleUrls: string[];
+  /** Video-model samples are `<video>`, not `<img>` — the grid renders them accordingly. */
+  isVideo: boolean;
 }
 
 /**
@@ -193,6 +195,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     base,
     code,
     name,
+    media,
     progress: progressRate,
   } = resolveWorkflow(w);
   if (!state) return null;
@@ -235,6 +238,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
           : w.status
         : '',
     sampleUrls,
+    isVideo: media === 'video',
   };
 }
 
@@ -358,6 +362,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 0,
     progress: '',
     sampleUrls: [],
+    isVideo: false,
   },
   {
     name: 'ink_wash_style',
@@ -368,6 +373,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 62,
     progress: 'step 5,120 / 8,400 · checkpoint 6/10',
     sampleUrls: [],
+    isVideo: false,
   },
   {
     name: 'chibi_pack',
@@ -378,6 +384,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 0,
     progress: '',
     sampleUrls: [],
+    isVideo: false,
   },
   {
     name: 'retro_poster',
@@ -388,6 +395,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 0,
     progress: '',
     sampleUrls: [],
+    isVideo: false,
   },
 ];
 

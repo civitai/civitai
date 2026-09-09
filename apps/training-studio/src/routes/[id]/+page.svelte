@@ -456,10 +456,10 @@
                     class="block w-full cursor-zoom-in rounded transition hover:ring-2 hover:ring-primary/50"
                     aria-label="Open Epoch {epoch.number}, prompt {r + 1}"
                   >
-                    <SampleImage url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
+                    <SampleImage isVideo={d.isVideo} url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
                   </button>
                 {:else}
-                  <SampleImage url={null} />
+                  <SampleImage isVideo={d.isVideo} url={null} />
                 {/if}
               {/each}
             {/each}
@@ -507,10 +507,10 @@
                   class="block w-full cursor-zoom-in rounded transition hover:ring-2 hover:ring-primary/50"
                   aria-label="Open Epoch {featured.number} sample {i + 1}"
                 >
-                  <SampleImage url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
+                  <SampleImage isVideo={d.isVideo} url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
                 </button>
               {:else}
-                <SampleImage url={null} />
+                <SampleImage isVideo={d.isVideo} url={null} />
               {/if}
               <figcaption class="text-[11px] leading-relaxed text-dark-2" title={prompt}>
                 {prompt}
@@ -552,6 +552,7 @@
                 <div class="grid grid-cols-3 gap-1.5">
                   {#each promptLabels as _, si (si)}
                     <SampleImage
+                      isVideo={d.isVideo}
                       url={epoch.samples[si] ?? null}
                       alt="Epoch {epoch.number} preview {si + 1}"
                     />

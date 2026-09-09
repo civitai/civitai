@@ -72,7 +72,7 @@
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
             {#if r.sampleUrls.length > 0}
-              <div class="mt-3"><SampleGrid urls={r.sampleUrls} cols={4} /></div>
+              <div class="mt-3"><SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} /></div>
             {/if}
           {:else if r.state === 'failed'}
             <div
@@ -81,7 +81,7 @@
               <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
             </div>
           {:else if r.sampleUrls.length > 0}
-            <SampleGrid urls={r.sampleUrls} cols={4} />
+            <SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} />
           {:else}
             <div class="grid grid-cols-4 gap-1.5">
               {#each Array(4) as _, i (i)}
