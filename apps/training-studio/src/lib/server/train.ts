@@ -4,6 +4,7 @@ import {
   updateWorkflow,
   type BuzzClientAccount,
   type WorkflowStepTemplate,
+  type WorkflowTemplate,
 } from '@civitai/client';
 import { env } from '$env/dynamic/private';
 import { isFlux2, orchestratorClient } from './orchestrator';
@@ -193,15 +194,25 @@ type EpochOutput = {
 // urn:air:other:other:orchestrator:blob@{blobKey}"), built from the epoch model's blob key (`model.id`).
 const BLOB_AIR_PREFIX = 'urn:air:other:other:orchestrator:blob@';
 
-/** "Keep training": submit a NEW run that continues from an existing checkpoint's weights — same dataset and
- *  hyperparameters as the source run, plus `continueFrom` and a fresh epoch budget. Reconstructs the submit
- *  from the source workflow's own training step (ai-toolkit only), so no client re-upload. Returns the new
- *  workflow id. */
-export async function continueTraining(
+export interface ContinueOpts {
+  workflowId: string;
+  fromEpoch: number;
+  addEpochs: number;
+  currencies?: string[];
+}
+
+/** Reconstruct the submit body for a "keep training" continuation from the source run's own training step
+ *  (ai-toolkit only), plus `continueFrom` and the added epochs. Shared by the real submit and the whatif so
+ *  the quoted price matches what gets charged. `steps` is the continuation's step budget (for ETA). */
+async function buildContinuation(
   token: string,
   userId: number,
-  opts: { workflowId: string; fromEpoch: number; addEpochs: number; currencies?: string[] }
-): Promise<string> {
+  opts: ContinueOpts
+): Promise<{
+  client: ReturnType<typeof orchestratorClient>;
+  body: WorkflowTemplate;
+  steps: number | undefined;
+}> {
   const client = orchestratorClient(token);
   const { data: wf, error: getError } = await getWorkflow({
     client,
@@ -267,7 +278,7 @@ export async function continueTraining(
     input: continuedInput,
   } as unknown as WorkflowStepTemplate;
 
-  const { data, error } = await submitWorkflow({
+  return {
     client,
     body: {
       tags: slug
@@ -278,10 +289,33 @@ export async function continueTraining(
       currencies: resolveCurrencies(opts.currencies),
       ...(callbacks ? { callbacks } : {}),
     },
-    query: { wait: 0 },
-  });
+    steps,
+  };
+}
+
+/** "Keep training": submit a new run continuing from a checkpoint. Charges Buzz. Returns the new run id. */
+export async function continueTraining(
+  token: string,
+  userId: number,
+  opts: ContinueOpts
+): Promise<string> {
+  const { client, body } = await buildContinuation(token, userId, opts);
+  const { data, error } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id) throw new Error(`keep training: submit failed (${describeSubmitError(error)})`);
   return data.id;
+}
+
+/** Price a "keep training" continuation without submitting (the same body, `whatif`). Returns the total Buzz
+ *  cost and the step budget (for an ETA), so the UI can show the price + confirm before charging. */
+export async function continueTrainingWhatIf(
+  token: string,
+  userId: number,
+  opts: ContinueOpts
+): Promise<{ cost: number | null; steps: number | undefined }> {
+  const { client, body, steps } = await buildContinuation(token, userId, opts);
+  const { data, error } = await submitWorkflow({ client, body, query: { whatif: true } });
+  if (!data) throw new Error(`keep training quote failed: ${describeSubmitError(error)}`);
+  return { cost: data.cost?.total ?? null, steps };
 }
 
 /** Rename a training: merge the new name into the workflow metadata (the title the list/detail read) and

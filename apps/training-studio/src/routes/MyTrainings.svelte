@@ -10,6 +10,23 @@
   import type { TrainingRow } from '$lib/data/trainingRows';
 
   let { rows, onNew }: { rows: TrainingRow[]; onNew: () => void } = $props();
+
+  // Remix / Retry reuse a run's dataset. Track which card is in flight and surface a failure inline, so the
+  // button never looks like a dead click (it navigates away on success).
+  let remixingId = $state<string | null>(null);
+  let remixError = $state('');
+  async function remix(workflowId: string) {
+    if (remixingId) return;
+    remixingId = workflowId;
+    remixError = '';
+    try {
+      await remixFromRun(workflowId);
+    } catch (err) {
+      remixError = err instanceof Error ? err.message : 'Could not reuse that dataset.';
+    } finally {
+      remixingId = null;
+    }
+  }
 </script>
 
 <section class="flex flex-col gap-5">
@@ -23,6 +40,14 @@
     </div>
     <Button onclick={onNew}><IconPlus size={15} stroke={2} class="mr-1.5 inline" />New training</Button>
   </div>
+
+  {#if remixError}
+    <p
+      class="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-[11px] text-red-400"
+    >
+      {remixError}
+    </p>
+  {/if}
 
   {#if rows.length === 0}
     <div class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
@@ -94,9 +119,6 @@
         </div>
 
         <div class="relative z-[2] mt-auto flex flex-wrap gap-2 px-3.5 pb-3.5">
-          {#if r.state === 'ready' || r.state === 'published'}
-            <Button variant="outline" size="sm">Generate</Button>
-          {/if}
           {#if r.state === 'ready'}
             <Button
               variant="outline"
@@ -110,18 +132,20 @@
             <Button
               variant="outline"
               size="sm"
-              onclick={() => r.workflowId && remixFromRun(r.workflowId)}
+              disabled={remixingId === r.workflowId}
+              onclick={() => r.workflowId && remix(r.workflowId)}
             >
-              Remix
+              {remixingId === r.workflowId ? 'Loading…' : 'Remix'}
             </Button>
           {/if}
           {#if r.state === 'failed'}
             <Button
               variant="outline"
               size="sm"
-              onclick={() => r.workflowId && remixFromRun(r.workflowId)}
+              disabled={remixingId === r.workflowId}
+              onclick={() => r.workflowId && remix(r.workflowId)}
             >
-              Retry
+              {remixingId === r.workflowId ? 'Loading…' : 'Retry'}
             </Button>
           {/if}
         </div>

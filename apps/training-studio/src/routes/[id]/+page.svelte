@@ -16,6 +16,7 @@
     IconArchive,
     IconRepeat,
     IconArrowLeft,
+    IconBoltFilled,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
@@ -27,7 +28,7 @@
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import { overallProgressPct, type TrainingDetailEpoch } from '$lib/data/trainingRows';
-  import { handoffReuse, continueRun } from '$lib/reuse';
+  import { handoffReuse, continueRun, continueQuote } from '$lib/reuse';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -226,11 +227,45 @@
   }
 
   // Keep training: continue from the recommended checkpoint with more epochs (same dataset + settings),
-  // landing on the new run. `publishTarget` is the latest checkpoint that has downloadable weights.
+  // landing on the new run. `publishTarget` is the latest checkpoint that has downloadable weights. This
+  // SPENDS Buzz, so it's priced (a whatif quote) and gated behind an explicit confirm — matching the Review
+  // step's "nothing charges until you confirm" contract.
   let furtherEpochs = $state(5);
+  let confirming = $state(false);
   let continuing = $state(false);
   let continueError = $state('');
-  async function trainFurther() {
+  let quote = $state<{ cost: number | null; eta: number | null } | null>(null);
+  let quoteError = $state('');
+
+  // Re-quote when the epoch count changes (debounced) so the confirm always shows the current price.
+  $effect(() => {
+    const epochs = Number(furtherEpochs) || 0;
+    if (!browser || !publishTarget || epochs < 1) {
+      quote = null;
+      return;
+    }
+    const wf = d.workflowId;
+    const from = publishTarget.number;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const q = await continueQuote(wf, from, epochs);
+        if (cancelled) return;
+        quote = { cost: q.cost, eta: q.steps ? Math.max(1, Math.round((q.steps / 2000) * 18)) : null };
+        quoteError = '';
+      } catch (err) {
+        if (cancelled) return;
+        quote = null;
+        quoteError = err instanceof Error ? err.message : 'Could not price this';
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  });
+
+  async function doTrainFurther() {
     if (!publishTarget || continuing) return;
     continuing = true;
     continueError = '';
@@ -239,6 +274,7 @@
       await goto(`/${id}`);
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
+      confirming = false;
     } finally {
       continuing = false;
     }
@@ -398,6 +434,11 @@
         No weights were produced. If Buzz was charged for this run it's refunded automatically — nothing
         to publish or download here.
       </p>
+      {#if d.dataset.length}
+        <Button class="mt-4" variant="outline" onclick={reuseDataset}>
+          <IconRepeat size={14} stroke={2} class="mr-1.5 inline" />Try again with this dataset
+        </Button>
+      {/if}
     </div>
   {:else if d.epochs.length === 0}
     <div class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
@@ -598,19 +639,43 @@
               with more epochs — same dataset and settings, starts a new run.
             </p>
           </div>
-          <div class="ml-auto flex items-center gap-2">
-            <label for="further-epochs" class="font-mono text-[11px] text-dark-2">+ epochs</label>
-            <Input
-              id="further-epochs"
-              type="number"
-              min={1}
-              max={20}
-              bind:value={furtherEpochs}
-              class="w-20"
-            />
-            <Button onclick={trainFurther} disabled={continuing}>
-              {continuing ? 'Starting…' : 'Train further'}
-            </Button>
+          <div class="ml-auto flex flex-col items-end gap-1.5">
+            <div class="flex items-center gap-2">
+              <label for="further-epochs" class="font-mono text-[11px] text-dark-2">+ epochs</label>
+              <Input
+                id="further-epochs"
+                type="number"
+                min={1}
+                max={20}
+                bind:value={furtherEpochs}
+                disabled={confirming || continuing}
+                class="w-20"
+              />
+              {#if confirming}
+                <Button onclick={doTrainFurther} disabled={continuing}>
+                  {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
+                      <span class="ml-1 inline-flex items-center"
+                        >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
+                      >{/if}{/if}
+                </Button>
+                <Button variant="outline" onclick={() => (confirming = false)} disabled={continuing}>
+                  Cancel
+                </Button>
+              {:else}
+                <Button onclick={() => (confirming = true)}>Train further</Button>
+              {/if}
+            </div>
+            <div class="font-mono text-[10px] text-dark-2">
+              {#if quoteError}
+                <span class="text-red-400">{quoteError}</span>
+              {:else if quote?.cost != null}
+                Costs <span class="text-buzz"
+                  ><IconBoltFilled size={10} stroke={2} class="mb-px inline" />{quote.cost.toLocaleString()}</span
+                >{#if quote.eta} · ~{quote.eta} min{/if} · spends Buzz on confirm
+              {:else}
+                pricing…
+              {/if}
+            </div>
           </div>
         </div>
         {#if continueError}

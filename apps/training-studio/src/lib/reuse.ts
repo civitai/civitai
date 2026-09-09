@@ -34,13 +34,28 @@ export function handoffReuse(items: ReuseItem[]) {
 }
 
 /** Remix: fetch a run's dataset and start a new training pre-loaded with it (reuse the blob airs — no
- *  re-upload). No-op if the run has no blob-backed dataset. */
+ *  re-upload). Throws a user-facing message when the run has no reusable dataset so callers can show it. */
 export async function remixFromRun(workflowId: string): Promise<void> {
   const res = await fetch(`/api/run-dataset?id=${encodeURIComponent(workflowId)}`);
-  if (!res.ok) return;
+  if (!res.ok) throw new Error("Couldn't load that dataset.");
   const dataset = (await res.json()) as { air: string; caption: string }[];
-  if (dataset.length === 0) return;
+  if (dataset.length === 0) throw new Error("This run's data can't be reused.");
   handoffReuse(toReuseItems(dataset, workflowId));
+}
+
+/** Price a keep-training continuation (whatif) without charging. Returns total Buzz + step budget. */
+export async function continueQuote(
+  workflowId: string,
+  fromEpoch: number,
+  addEpochs: number
+): Promise<{ cost: number | null; steps?: number }> {
+  const res = await fetch(
+    `/api/continue-training?id=${encodeURIComponent(
+      workflowId
+    )}&fromEpoch=${fromEpoch}&addEpochs=${addEpochs}`
+  );
+  if (!res.ok) throw new Error(await res.text().catch(() => 'Could not price the continuation.'));
+  return (await res.json()) as { cost: number | null; steps?: number };
 }
 
 /** Keep training: continue a run from one of its checkpoints, adding `addEpochs` epochs. Returns the new
