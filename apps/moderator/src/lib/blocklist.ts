@@ -40,7 +40,9 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' hosts like "dynv6.net" carry many separate entries there, and "co.uk" and "org.uk" are on' +
     ' that list too.' +
     ' Entries here are yours: nothing syncs this list, so what you add stays and what you remove' +
-    ' stays removed. Existing accounts are never locked out — an entry refuses new signups only.',
+    ' stays removed. An entry refuses a NEW signup on the domain and refuses anyone changing their' +
+    ' address to it; it does not touch accounts that already have an address there, and it cannot' +
+    ' lock an existing user out of signing in. Single-label entries ("com") are ignored.',
   MessagePattern:
     'Case-insensitive substrings matched against chat messages and comments. A chat message that' +
     ' contains one is REFUSED; a comment is accepted and reported instead — it lands in the report' +

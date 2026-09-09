@@ -262,6 +262,13 @@ describe('EmailDomainSuffix', () => {
     expect(isBlockedSuffix(['	*.farm.test  '], 'farm.test')).toBe(true);
   });
 
+  it('refuses a SINGLE-LABEL entry, so one typo cannot block a whole TLD', () => {
+    // `com` is one keystroke from `com.example`, and nothing validates what a moderator types.
+    // Without the `entry.includes('.')` guard this matches every domain under `.test`.
+    expect(isBlockedSuffix(['test'], 'single-label.test')).toBe(false);
+    expect(isBlockedSuffix(['*.test'], 'single-label.test')).toBe(false);
+  });
+
   it('an entry that normalizes to EMPTY matches nothing, even for a domain ending in a dot', () => {
     // The trailing-dot domain is what makes this capable of failing. Delete the `if (!entry)` guard
     // and a `'.'` entry reduces to `''`, whose `endsWith('.')` is TRUE for `example.test.` — every

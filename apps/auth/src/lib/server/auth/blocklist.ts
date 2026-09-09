@@ -85,6 +85,10 @@ export function isBlockedSuffix(entries: string[], domain: string): boolean {
     // a signup, on the path this list exists for.
     const entry = normalizeDomain(normalizeDomain(raw).replace(SUFFIX_ENTRY_PREFIX, ''));
     if (!entry) return false;
+    // 🔴 A SINGLE LABEL IS REFUSED. Nothing validates what a moderator types, and `com` is one
+    // keystroke from `com.example` — it would refuse every address under the whole TLD. The exact
+    // list cannot do that, so the blast radius is new to this list.
+    if (!entry.includes('.')) return false;
     return domain === entry || domain.endsWith(`.${entry}`);
   });
 }
