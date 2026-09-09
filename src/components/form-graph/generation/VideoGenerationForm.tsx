@@ -61,7 +61,6 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
                           resources: readResources(store),
                           ecosystem: {
                             value: ecosystem,
-                            modelLocked: meta?.modelLocked,
                             compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
                             excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
                             ecosystemStates: ecosystemMeta?.ecosystemStates,

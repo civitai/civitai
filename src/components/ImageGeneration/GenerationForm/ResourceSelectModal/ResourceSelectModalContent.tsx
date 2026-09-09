@@ -52,7 +52,6 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
     footer: Footer,
     role,
     resources,
-    catalogNotice,
   } = useResourceSelectContext();
   const dialog = useDialogContext();
   const isMobile = useIsMobile({ type: 'media' });
@@ -137,7 +136,7 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
             modal's right edge on a narrow viewport. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex flex-none flex-col gap-2.5 p-3">
-            <div className={clsx('flex flex-wrap items-center gap-2', !!catalogNotice && 'hidden')}>
+            <div className="flex flex-wrap items-center gap-2">
               <CatalogTabs tabs={allowedTabs} value={tab} onChange={setTab} />
               {tab !== 'featured' && <ResourceSelectSort />}
               <ResourceSelectFiltersDropdown />
@@ -174,11 +173,7 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
             scrollRestore={{ key: 'resource-select-modal', enabled: false }}
             className="flex-1 overflow-y-scroll"
           >
-            {catalogNotice ? (
-              <div className="p-3">{catalogNotice}</div>
-            ) : (
-              <ResourceHitList key={tab} query={debouncedSearch} />
-            )}
+            <ResourceHitList key={tab} query={debouncedSearch} />
           </ScrollArea>
         </div>
       </div>
