@@ -9,6 +9,7 @@ import {
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import type { PartialResourceValue } from '~/components/generation_v2/inputs/resource-select.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { PickerRail } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal/PickerRail';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ecosystemByKey, getEcosystemDefaults } from '~/shared/constants/basemodel.constants';
 import { getResourceSelectOptions } from '~/shared/form-graph/generation/defs';
@@ -171,7 +172,7 @@ export function EcosystemRail({
   });
 
   return (
-    <div className="flex min-h-0 w-full flex-col gap-2 overflow-y-auto p-2">
+    <PickerRail>
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
         Ecosystem
       </Text>
@@ -189,7 +190,7 @@ export function EcosystemRail({
         searchValue={searchValue}
         onSearchChange={setSearchValue}
       />
-    </div>
+    </PickerRail>
   );
 }
 

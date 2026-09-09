@@ -26,6 +26,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CategoryTagFilters } from './CategoryTagFilters';
+import { InlineRail } from './PickerRail';
 import { ResourceHitList } from './ResourceHitList';
 
 /** Each role says what it is and what it is judged against. */
@@ -125,14 +126,7 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
       </div>
 
       <div className="flex min-h-0 flex-1">
-        {/* Viewport breakpoint, not `@md`: Mantine's Modal sets no containerType
-            (only Drawer does), so container-query variants never resolve here
-            and the rail would stay hidden. */}
-        {Rail && (
-          <div className="hidden w-56 shrink-0 border-r border-gray-3 md:flex dark:border-dark-4">
-            <Rail />
-          </div>
-        )}
+        {Rail && <Rail />}
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-none flex-col gap-2.5 p-3">
@@ -240,6 +234,8 @@ function CatalogTabs({
  */
 function MobileRailStep({ Rail }: { Rail?: React.ComponentType }) {
   const [opened, setOpened] = useState(false);
+  // The label assumes the rail is the ecosystem one, which is the only rail any
+  // caller supplies.
   if (!Rail) return null;
 
   return (
@@ -254,9 +250,9 @@ function MobileRailStep({ Rail }: { Rail?: React.ComponentType }) {
               Change model family
             </Text>
           </div>
-          <div className="max-h-80 overflow-y-auto">
+          <InlineRail>
             <Rail />
-          </div>
+          </InlineRail>
         </div>
       ) : (
         <Button variant="default" fullWidth onClick={() => setOpened(true)}>
