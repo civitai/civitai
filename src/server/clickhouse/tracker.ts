@@ -55,6 +55,46 @@ export type TrackDelivery = { awaitDelivery?: boolean };
 /** Per attempt, so three of these plus the backoff is the worst case wait. */
 const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 
+// 🔴 A NUMBER TOO BIG FOR ITS COLUMN DESTROYS THE WHOLE ROW, SILENTLY.
+//
+// A JS number is far wider than the ClickHouse columns these land in, and the tracker
+// rejects an out-of-range value CLIENT-side while serializing the batch — before
+// ClickHouse is ever asked. The POST is fire-and-forget and returns success, the app
+// logs nothing, and the row simply never exists. Nothing about it looks like an error.
+//
+// Measured on production 2026-09-08 by reading the rejected rows out of the tracker's
+// dead-letter queue: `pageViews` was the only table still losing rows, ALL of it to this
+// — 21 of 26 sampled rows carried a `duration` above the UInt32 ceiling (values of
+// 50–144 days in ms, from an accumulator that appears never to reset) and 5 carried
+// window dimensions above Int16 (up to 183,800 × 102,200 px).
+//
+// The corroborating tell, if you ever want to check another column for the same thing:
+// the live `duration` maximum sat at 4,264,810,774 — 99.3% of the UInt32 ceiling and
+// never above it. A maximum pinned just under a type bound is a silently clipped tail.
+//
+// WHY CLAMP RATHER THAN WIDEN THE COLUMN: `UInt32`→`UInt64` rewrites data on a table
+// taking ~55.7M rows/7d, to preserve values that are junk on their face.
+// WHY CLAMP RATHER THAN DROP THE ROW: the outlier is ONE metric on an otherwise-good row
+// — path, host, country and userId are all fine — so saturating that field keeps the
+// page view countable instead of discarding it. Saturation is also honest here: the
+// stored distribution was ALREADY clipped at this bound, just by silent loss instead.
+const UINT32_MAX = 4_294_967_295;
+const INT16_MAX = 32_767;
+
+/**
+ * Clamp a number into `[0, max]` so it cannot exceed its ClickHouse column.
+ *
+ * Non-finite input (NaN/±Infinity) and negatives collapse to 0: every field this guards
+ * is a duration or a pixel dimension, none of which can meaningfully be negative, and a
+ * non-integer would be rejected by an integer column just as an oversized one is.
+ */
+export function clampToColumn(value: number, max: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const truncated = Math.trunc(value);
+  if (truncated < 0) return 0;
+  return truncated > max ? max : truncated;
+}
+
 export type ViewType = (typeof VIEW_TYPES)[number];
 
 /**
@@ -633,12 +673,23 @@ export class Tracker {
     windowWidth: number;
     windowHeight: number;
   }) {
+    // The three clamped fields are destructured OUT of the spread rather than being
+    // overwritten after it. That is deliberate and load-bearing: with `...values` still
+    // carrying them, the clamp would depend on key ORDER — move the spread below these
+    // lines, or let a merge reorder them, and the raw values win again silently, which
+    // is the exact failure this guards. Destructuring makes the raw values unreachable
+    // here, so no reordering can reintroduce it. See clampToColumn above for why these
+    // three and not the rest.
+    const { duration, windowWidth, windowHeight, ...rest } = values;
     return this.send('pageViews', ({ session, actor }) => {
       return {
         userId: actor.userId,
         memberType: session?.user?.tier ?? 'undefined',
         ip: actor.ip,
-        ...values,
+        ...rest,
+        duration: clampToColumn(duration, UINT32_MAX),
+        windowWidth: clampToColumn(windowWidth, INT16_MAX),
+        windowHeight: clampToColumn(windowHeight, INT16_MAX),
       };
     });
   }
