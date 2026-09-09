@@ -195,9 +195,12 @@ type EpochOutput = {
   model?: { id?: string; url?: string | null; available?: boolean };
 };
 
-// `continueFrom` is a blob-reference AIR to the epoch's trained LoRA (the SDK: "Accepts an AIR urn
-// urn:air:other:other:orchestrator:blob@{blobKey}"), built from the epoch model's blob key (`model.id`).
-const BLOB_AIR_PREFIX = 'urn:air:other:other:orchestrator:blob@';
+// `continueFrom` must reference the epoch's trained LoRA, and the orchestrator resolves it as a LoRA only
+// when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is rejected with
+// "continueFrom must reference a LoRA resource". This is the same shape the main app builds for a
+// blob-backed epoch (`getEpochJobAndFileName` → jobId `blob`): urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
+const loraBlobAir = (ecosystem: string, blobKey: string) =>
+  `urn:air:${ecosystem}:lora:orchestrator:blob@${blobKey}`;
 
 export interface ContinueOpts {
   workflowId: string;
@@ -238,7 +241,10 @@ async function buildContinuation(
   );
   const modelKey = epoch?.model?.id;
   if (!modelKey) throw new Error('keep training: that checkpoint has no downloadable weights yet');
-  const continueFrom = `${BLOB_AIR_PREFIX}${modelKey}`;
+  const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
+  if (!ecosystem)
+    throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
+  const continueFrom = loraBlobAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;
   const origSteps = Number(input.steps) || 0;

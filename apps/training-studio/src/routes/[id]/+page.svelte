@@ -45,6 +45,10 @@
   const currentEpoch = $derived(
     d.plannedEpochs ? Math.min(completedEpochs + 1, d.plannedEpochs) : completedEpochs + 1
   );
+  // "Train further" only makes sense once the run has finished all its epochs — continuing mid-run would
+  // fork off a checkpoint that's still being superseded. `ready` (succeeded) or `published` are the terminal
+  // success states; `training`/`failed` are not.
+  const runComplete = $derived(d.state === 'ready' || d.state === 'published');
 
   // Live updates while training: re-run the load every few seconds so new epochs/samples stream in. The
   // one-shot timeout re-arms via this effect after each refetch and stops on its own once the run reaches
@@ -228,12 +232,7 @@
 
   // Keep training: continue from the recommended checkpoint with more epochs (same dataset + settings),
   // landing on the new run. Priced via a whatif and gated behind an explicit confirm (fail-safe: no charge).
-  // DISABLED for now: the orchestrator requires `continueFrom` to be a civitai LoRA ModelVersion AIR
-  // (urn:air:…:lora:civitai:<modelId>@<versionId>), which this DB-less app can't produce for an
-  // orchestrator-only epoch — a blob AIR is rejected ("continueFrom must reference a LoRA resource"). The
-  // full priced/confirm flow + server endpoints stay wired; flip this on once a blob→LoRA AIR path exists
-  // (or route it through publish, which mints the ModelVersion). See continueTraining in lib/server/train.ts.
-  const KEEP_TRAINING_ENABLED = false;
+  const KEEP_TRAINING_ENABLED = true;
   let furtherEpochs = $state(5);
   let confirming = $state(false);
   let continuing = $state(false);
@@ -244,7 +243,7 @@
   // Re-quote when the epoch count changes (debounced) so the confirm always shows the current price.
   $effect(() => {
     const epochs = Number(furtherEpochs) || 0;
-    if (!browser || !KEEP_TRAINING_ENABLED || !publishTarget || epochs < 1) {
+    if (!browser || !KEEP_TRAINING_ENABLED || !runComplete || !publishTarget || epochs < 1) {
       quote = null;
       return;
     }
@@ -632,7 +631,7 @@
       {/if}
     {/if}
 
-    {#if publishTarget && KEEP_TRAINING_ENABLED}
+    {#if publishTarget && KEEP_TRAINING_ENABLED && runComplete}
       <div id="train-further" class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <div class="flex flex-wrap items-center gap-3">
           <div class="min-w-0">
