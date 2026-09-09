@@ -97,7 +97,6 @@ import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-wi
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
-import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
@@ -172,7 +171,6 @@ export const jobs: Job[] = [
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
-  rewardsAbusePrevention,
   nextauthCleanup,
   syncEmailBlocklist,
   applyTagRules,
