@@ -65,6 +65,17 @@ const { db, s3, holder } = vi.hoisted(() => {
   return { db, s3, holder };
 });
 
+// 🔴 `approveRequest` LAZILY imports `app-listing.service` for its catalog-cache bust
+// (#529), and that module statically imports `~/server/utils/cache-helpers`, whose module
+// BODY builds a logger off the real env. Against this file's minimal `~/env/server` stub
+// that construction throws `TypeError: Cannot read properties of undefined (reading
+// 'includes')` at import time — inside the approve, so every approve case rejects rather
+// than reporting a missing mock. Stub the two exports the listing service uses.
+vi.mock('~/server/utils/cache-helpers', () => ({
+  queryCache: () => async (): Promise<unknown[]> => [],
+  bustCacheTag: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: vi.fn(async () => undefined),
 }));

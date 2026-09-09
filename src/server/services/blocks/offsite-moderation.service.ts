@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
   APP_LISTING_REPORT_REASONS,
   OFFSITE_MOD_REASON_MIN,
@@ -661,6 +662,9 @@ export async function delistListing(opts: {
     details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
   });
 
+  // Catalog bust: delist removes the listing from the store catalog.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { appListingId: input.appListingId, status: 'removed' };
 }
 
@@ -762,6 +766,9 @@ export async function relistListing(opts: {
       )
       .catch(() => undefined);
   }
+
+  // Catalog bust: relist puts the listing back into the store catalog.
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { appListingId: input.appListingId, status: 'approved' };
 }
@@ -971,6 +978,17 @@ export async function claimListing(opts: {
     }
   });
 
+  // Catalog bust: DEFENCE IN DEPTH, not a cached axis — stated honestly so nobody later
+  // reasons from a wrong premise. Claim moves `userId`, and the creator chip that renders
+  // from it is hydrated LIVE; the cache holds `{id, sort_key}` only, and no sort or filter
+  // here keys on ownership. So this bust is currently INERT. It is kept because it costs one
+  // tag delete on a rare mod action and a future ownership-aware sort would need it.
+  // 🔴 NOT an instance of "every listing-state mutation busts" — that rule was invoked here
+  // and it is false. `acceptTransfer` (`app-ownership-transfer.service`) moves the SAME
+  // `userId` column and correctly does NOT bust; it is an `EXEMPT` row in
+  // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { appListingId: input.appListingId, userId: input.targetUserId };
 }
 
@@ -1128,6 +1146,9 @@ export async function purgeListing(opts: {
       );
     }
   }
+
+  // Catalog bust: purge deletes the row (and releases the slug) — catalog membership.
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { appListingId: input.appListingId, purged: true };
 }
@@ -1398,6 +1419,9 @@ export async function resetListingToPending(opts: {
     details: { slug, name, listingId: input.appListingId, reason },
   });
 
+  // Catalog bust: reset-to-pending drops the row out of the approved-only catalog.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { appListingId: input.appListingId, status: 'pending', publishRequestId };
 }
 
@@ -1614,6 +1638,9 @@ export async function resetOnsiteListingToPending(opts: {
     details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
   });
 
+  // Catalog bust: onsite reset-to-pending — same membership change as the offsite path.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { appListingId: input.appListingId, status: 'pending', publishRequestId };
 }
 
@@ -1757,6 +1784,9 @@ export async function unpublishOwnListing(opts: {
       },
     });
   });
+
+  // Catalog bust: owner-unpublish removes the listing from the store catalog.
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { appListingId: input.appListingId, status: 'removed' };
 }
@@ -2046,6 +2076,9 @@ export async function republishOwnListing(opts: {
       )
       .catch(() => undefined);
   }
+
+  // Catalog bust: owner-republish restores the listing to the catalog (or moves it to pending).
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   // 🔴 The narrowing is on the LOCAL, not on a re-read: `reviewReason` is assigned inside
   // the transaction callback and TypeScript cannot see through the closure, so it is

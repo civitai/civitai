@@ -3494,6 +3494,26 @@ export class BlockRegistry {
         featuredOrder: true,
       },
     });
+    // 🔴 NO CATALOG BUST HERE, DELIBERATELY — and the reason is not "category doesn't
+    // matter", it is that this writes the WRONG TABLE for that cache. The `/apps` catalog
+    // statement filters `app_listings.category`; this function writes
+    // `app_blocks.category`. The two are synced in ONE direction and at ONE moment —
+    // `approveRequest` copies the block's curated scalars onto the listing on approve, and
+    // busts there. Nothing in the cached statement reads any column this function writes
+    // (`category`, `featured`, `featuredOrder`); of `app_blocks` it reads only
+    // `current_version_deployed_at`, via the deploy gate. A bust here was measured inert.
+    //
+    // If the catalog query ever grows a predicate over an `app_blocks` column this
+    // function writes, add the bust back — and add the row
+    // `'src/server/services/block-registry.service.ts::BlockRegistry::setMarketplaceMeta'`
+    // to `LEDGER` in
+    // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`, which
+    // is what will fail and make that a deliberate decision rather than an omission.
+    // (That spelling is exact and verified: the ledger's attributor names class methods
+    // `Class::method`. An earlier version of it was anchored at column 0 and reported an
+    // added bust here as an unrelated top-level helper, which made this instruction
+    // unfollowable.)
+
     return {
       appBlockId: updated.id,
       status: updated.status,
