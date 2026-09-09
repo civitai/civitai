@@ -414,9 +414,11 @@ const braceImbalance = (walk: Walk): string | null =>
  *     frame. A parse failure; fix `classifyBrace`.
  *   · `<module scope>` — the site is inside no braces at all, i.e. a genuine top-level
  *     write. That is a correct answer, not a parse failure, and it needs no guard of its
- *     own: `<file>::<module scope>` can never be in `LEDGER` (a top-level statement
- *     cannot call the buster meaningfully) and would have to be typed by hand into
- *     `EXEMPT`, so the headline coverage guard reports it, loudly and by name.
+ *     own: neither list holds a `<module scope>` row today, so a new one lands in
+ *     neither `LEDGER` nor `EXEMPT` and the headline coverage guard reports it, loudly
+ *     and by name. (Nothing MECHANICALLY stops someone typing such a row in — the point
+ *     is that doing so is a deliberate act, which is the same contract every other row
+ *     is under, not a silent pass.)
  */
 const attribute = (frames: Frame[], index: number): string => {
   const enclosing = frames
