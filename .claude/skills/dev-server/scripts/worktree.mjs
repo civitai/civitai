@@ -189,6 +189,23 @@ async function fetchRunning(daemonRequest) {
   };
 }
 
+/**
+ * What one `/` answer establishes, before any tree is named.
+ *
+ * 🔴 `reachable` turns on the TRANSPORT, not on `ok`. `daemonRequest` reports `status: 0` only when
+ * the request never got an answer; a live daemon that 500s on `/` — one session's status throwing is
+ * enough — also arrives as `ok: false`. Reading that as "no daemon is running" would hand back the
+ * confidently-wrong verdict this whole change exists to remove, just from a rarer cause.
+ *
+ * (One case still lands on the wrong side: `daemonRequest` parses the body inside its `try`, so a
+ * daemon answering non-JSON is reported as `status: 0`. A daemon that cannot serve JSON on `/` is
+ * broken in ways this command cannot help with, and fixing it belongs in `daemonRequest`.)
+ */
+export function daemonAnswer(res) {
+  const reachable = res.status !== 0;
+  return { checked: Boolean(res.ok && res.data?.skillDir), reachable };
+}
+
 // The daemon reports where its own code lives; a daemon running out of this tree holds the
 // directory open and no delete can succeed while it lives.
 export async function daemonRunningFrom(target, daemonRequest) {
@@ -202,16 +219,12 @@ export async function daemonRunningFrom(target, daemonRequest) {
 // the `skillDir` field yields no holder AND no knowledge, and the caller must not then report the
 // daemon as ruled out.
 export function daemonHeldFrom(res, target) {
-  // A daemon that does not answer at all is not running, and a daemon that is not running holds no
-  // directory open. That is the one unknown that rules ITSELF out, and keeping it separate is what
-  // stops a box with no daemon from reporting every tree as unremovable forever.
-  if (!res.ok) return { holder: null, checked: false, reachable: false };
-  const skillDir = res.data?.skillDir;
-  if (!skillDir) return { holder: null, checked: false, reachable: true };
+  const answer = daemonAnswer(res);
+  if (!answer.checked) return { holder: null, ...answer };
   // Its script AND its working directory: either one alone keeps the directory open. A daemon
   // started by hand from a worktree runs the primary's script and still pins the tree by cwd.
   const held = [
-    ['its running script', skillDir],
+    ['its running script', res.data.skillDir],
     ['its working directory', res.data.cwd],
   ].find(([, p]) => p && isInside(p, target));
   return {
@@ -286,14 +299,14 @@ export async function inspect(primary, daemonRequest) {
       daemon: daemonHeldFrom(daemonRoot, t.path),
     });
   }
-  return rows;
+  return { rows, daemon: daemonAnswer(daemonRoot) };
 }
 
 /**
  * Which trees `wt stale` offers and which it keeps — separated from the printing so a selftest can
  * reach the decision without a git tree, a `gh` call and a daemon.
  */
-export function partitionStale(rows) {
+export function partitionStale(rows, daemon) {
   const candidates = rows.filter((r) => !r.isPrimary);
   const removable = candidates.filter(
     (r) => r.mergedPr && !r.dirty && r.sessions.length === 0 && !daemonBlockReason(r.daemon)
@@ -302,8 +315,10 @@ export function partitionStale(rows) {
     candidates,
     removable,
     blocked: candidates.filter((r) => !removable.includes(r)),
-    // One `/` answer decides every row, so this is one fact about the daemon rather than a tally.
-    daemonUnasked: candidates.length > 0 && candidates.every((r) => daemonBlockReason(r.daemon) && !r.daemon?.checked),
+    // Read from the one `/` answer rather than tallied back out of the rows: a tally says nothing
+    // when there are no candidates, and would then print no banner on a box holding only the
+    // primary checkout while `wt rm` refuses on the same daemon.
+    daemonUnasked: Boolean(daemon?.reachable && !daemon.checked),
   };
 }
 
@@ -319,8 +334,8 @@ export function keepReasons(r, daemonUnasked) {
 }
 
 export async function cmdStale(primary, daemonRequest) {
-  const rows = await inspect(primary, daemonRequest);
-  const { candidates, removable, blocked, daemonUnasked } = partitionStale(rows);
+  const { rows, daemon } = await inspect(primary, daemonRequest);
+  const { removable, blocked, daemonUnasked } = partitionStale(rows, daemon);
 
   if (daemonUnasked) {
     console.log(
@@ -368,19 +383,25 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
   // The same verdict `wt stale` prints. It used to refuse only a KNOWN holder, so the case that
   // actually cost the 40 minutes — a daemon too old to answer, which is neither a holder nor ruled
   // out — walked straight past this and failed at the `rmSync` below with the tree already gutted.
+  // A KNOWN holder is absolute; an unknown one is overridable. The two carry different confidence,
+  // and refusing both outright would mean no tree on this box could be removed at all until a
+  // SHARED daemon is restarted — the accumulation `wt stale` and `wt rm` exist to prevent, brought
+  // about by the command meant to prevent it.
   const daemonWhy = daemonBlockReason(daemonCheck);
-  if (daemonWhy) {
+  if (daemonCheck.holder || (daemonWhy && !opts.force)) {
     fail(
       `${daemonWhy}\n` +
         (daemonCheck.holder
           ? `no delete can succeed while it lives — that path is inside the directory.\n` +
             `a daemon started by a cli.mjs carrying this fix runs from the primary checkout and never\n` +
-            `blocks this; this one does not.`
-          : `so this delete may be the one that unlinks the tree and then cannot remove it.`) +
+            `blocks this; this one does not. --force does NOT override this one.`
+          : `so this delete may be the one that unlinks the tree and then cannot remove it. re-run\n` +
+            `with --force to delete anyway, once you accept that risk.`) +
         `\nit is SHARED — other agents' dev servers and queued test runs are on it — so check\n` +
         `"cli.mjs test list" reports zero running and zero queued, and ask before restarting it.`
     );
   }
+  if (daemonWhy) console.log(`[!] ${daemonWhy}\n    proceeding because --force was given.`);
 
   const sessions = sessionsIn(target, await fetchRunning(daemonRequest));
   const live = sessions.filter((s) => s.status === 'running');

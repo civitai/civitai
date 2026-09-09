@@ -662,8 +662,9 @@ deletes the branch only when `gh` reports a **merged** PR, keeps
 it when commits exist on no remote, and prints the SHA when it does delete. `wt stale` applies that
 daemon check too. **A running daemon that will not say where it runs from blocks both** — it predates
 PR #4641, and a daemon that could not be asked has not been ruled out, so `wt stale` clears no tree and
-`wt rm` refuses until it is restarted. A daemon that is simply *down* blocks nothing: it holds no
-directory open, and that is the one unknown that rules itself out. Left alone, worktrees
+`wt rm` refuses (`--force` overrides that one, but never a named holder). A daemon that is *not
+running* blocks nothing: it holds no directory open. That turns on the transport, not on a good
+response — a live daemon that errors on `/` is still running, and still blocks. Left alone, worktrees
 accumulate: 22 stale ones were removed in one sweep on 2026-08-12, 15 with already-merged PRs.
 
 **Two checks that fail *clean* if you verify merge state yourself.** Both return success-shaped output

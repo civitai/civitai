@@ -666,8 +666,10 @@ What's already handled:
   first. `wt rm` **and** `wt stale` ask the daemon for its script path and its cwd, and name it when
   either is inside the target instead of blaming a stray shell; `wt stale` keeps that tree out of
   SAFE TO REMOVE. A daemon that is **running but will not say** — one older than this change, whose
-  `/` carries a bare pid — blocks both, for every tree, because it has not been ruled out. A daemon
-  that is **down** blocks nothing, since a process that is not running holds no directory open.
+  `/` carries a bare pid — blocks both, for every tree, because it has not been ruled out; `wt rm
+  --force` overrides that verdict, and never a named holder. A daemon that is **not running** blocks
+  nothing, since it holds no directory open — and that is decided by the transport, not by a good
+  response, so a live daemon erroring on `/` still counts as running.
 
   🔴 **This only binds a CLI that has the change.** The skill directory is committed, so every
   worktree runs its own `cli.mjs`, and a tree cut before it re-pins itself the next time the daemon

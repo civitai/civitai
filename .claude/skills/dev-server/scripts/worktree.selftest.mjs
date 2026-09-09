@@ -14,6 +14,7 @@
  */
 
 import {
+  daemonAnswer,
   daemonBlockReason,
   daemonHeldFrom,
   describePrRows,
@@ -123,11 +124,12 @@ check('empty prune output says so', describePrune('', ADMIN)[0], 'pruned: no sta
 const TREE = 'C:/Dev/Repos/work/worktrees/mine';
 const PRIMARY = 'C:/Dev/Repos/work/model-share';
 const skill = (root) => `${root}/.claude/skills/dev-server`;
-const root = (data) => ({ ok: true, data });
+const root = (data) => ({ ok: true, status: 200, data });
 const AT_PRIMARY = root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY });
 const IN_TREE = root({ pid: 7, skillDir: skill(TREE), cwd: PRIMARY });
 const TOO_OLD = root({ pid: 46332 });
-const DOWN = { ok: false };
+const DOWN = { ok: false, status: 0 };
+const ERRORING = { ok: false, status: 500 };
 
 check(
   'a daemon whose script is in the tree is the holder',
@@ -168,6 +170,15 @@ check(
   true
 );
 check('but a daemon that is down blocks nothing', daemonBlockReason(daemonHeldFrom(DOWN, TREE)), null);
+// `reachable` turns on the transport, not on `ok`. A live daemon that 500s on `/` — one session's
+// status throwing is enough — arrives as ok:false too, and reading that as "no daemon is running"
+// hands back the same confidently-wrong verdict from a rarer cause.
+check('a daemon that answered 500 IS running', daemonHeldFrom(ERRORING, TREE).reachable, true);
+check(
+  'so it blocks removal like any other silent one',
+  daemonBlockReason(daemonHeldFrom(ERRORING, TREE))?.includes('NOT ruled out'),
+  true
+);
 
 // The decision `wt stale` prints, over rows `inspect` would have built. Without these the filter and
 // the banner condition are covered by nothing — swapping `every` for `some` at the banner, or
@@ -185,26 +196,26 @@ const row = (over) => ({
 });
 const PRIME = row({ path: PRIMARY, isPrimary: true, daemon: daemonHeldFrom(AT_PRIMARY, PRIMARY) });
 
-check('a merged, clean, unheld tree is offered', partitionStale([PRIME, row({})]).removable.length, 1);
+check('a merged, clean, unheld tree is offered', partitionStale([PRIME, row({})], daemonAnswer(AT_PRIMARY)).removable.length, 1);
 check(
   'the same tree is NOT offered when the daemon lives in it',
-  partitionStale([PRIME, row({ daemon: daemonHeldFrom(IN_TREE, TREE) })]).removable.length,
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(IN_TREE, TREE) })], daemonAnswer(IN_TREE)).removable.length,
   0
 );
 check(
   'nor when no running daemon would say',
-  partitionStale([PRIME, row({ daemon: daemonHeldFrom(TOO_OLD, TREE) })]).removable.length,
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(TOO_OLD, TREE) })], daemonAnswer(TOO_OLD)).removable.length,
   0
 );
 // The regression this pair exists for: a down daemon must not zero the command.
 check(
   'but a down daemon offers it as before',
-  partitionStale([PRIME, row({ daemon: daemonHeldFrom(DOWN, TREE) })]).removable.length,
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(DOWN, TREE) })], daemonAnswer(DOWN)).removable.length,
   1
 );
 check(
   'and the primary is never a candidate',
-  partitionStale([PRIME, row({})]).candidates.length,
+  partitionStale([PRIME, row({})], daemonAnswer(AT_PRIMARY)).candidates.length,
   1
 );
 
@@ -212,25 +223,21 @@ check(
 // never for a single held tree, which is named on its own row instead.
 check(
   'the banner fires when nothing could be asked',
-  partitionStale([PRIME, row({ daemon: daemonHeldFrom(TOO_OLD, TREE) })]).daemonUnasked,
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(TOO_OLD, TREE) })], daemonAnswer(TOO_OLD)).daemonUnasked,
   true
 );
 check(
   'but not for a daemon that answered and named one tree',
-  partitionStale([PRIME, row({ daemon: daemonHeldFrom(IN_TREE, TREE) })]).daemonUnasked,
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(IN_TREE, TREE) })], daemonAnswer(IN_TREE)).daemonUnasked,
   false
 );
-check('nor when there is nothing to judge', partitionStale([PRIME]).daemonUnasked, false);
-// Mixed rows cannot arise while one `/` answer decides them all, so this pins the rule rather than a
-// reachable state: `some` here would print "NO tree can be cleared" over a list that clears one.
+check('nor when the daemon answered and there is nothing to judge', partitionStale([PRIME], daemonAnswer(AT_PRIMARY)).daemonUnasked, false);
+// Read from the daemon, not tallied out of the rows: a box holding only the primary checkout has no
+// candidates to tally, and used to print no banner while `wt rm` refused on that same daemon.
 check(
-  'and not while any tree is still clearable',
-  partitionStale([
-    PRIME,
-    row({ daemon: daemonHeldFrom(TOO_OLD, TREE) }),
-    row({ path: `${TREE}2`, daemon: daemonHeldFrom(AT_PRIMARY, `${TREE}2`) }),
-  ]).daemonUnasked,
-  false
+  'the banner still fires with no candidate trees at all',
+  partitionStale([PRIME], daemonAnswer(TOO_OLD)).daemonUnasked,
+  true
 );
 
 check(
