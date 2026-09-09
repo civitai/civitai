@@ -97,6 +97,9 @@ vi.mock('~/server/services/user.service', () => ({
 
 import { appsRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+// Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
+// vi.fn(), so the refusal-instrumentation assertions below can read it.
+import { appStorageOpsCounter } from '~/server/prom/client';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -118,10 +121,25 @@ function validClaims(over: Record<string, unknown> = {}) {
   };
 }
 
-function fakeCtx() {
+/**
+ * The `app-blocks-enabled` (RUN) cohort, by user id. The mock flag evaluator
+ * below reads this set, so a test can enable/disable the capability for the
+ * SESSION user and for the TOKEN SUBJECT independently — which is the only way
+ * to tell the `enforceAppBlocksFlag` middleware (evaluates `ctx.user`) apart
+ * from the per-subject assertion inside `resolveStorageContext`. Both refuse
+ * with the same code AND the same message, so a test that leaves the two
+ * identities equal can pass for the wrong reason.
+ */
+const runEnabledUserIds = new Set<number>();
+
+/** The SESSION user on the host page — distinct id from the token subject where
+ *  a test needs to isolate which of the two gates fired. */
+const SESSION_USER = { id: 1, isModerator: false, tier: 'free' };
+
+function fakeCtx(user: unknown = SESSION_USER) {
   return {
     acceptableOrigin: true,
-    user: undefined,
+    user,
     apiKeyId: null,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
@@ -153,12 +171,27 @@ beforeEach(() => {
   mockProvisionReviewPreview.mockClear();
 
   // Sane defaults the happy-path tests inherit.
-  mockIsAppBlocksEnabled.mockImplementation(async () => true);
+  // The RUN capability (`app-blocks-enabled`) is per-user: it is evaluated once
+  // by the middleware against `ctx.user` and once by resolveStorageContext
+  // against the TOKEN SUBJECT. Model it as a cohort membership so those two
+  // evaluations can disagree. A user-less eval returns false here, matching the
+  // live base-false flag — but that is NOT what makes production fail closed on
+  // a vanished subject: both capability gates now throw on an explicit null
+  // check before any flag evaluation, so this mock's no-user answer is never
+  // reached on that path (see the `unhydratable subject` blocks below, which
+  // pin the refusal under a base-TRUE flag too).
+  runEnabledUserIds.clear();
+  runEnabledUserIds.add(SESSION_USER.id);
+  runEnabledUserIds.add(42);
+  mockIsAppBlocksEnabled.mockImplementation(async (opts?: { user?: { id?: number } }) => {
+    const id = opts?.user?.id;
+    return id != null && runEnabledUserIds.has(id);
+  });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
-  // The storage resolver re-asserts the resolved viewer is an app AUTHOR
-  // (assertViewerIsAppDeveloper → getSessionUserById + isAppBlocksAuthorEnabled).
-  // Default the happy path to a moderator subject; the author capability defaults
-  // to the mod-floor (mirrors the flag absent → mods pass, non-mods don't).
+  // The storage resolver hydrates the token subject (getSessionUserById) and
+  // asserts a capability against it. Default the happy path to a moderator
+  // subject, who holds every capability; the author capability defaults to the
+  // mod-floor (mirrors the flag absent → mods pass, non-mods don't).
   mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
   mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true });
   mockIsAppBlocksAuthorEnabled.mockImplementation(
@@ -179,7 +212,7 @@ beforeEach(() => {
 
 describe('apps.storage shared gates', () => {
   it('rejects when the Flipt flag is dark', async () => {
-    mockIsAppBlocksEnabled.mockImplementationOnce(async () => false);
+    mockIsAppBlocksEnabled.mockImplementation(async () => false);
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
       TRPCError
@@ -227,48 +260,216 @@ describe('apps.storage shared gates', () => {
     ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
   });
 
-  // App Blocks authoring is mod OR the app-dev-testers cohort. A block token
-  // whose subject resolves to a non-author (non-mod, no cohort grant) is rejected
-  // with FORBIDDEN by the shared resolveStorageContext gate — across every op.
-  it('rejects a non-mod resolved viewer with FORBIDDEN (get)', async () => {
+  // ── Per-user storage is gated on the RUN capability, not the AUTHOR one ──────
+  //
+  // REGRESSION (the defect): the shared resolver used to assert the AUTHORING
+  // capability (`app-blocks-author`) against the token subject. Once the run
+  // cohort widened past the author cohort, a user who could legitimately open an
+  // app got FORBIDDEN on all five storage ops — so no stateful app could save
+  // anything, and could not read back what it had already saved. Reading/writing
+  // your OWN data inside an app you are allowed to run is a consumer capability.
+  it('a NON-AUTHOR subject holding the run capability can READ its own storage', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetSessionUser.mockResolvedValueOnce({ id: 42, isModerator: false });
+    // Not an author: no mod floor, and the author cohort refuses this subject.
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: { saved: true } }], rowCount: 1 });
+
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    // The non-mod must never reach the data pool.
+    const out = await caller.storage.get({ blockToken: 't', key: 'k' });
+
+    expect(out).toEqual({ value: { saved: true } });
+    expect(mockPool.query).toHaveBeenCalled();
+  });
+
+  it('a NON-AUTHOR subject holding the run capability can WRITE its own storage', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    mockPool.query
+      // quota row
+      .mockResolvedValueOnce({ rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 })
+      // no existing row for this key
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const out = await caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } });
+
+    expect(out.ok).toBe(true);
+    const sqls = (mockClient.query.mock.calls as Array<[string, unknown?]>).map((c) => c[0]);
+    expect(sqls.some((s) => s.includes('INSERT INTO "app_generate_from_model".kv'))).toBe(true);
+  });
+
+  // KILL-SWITCH, still fail-closed. The subject id differs from the session
+  // user's so ONLY the per-subject assertion can produce this refusal — the
+  // middleware sees a run-enabled `ctx.user` and passes. Both gates throw the
+  // same code and message, so without that split this test would pass even if
+  // the per-subject assertion were deleted outright.
+  it('refuses a subject WITHOUT the run capability, even when the session user has it (get)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+    mockParseSubjectUserId.mockImplementation(() => 77);
+    mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+    runEnabledUserIds.delete(77); // session user (id 1) stays enabled
+
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'Apps are not enabled',
+    });
+    // Proof the middleware let this through and the SUBJECT gate is what refused:
+    // the token was verified and the subject was hydrated before the throw.
+    expect(mockVerifyBlockToken).toHaveBeenCalled();
+    expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+    // The refused subject must never reach the data pool.
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
-  it('rejects a non-mod resolved viewer with FORBIDDEN (set)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetSessionUser.mockResolvedValueOnce({ id: 42, isModerator: false });
+  it('refuses a subject WITHOUT the run capability, even when the session user has it (set)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+    mockParseSubjectUserId.mockImplementation(() => 77);
+    mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+    runEnabledUserIds.delete(77);
+
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+    expect(mockGetSessionUser).toHaveBeenCalledWith(77);
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
-  it('rejects a vanished resolved viewer with FORBIDDEN (getSessionUserById → null)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetSessionUser.mockResolvedValueOnce(null);
+  // Positive control for the pair above: the ONLY thing that changed is the
+  // subject's cohort membership, so if the assertion above were inert this case
+  // would be indistinguishable from it.
+  it('the same subject IS admitted once it holds the run capability', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+    mockParseSubjectUserId.mockImplementation(() => 77);
+    mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+    runEnabledUserIds.add(77);
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
+
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await caller.storage.get({ blockToken: 't', key: 'k' })).toEqual({ value: 1 });
   });
 
-  it('accepts an author-capable NON-MOD subject (cohort widening): reaches the data pool', async () => {
-    // A curated non-mod author (granted app-blocks-author) whose block declares
-    // apps:storage:* must NOT be blocked at the storage gate — the KV op proceeds.
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockGetSessionUser.mockResolvedValueOnce({ id: 42, isModerator: false });
-    mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+  // ── Fail-closed on an unhydratable subject ──────────────────────────────────
+  // Audit 🟡-2. A subject the session hub cannot resolve (deleted account,
+  // transient miss) must be refused by an EXPLICIT null check, not by whatever
+  // `app-blocks-enabled` happens to evaluate to when it is handed no user.
+  // Handing it `undefined` takes the no-user GLOBAL eval, which refuses today
+  // only because the live flag is base-`false`; a plain base-`enabled: true`
+  // flag matches every entityId including the contextless global one.
+  //
+  // So the property is measured at BOTH points on the flag-config dimension:
+  // base-false (today) and base-true (the documented GA shape). The second case
+  // is the structural one — it fails against a gate that leans on the flag.
+  describe('unhydratable subject', () => {
+    beforeEach(() => {
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      // A vanished subject: the token is valid and its `sub` parses, but the
+      // hub has no user for it.
+      mockGetSessionUser.mockResolvedValue(null);
+    });
+
+    it('is refused under TODAY\'s base-false flag (get)', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        // The null guard's OWN message, not the flag gate's 'Apps are not
+        // enabled' — pinning which of the two refusals fired.
+        message: 'block token subject could not be resolved',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    // The POST-GA model: `app-blocks-enabled` is base-`enabled: true`, so it
+    // resolves TRUE for every eval — including the no-user global eval a null
+    // subject would produce. A gate whose fail-closed is only spelled (pass
+    // `undefined`, let the flag say no) ADMITS here and lets `get` read and
+    // `set` write on the vanished subject's behalf.
+    const baseTrueFlag = async () => true;
+
+    it('is STILL refused when the flag evaluates TRUE for a null user (base-true / GA shape, get)', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(baseTrueFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      // A row is waiting: if the gate admits, the op succeeds and returns it,
+      // so this case cannot pass by the query merely being empty.
+      mockPool.query.mockResolvedValue({ rows: [{ value: 'other-users-row' }], rowCount: 1 });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'block token subject could not be resolved',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('is STILL refused when the flag evaluates TRUE for a null user (base-true / GA shape, set)', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(baseTrueFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+      ).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'block token subject could not be resolved',
+      });
+      // No row is written on the vanished subject's behalf.
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(mockClient.query).not.toHaveBeenCalled();
+    });
+
+    // POSITIVE CONTROL for the two cases above. Same base-true flag mock, same
+    // subject id — the ONLY thing that changes is that the subject hydrates. If
+    // the guard refused unconditionally (or the base-true mock were not
+    // actually reaching the gate), this would fail too and the pair above would
+    // prove nothing.
+    it('admits a subject that DOES hydrate, under the same base-true flag', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(baseTrueFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      expect(await caller.storage.get({ blockToken: 't', key: 'k' })).toEqual({ value: 1 });
+    });
+
+    // Audit 🟡-4: every other refusal in resolveStorageContext increments the
+    // ops counter; the capability refusals did not, which is why the defect
+    // behind this change was only visible in a raw request log.
+    it('counts the refusal on the ops counter (op + outcome)', async () => {
+      const inc = vi.mocked(appStorageOpsCounter.inc);
+      inc.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
+        TRPCError
+      );
+      expect(inc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
+    });
+  });
+
+  // The OTHER capability refusal on this path — subject hydrates, but does not
+  // hold the run capability — must be counted too (audit 🟡-4).
+  it('counts a run-capability refusal on the ops counter', async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+    mockParseSubjectUserId.mockImplementation(() => 77);
+    mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+    runEnabledUserIds.delete(77);
+
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await caller.storage.get({ blockToken: 't', key: 'k' });
-    expect(mockPool.query).toHaveBeenCalled();
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'unauthorized' });
   });
 
   // Fix 3 / audit A5 (design-gaps H4): storage is a DECLARED, approved scope —
@@ -728,6 +929,24 @@ describe('apps.storage — run-for-real preview namespace', () => {
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
+  // INVARIANT GUARD (not a regression test — this behaviour is unchanged): the
+  // review-preview branch is a reviewer action whose rows land in the reviewing
+  // MOD's own namespace, so it keeps the AUTHORING gate. Widening the ordinary
+  // per-user path to the run capability must not widen this one: a subject that
+  // holds the run capability but is not an author is still refused here.
+  it('review-preview still asserts the AUTHORING capability (run capability alone is not enough)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Apps authoring is not enabled for this account',
+    });
+    expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
   it('ORPHAN GUARD: a run-for-real token for a VANISHED request refuses (no re-provision)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce(null);
@@ -736,5 +955,114 @@ describe('apps.storage — run-for-real preview namespace', () => {
       caller.storage.get({ blockToken: 't', key: 'k' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+  });
+
+  // ── Fail-closed on an unhydratable subject, ON THIS BRANCH ──────────────────
+  // This branch RETURNS before `assertAppBlocksEnabledForTokenUser` ever runs,
+  // so `assertViewerIsAppDeveloper` is the ONLY subject check it makes — the
+  // null guard on the other gate does not cover it, and a case on the ordinary
+  // path does not exercise it.
+  //
+  // Measured at both points on the flag-config dimension: `app-blocks-author`
+  // absent / base-false (today) and base-true. The second is the one that a
+  // gate leaning on the flag fails — `isAppBlocksAuthorEnabled` has no mod floor
+  // for a null user and falls through to a contextless GLOBAL eval, which a
+  // plain base-`enabled: true` flag matches.
+  describe('unhydratable subject on the review-preview branch', () => {
+    beforeEach(() => {
+      // Valid token whose `sub` parses, but the session hub has no user for it.
+      mockGetSessionUser.mockResolvedValue(null);
+    });
+
+    it("is refused under TODAY's absent / base-false author flag (get)", async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        // The null guard's OWN message, not the capability refusal's
+        // 'Apps authoring is not enabled for this account' — pinning which of
+        // the two refusals inside this gate fired.
+        message: 'review token subject could not be resolved',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(42);
+      // Refused BEFORE the orphan-guard read and before any provisioning, i.e.
+      // at the point in the branch where the subject is first known.
+      expect(mockDbRead.appBlockPublishRequest.findUnique).not.toHaveBeenCalled();
+      expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    // The structural case: the author flag says YES even for a null user.
+    const baseTrueAuthorFlag = async () => true;
+
+    it('is STILL refused when the author flag evaluates TRUE for a null user (get)', async () => {
+      mockIsAppBlocksAuthorEnabled.mockImplementation(baseTrueAuthorFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+      // A row is waiting: if the gate admits, `get` resolves WITH it, so this
+      // case cannot pass merely because the query returned nothing.
+      mockPool.query.mockResolvedValue({ rows: [{ value: 'preview-row' }], rowCount: 1 });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'review token subject could not be resolved',
+      });
+      expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('is STILL refused when the author flag evaluates TRUE for a null user (set)', async () => {
+      mockIsAppBlocksAuthorEnabled.mockImplementation(baseTrueAuthorFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'review token subject could not be resolved',
+      });
+      // No preview schema provisioned, and no row written on the vanished
+      // subject's behalf into the reviewing mod's namespace.
+      expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(mockClient.query).not.toHaveBeenCalled();
+    });
+
+    // POSITIVE CONTROL for the pair above. Same base-true author mock, same
+    // branch, same subject id — the ONLY change is that the subject hydrates.
+    // If the guard refused unconditionally, or the base-true mock never reached
+    // the gate, this would fail too and the pair above would prove nothing.
+    it('admits a subject that DOES hydrate, under the same base-true author flag', async () => {
+      mockIsAppBlocksAuthorEnabled.mockImplementation(baseTrueAuthorFlag);
+      mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false });
+      mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+      mockPool.query.mockResolvedValue({ rows: [{ value: 'preview-row' }], rowCount: 1 });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      const out = await caller.storage.get({ blockToken: 't', key: 'k' });
+
+      expect(out.value).toBe('preview-row');
+      expect(mockProvisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: 'pubreq_aaa' });
+    });
+
+    // Every other refusal in resolveStorageContext increments the ops counter;
+    // this one must too, or a valid token refused here is visible only in a raw
+    // request log (audit 🟡-4). INVARIANT GUARD, not regression coverage for the
+    // null check: this case also passed before the guard existed, because the
+    // capability refusal it hit instead was already counted. What it does pin is
+    // the new guard's OWN `inc` — deleting that line alone turns it red.
+    it('counts the refusal on the ops counter (op + outcome)', async () => {
+      const inc = vi.mocked(appStorageOpsCounter.inc);
+      inc.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
+        TRPCError
+      );
+      expect(inc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
+    });
   });
 });
