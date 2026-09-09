@@ -42,11 +42,15 @@ import type {
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import {
+  ACTIVITY_TAB_LABELS,
   ACTIVITY_TAB_QUERY_KEY,
   activityTabQuery,
   isActivityTab,
+  isActivityTabVisible,
   resolveActivityTab,
+  visibleActivityTabs,
 } from '~/components/Apps/appsActivityTabs';
+import type { ActivityTab } from '~/components/Apps/appsActivityTabs';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -477,26 +481,44 @@ function HiddenBlocksPanel() {
   );
 }
 
+/**
+ * The icon for each tab. Lives here rather than beside `ACTIVITY_TAB_LABELS` because
+ * `appsActivityTabs.ts` is deliberately React-free (that is what lets it run in the
+ * node-env `unit` project). Typed as a total `Record` so adding a tab to
+ * `ACTIVITY_TAB_VALUES` fails the build here rather than rendering an undefined icon.
+ */
+const ACTIVITY_TAB_ICONS: Record<ActivityTab, typeof IconHistory> = {
+  activity: IconHistory,
+  subscriptions: IconPlugConnected,
+  permissions: IconShieldLock,
+  hidden: IconEyeOff,
+};
+
 export default function AppActivityPage() {
   const features = useFeatureFlags();
   const router = useRouter();
-  // 🔴 The install-only tabs' gate is the `appBlocks` SLOT flag; the PAGE's is
+  // 🔴 The gated tabs' predicate is the `appBlocks` SLOT flag; the PAGE's is
   // `appBlocks || appBlocksPages`. A tab's predicate is its content's own gate,
   // restated — and this one is NON-VACUOUS only because the page gate widened.
-  // `INSTALL_GATED_ACTIVITY_TABS` is the ledger of which tabs that covers
-  // (`subscriptions` + `hidden`, both slot-install surfaces) and the resolver reads the
-  // SAME predicate, so a `?tab=` deep link can never select a tab this page did not
-  // render. `permissions` is deliberately NOT in it — see that constant's comment.
-  const canSeeInstallOnlyTabs = !!features.appBlocks;
+  // `SLOT_GATED_ACTIVITY_TABS` is the ledger of which tabs that covers, and everything
+  // below — the bar, the panels and the `?tab=` resolver — reads it through this ONE
+  // value, so none of them can disagree with another.
+  const visibility = { canSeeSlotGatedTabs: !!features.appBlocks };
   const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: canSeeInstallOnlyTabs,
+    enabled: visibility.canSeeSlotGatedTabs,
   });
 
   // 🔴 URL-backed, controlled tabs. `resolveActivityTab` returns the default for an
   // absent value, so an empty first-render `router.query` renders what SSR did.
-  const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], {
-    canSeeInstallOnlyTabs,
-  });
+  const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], visibility);
+
+  // 🔴 THE BAR IS DERIVED, NOT HAND-SPELLED. This used to be four `canSee… &&` guards
+  // inline in the JSX below — four sites the node-env `unit` project could not see, so
+  // deleting one of them (rendering a tab whose panel stayed gated) left that whole
+  // suite green and only the report-only `component` tier caught it. Mapping the
+  // ledger's own output means the unit-tier guard on `SLOT_GATED_ACTIVITY_TABS` now
+  // governs what actually renders.
+  const visibleTabs = visibleActivityTabs(visibility);
 
   const groupedApps = useMemo(() => groupSubscriptionsByApp(subs ?? []), [subs]);
 
@@ -555,38 +577,23 @@ export default function AppActivityPage() {
           }}
           variant="outline"
         >
-          <Tabs.List>
-            <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
-              Recent activity
-            </Tabs.Tab>
-            {canSeeInstallOnlyTabs && (
-              <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
-                Installs
-              </Tabs.Tab>
-            )}
-            {/* 🔴 UNGATED ON PURPOSE, unlike its two neighbours. Scope grants are the
-                consent/audit surface: a full-page app (`appBlocksPages`) invokes scopes
-                with no install row, so a viewer holding only the page flag has grants
-                here and nothing on `Installs` to reach them through. Gating this would
-                hide the record of access from the people whose access it records. */}
-            <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
-              Apps & permissions
-            </Tabs.Tab>
-            {/* Hidden lists SLOT installs the viewer has hidden from their model pages,
-                so it carries the slot flag exactly as `Installs` does. */}
-            {canSeeInstallOnlyTabs && (
-              <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
-                Hidden
-              </Tabs.Tab>
-            )}
-          </Tabs.List>
-
-          {/* 🔴 NO `< 2` COLLAPSE HERE, and its absence is deliberate. `AppsSubNav`
-              hides its bar below two rows; this bar cannot reach that state — `activity`
-              and `permissions` are both ungated and the page 404s for anyone holding
-              neither runtime flag, so the floor is 2. A collapse would be a branch that
-              never executes. If `permissions` is ever gated, the floor test in
-              `appsActivityTabs.test.ts` goes red — add the collapse then. */}
+          {/* 🔴 A `< 2` COLLAPSE, MIRRORING `AppsSubNav`'s `links.length < 2` — and it is
+              REACHABLE, which is why it exists. A viewer without the slot flag sees only
+              `Recent activity`, and a one-tab bar is chrome offering no choice. (The
+              earlier state of this file argued the floor was 2 and declined to build a
+              branch that could never run; gating `permissions` inverted that.) */}
+          {visibleTabs.length >= 2 && (
+            <Tabs.List>
+              {visibleTabs.map((tab) => {
+                const Icon = ACTIVITY_TAB_ICONS[tab];
+                return (
+                  <Tabs.Tab key={tab} value={tab} leftSection={<Icon size={14} />}>
+                    {ACTIVITY_TAB_LABELS[tab]}
+                  </Tabs.Tab>
+                );
+              })}
+            </Tabs.List>
+          )}
 
           <Tabs.Panel value="activity" pt="md">
             <Stack gap="sm">
@@ -598,9 +605,11 @@ export default function AppActivityPage() {
             </Stack>
           </Tabs.Panel>
 
-          {/* 🔴 THE PANEL IS GATED TOO. A `Tabs.Panel` with no tab is unreachable but
-              still MOUNTS its children on every render. */}
-          {canSeeInstallOnlyTabs && (
+          {/* 🔴 THE PANEL IS GATED TOO, THROUGH THE SAME PREDICATE THE BAR USES. A
+              `Tabs.Panel` with no tab is unreachable but still MOUNTS its children on
+              every render. Reading `isActivityTabVisible` rather than a local boolean is
+              what makes "the bar and the panels cannot disagree" a fact about the code. */}
+          {isActivityTabVisible('subscriptions', visibility) && (
             <Tabs.Panel value="subscriptions" pt="md">
               {isLoading ? (
                 <Center py="xl">
@@ -620,20 +629,27 @@ export default function AppActivityPage() {
             </Tabs.Panel>
           )}
 
-          <Tabs.Panel value="permissions" pt="md">
-            <Stack gap="sm">
-              <Text size="sm" c="dimmed">
-                What each app you've installed can request, and where you have it. This is a
-                reflection of the current state — to revoke access, remove the install or
-                subscription on the Installs tab.
-              </Text>
-              <ScopeGrantsPanel />
-            </Stack>
-          </Tabs.Panel>
+          {/* 🔴 GATED, AND ITS OWN DATA SOURCE IS WHY. `ScopeGrantsPanel`'s only read is
+              `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware returns
+              `[]` for a viewer without `features.appBlocks` — so ungated this panel showed
+              the "No apps installed or subscribed yet." empty state to every such viewer,
+              always. Gating it displays nothing that was ever displayed. */}
+          {isActivityTabVisible('permissions', visibility) && (
+            <Tabs.Panel value="permissions" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  What each app you've installed can request, and where you have it. This is a
+                  reflection of the current state — to revoke access, remove the install or
+                  subscription on the Installs tab.
+                </Text>
+                <ScopeGrantsPanel />
+              </Stack>
+            </Tabs.Panel>
+          )}
 
           {/* 🔴 THE PANEL IS GATED TOO — same reason as `subscriptions` above: an
               unreachable `Tabs.Panel` still MOUNTS its children on every render. */}
-          {canSeeInstallOnlyTabs && (
+          {isActivityTabVisible('hidden', visibility) && (
             <Tabs.Panel value="hidden" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">

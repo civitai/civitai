@@ -33,56 +33,81 @@ export function isActivityTab(value: unknown): value is ActivityTab {
 }
 
 /**
- * The tabs whose CONTENT is governed by the `appBlocks` SLOT flag, and which the page
- * therefore renders only for a viewer who holds it.
+ * The tabs whose CONTENT the `appBlocks` SLOT flag governs, and which the page therefore
+ * renders only for a viewer who holds it.
  *
- * 🔴 A LEDGER, NOT AN ACCUMULATION OF BOOLEANS. Both of these tabs are about SLOT
- * INSTALLS — `subscriptions` lists them, `hidden` lists the ones the viewer has hidden
- * from their model pages — so they share ONE predicate rather than one flag each. That
- * is what lets {@link resolveActivityTab} take a single `canSeeInstallOnlyTabs` and
- * stay correct as the set grows: add a tab here and its `?tab=` fallback comes with it.
+ * 🔴 A LEDGER, NOT AN ACCUMULATION OF BOOLEANS. Every tab here shares ONE predicate
+ * rather than carrying one flag each, which is what lets {@link resolveActivityTab} take
+ * a single `canSeeSlotGatedTabs` and stay correct as the set grows: add a tab here and
+ * both its `?tab=` fallback and its place in {@link visibleActivityTabs} come with it.
  *
- * 🔴 `permissions` IS DELIBERATELY NOT HERE, AND THAT IS A DECISION, NOT AN OVERSIGHT.
- * Scope grants are a consent/audit surface: a full-page app (`appBlocksPages`) invokes
- * scopes with no install row at all, so a viewer holding only the page flag has grants
- * to read and revoke and no `subscriptions` row to reach them through. Gating it on the
- * slot flag would hide the record of access from exactly the people whose access it
- * records. Do not "tidy" the two into one uniform predicate.
+ * 🔴 EACH ENTRY IS HERE BECAUSE ITS OWN DATA SOURCE IS GATED ON THE SAME FLAG — the tab's
+ * predicate is its content's gate restated, never a separate policy:
+ *   · `subscriptions` and `hidden` are SLOT-INSTALL surfaces. `subscriptions` lists
+ *     `block_user_subscriptions` rows; `hidden` lists the ones the viewer has hidden from
+ *     their model pages. Slot installs are `appBlocks`-gated, so without it there are none.
+ *   · `permissions` reads `blocks.listMyScopeGrants` and NOTHING else — one `useQuery`
+ *     with no `enabled:`. That procedure runs `enforceAppBlocksFlag`, which evaluates the
+ *     `app-blocks-enabled` Flipt key (exactly `features.appBlocks`) and short-circuits to
+ *     `[]` for anyone without it. So the panel rendered "No apps installed or subscribed
+ *     yet." for every slotless viewer, ALWAYS — there was no cohort for whom the ungated
+ *     tab showed anything. Gating it loses nothing that was ever displayed, and it closes
+ *     the #3899 / #4668 class: a tab offered whose own gate refuses its content.
+ *
+ * 🔴 `permissions` USED TO BE EXCLUDED ON THE PREMISE THAT A PAGE-FLAG-ONLY VIEWER HAS
+ * GRANTS TO READ. That premise is false at the data layer (above), and it was ALREADY
+ * retracted one file over: `AppsSubNav.tsx` records that such a viewer cannot run a
+ * full-page app at all (`/apps/run/[slug]/[[...path]].tsx` requires BOTH flags) and cannot
+ * install, so they generate no scope invocations to have grants FROM. Do not reinstate it.
  */
-export const INSTALL_GATED_ACTIVITY_TABS = [
+export const SLOT_GATED_ACTIVITY_TABS = [
   'subscriptions',
+  'permissions',
   'hidden',
 ] as const satisfies readonly ActivityTab[];
 
 /**
  * What the viewer's sight of the gated tabs turns on — the `appBlocks` slot flag.
  *
- * ONE field, not one per tab: the rule is "can this viewer see the install-only tabs",
+ * ONE field, not one per tab: the rule is "can this viewer see the slot-gated tabs",
  * and spelling it per-tab is how the resolver drifted out of step with the page.
  */
-export type ActivityTabVisibility = { canSeeInstallOnlyTabs: boolean };
+export type ActivityTabVisibility = { canSeeSlotGatedTabs: boolean };
 
 /** Whether `tab` renders for a viewer with the given visibility. */
 export function isActivityTabVisible(tab: ActivityTab, opts: ActivityTabVisibility): boolean {
-  if (opts.canSeeInstallOnlyTabs) return true;
-  return !(INSTALL_GATED_ACTIVITY_TABS as readonly ActivityTab[]).includes(tab);
+  if (opts.canSeeSlotGatedTabs) return true;
+  return !(SLOT_GATED_ACTIVITY_TABS as readonly ActivityTab[]).includes(tab);
 }
 
 /**
  * The tabs the page renders for this viewer, in render order.
  *
- * 🔴 THE MINIMUM IS 2, AND THAT IS WHY THERE IS NO `< 2` COLLAPSE HERE. `AppsSubNav`
- * hides its bar when fewer than two rows survive its gates; this bar has no such
- * branch because it cannot reach that state — `activity` and `permissions` are BOTH
- * ungated, and the page itself 404s (`canAccessAppsActivity`) for anyone who holds
- * neither runtime flag, so every viewer who can load the page sees at least those two.
- * A collapse would be a branch that can never execute, which reads as coverage while
- * providing none. `appsActivityTabs.test.ts` pins the floor at 2: if a later change
- * gates `permissions`, that test goes red and the collapse becomes real work.
+ * 🔴 THE MINIMUM IS 1, AND THE PAGE COLLAPSES ITS BAR THERE. `activity` is the only
+ * ungated tab, so a viewer without the slot flag gets exactly `['activity']` — and
+ * `activity.tsx` hides its `Tabs.List` below two visible tabs, mirroring `AppsSubNav`'s
+ * `links.length < 2` behaviour. A one-tab bar is chrome that offers no choice.
+ *
+ * 🔴 THIS IS THE PAGE'S ONLY SOURCE FOR WHICH TABS TO RENDER. `activity.tsx` maps over
+ * this result instead of hand-spelling a `&&` per tab, so the ledger above cannot
+ * disagree with the bar: the four hand-spelled guards it replaced were invisible to the
+ * node-env `unit` project, and deleting one of them left this suite fully green.
  */
 export function visibleActivityTabs(opts: ActivityTabVisibility): readonly ActivityTab[] {
   return ACTIVITY_TAB_VALUES.filter((tab) => isActivityTabVisible(tab, opts));
 }
+
+/**
+ * The visible LABEL for each tab, kept here rather than inline in the page so the render
+ * loop has no per-tab branch left and the `unit` project can pin the strings. Icons stay
+ * in `activity.tsx` — they are React, and this module is deliberately React-free.
+ */
+export const ACTIVITY_TAB_LABELS: Record<ActivityTab, string> = {
+  activity: 'Recent activity',
+  subscriptions: 'Installs',
+  permissions: 'Apps & permissions',
+  hidden: 'Hidden',
+};
 
 /**
  * Resolve the tab to render from the raw `router.query.tab` value.
@@ -93,10 +118,11 @@ export function visibleActivityTabs(opts: ActivityTabVisibility): readonly Activ
  * the FIRST entry, which is what every other query reader in this area does.
  *
  * 🔴 A TAB THE VIEWER CANNOT SEE FALLS BACK TO THE DEFAULT, IT DOES NOT RENDER EMPTY.
- * `Installs` and `Hidden` are gated on `features.appBlocks` (the slot flag), so
- * `/apps/activity?tab=subscriptions` and `?tab=hidden` are links a page-only viewer can
- * legitimately receive — from a teammate, a bookmark taken before a flag moved, or their
- * own history. Handing that value to `Tabs.value` selects a tab that is not in the list
+ * `Installs`, `Apps & permissions` and `Hidden` are gated on `features.appBlocks` (the
+ * slot flag), so `?tab=subscriptions`, `?tab=permissions` and `?tab=hidden` are all links
+ * a page-only viewer can legitimately receive — from a teammate, a bookmark taken before a
+ * flag moved, or their own history. Handing that value to `Tabs.value` selects a tab that
+ * is not in the list
  * and Mantine renders a bar with nothing active over an empty panel: a blank page with
  * no error. Falling back is the only outcome that is a page.
  *
