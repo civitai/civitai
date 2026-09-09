@@ -158,9 +158,17 @@ async function assertAppBlocksEnabledForTokenUser(userId: number, op: StorageOp)
 // to v1; v0 hard-rejects writes that would cross this threshold.
 const APP_QUOTA_BYTES = 50 * 1024 * 1024;
 
-// 64 KB per individual KV value — a single oversized write can't burn
-// through quota on a single call. v1 SQL access removes this cap (quota
-// tracker becomes the only ceiling).
+// 64 KB per individual KV value, checked in the WIRE unit
+// (`Buffer.byteLength(JSON.stringify(v))`). 🔴 It bounds what one call SENDS, not
+// what one call STORES, and at per-user scope those diverge enough to matter:
+// measured, the largest value this cap admits — 9,362 x `1e308`, 65,535 wire
+// bytes — stores 2,911,582 bytes, 44.4x. So a single call can add more stored
+// bytes than the entire 2 MiB USER_QUOTA_BYTES budget. The byte ceilings below,
+// which are enforced in the stored unit, are what actually bind; the residual is
+// that the pre-flight read is one write out of date, so a racing pair can reach
+// ~4.8 MiB against a 2 MiB cap rather than ~2 MiB + 64 KiB. See the units block
+// in `set` for the expansion measurements.
+// v1 SQL access removes this cap (quota tracker becomes the only ceiling).
 const PER_VALUE_BYTE_CAP = 64 * 1024;
 
 // 1 million rows per app — companion budget to APP_QUOTA_BYTES. Trigger
@@ -515,8 +523,15 @@ export const appsStorageRouter = router({
       // in the wire unit.
       //
       // Residual, named rather than silently fixed: PER_VALUE_BYTE_CAP is checked
-      // in the wire unit, so a single value can occupy up to ~1.5x its nominal
-      // 64KB on disk. That is pre-existing behaviour and it is NOT a ceiling
+      // in the wire unit, so a value's stored size is NOT bounded by it — and the
+      // expansion has no useful fixed multiplier. Postgres never emits scientific
+      // notation for a number, so `1e308` costs 6 wire bytes and stores 309.
+      // Measured against Postgres: a 5,000-element dense integer array is 1.50x,
+      // `Array(9000).fill(1e308)` is 63,001 wire -> 2,799,000 stored (44.4x), and
+      // the largest all-`1e308` array the cap admits (9,362 elements, 65,535 wire)
+      // stores 2,911,582 bytes. Treat it as unbounded in practice for
+      // numeric-heavy payloads; 2,911,582 is the measured worst case under the cap.
+      // That is pre-existing behaviour and it is NOT a ceiling
       // bypass — both byte ceilings below are enforced in the stored unit and bind
       // regardless. Tightening the per-value cap would refuse writes that succeed
       // today, so it is left alone deliberately.
@@ -597,9 +612,11 @@ export const appsStorageRouter = router({
         // twice. One line per write on an un-upgraded app is a small, bounded
         // population and exactly the signal that says "run the backfill".
         //
-        // The Axiom line alone was NOT enough, for the same reason
-        // countStorageFault's docstring gives about faults: a state observable
-        // only by going and reading logs is not a state anything can alert on,
+        // The Axiom line alone was NOT enough, for the same shape
+        // countStorageFault's docstring describes about faults: a condition with no
+        // error SERIES of its own is not a condition anything can alert on — there
+        // it showed up solely as the `ok` series falling to zero. A state
+        // observable only by going and reading logs has the same gap,
         // and nothing schedules the backfill that ends it, so it can persist
         // indefinitely with no bound. The counter is the alertable half — it is
         // the series that says "this app has been running with its per-user
@@ -756,20 +773,28 @@ export const appsStorageRouter = router({
       // app's remaining budget available to every OTHER user of the app, which is
       // the whole point — the app-wide gates alone let one account take it all.
       //
-      // 🔴 These two gates deliberately do NOT test `userQuotaTracked`. They used
-      // to, and it was a condition that read as a guard while guarding nothing:
-      // mutants deleting `userQuotaTracked &&` from either gate survived the full
-      // suite, because in the fallback the query returns literal '0' for both
-      // per-user counters and the arithmetic is then identical either way. Writing
-      // a condition that cannot change an outcome is worse than omitting it — it
+      // 🔴 These two gates deliberately do NOT test `userQuotaTracked`. Mutants
+      // deleting `userQuotaTracked &&` from either gate survived the full suite,
+      // because in the fallback the query returns literal '0' for both per-user
+      // counters and no fixture in the suite makes the two arms diverge.
+      //
+      // For the ROW gate that survival is exact — `0 + 1 > 1000` is false either
+      // way, so the condition genuinely could not change an outcome there. Writing
+      // a condition that cannot change an outcome is worse than omitting it: it
       // reads as coverage and stops anyone looking.
       //
-      // Identical for a bounded reason, not by luck: `netDelta` is at most
-      // `storedByteSize`, `storedByteSize` is at most ~1.5x PER_VALUE_BYTE_CAP
-      // (64KiB, the largest jsonb expansion being the ~1.5x of a dense array), so
-      // `0 + netDelta` cannot exceed ~96KiB against a 2MiB USER_QUOTA_BYTES, and
-      // `0 + 1` cannot exceed a 1,000-row USER_ROW_LIMIT. Lowering either ceiling
-      // near those numbers would make the distinction real again; today it is not.
+      // 🔴 For the BYTE gate it is NOT exact, and the removal DOES change
+      // behaviour. `netDelta` is at most `storedByteSize`, but `storedByteSize` is
+      // NOT bounded by PER_VALUE_BYTE_CAP — that cap is enforced in the wire unit,
+      // and the largest value it admits stores 2,911,582 bytes (measured; see the
+      // units block above), past the 2 MiB USER_QUOTA_BYTES on its own. So on an
+      // un-backfilled schema, where the fallback pins `userUsedBytes` at 0, this
+      // gate now REFUSES that class of write with `per-user storage quota
+      // exceeded`, citing a per-user quota the app is not tracking. Kept
+      // deliberately: refusing a multi-megabyte single value is the behaviour we
+      // want whether or not the counter exists, and the untracked state is carried
+      // by the counter named below. Do NOT restore the flag to "fix" this, and do
+      // not read this block as saying the two arms cannot diverge.
       //
       // "We did not enforce" stays distinct from "we enforced against zero" where
       // that distinction is actually consumable: the

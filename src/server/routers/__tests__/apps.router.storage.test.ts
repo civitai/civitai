@@ -170,8 +170,11 @@ function fakeCtx(user: unknown = SESSION_USER) {
  *
  * 🔴 BOTH NUMBERS ARE STORED BYTES — `octet_length(value::text)` over JSONB — and
  * that is NOT `Buffer.byteLength(JSON.stringify(value))`. Postgres' jsonb output
- * function emits `, ` after every separator and `: ` after every object key, so
- * for anything but a scalar the stored size is LARGER, by up to ~1.5x.
+ * function emits `, ` after every separator and `: ` after every object key, and it
+ * re-renders every number in full decimal (`1e308` is 6 wire bytes and 309 stored),
+ * so for anything but a scalar the stored size is LARGER — and by no fixed ratio.
+ * Measured against Postgres: 1.50x for a dense integer array, 44.4x for the largest
+ * all-`1e308` array the per-value cap admits (65,535 wire -> 2,911,582 stored).
  *
  * That distinction is why this suite could not see the deploy-blocking defect it
  * was supposed to cover. Every fixture here used to supply `size_bytes` as a bare
@@ -1317,8 +1320,9 @@ describe('apps.storage.set', () => {
   // The refusal's own log has to be readable. `userUsedBytes` is the
   // trigger-maintained counter (stored bytes) and the gate that refused is
   // `userUsedBytes + netDelta`, so `attemptedBytes` must be in the SAME unit — a
-  // wire byte count there reads as the number that was compared and is not, by up
-  // to 1.5x. `quotaPoolFor` answers the probe with DEFAULT_STORED_BYTES for a
+  // wire byte count there reads as the number that was compared and is not, by
+  // anywhere from 1.50x (a dense integer array) to 44.4x (a numeric-heavy one),
+  // measured. `quotaPoolFor` answers the probe with DEFAULT_STORED_BYTES for a
   // fresh key, which is not the wire size of the value written.
   it('logs the refusal in STORED bytes, the unit the gate actually compared', async () => {
     useSubjectFromSub();

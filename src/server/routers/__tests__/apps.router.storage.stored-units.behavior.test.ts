@@ -384,8 +384,9 @@ describe('storage.set quota arithmetic vs the bytes Postgres stores', () => {
     // still 0. 2,949,030 is exactly 30 x 98,301, i.e. every key saturated at the
     // per-value cap's stored size — the walk was stopped by the per-value cap and
     // the loop bound, and by no ceiling at all. Scaling the key count scales the
-    // overrun linearly; USER_ROW_LIMIT (1,000) puts the reachable figure near
-    // 98 MiB for a single account, past APP_QUOTA_BYTES as well.
+    // overrun linearly; USER_ROW_LIMIT (1,000) puts the reachable figure at
+    // 1,000 x 98,301 = 98,301,000 bytes — 93.7 MiB — for a single account, past
+    // APP_QUOTA_BYTES as well.
     expect(used).toBeLessThanOrEqual(USER_QUOTA_BYTES);
     // …and it genuinely pressed against the ceiling rather than stopping early
     // for some unrelated reason.
