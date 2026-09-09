@@ -35,9 +35,26 @@ import { appsSharedRouter, appsModRouter } from '~/server/routers/apps-shared.ro
  * block-token authed — the viewer is resolved from the JWT subject, not
  * `ctx.user`. Re-assert the resolved viewer is an app AUTHOR here (mod OR the
  * app-dev-testers cohort, via the appBlocksAuthor capability) — defense-in-depth
- * per call. Mirrors blocks.router's assertViewerIsAppDeveloper.
- * Fail-closed: an unhydratable subject → undefined → mod-floor misses +
- * Flipt eval can't match → FORBIDDEN. Throws FORBIDDEN otherwise.
+ * per call. Same capability and same refusal message as blocks.router's
+ * `assertViewerIsAppDeveloper`, but NOT the same function: this one additionally
+ * null-guards the subject (see below), takes `op`, and counts every refusal on
+ * `appStorageOpsCounter`. Keep those three when reconciling the two.
+ *
+ * FAIL-CLOSED ON AN UNHYDRATABLE SUBJECT IS STRUCTURAL HERE, the same shape
+ * `assertAppBlocksEnabledForTokenUser` below uses (different code and message —
+ * this gate throws FORBIDDEN, that one UNAUTHORIZED): a subject the session hub
+ * cannot resolve is refused BEFORE any flag evaluation. Handing
+ * `isAppBlocksAuthorEnabled` an `undefined` user instead takes its no-user
+ * branch — no moderator floor, then a contextless GLOBAL eval of
+ * `app-blocks-author` (entityId `'global'`, empty context), which is fail-closed
+ * only until a base-enabled GA flip: a plain base-`enabled: true` flag matches
+ * every entityId, the global one included. That matters on THIS gate in
+ * particular, because the review-preview branch returns before
+ * `assertAppBlocksEnabledForTokenUser` runs, so this is the only subject check
+ * that branch makes.
+ *
+ * Otherwise: a hydrated subject holding neither the moderator floor nor the
+ * author cohort → FORBIDDEN.
  *
  * SCOPE: this is the AUTHORING capability, so it belongs ONLY on paths that are
  * genuinely an author/reviewer action — today just the mod review-preview
@@ -53,7 +70,17 @@ import { appsSharedRouter, appsModRouter } from '~/server/routers/apps-shared.ro
  */
 async function assertViewerIsAppDeveloper(userId: number, op: StorageOp): Promise<void> {
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
+  // Structural fail-closed: refuse an unhydratable subject outright, before the
+  // capability is evaluated. Distinct message from the capability refusal below
+  // AND from the run gate's, so all three stay separable in a log and in a test.
+  if (!user) {
+    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'review token subject could not be resolved',
+    });
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
     appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -80,8 +107,11 @@ async function assertViewerIsAppDeveloper(userId: number, op: StorageOp): Promis
  * segment match cannot be spoofed.
  *
  * FAIL-CLOSED HERE IS STRUCTURAL, NOT INHERITED FROM THE FLAG'S BASE STATE — and
- * that is the one way this gate does NOT mirror blocks.router's. A subject that
- * cannot be hydrated (deleted account, transient session-hub miss) is refused
+ * it is NOT the only way this gate departs from blocks.router's same-named
+ * helper. It also takes `op` and increments `appStorageOpsCounter` on both of its
+ * refusals, where blocks.router's `assertAppBlocksEnabledForTokenUser` takes only
+ * a userId and counts nothing. Keep all three when reconciling the two. A subject
+ * that cannot be hydrated (deleted account, transient session-hub miss) is refused
  * BEFORE any flag evaluation, rather than being passed to `isAppBlocksEnabled` as
  * `undefined`. That overload takes the no-user branch — a GLOBAL eval
  * (entityId `'global'`, empty context; see `isAppBlocksEnabled` in
