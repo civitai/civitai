@@ -102,19 +102,29 @@ const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 //
 // The leverage differs sharply by column, which is why `duration` is the one to worry
 // about first: a clamped `duration` is ~5.9 orders of magnitude above a typical page
-// duration (4.29e9 against ~5e3 ms), so a handful of clamped rows per week visibly moves
-// `avg(duration)` over a ~55.7M-row/7d table. A clamped window dimension is only ~17×
+// duration (4.29e9 against a ~5e3 ms assumption — the direction survives any plausible
+// baseline: even at 30 s typical it is 5.1 OOM), so a handful of clamped rows per week
+// visibly moves `avg(duration)` over a ~55.7M-row/7d table. A clamped window is only ~17×
 // a typical 1920, so the same count barely moves that mean.
 //
-// It also costs a diagnostic: the max of a clamped column now sits exactly AT the bound
-// by construction. Note precisely what is lost — a max EQUAL to the bound still proves
-// clipping occurred; what dies is the JUST-UNDER-the-bound signature described above,
-// which is what previously distinguished a silently clipped tail from a healthy one.
-// Count the sentinel instead.
+// It SHADOWS a diagnostic rather than destroying one — an earlier draft of this comment
+// said the just-under-the-bound signature "dies", and that was one step too strong. An
+// unfiltered `max()` now always returns the bound, so it stops being informative; but the
+// clamp is the identity on every value below the bound, so the real tail is unchanged in
+// storage and the SAME exclusion this block already mandates recovers it exactly:
+//   `max(duration) WHERE duration < 4294967295`
+// Count the sentinel for frequency, and use that filtered max for magnitude — the two
+// answer different questions, and the count alone will not tell you the tail is moving.
 //
-// No in-repo consumer reads any of the three (checked: `duration`, `windowWidth` and
-// `windowHeight` appear outside `__tests__` only on the write path). External dashboards
-// were not enumerated, so this is a property of the change, not a known impact.
+// No in-repo consumer reads any of the three clamped columns. Method, so it reproduces:
+// enumerate readers of the `pageViews` TABLE (`find … -print0 | xargs -0 grep pageViews`
+// — not a gitignore-blind `grep -r`), then check which columns each one selects; the
+// readers are `user-activity-rollup` (userId/time/country only) and two creator-studio
+// analytics files that mention the table only in prose. 🔴 Do NOT grep for the column
+// NAMES to re-derive this: `duration` alone appears in 271 non-test files across the
+// repo and none of the hits are about this table — an earlier draft implied that grep
+// and it does not reproduce. External dashboards were not enumerated, so this is a
+// property of the change, not a known impact.
 const UINT32_MAX = 4_294_967_295;
 const INT16_MAX = 32_767;
 

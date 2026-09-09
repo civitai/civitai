@@ -92,19 +92,31 @@ describe('pageView emits through the clamp', () => {
   // An earlier version of this comment said "a behavioural test would need the whole
   // tracker/session/actor apparatus", and used that to justify pinning the wiring by
   // source text alone. It was FALSE, and it is recorded here rather than quietly deleted
-  // because it caused a real defect: that apparatus already existed 40 lines away in
+  // because it caused a real defect: that apparatus already existed, in this directory, in
   // `tracker.blockRender.test.ts`, and because nothing asserted on the VALUES that get
   // POSTed, the suite could not see the two constants in `tracker.ts` that decide what
-  // reaches ClickHouse. Measured: setting `INT16_MAX` to 65_535 left this suite at
-  // 87 passed, fully green, while every window dimension in (32767, 65535] would go
-  // straight at an `Int16` column and destroy its row.
+  // reaches ClickHouse. Measured at the time: setting `INT16_MAX` to 65_535 left the
+  // whole `src/server/clickhouse/` suite at 87 passed, fully green, while every window
+  // dimension in (32767, 65535] would go straight at an `Int16` column and destroy its
+  // row. (87 was the directory total BEFORE `tracker.pageView.test.ts` existed; today
+  // the same mutation is caught. Re-deriving that number now gives a different total —
+  // it is recorded as the historical measurement, not as a reproducible one.)
   //
   // 🔴 SO: IF YOU ARE GUARDING A NEW NARROW COLUMN, ADD A WIRE ASSERTION THERE, NOT A
-  // SOURCE-TEXT ASSERTION HERE. What survives in this file is only what a wire test
-  // genuinely cannot see: that a FUTURE edit could reintroduce `...values` after the
-  // clamps. A spread placed BEFORE the clamps is behaviourally identical to the
-  // destructure, so the wire test cannot distinguish them — that, and only that, is what
-  // these structural assertions are for.
+  // SOURCE-TEXT ASSERTION HERE.
+  //
+  // Of the structural assertions below, exactly which are irreplaceable — stated per
+  // test, because an earlier version of this comment said "only what a wire test
+  // genuinely cannot see" and that was FALSE for one of them:
+  //   * `does NOT spread the raw values object` — UNIQUE. A spread placed BEFORE the
+  //     clamps is behaviourally identical to the destructure, so the wire test passes on
+  //     it (measured: 9/9); only source text catches that a future edit could put it
+  //     back. A spread AFTER the clamps IS caught by the wire test (measured: 5 failed).
+  //   * `the ledger of clamped fields` — UNIQUE. A newly-added unclamped column is
+  //     absent from the wire test's fixture, so only this sees the set change.
+  //   * `clamps all three narrow columns` — REDUNDANT with the wire test, which fails
+  //     5/9 if any clamp is removed. Kept as a cheap locality check, not because it is
+  //     irreplaceable. Do not cite it as a reason to add more source-text assertions.
   //
   // They assert a RELATIONSHIP (raw values unreachable at the emit site), not the
   // presence of a word — a guard that merely checked for the string "clampToColumn"
