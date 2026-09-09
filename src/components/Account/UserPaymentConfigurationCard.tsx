@@ -295,7 +295,9 @@ const TipaltiConfigurationCard = ({ flat }: { flat?: boolean }) => {
           Tipalti is the new way to receive payments. We are slowly rolling invitations to Tipalti
           to all creators. If you have not received an invitation yet, please be patient.
         </Text>
-        <Text {...descProps}>A notification will be sent to you once you are invited to Tipalti.</Text>
+        <Text {...descProps}>
+          A notification will be sent to you once you are invited to Tipalti.
+        </Text>
       </Stack>
     );
   }

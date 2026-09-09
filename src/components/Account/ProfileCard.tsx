@@ -41,7 +41,11 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
 
   const currentUser = data?.user;
 
-  const { mutate, isPending: isLoading, error } = trpc.user.update.useMutation({
+  const {
+    mutate,
+    isPending: isLoading,
+    error,
+  } = trpc.user.update.useMutation({
     async onSuccess(user) {
       showSuccessNotification({ message: 'Your profile has been saved' });
       await queryUtils.user.getById.invalidate({ id: user.id });
@@ -187,13 +191,7 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
 
   return (
     <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? 'transparent' : undefined}>
-      {flat ? (
-        <SettingsSection title="Account info">
-          {formBody}
-        </SettingsSection>
-      ) : (
-        formBody
-      )}
+      {flat ? <SettingsSection title="Account info">{formBody}</SettingsSection> : formBody}
 
       {/* Email Change Modal */}
       <Modal

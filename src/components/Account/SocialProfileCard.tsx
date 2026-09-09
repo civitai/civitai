@@ -45,7 +45,8 @@ export function SocialProfileCard({ flat }: { flat?: boolean } = {}) {
 
   if (!user) return null;
 
-  const linksFor = (type: LinkType) => (type === LinkType.Social ? data?.social : data?.sponsorship);
+  const linksFor = (type: LinkType) =>
+    type === LinkType.Social ? data?.social : data?.sponsorship;
 
   const renderLinks = (type: LinkType) => {
     const links = linksFor(type);
@@ -125,10 +126,7 @@ export function SocialProfileCard({ flat }: { flat?: boolean } = {}) {
   return (
     <>
       {flat ? (
-        <SettingsSection
-          title="Creator profile"
-          description="Shown on your public profile."
-        >
+        <SettingsSection title="Creator profile" description="Shown on your public profile.">
           {renderGroup(LinkType.Social, 'Social links')}
           {renderGroup(LinkType.Sponsorship, 'Sponsorship links')}
         </SettingsSection>

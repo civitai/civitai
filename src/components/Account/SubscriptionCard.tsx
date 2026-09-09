@@ -1,14 +1,4 @@
-import {
-  Button,
-  Stack,
-  Center,
-  Loader,
-  Title,
-  Text,
-  Group,
-  Box,
-  Divider,
-} from '@mantine/core';
+import { Button, Stack, Center, Loader, Title, Text, Group, Box, Divider } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconAlertTriangle, IconExternalLink, IconSettings } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';

@@ -258,9 +258,7 @@ function SecretDisplay({
 // Origin entries are exact-matched against the browser's `Origin` header, so
 // they must be a bare scheme://host[:port]. We pre-validate on the client to
 // give a fast inline error; the server enforces the same rule.
-function parseOriginList(
-  text: string
-): { value: string[]; error: string | null } {
+function parseOriginList(text: string): { value: string[]; error: string | null } {
   const lines = text
     .split('\n')
     .map((line) => line.trim())
@@ -563,9 +561,7 @@ function EditAppModal({
   const [name, setName] = useState(client.name);
   const [description, setDescription] = useState(client.description ?? '');
   const [redirectUrisText, setRedirectUrisText] = useState(client.redirectUris.join('\n'));
-  const [allowedOriginsText, setAllowedOriginsText] = useState(
-    client.allowedOrigins.join('\n')
-  );
+  const [allowedOriginsText, setAllowedOriginsText] = useState(client.allowedOrigins.join('\n'));
   const [tokenScope, setTokenScope] = useState(client.allowedScopes);
   const [uriError, setUriError] = useState<string | null>(null);
   const [originError, setOriginError] = useState<string | null>(null);
@@ -770,7 +766,11 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
   };
 
   const registerButton = (
-    <Button size="compact-sm" leftSection={<IconPlus size={14} stroke={1.5} />} onClick={openRegister}>
+    <Button
+      size="compact-sm"
+      leftSection={<IconPlus size={14} stroke={1.5} />}
+      onClick={openRegister}
+    >
       Register App
     </Button>
   );

@@ -90,8 +90,7 @@ export function CreatorControlsCard({
           {
             name: 'hideDonationGoals',
             label: 'Hide my donation goals from public view',
-            description:
-              "Others won't see the progress or amount. The goal still works.",
+            description: "Others won't see the progress or amount. The goal still works.",
             checked: hideDonationGoals ?? false,
             onChange: (checked: boolean) => mutateSetting({ hideDonationGoals: checked }),
           },

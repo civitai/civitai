@@ -193,10 +193,7 @@ export function AccountOverview() {
             accountSections.find((section) => section.id === 'profile') ?? accountSections[0]
           )}
           icon={
-            <IconMailCheck
-              size={16}
-              className={emailVerified ? 'text-green-6' : 'text-yellow-6'}
-            />
+            <IconMailCheck size={16} className={emailVerified ? 'text-green-6' : 'text-yellow-6'} />
           }
         >
           <Text size="lg" fw={700} c={emailVerified ? 'green.6' : 'yellow.6'}>

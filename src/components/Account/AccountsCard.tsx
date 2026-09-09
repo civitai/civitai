@@ -1,13 +1,4 @@
-import {
-  Alert,
-  Button,
-  Group,
-  LoadingOverlay,
-  Stack,
-  Table,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Alert, Button, Group, LoadingOverlay, Stack, Table, Text, Title } from '@mantine/core';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
 import { useRouter } from 'next/router';
 import {

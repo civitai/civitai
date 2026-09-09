@@ -40,7 +40,12 @@ export function StickerInventoryCard({ flat }: { flat?: boolean } = {}) {
   const balances = new Map((balanceRows ?? []).map((b) => [b.cosmeticId, b.remaining]));
 
   return (
-    <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? 'transparent' : undefined} id="stickers">
+    <Card
+      withBorder={!flat}
+      p={flat ? 0 : undefined}
+      bg={flat ? 'transparent' : undefined}
+      id="stickers"
+    >
       <Stack>
         <Title order={flat ? 3 : 2}>Stickers</Title>
         <Text size="sm" c="dimmed">

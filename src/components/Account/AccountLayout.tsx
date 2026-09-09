@@ -279,7 +279,11 @@ export function AccountLayout({
           className="sticky z-10 flex items-center gap-3 border-b border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-6"
           style={{ top: stickyTop - RAIL_STICKY_GAP }}
         >
-          <NextLink href="/user/account" aria-label="Manage account" className="flex text-dark-9 dark:text-gray-0">
+          <NextLink
+            href="/user/account"
+            aria-label="Manage account"
+            className="flex text-dark-9 dark:text-gray-0"
+          >
             <IconChevronLeft size={22} />
           </NextLink>
           <Text component="h1" className="text-base font-semibold">

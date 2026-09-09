@@ -179,7 +179,8 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
             </Badge>
             {points > 0 && (
               <Badge color={standingColor} size="md" variant="light">
-                {summary?.activeStrikes} active &middot; {points} {points === 1 ? 'point' : 'points'}
+                {summary?.activeStrikes} active &middot; {points}{' '}
+                {points === 1 ? 'point' : 'points'}
               </Badge>
             )}
           </Group>

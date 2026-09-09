@@ -249,7 +249,9 @@ export function PointerCard({
         <div
           className={clsx(
             'flex size-9 shrink-0 items-center justify-center rounded',
-            danger ? 'bg-red-1 text-red-6 dark:bg-red-8/25' : 'bg-blue-1 text-blue-6 dark:bg-blue-8/25'
+            danger
+              ? 'bg-red-1 text-red-6 dark:bg-red-8/25'
+              : 'bg-blue-1 text-blue-6 dark:bg-blue-8/25'
           )}
         >
           {icon}
@@ -264,7 +266,9 @@ export function PointerCard({
             </Text>
           )}
         </div>
-        {!action && <IconArrowUpRight size={16} className="shrink-0 text-gray-6 dark:text-dark-2" />}
+        {!action && (
+          <IconArrowUpRight size={16} className="shrink-0 text-gray-6 dark:text-dark-2" />
+        )}
       </div>
       {action && <div className="shrink-0 self-end sm:self-auto">{action}</div>}
     </>
@@ -287,4 +291,3 @@ export function PointerCard({
 
   return <div className={className}>{body}</div>;
 }
-

@@ -1,4 +1,14 @@
-import { Autocomplete, Badge, Card, Group, Loader, Portal, Select, Stack, Text } from '@mantine/core';
+import {
+  Autocomplete,
+  Badge,
+  Card,
+  Group,
+  Loader,
+  Portal,
+  Select,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
@@ -33,7 +43,7 @@ export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
         (b.username ?? '').localeCompare(a.username ?? '', undefined, { sensitivity: 'base' })
       );
     }
-    
+
     return users;
   }, [hiddenUsers, sort]);
 
