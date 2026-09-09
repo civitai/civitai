@@ -327,12 +327,32 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     className="shrink-0"
                     checked={mineOnly}
                     onChange={setMineOnlyRequested}
-                    // Chip sizes to its own text and came out shorter than the
-                    // two controls beside it, which size to Mantine's input
-                    // scale. The fallback is load-bearing: `--input-height-xs` is
-                    // scoped to an Input, so unqualified it resolves to nothing
-                    // here and the whole declaration is dropped.
-                    styles={{ label: { height: 'var(--input-height-xs, 1.875rem)' } }}
+                    /**
+                     * 🔴 ALL FOUR OF THESE PIN GEOMETRY, AND NONE IS DECORATION.
+                     * Mantine restyles a checked chip: padding drops 16px -> 7.5px,
+                     * the border goes 1px -> 0, and a check icon appears. Those do
+                     * not cancel — measured 105.08px unchecked against 102.73px
+                     * checked — so the control visibly jumped as you toggled it,
+                     * next to two inputs that do not move. Pinning the three that
+                     * vary, and dropping the icon, makes the box the same in both
+                     * states by construction rather than by arithmetic; the filled
+                     * background still says which state it is in.
+                     *
+                     * The height fallback is load-bearing separately:
+                     * `--input-height-xs` is scoped to an Input, so unqualified it
+                     * resolves to nothing here and the declaration is dropped —
+                     * which is why the chip first came out at 23px beside 30px
+                     * inputs.
+                     */
+                    styles={{
+                      label: {
+                        height: 'var(--input-height-xs, 1.875rem)',
+                        paddingInline: 16,
+                        borderWidth: 1,
+                        borderStyle: 'solid',
+                      },
+                      iconWrapper: { display: 'none' },
+                    }}
                   >
                     Made by you
                   </FilterChip>
