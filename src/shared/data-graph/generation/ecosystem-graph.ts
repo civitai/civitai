@@ -242,7 +242,7 @@ export const ecosystemGraph = new DataGraph<
         ctx.output === 'audio'
           ? 'Ace'
           : ctx.output === 'video'
-          ? 'Seedance'
+          ? 'MiniMaxH3'
           : ctx.output === 'model3d'
           ? 'PolyGen'
           : 'ZImageTurbo';
