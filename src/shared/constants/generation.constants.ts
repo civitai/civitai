@@ -514,10 +514,14 @@ export const fluxUltraAirId = 1088507;
 export const fluxProAirId = 922358;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
-// Experimental mode supported models - only for Text-to-Image workflow
-export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
-  'SD1',
-  'SDXL',
+// Ecosystems that expose the `enhancedCompatibility` toggle — txt2img only.
+// Off (the default) runs sdcpp; on runs comfyui.
+export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = ['SD1', 'SDXL'];
+
+// Ecosystems that always run comfyui, with no toggle to opt out. Deliberately NOT workflow-scoped:
+// these ecosystems have no sdcpp support left, so any textToImage step they emit belongs on comfyui.
+// (Only SD1/SDXL are workflow-scoped, via the toggle, which the form shows on txt2img alone.)
+export const COMFY_ONLY_ECOSYSTEMS: string[] = [
   'Pony',
   'Illustrious',
   'NoobAI',
@@ -525,10 +529,11 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'FluxKrea',
 ];
 
-// Ecosystems that run via the sdcpp engine and qualify for the 2-for-1 quantity
-// bonus + footer alert. Superset of EXPERIMENTAL_MODE_SUPPORTED_MODELS: includes
-// ecosystems that don't expose the `enhancedCompatibility` toggle but still use
-// sdcpp under the hood.
+// Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert.
+// 🔴 No longer a synonym for "runs on sdcpp": Flux2Klein submits 'flux2', and of the SD family only
+// SD1/SDXL still reach sdcpp — on the textToImage path, with `enhancedCompatibility` off.
+// Membership is a pricing decision that outlived the engine it was named for; re-scope it
+// deliberately rather than reading the name as the mechanism.
 export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   ...EXPERIMENTAL_MODE_SUPPORTED_MODELS,
   'ZImageBase',
@@ -543,6 +548,21 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
 // the sdcpp/BOGO path (e.g. Flux Pro 1.1 and Flux Ultra run on a different
 // engine even though their ecosystem is `Flux1`).
 export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
+
+/** Flux Ultra and Flux Pro keep the engine their handler chose, despite Flux1 being comfy-only. */
+export function usesComfyEngine({
+  ecosystem,
+  modelId,
+  enhancedCompatibility,
+}: {
+  ecosystem: string;
+  modelId?: number;
+  enhancedCompatibility?: boolean;
+}): boolean {
+  if (modelId !== undefined && SDCPP_EXCLUDED_MODEL_IDS.includes(modelId)) return false;
+  if (COMFY_ONLY_ECOSYSTEMS.includes(ecosystem)) return true;
+  return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && enhancedCompatibility === true;
+}
 
 // Per-tier per-request video quantity for ecosystems that batch multiple
 // outputs in a single job. Drives `ext.limits.vidQuantity` and the quantity
