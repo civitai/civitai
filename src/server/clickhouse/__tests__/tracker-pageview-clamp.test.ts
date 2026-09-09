@@ -86,11 +86,27 @@ describe('clampToColumn', () => {
 });
 
 describe('pageView emits through the clamp', () => {
-  // A behavioural test would need the whole tracker/session/actor apparatus. What can
-  // break WITHOUT that, and what actually reintroduces the bug, is the wiring: the raw
-  // values getting back into the emitted object. So this pins the wiring structurally.
+  // 🔴 THE BEHAVIOURAL TEST IS IN `tracker.pageView.test.ts`. READ IT BEFORE ADDING A
+  // STRUCTURAL GUARD HERE.
   //
-  // 🔴 This asserts a RELATIONSHIP (raw values unreachable at the emit site), not the
+  // An earlier version of this comment said "a behavioural test would need the whole
+  // tracker/session/actor apparatus", and used that to justify pinning the wiring by
+  // source text alone. It was FALSE, and it is recorded here rather than quietly deleted
+  // because it caused a real defect: that apparatus already existed 40 lines away in
+  // `tracker.blockRender.test.ts`, and because nothing asserted on the VALUES that get
+  // POSTed, the suite could not see the two constants in `tracker.ts` that decide what
+  // reaches ClickHouse. Measured: setting `INT16_MAX` to 65_535 left this suite at
+  // 87 passed, fully green, while every window dimension in (32767, 65535] would go
+  // straight at an `Int16` column and destroy its row.
+  //
+  // 🔴 SO: IF YOU ARE GUARDING A NEW NARROW COLUMN, ADD A WIRE ASSERTION THERE, NOT A
+  // SOURCE-TEXT ASSERTION HERE. What survives in this file is only what a wire test
+  // genuinely cannot see: that a FUTURE edit could reintroduce `...values` after the
+  // clamps. A spread placed BEFORE the clamps is behaviourally identical to the
+  // destructure, so the wire test cannot distinguish them — that, and only that, is what
+  // these structural assertions are for.
+  //
+  // They assert a RELATIONSHIP (raw values unreachable at the emit site), not the
   // presence of a word — a guard that merely checked for the string "clampToColumn"
   // would pass while `...values` silently reinstated the raw fields after it.
   // Resolved from this file's own location, matching tracker-enum-drift.test.ts. A

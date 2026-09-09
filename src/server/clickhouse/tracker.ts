@@ -71,10 +71,10 @@ const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 // how an earlier draft of this comment stated it.)
 //
 // ⚠️ THIS CLOSES THE NUMERIC-WIDTH HALF ONLY. A wrong-TYPE value destroys the row in
-// exactly the same silent way and is NOT addressed here: `/api/internal/ping` type-asserts
-// its JSON body rather than parsing it, so `ads: "true"` (a string into a `Bool` column)
-// is forwarded as-is and rejected identically. Closing that needs a schema parse at the
-// endpoint, not another clamp here.
+// exactly the same silent way and is NOT addressed here: `/api/internal/ping` gives its
+// `JSON.parse(req.body)` result a type ANNOTATION and performs no runtime validation, so
+// `ads: "true"` (a string into a `Bool` column) is forwarded as-is and rejected
+// identically. Closing that needs a schema parse at the endpoint, not another clamp here.
 //
 // The corroborating tell, if you ever want to check another column for the same thing:
 // the live `duration` maximum sat at 4,264,810,774 — 99.3% of the UInt32 ceiling and
@@ -86,23 +86,35 @@ const AWAIT_DELIVERY_TIMEOUT_MS = 5_000;
 // — path, host, country and userId are all fine — so saturating that field keeps the
 // page view countable instead of discarding it.
 //
-// 🔴 CLAMPING CHANGES THE `duration` DISTRIBUTION, AND ANY AGGREGATE OVER IT.
+// 🔴 CLAMPING CHANGES THE DISTRIBUTION OF ALL THREE CLAMPED COLUMNS, AND ANY AGGREGATE
+// OVER THEM — `duration`, `windowWidth` AND `windowHeight`, not just `duration`.
 // An earlier draft of this comment claimed saturation was "honest here, because the
 // stored distribution was ALREADY clipped at this bound, just by silent loss instead."
 // That is FALSE and is recorded here so nobody derives it again: dropping a row REMOVES
 // it from the distribution, clamping INSERTS it at the maximum. Truncation and
 // winsorization are different operations with different means.
 //
-// The practical consequence, because the clamped value is 4–5 orders of magnitude above
-// a typical page duration: a handful of clamped rows per week visibly moves
-// `avg(duration)` over a ~55.7M-row/7d table. So:
-//   * `duration = 4294967295` is a SATURATION SENTINEL, not a measurement. Any mean,
-//     percentile or max over `pageViews.duration` should exclude it.
-//   * This also destroys, for THIS column, the diagnostic described above — the max will
-//     now sit exactly AT the bound by construction, so it no longer distinguishes a
-//     clipped tail from a healthy one. Use the sentinel count instead.
-// No in-repo consumer reads `pageViews.duration` (checked); external dashboards were not
-// enumerated, so this is stated as a property of the change rather than a known impact.
+// So each clamped column now has a SATURATION SENTINEL — a value that is a marker, not a
+// measurement. Any mean, percentile or max over these columns should exclude it:
+//   * `duration      = 4294967295`
+//   * `windowWidth   = 32767`
+//   * `windowHeight  = 32767`
+//
+// The leverage differs sharply by column, which is why `duration` is the one to worry
+// about first: a clamped `duration` is ~5.9 orders of magnitude above a typical page
+// duration (4.29e9 against ~5e3 ms), so a handful of clamped rows per week visibly moves
+// `avg(duration)` over a ~55.7M-row/7d table. A clamped window dimension is only ~17×
+// a typical 1920, so the same count barely moves that mean.
+//
+// It also costs a diagnostic: the max of a clamped column now sits exactly AT the bound
+// by construction. Note precisely what is lost — a max EQUAL to the bound still proves
+// clipping occurred; what dies is the JUST-UNDER-the-bound signature described above,
+// which is what previously distinguished a silently clipped tail from a healthy one.
+// Count the sentinel instead.
+//
+// No in-repo consumer reads any of the three (checked: `duration`, `windowWidth` and
+// `windowHeight` appear outside `__tests__` only on the write path). External dashboards
+// were not enumerated, so this is a property of the change, not a known impact.
 const UINT32_MAX = 4_294_967_295;
 const INT16_MAX = 32_767;
 
