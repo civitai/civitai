@@ -2,11 +2,18 @@
 //
 // Mounted at `trpc.apps.shared.*` (block-token authed) + `trpc.apps.mod.*`
 // (session moderatorProcedure). This is the FIRST App Blocks surface that opens
-// the per-app datastore to PUBLIC cross-user writes — today per-user KV is
-// reachable only by mods + app-dev-testers (apps.router `assertViewerIsAppDeveloper`).
-// Every control here exists because a community app serves GENERAL users; see the
-// hardened design (`shared-storage-design.md`, "HARDENED per design security
-// review"). Read that before touching auth/counter/trust logic.
+// the per-app datastore to PUBLIC cross-user writes. The per-user KV path
+// (apps.router) is scoped by every query to the writer's OWN
+// (block_instance_id, user_id) rows, and is gated on the RUN capability
+// (`app-blocks-enabled`, via apps.router's `assertAppBlocksEnabledForTokenUser`)
+// — i.e. whoever may open the app at all. It is NO LONGER limited to app
+// authors: `assertViewerIsAppDeveloper` left that path when per-user storage was
+// re-gated on the run capability, and now guards only the mod review-preview
+// ("run for real") branch. Here, by contrast, a write is readable, votable and
+// reportable by OTHER users of the app, which is what every control below
+// (min-trust, per-user row cap, rate limits, revocation, content safety) is
+// answering. See the hardened design (`shared-storage-design.md`, "HARDENED per
+// design security review"). Read that before touching auth/counter/trust logic.
 //
 // Data model (per-app schema `app_<slug>`, provisioned by AppStorageProvisioner):
 //   - shared_kv(key ULID PK [SERVER-generated], author_user_id, value jsonb, …)

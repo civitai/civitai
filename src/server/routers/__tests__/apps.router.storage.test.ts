@@ -97,6 +97,9 @@ vi.mock('~/server/services/user.service', () => ({
 
 import { appsRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+// Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
+// vi.fn(), so the refusal-instrumentation assertions below can read it.
+import { appStorageOpsCounter } from '~/server/prom/client';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -345,20 +348,124 @@ describe('apps.storage shared gates', () => {
     expect(await caller.storage.get({ blockToken: 't', key: 'k' })).toEqual({ value: 1 });
   });
 
-  it('fails closed on an unhydratable subject (getSessionUserById → null)', async () => {
+  // ── Fail-closed on an unhydratable subject ──────────────────────────────────
+  // Audit 🟡-2. A subject the session hub cannot resolve (deleted account,
+  // transient miss) must be refused by an EXPLICIT null check, not by whatever
+  // `app-blocks-enabled` happens to evaluate to when it is handed no user.
+  // Handing it `undefined` takes the no-user GLOBAL eval, which refuses today
+  // only because the live flag is base-`false`; a plain base-`enabled: true`
+  // flag matches every entityId including the contextless global one.
+  //
+  // So the property is measured at BOTH points on the flag-config dimension:
+  // base-false (today) and base-true (the documented GA shape). The second case
+  // is the structural one — it fails against a gate that leans on the flag.
+  describe('unhydratable subject', () => {
+    beforeEach(() => {
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      // A vanished subject: the token is valid and its `sub` parses, but the
+      // hub has no user for it.
+      mockGetSessionUser.mockResolvedValue(null);
+    });
+
+    it('is refused under TODAY\'s base-false flag (get)', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        // The null guard's OWN message, not the flag gate's 'Apps are not
+        // enabled' — pinning which of the two refusals fired.
+        message: 'block token subject could not be resolved',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    // The POST-GA model: `app-blocks-enabled` is base-`enabled: true`, so it
+    // resolves TRUE for every eval — including the no-user global eval a null
+    // subject would produce. A gate whose fail-closed is only spelled (pass
+    // `undefined`, let the flag say no) ADMITS here and lets `get` read and
+    // `set` write on the vanished subject's behalf.
+    const baseTrueFlag = async () => true;
+
+    it('is STILL refused when the flag evaluates TRUE for a null user (base-true / GA shape, get)', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(baseTrueFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      // A row is waiting: if the gate admits, the op succeeds and returns it,
+      // so this case cannot pass by the query merely being empty.
+      mockPool.query.mockResolvedValue({ rows: [{ value: 'other-users-row' }], rowCount: 1 });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'block token subject could not be resolved',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('is STILL refused when the flag evaluates TRUE for a null user (base-true / GA shape, set)', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(baseTrueFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+      ).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'block token subject could not be resolved',
+      });
+      // No row is written on the vanished subject's behalf.
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(mockClient.query).not.toHaveBeenCalled();
+    });
+
+    // POSITIVE CONTROL for the two cases above. Same base-true flag mock, same
+    // subject id — the ONLY thing that changes is that the subject hydrates. If
+    // the guard refused unconditionally (or the base-true mock were not
+    // actually reaching the gate), this would fail too and the pair above would
+    // prove nothing.
+    it('admits a subject that DOES hydrate, under the same base-true flag', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(baseTrueFlag);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      expect(await caller.storage.get({ blockToken: 't', key: 'k' })).toEqual({ value: 1 });
+    });
+
+    // Audit 🟡-4: every other refusal in resolveStorageContext increments the
+    // ops counter; the capability refusals did not, which is why the defect
+    // behind this change was only visible in a raw request log.
+    it('counts the refusal on the ops counter (op + outcome)', async () => {
+      const inc = vi.mocked(appStorageOpsCounter.inc);
+      inc.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
+        TRPCError
+      );
+      expect(inc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
+    });
+  });
+
+  // The OTHER capability refusal on this path — subject hydrates, but does not
+  // hold the run capability — must be counted too (audit 🟡-4).
+  it('counts a run-capability refusal on the ops counter', async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
     mockParseSubjectUserId.mockImplementation(() => 77);
-    // A vanished subject hydrates to null → the flag gets no user → global eval
-    // → a base-false flag can never match a segment → refused.
-    mockGetSessionUser.mockResolvedValue(null);
+    mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+    runEnabledUserIds.delete(77);
 
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-      message: 'Apps are not enabled',
-    });
-    expect(mockGetSessionUser).toHaveBeenCalledWith(77);
-    expect(mockPool.query).not.toHaveBeenCalled();
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'unauthorized' });
   });
 
   // Fix 3 / audit A5 (design-gaps H4): storage is a DECLARED, approved scope —

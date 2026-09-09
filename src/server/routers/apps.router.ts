@@ -45,10 +45,16 @@ import { appsSharedRouter, appsModRouter } from '~/server/routers/apps-shared.ro
  * The ordinary per-user storage path must NOT use it: reading and writing your
  * own saved data inside an app you are allowed to RUN is a CONSUMER capability
  * (see assertAppBlocksEnabledForTokenUser below).
+ *
+ * Takes `op` only to label the refusal counter — every OTHER refusal in
+ * `resolveStorageContext` is counted, and a capability refusal that is not
+ * leaves the "valid token, refused anyway" case visible only in a raw request
+ * log (audit 🟡-4).
  */
-async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
+async function assertViewerIsAppDeveloper(userId: number, op: StorageOp): Promise<void> {
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
   if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
+    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'Apps authoring is not enabled for this account',
@@ -67,13 +73,27 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
  * no-session call). The kill-switch has to bind that subject too, or the
  * per-subject half of the gate does not exist.
  *
- * Mirrors `assertAppBlocksEnabledForTokenUser` in blocks.router: hydrate the FULL
+ * The subject is hydrated the same way blocks.router's gate hydrates it: the FULL
  * server-side SessionUser via `sessionClient.getSessionUserById` (the
  * authoritative hub-backed resolver, never a client-supplied value) so
  * `buildFliptContext` sees the subject's real `isModerator`/`tier` and the
- * segment match cannot be spoofed. Fail-closed: a vanished/unhydratable subject
- * → `undefined` → global eval → a base-false flag can never match a segment →
- * refused.
+ * segment match cannot be spoofed.
+ *
+ * FAIL-CLOSED HERE IS STRUCTURAL, NOT INHERITED FROM THE FLAG'S BASE STATE — and
+ * that is the one way this gate does NOT mirror blocks.router's. A subject that
+ * cannot be hydrated (deleted account, transient session-hub miss) is refused
+ * BEFORE any flag evaluation, rather than being passed to `isAppBlocksEnabled` as
+ * `undefined`. That overload takes the no-user branch — a GLOBAL eval
+ * (entityId `'global'`, empty context; see `isAppBlocksEnabled` in
+ * app-blocks-flag.ts) — which refuses today only because `app-blocks-enabled` is
+ * base-`false`, so no segment can match. A plain base-`enabled: true` flag (the
+ * documented GA shape) matches EVERY entityId, the contextless global one
+ * included; on that config the `undefined` path would ADMIT an unresolvable
+ * subject and `set` would write rows on its behalf for the rest of the token's
+ * lifetime. The explicit null check removes that dependency: the refusal holds
+ * on every flag configuration. `resolveSharedContext` in apps-shared.router.ts
+ * takes the same approach on its write path (`if (userId == null) throw`, and
+ * `assertSharedWriteTrust` opens with `if (!user) return deny(...)`).
  *
  * This is the RUN capability, NOT the authoring one: per-user storage is a
  * consumer surface (your own saved data, in an app you are allowed to open), so
@@ -81,10 +101,23 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
  * app. Same reasoning the shared-storage resolver already applies — see
  * `resolveSharedContext` in apps-shared.router.ts, which deliberately does not
  * reuse the author gate.
+ *
+ * `op` labels the refusal counter — see assertViewerIsAppDeveloper above.
  */
-async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
+async function assertAppBlocksEnabledForTokenUser(userId: number, op: StorageOp): Promise<void> {
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
+  // Structural fail-closed: refuse an unhydratable subject outright. Distinct
+  // message so the two refusals below are separable in a log AND in a test —
+  // they are different conditions, not one gate spelled twice.
+  if (!user) {
+    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'block token subject could not be resolved',
+    });
+  }
+  if (!(await isAppBlocksEnabled({ user }))) {
+    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
 }
@@ -186,7 +219,7 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
     // Self-bound: reads/writes land in the reviewing MOD's own rows. A non-mod
     // subject can't hold a review token (mint is mod-gated); assert developer.
     if (userId != null) {
-      await assertViewerIsAppDeveloper(userId);
+      await assertViewerIsAppDeveloper(userId, op);
     }
     // The preview namespace is keyed on the publishRequestId (the token's
     // `appBlockId` claim = `pubreq_<ULID>`), so it is isolated per pending app AND
@@ -266,7 +299,7 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
   // Anon subjects (userId === null) fall through to each op's existing
   // anon-handling (clean-null for reads, UNAUTHORIZED for writes).
   if (userId != null) {
-    await assertAppBlocksEnabledForTokenUser(userId);
+    await assertAppBlocksEnabledForTokenUser(userId, op);
   }
   return {
     userId,
