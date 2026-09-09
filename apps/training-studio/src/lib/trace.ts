@@ -12,32 +12,19 @@ export interface TraceEvent {
   [key: string]: unknown;
 }
 
-/** Open the trace stream. Prefer the orchestrator URL DIRECTLY — no backend hop, and a directly-consumed
- *  stream survives Cloudflare (which buffers a proxied stream, so live trace never arrives behind it). Falls
- *  back to the server proxy only when the browser can't read the orch response cross-origin (no CORS
- *  headers) — that path throws, and we retry through `/api/trace`. The traceUrl is presigned, so a direct
- *  fetch needs no credentials. */
-async function openTraceStream(traceUrl: string, signal: AbortSignal): Promise<Response> {
-  try {
-    const direct = await fetch(traceUrl, { signal });
-    // 404 = not written yet (caller retries); a readable 2xx = the orch permits cross-origin reads.
-    if (direct.status === 404 || (direct.ok && direct.body)) return direct;
-  } catch (err) {
-    if (isAbort(err)) throw err;
-    // Opaque cross-origin (CORS) or network failure — fall back to the proxy below.
-  }
-  return fetch(`/api/trace?url=${encodeURIComponent(traceUrl)}`, { signal });
-}
-
 /** Tail the trace stream, calling `onLine` with each complete line as it arrives. Resolves `{ready:false}`
  *  on a 404 (the worker hasn't written its first line yet — caller should retry), or `{ready:true}` once
- *  the stream opens and closes. Rejects only on abort or a hard error. */
+ *  the stream opens and closes. Rejects only on abort or a hard error.
+ *
+ *  The orchestrator's `streaming-blobs` URL is a presigned, CORS-enabled long-poll, so the browser consumes
+ *  it DIRECTLY — no backend proxy. (A proxied stream is buffered by Cloudflare and never arrives live; a
+ *  direct fetch sidesteps that and needs no server endpoint.) */
 export async function tailTrace(
   traceUrl: string,
   onLine: (line: string) => void,
   signal: AbortSignal
 ): Promise<{ ready: boolean }> {
-  const res = await openTraceStream(traceUrl, signal);
+  const res = await fetch(traceUrl, { signal });
   if (res.status === 404) return { ready: false };
   if (!res.ok || !res.body) throw new Error(`trace failed (${res.status})`);
 
