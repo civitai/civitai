@@ -666,9 +666,12 @@
                   <!-- svelte-ignore a11y_media_has_caption -->
                   <video src={img.previewUrl} muted class="h-full w-full object-cover"></video>
                 {:else}
-                  <div class="flex h-full flex-col items-center justify-center gap-1 p-2 text-center">
-                    <IconMusic size={24} stroke={2} class="text-dark-2" />
-                    <span class="line-clamp-2 break-all font-mono text-[10px] text-dark-2">{img.name}</span>
+                  <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
+                    <IconMusic size={20} stroke={2} class="text-dark-2" />
+                    <span class="line-clamp-2 break-all font-mono text-[10px] leading-tight text-dark-2">
+                      {img.name}
+                    </span>
+                    <audio src={img.previewUrl} controls preload="metadata" class="h-8 w-full"></audio>
                   </div>
                 {/if}
 

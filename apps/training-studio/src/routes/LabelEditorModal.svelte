@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconSparkles, IconX } from '@tabler/icons-svelte';
+  import { IconSparkles, IconX, IconMusic } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
@@ -80,6 +80,25 @@
   }
 </script>
 
+<!-- The preview adapts to the media: an image, a playable <video>, or an <audio> player for audio clips —
+     so captioning an audio/video dataset lets you actually see/hear what you're labeling. -->
+{#snippet mediaPreview(img: Img, cls: string)}
+  {#if img.mediaType === 'audio'}
+    <div
+      class="flex flex-col items-center justify-center gap-3 rounded border border-dark-4 bg-dark-7 p-4 {cls}"
+    >
+      <IconMusic size={28} stroke={2} class="text-dark-2" />
+      <div class="w-full break-all text-center font-mono text-[10px] text-dark-2">{img.name}</div>
+      <audio src={img.previewUrl} controls preload="metadata" class="w-full"></audio>
+    </div>
+  {:else if img.mediaType === 'video'}
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video src={img.previewUrl} controls class="rounded border border-dark-4 {cls}"></video>
+  {:else}
+    <img src={img.previewUrl} alt="" class="rounded border border-dark-4 {cls}" />
+  {/if}
+{/snippet}
+
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-2xl">
     {#if editing}
@@ -90,11 +109,7 @@
 
       {#if labelMode === 'tag'}
         <div class="grid gap-4 sm:grid-cols-[200px_1fr]" use:autofocusInput>
-          <img
-            src={editing.previewUrl}
-            alt=""
-            class="max-h-48 w-full rounded border border-dark-4 object-cover sm:max-h-none"
-          />
+          {@render mediaPreview(editing, 'max-h-48 w-full object-cover sm:max-h-none')}
           <div>
             <div class="mb-2 flex items-center justify-between gap-2">
               <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
@@ -186,7 +201,7 @@
         </div>
       {:else}
         <div class="flex flex-col gap-3" use:autofocusInput>
-          <img src={editing.previewUrl} alt="" class="max-h-72 w-full rounded border border-dark-4 object-contain" />
+          {@render mediaPreview(editing, 'max-h-72 w-full object-contain')}
           <div>
             <div class="mb-2 flex items-center justify-between gap-2">
               <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
