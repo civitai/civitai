@@ -105,10 +105,6 @@ export const placementTransactionId = (placementId: number, kind: PlacementTrans
  * added to your gallery. The internal leg name is unchanged and still identifies
  * the leg everywhere it is used to find money — the `PlacementTransaction` row,
  * the external transaction id, every recovery query.
- *
- * Shared rather than service-local because the Buzz dashboard renders a
- * description only when it recognises the string, and it derives that set from
- * this table — see `PLACEMENT_LEDGER_DESCRIPTIONS`.
  */
 export const PLACEMENT_LEDGER_TEXT: Record<
   PlacementSurface,
@@ -144,13 +140,7 @@ export const PLACEMENT_LEDGER_TEXT: Record<
   },
 };
 
-/**
- * The placement descriptions a Buzz surface may render verbatim.
- *
- * Derived from the table above, so copy written there is copy a reader can see,
- * and a string this set does not contain — a pre-#4212 row carrying an internal
- * placement id, a fee written by some future producer — is never rendered.
- */
+/** The placement descriptions a Buzz surface may render to a user verbatim. */
 export const PLACEMENT_LEDGER_DESCRIPTIONS: ReadonlySet<string> = new Set(
   Object.values(PLACEMENT_LEDGER_TEXT).flatMap((byKind) => Object.values(byKind))
 );
