@@ -39,7 +39,7 @@ async function setCache(data: BlocklistDTO) {
  * ⚠️ What this does NOT close, stated because the obvious reading of "deletes commute" is that it
  * does: a DELETE does not commute with the POPULATE in `getBlocklistDTO`, which is plain
  * cache-aside. A reader that missed and read the row before the commit can `set` its pre-write
- * snapshot AFTER the bust, pinning it for the whole month TTL.
+ * snapshot AFTER the bust, pinning it until the key expires.
  *
  * The causation runs to the NEXT write, not this one: a bust guarantees the following read misses,
  * and the page reloads through `load` on every submit, so a reader is typically mid-fill when the

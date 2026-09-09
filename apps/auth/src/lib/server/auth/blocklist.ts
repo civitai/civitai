@@ -7,6 +7,7 @@ import { db } from '../db/db';
 // refreshed on read). We read that shared cache first, then fall back to the Blocklist table on a
 // cold cache (and best-effort repopulate). Same redis + same DB = same list.
 const BLOCKLIST_KEY = `${REDIS_KEYS.SYSTEM.BLOCKLIST}:EmailDomain`;
+const SUFFIX_BLOCKLIST_KEY = `${REDIS_KEYS.SYSTEM.BLOCKLIST}:EmailDomainSuffix`;
 
 /**
  * A CEILING on staleness, not a cache lifetime. The moderator writers DELETE this key, so an edit
@@ -52,6 +53,28 @@ export function isBlockedDomain(entries: string[], domain: string): boolean {
 }
 
 /**
+ * `*.evil.example` and `.evil.example` are how a moderator writes "and its subdomains" by hand, and
+ * unstripped both are entries that match no address at all — silently, since a suffix entry's only
+ * feedback is accounts continuing to arrive.
+ */
+const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
+
+/**
+ * The domain itself, or anything under it. `endsWith('.' + entry)` and not `endsWith(entry)`: the
+ * latter matches `notevil.example` against an entry of `evil.example`, a different registrable
+ * domain owned by someone else. Twin of the main app's `matchesBlockedSuffix`; reverting one side
+ * only is how the two diverge.
+ */
+export function isBlockedSuffix(entries: string[], domain: string): boolean {
+  if (!domain) return false;
+  return entries.some((raw) => {
+    const entry = normalizeDomain(raw.replace(SUFFIX_ENTRY_PREFIX, ''));
+    if (!entry) return false;
+    return domain === entry || domain.endsWith(`.${entry}`);
+  });
+}
+
+/**
  * The address as it should be STORED and LOOKED UP.
  *
  * `userExistsByEmail` is both the returning-user exemption for the blocklist and the gate on the
@@ -64,11 +87,11 @@ export function normalizeEmailAddress(email: string): string {
   return `${email.slice(0, at).trim()}@${normalizeDomain(email.slice(at + 1))}`;
 }
 
-export async function getBlockedEmailDomains(): Promise<string[]> {
+async function readBlocklist(type: string, key: string): Promise<string[]> {
   const redis = getRedis();
   if (redis) {
     try {
-      const cached = await (redis as unknown as StringGet).get(BLOCKLIST_KEY);
+      const cached = await (redis as unknown as StringGet).get(key);
       if (cached) {
         const parsed = JSON.parse(cached) as { data?: string[] };
         return parsed.data ?? [];
@@ -82,16 +105,43 @@ export async function getBlockedEmailDomains(): Promise<string[]> {
     const row = await db
       .selectFrom('Blocklist')
       .select('data')
-      .where('type', '=', 'EmailDomain')
+      .where('type', '=', type)
+      // 🔴 The main app's `readBlocklistRow` pins `orderBy: { id: 'asc' }`. Without the same
+      // ordering here, a type with two rows lets this app enforce a different list than the main
+      // app does — on the signup path. A unique index on `Blocklist.type` makes that
+      // unrepresentable; this makes the two agree until it is applied, and after.
+      .orderBy('id', 'asc')
       .executeTakeFirst();
     const data = row?.data ?? [];
     if (redis) {
       await (redis as unknown as StringSet)
-        .set(BLOCKLIST_KEY, JSON.stringify({ type: 'EmailDomain', data }), { EX: TTL_SECONDS })
+        .set(key, JSON.stringify({ type, data }), { EX: TTL_SECONDS })
         .catch(() => {});
     }
     return data;
   } catch {
     return []; // degrade open — a lookup failure must not block every login
   }
+}
+
+export async function getBlockedEmailDomains(): Promise<string[]> {
+  return readBlocklist('EmailDomain', BLOCKLIST_KEY);
+}
+
+/** Entries that block the domain AND its subdomains. Opt-in per entry; see the main app's twin. */
+export async function getBlockedEmailDomainSuffixes(): Promise<string[]> {
+  return readBlocklist('EmailDomainSuffix', SUFFIX_BLOCKLIST_KEY);
+}
+
+/**
+ * Both lists, in the order that keeps the second lookup off the path an ordinary signup takes. Used
+ * by both hub call sites so one of them cannot quietly stop consulting the suffix list.
+ *
+ * Callers must still exempt users who ALREADY have this address — a list entry added later must not
+ * lock out an account that predates it.
+ */
+export async function isBlockedEmailDomain(domain: string): Promise<boolean> {
+  if (!domain) return false;
+  if (isBlockedDomain(await getBlockedEmailDomains(), domain)) return true;
+  return isBlockedSuffix(await getBlockedEmailDomainSuffixes(), domain);
 }

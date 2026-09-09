@@ -6,13 +6,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const h = vi.hoisted(() => ({
   getRedis: vi.fn(),
   executeTakeFirst: vi.fn(),
+  where: vi.fn(),
+  orderBy: vi.fn(),
 }));
 vi.mock('../../redis', () => ({ getRedis: h.getRedis }));
 vi.mock('../../db/db', () => ({
   db: {
     selectFrom: () => ({
       select: () => ({
-        where: () => ({ executeTakeFirst: h.executeTakeFirst }),
+        where: (...args: unknown[]) => {
+          h.where(...args);
+          // `orderBy` is modelled because the read now DEPENDS on it: without it a type with two
+          // rows lets this app enforce a different list than the main app, which pins
+          // `orderBy: id asc`. A mock that tolerated its absence would hide exactly that.
+          return {
+            orderBy: (...orderArgs: unknown[]) => {
+              h.orderBy(...orderArgs);
+              return { executeTakeFirst: h.executeTakeFirst };
+            },
+          };
+        },
       }),
     }),
   },
@@ -21,11 +34,15 @@ vi.mock('../../db/db', () => ({
 import {
   emailDomain,
   getBlockedEmailDomains,
+  getBlockedEmailDomainSuffixes,
   isBlockedDomain,
+  isBlockedEmailDomain,
+  isBlockedSuffix,
   normalizeEmailAddress,
 } from '../blocklist';
 
 const BLOCKLIST_KEY = 'system:blocklist:EmailDomain';
+const SUFFIX_KEY = 'system:blocklist:EmailDomainSuffix';
 
 function makeRedis() {
   const store = new Map<string, string>();
@@ -195,5 +212,95 @@ describe('normalizeEmailAddress', () => {
 
   it('leaves an address with no @ alone beyond trim and case', () => {
     expect(normalizeEmailAddress(' NotAnEmail ')).toBe('notanemail');
+  });
+});
+
+describe('EmailDomainSuffix', () => {
+  /**
+   * 🔴 A SEPARATE, opt-in list. The exact list stays exact on purpose: making it cover subdomains
+   * would apply suffix semantics to the ~8,800 entries the main app's weekly upstream sync
+   * maintains, 1,357 of which are already subdomains of a shared parent (`dynv6.net` alone has 337;
+   * `co.uk` and `org.uk` are on it). Measured on production 2026-09-09.
+   *
+   * These must stay in step with the main app's `matchesBlockedSuffix` — the two are the same rule
+   * in two separately-released apps, and changing one side only is how they diverge.
+   */
+  it('matches the opted-in domain and anything under it', () => {
+    expect(isBlockedSuffix(['farm.test'], 'farm.test')).toBe(true);
+    expect(isBlockedSuffix(['farm.test'], 'a.farm.test')).toBe(true);
+    expect(isBlockedSuffix(['farm.test'], 'a.b.c.farm.test')).toBe(true);
+  });
+
+  it('does NOT match a different registrable domain that merely ENDS with the entry', () => {
+    // The branch that separates `endsWith('.' + entry)` from `endsWith(entry)`. Without the dot,
+    // an entry of `farm.test` also blocks `notfarm.test`, which belongs to someone else.
+    expect(isBlockedSuffix(['farm.test'], 'notfarm.test')).toBe(false);
+  });
+
+  it('does NOT match an unrelated domain while entries are present', () => {
+    // Negative control: a matcher returning true unconditionally passes every case above.
+    expect(isBlockedSuffix(['farm.test'], 'example.test')).toBe(false);
+  });
+
+  it('matches an entry written as a wildcard, with a leading dot, or messily', () => {
+    expect(isBlockedSuffix(['*.farm.test'], 'a.farm.test')).toBe(true);
+    expect(isBlockedSuffix(['.farm.test'], 'a.farm.test')).toBe(true);
+    expect(isBlockedSuffix(['  Farm.TEST.  '], 'a.farm.test')).toBe(true);
+  });
+
+  it('an EMPTY entry matches nothing rather than everything', () => {
+    expect(isBlockedSuffix([''], 'example.test')).toBe(false);
+    expect(isBlockedSuffix(['   '], 'example.test')).toBe(false);
+  });
+
+  it('reads the suffix list from its OWN redis key, not the exact list', async () => {
+    const redis = makeRedis();
+    redis._store.set(BLOCKLIST_KEY, JSON.stringify({ type: 'EmailDomain', data: ['exact.test'] }));
+    redis._store.set(
+      SUFFIX_KEY,
+      JSON.stringify({ type: 'EmailDomainSuffix', data: ['suffix.test'] })
+    );
+    h.getRedis.mockReturnValue(redis);
+
+    await expect(getBlockedEmailDomainSuffixes()).resolves.toEqual(['suffix.test']);
+    await expect(getBlockedEmailDomains()).resolves.toEqual(['exact.test']);
+  });
+
+  it('orders the DB fallback by id so this app and the main app read the SAME row', async () => {
+    // 🔴 Pins the fix for the duplicate-row divergence. The main app's `readBlocklistRow` pins
+    // `orderBy: { id: 'asc' }`; this used to be `executeTakeFirst()` with no ordering, so with two
+    // rows for a type the signup path here could enforce a list the main app did not.
+    h.getRedis.mockReturnValue(null);
+    h.executeTakeFirst.mockResolvedValue({ data: ['whatever.test'] });
+
+    await getBlockedEmailDomainSuffixes();
+
+    expect(h.orderBy).toHaveBeenCalledWith('id', 'asc');
+  });
+
+  it('blocks on the suffix list when the exact list misses', async () => {
+    const redis = makeRedis();
+    redis._store.set(BLOCKLIST_KEY, JSON.stringify({ type: 'EmailDomain', data: [] }));
+    redis._store.set(
+      SUFFIX_KEY,
+      JSON.stringify({ type: 'EmailDomainSuffix', data: ['farm.test'] })
+    );
+    h.getRedis.mockReturnValue(redis);
+
+    await expect(isBlockedEmailDomain('a.farm.test')).resolves.toBe(true);
+    await expect(isBlockedEmailDomain('unrelated.test')).resolves.toBe(false);
+  });
+
+  it('does not read the suffix list when the exact list already matched', async () => {
+    // Ordering is deliberate: the second lookup stays off the path an ordinary signup takes.
+    const redis = makeRedis();
+    redis._store.set(BLOCKLIST_KEY, JSON.stringify({ type: 'EmailDomain', data: ['exact.test'] }));
+    redis._store.set(SUFFIX_KEY, JSON.stringify({ type: 'EmailDomainSuffix', data: [] }));
+    h.getRedis.mockReturnValue(redis);
+
+    await expect(isBlockedEmailDomain('exact.test')).resolves.toBe(true);
+
+    expect(redis.get).toHaveBeenCalledWith(BLOCKLIST_KEY);
+    expect(redis.get).not.toHaveBeenCalledWith(SUFFIX_KEY);
   });
 });
