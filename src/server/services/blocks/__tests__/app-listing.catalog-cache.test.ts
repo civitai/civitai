@@ -41,11 +41,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     against a chosen target is CONSTRUCTED algebraically — not brute-forced —
  *     and the attacker has the bytes to do it with: `decodeListingCursor` slices
  *     `cursorSortKey` and `cursorId` out of a lenient base64url decode as
- *     arbitrary free strings (only `cursorMean` is range-validated) and the
- *     router bounds `cursor` only by `z.string().max(128)`. Both land in the
- *     hashed statement as bound params. Two statements differing exactly at the
- *     scope predicate (`TRUE` vs `al.kind = 'offsite'`) collide on the identical
- *     32-bit hash with six tuning characters placed in the cursor.
+ *     arbitrary free strings (only `cursorMean` is range-validated) and the read
+ *     schema bounds `cursor` only by `z.string().max(128)`. Both land in the
+ *     hashed statement as bound params, which is what makes a collision between
+ *     the two scope predicates (`TRUE` vs `al.kind = 'offsite'`) CONSTRUCTIBLE
+ *     rather than something to brute-force.
+ *
+ *     ⚠️ Nothing here constructs one, and no test asserts a byte count for it. An
+ *     earlier version of this comment quoted "six tuning characters"; that figure
+ *     was never derived or pinned, so it is gone rather than replaced. It does not
+ *     need replacing: the guards below put the boundary OUTSIDE the hash entirely,
+ *     which makes the exact cost of a collision irrelevant rather than merely large.
  *
  *     The service's answer is NOT to widen the hash (global blast radius — it
  *     keys caches, DOM ids and de-dup across the codebase). It is to lift the two
@@ -63,9 +69,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 /**
- * The capture. `queryCache(db, key, version)` is called once at MODULE level in the
- * service, so this factory records the cache name/version there and the per-call
- * `(sql, options)` on every invocation.
+ * The capture. `queryCache(db, key, version)` is called PER INVOCATION, inside
+ * `catalogPageCache(scope, redCapable)` — that is the fix this PR makes, because a
+ * module-level binding could only ever hold ONE key and so could not carry the viewer
+ * class. This factory therefore records a `cacheBinding` entry per call, not one for
+ * the module, and each entry is the key for the viewer shape that produced it.
  *
  * It returns `[]`, which makes `listAvailableListings` short-circuit before the
  * hydration — this file is about the KEY, not the rows, so no DB fixture is needed.
@@ -102,6 +110,9 @@ import {
   APP_LISTING_RECOMMEND_MEAN_TAG,
 } from '../app-listing-cache.constants';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+// The runtime value set, from the leaf module that owns it (no imports of its own), so
+// the viewer-class count below is DERIVED rather than restated.
+import { STORE_VISIBILITY_SCOPES } from '~/shared/utils/store-visibility-scope';
 
 const BASE_INPUT = { kind: 'all', sort: 'newest', limit: 20 } as const;
 
@@ -296,10 +307,12 @@ describe('/apps catalog cache — the key separates viewers', () => {
    *
    * WHY A HASH COLLISION IS REACHABLE HERE, not theoretical: `hashify` is a 32-bit
    * linear rolling hash and `decodeListingCursor` admits `cursorSortKey` / `cursorId`
-   * as arbitrary free strings straight into the hashed statement as bound params. Six
-   * tuning characters in the cursor are enough to collide the `full` statement with
-   * the `public-external` one. If the scope lived only inside the hash, that collision
-   * would serve on-site apps into the anonymous `GET /api/v1/apps` response
+   * as arbitrary free strings straight into the hashed statement as bound params —
+   * enough attacker-chosen bytes to solve for a collision between the `full` statement
+   * and the `public-external` one instead of searching for it. (No test constructs one
+   * and no byte count is claimed; see the file header.) If the scope lived only inside
+   * the hash, that collision would serve on-site apps into the anonymous
+   * `GET /api/v1/apps` response
    * (civitai#3983, re-opened through the cache) — and the reverse direction is cache
    * poisoning.
    */
@@ -332,13 +345,17 @@ describe('/apps catalog cache — the key separates viewers', () => {
   });
 
   /**
-   * All FIVE viewer classes, on the hash-independent prefix. `none` is included: the
-   * router short-circuits it, but it is the fail-closed scope and must not be able to
-   * share an entry with a scope that returns rows.
+   * The WHOLE `scope × redCapable` product on the hash-independent prefix. `none` is
+   * included: the router short-circuits it, but it is the fail-closed scope and must
+   * not be able to share an entry with a scope that returns rows.
    *
    * Pairwise-distinct prefixes is the whole property this change buys — stated once,
    * over the full product, so a key that folded two axes into one bit cannot satisfy
    * the 1-D cases above and slip through here.
+   *
+   * 🔴 The count is DERIVED from `STORE_VISIBILITY_SCOPES`, not written down, so this
+   * also pins the cardinality claim `catalogPageCache` makes about the `cache_name`
+   * metric label. Adding a scope adds two classes and fails here until enumerated.
    */
   it('🔴 every (scope × redCapable) viewer class has a distinct HASH-INDEPENDENT prefix', async () => {
     const shapes: { scope?: StoreVisibilityScope; redCapable: boolean }[] = [
@@ -346,8 +363,15 @@ describe('/apps catalog cache — the key separates viewers', () => {
       { scope: 'full', redCapable: false },
       { scope: 'public-external', redCapable: true },
       { scope: 'public-external', redCapable: false },
+      { scope: 'none', redCapable: true },
       { scope: undefined, redCapable: false }, // → narrowStoreScope → 'none'
     ];
+    expect(
+      shapes.length,
+      'the viewer-class product changed size. `catalogPageCache` states the ' +
+        '`cache_name` label cardinality is bounded at (scopes x 2) — enumerate the new ' +
+        'classes here and update that note in the same commit.'
+    ).toBe(STORE_VISIBILITY_SCOPES.length * 2);
     const prefixes: string[] = [];
     for (const shape of shapes) prefixes.push(await prefixFor(shape));
     // The prefix must carry MORE than `<key>:<version>` — i.e. the axes are actually in

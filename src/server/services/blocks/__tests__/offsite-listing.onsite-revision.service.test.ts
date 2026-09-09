@@ -345,7 +345,11 @@ describe('🔴 approveExternalRequest — the REVISION branch busts the catalog 
     ).toHaveBeenCalledWith([APP_LISTING_CATALOG_TAG]);
   });
 
-  it('onsite revision approve busts too (the rule is unconditional, not per-branch)', async () => {
+  // The onsite branch is assets-only and moves no cached axis, so this bust is inert
+  // today; `applyApprovedRevision` fires it for both branches rather than gating on
+  // `kind`. That is a property of THAT function, not a universal "every mutation busts"
+  // rule — see its comment, and the `EXEMPT` list in the ledger suite.
+  it('onsite revision approve busts too (unconditional across the two branches)', async () => {
     stageRevisionApprove('onsite');
     await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
     expect(bustCacheTag).toHaveBeenCalledWith([APP_LISTING_CATALOG_TAG]);

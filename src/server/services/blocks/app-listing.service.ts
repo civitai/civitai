@@ -763,10 +763,35 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * `__tests__/app-listing.catalog-cache.test.ts` pins that the boundary lives in
  * the un-hashed segments.
  *
- * The remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the
- * hash. They are ordinary correctness, not a disclosure boundary: the worst a
- * constructed collision buys there is the attacker's own page served back to
- * themselves under a different filter, within their own viewer class.
+ * 🔴 WHAT IS LEFT UN-CONTAINED, STATED AS A RESIDUAL RATHER THAN A REASSURANCE. The
+ * remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the hash, and
+ * a constructed collision across them is CROSS-USER CACHE POISONING of the shared
+ * `/apps` grid — not, as an earlier version of this comment said, "the attacker's own
+ * page served back to themselves". The entry is shared by every viewer in the class,
+ * and `full` is the class for ordinary logged-in users. The attacker's crafted-cursor
+ * request MISSES, so it is the request that WRITES the colliding key; every later
+ * reader deriving that key HITS it. So one request can pin the store's first page to
+ * an arbitrary filtered — or empty — result for up to `CacheTTL.sm` (180s) for everyone
+ * in that class.
+ *
+ * What it is NOT is a disclosure boundary: every row in a poisoned page came from a
+ * statement carrying the SAME `scope` and `redCapable` predicates, so no listing
+ * appears that the viewer was not already entitled to see. That is the whole reason
+ * those two axes, and only those two, were lifted out of the hash.
+ *
+ * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
+ * grid defect above. The alternative to accepting it is putting the remaining axes in
+ * the literal key too, and the blocker is `cursor`: it is a free-form 128-byte string,
+ * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
+ * label request-controlled and unbounded — exactly the property the note at the bottom
+ * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
+ * `limit` is 1..50, so those four could be lifted; they would multiply the label
+ * cardinality by their product, and they do not help while `cursor` stays hashed,
+ * because `cursor` is the tuning room the collision is built out of.) Widening
+ * `hashify` is the other alternative and it is global — see below.
+ *
+ * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
+ * cursor DIGEST computed with a real hash, not to widen `hashify`.
  *
  * 🔴 DO NOT "FIX" THIS BY WIDENING `hashify` — it is used across the codebase for
  * cache keys, DOM ids and de-dup, so changing its output is a global blast radius.
@@ -799,8 +824,28 @@ function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
 }
 
 /**
- * Bust the `/apps` store catalog cache. THE one buster — every listing-state
- * mutation calls this and nothing else.
+ * Bust the `/apps` store catalog cache. THE one buster — nothing else deletes the tag.
+ *
+ * 🔴 THE RULE IS "BUST WHEN A CACHED AXIS OR CATALOG MEMBERSHIP MOVES", NOT "every
+ * listing-state mutation busts". Several call sites used to invoke the latter as a
+ * "uniform rule"; it is not uniform, and stating it that way made a reader's model of
+ * the cache wrong in the expensive direction — it implies that a writer WITHOUT a bust
+ * is a bug, when a whole enumerated list of them are deliberate and correct. The cached statement reads
+ * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
+ * `ab.current_version_deployed_at` and the `sort_key` inputs (`al.name`,
+ * `al.created_at`, the metric rollup) — and nothing else. Every other column on the
+ * card is hydrated live below the cache and can never be served stale.
+ *
+ * Some busts ARE kept on paths that are inert today, as cheap defence-in-depth against
+ * a future edit promoting the row into the catalog: `updateListing`'s `removed` and
+ * `draft`/`pending` branches, its material-shadow branch, `submitListingRevision`, and
+ * `claimListing`. Each says so at its own call site. They are a judgement, not the
+ * rule.
+ *
+ * The asserted form of the rule — every `AppListing` writer either busts or is on an
+ * `EXEMPT` list with a reason — is
+ * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`. That
+ * file, not this paragraph, is what a new mutation has to satisfy.
  *
  * Fire-and-forget by the caller's convention (mirrors `bustRecommendMeanCache` in
  * `app-listing-review.service`): a cache-bus outage must never fail the mutation

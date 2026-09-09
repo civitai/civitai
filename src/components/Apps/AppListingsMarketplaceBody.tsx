@@ -263,9 +263,13 @@ export function AppListingsMarketplaceBody() {
        * tab away, tab back). Each of those was a fresh network round trip for a
        * catalog that had not moved.
        *
-       * WHY 60 AND NOT MORE: it is deliberately a THIRD of the server-side TTL
-       * (`CacheTTL.sm`, 180s, on `listAvailableListings`'s keyset query), so the
-       * client is never the longer of the two staleness sources. The moderator-
+       * WHY 60 AND NOT MORE: the PROPERTY is that the client window stays strictly
+       * shorter than the server-side TTL (`CacheTTL.sm`, 180s at the time of writing,
+       * on `listAvailableListings`'s keyset query), so the client is never the longer
+       * of the two staleness sources. That inequality — and only that — is what
+       * `AppListingsMarketplaceBody.keepPreviousData.browser.test.tsx` asserts, against
+       * the real constant. The specific 3× headroom is a judgement, not a pinned
+       * ratio: pick any value under `CacheTTL.sm`. The moderator-
        * visible worst case for a listing entering or leaving the store is bounded
        * by the server side, which every listing-state mutation busts explicitly
        * (`bustAppListingCatalogCache`) — a client window that outlived the server

@@ -1505,11 +1505,14 @@ export async function updateListing(opts: {
       // the `approved` trivial-only branch makes.
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
-      // Catalog bust: UNIFORM RULE, not a cached axis — this branch edits a `removed`
+      // Catalog bust: DEFENCE IN DEPTH, not a cached axis. This branch edits a `removed`
       // (owner-unpublished) row, which the approved-only catalog query already excludes, so
       // it is INERT today. Of the trivial fields it can write, only `category` is a cached
       // axis at all (tagline/description are hydrated live); it becomes load-bearing the
-      // moment such a row is republished, and that path busts too.
+      // moment such a row is republished, and that path busts too. Kept because the cost is
+      // one tag delete on a rare owner action — NOT because "every mutation busts": a
+      // number of `AppListing` writers deliberately do not, enumerated as `EXEMPT` in
+      // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
       await bustAppListingCatalogCache().catch(() => undefined);
 
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
@@ -1527,9 +1530,9 @@ export async function updateListing(opts: {
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
-      // Catalog bust: UNIFORM RULE, not a cached axis — a `draft`/`pending` row is outside
-      // the approved-only catalog query, so this is INERT today. Same reasoning as the
-      // `removed` branch above.
+      // Catalog bust: DEFENCE IN DEPTH, not a cached axis — a `draft`/`pending` row is
+      // outside the approved-only catalog query, so this is INERT today. Same reasoning as
+      // the `removed` branch above, including the part about the rule not being uniform.
       await bustAppListingCatalogCache().catch(() => undefined);
 
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
@@ -1595,13 +1598,15 @@ export async function updateListing(opts: {
         await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
       });
-      // Catalog bust: UNIFORM RULE, not a cached axis. The MATERIAL half is staged on a
+      // Catalog bust: DEFENCE IN DEPTH, not a cached axis. The MATERIAL half is staged on a
       // shadow (excluded from the catalog by both the approved-only and `revision_of_id IS
       // NULL` filters), and the beta half writes `isBeta` to the LIVE parent — but the cache
       // holds `{id, sort_key}` only and `isBeta` is a hydrated projection field, so it can
-      // never be served stale. INERT today; kept so the rule stays mechanical. (Note the
-      // asymmetry with `updateRevisionDraft`, which writes the same beta half to the same
-      // live parent and has NO bust — also correct, for the same reason.)
+      // never be served stale. INERT today; kept because it costs one tag delete on a path
+      // that already runs a transaction. 🔴 It is NOT evidence of a uniform rule:
+      // `updateRevisionDraft` writes the SAME beta half to the SAME live parent and has no
+      // bust, and that is equally correct — it is an `EXEMPT` row in
+      // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
       await bustAppListingCatalogCache().catch(() => undefined);
 
       return { listingId, status: listing.status, requiresReview: true, shadowId };
@@ -1905,10 +1910,13 @@ export async function submitListingRevision(opts: {
       changelog,
     },
   });
-  // Catalog bust: UNIFORM RULE — every listing-state mutation busts. Today this writes only
-  // a publish-request row against a `draft` shadow, which the approved-only catalog query
-  // already excludes, so the bust is a no-op. It is here so that the rule is mechanical
-  // rather than a per-branch judgement a future parent write could quietly fall outside of.
+  // Catalog bust: DEFENCE IN DEPTH. Today this writes only a publish-request row against a
+  // `draft` shadow, which the approved-only catalog query already excludes, so the bust is a
+  // no-op. It is kept against a future parent write being added to this path — a judgement
+  // about THIS function, not an instance of a universal rule (see
+  // `bustAppListingCatalogCache`'s header, and the `EXEMPT` list in
+  // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts` for the
+  // writers that correctly do not bust).
   await bustAppListingCatalogCache().catch(() => undefined);
 
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
@@ -3741,8 +3749,12 @@ async function applyApprovedRevision(opts: {
   //     leaves the app in the wrong filtered grid.
   //   · `name` — the `sort='name'` sort key, cached as `sort_key`.
   // The onsite branch is assets-only and touches none of those, but the bust is
-  // unconditional here for the same reason it is unconditional everywhere else: a
-  // per-branch judgement is the thing that goes stale.
+  // unconditional across the two branches of THIS function rather than gated on which
+  // one ran — the gate would be a per-branch judgement inside a function whose branches
+  // already share a return path, and it would save one tag delete on a mod action. That
+  // is a statement about this function, not a universal rule: a number of `AppListing`
+  // writers correctly do not bust at all, enumerated as `EXEMPT` in
+  // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
   //
   // Post-commit and fire-and-forget, matching every sibling site — a cache-bus outage
   // must never fail an approval that has already committed.
@@ -3887,8 +3899,14 @@ export async function rejectExternalRequest(opts: {
       },
     });
   }
-  // Catalog bust: reject deletes the draft, or — for a reset-to-pending, formerly-live
-  // listing — delists it via `closeTerminalListing`. Both are catalog membership changes.
+  // Catalog bust: DEFENCE IN DEPTH, and the justification this comment used to give was
+  // wrong — it said both outcomes are "catalog membership changes". Neither is. Reject
+  // reaches the table only through `closeTerminalListing`, which DELETES a `draft` or
+  // flips `pending`→`removed`; the catalog query is approved-only, so both rows were
+  // already outside it and the bust is INERT today. It is kept because reject is a rare
+  // moderator action and this function is the one most likely to grow a live-parent write
+  // (a revision reject already reads the parent). If `closeTerminalListing` ever gains an
+  // `approved` branch, this becomes load-bearing with no further edit.
   await bustAppListingCatalogCache().catch(() => undefined);
 }
 

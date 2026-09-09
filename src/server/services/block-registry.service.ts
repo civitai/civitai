@@ -3504,9 +3504,15 @@ export class BlockRegistry {
     // `current_version_deployed_at`, via the deploy gate. A bust here was measured inert.
     //
     // If the catalog query ever grows a predicate over an `app_blocks` column this
-    // function writes, add the bust back — and add this function to the ledger in
+    // function writes, add the bust back — and add the row
+    // `'src/server/services/block-registry.service.ts::BlockRegistry::setMarketplaceMeta'`
+    // to `LEDGER` in
     // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`, which
     // is what will fail and make that a deliberate decision rather than an omission.
+    // (That spelling is exact and verified: the ledger's attributor names class methods
+    // `Class::method`. An earlier version of it was anchored at column 0 and reported an
+    // added bust here as an unrelated top-level helper, which made this instruction
+    // unfollowable.)
 
     return {
       appBlockId: updated.id,

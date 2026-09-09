@@ -978,13 +978,15 @@ export async function claimListing(opts: {
     }
   });
 
-  // Catalog bust: kept for the UNIFORM RULE (every listing-state mutation busts), not for a
-  // cached axis — stated honestly so nobody later reasons from a wrong premise. Claim moves
-  // `userId`, and the creator chip that renders from it is hydrated LIVE; the cache holds
-  // `{id, sort_key}` only, and no sort or filter here keys on ownership. So this bust is
-  // currently INERT. It costs one tag delete on a rare mod action and it means the rule is
-  // mechanical rather than a per-branch judgement a future ownership-aware sort could
-  // quietly fall outside of.
+  // Catalog bust: DEFENCE IN DEPTH, not a cached axis — stated honestly so nobody later
+  // reasons from a wrong premise. Claim moves `userId`, and the creator chip that renders
+  // from it is hydrated LIVE; the cache holds `{id, sort_key}` only, and no sort or filter
+  // here keys on ownership. So this bust is currently INERT. It is kept because it costs one
+  // tag delete on a rare mod action and a future ownership-aware sort would need it.
+  // 🔴 NOT an instance of "every listing-state mutation busts" — that rule was invoked here
+  // and it is false. `acceptTransfer` (`app-ownership-transfer.service`) moves the SAME
+  // `userId` column and correctly does NOT bust; it is an `EXEMPT` row in
+  // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
   await bustAppListingCatalogCache().catch(() => undefined);
 
   return { appListingId: input.appListingId, userId: input.targetUserId };

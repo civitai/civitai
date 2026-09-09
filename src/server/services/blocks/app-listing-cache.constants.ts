@@ -27,10 +27,26 @@
 
 /**
  * The unified `/apps` store CATALOG page cache (`listAvailableListings`'s keyset
- * query). Busted by every mutation that can change catalog MEMBERSHIP (approve,
- * delist, relist, claim, purge, reset-to-pending, unpublish, republish, reject) or
- * the CARD CONTENT / FILTER AXES the cached page carries (name, tagline, category,
- * icon/cover/screenshot, content rating, and the onsite deploy gate).
+ * query).
+ *
+ * 🔴 WHAT IS ACTUALLY CACHED IS `{ id, sort_key }` PER ROW — NOTHING ELSE. Read that
+ * before deciding whether a new mutation needs a bust, because the intuitive model
+ * ("the cache holds the card") is wrong and gives the wrong answer in both directions.
+ * The card's projection fields — tagline, description, icon/cover/screenshot URLs, the
+ * owner chip, the beta badge — are hydrated by a LIVE query below the cache on every
+ * request, so they can never be served stale and a write that touches only those needs
+ * no bust.
+ *
+ * A bust is needed when a write moves something the CACHED STATEMENT itself reads:
+ *   · catalog MEMBERSHIP — `al.status` (approved-only), `al.kind`, `al.revision_of_id`,
+ *     and `ab.current_version_deployed_at` (the onsite deploy gate);
+ *   · a FILTER axis — `al.category`, `al.content_rating` (the maturity gate);
+ *   · a `sort_key` input — `al.name`, `al.created_at`, or the `app_listing_metrics`
+ *     rollup.
+ *
+ * The asserted, mechanical form of that rule — every `AppListing` writer either busts
+ * or is on an `EXEMPT` list with a reason — lives in
+ * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`.
  */
 export const APP_LISTING_CATALOG_TAG = 'app-listing:catalog';
 
