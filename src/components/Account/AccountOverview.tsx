@@ -79,7 +79,7 @@ export function AccountOverview() {
   const features = useFeatureFlags();
   const { data: buzz } = useQueryBuzz();
   const { data: strikeSummary } = trpc.strike.getMyStrikeSummary.useQuery(undefined, {
-    enabled: !!currentUser && features.strikes,
+    enabled: !!currentUser && !!features.strikes,
   });
   // Equipped cosmetics aren't on the session user, so the nameplate and badge need the profile.
   const { data: profile } = trpc.userProfile.get.useQuery(
