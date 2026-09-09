@@ -227,9 +227,13 @@
   }
 
   // Keep training: continue from the recommended checkpoint with more epochs (same dataset + settings),
-  // landing on the new run. `publishTarget` is the latest checkpoint that has downloadable weights. This
-  // SPENDS Buzz, so it's priced (a whatif quote) and gated behind an explicit confirm — matching the Review
-  // step's "nothing charges until you confirm" contract.
+  // landing on the new run. Priced via a whatif and gated behind an explicit confirm (fail-safe: no charge).
+  // DISABLED for now: the orchestrator requires `continueFrom` to be a civitai LoRA ModelVersion AIR
+  // (urn:air:…:lora:civitai:<modelId>@<versionId>), which this DB-less app can't produce for an
+  // orchestrator-only epoch — a blob AIR is rejected ("continueFrom must reference a LoRA resource"). The
+  // full priced/confirm flow + server endpoints stay wired; flip this on once a blob→LoRA AIR path exists
+  // (or route it through publish, which mints the ModelVersion). See continueTraining in lib/server/train.ts.
+  const KEEP_TRAINING_ENABLED = false;
   let furtherEpochs = $state(5);
   let confirming = $state(false);
   let continuing = $state(false);
@@ -240,7 +244,7 @@
   // Re-quote when the epoch count changes (debounced) so the confirm always shows the current price.
   $effect(() => {
     const epochs = Number(furtherEpochs) || 0;
-    if (!browser || !publishTarget || epochs < 1) {
+    if (!browser || !KEEP_TRAINING_ENABLED || !publishTarget || epochs < 1) {
       quote = null;
       return;
     }
@@ -626,7 +630,7 @@
       {/if}
     {/if}
 
-    {#if publishTarget}
+    {#if publishTarget && KEEP_TRAINING_ENABLED}
       <div id="train-further" class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <div class="flex flex-wrap items-center gap-3">
           <div class="min-w-0">

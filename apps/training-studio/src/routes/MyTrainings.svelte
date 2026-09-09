@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { IconAlertTriangle, IconPlus } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { remixFromRun } from '$lib/reuse';
@@ -119,15 +118,6 @@
         </div>
 
         <div class="relative z-[2] mt-auto flex flex-wrap gap-2 px-3.5 pb-3.5">
-          {#if r.state === 'ready'}
-            <Button
-              variant="outline"
-              size="sm"
-              onclick={() => r.workflowId && goto(`/${r.workflowId}#train-further`)}
-            >
-              Train further
-            </Button>
-          {/if}
           {#if r.state !== 'failed'}
             <Button
               variant="outline"
