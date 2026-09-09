@@ -41,36 +41,56 @@ export const rewardsAbusePrevention = createJob(
       )
     );
 
-    const matched = buildTypePredicate(abuseLimits);
+    const typePredicate = buildTypePredicate(abuseLimits);
+    const persistence = buildPersistenceGate(abuseLimits, typePredicate);
+    const matched = persistence.condition
+      ? `${typePredicate} AND ${persistence.condition}`
+      : typePredicate;
     const excludedIps = abuseLimits.excludedIps.map((ip) => `'${ip}'`);
-    const clusterCeiling =
-      abuseLimits.max_user_count !== undefined
-        ? `AND user_count <= ${abuseLimits.max_user_count}`
-        : '';
 
-    // Exclusivity has to count the users the type filter would have hidden, which costs a
-    // whole-day scan — so it moves the filter out of the WHERE only when it is switched on.
+    // Both non-default branches keep a filter out of the WHERE so `ip_user_count` can see the
+    // users it would have hidden, which costs a whole-day scan — hence only when one is on.
     //
-    // Exact, not `uniq`: the having-clause compares these two counts for EQUALITY, and an
-    // equality between two HyperLogLog estimates is unstable on exactly the boundary the test
-    // lives on.
+    // `uniqExact` in the exclusivity branch only: its having-clause compares the two counts for
+    // EQUALITY, and that is unstable between two HyperLogLog estimates.
+    //
+    // `user_ids` drives the disable write, so it is gated in every branch rather than relying on
+    // the exclusivity equality to make the two sets coincide.
+    //
+    // `max_user_count` is the one threshold that is an UPPER bound, so it has to read a count the
+    // persistence gate cannot shrink: gating the column the ceiling compares lets an IP too large
+    // to be a farm slip under it.
     const exclusivity = abuseLimits.require_exclusive_ip
       ? {
           where: '',
-          select: `uniqExactIf(be.toUserId, ${matched}) as user_count, uniqExact(be.toUserId) as ip_user_count, sumIf(awardAmount, ${matched}) as awarded`,
+          select: `uniqExactIf(be.toUserId, ${matched}) as user_count, uniqExact(be.toUserId) as ip_user_count, sumIf(awardAmount, ${matched}) as awarded, groupUniqArrayIf(be.toUserId, ${matched}) as user_ids`,
           having: 'AND ip_user_count = user_count',
+          ceiling: 'ip_user_count',
+        }
+      : persistence.condition
+      ? {
+          where: `AND ${typePredicate}`,
+          select: `uniqIf(be.toUserId, ${persistence.condition}) as user_count, uniq(be.toUserId) as ip_user_count, sumIf(awardAmount, ${persistence.condition}) as awarded, groupUniqArrayIf(be.toUserId, ${persistence.condition}) as user_ids`,
+          having: '',
+          ceiling: 'ip_user_count',
         }
       : {
           where: `AND ${matched}`,
-          select: `uniq(be.toUserId) as user_count, sum(awardAmount) as awarded`,
+          select: `uniq(be.toUserId) as user_count, sum(awardAmount) as awarded, array_agg(distinct be.toUserId) as user_ids`,
           having: '',
+          ceiling: 'user_count',
         };
 
+    const clusterCeiling =
+      abuseLimits.max_user_count !== undefined
+        ? `AND ${exclusivity.ceiling} <= ${abuseLimits.max_user_count}`
+        : '';
+
     const abusers = await clickhouse?.$query<Abuser>(`
+      ${persistence.cte}
       SELECT
         ip,
-        ${exclusivity.select},
-        array_agg(distinct be.toUserId) as user_ids
+        ${exclusivity.select}
       FROM buzzEvents be
       WHERE createdDate > subtractDays(now(), 1)
       AND time > subtractDays(now(), ${DATE_BOUND_SLACK_DAYS})
@@ -93,6 +113,7 @@ export const rewardsAbusePrevention = createJob(
     // nobody is otherwise indistinguishable from a run that found nothing.
     const found = {
       dryRun: abuseLimits.dryRun,
+      minCapDays: abuseLimits.min_cap_days,
       wouldDisable: new Set(usersToDisable).size,
       ipsFlagged: abusers?.length ?? 0,
       sample:
@@ -237,6 +258,42 @@ async function logDecisions({
   }
 }
 
+/**
+ * Sharing an IP says nothing about the person: a household reproduces the cluster shape exactly.
+ * This asks the separate question — does this ACCOUNT peg its own daily cap habitually — and
+ * every account has its own cap, so the IP's total cannot answer it.
+ *
+ *
+ * A cap-day compares the day against the account's OWN ceiling, both sides multiplied: a member
+ * on a 1.5x multiplier is capped at 150, so being paid 100 is not a cap-day. `awardAmount` carries
+ * the base award except on the one grant a day the cap trims, which stores the multiplied value
+ * and neutralises `multiplier` to 1.
+ */
+function buildPersistenceGate(abuseLimits: AbuseLimits, typePredicate: string) {
+  const { cap_days_window: window, cap_day_awarded: cap, min_cap_days: minCapDays } = abuseLimits;
+  if (!minCapDays || cap === undefined) return { cte: '', condition: '' };
+
+  return {
+    cte: `WITH persistent_earners AS (
+        SELECT toUserId AS uid
+        FROM (
+          SELECT be.toUserId AS toUserId, be.createdDate AS day,
+            sum(if(be.multiplier = 1, be.awardAmount, ceil(be.awardAmount * be.multiplier))) AS day_awarded,
+            ceil(${cap} * max(be.multiplier)) AS day_cap
+          FROM buzzEvents be
+          WHERE createdDate > subtractDays(now(), ${window})
+          AND time > subtractDays(now(), ${window + DATE_BOUND_SLACK_DAYS})
+          AND ${typePredicate}
+          AND awardAmount > 0
+          GROUP BY toUserId, day
+        )
+        GROUP BY uid
+        HAVING countIf(day_awarded >= day_cap) >= ${minCapDays}
+      )`,
+    condition: 'be.toUserId IN (SELECT uid FROM persistent_earners)',
+  };
+}
+
 // `encouragement` writes one buzzEvent type per entity kind (`encouragement:image`,
 // `:comment`, `:article`, …), so an exact-match list silently stops covering the family
 // the next time an entity kind is added.
@@ -265,16 +322,33 @@ const sqlSafeToken = z
   .string()
   .regex(/^[A-Za-z0-9_:.-]*$/, 'must not contain SQL-significant characters');
 
-const abuseLimitsSchema = z.object({
-  awarded: z.number().default(3000),
-  user_count: z.number().default(10),
-  max_user_count: z.number().optional(),
-  require_exclusive_ip: z.boolean().default(false),
-  dryRun: z.boolean().default(false),
-  excludedIps: sqlSafeToken.array().default(['1.1.1.1', '']), // "10.124.0.14","10.124.0.17","10.124.0.32","10.124.0.70","10.124.0.84","10.124.0.94"
-  award_types: sqlSafeToken.array().default(['dailyBoost']),
-  award_type_prefixes: sqlSafeToken.array().default([]),
-  user_conditions: z.string().array().optional(),
-});
+const abuseLimitsSchema = z
+  .object({
+    awarded: z.number().default(3000),
+    user_count: z.number().default(10),
+    max_user_count: z.number().optional(),
+    require_exclusive_ip: z.boolean().default(false),
+    dryRun: z.boolean().default(false),
+    excludedIps: sqlSafeToken.array().default(['1.1.1.1', '']), // "10.124.0.14","10.124.0.17","10.124.0.32","10.124.0.70","10.124.0.84","10.124.0.94"
+    award_types: sqlSafeToken.array().default(['dailyBoost']),
+    award_type_prefixes: sqlSafeToken.array().default([]),
+    min_cap_days: z.number().int().nonnegative().default(0),
+    // Bounded so a mistyped window fails validation rather than the nightly run; past ~90 days
+    // the aggregate outruns the page cache.
+    cap_days_window: z.number().int().positive().max(365).default(30),
+    // No default on purpose: `award_types` defaults to dailyBoost, capped at 25, so a borrowed
+    // 100 builds a gate nobody passes and reports it as a quiet night. The enforced cap is in
+    // `rewards:config`.
+    cap_day_awarded: z.number().int().positive().optional(),
+    user_conditions: z.string().array().optional(),
+  })
+  .superRefine((limits, ctx) => {
+    if (limits.min_cap_days > 0 && limits.cap_day_awarded === undefined)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['cap_day_awarded'],
+        message: 'cap_day_awarded is required when min_cap_days is set',
+      });
+  });
 
 type AbuseLimits = z.infer<typeof abuseLimitsSchema>;

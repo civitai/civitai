@@ -77,6 +77,7 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
     expect(chQuery).toHaveBeenCalledTimes(1); // detection query ran
     expect(result).toEqual({
       dryRun: false,
+      minCapDays: 0,
       usersDisabled: 0,
       wouldDisable: 0,
       ipsFlagged: 0,
@@ -92,6 +93,7 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
     expect(chQuery).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       dryRun: false,
+      minCapDays: 0,
       usersDisabled: 0,
       wouldDisable: 0,
       ipsFlagged: 0,
@@ -121,6 +123,10 @@ describe('rewards-abuse-prevention — sysRedis config read (STEP-3 soft-depende
 });
 
 const sqlOf = () => (chQuery.mock.calls[0]?.[0] as string) ?? '';
+// The outer query's own WHERE. Asserting the gate's ABSENCE here is what forbids the placement
+// that lets the cluster-size ceiling read a count the gate has already shrunk.
+const outerWhereOf = (sql: string) =>
+  sql.slice(sql.lastIndexOf('WHERE createdDate'), sql.indexOf('GROUP BY ip'));
 type DryRunReport = {
   dryRun: boolean;
   usersDisabled: number;
@@ -386,5 +392,202 @@ describe('rewards-abuse-prevention — decision log', () => {
 
     expect(chInsert).toHaveBeenCalledTimes(1);
     expect(logToAxiom).not.toHaveBeenCalled();
+  });
+});
+
+describe('rewards-abuse-prevention — per-account persistence gate', () => {
+  const prefixConfig = {
+    require_exclusive_ip: true,
+    award_types: [],
+    award_type_prefixes: ['encouragement:'],
+    cap_day_awarded: 100,
+  };
+
+  it('adds nothing at all when min_cap_days is absent', async () => {
+    await runWith(prefixConfig);
+
+    expect(sqlOf()).not.toContain('persistent_earners');
+  });
+
+  it('CONTROL: the same config with min_cap_days set does add it', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10 });
+
+    expect(sqlOf()).toContain('persistent_earners');
+  });
+
+  it('counts a cap-day per user-day over the configured window', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10 });
+
+    const sql = sqlOf();
+    expect(sql).toContain('GROUP BY toUserId, day');
+    expect(sql).toContain('HAVING countIf(day_awarded >= day_cap) >= 10');
+    expect(sql).toContain('createdDate > subtractDays(now(), 30)');
+  });
+
+  it('bounds the wider window on the partition key as well as on createdDate', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10, cap_days_window: 14 });
+
+    const sql = sqlOf();
+    expect(sql).toContain('createdDate > subtractDays(now(), 14)');
+    // Why wider than the window: see DATE_BOUND_SLACK_DAYS.
+    expect(sql).toContain('time > subtractDays(now(), 17)');
+  });
+
+  it('takes the cap amount from config rather than assuming the encouragement cap', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 3, cap_day_awarded: 250 });
+
+    expect(sqlOf()).toContain('ceil(250 * max(be.multiplier)) AS day_cap');
+  });
+
+  it('measures cap-days on the same award types the clustering matches', async () => {
+    await runWith({
+      require_exclusive_ip: true,
+      award_types: ['dailyBoost'],
+      award_type_prefixes: [],
+      min_cap_days: 10,
+      cap_day_awarded: 25,
+    });
+
+    // Between the CTE header and its HAVING is the CTE's own WHERE: the type predicate has to
+    // be there, or cap-days are counted over every reward the account earns.
+    expect(sqlOf()).toMatch(
+      /persistent_earners[\s\S]*be\.type IN \('dailyBoost'\)[\s\S]*HAVING countIf/
+    );
+  });
+
+  it('CONTROL: the same parity holds for a prefix family, not just an exact list', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10 });
+
+    const sql = sqlOf();
+    expect(sql).toMatch(
+      /persistent_earners[\s\S]*startsWith\(be\.type, 'encouragement:'\)[\s\S]*HAVING countIf/
+    );
+    // A CTE that hardcoded a type list would satisfy the dailyBoost test above and nothing else.
+    expect(sql).not.toContain('be.type IN (');
+    // Capped grants store an awardAmount of 0; counting them would make a cap-day out of a day
+    // the account spent entirely refused.
+    expect(sql).toMatch(/persistent_earners[\s\S]*AND awardAmount > 0[\s\S]*HAVING countIf/);
+  });
+
+  it('gates the counted users but NOT the IP total, so a mixed household loses exclusivity', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10 });
+
+    const sql = sqlOf();
+    expect(sql).toContain(
+      "uniqExactIf(be.toUserId, startsWith(be.type, 'encouragement:') AND be.toUserId IN (SELECT uid FROM persistent_earners)) as user_count"
+    );
+    // Unfiltered on purpose: `ip_user_count` has to keep counting the casual earners, or the
+    // household is reduced to its one persistent user and passes exclusivity instead of failing it.
+    expect(sql).toContain('uniqExact(be.toUserId) as ip_user_count');
+    expect(sql).toContain('AND ip_user_count = user_count');
+    expect(sql).toContain(
+      "sumIf(awardAmount, startsWith(be.type, 'encouragement:') AND be.toUserId IN (SELECT uid FROM persistent_earners)) as awarded"
+    );
+    // The disable list, gated in its own right: without this it is every account that touched the
+    // IP, correct only for as long as the equality above survives.
+    expect(sql).toContain(
+      "groupUniqArrayIf(be.toUserId, startsWith(be.type, 'encouragement:') AND be.toUserId IN (SELECT uid FROM persistent_earners)) as user_ids"
+    );
+    expect(outerWhereOf(sql)).not.toContain('persistent_earners');
+  });
+
+  it('keeps the gate out of the WHERE with exclusivity off too, so the ceiling has a count to read', async () => {
+    await runWith({ ...prefixConfig, require_exclusive_ip: false, min_cap_days: 10 });
+
+    const sql = sqlOf();
+    expect(sql).toContain(
+      'uniqIf(be.toUserId, be.toUserId IN (SELECT uid FROM persistent_earners)) as user_count'
+    );
+    expect(sql).toContain('uniq(be.toUserId) as ip_user_count');
+    // The disable list has to be the gated users, not everyone the WHERE let through.
+    expect(sql).toContain(
+      'groupUniqArrayIf(be.toUserId, be.toUserId IN (SELECT uid FROM persistent_earners)) as user_ids'
+    );
+    // The aggregates here take the bare gate, so this branch's award-type filtering exists only
+    // in the WHERE: without it `awarded` sums every reward the persistent users earned.
+    expect(outerWhereOf(sql)).toContain("startsWith(be.type, 'encouragement:')");
+    expect(sql).toContain(
+      'sumIf(awardAmount, be.toUserId IN (SELECT uid FROM persistent_earners)) as awarded'
+    );
+  });
+
+  it('compares the cluster ceiling against a count the gate cannot shrink', async () => {
+    await runWith({
+      ...prefixConfig,
+      require_exclusive_ip: false,
+      min_cap_days: 10,
+      max_user_count: 5,
+    });
+
+    // `user_count` is gated, so an IP too large to be a farm would drop under the ceiling and be
+    // flagged for the first time — the one threshold the gate can LOOSEN rather than tighten.
+    expect(sqlOf()).toContain('AND ip_user_count <= 5');
+    expect(sqlOf()).not.toContain('AND user_count <= 5');
+  });
+
+  it('compares the ceiling against the ungated count with exclusivity ON as well', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10, max_user_count: 5 });
+
+    // Equivalent today, because `ip_user_count = user_count` cannot flip false to true when only
+    // `user_count` shrinks. Pinned so that relaxing that equality does not silently re-open the
+    // ceiling the other branch's fix closed.
+    expect(sqlOf()).toContain('AND ip_user_count <= 5');
+  });
+
+  it('CONTROL: ungated, the ceiling still reads the matched count it always did', async () => {
+    await runWith({ require_exclusive_ip: false, award_types: ['dailyBoost'], max_user_count: 5 });
+
+    expect(sqlOf()).toContain('AND user_count <= 5');
+  });
+
+  it('measures the day against the account own multiplied ceiling, not a flat amount', async () => {
+    await runWith({ ...prefixConfig, min_cap_days: 10 });
+
+    const sql = sqlOf();
+    // A member on a 1.5x multiplier is capped at 150, so 100 paid is not a cap-day. The trimmed
+    // grant stores an already-multiplied amount with `multiplier` neutralised to 1.
+    expect(sql).toContain(
+      'sum(if(be.multiplier = 1, be.awardAmount, ceil(be.awardAmount * be.multiplier))) AS day_awarded'
+    );
+    expect(sql).toContain('ceil(100 * max(be.multiplier)) AS day_cap');
+  });
+
+  it('refuses a threshold with no cap to measure it against', async () => {
+    hGet.mockResolvedValue(
+      JSON.stringify({
+        require_exclusive_ip: true,
+        award_types: [],
+        award_type_prefixes: ['encouragement:'],
+        min_cap_days: 10,
+      })
+    );
+
+    await expect(rewardsAbusePrevention.run().result).rejects.toThrow(/cap_day_awarded/);
+    expect(chQuery).not.toHaveBeenCalled();
+  });
+
+  it('refuses a window wide enough to fail the run on a query timeout', async () => {
+    hGet.mockResolvedValue(
+      JSON.stringify({ ...prefixConfig, min_cap_days: 10, cap_days_window: 3650 })
+    );
+
+    // Named, so an unrelated validation error cannot stand in for this guard.
+    await expect(rewardsAbusePrevention.run().result).rejects.toThrow(/cap_days_window/);
+    expect(chQuery).not.toHaveBeenCalled();
+  });
+
+  it('reports the threshold it ran at, so a quiet run can be told from an ungated one', async () => {
+    chQuery.mockResolvedValue([]);
+
+    const result = await runWith({ ...prefixConfig, min_cap_days: 10, dryRun: true });
+
+    expect(result).toMatchObject({ minCapDays: 10 });
+  });
+
+  it('rejects a negative threshold rather than emitting a having-clause nothing can fail', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ ...prefixConfig, min_cap_days: -1 }));
+
+    await expect(rewardsAbusePrevention.run().result).rejects.toThrow();
+    expect(chQuery).not.toHaveBeenCalled();
   });
 });
