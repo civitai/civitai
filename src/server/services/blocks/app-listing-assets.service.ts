@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -1266,6 +1267,13 @@ export async function setListingIcon(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
+  // Catalog bust: the card's `iconUrl` moved. AND the tx may have RAISED `content_rating`
+  // via `reDeriveContentRatingForModLiveEdit` — the `listingMatureFilter` axis the cached
+  // page is keyed on. That helper runs INSIDE the transaction, so its bust belongs here,
+  // post-commit, at each of its three callers: a bust fired inside the tx would also fire
+  // on a rollback.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { status: 'attached', iconId: validated.imageId, scanPending: validated.scanPending };
 }
 
@@ -1288,6 +1296,10 @@ export async function setListingCover(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
+  // Catalog bust: the card's `coverUrl`, plus the same in-tx `content_rating` re-derive as
+  // the icon path above.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { status: 'attached', coverId: validated.imageId, scanPending: validated.scanPending };
 }
 
@@ -1341,6 +1353,10 @@ export async function addListingScreenshot(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
+  // Catalog bust: a screenshot can RAISE `content_rating` via the same in-tx re-derive,
+  // flipping the maturity gate the cached page is keyed on.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { status: 'attached', id, order: nextOrder, scanPending };
 }
 

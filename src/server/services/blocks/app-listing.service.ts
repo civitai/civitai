@@ -35,7 +35,14 @@ import {
   readListingBetaManyForRender,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
-import { queryCache } from '~/server/utils/cache-helpers';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+// The cache TAG NAMES live in a dependency-free LEAF module, never here — a router
+// that must `await import()` this service cannot name a constant exported from it
+// without making that lazy import graph-inert. See that module's header.
+import {
+  APP_LISTING_CATALOG_TAG,
+  APP_LISTING_RECOMMEND_MEAN_TAG,
+} from '~/server/services/blocks/app-listing-cache.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -708,9 +715,60 @@ export async function getGlobalRecommendMean(): Promise<number> {
       WHERE al.status = 'approved'
         AND (m.thumbs_up_count + m.thumbs_down_count) > 0
     `,
-    { ttl: CacheTTL.hour, tag: ['app-listing:recommend-global-mean'] }
+    { ttl: CacheTTL.hour, tag: [APP_LISTING_RECOMMEND_MEAN_TAG] }
   );
   return rows[0]?.mean ?? DEFAULT_RECOMMEND_MEAN;
+}
+
+// ---------------------------------------------------------------------------
+// The unified store CATALOG cache (`listAvailableListings`) + its ONE buster.
+// ---------------------------------------------------------------------------
+
+/**
+ * The read-through cache for the `/apps` store's keyset id page.
+ *
+ * 🔴 WHY `queryCache` + A BUST TAG, AND NOT THE ALTERNATIVES.
+ *
+ * · **The key is `hashifyObject(Prisma.Sql)`** — `queryCache` builds it as
+ *   `[key, version, hashifyObject(query)].join(':')` over the WHOLE statement,
+ *   text and bound params (`~/server/utils/cache-helpers`). Every axis this page
+ *   varies on — `kind`, `category`, `sort`, `cursor`, `limit`, the maturity gate
+ *   `listingMatureFilter(redCapable)` and the store-scope gate
+ *   `listingPublicVisibilityFilter(scope)` — is interpolated into that ONE
+ *   statement, so **each is in the cache key BY CONSTRUCTION**. A hand-assembled
+ *   key is a list someone has to keep complete; this one cannot omit an axis,
+ *   because omitting it would mean the SQL did not depend on it either. That
+ *   structural property is what makes it safe to cache a page whose contents are
+ *   VIEWER-VARYING: `scope` (a public/onsite security boundary) and `redCapable`
+ *   (a maturity gate) can never collide into one entry.
+ *   `__tests__/app-listing.catalog-cache.test.ts` pins exactly that.
+ *
+ * · **NOT `fetchThroughCache`** — it takes no `tag` option, so `bustCacheTag`
+ *   cannot drive it and a moderator's approve/delist would not be visible until
+ *   the TTL expired.
+ *
+ * · **NOT `clearCacheByPattern`** — banned for bust-on-mutation; see that
+ *   function's own header. A prior use ran a cluster SCAN over a ~60M-key shard,
+ *   producing redis timeouts and 504 waves, and was reverted.
+ *
+ * · **NOT a generation counter** — a counter folded into the key leaves the old
+ *   entries in redis to expire on their own, so a bust multiplies the keyspace
+ *   instead of reclaiming it. The tag set holds the exact keys to delete.
+ */
+const listAvailableListingsCache = queryCache(dbRead, 'listAvailableAppListings', 'v1');
+
+/**
+ * Bust the `/apps` store catalog cache. THE one buster — every listing-state
+ * mutation calls this and nothing else.
+ *
+ * Fire-and-forget by the caller's convention (mirrors `bustRecommendMeanCache` in
+ * `app-listing-review.service`): a cache-bus outage must never fail the mutation
+ * that already committed. The worst case of a swallowed failure is a stale store
+ * grid for at most `CacheTTL.sm`; the worst case of a thrown one is a moderator
+ * action that reports failure after having succeeded.
+ */
+export async function bustAppListingCatalogCache(): Promise<void> {
+  await bustCacheTag([APP_LISTING_CATALOG_TAG]);
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +814,21 @@ export async function listAvailableListings(
   const kindParam = kind === 'all' ? null : kind;
   const categoryParam = category ?? null;
 
-  const idRows = await dbRead.$queryRaw<{ id: string; sort_key: string }[]>(Prisma.sql`
+  // 🔴 CACHED. Only the keyset ID PAGE is cached — the hydration below stays a live
+  // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
+  // a card's mutable projection fields are never served from two different ages.
+  // `nextCursor` is derived from these (now cached) rows, same as there.
+  //
+  // TTL = `CacheTTL.sm` (180s). The catalog is MOD-GATED and low-churn: rows enter and
+  // leave only through moderator approve/delist/reject/purge or an owner
+  // unpublish/republish, and EVERY one of those paths calls
+  // `bustAppListingCatalogCache()` — so the TTL is not the freshness mechanism, it is
+  // the backstop for the one path that has no mutation to hang a bust on (a redis bus
+  // failure, or a row that ages into visibility). 180s keeps that backstop short enough
+  // that a missed bust is a blip rather than an outage, while still collapsing the
+  // burst of identical cold reads that a `/apps` page load produces.
+  const idRows = await listAvailableListingsCache<{ id: string; sort_key: string }[]>(
+    Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
@@ -786,7 +858,9 @@ export async function listAvailableListings(
       )
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
-  `);
+  `,
+    { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+  );
 
   const trimmed = idRows.slice(0, limit);
   const last = trimmed[trimmed.length - 1];

@@ -5,6 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
   listingAssetTooLargeReason,
   MAX_LISTING_ASSET_SIZE_BYTES,
@@ -1504,6 +1505,9 @@ export async function updateListing(opts: {
       // the `approved` trivial-only branch makes.
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
+      // Catalog bust: an in-place edit of card fields (tagline / description / category).
+      await bustAppListingCatalogCache().catch(() => undefined);
+
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
     }
     case 'rejected':
@@ -1519,6 +1523,9 @@ export async function updateListing(opts: {
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
       const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
+      // Catalog bust: an in-place edit of card fields (tagline / description / category).
+      await bustAppListingCatalogCache().catch(() => undefined);
+
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
     }
     case 'approved': {
@@ -1535,6 +1542,9 @@ export async function updateListing(opts: {
         // false), so writing it is a harmless no-op.
         const data = buildListingPatchData(effectivePatch, patchOpts);
         await dbWrite.appListing.update({ where: { id: listingId }, data });
+        // Catalog bust: a trivial in-place edit of a LIVE listing — card fields move.
+        await bustAppListingCatalogCache().catch(() => undefined);
+
         return { listingId, status: listing.status, requiresReview: false, shadowId: null };
       }
       // MATERIAL change → stage on a shadow. The parent stays LIVE untouched; the
@@ -1576,6 +1586,10 @@ export async function updateListing(opts: {
         await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
         if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
       });
+      // Catalog bust: the MATERIAL half is staged on a shadow, but the beta half writes to
+      // the LIVE parent — and `isBeta` is a card field.
+      await bustAppListingCatalogCache().catch(() => undefined);
+
       return { listingId, status: listing.status, requiresReview: true, shadowId };
     }
     default:
@@ -1877,6 +1891,12 @@ export async function submitListingRevision(opts: {
       changelog,
     },
   });
+  // Catalog bust: UNIFORM RULE — every listing-state mutation busts. Today this writes only
+  // a publish-request row against a `draft` shadow, which the approved-only catalog query
+  // already excludes, so the bust is a no-op. It is here so that the rule is mechanical
+  // rather than a per-branch judgement a future parent write could quietly fall outside of.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { publishRequestId, shadowId, slug: shadow.revisionOf.slug };
 }
 
@@ -3363,6 +3383,9 @@ export async function approveExternalRequest(opts: {
     details: { slug: listing.slug, name: listing.name, listingId: appListingId, reason: null },
   });
 
+  // Catalog bust: approve puts the listing INTO the store catalog.
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return { publishRequestId, listingId: appListingId, slug: request.slug };
 }
 
@@ -3829,6 +3852,9 @@ export async function rejectExternalRequest(opts: {
       },
     });
   }
+  // Catalog bust: reject deletes the draft, or — for a reset-to-pending, formerly-live
+  // listing — delists it via `closeTerminalListing`. Both are catalog membership changes.
+  await bustAppListingCatalogCache().catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------

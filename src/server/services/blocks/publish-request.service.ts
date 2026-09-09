@@ -3336,6 +3336,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
+  // Catalog bust: an onsite approve mints/flips the AppListing to `approved`, i.e. it
+  // puts the app INTO the store catalog.
+  //
+  // 🔴 LAZY IMPORT, DELIBERATELY. This module keeps `~/server/db/client` and `~/env/server`
+  // out of its STATIC graph on purpose (see the import header, and its own
+  // `await import('~/server/db/client')` at the top of this function) so the pure-helper
+  // suites can load it without Prisma. `app-listing.service` imports both statically, so a
+  // top-level import here would quietly undo that.
+  const { bustAppListingCatalogCache } = await import(
+    '~/server/services/blocks/app-listing.service'
+  );
+  await bustAppListingCatalogCache().catch(() => undefined);
+
   return {
     publishRequestId: request.id,
     appBlockId,

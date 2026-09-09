@@ -4,6 +4,7 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
@@ -323,7 +324,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // window. A replayed success callback short-circuits here before triggering
   // another apply Job or touching commit status.
   if (!(await markApplyTriggered(body.appBlockId, body.sha))) {
-    res.status(200).json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
+    res
+      .status(200)
+      .json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
     return;
   }
 
@@ -413,6 +416,13 @@ async function watchApplyJobAndRecord(args: {
         where: { id: args.appBlockId },
         data: { currentVersionDeployedAt: new Date() },
       });
+      // 🔴 Catalog bust: `currentVersionDeployedAt` IS the onsite DEPLOY GATE in
+      // `listAvailableListings` (`al.kind <> 'onsite' OR ab.current_version_deployed_at IS
+      // NOT NULL`). This is the ONE non-tRPC writer of it, so without a bust here a
+      // freshly-deployed onsite app stays INVISIBLE in the store for the whole TTL —
+      // the deploy succeeds and the app simply is not there.
+      await bustAppListingCatalogCache().catch(() => undefined);
+
       await markRequestDeployState(args.slug, args.sha, 'live');
       await safe(setCommitStatus, {
         slug: args.slug,

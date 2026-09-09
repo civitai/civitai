@@ -334,4 +334,45 @@ describe('🔴 a sort change re-orders the store without emptying it', () => {
     // component's OTHER options too.
     expect(typeof captured?.getNextPageParam).toBe('function');
   });
+
+  /**
+   * 🔴 THE CLIENT HALF OF THE `/apps` CACHE (#529).
+   *
+   * The server now caches this query's keyset page for 180s (`CacheTTL.sm`) behind the
+   * `app-listing:catalog` bust tag. The client half is a `staleTime`: without one,
+   * react-query's default is ZERO, so every remount and every window refocus refetches
+   * a catalog that has not moved — and `/apps` is a page viewers leave and come
+   * straight back to.
+   *
+   * Asserted HERE, through the same capture as `placeholderData` above, for the same
+   * reason: every sibling spec mocks the query with a literal-returning function, so
+   * against those this option is inert and a guard would read as coverage while
+   * providing none. This reads the object the COMPONENT passed.
+   *
+   * The bound is asserted, not just presence: the value must be a positive number and
+   * must stay STRICTLY BELOW the server's 180 000 ms TTL, so the client can never be
+   * the longer of the two staleness sources — a client window outliving the server TTL
+   * would make `bustAppListingCatalogCache()` invisible for the difference.
+   */
+  test('the component supplies a staleTime, bounded below the server TTL', async () => {
+    mocks.sort = 'top-rated';
+    mocks.pending = [];
+    mocks.lastOptions = null as Record<string, unknown> | null;
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.poll(() => mocks.lastOptions !== null).toBe(true);
+    const captured: Record<string, unknown> | null = mocks.lastOptions;
+    const staleTime = captured?.staleTime;
+    expect(
+      typeof staleTime,
+      'the store query passes no `staleTime`, so react-query refetches the whole ' +
+        'catalog on every remount and every window refocus (its default is 0). See #529.'
+    ).toBe('number');
+    expect(staleTime as number).toBeGreaterThan(0);
+    expect(
+      staleTime as number,
+      'the client staleTime is >= the server-side TTL (CacheTTL.sm, 180s) on ' +
+        '`listAvailableListings`. A client window longer than the server one makes the ' +
+        'explicit catalog busts invisible for the difference.'
+    ).toBeLessThan(180 * 1000);
+  });
 });

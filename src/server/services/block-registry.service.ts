@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
@@ -3494,6 +3495,9 @@ export class BlockRegistry {
         featuredOrder: true,
       },
     });
+    // Catalog bust: `category` is a FILTER AXIS of the cached page, and a mod sets it here.
+    await bustAppListingCatalogCache().catch(() => undefined);
+
     return {
       appBlockId: updated.id,
       status: updated.status,
