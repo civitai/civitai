@@ -170,15 +170,68 @@ const APP_ROW_LIMIT = 1_000_000;
 // keyed on app_block_id while `kv` rows are keyed per user, so before these
 // existed one account could spend the entire app budget and — because only the
 // owning user may delete their own rows — no other user of the app could ever
-// reclaim it. These are an outlier clamp, not a fair share: a fair share of
+// reclaim it. These are an anti-monopoly clamp, not a fair share: a fair share of
 // 50MB across a popular app's user count lands below a single PER_VALUE_BYTE_CAP
-// write. 1MB is ~16 max-size values or ~1000 typical settings blobs, well past
-// any plausible per-user workload, and it takes 50 distinct accounts rather than
-// one to exhaust the app. Same ratio logic for the rows: 1000 accounts, not one.
-const USER_QUOTA_BYTES = 1024 * 1024;
+// write.
+//
+// SIZED AGAINST THE OBSERVED DISTRIBUTION, not a guess. Measured 2026-09-09 over
+// every provisioned app schema holding a `kv` table, the largest per-user
+// footprint was 0.65 MiB across 49 rows; the next two were 0.47 MiB and 0.30 MiB,
+// and every other account was under 20 KiB. A 1 MiB cap would have put that top
+// account at 65% of its ceiling — 1.5x headroom on a live, growing app, close
+// enough that ordinary continued use would start refusing its writes. 2 MiB gives
+// ~3.1x headroom over the largest thing anyone is actually doing while keeping the
+// property the cap exists for: it still takes 25 distinct accounts, not one, to
+// exhaust the app's 50 MiB.
+//
+// So this is NOT an "outlier clamp" in the sense of a bound no real workload
+// approaches — the top account is within one order of magnitude of it, and that
+// is a recorded decision rather than an oversight. Re-measure before moving the
+// number again; do not re-derive it from this comment.
+//
+// The row cap is the comfortable one: the widest observed user holds 49 rows
+// against 1000, so 1000 accounts rather than one are needed to exhaust
+// APP_ROW_LIMIT and no real workload is anywhere near it.
+const USER_QUOTA_BYTES = 2 * 1024 * 1024;
 const USER_ROW_LIMIT = 1_000;
 
 const STORAGE_LOG = 'app-storage-trpc';
+
+// Postgres `undefined_table`. A LEFT JOIN tolerates a missing ROW; it does not
+// tolerate a missing RELATION, and `user_quota` only exists in schemas that have
+// been through AppStorageProvisioner.provision since it was added.
+const PG_UNDEFINED_TABLE = '42P01';
+
+function isUndefinedTable(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === PG_UNDEFINED_TABLE
+  );
+}
+
+/**
+ * Count an UNEXPECTED fault on a storage procedure.
+ *
+ * Every deliberate refusal on these paths increments its own `outcome`
+ * (`unauthorized` / `not_found` / `quota_exceeded` / `payload_too_large` /
+ * `error`) immediately before throwing a `TRPCError`, so a `TRPCError` arriving
+ * here has already been counted and must not be counted twice. Anything else — a
+ * pool checkout failure, a missing relation, a constraint violation, a Redis
+ * failure inside `resolveStorageContext` — was counted NOWHERE on the read paths
+ * and only INSIDE the write transaction on the two mutations. A fault before
+ * `BEGIN` (the pre-flight quota round trip, say) therefore showed up solely as
+ * the `ok` series falling to zero, with no error series for an alert to fire on.
+ *
+ * The discriminator is the error type, not a flag threaded through the body: a
+ * refusal is always a `TRPCError`, a fault never is. A future `TRPCError` thrown
+ * without its own `.inc` would go uncounted — that is the pre-existing contract
+ * this preserves, and the reason each refusal counts itself at the throw site.
+ */
+function countStorageFault(op: StorageOp, err: unknown): void {
+  if (err instanceof TRPCError) return;
+  appStorageOpsCounter.inc({ op, outcome: 'error' });
+}
 
 // H2: evaluated with the request user's context (`ctx.user`) so the live
 // `moderators`-segmented Flipt flag resolves ON for a moderator and OFF for a
@@ -403,6 +456,9 @@ export const appsStorageRouter = router({
         ).rows;
         appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
         return { value: rows[0]?.value ?? null };
+      } catch (err) {
+        countStorageFault('get', err);
+        throw err;
       } finally {
         stopTimer();
       }
@@ -429,7 +485,7 @@ export const appsStorageRouter = router({
     .mutation(async ({ input }) => {
       const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'set' });
       try {
-      const { userId, schema, appBlockId, blockInstanceId } = await resolveStorageContext(
+      const { userId, slug, schema, appBlockId, blockInstanceId } = await resolveStorageContext(
         input.blockToken,
         'set'
       );
@@ -463,23 +519,67 @@ export const appsStorageRouter = router({
       // JOIN, so the per-user gate below costs no extra query and no SUM() over
       // the writer's rows — the counter is maintained by kv_user_quota_trigger in
       // the same transaction as the write.
-      const quotaRows = (
-        await pool.query<{
-          used_bytes: string;
-          row_count: string;
-          user_used_bytes: string;
-          user_row_count: string;
-        }>(
-          `SELECT q.used_bytes::text, q.row_count::text,
-                  COALESCE(u.used_bytes, 0)::text AS user_used_bytes,
-                  COALESCE(u.row_count, 0)::text  AS user_row_count
-             FROM ${schema}.quota q
-             LEFT JOIN ${schema}.user_quota u
-               ON u.app_block_id = q.app_block_id AND u.user_id = $2
-            WHERE q.app_block_id = $1`,
-          [appBlockId, userId]
-        )
-      ).rows;
+      //
+      // DEPLOY ORDER (why the fallback exists). `user_quota` is created by
+      // AppStorageProvisioner.provision, whose only callers are new-version
+      // approval and the manual admin backfill endpoint — nothing schedules it.
+      // So at deploy this code is serving every already-provisioned app whose
+      // schema predates the table, and a LEFT JOIN against a relation that does
+      // not exist is a hard `42P01`, not a null-filled row: every `set` on every
+      // live app would fail until a human ran the backfill. Attempt the joined
+      // read, and on `42P01` fall back to the app counters alone with the
+      // per-user counters at zero.
+      //
+      // The fallback leaves the per-user gate INERT for that app rather than
+      // failing closed, which is the correct trade: the two app-wide ceilings
+      // above still apply, the pre-existing 64KB per-value cap still applies, and
+      // an app that has not been backfilled is by construction an app that was
+      // running without a per-user cap yesterday. Refusing its writes to enforce a
+      // counter that does not exist would convert a missing upgrade into an
+      // outage. A `42P01` from a missing `quota` still propagates — the fallback
+      // query reads `quota` too, so it raises the same error a second time.
+      type QuotaRow = {
+        used_bytes: string;
+        row_count: string;
+        user_used_bytes: string;
+        user_row_count: string;
+      };
+      let quotaRows: QuotaRow[];
+      let userQuotaTracked = true;
+      try {
+        quotaRows = (
+          await pool.query<QuotaRow>(
+            `SELECT q.used_bytes::text, q.row_count::text,
+                    COALESCE(u.used_bytes, 0)::text AS user_used_bytes,
+                    COALESCE(u.row_count, 0)::text  AS user_row_count
+               FROM ${schema}.quota q
+               LEFT JOIN ${schema}.user_quota u
+                 ON u.app_block_id = q.app_block_id AND u.user_id = $2
+              WHERE q.app_block_id = $1`,
+            [appBlockId, userId]
+          )
+        ).rows;
+      } catch (err) {
+        if (!isUndefinedTable(err)) throw err;
+        userQuotaTracked = false;
+        quotaRows = (
+          await pool.query<QuotaRow>(
+            `SELECT q.used_bytes::text, q.row_count::text,
+                    '0' AS user_used_bytes,
+                    '0' AS user_row_count
+               FROM ${schema}.quota q
+              WHERE q.app_block_id = $1`,
+            [appBlockId]
+          )
+        ).rows;
+        // Loud, because an inert gate that nobody can see is how this ships
+        // twice. One line per write on an un-upgraded app is a small, bounded
+        // population and exactly the signal that says "run the backfill".
+        logToAxiom(
+          { event: 'user_quota_relation_missing', appBlockId, slug },
+          STORAGE_LOG
+        ).catch(() => undefined);
+      }
       const usedBytes = Number(quotaRows[0]?.used_bytes ?? '0');
       const rowCount = Number(quotaRows[0]?.row_count ?? '0');
       const userUsedBytes = Number(quotaRows[0]?.user_used_bytes ?? '0');
@@ -499,9 +599,26 @@ export const appsStorageRouter = router({
       const isInsert = existing.length === 0;
       const netDelta = byteSize - oldSize;
 
-      if (usedBytes + netDelta > APP_QUOTA_BYTES) {
+      // A write that does not grow the stored bytes can never push a counter past
+      // a ceiling, so it must never be refused by one — and refusing it is worse
+      // than pointless, it is a trap with no exit. `usedBytes` and `userUsedBytes`
+      // are what is stored NOW, not a projection: a counter already at or above a
+      // ceiling (a cap lowered under existing data, a pre-existing account, a
+      // counter drifted by a failed transaction) makes `used + netDelta > CAP`
+      // true for a SHRINK as well as a growth, so the one action that would bring
+      // the account back under the cap is the action refused. The only other route
+      // back is `storage.delete`, which the app has to expose an affordance for.
+      //
+      // `netDelta <= 0` implies an UPDATE, never an INSERT: `oldSize` is 0 on an
+      // insert and the smallest serialisable value is `null` at 4 bytes, so
+      // netDelta is >= 4 there. That is why the two row-count gates below stay
+      // unconditional — they are already `isInsert`-guarded, and a non-increasing
+      // write adds no row.
+      const isNonIncreasing = netDelta <= 0;
+
+      if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
         appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId });
+        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
         logToAxiom(
           {
             event: 'quota_exceeded',
@@ -519,7 +636,7 @@ export const appsStorageRouter = router({
       }
       if (isInsert && rowCount + 1 > APP_ROW_LIMIT) {
         appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId });
+        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
         throw new TRPCError({
           code: 'PAYLOAD_TOO_LARGE',
           message: 'app row limit exceeded',
@@ -529,9 +646,15 @@ export const appsStorageRouter = router({
       // Sub-budget beneath the two app ceilings above: refusing here leaves the
       // app's remaining budget available to every OTHER user of the app, which is
       // the whole point — the app-wide gates alone let one account take it all.
-      if (userUsedBytes + netDelta > USER_QUOTA_BYTES) {
+      //
+      // `userQuotaTracked` is false only when this app's schema has no
+      // `user_quota` relation yet (see the fallback on the quota read above); the
+      // counters read zero there, so the gate would pass anyway. Naming the
+      // condition keeps "we did not enforce" distinct from "we enforced against
+      // zero", which are the same arithmetic and very different claims.
+      if (userQuotaTracked && !isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {
         appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId });
+        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
         logToAxiom(
           {
             event: 'user_quota_exceeded',
@@ -548,9 +671,9 @@ export const appsStorageRouter = router({
           message: 'per-user storage quota exceeded',
         });
       }
-      if (isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
+      if (userQuotaTracked && isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
         appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
-        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId });
+        appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
         throw new TRPCError({
           code: 'PAYLOAD_TOO_LARGE',
           message: 'per-user row limit exceeded',
@@ -576,8 +699,12 @@ export const appsStorageRouter = router({
         );
         await client.query('COMMIT');
       } catch (err) {
+        // ROLLBACK only — the `error` outcome is counted once by the procedure's
+        // catch-all below, which also covers every fault BEFORE this transaction
+        // opens (the quota round trip, the pool checkout, token resolution).
+        // Counting here as well would double-count exactly the faults that do
+        // reach the write.
         await client.query('ROLLBACK').catch(() => {});
-        appStorageOpsCounter.inc({ op: 'set', outcome: 'error' });
         throw err;
       } finally {
         client.release();
@@ -619,6 +746,9 @@ export const appsStorageRouter = router({
         });
       })().catch(() => {});
       return { ok: true as const, sizeBytes: byteSize };
+      } catch (err) {
+        countStorageFault('set', err);
+        throw err;
       } finally {
         stopTimer();
       }
@@ -687,12 +817,16 @@ export const appsStorageRouter = router({
           }
           return { ok: true as const, deleted };
         } catch (err) {
+          // ROLLBACK only; the `error` outcome is counted once by the catch-all
+          // below (see the same note on `set`).
           await client.query('ROLLBACK').catch(() => {});
-          appStorageOpsCounter.inc({ op: 'delete', outcome: 'error' });
           throw err;
         } finally {
           client.release();
         }
+      } catch (err) {
+        countStorageFault('delete', err);
+        throw err;
       } finally {
         stopTimer();
       }
@@ -755,6 +889,9 @@ export const appsStorageRouter = router({
           keys: rows.map((r) => ({ key: r.key, updatedAt: r.updated_at })),
           nextCursor,
         };
+      } catch (err) {
+        countStorageFault('list', err);
+        throw err;
       } finally {
         stopTimer();
       }
@@ -762,16 +899,26 @@ export const appsStorageRouter = router({
 
   /**
    * The CALLER'S OWN usage against their own caps, so a settings panel can show
-   * "used 12 KB of 1 MB" without hard-coding the cap on the client.
+   * "used 12 KB of 2 MB" without hard-coding the cap on the client.
    *
    * Deliberately NOT the app-wide aggregate it used to return. This procedure is
    * reachable by everyone who may RUN the app, and the app aggregate sums other
    * users' rows — a cross-user readout on the one surface whose entire invariant
    * is that a caller only ever sees their own data. It was not actionable either:
    * only the owning user can delete their own rows, so a consumer shown "49 of
-   * 50 MB used" cannot free any of it. `AppStorageProvisioner.getQuota` still
-   * reads the app aggregate and is retained for the moderator surface; no tRPC
-   * procedure exposes it.
+   * 50 MB used" cannot free any of it.
+   *
+   * `AppStorageProvisioner.getQuota` still computes the app aggregate, and this
+   * used to say it was "retained for the moderator surface". That was wrong on
+   * the facts: it has NO production caller at all — verified 2026-09-09, the only
+   * references anywhere are its own definition and its unit tests, and
+   * `appsModRouter` exposes no storage-usage readout. Why it is still here is not
+   * recorded anywhere, so no reason is asserted for it; it is simply unreferenced.
+   *
+   * The consequence is worth stating rather than implying: after this change
+   * NOTHING reports how close an app is to its 50MB / 1M-row ceiling, so the app
+   * ceilings are observable only through `app_blocks_storage_quota_exceeded_total`
+   * (`ceiling="app"`) firing after the fact.
    *
    * Field names are unchanged, so the host bridge and the SDK's
    * APP_STORAGE_QUOTA_RESULT contract carry through untouched; what moved is the
@@ -816,6 +963,9 @@ export const appsStorageRouter = router({
           limitBytes: USER_QUOTA_BYTES,
           limitRows: USER_ROW_LIMIT,
         };
+      } catch (err) {
+        countStorageFault('getQuota', err);
+        throw err;
       } finally {
         stopTimer();
       }

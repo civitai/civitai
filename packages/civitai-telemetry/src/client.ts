@@ -521,10 +521,27 @@ export const appStorageOpsCounter = registerCounterWithLabels({
   labelNames: ['op', 'outcome'] as const,
 });
 
+// App Blocks KV writes refused by a storage ceiling. `ceiling` says WHICH one,
+// because the two want opposite responses and used to be indistinguishable here:
+// `ceiling="app"` is the 50MB / 1M-row per-APP budget — rare, shared by every
+// user of the app, and needs an operator; `ceiling="user"` is the per-USER
+// sub-budget beneath it — routine, self-inflicted, self-recoverable, and not an
+// ops signal. Alert on the first; the second belongs on a dashboard. A query that
+// sums without the label keeps its previous meaning (both ceilings combined).
+//
+// 🔴 NOT named `scope`. In this codebase `scope: '<literal>'` inside a router file
+// means an App Blocks PERMISSION scope (`apps:storage:write`, …), and
+// `analytics-bucket-labels.drift.test.ts` greps exactly that spelling out of
+// apps.router.ts to gate the analytics Scopes card. A Prometheus label keyed
+// `scope` there is picked up as a permission scope and pollutes that guard —
+// measured, it added "app" and "user" to its expected set. `quota_scope` would
+// not have helped either: the guard's regex has no word boundary, so it matches
+// the `scope: '…'` tail inside it. `ceiling` is both collision-free and the more
+// accurate word for what the label distinguishes.
 export const appStorageQuotaExceededCounter = registerCounterWithLabels({
   name: 'app_blocks_storage_quota_exceeded_total',
-  help: 'App Blocks KV writes rejected because the app quota would be exceeded',
-  labelNames: ['app_block_id'] as const,
+  help: 'App Blocks KV writes rejected by a storage ceiling (ceiling=app: the per-app budget; ceiling=user: the per-user sub-budget)',
+  labelNames: ['app_block_id', 'ceiling'] as const,
 });
 
 export const appStorageLatencyHistogram = registerHistogram({

@@ -108,7 +108,7 @@ import { appsRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
 // vi.fn(), so the refusal-instrumentation assertions below can read it.
-import { appStorageOpsCounter } from '~/server/prom/client';
+import { appStorageOpsCounter, appStorageQuotaExceededCounter } from '~/server/prom/client';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -714,7 +714,7 @@ describe('apps.storage.set', () => {
   // ── Per-USER sub-budget ────────────────────────────────────────────────────
   // Literals, not imports from the router: an expectation derived from the
   // constant it tests moves with the constant and asserts nothing.
-  const USER_CAP_BYTES = 1024 * 1024;
+  const USER_CAP_BYTES = 2 * 1024 * 1024;
   const USER_CAP_ROWS = 1_000;
   const APP_CAP_BYTES = 50 * 1024 * 1024;
 
@@ -854,6 +854,358 @@ describe('apps.storage.set', () => {
     expect(quotaCall?.[1]).toEqual(['apb_test', 42]);
   });
 
+  // ── Over-cap SHRINK (a cap must never trap the account it applies to) ───────
+  //
+  // `userUsedBytes` is what is stored NOW, so a counter at or above the ceiling
+  // made `used + netDelta > CAP` true for a SHRINK as well as a growth: the one
+  // write that would bring the account back under the cap was the write refused,
+  // leaving `storage.delete` — which the app has to expose an affordance for — as
+  // the only exit. Not a live regression at the time of writing (the widest
+  // observed per-user footprint is well under the cap), but reachable the moment
+  // a cap is lowered, a counter drifts, or usage grows.
+  it('lets a user ALREADY over the per-user cap shrink an existing value', async () => {
+    useSubjectFromSub();
+    const overCap = USER_CAP_BYTES + 512 * 1024;
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('.quota q')) {
+        return {
+          rows: [
+            {
+              used_bytes: '0',
+              row_count: '0',
+              user_used_bytes: String(overCap),
+              user_row_count: '3',
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      // An existing, much larger row — so this write is a shrink.
+      return { rows: [{ size_bytes: 61_440 }], rowCount: 1 };
+    });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(1000) })
+    ).resolves.toMatchObject({ ok: true });
+    // The write reached the transaction rather than being short-circuited.
+    expect(mockPool.connect).toHaveBeenCalled();
+  });
+
+  // The boundary itself. A same-size rewrite is netDelta === 0 — it stores no new
+  // bytes, so it is exactly as safe as a shrink and must be allowed. Separated
+  // from the shrink case so `<= 0` narrowing to `< 0` has its own killing test
+  // rather than dying to a neighbouring assertion.
+  it('lets an over-cap user rewrite a value to the SAME size (netDelta === 0)', async () => {
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('.quota q')) {
+        return {
+          rows: [
+            {
+              used_bytes: '0',
+              row_count: '0',
+              user_used_bytes: String(USER_CAP_BYTES + 512 * 1024),
+              user_row_count: '3',
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      // `'x'.repeat(1000)` serialises to 1002 bytes — the exact size of the
+      // replacement below, so the delta is zero rather than merely small.
+      return { rows: [{ size_bytes: 1_002 }], rowCount: 1 };
+    });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'y'.repeat(1000) })
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  // The other half of the same claim: relaxing the gate for a shrink must NOT
+  // relax it for a growth. Same over-cap state, same existing row, a LARGER new
+  // value — still refused. Without this, deleting the gate outright also passes
+  // the test above.
+  it('still refuses a GROWTH from the same over-cap state', async () => {
+    useSubjectFromSub();
+    const overCap = USER_CAP_BYTES + 512 * 1024;
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('.quota q')) {
+        return {
+          rows: [
+            {
+              used_bytes: '0',
+              row_count: '0',
+              user_used_bytes: String(overCap),
+              user_row_count: '3',
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return { rows: [{ size_bytes: 1_002 }], rowCount: 1 };
+    });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(5000) })
+    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+  });
+
+  // Same trap, app-wide ceiling. Kept as its own case because it is a different
+  // gate on a different counter — the per-user test above passes with this one
+  // still broken.
+  //
+  // 🔴 THE BREACH MUST EXCEED THE SHRINK, or the guard never executes. A first
+  // draft used `APP_CAP_BYTES + 4096` against a ~60KB shrink: the write brought
+  // the total back under the ceiling by arithmetic, so `used + netDelta > CAP`
+  // was false either way and removing the exemption left the test GREEN. 256KB
+  // over, shrinking by ~60KB, leaves the projected total still ~196KB above the
+  // ceiling — so only the exemption can let it through.
+  it('lets a write that shrinks the APP total through a breached app ceiling', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            used_bytes: String(APP_CAP_BYTES + 256 * 1024),
+            row_count: '5',
+            user_used_bytes: '0',
+            user_row_count: '1',
+          },
+        ],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ size_bytes: 61_440 }], rowCount: 1 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(1000) })
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  // ── The quota-exceeded counter says WHICH ceiling ───────────────────────────
+  // An app-ceiling breach is rare, shared by every user of the app, and needs an
+  // operator; a per-user refusal is routine and self-recoverable. They shared one
+  // label set, so no query could separate "alert now" from "normal Tuesday".
+  it('labels an APP-ceiling refusal ceiling=app and a per-USER refusal ceiling=user', async () => {
+    const quotaInc = vi.mocked(appStorageQuotaExceededCounter.inc);
+    quotaInc.mockClear();
+
+    // App ceiling: a big enough write against a full app.
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            used_bytes: String(APP_CAP_BYTES),
+            row_count: '1',
+            user_used_bytes: '0',
+            user_row_count: '0',
+          },
+        ],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).rejects.toMatchObject({ message: 'app quota exceeded' });
+    expect(quotaInc).toHaveBeenCalledWith({ app_block_id: 'apb_test', ceiling: 'app' });
+
+    // Per-user ceiling: a small write against a full user in a near-empty app.
+    quotaInc.mockClear();
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    expect(quotaInc).toHaveBeenCalledWith({ app_block_id: 'apb_test', ceiling: 'user' });
+  });
+
+  // ── Deploy order: a schema that predates `user_quota` ───────────────────────
+  //
+  // `user_quota` is created by AppStorageProvisioner.provision, whose only
+  // callers are new-version approval and the manual admin backfill — nothing
+  // schedules it. A LEFT JOIN tolerates a missing ROW, not a missing RELATION, so
+  // at deploy every `set` on every already-provisioned app raised 42P01 until a
+  // human ran the backfill. `get`/`list`/`getQuota` were unaffected, which is
+  // what made it look survivable.
+  describe('a schema provisioned before user_quota existed', () => {
+    /** What node-postgres raises for `undefined_table`. */
+    function undefinedTable(relation: string) {
+      return Object.assign(new Error(`relation "${relation}" does not exist`), {
+        code: '42P01',
+      });
+    }
+
+    /** Joined read raises 42P01; the un-joined fallback resolves. */
+    function poolMissingUserQuota() {
+      return async (sql: string) => {
+        if (sql.includes('user_quota')) throw undefinedTable('app_x.user_quota');
+        if (sql.includes('.quota q')) {
+          return {
+            rows: [
+              {
+                used_bytes: '4096',
+                row_count: '2',
+                user_used_bytes: '0',
+                user_row_count: '0',
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      };
+    }
+
+    it('accepts the write instead of returning INTERNAL_SERVER_ERROR', async () => {
+      mockPool.query.mockImplementation(poolMissingUserQuota());
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })
+      ).resolves.toMatchObject({ ok: true });
+      // The row was actually written, not just a clean return.
+      const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find(([s]) =>
+        s.includes('INSERT INTO')
+      );
+      expect(insert).toBeDefined();
+    });
+
+    it('falls back to a statement that reads the app counters WITHOUT the join', async () => {
+      mockPool.query.mockImplementation(poolMissingUserQuota());
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
+      const quotaReads = (mockPool.query.mock.calls as Array<[string, unknown[]?]>)
+        .map(([s]) => s)
+        .filter((s) => s.includes('.quota q'));
+      // Two attempts: the joined one that raised, then the fallback that did not.
+      expect(quotaReads).toHaveLength(2);
+      expect(quotaReads[0]).toContain('user_quota');
+      expect(quotaReads[1]).not.toContain('user_quota');
+    });
+
+    it('logs the missing relation so an inert sub-quota is visible', async () => {
+      mockPool.query.mockImplementation(poolMissingUserQuota());
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await caller.storage.set({ blockToken: 't', key: 'k', value: 'v' });
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'user_quota_relation_missing', appBlockId: 'apb_test' }),
+        expect.anything()
+      );
+    });
+
+    // The fallback must not swallow a genuinely broken schema: `quota` missing
+    // too raises the same 42P01 from the fallback statement and propagates.
+    it('still fails when the app `quota` table is missing as well', async () => {
+      const inc = vi.mocked(appStorageOpsCounter.inc);
+      inc.mockClear();
+      mockPool.query.mockImplementation(async () => {
+        throw undefinedTable('app_x.quota');
+      });
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      // tRPC re-wraps a non-TRPCError as INTERNAL_SERVER_ERROR on the way out, so
+      // the pg code is asserted through the surviving message rather than `.code`.
+      await expect(caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })).rejects.toThrow(
+        'relation "app_x.quota" does not exist'
+      );
+      // Two attempts, both raising — the fallback did not paper over it.
+      expect(mockPool.query.mock.calls.filter(([s]) => String(s).includes('.quota q'))).toHaveLength(
+        2
+      );
+      expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+    });
+  });
+
+  // ── An unexpected fault must be COUNTABLE ──────────────────────────────────
+  //
+  // Only the write transaction's own catch incremented `outcome:'error'`, so any
+  // fault BEFORE `BEGIN` — the quota round trip, the pool checkout, token
+  // resolution — was visible solely as the `ok` series falling to zero. An
+  // outage with no error series is an outage nothing can alert on.
+  it("counts outcome:'error' for a fault raised before the write transaction opens", async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    mockPool.query.mockImplementation(async () => {
+      throw new Error('connection terminated unexpectedly');
+    });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })).rejects.toThrow(
+      'connection terminated unexpectedly'
+    );
+    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  // …and must be counted exactly ONCE when it happens inside the transaction,
+  // which is where it was already counted. The catch-all discriminates on the
+  // error TYPE, so a double-count here would be silent.
+  //
+  // INVARIANT GUARD, not regression coverage: this case was green before the
+  // catch-all existed too (the write transaction's own catch counted it once).
+  // What it pins is that ADDING the catch-all did not turn one increment into
+  // two. Its killing mutation is re-adding `appStorageOpsCounter.inc({ op:
+  // 'set', outcome: 'error' })` to the inner transaction catch — measured, that
+  // turns THIS test red and nothing else. Deleting the `TRPCError` early-return
+  // in `countStorageFault` does NOT reach it (the fault here is a raw Error, so
+  // the early-return never applies); that mutation is caught by the sibling
+  // deliberate-refusal case below instead.
+  it("counts outcome:'error' once, not twice, for a fault inside the write", async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          { used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' },
+        ],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('INSERT INTO')) throw new Error('deadlock detected');
+      return { rows: [], rowCount: 0 };
+    });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(caller.storage.set({ blockToken: 't', key: 'k', value: 'v' })).rejects.toThrow(
+      'deadlock detected'
+    );
+    const errorIncs = inc.mock.calls.filter(
+      ([labels]) => (labels as { outcome?: string })?.outcome === 'error'
+    );
+    expect(errorIncs).toHaveLength(1);
+  });
+
+  // A deliberate refusal already counts its own outcome. The catch-all must not
+  // add a second, wrong one on top — otherwise every quota refusal would also
+  // read as a fault, and `outcome:'error'` would stop meaning anything.
+  //
+  // INVARIANT GUARD as well (green before the catch-all, for want of a
+  // catch-all). This is the case that pins `countStorageFault`'s TRPCError
+  // early-return: measured, deleting that `return` turns THIS test red — and
+  // only this one — because a deliberate refusal is the only path where an
+  // already-counted error reaches the catch-all.
+  it("does NOT count outcome:'error' for a deliberate quota refusal", async () => {
+    const inc = vi.mocked(appStorageOpsCounter.inc);
+    inc.mockClear();
+    useSubjectFromSub();
+    mockPool.query.mockImplementation(quotaPoolFor({ 42: USER_CAP_BYTES - 10 }));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: 'x'.repeat(500) })
+    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'quota_exceeded' });
+    expect(inc).not.toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+  });
+
   it('uses the net delta from an existing row to size the quota check', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     // Pretend used_bytes is the per-app limit; the only reason this write
@@ -981,7 +1333,7 @@ describe('apps.storage.getQuota', () => {
     expect(out).toEqual({
       usedBytes: 12345,
       rowCount: 7,
-      limitBytes: 1024 * 1024,
+      limitBytes: 2 * 1024 * 1024,
       limitRows: 1_000,
     });
     expect(mockGetUserQuota).toHaveBeenCalledWith({
@@ -1000,7 +1352,7 @@ describe('apps.storage.getQuota', () => {
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.getQuota({ blockToken: 't' });
     expect(mockGetQuota).not.toHaveBeenCalled();
-    expect(out.limitBytes).toBe(1024 * 1024);
+    expect(out.limitBytes).toBe(2 * 1024 * 1024);
     expect(out.limitBytes).not.toBe(50 * 1024 * 1024);
   });
 
@@ -1020,7 +1372,7 @@ describe('apps.storage.getQuota', () => {
     expect(out).toEqual({
       usedBytes: 0,
       rowCount: 0,
-      limitBytes: 1024 * 1024,
+      limitBytes: 2 * 1024 * 1024,
       limitRows: 1_000,
     });
     expect(mockGetUserQuota).not.toHaveBeenCalled();

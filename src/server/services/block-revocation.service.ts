@@ -5,10 +5,16 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 // block-token.service.ts), so a marker can lapse while such a token is still
 // valid. The write path is wired: `revokeInstance` on uninstall and on
 // `toggleEnabled(false)`, `clearInstance` on re-enable (block-registry.service).
-// Two things still to settle before this TTL is raised to cover that worst case:
+//
+// One thing still to settle before this TTL is raised to cover that worst case:
 // dev page tokens share the `page_<appBlockId>` instance-id shape with prod page
-// mints (see the note in api/v1/blocks/dev-token.ts), so a longer-lived dev
-// revocation would reach production page tokens for the same app.
+// mints (`PAGE_INSTANCE_PREFIX` in both api/v1/block-tokens/index.ts and
+// api/v1/blocks/dev-token.ts), so a longer-lived dev revocation would reach
+// production page tokens for the same app. The collision is LATENT today, not
+// live: both wired call sites revoke `blockUserSubscription.blockInstanceId` — a
+// per-install subscription id — so nothing currently passes a `page_` id to
+// `revokeInstance`. A future caller that revokes by page instance id, or a TTL
+// raised to the 4h dev-token lifetime, is what makes it reachable.
 const REVOCATION_TTL_SECONDS = 900;
 
 function revokedKey(blockInstanceId: string) {
