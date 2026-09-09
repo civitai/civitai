@@ -1355,9 +1355,28 @@ describe('apps.storage.set', () => {
   // Killing mutation: replacing the throw with `?? 0` turns BOTH cases below
   // green-and-wrong — the write is accepted with the gates skipped.
   it.each([
-    ['no row at all', { rows: [] as unknown[], rowCount: 0 }],
-    ['a non-numeric new size', { rows: [{ new_size_bytes: null, old_size_bytes: null }], rowCount: 1 }],
-  ])('refuses the write when the stored-size probe returns %s', async (_label, probeResult) => {
+    ['no row at all', { rows: [] as unknown[], rowCount: 0 }, 'no usable row'],
+    [
+      'a NULL new size',
+      { rows: [{ new_size_bytes: null, old_size_bytes: null }], rowCount: 1 },
+      'no usable row',
+    ],
+    [
+      'a non-numeric new size',
+      { rows: [{ new_size_bytes: 'abc', old_size_bytes: null }], rowCount: 1 },
+      'no usable row',
+    ],
+    // The old size has its own throw with its own message, so it needs its own
+    // case — the two guards are not interchangeable and a shared assertion would
+    // let either one cover for the other.
+    [
+      'a non-numeric old size',
+      { rows: [{ new_size_bytes: 100, old_size_bytes: 'abc' }], rowCount: 1 },
+      'a non-numeric old size',
+    ],
+  ])(
+    'refuses the write when the stored-size probe returns %s',
+    async (_label, probeResult, expectedMessage) => {
     const inc = vi.mocked(appStorageOpsCounter.inc);
     inc.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
@@ -1373,12 +1392,13 @@ describe('apps.storage.set', () => {
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
-    ).rejects.toThrow('stored-size probe returned no usable row');
+    ).rejects.toThrow(`app storage: stored-size probe returned ${expectedMessage}`);
     // It is a FAULT, not a refusal — so it lands on the error series an alert can
     // watch, and the write never reached the transaction.
     expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
     expect(mockPool.connect).not.toHaveBeenCalled();
-  });
+    }
+  );
 
   it('uses the net delta from an existing row to size the quota check', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
