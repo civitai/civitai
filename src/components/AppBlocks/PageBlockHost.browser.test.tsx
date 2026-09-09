@@ -1462,6 +1462,10 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
   // `needsConsent` together, so it could not attribute the absence to either —
   // and it left `needsConsent &&` in the render condition with no killing
   // mutation at all. Audit finding; split.
+  // ⚠️ BOTH halves pin a state the mint never produces — it sets
+  // `needsConsent = missing.length > 0`, so the two always agree in production.
+  // That is the price of attributing each term separately, and it is said on BOTH
+  // so a reader does not take the unflagged one for a reachable case.
   test('NEGATIVE CONTROL — nothing missing (needsConsent still true), no notice', async () => {
     renderWithProviders(
       <PageBlockHost {...baseProps} missingScopes={[]} onConsentGranted={vi.fn()} />
@@ -1533,29 +1537,13 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     // had never seen it for — the exact hole this feature exists to close.
     // Audit finding; reproduced with the control below.
     //
-    // 🔴 A HARNESS, NOT `rerender` — and the harness is CLOSER to the real thing.
-    // `renderWithProviders` returns vitest-browser-react's handle, which exposes
-    // no `rerender`. Swapping props inside a parent that keeps the SAME element
-    // position is exactly what the SPA does: no `key`, so React reuses the
-    // instance and its state survives, which is the whole defect.
-    function TwoApps() {
-      const [second, setSecond] = useState(false);
-      return (
-        <>
-          <button type="button" data-testid="switch-app" onClick={() => setSecond(true)}>
-            switch
-          </button>
-          <PageBlockHost
-            {...baseProps}
-            appBlockId={second ? 'apb_second' : baseProps.appBlockId}
-            appName={second ? 'Second App' : baseProps.appName}
-            missingScopes={second ? ['buzz:read:self'] : baseProps.missingScopes}
-            onConsentGranted={vi.fn()}
-          />
-        </>
-      );
-    }
-    renderWithProviders(<TwoApps />);
+    // Prop-swap on the SAME element position, which is what the SPA does: no
+    // `key`, so React reuses the instance and its state survives — the defect.
+    // `rerender` is the repo's convention for exactly this (see
+    // `useBlockToken.browser.test.tsx`, same app-A→app-B soft-nav shape).
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />
+    );
     await driveToReady();
     await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
     await page.getByTestId('block-consent-notice-dismiss').click();
@@ -1563,8 +1551,15 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
 
     // CONTROL that the swap itself is what brings it back: before the fix this
     // stayed null, because the latch was a bare boolean.
-    await page.getByTestId('switch-app').click();
-    await driveToReady();
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        appBlockId="apb_second"
+        appName="Second App"
+        missingScopes={['buzz:read:self']}
+        onConsentGranted={vi.fn()}
+      />
+    );
     await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
   });
 

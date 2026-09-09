@@ -733,9 +733,15 @@ export function PageBlockHost({
    * none — and the chrome THIS component draws is itself that one-click path
    * ("Recently run" items are `NextLink`s). So a bare flag meant dismissing app
    * A's notice silently suppressed app B's for the rest of the SPA session, for
-   * apps the viewer had never seen it for. Found by audit; reproduced with a
-   * control (swap props to a second app: notice present without a prior dismiss,
-   * absent with one).
+   * apps the viewer had never seen it for. Found by the ROUND-1 AUDIT, which
+   * reproduced it with a two-armed control; the committed test carries the
+   * with-dismiss arm, and the without-dismiss arm is covered by the mutation
+   * that reverts this to a boolean.
+   *
+   * The three structural facts this rests on were RE-VERIFIED here rather than
+   * taken from the audit on trust: `_app.tsx:175` renders `<Component>` with no
+   * `key`, the run page renders `<PageBlockHost` unkeyed, and
+   * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
    */
   const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
@@ -1618,7 +1624,9 @@ export function PageBlockHost({
         // clicks in different milliseconds stack TWO consent modals. That was
         // latent while the only caller was a message handler; the notice below is
         // the first HUMAN-clickable trigger, which is what makes it reachable.
-        // Measured: two clicks 30ms apart → 2 dialogs.
+        // Measured BY THE ROUND-1 AUDIT, attributed rather than restated as my
+        // own: two clicks 30ms apart produced 2 dialogs. The committed
+        // idempotence test reproduces the mechanism without the timing.
         id: `block-consent-${appBlockId}`,
         component: BlockConsentModal,
         props: {
@@ -4215,6 +4223,21 @@ export function PageBlockHost({
           `playable-collections` browses public collections fine with no grant at
           all — and an unconditional modal would interrupt every viewer of every
           app that merely REQUESTS a consent-gated scope. The viewer decides.
+
+          🔴 `!reviewMode` IS STRICTER THAN THE BLOCK-INITIATED PATH, NOT A MIRROR
+          OF IT — an earlier version of this comment claimed it matched, and that
+          was wrong. That path's absolute rule is "never a MODAL at the mod", and
+          it deliberately emits a PASSIVE notice instead, because dropping the
+          request silently "meant the reviewer got nothing at all… which reads as
+          'this app is broken'" (see its comment above). This suppresses the notice
+          ENTIRELY, which re-creates that silence.
+          Accepted because it is UNREACHABLE today — `ReviewBlockPreviewHost`
+          hardcodes `missingScopes={[]}` / `needsConsent={false}` and
+          `mintReviewBlockToken` returns neither field — and because the safety
+          property (no scope grant from the sandbox) holds either way. 🔴 If those
+          props are ever threaded from `mintData`, do NOT simply delete this term:
+          render the notice WITHOUT its Review button, or route it through
+          `resolveReviewConsentNotice` as the block path does.
 
           Gated through `resolveRequestConsent`, the SAME predicate the
           block-initiated path uses, so the two cannot disagree about when consent
