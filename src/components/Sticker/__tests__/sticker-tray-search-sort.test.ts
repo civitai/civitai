@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
+import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 
 /**
  * The tray's filter and its sort.
@@ -22,6 +23,9 @@ const IMAGE_ID = 1;
 const mocks = vi.hoisted(() => ({
   owned: [] as { id: number; name: string; slug: string; url: string; animated: boolean }[],
   recentUse: [] as { cosmeticId: number; lastUsedAt: string }[],
+  attribution: [] as { id: number; creatorId: number | null }[],
+  /** One entry per attribution REQUEST built, so the gate and the chunking are both observable. */
+  attributionRequests: [] as number[][],
 }));
 
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
@@ -65,6 +69,26 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getStickerBalances: { useQuery: () => ({ data: [] }) },
       getStickerRecentUse: { useQuery: () => ({ data: mocks.recentUse }) },
       getStickerOffers: { useQuery: () => ({ data: [] }) },
+    },
+    // `useOwnedStickerCreators` builds one query per chunk, so this records the
+    // REQUESTS rather than an `enabled` flag: gated off, the list is empty and
+    // nothing is asked for at all.
+    useQueries: (
+      build: (t: {
+        cosmetic: {
+          getStickerAttribution: (input: { ids: number[] }) => { ids: number[] };
+        };
+      }) => { ids: number[] }[]
+    ) => {
+      const requests = build({
+        cosmetic: { getStickerAttribution: (input) => ({ ids: input.ids }) },
+      });
+      for (const request of requests) mocks.attributionRequests.push(request.ids);
+      return requests.map((request) => ({
+        data: mocks.attribution.filter((row) => request.ids.includes(row.id)),
+        dataUpdatedAt: 1,
+        isLoading: false,
+      }));
     },
   },
 }));
@@ -137,7 +161,99 @@ const type = async (container: HTMLElement, value: string) => {
 beforeEach(() => {
   mocks.owned = OWNED;
   mocks.recentUse = [];
+  mocks.attribution = [];
+  mocks.attributionRequests = [];
   document.body.innerHTML = '';
+});
+
+/** The chip's input is visually hidden, so it is driven rather than clicked. */
+const toggleMineOnly = async (container: HTMLElement) => {
+  const chip = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (!chip) throw new Error('the "Made by you" chip is not rendered');
+  await act(async () => {
+    chip.click();
+  });
+};
+
+/**
+ * 🔴 THE THRESHOLD IS A DECISION, NOT AN OPTIMISATION — do not delete the gate
+ * that these two assertions pin.
+ *
+ * "Made by you" was built on the EXISTING `cosmetic.getStickerAttribution`
+ * rather than by adding `createdById` to `user.getCosmetics`, precisely because
+ * it can be kept behind the same `> 12` threshold the search and sort controls
+ * already use. Prod, 2026-09-09: 49 of 1,544 sticker owners hold more than 12,
+ * and 30 of those 49 made at least one of their own. Remove the `enabled`
+ * clause and the feature still works in every manual test while the other 1,495
+ * owners each pay an uncached round trip on tray-open — which is the whole
+ * reason the cheaper option was chosen over widening a shared payload.
+ */
+describe('the tray can narrow to stickers you made', () => {
+  it('shows only the ones the viewer created', async () => {
+    mocks.attribution = [
+      { id: OWNED[2].id, creatorId: 7 },
+      { id: OWNED[5].id, creatorId: 7 },
+      { id: OWNED[8].id, creatorId: 999 },
+    ];
+    const container = await render();
+    expect(slugs(container)).toHaveLength(OWNED.length);
+
+    await toggleMineOnly(container);
+
+    // Named rather than counted, so a revert says WHICH stickers came back.
+    expect(slugs(container)).toEqual([OWNED[2].slug, OWNED[5].slug]);
+  });
+
+  it('draws no chip for someone who created none of them', async () => {
+    mocks.attribution = [{ id: OWNED[0].id, creatorId: 999 }];
+    const container = await render();
+
+    // The search control proves the threshold controls rendered at all, so this
+    // absence is about the chip and not about an empty tray.
+    expect(container.querySelector('input[aria-label="Search your stickers"]')).not.toBeNull();
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it('does not ask who made them at or below the search threshold', async () => {
+    mocks.owned = OWNED.slice(0, 12);
+    await render();
+
+    // Reported as text rather than as a count, so a revert names how many ids
+    // went out instead of printing "expected 1 to be 0".
+    expect(
+      mocks.attributionRequests.length
+        ? `asked for ${mocks.attributionRequests.flat().length} ids`
+        : 'asked for nothing'
+    ).toBe('asked for nothing');
+  });
+
+  it('does ask above the threshold, so the assertion above can fail', async () => {
+    await render();
+
+    expect(
+      mocks.attributionRequests.length
+        ? `asked for ${mocks.attributionRequests.flat().length} ids`
+        : 'asked for nothing'
+    ).toBe(`asked for ${OWNED.length} ids`);
+  });
+
+  /**
+   * 🔴 THE CAP IS SILENT, WHICH IS WHY THIS IS PINNED. `getStickerCosmeticsSchema`
+   * maxes `ids` at 100; a single request carrying more fails zod, and a failed
+   * query is indistinguishable from "you made none" — the chip simply never
+   * appears. Five owners on prod hold more than 100 stickers, the largest 533,
+   * and they are the heaviest collectors this control exists for.
+   */
+  it('never asks for more than the schema accepts, however many are owned', async () => {
+    mocks.owned = Array.from({ length: 250 }, (_, i) => sticker(i, `Name${i}`, `slug-${i}`));
+    await render();
+
+    const oversized = mocks.attributionRequests.filter((ids) => ids.length > STICKER_OFFER_LIMIT);
+    expect(oversized.map((ids) => ids.length)).toEqual([]);
+    // Every id still asked about exactly once — chunking that drops or repeats
+    // ids would leave the filter quietly wrong rather than absent.
+    expect(mocks.attributionRequests.flat()).toHaveLength(250);
+  });
 });
 
 describe('the tray sorts by what was placed most recently', () => {

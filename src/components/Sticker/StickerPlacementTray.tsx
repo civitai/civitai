@@ -1,13 +1,4 @@
-import {
-  Button,
-  Chip,
-  CloseButton,
-  Group,
-  Select,
-  Text,
-  TextInput,
-  ThemeIcon,
-} from '@mantine/core';
+import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconInfoCircle,
@@ -18,6 +9,7 @@ import {
 import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
@@ -28,7 +20,11 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
+import {
+  remainingStickerUses,
+  useOwnedSticker,
+  useOwnedStickerCreators,
+} from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
@@ -72,7 +68,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { sticker, isLoading } = useOwnedSticker();
   const [shopping, setShopping] = useState(false);
   const [search, setSearch] = useState('');
-  const [mineOnly, setMineOnly] = useState(false);
+  const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
   const [sortBy, setSortBy] = useState<StickerTraySort>('used');
   const trayRef = useRef<HTMLDivElement>(null);
 
@@ -101,7 +97,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
       // worse — it comes back showing 2 of 83 with nothing on screen saying why.
       setShopping(false);
       setSearch('');
-      setMineOnly(false);
+      setMineOnlyRequested(false);
       return;
     }
     setTray(trayRef.current);
@@ -119,39 +115,36 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // 97.6% of sticker owners hold 12 or fewer and never see the sort control;
   // 73.4% hold one, where an order is a no-op. tRPC batching is off, so this is
   // its own round trip on the tray-open path — not worth taking for them.
+  // Named once: the search box, the sort control and the chip all appear at this
+  // size, and the creator lookup is asked for at the same moment.
+  const worthNarrowing = sticker.length > STICKER_SEARCH_THRESHOLD;
   const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null && sticker.length > 1,
     staleTime: 60_000,
   });
   const ownedIds = useMemo(() => sticker.map((option) => option.id), [sticker]);
-  // Reuses the hover card's procedure rather than widening `user.getCosmetics`,
-  // which the shop modal and the creator storefront also read — the creator is
-  // the only field the tray is missing and it is already exposed here.
-  //
-  // Behind the same threshold as the controls, so the chip and the request that
-  // decides whether to draw it cannot disagree. Measured on prod: 49 of 1,544
-  // sticker owners are over it, and 30 of those 49 made at least one of their own.
-  const { data: attribution } = trpc.cosmetic.getStickerAttribution.useQuery(
-    { ids: ownedIds },
-    {
-      enabled: !!currentUser && targetImageId != null && sticker.length > STICKER_SEARCH_THRESHOLD,
-      staleTime: 5 * 60_000,
-    }
+  /**
+   * Reuses the hover card's procedure rather than widening `user.getCosmetics`,
+   * which the shop modal and the creator storefront also read — the creator is
+   * the only field the tray is missing and it is already exposed there.
+   *
+   * Behind `worthNarrowing`, so the chip and the request that decides whether to
+   * draw it cannot disagree. Prod, 2026-09-09: 49 of 1,544 sticker owners are
+   * over the threshold, and 30 of those 49 made at least one of their own.
+   */
+  const madeByYou = useOwnedStickerCreators(
+    ownedIds,
+    !!currentUser && targetImageId != null && worthNarrowing
   );
   /**
-   * ⚠️ This under-reports if a sticker ever leaves its availability window:
-   * `getStickerAttribution` filters those out, so an owner would keep the tile
-   * and lose it from this set. No sticker cosmetic carries a window today
-   * (0 of 659 on prod, 2026-09-09), which is why reusing the procedure is the
-   * cheap option — give it its own query if that changes.
+   * 🔴 DERIVED, NOT THE RAW TOGGLE — the filter cannot outlive its own control.
+   * The chip is drawn only for someone with something to filter to, and buying a
+   * sticker from the panel directly above remints the query key, so `madeByYou`
+   * empties for a beat. Held as state alone, that left the tray filtered to
+   * nothing with no control on screen to turn it off, on the paid surface,
+   * immediately after money moved.
    */
-  const madeByYou = useMemo(() => {
-    const mine = currentUser?.id;
-    if (mine == null) return new Set<number>();
-    return new Set(
-      (attribution ?? []).filter((row) => row.creatorId === mine).map((row) => row.id)
-    );
-  }, [attribution, currentUser?.id]);
+  const mineOnly = mineOnlyRequested && madeByYou.size > 0;
 
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
@@ -297,10 +290,11 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 ))}
               </div>
             </div>
-            {!isLoading && sticker.length > STICKER_SEARCH_THRESHOLD && (
+            {!isLoading && worthNarrowing && (
               <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
                 <TextInput
                   size="xs"
+                  radius="xl"
                   className="min-w-0 flex-1 sm:w-36 sm:flex-none"
                   value={search}
                   onChange={(event) => setSearch(event.currentTarget.value)}
@@ -308,16 +302,9 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   aria-label="Search your stickers"
                   leftSection={<IconSearch size={14} />}
                 />
-                {/* Drawn only for someone who has made one. Owning none of your
-                    own is the common case even up here, and a filter that can
-                    only ever empty the tray is worse than no filter. */}
-                {!!madeByYou.size && (
-                  <Chip size="xs" className="shrink-0" checked={mineOnly} onChange={setMineOnly}>
-                    Made by you
-                  </Chip>
-                )}
                 <Select
                   size="xs"
+                  radius="xl"
                   className="w-36 shrink-0 sm:w-40"
                   value={sortBy}
                   onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
@@ -331,6 +318,25 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   // `withinPortal: false`, so the menu would open inside the clip.
                   comboboxProps={{ withinPortal: true }}
                 />
+                {/* Drawn only for someone who has made one. Owning none of your
+                    own is the common case even up here, and a filter that can
+                    only ever empty the tray is worse than no filter. */}
+                {!!madeByYou.size && (
+                  <FilterChip
+                    size="xs"
+                    className="shrink-0"
+                    checked={mineOnly}
+                    onChange={setMineOnlyRequested}
+                    // Chip sizes to its own text and came out shorter than the
+                    // two controls beside it, which size to Mantine's input
+                    // scale. The fallback is load-bearing: `--input-height-xs` is
+                    // scoped to an Input, so unqualified it resolves to nothing
+                    // here and the whole declaration is dropped.
+                    styles={{ label: { height: 'var(--input-height-xs, 1.875rem)' } }}
+                  >
+                    Made by you
+                  </FilterChip>
+                )}
               </div>
             )}
             <CloseButton

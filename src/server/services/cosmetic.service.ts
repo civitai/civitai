@@ -60,8 +60,10 @@ export async function getStickerCosmetics({ ids }: GetStickerCosmeticsInput) {
  *
  * Separate from `getStickerCosmetics` because the shared `cosmeticCache` does not
  * hold a creator — it selects id/name/type/data/source, and widening a cache
- * every avatar and badge lookup goes through, to serve a hover, is the wrong
- * trade. This is asked for one sticker at a time, when someone hovers it.
+ * every avatar and badge lookup goes through is the wrong trade for this. The
+ * callers are a hover, one id at a time, and the placement tray's "Made by you"
+ * filter, which asks in chunks of `STICKER_OFFER_LIMIT` for one viewer's own
+ * collection — so the volume this stays uncached for is small and bounded.
  *
  * Emits the href rather than the username, matching the placement card: a
  * template literal accepts null silently, which is how `/user/null/shop` once
