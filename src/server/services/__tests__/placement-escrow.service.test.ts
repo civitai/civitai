@@ -20,7 +20,6 @@ vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction,
 }));
 
-
 // Wholesale on purpose: the real module loads `base.reward`, which builds a
 // ClickHouse client, redis handles and prom collectors at import time. The
 // reward's own behaviour is tested in stickerPlacementAccepted.reward.test.ts;
@@ -94,7 +93,6 @@ const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
 const queryRaw = vi.fn(async () => [] as { id: number }[]);
 const txCommits: string[][] = [];
-
 
 Object.assign(dbWriteMock, {
   // Interactive transaction: the callback gets the same client. Good enough to
@@ -2183,7 +2181,7 @@ describe('what a placement says in the Buzz ledger', () => {
     expect(createBuzzTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         toAccountId: OWNER,
-        description: 'Fee for a sticker you declined',
+        description: 'Fee kept from a sticker you declined',
       }),
       expect.anything()
     );

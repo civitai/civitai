@@ -98,6 +98,64 @@ export const placementTransactionId = (placementId: number, kind: PlacementTrans
   `placement-${placementId}-${kind}`;
 
 /**
+ * What a placement leg reads as in someone's Buzz history.
+ *
+ * Keyed by surface as well as leg because the two surfaces are different events
+ * to the person reading the row: a sticker is put on your image, a remix is
+ * added to your gallery. The internal leg name is unchanged and still identifies
+ * the leg everywhere it is used to find money — the `PlacementTransaction` row,
+ * the external transaction id, every recovery query.
+ *
+ * Shared rather than service-local because the Buzz dashboard renders a
+ * description only when it recognises the string, and it derives that set from
+ * this table — see `PLACEMENT_LEDGER_DESCRIPTIONS`.
+ */
+export const PLACEMENT_LEDGER_TEXT: Record<
+  PlacementSurface,
+  Record<PlacementTransactionKind, string>
+> = {
+  sticker: {
+    holdFee: 'Sticker placement fee, held while the creator decides',
+    holdPrincipal: 'Sticker placement, held while the creator decides',
+    toOwner: 'Someone placed a sticker on your image',
+    feeToOwner: 'Fee kept from a sticker you declined',
+    toSeller: 'Someone used your sticker',
+    // Deliberately says nothing about why. One refund path serves a decline, an
+    // expiry, an owner removal and a cosmetic takedown, and a leg cannot tell
+    // them apart — so naming one of them here would be wrong on the other three.
+    principalToPlacer: 'Refund: your sticker placement',
+    feeToPlacer: 'Refund: sticker placement fee',
+    // Neither of these two reaches Buzz — the platform legs keep the money in
+    // escrow and record a receipt instead — so this text is what a row WOULD say
+    // if that ever changes, and nothing renders it today.
+    toPlatform: 'Platform share of a sticker placement',
+    forfeit: 'Forfeited sticker placement',
+  },
+  remixGallery: {
+    holdFee: 'Remix submission fee, held while the creator decides',
+    holdPrincipal: 'Remix submission, held while the creator decides',
+    toOwner: 'Someone added a remix to your gallery',
+    feeToOwner: 'Fee kept from a remix you declined',
+    toSeller: 'Share of a remix submission',
+    principalToPlacer: 'Refund: your remix submission',
+    feeToPlacer: 'Refund: remix submission fee',
+    toPlatform: 'Platform share of a remix submission',
+    forfeit: 'Forfeited remix submission',
+  },
+};
+
+/**
+ * The placement descriptions a Buzz surface may render verbatim.
+ *
+ * Derived from the table above, so copy written there is copy a reader can see,
+ * and a string this set does not contain — a pre-#4212 row carrying an internal
+ * placement id, a fee written by some future producer — is never rendered.
+ */
+export const PLACEMENT_LEDGER_DESCRIPTIONS: ReadonlySet<string> = new Set(
+  Object.values(PLACEMENT_LEDGER_TEXT).flatMap((byKind) => Object.values(byKind))
+);
+
+/**
  * Everything that varies per surface, in one table — the shape v1's
  * `STICKER_SURFACES` earned. **A surface absent from this table is denied
  * everywhere**, which is the property the table exists for; adding one must be
