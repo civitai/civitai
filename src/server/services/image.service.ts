@@ -19,6 +19,7 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
+import { feedShadow } from '~/server/services/feed-shadow.service';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
@@ -3238,13 +3239,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const started = Date.now();
   try {
     const result = await searchImages(input);
-    void feedRequestCapture().record(input, {
-      source: 'getImagesFromSearch',
+    const outcome = {
+      source: 'getImagesFromSearch' as const,
       filterMode: result.filterMode,
       elapsedMs: Date.now() - started,
       resultIds: result.data.map((i: { id: number }) => i.id),
       nextCursor: result.nextCursor,
-    });
+    };
+    void feedRequestCapture().record(input, outcome);
+    void feedShadow().compare(input, outcome);
     return result;
   } catch (err) {
     void feedRequestCapture().record(input, {

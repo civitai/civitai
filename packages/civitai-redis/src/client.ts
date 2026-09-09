@@ -2056,6 +2056,9 @@ export const REDIS_SYS_KEYS = {
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
+    // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
+    // searches to the candidate feed service and record the comparison. Off when missing.
+    FEED_SHADOW: 'system:feed-shadow',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

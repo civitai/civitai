@@ -461,6 +461,8 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
+    // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
+    FEED_SHADOW_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
