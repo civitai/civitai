@@ -1,4 +1,13 @@
-import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
+import {
+  Button,
+  Chip,
+  CloseButton,
+  Group,
+  Select,
+  Text,
+  TextInput,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconInfoCircle,
@@ -63,6 +72,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   const { sticker, isLoading } = useOwnedSticker();
   const [shopping, setShopping] = useState(false);
   const [search, setSearch] = useState('');
+  const [mineOnly, setMineOnly] = useState(false);
   const [sortBy, setSortBy] = useState<StickerTraySort>('used');
   const trayRef = useRef<HTMLDivElement>(null);
 
@@ -91,6 +101,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
       // worse — it comes back showing 2 of 83 with nothing on screen saying why.
       setShopping(false);
       setSearch('');
+      setMineOnly(false);
       return;
     }
     setTray(trayRef.current);
@@ -112,6 +123,36 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     enabled: !!currentUser && targetImageId != null && sticker.length > 1,
     staleTime: 60_000,
   });
+  const ownedIds = useMemo(() => sticker.map((option) => option.id), [sticker]);
+  // Reuses the hover card's procedure rather than widening `user.getCosmetics`,
+  // which the shop modal and the creator storefront also read — the creator is
+  // the only field the tray is missing and it is already exposed here.
+  //
+  // Behind the same threshold as the controls, so the chip and the request that
+  // decides whether to draw it cannot disagree. Measured on prod: 49 of 1,544
+  // sticker owners are over it, and 30 of those 49 made at least one of their own.
+  const { data: attribution } = trpc.cosmetic.getStickerAttribution.useQuery(
+    { ids: ownedIds },
+    {
+      enabled: !!currentUser && targetImageId != null && sticker.length > STICKER_SEARCH_THRESHOLD,
+      staleTime: 5 * 60_000,
+    }
+  );
+  /**
+   * ⚠️ This under-reports if a sticker ever leaves its availability window:
+   * `getStickerAttribution` filters those out, so an owner would keep the tile
+   * and lose it from this set. No sticker cosmetic carries a window today
+   * (0 of 659 on prod, 2026-09-09), which is why reusing the procedure is the
+   * cheap option — give it its own query if that changes.
+   */
+  const madeByYou = useMemo(() => {
+    const mine = currentUser?.id;
+    if (mine == null) return new Set<number>();
+    return new Set(
+      (attribution ?? []).filter((row) => row.creatorId === mine).map((row) => row.id)
+    );
+  }, [attribution, currentUser?.id]);
+
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
@@ -131,12 +172,13 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
     [recentUse]
   );
   const visible = useMemo(() => {
+    const pool = mineOnly ? sticker.filter((option) => madeByYou.has(option.id)) : sticker;
     const term = search.trim().toLowerCase();
     const matched = term
-      ? sticker.filter((option) =>
+      ? pool.filter((option) =>
           `${option.name ?? ''} ${option.slug ?? ''}`.toLowerCase().includes(term)
         )
-      : sticker;
+      : pool;
 
     if (sortBy === 'obtained') return matched;
 
@@ -149,7 +191,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
       if (right) return 1;
       return 0;
     });
-  }, [sticker, search, sortBy, lastUsedAt]);
+  }, [sticker, search, sortBy, lastUsedAt, mineOnly, madeByYou]);
 
   if (!showing) return null;
 
@@ -266,6 +308,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   aria-label="Search your stickers"
                   leftSection={<IconSearch size={14} />}
                 />
+                {/* Drawn only for someone who has made one. Owning none of your
+                    own is the common case even up here, and a filter that can
+                    only ever empty the tray is worse than no filter. */}
+                {!!madeByYou.size && (
+                  <Chip size="xs" className="shrink-0" checked={mineOnly} onChange={setMineOnly}>
+                    Made by you
+                  </Chip>
+                )}
                 <Select
                   size="xs"
                   className="w-36 shrink-0 sm:w-40"
@@ -369,7 +419,9 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
               })}
               {!isLoading && !!sticker.length && !visible.length && (
                 <Text size="sm" c="dimmed" px="xs">
-                  No stickers match “{search.trim()}”.
+                  {search.trim()
+                    ? `No ${mineOnly ? 'stickers you made' : 'stickers'} match “${search.trim()}”.`
+                    : 'None of the stickers you own were made by you.'}
                 </Text>
               )}
             </Group>
