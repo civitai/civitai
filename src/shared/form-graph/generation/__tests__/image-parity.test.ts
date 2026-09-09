@@ -153,6 +153,8 @@ const OPENAI_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: 1733399, transparent: true, quality: 'low' }, // gpt1
   { prompt: 'a cat', model: 2512167 }, // v1.5 -> gpt1
   { prompt: 'a cat', quality: 'medium' }, // default v2 -> gpt2
+  { prompt: 'a cat', model: 3311434, quality: 'low' }, // 2.5 flare -> gpt2
+  { prompt: 'a cat', model: 3311436 }, // 2.5 sunburst -> gpt2
 ];
 const LENS_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: 2982241 }, // turbo ranges

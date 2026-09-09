@@ -12,6 +12,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: vi.fn(async () => wan22MultiStep),
 }));
 
+import { openaiVersionIds } from '~/shared/data-graph/generation/openai-graph';
 import { createEcosystemStepInput } from '../../ecosystems';
 import { createFormGraphStepInput, type GenerationData } from '../index';
 
@@ -231,6 +232,24 @@ const CASES: Record<string, unknown>[] = [
   },
   { workflow: 'txt2img', ecosystem: 'OpenAI', prompt: 'a cat', seed: 42, quantity: 3 },
   { workflow: 'img2img:edit', ecosystem: 'OpenAI', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  // 2.5 flare / sunburst: gpt2's shape, distinguished only by the model literal
+  {
+    workflow: 'txt2img',
+    ecosystem: 'OpenAI',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3311434,
+    quality: 'low',
+  },
+  { workflow: 'txt2img', ecosystem: 'OpenAI', prompt: 'a cat', seed: 42, model: 3311436 },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'OpenAI',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3311436,
+    images: [IMAGE],
+  },
   {
     workflow: 'txt2img',
     ecosystem: 'Lens',
@@ -672,6 +691,25 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
       expect(v2.map((s) => s.$type)).toEqual(['videoGen', 'videoInterpolation']);
     } finally {
       wan22MultiStep = false;
+    }
+  });
+
+  // The differential above compares two lanes, so a mapping both lanes get
+  // wrong passes it. These pin the emitted model literal itself.
+  it.each([
+    { versionId: openaiVersionIds['v2.5-flare'], model: 'gpt-image-2.5-flare' },
+    { versionId: openaiVersionIds['v2.5-sunburst'], model: 'gpt-image-2.5-sunburst' },
+  ])('openai $model resolves from its version id in both lanes', async ({ versionId, model }) => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'OpenAI',
+      prompt: 'a cat',
+      seed: 42,
+      model: versionId,
+    });
+    for (const steps of [v1, v2]) {
+      expect(steps).toHaveLength(1);
+      expect(steps[0].input).toMatchObject({ engine: 'openai', model, operation: 'createImage' });
     }
   });
 
