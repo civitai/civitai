@@ -107,7 +107,26 @@ function splitArgs(src: string, open: number): string[] | null {
   return null;
 }
 
-type EvalCall = { site: string; fn: string; argc: number };
+type EvalCall = { site: string; key: string; fn: string; argc: number };
+
+/**
+ * What a ledger row is addressed by: the file, and the flag expression as written.
+ *
+ * NOT the line number. The ledger used to key on `file:line`, which made every PR touching a
+ * ledgered file collide there — 19 commits renumbered these rows between 2026-08-20 and 2026-09-08,
+ * and the conflict carried no information, because the file itself merged cleanly every time. Worse,
+ * two of the three assertions below then reported a renumbering as "a Flipt evaluation passes an
+ * entityId with no evaluation context", sending the reader after a Flipt bug that did not exist.
+ *
+ * The gate's subject is "this call site evaluates this flag without a context", and none of that is
+ * positional. The line number is still carried, as `site`, so a failure can say WHERE — it is data,
+ * not identity.
+ */
+const ledgerKey = (rel: string, flagArg: string) =>
+  // `splitArgs` accumulates from the opening paren, so the first argument arrives carrying it, and a
+  // wrapped call carries the newline and indentation after it too. Both are spelling, not identity —
+  // reflowing a call must not rename its row, or the key is a line number again by another name.
+  `${rel}#${flagArg.replace(/^\(/, '').replace(/\s+/g, ' ').trim()}`;
 
 function scanEvalCalls(): { calls: EvalCall[]; scanned: number } {
   const calls: EvalCall[] = [];
@@ -126,7 +145,12 @@ function scanEvalCalls(): { calls: EvalCall[]; scanned: number } {
       const args = splitArgs(src, open);
       if (!args) continue;
       const line = src.slice(0, m.index).split('\n').length;
-      calls.push({ site: `${rel}:${line}`, fn: m[1], argc: args.length });
+      calls.push({
+        site: `${rel}:${line}`,
+        key: ledgerKey(rel, args[0] ?? '(no argument)'),
+        fn: m[1],
+        argc: args.length,
+      });
     }
   }
   return { calls, scanned };
@@ -144,23 +168,36 @@ function scanEvalCalls(): { calls: EvalCall[]; scanned: number } {
  * deliberately hoisted out of per-flag work, and the dispute helper has a bare
  * `userId` and no `SessionUser` to build a truthful context from.
  */
-const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
+type LedgerRow = { count: number; reason: string };
+
+/**
+ * 🔴 `count` IS LOAD-BEARING. A row forgives the sites it names and no more: keying on file+flag
+ * alone would mean a FOURTH uncontexted evaluation of an already-ledgered flag, in an
+ * already-ledgered file, arrives pre-forgiven — the gate going silent for exactly the violation it
+ * exists to catch. The count assertion below fails when the number moves, in either direction, and
+ * names the lines it found.
+ */
+const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, LedgerRow> = {
   // flag `article-rating-dispute`: enabled=true, 0 rules, 0 rollouts → answers
   // true for every entity regardless of context. A background auto-resolve path
   // with only `pending.userId` in hand; building a real context would cost a
   // user fetch. Revisit the moment this flag gains a rollout.
-  'server/services/article-rating-review.helpers.ts:482':
-    'article-rating-dispute has no segment rollouts; background path with no SessionUser',
+  'server/services/article-rating-review.helpers.ts#FLIPT_FEATURE_FLAGS.ARTICLE_RATING_DISPUTE': {
+    count: 1,
+    reason: 'article-rating-dispute has no segment rollouts; background path with no SessionUser',
+  },
   // flag `feed-fetch-filter-in-post`: enabled=true, 0 rules, 0 rollouts.
-  'server/services/image.service.ts:3279':
-    'feed-fetch-filter-in-post has no segment rollouts; hot feed path',
-  // flag `feed-image-existence`: enabled=true, 0 rules, 0 rollouts. Three sites.
-  'server/services/image.service.ts:3323':
-    'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:4092':
-    'feed-image-existence has no segment rollouts; hot feed path',
-  'server/services/image.service.ts:4902':
-    'feed-image-existence has no segment rollouts; hot feed path',
+  'server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_POST_FILTER': {
+    count: 1,
+    reason: 'feed-fetch-filter-in-post has no segment rollouts; hot feed path',
+  },
+  // flag `feed-image-existence`: enabled=true, 0 rules, 0 rollouts. Three sites,
+  // same reason at each — which is why they share a row, and why the count is
+  // the thing that notices a fourth.
+  'server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE': {
+    count: 3,
+    reason: 'feed-image-existence has no segment rollouts; hot feed path',
+  },
   // flags `model-text-moderation-xguard` / `-apply`: both enabled=true, 0 rules,
   // 0 rollouts (checked against flipt-state and against the evaluation API on
   // 2026-08-20, which returned DEFAULT_EVALUATION_REASON for both).
@@ -175,10 +212,17 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   //
   // The caveat above still applies with force: if either flag ever gains a SEGMENT
   // rollout it will silently match nothing here. A percentage rollout is fine.
-  'server/services/model-moderation.adapter.ts:123':
-    'model-text-moderation-xguard has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
-  'server/services/model-moderation.adapter.ts:228':
-    'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
+  'server/services/model-moderation.adapter.ts#FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD': {
+    count: 1,
+    reason:
+      'model-text-moderation-xguard has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
+  },
+  'server/services/model-moderation.adapter.ts#FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD_APPLY':
+    {
+      count: 1,
+      reason:
+        'model-text-moderation-xguard-apply has no segment rollouts; entityId is a MODEL id (no user segment can describe it) and the rollout is threshold-keyed; webhook path with no SessionUser',
+    },
   // flag `text-blurbs`: default-off, no rules and no rollouts.
   //
   // Entity-keyed on purpose. The entityId is the CONTENT OWNER's user id, not the actor's, so a
@@ -190,8 +234,11 @@ const ENTITY_WITHOUT_CONTEXT_LEDGER: Record<string, string> = {
   // 🔴 So this flag can only be ramped by PERCENTAGE or BOOLEAN. A SEGMENT rollout silently
   // matches nothing here and looks exactly like "blurbs are off". The full warning is on
   // FLIPT_FEATURE_FLAGS.TEXT_BLURBS, which is where someone running the ramp will look.
-  'server/services/blurb-materialize.service.ts:66':
-    'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
+  'server/services/blurb-materialize.service.ts#FLIPT_FEATURE_FLAGS.TEXT_BLURBS': {
+    count: 1,
+    reason:
+      'text-blurbs has no segment rollouts; entityId is the CONTENT OWNER (not the actor) so the intended threshold rollout is sticky per creator; no SessionUser for the owner exists on either the moderator-edit path or the fan-out job',
+  },
 };
 
 describe('flipt evaluation context — source gate', () => {
@@ -217,16 +264,19 @@ describe('flipt evaluation context — source gate', () => {
   it('sees a known contexted site as contexted, and a known bare site as bare', () => {
     // The pair matters. A detector hardwired to "3 args" would pass the first of
     // these and fail the second, and vice versa.
-    const bySite = new Map(calls.map((c) => [c.site, c]));
-    expect(bySite.get('server/services/feedback.service.ts:43')?.argc).toBe(3);
-    expect(bySite.get('server/services/image.service.ts:3323')?.argc).toBe(2);
+    const byKey = new Map(calls.map((c) => [c.key, c]));
+    expect(byKey.get('server/services/feedback.service.ts#feedbackAreaFlagKey(area)')?.argc).toBe(
+      3
+    );
+    expect(
+      byKey.get('server/services/image.service.ts#FLIPT_FEATURE_FLAGS.FEED_POST_FILTER')?.argc
+    ).toBe(2);
   });
 
   it('adds no Flipt evaluation that names an entity but passes no context', () => {
     const unledgered = calls
-      .filter((c) => c.argc === 2)
+      .filter((c) => c.argc === 2 && !(c.key in ENTITY_WITHOUT_CONTEXT_LEDGER))
       .map((c) => c.site)
-      .filter((site) => !(site in ENTITY_WITHOUT_CONTEXT_LEDGER))
       .sort();
     expect(
       unledgered,
@@ -236,7 +286,8 @@ describe('flipt evaluation context — source gate', () => {
         'any of them, and returns the flag default instead. That is indistinguishable from ' +
         '"the subject is not in the segment". Pass `buildFliptContext(user)`, or the ' +
         'properties you actually know; if the flag genuinely has no segment rollout, add ' +
-        'the site to ENTITY_WITHOUT_CONTEXT_LEDGER with the reason you checked.'
+        'the site to ENTITY_WITHOUT_CONTEXT_LEDGER with the reason you checked, keyed by ' +
+        'file#flag and with its count.'
     ).toEqual([]);
   });
 
@@ -244,14 +295,38 @@ describe('flipt evaluation context — source gate', () => {
     // The direction that gets left out. Without it the ledger silently becomes a
     // list of line numbers that stopped meaning anything, and the next reviewer
     // reads five accepted exceptions that are no longer there.
-    const bare = new Set(calls.filter((c) => c.argc === 2).map((c) => c.site));
+    const bare = new Set(calls.filter((c) => c.argc === 2).map((c) => c.key));
     const stale = Object.keys(ENTITY_WITHOUT_CONTEXT_LEDGER)
-      .filter((site) => !bare.has(site))
+      .filter((key) => !bare.has(key))
       .sort();
     expect(
       stale,
-      'A ledgered site no longer passes an entityId without a context — it was fixed, ' +
-        'deleted, or the line moved. Drop or update its row.'
+      'A ledgered file+flag no longer passes an entityId without a context — it was fixed ' +
+        'or deleted. Drop its row. (A line number moving is no longer this test’s business.)'
+    ).toEqual([]);
+  });
+
+  it('counts the sites in each ledgered row, so a NEW one is not pre-forgiven', () => {
+    // Without this, a row keyed on file+flag forgives every site in that file that
+    // evaluates that flag — including the fourth one somebody adds next month. The
+    // gate would go silent for exactly the violation it exists to catch.
+    const bareByKey = new Map<string, string[]>();
+    for (const c of calls.filter((c) => c.argc === 2)) {
+      bareByKey.set(c.key, [...(bareByKey.get(c.key) ?? []), c.site]);
+    }
+    const wrong = Object.entries(ENTITY_WITHOUT_CONTEXT_LEDGER)
+      .map(([key, row]) => ({ key, row, sites: bareByKey.get(key) ?? [] }))
+      .filter(({ row, sites }) => sites.length !== row.count)
+      .map(
+        ({ key, row, sites }) =>
+          `${key}: ledger says ${row.count}, found ${sites.length} at ${sites.join(', ')}`
+      )
+      .sort();
+    expect(
+      wrong,
+      'The number of context-less evaluations in a ledgered file+flag has changed. If a NEW ' +
+        'one was added, it is NOT covered by the existing reason — check the flag still has no ' +
+        'segment rollout, then raise the count. If one was removed or fixed, lower it.'
     ).toEqual([]);
   });
 });
