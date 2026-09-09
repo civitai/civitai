@@ -50,7 +50,11 @@ describe('getTrainedFileDefaultName', () => {
 
   it('falls back to the stored name when the model name leaves nothing behind', () => {
     expect(
-      getTrainedFileDefaultName({ modelName: 'キュアスパークル', versionName: 'V1', fileName: jobIdFile })
+      getTrainedFileDefaultName({
+        modelName: 'キュアスパークル',
+        versionName: 'V1',
+        fileName: jobIdFile,
+      })
     ).toBe(jobIdFile);
   });
 
@@ -90,7 +94,11 @@ describe('resolveTrainedFileName', () => {
 
   it('leaves a name the creator saved earlier alone', () => {
     expect(
-      resolveTrainedFileName({ ...trained, editedName: null, overrideName: 'MyOwnName.safetensors' })
+      resolveTrainedFileName({
+        ...trained,
+        editedName: null,
+        overrideName: 'MyOwnName.safetensors',
+      })
     ).toBe('MyOwnName.safetensors');
   });
 
