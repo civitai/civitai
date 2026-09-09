@@ -55,9 +55,30 @@ node .claude/skills/metabase/metabase.mjs create-question \
 
 **Variable types:** `text`, `number`, `date`, `date/single`, `date/range`, `date/month-year`, `date/quarter-year`, `date/relative`, `date/all-options`
 
-### update-question — Change display type or visualization
+### run-card — Run a SAVED question, with its parameters
+
+`run-query` runs ad-hoc SQL, which does **not** tell you whether a saved card works: a card
+whose parameters are mis-wired stores the right SQL and still returns nothing. Run the card
+itself to check.
 
 ```bash
+node .claude/skills/metabase/metabase.mjs run-card --id 3301 --params '{"from":"2026-09-09","to":"2026-10-01"}'
+node .claude/skills/metabase/metabase.mjs run-card --id 3303          # no parameters
+```
+
+Names in `--params` are `{{variable}}` names; an unknown one is an error rather than a
+silently ignored filter.
+
+### update-question — Change SQL, display, description, or archive it
+
+```bash
+# Replace the SQL (reads the card back and fails if the stored query differs)
+node .claude/skills/metabase/metabase.mjs update-question --id 123 --query "SELECT 1"   --variables '{"from":{"id":"f","name":"from","display-name":"From","type":"date"}}'
+
+# Description, or retire a superseded card
+node .claude/skills/metabase/metabase.mjs update-question --id 123 --description "..."
+node .claude/skills/metabase/metabase.mjs update-question --id 123 --archived true
+
 # Change to bar chart
 node .claude/skills/metabase/metabase.mjs update-question --id 123 --display bar
 
@@ -267,6 +288,24 @@ By default, `{{variable}}` template tags render as plain text inputs. To make th
 - Each command reads the existing template tag ID and wires it up correctly
 
 **Important:** Each call to `set-dropdown` or `set-date-picker` preserves other existing parameters. You can call them one at a time.
+
+## MBQL 4 vs MBQL 5 — the shape a GET returns is not the shape a PUT accepts
+
+A `GET /card/:id` returns MBQL 5: `dataset_query` has `stages` and `lib/type`, the SQL lives
+at `stages[0].native` as a string, and `template-tags` is an **array** of records. A write
+must send the MBQL 4 shape — `{database, type: 'native', native: {query, 'template-tags'}}`
+with tags as an **object keyed by name**. Spreading what a GET returned into a PUT is
+rejected with `MBQL 4 keys like :type, :query, or :native are not allowed in MBQL 5 queries
+with :lib/type`.
+
+The array-vs-object half is the one that bites quietly: looking a tag up by name on the
+array finds nothing, and `set-dropdown` / `set-date-picker` then report
+`Template tag "from" not found ... Available tags: 0, 1` — which reads as a missing variable
+rather than a wrong shape. Every command here normalises both shapes; new ones must too.
+
+Related: `POST /dashboard/:id/cards` no longer exists. Dashcards are written by PUTting the
+whole `dashcards` array back to `/dashboard/:id`, with a negative placeholder `id` on each
+new entry.
 
 ## Tips
 

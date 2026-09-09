@@ -273,38 +273,32 @@ async function addToDashboard(opts) {
     if (bottom > maxY) maxY = bottom;
   }
 
-  const added = [];
-  for (let i = 0; i < cardIds.length; i++) {
-    const col = i % perRow;
-    const row = Math.floor(i / perRow);
-    const result = await api('POST', `/dashboard/${dashId}/cards`, {
-      cardId: cardIds[i],
-    });
+  // Dashcards are created by PUTting the whole `dashcards` array, not by POSTing to
+  // /dashboard/:id/cards -- that endpoint is gone and 404s. A new card is an entry with a
+  // negative placeholder id; the server assigns the real one.
+  const added = cardIds.map((cardId, i) => ({
+    id: -1 - i,
+    card_id: cardId,
+    row: maxY + Math.floor(i / perRow) * cardHeight,
+    col: (i % perRow) * cardWidth,
+    size_x: cardWidth,
+    size_y: cardHeight,
+    parameter_mappings: [],
+    visualization_settings: {},
+  }));
 
-    // Position the card via PUT
-    const dashcardId = result.id;
-    added.push({
-      id: dashcardId,
-      card_id: cardIds[i],
-      row: maxY + row * cardHeight,
-      col: col * cardWidth,
-      size_x: cardWidth,
-      size_y: cardHeight,
-    });
-  }
+  const saved = await api('PUT', `/dashboard/${dashId}`, {
+    dashcards: [...existingCards, ...added],
+  });
 
-  // Update layout positions in bulk
-  if (added.length > 0) {
-    // Re-fetch the full dashboard to get all dashcard data
-    const fullDash = await api('GET', `/dashboard/${dashId}`);
-    const allCards = fullDash.dashcards.map(dc => {
-      const override = added.find(a => a.id === dc.id);
-      if (override) {
-        return { ...dc, row: override.row, col: override.col, size_x: override.size_x, size_y: override.size_y };
-      }
-      return dc;
-    });
-    await api('PUT', `/dashboard/${dashId}`, { dashcards: allCards });
+  // Read back rather than trust the write: a dashboard that saved no cards renders empty,
+  // which looks the same as a permissions problem.
+  const present = new Set((saved.dashcards || []).map((dc) => dc.card_id));
+  const missing = cardIds.filter((id) => !present.has(id));
+  if (missing.length > 0) {
+    console.error(`Dashboard ${dashId} did not take card(s): ${missing.join(', ')}`);
+    console.error(`  URL: ${METABASE_URL}/dashboard/${dashId}`);
+    process.exit(1);
   }
 
   console.log(`Added ${cardIds.length} card(s) to dashboard ${dashId}`);
@@ -410,16 +404,100 @@ async function listDatabases() {
   }
 }
 
-async function updateQuestion(opts) {
-  const { id, display, visualization } = opts;
+async function runCard(opts) {
+  const { id, params } = opts;
   const cardId = parseInt(id, 10);
   if (!cardId) {
-    console.error('Usage: update-question --id <id> [--display <type>] [--visualization \'{"key":"value"}\']');
+    console.error('Usage: run-card --id <id> [--params \'{"from":"2026-09-09","to":"2026-09-10"}\']');
+    process.exit(1);
+  }
+
+  const card = await api('GET', `/card/${cardId}`);
+  // MBQL 4 stores template-tags as an object keyed by name; MBQL 5 (what a GET returns
+  // today) stores the same records as an array. Normalise to the keyed form.
+  const rawTags =
+    card.dataset_query?.native?.['template-tags'] ??
+    card.dataset_query?.stages?.[0]?.['template-tags'] ??
+    {};
+  const tags = Array.isArray(rawTags)
+    ? Object.fromEntries(rawTags.map((t) => [t.name, t]))
+    : rawTags;
+
+  let values = {};
+  if (params) {
+    try {
+      values = JSON.parse(params);
+    } catch (e) {
+      console.error('Error: --params must be valid JSON');
+      process.exit(1);
+    }
+  }
+
+  const parameters = Object.entries(values).map(([name, value]) => {
+    const tag = tags[name];
+    if (!tag) {
+      console.error(`Error: question ${cardId} has no {{${name}}} variable`);
+      process.exit(1);
+    }
+    return {
+      id: tag.id,
+      type: tag.type === 'date' ? 'date/single' : `category`,
+      value,
+      target: ['variable', ['template-tag', name]],
+    };
+  });
+
+  const result = await api('POST', `/card/${cardId}/query`, { parameters });
+  if (result.status && result.status !== 'completed') {
+    console.error(`Query ${result.status}: ${result.error || 'unknown error'}`);
+    process.exit(1);
+  }
+  const cols = result.data.cols.map((c) => c.display_name || c.name);
+  console.log(`Columns: ${cols.join(', ')}`);
+  console.log('─'.repeat(60));
+  for (const row of result.data.rows) {
+    console.log(JSON.stringify(Object.fromEntries(cols.map((c, i) => [c, row[i]])), null, 2));
+  }
+  console.log(`\n${result.data.rows.length} row(s)`);
+}
+
+async function updateQuestion(opts) {
+  const { id, display, visualization, query, description, archived, variables } = opts;
+  const cardId = parseInt(id, 10);
+  if (!cardId) {
+    console.error('Usage: update-question --id <id> [--display <type>] [--visualization \'{"key":"value"}\'] [--query "SQL"] [--variables \'{...}\'] [--description "..."] [--archived true|false]');
     process.exit(1);
   }
 
   const body = {};
   if (display) body.display = display;
+  if (description !== undefined) body.description = description;
+  if (archived !== undefined) body.archived = archived === 'true' || archived === true;
+  if (query) {
+    // A card's dataset_query must be sent whole, so start from the stored one and
+    // swap the SQL. Template tags are rebuilt because a changed query may add or
+    // drop {{variables}}, and Metabase drops a parameter whose tag disappears.
+    const existing = await api('GET', `/card/${cardId}`);
+    // A GET returns MBQL 5 (`lib/type` + `stages`), but PUT rejects a body that mixes
+    // that with `type`/`native` — so rebuild the MBQL 4 shape create-question sends
+    // rather than spreading what came back. Read the old tags from either shape.
+    const oldNative =
+      existing.dataset_query?.native ?? existing.dataset_query?.stages?.[0] ?? {};
+    let templateTags = oldNative['template-tags'] || oldNative.template_tags || {};
+    if (variables) {
+      try {
+        templateTags = JSON.parse(variables);
+      } catch (e) {
+        console.error('Error: --variables must be valid JSON');
+        process.exit(1);
+      }
+    }
+    body.dataset_query = {
+      database: existing.database_id ?? existing.dataset_query?.database,
+      type: 'native',
+      native: { query, 'template-tags': templateTags },
+    };
+  }
   if (visualization) {
     try {
       body.visualization_settings = JSON.parse(visualization);
@@ -432,6 +510,16 @@ async function updateQuestion(opts) {
   const card = await api('PUT', `/card/${cardId}`, body);
   console.log(`Question ${cardId} updated`);
   console.log(`  Display: ${card.display}`);
+  if (query) {
+    const stored =
+      card.dataset_query?.native?.query ?? card.dataset_query?.stages?.[0]?.native;
+    if (stored !== query) {
+      console.error('Error: the stored query does not match what was sent');
+      process.exit(1);
+    }
+    console.log('  Verified: the stored query matches what was sent');
+  }
+  if (body.archived !== undefined) console.log(`  Archived: ${card.archived}`);
   console.log(`  URL: ${METABASE_URL}/question/${cardId}`);
 }
 
@@ -500,7 +588,13 @@ async function setDropdown(opts) {
 
   // Find the template tag to get its ID
   const nativeQuery = card.dataset_query?.native || card.dataset_query?.stages?.[0];
-  const tags = nativeQuery?.['template-tags'] || {};
+  const rawTags = nativeQuery?.['template-tags'] || {};
+  // MBQL 5 returns template-tags as an array of records, MBQL 4 as an object keyed by
+  // name. Looking up by name on the array finds nothing and lists the indices as the
+  // available tags, which reads as "that variable is missing" rather than "wrong shape".
+  const tags = Array.isArray(rawTags)
+    ? Object.fromEntries(rawTags.map((t) => [t.name, t]))
+    : rawTags;
   const tag = tags[variable];
   if (!tag) {
     console.error(`Error: Template tag "${variable}" not found in question ${cardId}`);
@@ -548,7 +642,13 @@ async function setDatePicker(opts) {
   const existingParams = card.parameters || [];
 
   const nativeQuery = card.dataset_query?.native || card.dataset_query?.stages?.[0];
-  const tags = nativeQuery?.['template-tags'] || {};
+  const rawTags = nativeQuery?.['template-tags'] || {};
+  // MBQL 5 returns template-tags as an array of records, MBQL 4 as an object keyed by
+  // name. Looking up by name on the array finds nothing and lists the indices as the
+  // available tags, which reads as "that variable is missing" rather than "wrong shape".
+  const tags = Array.isArray(rawTags)
+    ? Object.fromEntries(rawTags.map((t) => [t.name, t]))
+    : rawTags;
   const tag = tags[variable];
   if (!tag) {
     console.error(`Error: Template tag "${variable}" not found in question ${cardId}`);
@@ -646,6 +746,7 @@ const commands = {
   'run-query': runQuery,
   'create-question': createQuestion,
   'update-question': updateQuestion,
+  'run-card': runCard,
   'create-dashboard': createDashboard,
   'add-to-dashboard': addToDashboard,
   'add-dashboard-filter': addDashboardFilter,
