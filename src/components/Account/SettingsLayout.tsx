@@ -1,5 +1,5 @@
-import { Card as MantineCard, Stack, Text, Title } from '@mantine/core';
-import { IconArrowUpRight } from '@tabler/icons-react';
+import { Card as MantineCard, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconArrowUpRight, IconCircleCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
 
@@ -272,4 +272,54 @@ export function PointerCard({
     );
 
   return <div className={className}>{body}</div>;
+}
+
+/**
+ * The gate a settings pane shows instead of controls the user cannot use yet. One implementation
+ * because the three sites that need it (metric visibility, membership, payouts) sit in different
+ * cards and would otherwise drift apart in tone.
+ */
+export function UpsellPanel({
+  icon,
+  title,
+  description,
+  perks,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  perks?: React.ReactNode[];
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-lg border border-gray-2 bg-gray-0 p-6 text-center dark:border-dark-4 dark:bg-dark-5">
+      <ThemeIcon size={48} variant="light" color="gray" radius="xl">
+        {icon}
+      </ThemeIcon>
+      <Text fw={700} size="lg">
+        {title}
+      </Text>
+      {description && (
+        <Text size="sm" c="dimmed" maw={380}>
+          {description}
+        </Text>
+      )}
+      {!!perks?.length && (
+        <Stack gap={6} align="flex-start" ta="left">
+          {perks.map((perk, index) => (
+            <Group key={index} gap={8} wrap="nowrap">
+              <IconCircleCheck
+                size={16}
+                className="shrink-0"
+                style={{ color: 'var(--mantine-color-green-6)' }}
+              />
+              <Text size="sm">{perk}</Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
+      {action}
+    </div>
+  );
 }

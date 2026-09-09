@@ -13,9 +13,9 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { CardOrSection } from '~/components/Account/SettingsLayout';
+import { CardOrSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import { trpc } from '../../utils/trpc';
-import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
+import { IconExternalLink, IconInfoCircle, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { useState } from 'react';
@@ -375,8 +375,39 @@ const TipaltiConfigurationCard = ({ flat }: { flat?: boolean }) => {
 export function UserPaymentConfigurationCard({ flat }: { flat?: boolean } = {}) {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
 
+  // A payment configuration is created on joining the Creator Program, so its absence is the
+  // not-a-member case rather than an error. The legacy page drops the card; the flat pane keeps the
+  // section and says how to get one.
   if (!isLoading && !userPaymentConfiguration) {
-    return null;
+    if (!flat) return null;
+
+    return (
+      <CardOrSection
+        flat
+        title="Payouts"
+        description="Where your earnings and withdrawals land."
+        id="payments"
+      >
+        <UpsellPanel
+          icon={<IconUsers size={24} />}
+          title="Creator Program members only"
+          description="Set up payouts once you join the Creator Program:"
+          perks={['Earn real cash from your creations', 'Withdraw your earnings to your bank']}
+          action={
+            <Button
+              component="a"
+              href="/creator-program"
+              variant="filled"
+              size="sm"
+              leftSection={<IconUserPlus size={16} />}
+              className="w-fit"
+            >
+              Join the Creator Program
+            </Button>
+          }
+        />
+      </CardOrSection>
+    );
   }
 
   return (

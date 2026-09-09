@@ -23,6 +23,7 @@ import {
   useToggleNotificationSetting,
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
+import { NotificationCategory } from '~/server/common/enums';
 import {
   notificationCategoryTypes,
   notificationTypes,
@@ -39,6 +40,14 @@ const categoryIcons: Record<string, Icon> = {
   Referral: IconUserPlus,
   Buzz: IconBolt,
 };
+
+/**
+ * `Other` is the catch-all bucket, so it belongs under the named categories however processor
+ * registration happens to order them. Stable sort, so everything else keeps its order.
+ */
+const categoryEntries = Object.entries(notificationCategoryTypes).sort(
+  ([a], [b]) => Number(a === NotificationCategory.Other) - Number(b === NotificationCategory.Other)
+);
 
 export function NotificationsPane() {
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
@@ -104,7 +113,7 @@ export function NotificationsPane() {
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          {Object.entries(notificationCategoryTypes).map(([category, settings]) => {
+          {categoryEntries.map(([category, settings]) => {
             const isOpen = expanded === category;
             const enabled = settings.filter((x) => notificationSettings[x.type]).length;
             const categoryOn = hasCategory[category];

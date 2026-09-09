@@ -1,17 +1,5 @@
+import { Alert, Button, Card, Divider, Group, Stack, Switch, Text, Title } from '@mantine/core';
 import {
-  Alert,
-  Button,
-  Card,
-  Divider,
-  Group,
-  Stack,
-  Switch,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
-import {
-  IconCircleCheck,
   IconInfoCircle,
   IconLock,
   IconRefresh,
@@ -23,7 +11,7 @@ import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
 import { RemixGallerySettings } from '~/components/RemixGallery/RemixGallerySettings';
-import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { SettingRow, SettingsSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -99,43 +87,28 @@ export function CreatorControlsCard({
   ];
 
   const membershipUpsell = (
-    <div className="flex flex-col items-center gap-3 rounded-lg border border-gray-2 bg-gray-0 p-6 text-center dark:border-dark-4 dark:bg-dark-5">
-      <ThemeIcon size={48} variant="light" color="gray" radius="xl">
-        {membershipLapsed ? <IconLock size={24} /> : <IconUsers size={24} />}
-      </ThemeIcon>
-      <Text fw={700} size="lg">
-        {membershipLapsed ? 'Membership lapsed' : 'Creator Program members only'}
-      </Text>
-      <Text size="sm" c="dimmed" maw={380}>
-        {membershipLapsed
+    <UpsellPanel
+      icon={membershipLapsed ? <IconLock size={24} /> : <IconUsers size={24} />}
+      title={membershipLapsed ? 'Membership lapsed' : 'Creator Program members only'}
+      description={
+        membershipLapsed
           ? 'Renew your Creator Program membership to restore the controls below and the rest of your perks:'
-          : 'Gain more control over how your models are presented, plus the rest of the Creator Program:'}
-      </Text>
-      <Stack gap={6} align="flex-start" ta="left">
-        {['Hide your model metrics and donation goals', 'Earn real cash from your creations'].map(
-          (perk) => (
-            <Group key={perk} gap={8} wrap="nowrap">
-              <IconCircleCheck
-                size={16}
-                className="shrink-0"
-                style={{ color: 'var(--mantine-color-green-6)' }}
-              />
-              <Text size="sm">{perk}</Text>
-            </Group>
-          )
-        )}
-      </Stack>
-      <Button
-        component="a"
-        href={membershipLapsed ? renewUrl : '/creator-program'}
-        variant="filled"
-        size="sm"
-        leftSection={membershipLapsed ? <IconRefresh size={16} /> : <IconUserPlus size={16} />}
-        className="w-fit"
-      >
-        {membershipLapsed ? 'Renew membership' : 'Join the Creator Program'}
-      </Button>
-    </div>
+          : 'Gain more control over how your models are presented, plus the rest of the Creator Program:'
+      }
+      perks={['Hide your model metrics and donation goals', 'Earn real cash from your creations']}
+      action={
+        <Button
+          component="a"
+          href={membershipLapsed ? renewUrl : '/creator-program'}
+          variant="filled"
+          size="sm"
+          leftSection={membershipLapsed ? <IconRefresh size={16} /> : <IconUserPlus size={16} />}
+          className="w-fit"
+        >
+          {membershipLapsed ? 'Renew membership' : 'Join the Creator Program'}
+        </Button>
+      }
+    />
   );
 
   if (flat)

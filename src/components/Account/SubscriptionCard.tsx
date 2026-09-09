@@ -1,6 +1,12 @@
 import { Button, Stack, Center, Loader, Title, Text, Group, Box, Divider } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconAlertTriangle, IconExternalLink, IconSettings } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconExternalLink,
+  IconRosetteDiscountCheck,
+  IconSettings,
+  IconUserCircle,
+} from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -22,7 +28,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { CardOrSection } from '~/components/Account/SettingsLayout';
+import { CardOrSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
@@ -58,8 +64,37 @@ export function SubscriptionCard({ flat }: { flat?: boolean } = {}) {
   if (subscription) rows.push({ sub: subscription, isCrossDomain: false });
   if (otherSubscription) rows.push({ sub: otherSubscription, isCrossDomain: true });
 
+  // The legacy page hides the card entirely with no membership; the flat pane is a whole route, so
+  // hiding it leaves the section blank.
   if (!isLoading && rows.length === 0) {
-    return null;
+    if (!flat) return null;
+
+    return (
+      <CardOrSection flat title="Membership" id="manage-subscription">
+        <UpsellPanel
+          icon={<IconUserCircle size={24} />}
+          title="No active membership"
+          description="You're on the free plan. A membership adds:"
+          perks={[
+            'A monthly Buzz allowance',
+            'Ad-free browsing',
+            'Exclusive Discord channels and early access',
+          ]}
+          action={
+            <Button
+              component={Link}
+              href="/pricing"
+              variant="filled"
+              size="sm"
+              leftSection={<IconRosetteDiscountCheck size={16} />}
+              className="w-fit"
+            >
+              See membership plans
+            </Button>
+          }
+        />
+      </CardOrSection>
+    );
   }
 
   return (
