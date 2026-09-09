@@ -26,7 +26,7 @@
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
-  import type { TrainingDetailEpoch } from '$lib/data/trainingRows';
+  import { overallProgressPct, type TrainingDetailEpoch } from '$lib/data/trainingRows';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -37,12 +37,12 @@
   // checkpoints gives a whole-run reading that climbs instead of resetting. Falls back to the raw rate, or
   // to finished/planned, when a piece is missing.
   const completedEpochs = $derived(d.epochs.length);
-  const progressPct = $derived.by(() => {
-    const planned = d.plannedEpochs ?? 0;
-    const rate = typeof d.progress === 'number' ? d.progress : 0;
-    if (planned > 0) return Math.min(100, Math.round(((completedEpochs + rate) / planned) * 100));
-    return typeof d.progress === 'number' ? Math.round(d.progress * 100) : 0;
-  });
+  const progressPct = $derived(overallProgressPct(completedEpochs, d.plannedEpochs, d.progress));
+  // The epoch being trained now (one past the last finished checkpoint), capped at the plan — so a run with
+  // 1 checkpoint ready reads as "epoch 2", the one actually in progress, not "epoch 1".
+  const currentEpoch = $derived(
+    d.plannedEpochs ? Math.min(completedEpochs + 1, d.plannedEpochs) : completedEpochs + 1
+  );
 
   // Live updates while training: re-run the load every few seconds so new epochs/samples stream in. The
   // one-shot timeout re-arms via this effect after each refetch and stops on its own once the run reaches
@@ -347,7 +347,7 @@
           Training progress
         </span>
         <span class="font-mono text-dark-2">
-          {progressPct}%{#if d.plannedEpochs} · epoch {completedEpochs} / {d.plannedEpochs}{/if}
+          {progressPct}%{#if d.plannedEpochs} · epoch {currentEpoch} / {d.plannedEpochs}{/if}
         </span>
       </div>
       <div

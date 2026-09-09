@@ -45,6 +45,7 @@
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import type { GenerationItem } from '$lib/data/trainingRows';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
   let {
@@ -362,11 +363,13 @@
   }
 
   let genPickerOpen = $state(false);
-  function addFromGenerations(items: { blobId: string; url: string }[]) {
+  function addFromGenerations(items: GenerationItem[]) {
     addFromBlobs(
       items.map((i) => ({
+        // The AIR (what trains) comes from the FULL blob url; the tile preview + auto-label use the small
+        // preview so importing doesn't pull every full-size image into the browser.
         blobId: blobAirFromUrl(i.url),
-        url: i.url,
+        url: i.previewUrl ?? i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
       }))
     );

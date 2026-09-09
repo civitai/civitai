@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { IconAlertTriangle, IconPlus } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
@@ -33,11 +32,21 @@
   {:else}
   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {#each rows as r (r.workflowId ?? r.name)}
-      <div class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
+      <div
+        class="group relative flex flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 transition-colors hover:border-dark-3"
+      >
+        <!-- Stretched link: the whole card opens the run. Sits under the action buttons (z-index below), so
+             clicking the title/samples navigates while the buttons keep their own behaviour. -->
+        {#if r.workflowId}
+          <a href={`/${r.workflowId}`} class="absolute inset-0 z-[1]" aria-label={`Open ${r.name}`}></a>
+        {/if}
+
         <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">
           <ModelCodeBadge code={r.code} size="lg" />
           <div class="min-w-0">
-            <div class="truncate text-sm font-bold text-dark-0">{r.name}</div>
+            <div class="truncate text-sm font-bold text-dark-0 transition-colors group-hover:text-white">
+              {r.name}
+            </div>
             <div class="truncate font-mono text-[11px] text-dark-2">
               {r.base}{r.sub ? ` · ${r.sub}` : ''}
             </div>
@@ -62,6 +71,9 @@
               {/if}
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
+            {#if r.sampleUrls.length > 0}
+              <div class="mt-3"><SampleGrid urls={r.sampleUrls} cols={4} /></div>
+            {/if}
           {:else if r.state === 'failed'}
             <div
               class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-[11px] text-dark-2"
@@ -77,29 +89,21 @@
               {/each}
             </div>
           {/if}
+        </div>
 
-          <div class="mt-3 flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!r.workflowId}
-              onclick={() => r.workflowId && goto(`/${r.workflowId}`)}
-            >
-              Open
-            </Button>
-            {#if r.state === 'ready' || r.state === 'published'}
-              <Button variant="outline" size="sm">Generate</Button>
-            {/if}
-            {#if r.state === 'ready'}
-              <Button variant="outline" size="sm">Train further</Button>
-            {/if}
-            {#if r.state !== 'failed'}
-              <Button variant="outline" size="sm">Remix</Button>
-            {/if}
-            {#if r.state === 'failed'}
-              <Button variant="outline" size="sm">Retry</Button>
-            {/if}
-          </div>
+        <div class="relative z-[2] mt-auto flex flex-wrap gap-2 px-3.5 pb-3.5">
+          {#if r.state === 'ready' || r.state === 'published'}
+            <Button variant="outline" size="sm">Generate</Button>
+          {/if}
+          {#if r.state === 'ready'}
+            <Button variant="outline" size="sm">Train further</Button>
+          {/if}
+          {#if r.state !== 'failed'}
+            <Button variant="outline" size="sm">Remix</Button>
+          {/if}
+          {#if r.state === 'failed'}
+            <Button variant="outline" size="sm">Retry</Button>
+          {/if}
         </div>
       </div>
     {/each}

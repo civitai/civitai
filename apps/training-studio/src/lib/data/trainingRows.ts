@@ -159,6 +159,29 @@ function resolveWorkflow(w: Workflow) {
   };
 }
 
+/** Whole-run progress 0–100: finished checkpoints plus the current epoch's fraction, over the plan. The
+ *  orchestrator's `estimatedProgressRate` is PER-EPOCH (0→1 within the current epoch), so used raw it reads
+ *  as far more done than the run is — fold it into the completed count instead. Shared by the overview card
+ *  and the detail page so the two can't disagree. */
+export function overallProgressPct(
+  completedEpochs: number,
+  plannedEpochs: number | undefined,
+  rate: number | undefined
+): number {
+  const r = typeof rate === 'number' ? Math.max(0, Math.min(1, rate)) : 0;
+  if (plannedEpochs && plannedEpochs > 0)
+    return Math.min(100, Math.round(((completedEpochs + r) / plannedEpochs) * 100));
+  return typeof rate === 'number' ? Math.round(r * 100) : 0;
+}
+
+/** Epochs that have produced something (a finished checkpoint or a sample) — the "N complete" count. */
+function completedEpochCount(epochs: TrainingStepOutput['epochs']): number {
+  return (epochs ?? []).filter(
+    (e) =>
+      (e.model?.available && e.model?.url) || (e.samples ?? []).some((s) => s.available && s.url)
+  ).length;
+}
+
 /** Map one orchestrator workflow to a My-trainings row. Returns null for a workflow we can't place. */
 export function workflowToRow(w: Workflow): TrainingRow | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
@@ -191,6 +214,12 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     if (sampleUrls.length >= 4) break;
   }
 
+  const completedEpochs = completedEpochCount(output.epochs);
+  // The epoch being worked on now = one past the last completed, capped at the plan.
+  const currentEpoch = input.epochs
+    ? Math.min(completedEpochs + 1, input.epochs)
+    : completedEpochs + 1;
+
   return {
     workflowId: w.id,
     name,
@@ -198,8 +227,13 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     code,
     state,
     sub: parts.join(' · '),
-    progressPct: progressRate != null ? Math.round(progressRate * 100) : 0,
-    progress: state === 'training' ? w.status : '',
+    progressPct: overallProgressPct(completedEpochs, input.epochs, progressRate),
+    progress:
+      state === 'training'
+        ? input.epochs
+          ? `epoch ${currentEpoch} / ${input.epochs}`
+          : w.status
+        : '',
     sampleUrls,
   };
 }
