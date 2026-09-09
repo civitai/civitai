@@ -122,9 +122,8 @@ export const ACTIVITY_TAB_LABELS: Record<ActivityTab, string> = {
  * slot flag), so `?tab=subscriptions`, `?tab=permissions` and `?tab=hidden` are all links
  * a page-only viewer can legitimately receive — from a teammate, a bookmark taken before a
  * flag moved, or their own history. Handing that value to `Tabs.value` selects a tab that
- * is not in the list
- * and Mantine renders a bar with nothing active over an empty panel: a blank page with
- * no error. Falling back is the only outcome that is a page.
+ * is not in the list, and Mantine renders a bar with nothing active over an empty panel:
+ * a blank page with no error. Falling back is the only outcome that is a page.
  *
  * 🔴 THE FALLBACK IS DERIVED FROM THE VISIBILITY PREDICATE, NEVER FROM A TAB NAME
  * SPELLED HERE. It used to test `first === 'subscriptions'` — a check that stayed green
