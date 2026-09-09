@@ -1,9 +1,10 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { IconBoltFilled, IconChevronDown } from '@tabler/icons-svelte';
+  import { IconBoltFilled, IconCheck, IconChevronDown } from '@tabler/icons-svelte';
   import { getEdgeUrl } from '$lib/edge-url';
-  import { buzzMode } from '$lib/buzz-mode.svelte';
+  import { buzzMode, type BuzzMode } from '$lib/buzz-mode.svelte';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
+  import { dismiss } from '$lib/actions/dismiss';
 
   let {
     username,
@@ -24,25 +25,13 @@
   // The chosen primary account's balance (yellow or green); blue (generation) is always available too.
   const primaryBalance = $derived(buzz ? (buzzMode.value === 'green' ? buzz.green : buzz.yellow) : 0);
 
-  // The account menu is a native <details>; give it the menu dismissal users expect — Escape and a click
-  // outside — which <details> doesn't do on its own.
   let menuOpen = $state(false);
-  let menuEl = $state<HTMLDetailsElement | null>(null);
-  $effect(() => {
-    if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') menuOpen = false;
-    };
-    const onPointer = (e: PointerEvent) => {
-      if (menuEl && !menuEl.contains(e.target as Node)) menuOpen = false;
-    };
-    document.addEventListener('keydown', onKey);
-    document.addEventListener('pointerdown', onPointer);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.removeEventListener('pointerdown', onPointer);
-    };
-  });
+  let buzzMenuOpen = $state(false);
+
+  function pick(next: BuzzMode) {
+    buzzMode.set(next);
+    buzzMenuOpen = false;
+  }
 </script>
 
 <header class="mb-6 flex items-center justify-between gap-3">
@@ -63,22 +52,61 @@
       My trainings
     </a>
     {#if buzz}
-      <button
-        type="button"
-        onclick={() => buzzMode.toggle()}
-        title={`Yellow ${buzz.yellow.toLocaleString()} · Green ${buzz.green.toLocaleString()} · Blue ${buzz.blue.toLocaleString()} — click to switch primary Buzz`}
-        class="inline-flex items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25"
+      <details
+        class="relative"
+        bind:open={buzzMenuOpen}
+        use:dismiss={{ enabled: buzzMenuOpen, onDismiss: () => (buzzMenuOpen = false) }}
       >
-        <IconBoltFilled size={15} stroke={2} />
-        {primaryBalance.toLocaleString()}
-        <span class="text-[10px] font-normal capitalize opacity-70">{buzzMode.value}</span>
-        <span class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-[11px] font-normal text-blue-400">
-          <IconBoltFilled size={11} stroke={2} />{buzz.blue.toLocaleString()}
-        </span>
-      </button>
+        <summary
+          class="flex cursor-pointer list-none items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-buzz [&::-webkit-details-marker]:hidden"
+        >
+          <IconBoltFilled size={15} stroke={2} />
+          {primaryBalance.toLocaleString()}
+          <span class="text-[10px] font-normal capitalize opacity-70">{buzzMode.value}</span>
+          <span
+            class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-[11px] font-normal text-blue-400"
+          >
+            <IconBoltFilled size={11} stroke={2} />{buzz.blue.toLocaleString()}
+          </span>
+          <IconChevronDown size={13} stroke={2} class="opacity-70" />
+        </summary>
+        <div
+          class="absolute right-0 z-20 mt-2 min-w-[240px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
+        >
+          <div class="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-dark-2">
+            Buzz to spend
+          </div>
+          {#each [{ mode: 'yellow', label: 'Yellow', balance: buzz.yellow }, { mode: 'green', label: 'Green', balance: buzz.green }] as const as opt (opt.mode)}
+            <button
+              type="button"
+              onclick={() => pick(opt.mode)}
+              class="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm transition-colors hover:bg-dark-5"
+            >
+              <IconBoltFilled
+                size={14}
+                stroke={2}
+                class={opt.mode === 'green' ? 'text-emerald-400' : 'text-buzz'}
+              />
+              <span class="text-dark-0">{opt.label}</span>
+              <span class="ml-auto font-mono text-xs text-dark-2">{opt.balance.toLocaleString()}</span>
+              {#if buzzMode.value === opt.mode}
+                <IconCheck size={14} stroke={2.5} class="text-primary" />
+              {/if}
+            </button>
+          {/each}
+          <p class="px-3 pb-1.5 pt-1 text-[11px] leading-snug text-dark-2">
+            <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train NSFW
+            content. <span class="text-blue-400">Blue</span> covers any shortfall either way.
+          </p>
+        </div>
+      </details>
     {/if}
     {#if username}
-      <details class="relative" bind:open={menuOpen} bind:this={menuEl}>
+      <details
+        class="relative"
+        bind:open={menuOpen}
+        use:dismiss={{ enabled: menuOpen, onDismiss: () => (menuOpen = false) }}
+      >
         <summary
           class="flex cursor-pointer list-none items-center gap-2 rounded-full py-0.5 pl-0.5 pr-2 transition-colors hover:bg-dark-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary [&::-webkit-details-marker]:hidden"
         >
