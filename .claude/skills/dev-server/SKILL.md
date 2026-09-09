@@ -664,9 +664,10 @@ What's already handled:
   `resolveDaemonHome`. One daemon serves every tree, and a daemon living inside one of them holds
   that directory open for its whole life, so `wt rm` on it fails EBUSY for whoever finishes their PR
   first. `wt rm` **and** `wt stale` ask the daemon for its script path and its cwd, and name it when
-  either is inside the target instead of blaming a stray shell — `wt stale` keeps that tree out of
-  SAFE TO REMOVE, and keeps every tree out of it when the daemon does not answer at all, because a
-  daemon that could not be asked has not been ruled out.
+  either is inside the target instead of blaming a stray shell; `wt stale` keeps that tree out of
+  SAFE TO REMOVE. A daemon that is **running but will not say** — one older than this change, whose
+  `/` carries a bare pid — blocks both, for every tree, because it has not been ruled out. A daemon
+  that is **down** blocks nothing, since a process that is not running holds no directory open.
 
   🔴 **This only binds a CLI that has the change.** The skill directory is committed, so every
   worktree runs its own `cli.mjs`, and a tree cut before it re-pins itself the next time the daemon

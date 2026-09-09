@@ -13,7 +13,14 @@
  * A revert fails on the label text, not on a count, so the failing line names the wrong string.
  */
 
-import { daemonBlockReason, daemonHeldFrom, describePrRows, describePrune } from './worktree.mjs';
+import {
+  daemonBlockReason,
+  daemonHeldFrom,
+  describePrRows,
+  describePrune,
+  keepReasons,
+  partitionStale,
+} from './worktree.mjs';
 
 let failures = 0;
 function check(name, actual, expected) {
@@ -111,45 +118,38 @@ check(
 check('empty prune output says so', describePrune('', ADMIN)[0], 'pruned: no stale worktree registrations');
 
 // 868kzk7pf: `wt stale` called a tree safe while the daemon ran out of it, because it asked about
-// dev servers and never about the daemon's own home. These pin the three answers apart — HELD, and
-// the two that both used to print nothing: ruled out, and never asked.
-const TREE = 'C:\\Dev\\Repos\\work\\worktrees\\mine';
-const PRIMARY = 'C:\\Dev\\Repos\\work\\model-share';
-const skill = (root) => `${root}\\.claude\\skills\\dev-server`;
+// dev servers and never about the daemon's own home. HELD, ruled out, and never asked — the last
+// two used to print the same nothing.
+const TREE = 'C:/Dev/Repos/work/worktrees/mine';
+const PRIMARY = 'C:/Dev/Repos/work/model-share';
+const skill = (root) => `${root}/.claude/skills/dev-server`;
 const root = (data) => ({ ok: true, data });
+const AT_PRIMARY = root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY });
+const IN_TREE = root({ pid: 7, skillDir: skill(TREE), cwd: PRIMARY });
+const TOO_OLD = root({ pid: 46332 });
+const DOWN = { ok: false };
 
 check(
   'a daemon whose script is in the tree is the holder',
-  daemonHeldFrom(root({ pid: 7, skillDir: skill(TREE), cwd: PRIMARY }), TREE).holder?.reason,
+  daemonHeldFrom(IN_TREE, TREE).holder?.reason,
   `its running script: ${skill(TREE)}`
 );
-// Started by hand from inside the tree: it runs the primary's script and pins by cwd alone. Checking
-// only skillDir reports that tree as free while a delete on it cannot succeed.
+// Started by hand from inside the tree: it runs the primary's script and pins by cwd alone.
 check(
-  'and so is one merely CWD\u2019d there',
+  'and so is one merely CWD’d there',
   daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: TREE }), TREE).holder?.reason,
   `its working directory: ${TREE}`
 );
-check(
-  'a daemon at the primary holds nothing',
-  daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY }), TREE).holder,
-  null
-);
-check(
-  'and that verdict is a checked one',
-  daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY }), TREE).checked,
-  true
-);
-// The live case on 2026-09-09: pid 46332 predates PR #4641, so `/` answers with a bare pid. No
-// holder is reported and none has been ruled out either.
-check(
-  'a daemon too old to report is NOT ruled out',
-  daemonHeldFrom(root({ pid: 46332 }), TREE).checked,
-  false
-);
-check('nor is an unreachable one', daemonHeldFrom({ ok: false }, TREE).checked, false);
-// `worktrees/mine1` is a real neighbour of `worktrees/mine` here — git de-duplicates a colliding
-// basename that way — so a prefix match would blame the wrong agent's tree.
+check('a daemon at the primary holds nothing', daemonHeldFrom(AT_PRIMARY, TREE).holder, null);
+check('and that verdict is a checked one', daemonHeldFrom(AT_PRIMARY, TREE).checked, true);
+// The live case on 2026-09-09: pid 46332 predates PR #4641, so `/` answers with a bare pid.
+check('a daemon too old to report is NOT ruled out', daemonHeldFrom(TOO_OLD, TREE).checked, false);
+check('and it IS running', daemonHeldFrom(TOO_OLD, TREE).reachable, true);
+// The one unknown that rules itself out: a daemon that does not answer is not running, and a daemon
+// that is not running holds no directory. Without this a box with no daemon clears no tree, ever.
+check('a daemon that never answered is not running', daemonHeldFrom(DOWN, TREE).reachable, false);
+// A path prefix is not a path segment: without segment-wise matching, a daemon in `…/mine1` reads
+// as holding `…/mine` and blames the wrong agent's tree.
 check(
   'a sibling sharing a path prefix is not this tree',
   daemonHeldFrom(root({ pid: 7, skillDir: skill(`${TREE}1`), cwd: `${TREE}1` }), TREE).holder,
@@ -158,19 +158,96 @@ check(
 
 check(
   'the holder blocks removal, naming the pid',
-  daemonBlockReason(daemonHeldFrom(root({ pid: 7, skillDir: skill(TREE), cwd: PRIMARY }), TREE)),
+  daemonBlockReason(daemonHeldFrom(IN_TREE, TREE)),
+  `hosts the dev-server daemon (pid 7) - its running script: ${skill(TREE)}`
+);
+check('a ruled-out daemon blocks nothing', daemonBlockReason(daemonHeldFrom(AT_PRIMARY, TREE)), null);
+check(
+  'and an unanswered check blocks removal too',
+  daemonBlockReason(daemonHeldFrom(TOO_OLD, TREE))?.includes('NOT ruled out'),
+  true
+);
+check('but a daemon that is down blocks nothing', daemonBlockReason(daemonHeldFrom(DOWN, TREE)), null);
+
+// The decision `wt stale` prints, over rows `inspect` would have built. Without these the filter and
+// the banner condition are covered by nothing — swapping `every` for `some` at the banner, or
+// dropping the daemon term from the filter, both stay green on the helpers alone.
+const row = (over) => ({
+  path: TREE,
+  branch: 'feat/mine',
+  isPrimary: false,
+  mergedPr: 4321,
+  prLabel: 'PR #4321 merged',
+  dirty: 0,
+  sessions: [],
+  daemon: daemonHeldFrom(AT_PRIMARY, TREE),
+  ...over,
+});
+const PRIME = row({ path: PRIMARY, isPrimary: true, daemon: daemonHeldFrom(AT_PRIMARY, PRIMARY) });
+
+check('a merged, clean, unheld tree is offered', partitionStale([PRIME, row({})]).removable.length, 1);
+check(
+  'the same tree is NOT offered when the daemon lives in it',
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(IN_TREE, TREE) })]).removable.length,
+  0
+);
+check(
+  'nor when no running daemon would say',
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(TOO_OLD, TREE) })]).removable.length,
+  0
+);
+// The regression this pair exists for: a down daemon must not zero the command.
+check(
+  'but a down daemon offers it as before',
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(DOWN, TREE) })]).removable.length,
+  1
+);
+check(
+  'and the primary is never a candidate',
+  partitionStale([PRIME, row({})]).candidates.length,
+  1
+);
+
+// The banner is one fact about the daemon, so it fires only when NO row could be cleared of it —
+// never for a single held tree, which is named on its own row instead.
+check(
+  'the banner fires when nothing could be asked',
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(TOO_OLD, TREE) })]).daemonUnasked,
+  true
+);
+check(
+  'but not for a daemon that answered and named one tree',
+  partitionStale([PRIME, row({ daemon: daemonHeldFrom(IN_TREE, TREE) })]).daemonUnasked,
+  false
+);
+check('nor when there is nothing to judge', partitionStale([PRIME]).daemonUnasked, false);
+// Mixed rows cannot arise while one `/` answer decides them all, so this pins the rule rather than a
+// reachable state: `some` here would print "NO tree can be cleared" over a list that clears one.
+check(
+  'and not while any tree is still clearable',
+  partitionStale([
+    PRIME,
+    row({ daemon: daemonHeldFrom(TOO_OLD, TREE) }),
+    row({ path: `${TREE}2`, daemon: daemonHeldFrom(AT_PRIMARY, `${TREE}2`) }),
+  ]).daemonUnasked,
+  false
+);
+
+check(
+  'a held tree says so, with the pid',
+  keepReasons(row({ daemon: daemonHeldFrom(IN_TREE, TREE) }), false)[0],
   `hosts the dev-server daemon (pid 7) - its running script: ${skill(TREE)}`
 );
 check(
-  'a ruled-out daemon blocks nothing',
-  daemonBlockReason(daemonHeldFrom(root({ pid: 7, skillDir: skill(PRIMARY), cwd: PRIMARY }), TREE)),
-  null
+  'and defers to the banner when there is one',
+  keepReasons(row({ daemon: daemonHeldFrom(TOO_OLD, TREE) }), true).join('; '),
+  'daemon NOT ruled out (see above)'
 );
-// The whole ticket in one assertion: unknown must not read as no.
+// Every other reason survives alongside it; the daemon term is added, not substituted.
 check(
-  'and an unanswered check blocks removal too',
-  daemonBlockReason(daemonHeldFrom(root({ pid: 46332 }), TREE))?.includes('NOT ruled out'),
-  true
+  'the other reasons are still all there',
+  keepReasons(row({ dirty: 3, mergedPr: null, prLabel: 'PR #9 still OPEN', sessions: [{ id: 'a', port: 3001 }], daemon: daemonHeldFrom(IN_TREE, TREE) }), false).length,
+  4
 );
 
 console.log(failures ? `\n${failures} FAILURES` : '\nall green');

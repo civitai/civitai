@@ -191,21 +191,23 @@ async function fetchRunning(daemonRequest) {
 
 // The daemon reports where its own code lives; a daemon running out of this tree holds the
 // directory open and no delete can succeed while it lives.
-//
-// `checked` is separate from `holder` on purpose. A daemon that is down, unreachable, or older than
-// the `skillDir` field yields no holder AND no knowledge — and the failure path below must not then
-// tell the reader the daemon has been ruled out, which is the confidently-wrong message this
-// replaces.
 export async function daemonRunningFrom(target, daemonRequest) {
   return daemonHeldFrom(await daemonRequest('/'), target);
 }
 
 // The same verdict from an already-fetched `/`, so `wt stale` asks once for a dozen trees instead of
-// once per tree. Split rather than copied: paths.mjs exists because a `wt rm` and a `wt stale` that
-// disagree about which tree the daemon is in is the failure both are meant to prevent.
+// once per tree.
+//
+// `checked` is separate from `holder` on purpose. A daemon that is down, unreachable, or older than
+// the `skillDir` field yields no holder AND no knowledge, and the caller must not then report the
+// daemon as ruled out.
 export function daemonHeldFrom(res, target) {
-  const skillDir = res.ok ? res.data?.skillDir : null;
-  if (!skillDir) return { holder: null, checked: false };
+  // A daemon that does not answer at all is not running, and a daemon that is not running holds no
+  // directory open. That is the one unknown that rules ITSELF out, and keeping it separate is what
+  // stops a box with no daemon from reporting every tree as unremovable forever.
+  if (!res.ok) return { holder: null, checked: false, reachable: false };
+  const skillDir = res.data?.skillDir;
+  if (!skillDir) return { holder: null, checked: false, reachable: true };
   // Its script AND its working directory: either one alone keeps the directory open. A daemon
   // started by hand from a worktree runs the primary's script and still pins the tree by cwd.
   const held = [
@@ -215,21 +217,20 @@ export function daemonHeldFrom(res, target) {
   return {
     holder: held ? { pid: res.data.pid, reason: `${held[0]}: ${held[1]}` } : null,
     checked: true,
+    reachable: true,
   };
 }
 
-// Why this tree cannot be removed on the daemon's account, or null when it can.
-//
-// 🔴 UNKNOWN IS NOT NO. A daemon too old to report `skillDir` answers `/` with a bare pid, and the
-// whole of 868kzk7pf is those two being indistinguishable: `wt stale` called a tree safe while the
-// daemon ran out of it, `wt rm` unlinked 7794 reparse points and then failed EBUSY. So an
-// unanswered check keeps the tree in KEEP and says which of the two it is.
+// 🔴 UNKNOWN IS NOT NO. A daemon too old to report `skillDir` answers `/` with a bare pid, and
+// 868kzk7pf is those two being indistinguishable: `wt stale` called a tree safe while the daemon ran
+// out of it, then `wt rm` unlinked every reparse point and failed EBUSY. So an unanswered check
+// keeps the tree in KEEP and says which of the two it is.
 export function daemonBlockReason(daemon) {
   if (!daemon) return null;
   if (daemon.holder)
     return `hosts the dev-server daemon (pid ${daemon.holder.pid}) - ${daemon.holder.reason}`;
-  if (!daemon.checked)
-    return 'the dev-server daemon could not be asked where it runs from (down, unreachable, or too old to report it) - NOT ruled out';
+  if (!daemon.checked && daemon.reachable)
+    return 'a running dev-server daemon did not say where it runs from (it predates PR #4641) - NOT ruled out';
   return null;
 }
 
@@ -265,8 +266,7 @@ export function primaryOf(trees, fallback) {
 export async function inspect(primary, daemonRequest) {
   const trees = listWorktrees(primary);
   const primaryPath = primaryOf(trees, primary);
-  const running = await fetchRunning(daemonRequest);
-  const daemonRoot = await daemonRequest('/');
+  const [running, daemonRoot] = await Promise.all([fetchRunning(daemonRequest), daemonRequest('/')]);
   const rows = [];
   for (const t of trees) {
     const isPrimary = samePath(t.path, primaryPath);
@@ -289,23 +289,44 @@ export async function inspect(primary, daemonRequest) {
   return rows;
 }
 
-export async function cmdStale(primary, daemonRequest) {
-  const rows = await inspect(primary, daemonRequest);
+/**
+ * Which trees `wt stale` offers and which it keeps — separated from the printing so a selftest can
+ * reach the decision without a git tree, a `gh` call and a daemon.
+ */
+export function partitionStale(rows) {
   const candidates = rows.filter((r) => !r.isPrimary);
-
   const removable = candidates.filter(
     (r) => r.mergedPr && !r.dirty && r.sessions.length === 0 && !daemonBlockReason(r.daemon)
   );
-  const blocked = candidates.filter((r) => !removable.includes(r));
+  return {
+    candidates,
+    removable,
+    blocked: candidates.filter((r) => !removable.includes(r)),
+    // One `/` answer decides every row, so this is one fact about the daemon rather than a tally.
+    daemonUnasked: candidates.length > 0 && candidates.every((r) => daemonBlockReason(r.daemon) && !r.daemon?.checked),
+  };
+}
 
-  // Once, not once per row: an unanswered `/` is one fact about the daemon, and it lands on every
-  // tree at the same time. The rows below then say only that it applies to them.
-  const daemonUnasked = candidates.length && candidates.every((r) => !r.daemon?.checked);
+/** Every reason this tree is in KEEP, in the order they are printed. */
+export function keepReasons(r, daemonUnasked) {
+  const why = [];
+  if (r.sessions.length) why.push(`dev server ${r.sessions.map((s) => `${s.id}:${s.port}`).join(',')}`);
+  if (r.dirty) why.push(`${r.dirty} uncommitted`);
+  if (!r.mergedPr) why.push(r.prLabel);
+  const daemonWhy = daemonBlockReason(r.daemon);
+  if (daemonWhy) why.push(daemonUnasked ? 'daemon NOT ruled out (see above)' : daemonWhy);
+  return why;
+}
+
+export async function cmdStale(primary, daemonRequest) {
+  const rows = await inspect(primary, daemonRequest);
+  const { candidates, removable, blocked, daemonUnasked } = partitionStale(rows);
+
   if (daemonUnasked) {
     console.log(
-      '\n[!] the dev-server daemon did not say where it runs from, so NO tree can be cleared of\n' +
-        '    hosting it. It is either down, unreachable, or older than the fix that made it report\n' +
-        '    (PR #4641) - a daemon started before that stays old until it is restarted.'
+      '\n[!] a dev-server daemon is running but did not say where it runs from, so NO tree can be\n' +
+        '    cleared of hosting it. It predates PR #4641 and stays that way until it is restarted -\n' +
+        '    which is shared, so check "cli.mjs test list" is empty and ask before restarting it.'
     );
   }
 
@@ -324,15 +345,8 @@ export async function cmdStale(primary, daemonRequest) {
 
   console.log(`\nKEEP (${blocked.length})\n`);
   for (const r of blocked) {
-    const why = [];
-    if (r.sessions.length)
-      why.push(`dev server ${r.sessions.map((s) => `${s.id}:${s.port}`).join(',')}`);
-    if (r.dirty) why.push(`${r.dirty} uncommitted`);
-    if (!r.mergedPr) why.push(r.prLabel);
-    const daemonWhy = daemonBlockReason(r.daemon);
-    if (daemonWhy) why.push(daemonUnasked ? 'daemon NOT ruled out (see above)' : daemonWhy);
     console.log(`  ${r.path}`);
-    console.log(`      ${r.branch || '(detached)'}  ${why.join('; ')}`);
+    console.log(`      ${r.branch || '(detached)'}  ${keepReasons(r, daemonUnasked).join('; ')}`);
   }
   console.log('\nRemove one with:  node .claude/skills/dev-server/cli.mjs wt rm <path>\n');
 }
@@ -351,15 +365,20 @@ export async function cmdRemove(primary, targetArg, opts, daemonRequest) {
   // dev servers in this tree, which is irreversible and cannot be undone by the refusal that would
   // otherwise follow it.
   const daemonCheck = await daemonRunningFrom(target, daemonRequest);
-  if (daemonCheck.holder) {
+  // The same verdict `wt stale` prints. It used to refuse only a KNOWN holder, so the case that
+  // actually cost the 40 minutes — a daemon too old to answer, which is neither a holder nor ruled
+  // out — walked straight past this and failed at the `rmSync` below with the tree already gutted.
+  const daemonWhy = daemonBlockReason(daemonCheck);
+  if (daemonWhy) {
     fail(
-      `the dev-server daemon (pid ${daemonCheck.holder.pid}) is running from this worktree\n` +
-        `  ${daemonCheck.holder.reason}\n` +
-        `no delete can succeed while it lives — that path is inside the directory.\n` +
-        `a daemon started by a cli.mjs carrying this fix runs from the primary checkout and never\n` +
-        `blocks this; this one does not. it is SHARED — other agents' dev servers and queued test\n` +
-        `runs are on it — so check "cli.mjs test list" reports zero running and zero queued, and ask\n` +
-        `before restarting it.`
+      `${daemonWhy}\n` +
+        (daemonCheck.holder
+          ? `no delete can succeed while it lives — that path is inside the directory.\n` +
+            `a daemon started by a cli.mjs carrying this fix runs from the primary checkout and never\n` +
+            `blocks this; this one does not.`
+          : `so this delete may be the one that unlinks the tree and then cannot remove it.`) +
+        `\nit is SHARED — other agents' dev servers and queued test runs are on it — so check\n` +
+        `"cli.mjs test list" reports zero running and zero queued, and ask before restarting it.`
     );
   }
 

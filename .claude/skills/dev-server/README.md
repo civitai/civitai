@@ -89,7 +89,9 @@ node .claude/skills/dev-server/scripts/db-host.selftest.mjs        # the DB host
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs      # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
 node .claude/skills/dev-server/scripts/probe.selftest.mjs
-node .claude/skills/dev-server/scripts/worktree.selftest.mjs       # PR state and prune collateral, as reported
+node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
+node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs    # the daemon runs from the primary, never the caller
+node .claude/skills/dev-server/scripts/worktree.selftest.mjs       # PR state, prune collateral, and the daemon's home
 ```
 
 If you change any of this, mutate it and check the test goes red.
