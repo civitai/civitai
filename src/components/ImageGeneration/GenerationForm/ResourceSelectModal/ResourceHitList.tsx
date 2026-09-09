@@ -282,7 +282,9 @@ export function ResourceHitList({ query }: { query: string }) {
       {topItems.length > 0 && (
         <div
           className={clsx(
-            '!grid grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
+            // `minmax(0,350px)`, not a fixed 350px track: a fixed one is wider
+            // than a phone and overflows the pane.
+            '!grid grid-cols-[repeat(auto-fit,minmax(0,350px))] justify-center justify-items-center gap-6 p-3'
           )}
         >
           <div className={cardClasses.winnerFirst}>

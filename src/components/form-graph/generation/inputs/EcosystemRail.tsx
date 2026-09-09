@@ -232,7 +232,7 @@ export function EcosystemConsequenceFooter({
     : 0;
 
   return (
-    <div className="flex items-center gap-3 p-3">
+    <div className="flex flex-wrap items-center gap-3 p-3">
       <div className="flex min-w-0 flex-1 items-start gap-2">
         {!switching ? (
           <>

@@ -23,6 +23,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CategoryTagFilters } from './CategoryTagFilters';
@@ -54,6 +55,7 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
     catalogNotice,
   } = useResourceSelectContext();
   const dialog = useDialogContext();
+  const isMobile = useIsMobile({ type: 'media' });
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -125,10 +127,15 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
         <CloseButton onClick={handleClose} />
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1">
         {Rail && <Rail />}
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        {/* `min-w-0` is load-bearing: a flex item defaults to `min-width: auto`,
+            which refuses to shrink below its content's intrinsic width. The
+            catalog's toolbar and grid are intrinsically wide, so without this
+            the whole column — not any one element in it — spills past the
+            modal's right edge on a narrow viewport. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex flex-none flex-col gap-2.5 p-3">
             <div className={clsx('flex flex-wrap items-center gap-2', !!catalogNotice && 'hidden')}>
               <CatalogTabs tabs={allowedTabs} value={tab} onChange={setTab} />
@@ -145,8 +152,10 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
                 leftSection={<IconSearch size={16} />}
                 placeholder="Search models"
                 size="xs"
-                className="w-full min-w-40 flex-1 sm:w-auto"
-                autoFocus
+                className="w-full min-w-0 flex-1 sm:w-auto sm:min-w-40"
+                // Autofocus opens the on-screen keyboard over half the catalog
+                // before anything has been browsed.
+                autoFocus={!isMobile}
               />
             </div>
 
@@ -204,7 +213,10 @@ function CatalogTabs({
     <div
       role="group"
       aria-label="Catalog tab"
-      className="flex shrink-0 gap-0.5 rounded-lg border border-gray-3 bg-gray-1 p-0.5 dark:border-dark-4 dark:bg-dark-6"
+      // Scrolls rather than shrinks: five tabs are wider than a phone, and a
+      // `shrink-0` track that cannot wrap pushes the whole toolbar off the
+      // right edge instead.
+      className="flex max-w-full gap-0.5 overflow-x-auto rounded-lg border border-gray-3 bg-gray-1 p-0.5 dark:border-dark-4 dark:bg-dark-6"
     >
       {tabs.map((t) => (
         <UnstyledButton
@@ -212,7 +224,7 @@ function CatalogTabs({
           aria-pressed={t === value}
           onClick={() => onChange(t)}
           className={clsx(
-            'rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider',
+            'shrink-0 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider',
             t === value
               ? 'bg-white text-dark-9 shadow-sm dark:bg-dark-4 dark:text-white'
               : 'text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-gray-3',
@@ -277,7 +289,7 @@ function StagedTray() {
   if (!multiSelect || !staged.length) return null;
 
   return (
-    <div className="flex items-center gap-3 border-t border-gray-3 bg-gray-0 p-3 dark:border-dark-4 dark:bg-dark-7">
+    <div className="flex flex-wrap items-center gap-3 border-t border-gray-3 bg-gray-0 p-3 dark:border-dark-4 dark:bg-dark-7">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
         {staged.map((resource) => (
           <Badge
