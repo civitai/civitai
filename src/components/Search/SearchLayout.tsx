@@ -17,6 +17,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
   searchAvailability,
@@ -58,10 +59,12 @@ const meilisearch = instantMeiliSearch(
 // returns Meili's response verbatim. The availability store is the side-channel
 // used to render the banner (the swallowed error never reaches
 // `useInstantSearch().status`).
-const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient(meilisearch, {
-  onError: () => searchAvailability.setUnavailable(true),
-  onSuccess: () => searchAvailability.setUnavailable(false),
-});
+const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
+  createResilientSearchClient(meilisearch, {
+    onError: () => searchAvailability.setUnavailable(true),
+    onSuccess: () => searchAvailability.setUnavailable(false),
+  })
+);
 
 // #region [ImageGuardContext]
 type SearchLayoutState = {
