@@ -239,9 +239,19 @@ export const getTaskQueueWorker = (
       const result = await processor(task);
 
       if (result === 'error') {
-        // Awaited so a rejection from failTask is not dropped on the floor. It is not what keeps
-        // the retry alive — `retrying` does that — but the two are redundant, not alternatives;
-        // see the comment on the retry branch in `failTask`.
+        // Awaited so the re-queue completes before this worker re-evaluates `isQueueEmpty()`.
+        // That is redundant with `retrying`, not an alternative to it: measured, either
+        // mechanism ALONE keeps the retry alive, and only with neither do all the workers
+        // resolve before the task is added back. See the retry branch in `failTask`.
+        //
+        // 🔴 It does NOT stop a rejection from `failTask` being dropped. This worker is a
+        // `new Promise(async (resolve) => …)`, and a throw inside an async executor rejects
+        // the executor's own unobserved promise, never the outer one — so the rejection is
+        // unhandled with or without this `await`. What the `await` changes is that the worker
+        // then never settles, hanging the `Promise.all(workers)` in `updateSync` instead of
+        // returning. `failTask` cannot realistically throw today (`processSearchIndexTask`
+        // catches everything), so this is a latent shape, not a live bug — but do not read
+        // the `await` as error handling.
         await queue.failTask(task);
       } else {
         queue.completeTask(task);
