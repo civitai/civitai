@@ -129,7 +129,9 @@ beforeEach(() => {
     c.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
     c.appListingScreenshot.deleteMany.mockReset().mockResolvedValue({ count: 0 });
     c.appListingScreenshot.updateMany.mockReset().mockResolvedValue({ count: 0 });
-    c.appListingModerationEvent.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
+    c.appListingModerationEvent.create
+      .mockReset()
+      .mockImplementation(async (a: { data: unknown }) => a.data);
     // Default: the go-live scan-clean gate re-reads each asset's `ingestion` — echo
     // every queried id as `Scanned` so a normal approve passes. (The scan gate selects
     // `{ id, ingestion }`; the rating derive selects `{ nsfwLevel }` — tests that need a
@@ -142,7 +144,9 @@ beforeEach(() => {
     c.appListingPublishRequest.findUnique.mockReset().mockResolvedValue(null);
     c.appListingPublishRequest.findFirst.mockReset().mockResolvedValue(null);
     c.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
-    c.appListingPublishRequest.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
+    c.appListingPublishRequest.create
+      .mockReset()
+      .mockImplementation(async (a: { data: unknown }) => a.data);
     c.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
   }
   mockWrite.$transaction
@@ -479,8 +483,22 @@ describe('approveExternalRequest — supersede scopes by the REQUEST kind (no on
 describe('mod queue procs — widened to kind IN (onsite, offsite), each row carries kind', () => {
   it('listPendingOffsiteRequests: where widens to both kinds, select carries kind, onsite rows surface with kind:onsite', async () => {
     mockRead.appListingPublishRequest.findMany.mockResolvedValue([
-      { id: 'a', kind: 'onsite', slug: 'x', status: 'pending', appListingId: 'apl_s', appListing: {} },
-      { id: 'b', kind: 'offsite', slug: 'y', status: 'pending', appListingId: 'apl_o', appListing: {} },
+      {
+        id: 'a',
+        kind: 'onsite',
+        slug: 'x',
+        status: 'pending',
+        appListingId: 'apl_s',
+        appListing: {},
+      },
+      {
+        id: 'b',
+        kind: 'offsite',
+        slug: 'y',
+        status: 'pending',
+        appListingId: 'apl_o',
+        appListing: {},
+      },
     ]);
     const res = await listPendingOffsiteRequests({});
     const call = mockRead.appListingPublishRequest.findMany.mock.calls[0][0] as {
@@ -515,10 +533,24 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
   it('listApprovedOffsiteRequests + listRejectedOffsiteRequests both widen the kind filter', async () => {
     await listApprovedOffsiteRequests({});
     await listRejectedOffsiteRequests({});
-    const approvedWhere = (mockRead.appListingPublishRequest.findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
-    const rejectedWhere = (mockRead.appListingPublishRequest.findMany.mock.calls[1][0] as { where: Record<string, unknown> }).where;
-    expect(approvedWhere).toMatchObject({ status: 'approved', kind: { in: ['onsite', 'offsite'] } });
-    expect(rejectedWhere).toMatchObject({ status: 'rejected', kind: { in: ['onsite', 'offsite'] } });
+    const approvedWhere = (
+      mockRead.appListingPublishRequest.findMany.mock.calls[0][0] as {
+        where: Record<string, unknown>;
+      }
+    ).where;
+    const rejectedWhere = (
+      mockRead.appListingPublishRequest.findMany.mock.calls[1][0] as {
+        where: Record<string, unknown>;
+      }
+    ).where;
+    expect(approvedWhere).toMatchObject({
+      status: 'approved',
+      kind: { in: ['onsite', 'offsite'] },
+    });
+    expect(rejectedWhere).toMatchObject({
+      status: 'rejected',
+      kind: { in: ['onsite', 'offsite'] },
+    });
   });
 });
 
@@ -597,7 +629,7 @@ const LISTING_REQUEST_PRODUCERS: Record<string, string> = {
     'which is why the on-site half of this table was shadow-only.',
   'src/server/services/blocks/offsite-moderation.service.ts::routeRepublishToReviewInTx':
     '🔴 THE SECOND ON-SITE PRODUCER, and the one that falsified the invariant. BOTH ' +
-    "kinds (`kind: listing.kind`), NON-shadow — an owner republish whose assets differ " +
+    'kinds (`kind: listing.kind`), NON-shadow — an owner republish whose assets differ ' +
     'from the recorded approval baseline. Any consumer that reads `kind:onsite` as ' +
     '"therefore a shadow revision" is wrong about this row; discriminate on ' +
     '`revisionOfId`, never on `kind`.',
@@ -778,10 +810,7 @@ describe('🔴 AppListingPublishRequest PRODUCER LEDGER — fails when the set g
     // The ledger entry above is prose; this is the code it describes. Without it the
     // ledger could record a producer that does not actually reach the on-site half.
     const code = stripCommentsAndStrings(
-      readFileSync(
-        join(ROOT, 'src/server/services/blocks/offsite-moderation.service.ts'),
-        'utf8'
-      )
+      readFileSync(join(ROOT, 'src/server/services/blocks/offsite-moderation.service.ts'), 'utf8')
     );
     const fnStart = code.indexOf('function routeRepublishToReviewInTx');
     expect(fnStart).toBeGreaterThan(-1); // the ledger key must still name a real function
@@ -824,7 +853,10 @@ describe('the shape of a kind:onsite AppListingPublishRequest minted by submitLi
     const res = await submitListingRevision({ shadowId: 'apl_shadow', userId: CALLER });
     expect(res).toMatchObject({ shadowId: 'apl_shadow', slug: 'my-app' });
 
-    const created = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as Record<string, unknown>;
+    const created = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     // 🔴 the request is kind:onsite AND points at the SHADOW — so widening the queue
     // gates to include onsite surfaces exactly media revisions, nothing else.
     expect(created.kind).toBe('onsite');
