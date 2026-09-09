@@ -828,4 +828,4 @@
 />
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
-<ReuseDatasetModal bind:open={reuseOpen} onReuse={addFromBlobs} />
+<ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />

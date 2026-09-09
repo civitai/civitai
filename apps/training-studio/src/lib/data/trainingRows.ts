@@ -57,7 +57,9 @@ export interface TrainingRow {
   /** Real sample URLs from a finished run's last epoch (the list shows these instead of the gradient
    * placeholders). Empty until a run produces samples. */
   sampleUrls: string[];
-  /** Video-model samples are `<video>`, not `<img>` — the grid renders them accordingly. */
+  /** The run's media — image / video / audio. Drives sample rendering and the reuse picker's same-media filter. */
+  media: Media;
+  /** Convenience: video-model samples are `<video>`, not `<img>`. */
   isVideo: boolean;
 }
 
@@ -238,6 +240,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
           : w.status
         : '',
     sampleUrls,
+    media,
     isVideo: media === 'video',
   };
 }
@@ -270,7 +273,9 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
-  /** Sample media type — video models (e.g. Effect) render their samples as `<video>`. */
+  /** Sample media type — drives how samples render (image tiles, `<video>`, or a full-width `<audio>` card). */
+  media: Media;
+  /** Convenience: video-model samples are `<video>`. */
   isVideo: boolean;
   /** The fixed sample prompts (usually 3). Rows of the compare grid; captions for each epoch's images. */
   prompts: string[];
@@ -341,6 +346,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    media,
     isVideo: media === 'video',
     prompts,
     plannedEpochs: input.epochs,
@@ -362,6 +368,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 0,
     progress: '',
     sampleUrls: [],
+    media: 'image',
     isVideo: false,
   },
   {
@@ -373,6 +380,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 62,
     progress: 'step 5,120 / 8,400 · checkpoint 6/10',
     sampleUrls: [],
+    media: 'image',
     isVideo: false,
   },
   {
@@ -384,6 +392,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 0,
     progress: '',
     sampleUrls: [],
+    media: 'image',
     isVideo: false,
   },
   {
@@ -395,6 +404,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     progressPct: 0,
     progress: '',
     sampleUrls: [],
+    media: 'image',
     isVideo: false,
   },
 ];
@@ -407,6 +417,7 @@ export const SAMPLE_DETAIL: TrainingDetail = {
   code: 'XL',
   state: 'ready',
   createdAt: '2026-08-21T16:48:19.000Z',
+  media: 'image',
   isVideo: false,
   prompts: [
     '1girl, solo, blue eyes, long silver hair, standing in a sunlit forest, detailed background',

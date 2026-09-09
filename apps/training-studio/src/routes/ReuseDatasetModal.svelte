@@ -3,14 +3,18 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import type { TrainingRow } from '$lib/data/trainingRows';
+  import type { Media } from '$lib/data/trainingModels';
   import { toReuseItems } from '$lib/reuse';
 
   // Emits items in addFromBlobs shape so the Data step can seed them with no re-upload.
   let {
     open = $bindable(false),
+    media,
     onReuse,
   }: {
     open: boolean;
+    /** Only same-media runs are reusable — an image dataset can't seed an audio run, etc. */
+    media: Media;
     onReuse: (items: { blobId: string; url: string; name: string; caption: string }[]) => void;
   } = $props();
 
@@ -70,11 +74,14 @@
       {#await trainings}
         <div class="py-10 text-center font-mono text-sm text-dark-2">Loading your trainings…</div>
       {:then rows}
-        {#if rows.length === 0}
-          <div class="py-10 text-center font-mono text-sm text-dark-2">No trainings to reuse yet.</div>
+        {@const shown = rows.filter((r) => r.media === media)}
+        {#if shown.length === 0}
+          <div class="py-10 text-center font-mono text-sm text-dark-2">
+            No {media} trainings to reuse yet.
+          </div>
         {:else}
           <div class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
-            {#each rows as row (row.workflowId)}
+            {#each shown as row (row.workflowId)}
               <button
                 type="button"
                 onclick={() => pick(row)}

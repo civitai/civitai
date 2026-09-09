@@ -1,12 +1,20 @@
 <script lang="ts">
   import { cn } from '@civitai/ui/utils.js';
+  import { IconMusic } from '@tabler/icons-svelte';
 
   let {
     url,
     alt = 'training sample',
     isVideo = false,
+    isAudio = false,
     class: className = '',
-  }: { url: string | null; alt?: string; isVideo?: boolean; class?: string } = $props();
+  }: {
+    url: string | null;
+    alt?: string;
+    isVideo?: boolean;
+    isAudio?: boolean;
+    class?: string;
+  } = $props();
 
   const tileClass = 'aspect-square w-full rounded object-cover ring-1 ring-inset ring-dark-4/60';
 
@@ -23,7 +31,18 @@
 </script>
 
 {#if url}
-  {#if isVideo}
+  {#if isAudio}
+    <!-- Audio samples aren't a square thumbnail — a full-width player card, so the controls are usable. -->
+    <div
+      class={cn(
+        'flex w-full items-center gap-2.5 rounded-lg border border-dark-4 bg-dark-7 p-3',
+        className
+      )}
+    >
+      <IconMusic size={18} stroke={2} class="shrink-0 text-dark-2" />
+      <audio src={url} controls preload="metadata" class="h-9 w-full"></audio>
+    </div>
+  {:else if isVideo}
     <!-- svelte-ignore a11y_media_has_caption -->
     <video
       src={url}
@@ -46,6 +65,6 @@
       className
     )}
   >
-    no {isVideo ? 'video' : 'image'}
+    no {isAudio ? 'audio' : isVideo ? 'video' : 'image'}
   </div>
 {/if}

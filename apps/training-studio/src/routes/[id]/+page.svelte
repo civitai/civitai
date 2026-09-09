@@ -305,6 +305,8 @@
   // The fullscreen viewer navigates over `newestFirst` (↑ = newer epoch, matching the in-app trainer).
   let viewer = $state<{ epochIndex: number; sampleIndex: number } | null>(null);
   function openViewer(epoch: TrainingDetailEpoch, sampleIndex: number) {
+    // Audio samples are inline players (the controls are the interaction) — no fullscreen viewer.
+    if (d.media === 'audio') return;
     const epochIndex = newestFirst.indexOf(epoch);
     if (epochIndex !== -1) viewer = { epochIndex, sampleIndex };
   }
@@ -521,10 +523,10 @@
                     class="block w-full cursor-zoom-in rounded transition hover:ring-2 hover:ring-primary/50"
                     aria-label="Open Epoch {epoch.number}, prompt {r + 1}"
                   >
-                    <SampleImage isVideo={d.isVideo} url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
+                    <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
                   </button>
                 {:else}
-                  <SampleImage isVideo={d.isVideo} url={null} />
+                  <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} />
                 {/if}
               {/each}
             {/each}
@@ -561,7 +563,7 @@
           {/if}
         </div>
 
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}">
           {#each promptLabels as prompt, i (i)}
             {@const featuredUrl = featured.samples[i] ?? null}
             <figure class="m-0 flex flex-col gap-2">
@@ -572,10 +574,10 @@
                   class="block w-full cursor-zoom-in rounded transition hover:ring-2 hover:ring-primary/50"
                   aria-label="Open Epoch {featured.number} sample {i + 1}"
                 >
-                  <SampleImage isVideo={d.isVideo} url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
+                  <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
                 </button>
               {:else}
-                <SampleImage isVideo={d.isVideo} url={null} />
+                <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} />
               {/if}
               <figcaption class="text-[11px] leading-relaxed text-dark-2" title={prompt}>
                 {prompt}
@@ -617,7 +619,7 @@
                 <div class="grid grid-cols-3 gap-1.5">
                   {#each promptLabels as _, si (si)}
                     <SampleImage
-                      isVideo={d.isVideo}
+                      isVideo={d.isVideo} isAudio={d.media === 'audio'}
                       url={epoch.samples[si] ?? null}
                       alt="Epoch {epoch.number} preview {si + 1}"
                     />

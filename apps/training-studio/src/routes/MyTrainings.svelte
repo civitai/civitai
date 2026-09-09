@@ -97,7 +97,7 @@
               {/if}
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
-            {#if r.sampleUrls.length > 0}
+            {#if r.sampleUrls.length > 0 && r.media !== 'audio'}
               <div class="mt-3"><SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} /></div>
             {/if}
           {:else if r.state === 'failed'}
@@ -106,7 +106,7 @@
             >
               <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
             </div>
-          {:else if r.sampleUrls.length > 0}
+          {:else if r.sampleUrls.length > 0 && r.media !== 'audio'}
             <SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} />
           {:else}
             <div class="grid grid-cols-4 gap-1.5">
