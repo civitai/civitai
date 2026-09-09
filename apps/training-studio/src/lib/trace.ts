@@ -1,6 +1,8 @@
-// Client side of the live training trace: tail the proxied stream and hand each line to the caller. Works
-// for both trace modes — `events` lines are NDJSON objects, `logs` lines are plain text (parseTraceLine
-// falls back to raw text when a line isn't JSON).
+// Client side of the live training trace: tail the stream and hand each line to the caller. Works for both
+// trace modes — `events` lines are NDJSON objects, `logs` lines are plain text (parseTraceLine falls back
+// to raw text when a line isn't JSON).
+
+import { dev } from '$app/environment';
 
 export const isAbort = (err: unknown) => (err as DOMException | undefined)?.name === 'AbortError';
 
@@ -16,15 +18,18 @@ export interface TraceEvent {
  *  on a 404 (the worker hasn't written its first line yet — caller should retry), or `{ready:true}` once
  *  the stream opens and closes. Rejects only on abort or a hard error.
  *
- *  The orchestrator's `streaming-blobs` URL is a presigned, CORS-enabled long-poll, so the browser consumes
- *  it DIRECTLY — no backend proxy. (A proxied stream is buffered by Cloudflare and never arrives live; a
- *  direct fetch sidesteps that and needs no server endpoint.) */
+ *  In PROD the browser tails the orchestrator's `streaming-blobs` URL DIRECTLY — Cloudflare buffers a
+ *  proxied stream so it never arrives live, and the orchestrator's CORS allows the app's civitai.com
+ *  origin. In DEV that same cross-origin fetch has no CORS grant for `localhost`, so the browser never
+ *  gets response headers and hangs; there we route through the `/api/trace` proxy (Node isn't CORS-gated)
+ *  purely so local testing works. The proxy must NOT be relied on in prod. */
 export async function tailTrace(
   traceUrl: string,
   onLine: (line: string) => void,
   signal: AbortSignal
 ): Promise<{ ready: boolean }> {
-  const res = await fetch(traceUrl, { signal });
+  const url = dev ? `/api/trace?url=${encodeURIComponent(traceUrl)}` : traceUrl;
+  const res = await fetch(url, { signal });
   if (res.status === 404) return { ready: false };
   if (!res.ok || !res.body) throw new Error(`trace failed (${res.status})`);
 
