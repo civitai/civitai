@@ -249,9 +249,9 @@ export const getTaskQueueWorker = (
         // the executor's own unobserved promise, never the outer one — so the rejection is
         // unhandled with or without this `await`. What the `await` changes is that the worker
         // then never settles, hanging the `Promise.all(workers)` in `updateSync` instead of
-        // returning. `failTask` cannot realistically throw today (`processSearchIndexTask`
-        // catches everything), so this is a latent shape, not a live bug — but do not read
-        // the `await` as error handling.
+        // returning. Nothing in `failTask`'s own body throws today — it mutates queue state,
+        // sleeps, and calls `addTask` — so this is a latent shape, not a live bug. But do not
+        // read the `await` as error handling.
         await queue.failTask(task);
       } else {
         queue.completeTask(task);
