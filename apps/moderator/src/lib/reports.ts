@@ -206,11 +206,15 @@ export const getReportItemUrl = (
     ? `${base}${contextUrl}`
     : entityUrl(base, type, entityId);
 
-/** `Report.details` is free-form JSON; list its primitive key/value pairs for the moderator. Shared
- *  because it is the only view of a report whose target is gone — see the dashboard's unlinked rows. */
+/** `Report.details` is free-form JSON; list its key/value pairs for the moderator. Shared
+ *  because it is the only view of a report whose target is gone — see the dashboard's unlinked rows.
+ *
+ *  🔴 Nested objects are stringified, not skipped: a snapshot written so a deleted target can
+ *  still be ruled on IS a nested object, and this is the only place it reaches a moderator. */
 export const reportDetailEntries = (details: unknown): [string, string][] => {
   if (!details || typeof details !== 'object') return [];
   return Object.entries(details as Record<string, unknown>)
-    .filter(([, v]) => v != null && typeof v !== 'object' && String(v).trim() !== '')
-    .map(([k, v]) => [k, String(v)]);
+    .filter(([, v]) => v != null)
+    .map(([k, v]): [string, string] => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)])
+    .filter(([, v]) => v.trim() !== '');
 };

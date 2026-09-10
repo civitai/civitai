@@ -97,10 +97,7 @@ describe('AnnouncementCard actions', () => {
   test('an external link in the body opens the interstitial', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     renderWithProviders(
-      <AnnouncementCard
-        {...base}
-        content="grab them at [my telegram](https://t.me/SomeGroup)"
-      />
+      <AnnouncementCard {...base} content="grab them at [my telegram](https://t.me/SomeGroup)" />
     );
 
     const link = page.getByRole('link', { name: 'my telegram' });
@@ -112,13 +109,46 @@ describe('AnnouncementCard actions', () => {
   test('an internal link in the body is left alone', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     // Hash target — see the comment above on the internal-action test.
-    renderWithProviders(
-      <AnnouncementCard {...base} content="see [my model](#offer)" />
-    );
+    renderWithProviders(<AnnouncementCard {...base} content="see [my model](#offer)" />);
 
     const link = page.getByRole('link', { name: 'my model' });
     await expect.element(link).toHaveAttribute('href', '#offer');
     await link.click();
     expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
+  });
+});
+
+// 🔴 `warnOnExternalLinks` is opt-in, and every other surface — articles, comments, bios —
+// depends on that. Dropping the `warnOnExternalLinks &&` conjunct in `CustomMarkdown` would
+// put the interstitial in front of every external link in the app and pass every test above,
+// because they all render the one caller that opts in. This is what pins the boundary.
+describe('CustomMarkdown without warnOnExternalLinks', () => {
+  beforeEach(() => {
+    mocks.openExternalLinkWarning.mockClear();
+  });
+
+  test('leaves an external link alone', async () => {
+    const { CustomMarkdown } = await import('~/components/Markdown/CustomMarkdown');
+    // Nothing calls `preventDefault` on this path — that is the property under test — so the
+    // click would really open `target="_blank"`. Swallowing the default keeps the run
+    // deterministic; React still dispatches the component's own handler, if it has one.
+    const swallowNavigation = (e: MouseEvent) => e.preventDefault();
+    document.addEventListener('click', swallowNavigation, true);
+    try {
+      renderWithProviders(
+        <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+          grab them at [my telegram](https://t.me/SomeGroup)
+        </CustomMarkdown>
+      );
+
+      const link = page.getByRole('link', { name: 'my telegram' });
+      // Asserted so a "not called" cannot come from the href being mangled into something
+      // `isExternalHref` would have called internal anyway.
+      await expect.element(link).toHaveAttribute('href', 'https://t.me/SomeGroup');
+      await link.click();
+      expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('click', swallowNavigation, true);
+    }
   });
 });

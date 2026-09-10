@@ -32,6 +32,19 @@ describe('isExternalHref', () => {
     expect(isExternalHref('http://civitai.com:3000/models/1', hosts)).toBe(false);
   });
 
+  // The other direction, and the one that was broken: `useInternalHosts` seeds itself from
+  // `window.location.host`, which carries the port, while an href is compared as `url.hostname`,
+  // which never does. In local dev on :3000 that made every absolute internal link external.
+  it('treats an internal host entry carrying a port as matching the bare host', () => {
+    expect(isExternalHref('http://localhost:3000/models/1', ['localhost:3000'])).toBe(false);
+    expect(isExternalHref('https://civitai.com/models/1', ['civitai.com:3000'])).toBe(false);
+  });
+
+  it('still rejects a lookalike when the internal host entry carries a port', () => {
+    expect(isExternalHref('https://evil-civitai.com/x', ['civitai.com:3000'])).toBe(true);
+    expect(isExternalHref('https://cdn.civitai.com/x', ['civitai.com:3000'])).toBe(true);
+  });
+
   it('treats an unknown host as external', () => {
     expect(isExternalHref('https://t.me/SomeGroup', hosts)).toBe(true);
   });

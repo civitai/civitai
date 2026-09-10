@@ -1,4 +1,8 @@
-const normalizeHost = (host: string) => host.trim().toLowerCase().replace(/\.$/, '');
+// The port is stripped because the two sides are asymmetric: an href is compared as
+// `url.hostname`, which never carries one, while `internalHosts` entries come from
+// `window.location.host`, which does. Left in, every absolute internal link warns on :3000.
+const normalizeHost = (host: string) =>
+  host.trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
 
 /**
  * Whether following `href` leaves Civitai.

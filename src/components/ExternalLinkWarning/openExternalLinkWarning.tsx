@@ -27,9 +27,11 @@ export function openExternalLinkWarning(href: string) {
         <Text size="xs" c="dimmed" className="break-all">
           {href}
         </Text>
+        {/* Author-neutral on purpose: this also fires on Civitai's own sitewide announcements,
+            where a claim that Civitai has neither reviewed nor endorsed the destination is false. */}
         <Text size="sm">
-          Civitai has not reviewed this site and is not endorsing it. Do not enter your Civitai
-          password or payment details there.
+          Check the address before you continue, and never enter your Civitai password or payment
+          details on another site.
         </Text>
       </Stack>
     ),

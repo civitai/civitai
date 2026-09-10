@@ -176,9 +176,11 @@ export function AnnouncementCard({
                 if (external) openExternalLinkWarning(action.link);
               };
 
+              const variant = (action.variant || 'outline') as ButtonVariant;
+
               const shared = {
                 onClick: handleClick,
-                variant: (action.variant ? (action.variant as ButtonVariant) : 'outline') as ButtonVariant,
+                variant,
                 color: action.color ?? color,
                 children: action.linkText,
               };
@@ -186,7 +188,17 @@ export function AnnouncementCard({
               // No `href` when the destination is off-site: an anchor is still middle- and
               // cmd-clickable, which is a path around the interstitial rather than through it.
               return external ? (
-                <Button key={index} {...shared} />
+                <Button
+                  key={index}
+                  {...shared}
+                  type="button"
+                  // A `<button>` fires `auxclick`, not `click`, so without this middle-click is
+                  // dead rather than gated. Narrowed to button 1 because `auxclick` also fires
+                  // on right-click, where the interstitial would fight the context menu.
+                  onAuxClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                    if (e.button === 1) handleClick();
+                  }}
+                />
               ) : (
                 <Button key={index} component={Link} href={action.link} {...shared} />
               );
