@@ -16,8 +16,7 @@ import {
 } from '$lib/server/auth/users';
 import {
   emailDomain,
-  getBlockedEmailDomains,
-  isBlockedDomain,
+  isBlockedEmailDomain,
   normalizeEmailAddress,
 } from '$lib/server/auth/blocklist';
 import { establishSession } from '$lib/server/auth/session';
@@ -90,7 +89,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
     const domain = emailDomain(profile.email);
     if (
       domain &&
-      isBlockedDomain(await getBlockedEmailDomains(), domain) &&
+      (await isBlockedEmailDomain(domain)) &&
       !(await isLinkedAccount(provider.id, profile.providerAccountId)) &&
       !(await userExistsByEmail(profile.email))
     ) {
