@@ -1,14 +1,20 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
-// 15 minutes. NOTE: this NO LONGER covers the worst-case token lifetime — App
-// Blocks dev:live tokens now live up to DEV_TOKEN_LIFETIME_SECONDS (4h, see
-// block-token.service.ts). This TTL is intentionally left at 15min because the
-// revocation WRITE path (revokeInstance/clearInstance) is currently UNWIRED
-// (zero callers). BEFORE wiring a revocation write path, you MUST: (1) raise
-// this TTL to cover the max token lifetime, AND (2) namespace dev instance ids
-// distinctly (dev page tokens share the `page_<appBlockId>` shape with prod page
-// mints — see the note in api/v1/blocks/dev-token.ts), or a dev revocation will
-// bleed into production page tokens for the same app.
+// 15 minutes, which covers an ordinary block token but NOT the worst case — App
+// Blocks dev:live tokens live up to DEV_TOKEN_LIFETIME_SECONDS (4h, see
+// block-token.service.ts), so a marker can lapse while such a token is still
+// valid. The write path is wired: `revokeInstance` on uninstall and on
+// `toggleEnabled(false)`, `clearInstance` on re-enable (block-registry.service).
+//
+// One thing still to settle before this TTL is raised to cover that worst case:
+// dev page tokens share the `page_<appBlockId>` instance-id shape with prod page
+// mints (`PAGE_INSTANCE_PREFIX` in both api/v1/block-tokens/index.ts and
+// api/v1/blocks/dev-token.ts), so a longer-lived dev revocation would reach
+// production page tokens for the same app. The collision is LATENT today, not
+// live: both wired call sites revoke `blockUserSubscription.blockInstanceId` — a
+// per-install subscription id — so nothing currently passes a `page_` id to
+// `revokeInstance`. A future caller that revokes by page instance id, or a TTL
+// raised to the 4h dev-token lifetime, is what makes it reachable.
 const REVOCATION_TTL_SECONDS = 900;
 
 function revokedKey(blockInstanceId: string) {
