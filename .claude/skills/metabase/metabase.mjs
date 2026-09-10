@@ -95,11 +95,25 @@ async function api(method, path, body) {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 async function runQuery(opts) {
-  const { database, query, timeout } = opts;
+  const { database, timeout } = opts;
+  const queryFile = opts['query-file'];
+  if (opts.query && queryFile) {
+    console.error('Error: pass --query or --query-file, not both');
+    process.exit(1);
+  }
+  let query = opts.query;
+  if (queryFile) {
+    try {
+      query = readFileSync(resolve(process.cwd(), queryFile), 'utf-8');
+    } catch (e) {
+      console.error(`Error: cannot read --query-file ${queryFile}: ${e.message}`);
+      process.exit(1);
+    }
+  }
   if (typeof query === 'string') assertNoBareSqlComment(query);
   const dbId = parseInt(database, 10);
   if (!dbId || !query) {
-    console.error('Usage: run-query --database <id> --query "SQL"');
+    console.error('Usage: run-query --database <id> (--query "SQL" | --query-file <path>)');
     process.exit(1);
   }
 
@@ -137,7 +151,6 @@ async function createQuestion(opts) {
     console.error('Error: pass --query or --query-file, not both');
     process.exit(1);
   }
-  let snippetTagNames = [];
   let query = opts.query;
   if (queryFile) {
     try {
@@ -183,7 +196,7 @@ async function createQuestion(opts) {
     }
   }
 
-  await syncSnippetTags(templateTags, query);
+  const snippetTagNames = await syncSnippetTags(templateTags, query);
 
   const body = {
     name,
@@ -237,6 +250,7 @@ async function createQuestion(opts) {
   console.log(`  Name: ${card.name}`);
   console.log(`  URL: ${METABASE_URL}/question/${card.id}`);
   console.log(`  Verified: the stored query matches what was sent`);
+  verifySnippetTags(stored, snippetTagNames);
   if (Object.keys(templateTags).length > 0) {
     console.log(`  Variables: ${Object.keys(templateTags).join(', ')}`);
   }
@@ -514,61 +528,86 @@ function assertNoBareSqlComment(sql, what = 'SQL') {
 // run with `missing required parameters`. The UI writes that entry; a programmatic PUT does not. Tags
 // arrive as an object in the `native` shape and an array in the `stages` one.
 async function syncSnippetTags(tags, sql) {
-  const names = [...sql.matchAll(/\{\{\s*snippet:\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
+  const names = [...new Set([...sql.matchAll(/\{\{\s*snippet:\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]))];
   if (!names.length) return [];
 
   const all = await api('GET', '/native-query-snippet');
   const byName = new Map(all.map((sn) => [sn.name, sn]));
   const isArray = Array.isArray(tags);
-  const existing = new Set((isArray ? tags : Object.values(tags)).map((t) => t.name));
+  const find = (tagName) => (isArray ? tags : Object.values(tags)).find((t) => t.name === tagName);
 
   const added = [];
   const repointed = [];
   for (const name of names) {
     const tagName = `snippet: ${name}`;
     const snippet = byName.get(name);
-    // Existence is checked before the already-tagged branch on purpose. Checking it after let a
-    // reference to a DELETED snippet through whenever the card already carried a tag of that name --
-    // which is exactly the case the id reconcile below exists for.
+    const current = find(tagName);
+
+    // Metabase resolves a snippet by `snippet-id`, never by name -- a card whose SQL names a snippet
+    // that was since RENAMED keeps working. So an unknown name is only fatal when the card has no tag
+    // to resolve through; otherwise refusing here would block an unrelated edit to a card that runs.
     if (!snippet) {
+      if (current && current['snippet-id'] != null) {
+        console.error(
+          `  WARNING: {{snippet: ${name}}} names no existing snippet, but the card's tag points at ` +
+            `id ${current['snippet-id']}, which is what Metabase resolves. Left as is -- rename the ` +
+            `reference in the SQL when convenient.`
+        );
+        continue;
+      }
       console.error(`Error: the SQL references {{snippet: ${name}}} but no snippet of that name exists.`);
       console.error(`Existing snippets: ${all.map((sn) => sn.name).join(', ') || '(none)'}`);
       process.exit(1);
     }
-    if (existing.has(tagName)) {
-      // Skipping by name alone leaves a stale `snippet-id` behind when a snippet was deleted and
-      // recreated, and the card then fails at run time. The id is already in hand, so reconcile it.
-      const current = (isArray ? tags : Object.values(tags)).find((t) => t.name === tagName);
-      if (current && current['snippet-id'] !== snippet.id) {
+
+    if (current) {
+      // A stale id fails LOUDLY at run time ("Snippet 99999 does not exist"), so reconciling it is the
+      // load-bearing half. `snippet-name` is ignored by resolution, but it is what a human reads.
+      const fixes = [];
+      if (current['snippet-id'] !== snippet.id) {
         current['snippet-id'] = snippet.id;
-        repointed.push(`${tagName} -> id ${snippet.id}`);
+        fixes.push(`id ${snippet.id}`);
       }
-      if (current && current['snippet-name'] !== name) current['snippet-name'] = name;
+      if (current['snippet-name'] !== name) {
+        current['snippet-name'] = name;
+        fixes.push(`name "${name}"`);
+      }
+      if (fixes.length) repointed.push(`${tagName} -> ${fixes.join(', ')}`);
       continue;
     }
-    if (isArray) {
-      tags.push({
-        id: randomUUID(),
-        name: tagName,
-        'display-name': tagName,
-        type: 'snippet',
-        'snippet-name': name,
-        'snippet-id': snippet.id,
-      });
-    } else {
-      tags[tagName] = {
-        id: randomUUID(),
-        name: tagName,
-        'display-name': tagName,
-        type: 'snippet',
-        'snippet-name': name,
-        'snippet-id': snippet.id,
-      };
-    }
+
+    const tag = {
+      id: randomUUID(),
+      name: tagName,
+      'display-name': tagName,
+      type: 'snippet',
+      'snippet-name': name,
+      'snippet-id': snippet.id,
+    };
+    if (isArray) tags.push(tag);
+    else tags[tagName] = tag;
     added.push(tagName);
   }
+  if (added.length) console.log(`  Snippet tags added: ${added.join(', ')}`);
   if (repointed.length) console.log(`  Snippet tags re-pointed: ${repointed.join(', ')}`);
   return names.map((name) => `snippet: ${name}`);
+}
+
+// Announcing a tag is not the same as it having landed: a tag the server dropped leaves the query
+// byte-identical, so verifying the SQL alone cannot see it. `card` must come from a fresh read, not from
+// a write's own response -- a server that echoes what it did not persist would otherwise verify itself.
+function verifySnippetTags(card, expectedNames) {
+  if (!expectedNames.length) return;
+  const stage = card?.dataset_query?.native ?? card?.dataset_query?.stages?.[0];
+  const raw = stage?.['template-tags'] ?? stage?.template_tags ?? {};
+  const stored = new Set((Array.isArray(raw) ? raw : Object.values(raw)).map((t) => t.name));
+  const missing = expectedNames.filter((n) => !stored.has(n));
+  if (missing.length) {
+    console.error(`  WARNING: snippet tag(s) NOT stored: ${missing.join(', ')}. The card will fail to run.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`  Verified: snippet tag(s) stored (${expectedNames.join(', ')})`);
 }
 
 // A snippet is literal text substitution into `{{snippet: <name>}}` and takes NO parameters, so a fragment
@@ -685,6 +724,7 @@ async function updateSnippet(opts) {
 
 async function updateQuestion(opts) {
   const { id, display, visualization, description, archived, variables } = opts;
+  let snippetTagNames = [];
 
   // SQL long enough to carry a comment header does not survive a shell argument intact, and the parser
   // degrades a swallowed value to `true`, which writes a card with no query and reports success.
@@ -693,7 +733,6 @@ async function updateQuestion(opts) {
     console.error('Error: pass --query or --query-file, not both');
     process.exit(1);
   }
-  let snippetTagNames = [];
   let query = opts.query;
   if (queryFile) {
     try {
@@ -766,21 +805,7 @@ async function updateQuestion(opts) {
       process.exit(1);
     }
     console.log('  Verified: the stored query matches what was sent');
-
-    // The tags are the half nothing used to check. A snippet reference whose tag the server dropped
-    // still leaves the SQL byte-identical, so verifying the query alone cannot see it.
-    const storedStage = card.dataset_query?.native ?? card.dataset_query?.stages?.[0];
-    const storedRaw = storedStage?.['template-tags'] ?? {};
-    const storedTagNames = new Set(
-      (Array.isArray(storedRaw) ? storedRaw : Object.values(storedRaw)).map((t) => t.name)
-    );
-    const missing = snippetTagNames.filter((n) => !storedTagNames.has(n));
-    if (missing.length) {
-      console.error(`  WARNING: snippet tag(s) NOT stored: ${missing.join(', ')}. The card will fail to run.`);
-      process.exitCode = 1;
-    } else if (snippetTagNames.length) {
-      console.log(`  Verified: snippet tag(s) stored (${snippetTagNames.join(', ')})`);
-    }
+    verifySnippetTags(await readCard(cardId), snippetTagNames);
   }
   if (body.archived !== undefined) console.log(`  Archived: ${card.archived}`);
   console.log(`  URL: ${METABASE_URL}/question/${cardId}`);
