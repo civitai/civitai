@@ -694,17 +694,23 @@ const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
  * Exported for the guard tests — the branch that distinguishes those two is the whole rule.
  *
  * Twin of `isBlockedSuffix` in the auth hub's `apps/auth/src/lib/server/auth/blocklist.ts`. One rule
- * in two separately-released apps: normalize BEFORE stripping the prefix (the regex is `^`-anchored,
- * so a leading space would otherwise leave the `*.` in place and the entry would match nothing), and
- * keep the case table in `__tests__/email-domain-guard.test.ts` identical to the hub's.
+ * in two separately-released apps: trim on both sides of the prefix strip, and keep the case table
+ * in `__tests__/email-domain-guard.test.ts` identical to the hub's. Both whitespace cells have
+ * already diverged once between the two copies.
  */
 export function matchesBlockedSuffix(entries: string[], domain: string) {
   if (!domain) return false;
   return entries.some((raw) => {
+    // 🔴 TRIM ON BOTH SIDES OF THE STRIP, and the second trim is not redundant.
+    // `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so whitespace BEFORE the wildcard stops it matching at
+    // all (` *.evil.example` keeps its `*.` and then matches no address), and whitespace AFTER it
+    // survives into the entry (`*. evil.example` becomes ` evil.example`, which also matches
+    // nothing). Both are silent: a suffix entry's only feedback is accounts continuing to arrive.
     const entry = raw
       .trim()
       .toLowerCase()
       .replace(SUFFIX_ENTRY_PREFIX, '')
+      .trim()
       .replace(TRAILING_DOTS, '');
     // 🔴 A SINGLE LABEL IS REFUSED, and this is the only guard standing between a typo and an
     // outage. Nothing validates what a moderator types: an entry of `com` is one keystroke from

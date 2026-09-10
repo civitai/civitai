@@ -330,6 +330,14 @@ describe('assertEmailAllowed', () => {
       expect(await reject('someone@exact-only.test')).toBeInstanceOf(TRPCError);
     });
 
+    it('matches a wildcard entry with whitespace AFTER the prefix', async () => {
+      // The other side of the strip from the case below. `*. x` leaves ` x` behind, which matches
+      // nothing, so the entry is silently inert. The hub's table carries the twin of this case.
+      setBlockedSuffixes(['*. after-space.test']);
+
+      expect(await reject('someone@a.after-space.test')).toBeInstanceOf(TRPCError);
+    });
+
     it('matches a wildcard entry that ALSO carries leading whitespace', async () => {
       // 🔴 The PRODUCT of the two cases below, and the cell where this rule and the hub's
       // `isBlockedSuffix` (apps/auth/src/lib/server/auth/blocklist.ts) actually disagreed: the hub
