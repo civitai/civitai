@@ -26,11 +26,15 @@ const LEDGER_DESCRIPTIONS = Object.values(PLACEMENT_LEDGER_TEXT).flatMap((byKind
  * camelCase keys only — `forfeit` is also an English word, and matching it would
  * fail on "Forfeited sticker placement", which is copy rather than jargon. A
  * placement id in such a string is still caught by `PLACEMENT_ID`.
+ *
+ * `escrow` is not a leg name but appears in three of the four legacy shapes, and
+ * no copy uses it.
  */
 const LEG_NAMES = new RegExp(
-  Object.keys(PLACEMENT_LEDGER_TEXT.sticker)
-    .filter((kind) => /[A-Z]/.test(kind))
-    .join('|'),
+  [
+    ...Object.keys(PLACEMENT_LEDGER_TEXT.sticker).filter((kind) => /[A-Z]/.test(kind)),
+    'escrow',
+  ].join('|'),
   'i'
 );
 const PLACEMENT_ID = /placement\s*(id\s*)?#?\d+/i;
@@ -123,9 +127,9 @@ describe('declined-fee copy reads as money kept, not money charged', () => {
 
 /**
  * The helper is pure, so every test above passes against a dashboard that never
- * calls it. A text scan cannot see rendering — what it can see is the component
- * holding the raw field at all, which is the shape of every way the description
- * gets out unfiltered.
+ * calls it. A text scan cannot see rendering; what it can see is this component
+ * holding the raw field at all. It says nothing about `/user/transactions`, which
+ * renders every description unfiltered and is not covered by this PR.
  */
 describe('the dashboard renders through the helper', () => {
   const source = readFileSync(
