@@ -6,6 +6,7 @@ import { dbRead } from '~/server/db/client';
 import {
   isTransientMeiliError,
   searchClient,
+  searchWithSignal,
   withMeiliResourceSelect,
 } from '~/server/meilisearch/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -186,14 +187,22 @@ function buildFilter({
 
 async function searchModels(
   query: string,
-  request: SearchParams
+  request: SearchParams,
+  signal?: AbortSignal
 ): Promise<SearchResponse<ModelSearchIndexRecord>> {
   if (!searchClient)
     return { hits: [], estimatedTotalHits: 0 } as unknown as SearchResponse<ModelSearchIndexRecord>;
   const client = searchClient;
   try {
-    return await withMeiliResourceSelect(() =>
-      client.index(MODELS_SEARCH_INDEX).search<ModelSearchIndexRecord>(query, request)
+    return await withMeiliResourceSelect(
+      (searchSignal) =>
+        searchWithSignal<ModelSearchIndexRecord>(
+          client.index(MODELS_SEARCH_INDEX),
+          query,
+          request,
+          searchSignal
+        ),
+      { signal }
     );
   } catch (err) {
     if (isTransientMeiliError(err)) {
@@ -239,7 +248,7 @@ async function getOfficialModelIds() {
 
 export async function getResourceSelectModels(
   input: GetResourceSelectInput,
-  { user }: { user: ServiceUser }
+  { user, signal }: { user: ServiceUser; signal?: AbortSignal }
 ) {
   const { tab, query = '', sort, cursor, limit, filterTypes, filterBaseModels, tagName } = input;
 
@@ -283,12 +292,16 @@ export async function getResourceSelectModels(
     excludeIds: officialIdsForType,
   });
 
-  const results = await searchModels(query, {
-    filter: filter ?? undefined,
-    sort: meiliSortFor(sort),
-    offset,
-    limit: take,
-  });
+  const results = await searchModels(
+    query,
+    {
+      filter: filter ?? undefined,
+      sort: meiliSortFor(sort),
+      offset,
+      limit: take,
+    },
+    signal
+  );
 
   let items = transformModelHits(results.hits);
 
