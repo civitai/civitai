@@ -33,8 +33,8 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { SettingsSection } from '~/components/Account/SettingsLayout';
-import { maskEmail } from '~/components/Account/mask-email';
 import { showErrorNotification } from '~/utils/notifications';
+import { maskEmail } from '~/utils/string-helpers';
 
 const schema = z.object({
   id: z.number(),
