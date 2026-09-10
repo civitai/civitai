@@ -91,10 +91,15 @@ node .claude/skills/metabase/metabase.mjs update-question --id 123 --display lin
 shell argument intact, and a swallowed value is parsed as boolean `true` — which writes a card with no
 query and reports success. `create-question` takes `--query-file` too.
 
-🔴 **A comment line that is exactly `--` breaks parameter binding for the whole query** on the
+🔴 **A comment line whose only content is `--` breaks parameter binding for the whole query** on the
 ClickHouse driver: every variable fails with *"we got more parameters than we can handle"*, which points
-at neither the line nor the cause. One trailing space per line is the fix, and both write commands now
-refuse SQL that contains one.
+at neither the line nor the cause. **Indentation does not save it** — an indented `--`, the usual form
+inside a CTE, breaks binding the same way. A trailing space or tab is the fix.
+
+`create-question`, `update-question`, `run-query`, `create-snippet` and `update-snippet` all refuse text
+containing one. **No test can catch this**: the query runs clean until a variable is *bound*, so an
+unparameterised run and a card that merely exists both look correct. The guard is the only check that
+reaches it.
 
 **Display types:** `table`, `bar`, `line`, `area`, `pie`, `scalar`, `row`, `funnel`, `map`, `scatter`, `waterfall`, `combo`, `smartscalar`, `progress`, `gauge`, `pivot`
 
@@ -225,11 +230,21 @@ A snippet is text pasted into `{{snippet: <name>}}` at run time, so several card
 expression instead of each carrying a copy that drifts.
 
 ```bash
-node .claude/skills/metabase/metabase.mjs list-snippets
-node .claude/skills/metabase/metabase.mjs create-snippet --name "image engine" --file engine.sql \
-  --description "what it derives, and what must not be added to it"
-node .claude/skills/metabase/metabase.mjs update-snippet --id 1 --file engine.sql
+node .claude/skills/metabase/metabase.mjs list-snippets [--json]
+node .claude/skills/metabase/metabase.mjs create-snippet --name "image engine" \
+  (--file engine.sql | --content "SQL") [--description "..."]
+node .claude/skills/metabase/metabase.mjs update-snippet --id 1 \
+  [--file engine.sql | --content "SQL"] [--name "..."] [--description "..."]
 ```
+
+Each write reads the snippet back and reports only on the fields it actually sent — a metadata-only
+update says "stored description matches", never "content matches", because it did not send content and
+did not check it.
+
+🔴 **Snippet text is the one place the `--` guard could not otherwise reach.** A snippet is substituted
+verbatim into every card that references it, and those cards' own SQL may contain nothing but
+`{{snippet: name}}` — so a bare `--` inside a snippet body breaks binding everywhere it is used and no
+per-card check can see it. `create-snippet` and `update-snippet` guard their content for that reason.
 
 **A snippet takes no parameters** — it is literal substitution, not a function. So a fragment can only
 reference bare column names, and a card using it must select from the table with **no alias** on those

@@ -92,6 +92,7 @@ async function api(method, path, body) {
 
 async function runQuery(opts) {
   const { database, query, timeout } = opts;
+  if (typeof query === 'string') assertNoBareSqlComment(query);
   const dbId = parseInt(database, 10);
   if (!dbId || !query) {
     console.error('Usage: run-query --database <id> --query "SQL"');
@@ -138,6 +139,12 @@ async function createQuestion(opts) {
       query = readFileSync(resolve(process.cwd(), queryFile), 'utf-8');
     } catch (e) {
       console.error(`Error: cannot read --query-file ${queryFile}: ${e.message}`);
+      process.exit(1);
+    }
+    // An empty file is falsy and would skip the write AND its verification while exiting 0; a
+    // whitespace-only one is truthy and writes a card that opens blank, then "verifies" it.
+    if (!query.trim()) {
+      console.error(`Error: --query-file ${queryFile} is empty. Refusing to write a card with no query.`);
       process.exit(1);
     }
   }
@@ -482,15 +489,18 @@ async function runCard(opts) {
   console.log(`\n${result.data.rows.length} row(s)`);
 }
 
-// A comment line that is exactly `--` breaks parameter binding for the WHOLE query on Metabase's
+// A comment line whose only content is `--` breaks parameter binding for the WHOLE query on Metabase's
 // ClickHouse driver: every variable fails with "we got more parameters than we can handle", which names
-// neither the line nor the cause and reads as "you have too many variables". One trailing space is the
-// entire fix, so refusing here is cheaper than diagnosing it from the error.
-function assertNoBareSqlComment(sql) {
+// neither the line nor the cause and reads as "you have too many variables".
+//
+// Leading whitespace does NOT save it -- an indented `--`, the common form inside a CTE, breaks binding
+// exactly the same way -- while a trailing space or tab IS the fix. Measured against the live driver, so
+// trim only the start: trimming the end would reject the very form that works.
+function assertNoBareSqlComment(sql, what = 'SQL') {
   const lines = sql.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
-  const bad = lines.map((l, i) => (l === '--' ? i + 1 : 0)).filter(Boolean);
+  const bad = lines.map((l, i) => (l.trimStart() === '--' ? i + 1 : 0)).filter(Boolean);
   if (bad.length) {
-    console.error(`Error: ${bad.length} bare "--" comment line(s) at line ${bad.join(', ')}.`);
+    console.error(`Error: ${what} has ${bad.length} bare "--" comment line(s) at line ${bad.join(', ')}.`);
     console.error('They break parameter binding on the ClickHouse driver. Add a trailing space to each.');
     process.exit(1);
   }
@@ -509,10 +519,20 @@ async function syncSnippetTags(tags, sql) {
   const existing = new Set((isArray ? tags : Object.values(tags)).map((t) => t.name));
 
   const added = [];
+  const repointed = [];
   for (const name of names) {
     const tagName = `snippet: ${name}`;
-    if (existing.has(tagName)) continue;
     const snippet = byName.get(name);
+    if (existing.has(tagName)) {
+      // Skipping by name alone leaves a stale `snippet-id` behind when a snippet was deleted and
+      // recreated, and the card then fails at run time. The id is already in hand, so reconcile it.
+      const current = (isArray ? tags : Object.values(tags)).find((t) => t.name === tagName);
+      if (snippet && current && current['snippet-id'] !== snippet.id) {
+        current['snippet-id'] = snippet.id;
+        repointed.push(`${tagName} -> id ${snippet.id}`);
+      }
+      continue;
+    }
     if (!snippet) {
       console.error(`Error: the SQL references {{snippet: ${name}}} but no snippet of that name exists.`);
       console.error(`Existing snippets: ${all.map((sn) => sn.name).join(', ') || '(none)'}`);
@@ -539,6 +559,7 @@ async function syncSnippetTags(tags, sql) {
     }
     added.push(tagName);
   }
+  if (repointed.length) console.log(`  Snippet tags re-pointed: ${repointed.join(', ')}`);
   return added;
 }
 
@@ -579,26 +600,42 @@ function snippetContent(opts) {
     console.error('Error: pass --content or --file, not both');
     process.exit(1);
   }
-  if (!opts.file) return opts.content;
-  try {
-    return readFileSync(resolve(process.cwd(), opts.file), 'utf-8');
-  } catch (e) {
-    console.error(`Error: cannot read --file ${opts.file}: ${e.message}`);
-    process.exit(1);
+  let content = opts.content;
+  if (opts.file) {
+    try {
+      content = readFileSync(resolve(process.cwd(), opts.file), 'utf-8');
+    } catch (e) {
+      console.error(`Error: cannot read --file ${opts.file}: ${e.message}`);
+      process.exit(1);
+    }
+    if (!content.trim()) {
+      console.error(`Error: --file ${opts.file} is empty. Refusing to write an empty snippet.`);
+      process.exit(1);
+    }
   }
+  // Snippet text is substituted verbatim into every card that references it, so a bare `--` here breaks
+  // binding in cards whose own SQL contains nothing but `{{snippet: name}}` -- where no guard can see it.
+  if (content) assertNoBareSqlComment(content, 'snippet content');
+  return content;
 }
 
-function reportSnippetWrite(label, stored, sent) {
+// `expected` holds only the fields this call actually sent. A verification line printed for a field that
+// was never sent is a claim about a check that did not happen, which is worse than no line at all.
+function reportSnippetWrite(stored, expected) {
+  const fields = Object.keys(expected);
   if (stored === null) {
-    console.log('  WARNING: could not read it back. Verify by hand.');
+    console.error('  WARNING: could not read it back. Verify by hand.');
     process.exitCode = 1;
-  } else if (sent && stored.content !== sent) {
-    console.log('  WARNING: stored content DIFFERS from what was sent. Stored:');
-    console.log(stored.content);
-    process.exitCode = 1;
-  } else {
-    console.log('  Verified: the stored content matches what was sent');
+    return;
   }
+  const wrong = fields.filter((f) => stored[f] !== expected[f]);
+  if (wrong.length) {
+    console.error(`  WARNING: stored ${wrong.join(', ')} DIFFERS from what was sent.`);
+    for (const f of wrong) console.error(`    ${f}: ${JSON.stringify(stored[f])}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`  Verified: stored ${fields.join(', ')} match${fields.length === 1 ? 'es' : ''} what was sent`);
 }
 
 async function createSnippet(opts) {
@@ -614,7 +651,7 @@ async function createSnippet(opts) {
   });
   console.log(`Snippet created: ${snippet.name} (id ${snippet.id})`);
   console.log(`  Reference it as: {{snippet: ${snippet.name}}}`);
-  reportSnippetWrite('create', await readSnippet(snippet.id), content);
+  reportSnippetWrite(await readSnippet(snippet.id), { name: opts.name, content });
 }
 
 async function updateSnippet(opts) {
@@ -630,7 +667,7 @@ async function updateSnippet(opts) {
   if (opts.description !== undefined) body.description = opts.description;
   await api('PUT', `/native-query-snippet/${snippetId}`, body);
   console.log(`Snippet ${snippetId} updated`);
-  reportSnippetWrite('update', await readSnippet(snippetId), content);
+  reportSnippetWrite(await readSnippet(snippetId), body);
 }
 
 async function updateQuestion(opts) {
@@ -649,6 +686,12 @@ async function updateQuestion(opts) {
       query = readFileSync(resolve(process.cwd(), queryFile), 'utf-8');
     } catch (e) {
       console.error(`Error: cannot read --query-file ${queryFile}: ${e.message}`);
+      process.exit(1);
+    }
+    // An empty file is falsy and would skip the write AND its verification while exiting 0; a
+    // whitespace-only one is truthy and writes a card that opens blank, then "verifies" it.
+    if (!query.trim()) {
+      console.error(`Error: --query-file ${queryFile} is empty. Refusing to write a card with no query.`);
       process.exit(1);
     }
   }
@@ -916,6 +959,10 @@ Commands:
   list                 List items in a collection
   search               Search for questions/dashboards
   get                  Get details of an item
+  run-card             Run a SAVED question with its parameters
+  list-snippets        List native query snippets
+  create-snippet       Create a native query snippet
+  update-snippet       Update a snippet's content, name or description
   list-collections     List all collections
   list-databases       List all databases
 
