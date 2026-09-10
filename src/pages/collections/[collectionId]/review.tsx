@@ -511,6 +511,12 @@ function ModerationControls({
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
       async onMutate({ collectionItemIds, status, rejectionReason }) {
+        // Counted here, not in onSuccess: React Query pushes the latest render's options into an
+        // in-flight mutation, and the setInfiniteData below rewrites the very query `collectionItems`
+        // is memoized over — so by the time onSuccess runs its closure sees the POST-mutation list and
+        // the filter matches nothing. onMutate's options are the ones built at mutate() time.
+        const reviewed = countPendingReviewItems(collectionItems, collectionItemIds);
+
         await queryUtils.collection.getAllCollectionItems.cancel();
 
         // Snapshot for onError: the item is about to leave the queue, and without a rollback a
@@ -544,13 +550,10 @@ function ModerationControls({
           })
         );
 
-        return { prevData };
+        return { prevData, reviewed };
       },
-      onSuccess(_, { collectionItemIds, collectionId }) {
-        onReviewed({
-          collectionId,
-          reviewed: countPendingReviewItems(collectionItems, collectionItemIds),
-        });
+      onSuccess(_, { collectionId }, context) {
+        onReviewed({ collectionId, reviewed: context?.reviewed ?? 0 });
         showSuccessNotification({ message: `The items have been reviewed` });
       },
       onError(error, _variables, context) {
