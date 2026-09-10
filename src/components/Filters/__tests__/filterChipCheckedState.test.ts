@@ -132,18 +132,28 @@ function checkedGroup(checked: string): string | null {
 }
 
 /**
- * How many times any member of a shorthand family is declared.
+ * How many times anything in a property family is declared.
  *
  * 🔴 THE FAMILY, NOT THE PROPERTY. `border: 1px solid …; border-width: 0;` overrides the
  * pinned value while leaving exactly one `border:` — and longhand override of a chip
  * border is a live idiom here (`StickerPlacementTray.tsx` does it inline, on purpose).
- * Counting only the exact property would miss the very shape this check exists for.
+ * Counting only the exact property would miss the very shape this check exists for, and an
+ * enumerated list misses it too: the sided and logical longhands (`border-top-width`,
+ * `border-inline-start-width`, …) are 18 more names and each one does the same job.
+ *
+ * 🔴 THE EXCLUSIONS ARE WHAT MAKE A PREFIX SAFE. `border-radius` is ordinary CSS on a chip —
+ * these five modules are pill-shaped — so a bare `border[a-z-]*` prefix would refuse a
+ * perfectly good edit. A false red on ordinary CSS is how a guard gets deleted rather than
+ * fixed, which this file has already been through once.
  */
-function declarationCount(block: string, family: readonly string[]): number {
-  return family.reduce((total, property) => {
-    const re = new RegExp(`(^|[;{}\\s])${property.replace(/-/g, '\\-')}\\s*:`, 'g');
-    return total + (block.match(re) ?? []).length;
-  }, 0);
+const FAMILY_PATTERNS = {
+  border: /(^|[;{}\s])border(-(?!radius|collapse|spacing|image)[a-z-]+)?\s*:/g,
+  background: /(^|[;{}\s])background(-color|-image)?\s*:/g,
+  color: /(^|[;{}\s])color\s*:/g,
+} as const;
+
+function declarationCount(block: string, pattern: RegExp): number {
+  return (block.match(new RegExp(pattern.source, 'g')) ?? []).length;
 }
 
 describe('filter chips render a visible border when checked', () => {
@@ -226,32 +236,12 @@ describe('filter chips render a visible border when checked', () => {
     // fragment match cannot see the cascade: `border: 1px solid var(…); border-width: 0;`
     // satisfies every assertion above while drawing nothing. That is this bug's own history —
     // a declaration present and overridden — so it is checked by count across the family.
-    const families = {
-      border: [
-        'border',
-        'border-width',
-        'border-style',
-        'border-color',
-        'border-top',
-        'border-right',
-        'border-bottom',
-        'border-left',
-        'border-block',
-        'border-inline',
-        // Single-EDGE longhands (`border-top-width`, `border-inline-start`, …) are deliberately
-        // out of scope: each removes one edge rather than the border, so none reproduces this
-        // bug. Prefix-matching `border*` instead would sweep in `border-radius`, which is
-        // ordinary CSS on a chip, and refuse it.
-      ],
-      background: ['background', 'background-color', 'background-image'],
-      color: ['color'],
-    } as const;
-    for (const [name, family] of Object.entries(families)) {
-      const count = declarationCount(checked, family);
+    for (const [name, pattern] of Object.entries(FAMILY_PATTERNS)) {
+      const count = declarationCount(checked, pattern);
       expect(
         count,
         `${relative} declares ${name} ${count} times anywhere in the \`&[data-checked]\` block ` +
-          `(counting ${family.join(', ')}), sibling rules included. The later one wins, so the ` +
+          `(matching ${pattern.source}), sibling rules included. The later one wins, so the ` +
           'pinned value above may not be what renders — a sibling `&:hover { background-color: … }` ' +
           'restores on hover exactly the fill this change removes. A second declaration may well be ' +
           'legitimate; if it is, widen this guard deliberately rather than deleting it.'
