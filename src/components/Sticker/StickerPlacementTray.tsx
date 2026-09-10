@@ -337,28 +337,27 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     onChange={setMineOnlyRequested}
                     /**
                      * 🔴 ALL FOUR OF THESE PIN GEOMETRY, AND NONE IS DECORATION.
-                     * Mantine restyles a checked chip: padding drops 16px -> 7.5px,
-                     * the border WIDTH goes 1px -> 0, and a check icon appears.
-                     * Those do not cancel — measured 105.08px unchecked against
-                     * 102.73px checked — so the control visibly jumped as you
-                     * toggled it, next to two inputs that do not move. Pinning the
-                     * three that vary, and dropping the icon, makes the box the
-                     * same in both states by construction rather than by
-                     * arithmetic; the filled background still says which state it
-                     * is in.
+                     * Mantine restyles a checked chip: padding drops 16px -> 7.5px
+                     * and a check icon appears. Those do not cancel — measured
+                     * 105.08px unchecked against 102.73px checked — so the control
+                     * visibly jumped as you toggled it, next to two inputs that do
+                     * not move. Pinning what varies, and dropping the icon, makes
+                     * the box the same in both states by construction rather than
+                     * by arithmetic.
                      *
-                     * `borderWidth`/`borderStyle` are NOT a duplicate of
-                     * FilterChip.module.scss. That file sets the whole shorthand
-                     * for the checked state — but it names
-                     * `--mantine-color-primary`, which nothing defines (Mantine
-                     * ships `--mantine-primary-color-filled`; six module files
-                     * copy the undefined name). An unresolvable `var()` is invalid
-                     * at computed-value time, so the shorthand is dropped entirely
-                     * and the checked border computes to `none`. These two
-                     * longhands put the width back; the white that shows is
-                     * `currentColor` from the `color` beside it, not a colour
-                     * anyone set. Measured: 1px solid transparent unchecked, 1px
-                     * solid white checked, 105.08px both.
+                     * Dropping the icon costs this chip a cue the other filter
+                     * chips keep: FilterChip.module.scss draws a checked chip as a
+                     * primary border on a cleared background, and with the icon
+                     * hidden that border is the only thing here saying which state
+                     * it is in.
+                     *
+                     * `borderWidth`/`borderStyle` duplicate what that file already
+                     * sets for the checked state, and are kept deliberately: they
+                     * hold the box steady whatever the shared module does to the
+                     * border later. The shorthand there resolved to nothing until
+                     * PR #4749 (it named `--mantine-color-primary`, which nothing
+                     * defines), and these two longhands are why this chip did not
+                     * jump while it did.
                      *
                      * The height fallback is load-bearing separately:
                      * `--input-height-xs` is scoped to an Input, so unqualified it
