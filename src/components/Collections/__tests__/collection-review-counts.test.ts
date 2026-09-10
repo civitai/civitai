@@ -36,9 +36,9 @@ describe('decrementPendingReviewTotal', () => {
 
 describe('decrementPendingReviewForCollection', () => {
   const rows = () => [
-    { id: 1, pendingReviewCount: 4 },
-    { id: 2, pendingReviewCount: 1 },
-    { id: 3 },
+    { id: 1, pendingReviewCount: 4, name: 'Fav Videos' },
+    { id: 2, pendingReviewCount: 1, name: 'Sticker this!' },
+    { id: 3, name: 'Useful stuff' },
   ];
 
   it('subtracts from the named collection only', () => {
@@ -46,6 +46,16 @@ describe('decrementPendingReviewForCollection', () => {
 
     expect(next?.[0].pendingReviewCount).toBe(1);
     expect(next?.[1].pendingReviewCount).toBe(1);
+  });
+
+  it('leaves the rest of the modified row intact', () => {
+    // The row goes straight back into a React Query cache. A regression that
+    // returned a bare { id, pendingReviewCount } instead of spreading would
+    // blank every collection's name out of the sidebar, and every other
+    // assertion here would still pass.
+    const next = decrementPendingReviewForCollection(rows(), 1, 3);
+
+    expect(next?.[0].name).toBe('Fav Videos');
   });
 
   it('floors at zero rather than going negative', () => {
