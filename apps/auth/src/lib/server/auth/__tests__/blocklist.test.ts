@@ -252,6 +252,14 @@ describe('EmailDomainSuffix', () => {
     expect(isBlockedSuffix(['  Farm.TEST.  '], 'a.farm.test')).toBe(true);
   });
 
+  it('matches a wildcard entry with whitespace AFTER the prefix', () => {
+    // The other side of the strip. `*. farm.test` leaves ` farm.test` behind, which matches
+    // nothing, so the entry is silently inert — the same failure as leading whitespace, at the
+    // other end. Pinned on both sides; the main app's table has the twin of this case.
+    expect(isBlockedSuffix(['*. farm.test'], 'a.farm.test')).toBe(true);
+    expect(isBlockedSuffix(['. farm.test'], 'a.farm.test')).toBe(true);
+  });
+
   it('matches a wildcard entry that ALSO carries leading whitespace', () => {
     // 🔴 The PRODUCT of the two cases above, and the cell where this function and the main app's
     // `matchesBlockedSuffix` actually disagreed: `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so stripping
@@ -270,11 +278,11 @@ describe('EmailDomainSuffix', () => {
   });
 
   it('an entry that normalizes to EMPTY matches nothing, even for a domain ending in a dot', () => {
-    // The trailing-dot domain is what makes this capable of failing. Delete the `if (!entry)` guard
-    // and a `'.'` entry reduces to `''`, whose `endsWith('.')` is TRUE for `example.test.` — every
-    // address on the site blocked by one stray character. Asserting only `example.test` here passes
-    // with the guard removed, because a normalized domain never ends in a dot; the guard exists for
-    // callers that hand this function a domain they have not normalized.
+    // What enforces this is the SINGLE-LABEL guard, not a separate empty check — `''` contains no
+    // dot. Delete `if (!entry.includes('.'))` and a `'.'` entry reduces to `''`, whose
+    // `endsWith('.')` is TRUE for `example.test.`: every address on the site blocked by one stray
+    // character. The trailing-dot domain is what makes that reachable, and therefore what makes
+    // this assertion capable of failing — a normalized domain never ends in a dot.
     expect(isBlockedSuffix(['.'], 'example.test.')).toBe(false);
     expect(isBlockedSuffix([''], 'example.test')).toBe(false);
     expect(isBlockedSuffix(['   '], 'example.test')).toBe(false);

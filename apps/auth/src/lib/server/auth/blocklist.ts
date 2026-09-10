@@ -3,10 +3,11 @@ import { getRedis } from '../redis';
 import { db } from '../db/db';
 import { logAxiomError } from '../axiom';
 
-// Blocked email domains — mirrors the main app's getBlockedEmailDomains (blocklist.service.ts).
-// The main app keeps `${REDIS_KEYS.SYSTEM.BLOCKLIST}:EmailDomain` warm (a JSON {type, data[]},
-// refreshed on read). We read that shared cache first, then fall back to the Blocklist table on a
-// cold cache (and best-effort repopulate). Same redis + same DB = same list.
+// Blocked email domains — mirrors the main app's blocklist reads (blocklist.service.ts).
+// The main app keeps `${REDIS_KEYS.SYSTEM.BLOCKLIST}:<type>` warm (a JSON {type, data[]}, refreshed
+// on read) for each blocklist type. We read that shared cache first, then fall back to the Blocklist
+// table on a cold cache (and best-effort repopulate). Same redis + same DB = same list.
+
 /**
  * Derived from the type, never passed alongside it. A `(type, key)` pair that disagrees would DB-read
  * one type's rows and cache them under another type's key — the key the main app and the moderator
@@ -78,16 +79,16 @@ const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
 export function isBlockedSuffix(entries: string[], domain: string): boolean {
   if (!domain) return false;
   return entries.some((raw) => {
-    // 🔴 NORMALIZE, THEN STRIP, THEN NORMALIZE AGAIN — the order is the whole content of this line.
-    // `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so stripping the RAW string leaves ` *.farm.test`
-    // untouched and the entry then matches no address at all, silently. The main app trims first,
-    // so that entry is enforced there and inert here: a divergence, in the direction that admits
-    // a signup, on the path this list exists for.
+    // 🔴 NORMALIZE ON BOTH SIDES OF THE STRIP, and the second pass is not redundant.
+    // `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so whitespace BEFORE the wildcard stops it matching at
+    // all (` *.farm.test` keeps its `*.` and then matches no address), and whitespace AFTER it
+    // survives into the entry (`*. farm.test` becomes ` farm.test`, which also matches nothing).
+    // Both are silent: a suffix entry's only feedback is accounts continuing to arrive. The main
+    // app's `matchesBlockedSuffix` does the same in one expression — keep them in step.
     const entry = normalizeDomain(normalizeDomain(raw).replace(SUFFIX_ENTRY_PREFIX, ''));
-    if (!entry) return false;
-    // 🔴 A SINGLE LABEL IS REFUSED. Nothing validates what a moderator types, and `com` is one
-    // keystroke from `com.example` — it would refuse every address under the whole TLD. The exact
-    // list cannot do that, so the blast radius is new to this list.
+    // 🔴 A SINGLE LABEL IS REFUSED, and it also subsumes the empty entry. Nothing validates what a
+    // moderator types, and `com` is one keystroke from `com.example` — it would refuse every
+    // address under the whole TLD. The exact list cannot do that, so the blast radius is new here.
     if (!entry.includes('.')) return false;
     return domain === entry || domain.endsWith(`.${entry}`);
   });
@@ -164,8 +165,10 @@ export async function getBlockedEmailDomainSuffixes(): Promise<string[]> {
 }
 
 /**
- * Both lists, in the order that keeps the second lookup off the path an ordinary signup takes. Used
- * by both hub call sites so one of them cannot quietly stop consulting the suffix list.
+ * Both lists. Used by both hub call sites so one of them cannot quietly stop consulting the suffix
+ * list. The short-circuit fires only when the EXACT list already matched — i.e. only for an address
+ * that is being refused anyway — so an ordinary signup reads both. That is two cached redis GETs
+ * and is fine; do not "optimise" it on the belief that the second read is already skipped.
  *
  * Callers must still exempt users who ALREADY have this address — a list entry added later must not
  * lock out an account that predates it.
