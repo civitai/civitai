@@ -76,6 +76,8 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(reason({ sort: 'Random' })).toBe('sort:Random');
     expect(reason({ notPublished: true })).toBe('flag:unpublished:no-user');
     expect(reason({ notPublished: true, userId: 3 })).toBe('ok');
+    expect(reason({ tags: [0] })).toBe('tags:none');
+    expect(reason({ tags: [0, 5] })).toBe('ok');
   });
 
   it('continues a feed-served page only when the feed is primary', () => {

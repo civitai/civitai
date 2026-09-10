@@ -117,6 +117,10 @@ const present = (v: unknown) =>
   );
 const ints = (v: unknown): number[] =>
   Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n) && n > 0) : [];
+// An inclusion list whose ids are all impossible (prod sends `tags: [0]`) matches
+// nothing in Meili. Dropping them silently would widen the query to the whole feed,
+// so the request is left to Meili instead.
+const emptied = (v: unknown) => Array.isArray(v) && v.length > 0 && ints(v).length === 0;
 
 export type FeedQueryMapping = { ok: true; query: string } | { ok: false; reason: string };
 export type FeedQueryMode = 'shadow' | 'primary';
@@ -163,6 +167,7 @@ export function mapSearchInputToFeedQuery(
   const levels = LEVELS.filter((l) => (mask & l) !== 0);
   if (!levels.length) return skip('browsingLevel:0');
 
+  for (const key of ['tags', 'ids'] as const) if (emptied(input[key])) return skip(`${key}:none`);
   const tags = ints(input.tags);
   const excludedTags = ints(input.excludedTagIds);
   if (tags.length > 100) return skip('tags>100');
