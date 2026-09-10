@@ -164,7 +164,7 @@ export function AnnouncementCard({
             {controls}
           </div>
         )}
-        <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+        <CustomMarkdown allowedElements={['a']} unwrapDisallowed warnOnExternalLinks>
           {content}
         </CustomMarkdown>
         {!!actions.length && (

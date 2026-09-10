@@ -7,9 +7,17 @@ import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundar
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { remarkTimestamp } from '~/components/Markdown/remark-timestamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openExternalLinkWarning } from '~/components/ExternalLinkWarning/openExternalLinkWarning';
+import { useInternalHosts } from '~/hooks/useInternalHosts';
+import { isExternalHref } from '~/utils/external-link';
 
 type CustomOptions = Options & {
   allowExternalVideo?: boolean;
+  /**
+   * 🔴 Opt-in rather than a caller-supplied `a` renderer: `mergedComponents` spreads
+   * `components` FIRST and then defines `a`, so a caller's own `a` is silently dropped.
+   */
+  warnOnExternalLinks?: boolean;
 };
 
 /**
@@ -19,6 +27,7 @@ type CustomOptions = Options & {
  */
 export function CustomMarkdown({
   allowExternalVideo,
+  warnOnExternalLinks,
   components,
   className,
   remarkPlugins,
@@ -26,6 +35,7 @@ export function CustomMarkdown({
   ...options
 }: CustomOptions) {
   const user = useCurrentUser();
+  const internalHosts = useInternalHosts();
 
   // Discord-style `<t:UNIX:STYLE>` timestamp support is available in every
   // markdown surface. Caller-provided remark plugins still run alongside it.
@@ -79,9 +89,22 @@ export function CustomMarkdown({
 
       href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
 
+      const warn = warnOnExternalLinks && isExternalHref(href, internalHosts);
+
       return (
         <Link legacyBehavior href={href} passHref>
-          <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
+          <a
+            target={isExternalLink ? '_blank' : '_self'}
+            rel="nofollow noreferrer"
+            onClick={
+              warn
+                ? (e) => {
+                    e.preventDefault();
+                    openExternalLinkWarning(href);
+                  }
+                : undefined
+            }
+          >
             {props.children}
           </a>
         </Link>

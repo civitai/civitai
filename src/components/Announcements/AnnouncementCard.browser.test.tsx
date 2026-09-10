@@ -78,4 +78,47 @@ describe('AnnouncementCard actions', () => {
     await page.getByRole('button', { name: 'Join the group' }).click();
     expect(onActionClick).toHaveBeenCalledWith(action, 0);
   });
+
+  test('an internal action also reports the click to analytics', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onActionClick = vi.fn();
+    // A hash target, not a real path — see the comment on `action` in
+    // announcement-tracking.browser.test.tsx: clicking a real path navigates the test
+    // iframe and kills the run, silently, with the remaining tests left "skipped".
+    const action = { link: '#offer', linkText: 'See the model' };
+    renderWithProviders(
+      <AnnouncementCard {...base} actions={[action]} onActionClick={onActionClick} />
+    );
+
+    await page.getByRole('link', { name: 'See the model' }).click();
+    expect(onActionClick).toHaveBeenCalledWith(action, 0);
+  });
+
+  test('an external link in the body opens the interstitial', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    renderWithProviders(
+      <AnnouncementCard
+        {...base}
+        content="grab them at [my telegram](https://t.me/SomeGroup)"
+      />
+    );
+
+    const link = page.getByRole('link', { name: 'my telegram' });
+    await expect.element(link).toBeVisible();
+    await link.click();
+    expect(mocks.openExternalLinkWarning).toHaveBeenCalledWith('https://t.me/SomeGroup');
+  });
+
+  test('an internal link in the body is left alone', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    // Hash target — see the comment above on the internal-action test.
+    renderWithProviders(
+      <AnnouncementCard {...base} content="see [my model](#offer)" />
+    );
+
+    const link = page.getByRole('link', { name: 'my model' });
+    await expect.element(link).toHaveAttribute('href', '#offer');
+    await link.click();
+    expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
+  });
 });
