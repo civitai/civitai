@@ -15,8 +15,9 @@ import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.se
 // realizes at runtime. When the job reaches a TERMINAL status (observed by
 // `pollWorkflow` / `cancelWorkflow`) we refund the over-reservation
 // (`ceiling - actual`) back to EACH reservation counter (per-user daily, per-app
-// aggregate, and — when the submit came from an active on-site dev tunnel — the
-// per-dev-session cap), so every cap converges on the REAL accrued cost.
+// aggregate, the viewer's per-(user, app) CONSENT BUDGET when they set one, and —
+// when the submit came from an active on-site dev tunnel — the per-dev-session
+// cap), so every cap converges on the REAL accrued cost.
 //
 // This module owns the small durable link between the two: a per-workflow Redis
 // record of the exact reservation keys + the ceiling, written at submit and
@@ -45,6 +46,9 @@ const SETTLE_TTL_SECONDS = 25 * 60 * 60;
 // reserved, so the cast is sound — same key, same window).
 type BuzzCapKey = `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}`;
 
+/** Same round-trip-and-cast reasoning as BuzzCapKey, for the consent-budget key. */
+type ConsentBudgetKey = `${typeof REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${string}`;
+
 function settleKey(workflowId: string): `${typeof REDIS_SYS_KEYS.BLOCKS.CUSTOM_COMFY_SETTLE}:${string}` {
   return `${REDIS_SYS_KEYS.BLOCKS.CUSTOM_COMFY_SETTLE}:${workflowId}`;
 }
@@ -54,6 +58,21 @@ type SettleRecord = {
   buzzCapKey: string;
   /** The per-app aggregate daily key; null for dev tokens (no per-app reserve). */
   appSpendKey: string | null;
+  /**
+   * The per-(user, app, UTC-day) CONSENT BUDGET key the ceiling was ALSO reserved
+   * against, when the viewer set a budget for this app. Absent for every submit
+   * where they did not (and for dev / run-for-real tokens, which take no consent
+   * reservation at all) — so that leg simply no-ops and the record is the exact
+   * shape it was before this field existed, which is what makes an in-flight
+   * pre-deploy record settle cleanly.
+   *
+   * 🔴 IT MUST BE SETTLED LIKE THE OTHERS. A post-paid job reserves the CEILING;
+   * without this leg the consent budget alone would stay charged at the ceiling
+   * while every other counter converged on the real accrued cost, so a user's own
+   * limit would exhaust far faster than their actual spend — visible to them, and
+   * wrong in the direction they would report as a bug.
+   */
+  consentBudgetKey?: string | null;
   /**
    * The dev-tunnel SESSION id the ceiling was ALSO reserved against, when the
    * submit came from an active on-site dev tunnel (F4). Absent for every non-dev
@@ -97,6 +116,8 @@ export async function persistCustomComfySettle(input: {
   workflowId: string;
   buzzCapKey: string;
   appSpendKey: string | null;
+  /** The consent-budget key, when the viewer set a per-app budget. */
+  consentBudgetKey?: string | null;
   devSessionId?: string | null;
   ceiling: number;
   /** Resolved engine + recipe id, for per-engine settle-time observability. */
@@ -109,6 +130,7 @@ export async function persistCustomComfySettle(input: {
     workflowId,
     buzzCapKey,
     appSpendKey,
+    consentBudgetKey = null,
     devSessionId = null,
     ceiling,
     engine,
@@ -120,6 +142,9 @@ export async function persistCustomComfySettle(input: {
   // Include the dev-session id ONLY when present, so a non-dev submit persists the
   // exact record shape it did before F4 (the dev-session refund leg then no-ops).
   if (devSessionId) record.devSessionId = devSessionId;
+  // Same rule for the consent-budget key: omitted when the viewer set no budget,
+  // so that record is byte-identical to a pre-consent-budget one.
+  if (consentBudgetKey) record.consentBudgetKey = consentBudgetKey;
   // Observability-only fields (never affect the refund). Present for every real
   // customComfy submit going forward; absent-safe at settle.
   if (engine) record.engine = engine;
@@ -138,7 +163,8 @@ export async function persistCustomComfySettle(input: {
  * Settle a customComfy workflow to its REAL accrued cost on the FIRST terminal
  * observation. Reads + atomically claims the settle record (GET then DEL, gated
  * on DEL===1 so only one caller refunds), then refunds `ceiling - actual` to
- * BOTH the per-user daily cap and the per-app aggregate cap.
+ * EVERY counter the record names — the per-user daily cap, the per-app aggregate
+ * cap, the viewer's consent budget, and the dev-session cap.
  *
  * Idempotent + self-scoping: a record exists ONLY for a customComfy submit and is
  * deleted on the first successful claim, so this can be called unconditionally on
@@ -231,6 +257,16 @@ export async function settleCustomComfySpend(input: {
   if (record.appSpendKey) {
     const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
     await refundAppSpend(record.appSpendKey as AppSpendDailyKey, refund);
+  }
+
+  // CONSENT BUDGET: present ONLY when the viewer set a per-app daily budget, which
+  // the submit reserved the same CEILING against. Refund the SAME over-reservation
+  // so the user's own limit converges on their real accrued spend like every other
+  // counter. Best-effort (a lost refund over-counts — stricter) and never throws.
+  if (record.consentBudgetKey) {
+    await sysRedis.decrBy(record.consentBudgetKey as ConsentBudgetKey, refund).catch(() => {
+      /* best-effort — a lost refund over-counts (stricter cap) */
+    });
   }
 
   // Dev-tunnel SESSION cap (F4): present ONLY when the submit came from an active

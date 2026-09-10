@@ -3477,100 +3477,41 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
 });
 
 /**
- * Developer soft-launch (Phase B) — the block-token-authed runtime procedures
- * re-assert the AUTHOR capability against the RESOLVED viewer (from the token
- * subject, NOT ctx.user). A token whose subject resolves to a NON-author
- * (non-mod, not in the `app-blocks-author` cohort) must be rejected with
- * FORBIDDEN even though the token is otherwise valid (valid signature, correct
- * scopes, matching ctx).
+ * The AUTHORING capability NO LONGER GATES THE BLOCK-TOKEN RUNTIME PROCEDURES.
  *
- * This is the defense-in-depth layer beneath the gated token-minting endpoint:
- * even if a token were somehow minted for a non-author, the runtime refuses it.
+ * This block used to assert the opposite, procedure by procedure: a token whose
+ * subject resolved to a non-author was rejected with FORBIDDEN by
+ * `assertViewerIsAppDeveloper`. That was an AUTHORING capability standing in front
+ * of RUNTIME actions, and its effect was that a viewer who was not an app author
+ * could not USE an app at all. The platform now enforces the viewer's own SCOPE
+ * GRANTS on these paths instead; the author gate survives on exactly one
+ * procedure, `updateUserSettings`, which is pinned at the bottom of this block.
  *
- * NB: the AUTHZ gate resolves the subject via sessionClient.getSessionUserById
- * (mockGetSessionUser) and evaluates isAppBlocksAuthorEnabled against it — a
- * non-mod with no cohort grant → the default mock returns false → FORBIDDEN.
+ * 🔴 THE KILL-SWITCH IS NOW THE ONLY IDENTITY-SHAPED BELT ON THESE PROCS, so its
+ * fail-closed behaviour is no longer backed up by a second one. The vanished-viewer
+ * case below is therefore load-bearing in a way it was not before: it used to be
+ * covered incidentally by the author gate, and the flag mock had to be taught the
+ * REAL flag's shape (base-false, segment-gated ⇒ an undefined user resolves false)
+ * for it to mean anything.
  */
-describe('soft-launch — block-token runtime procedures reject non-author viewers', () => {
-  function nonModViewer() {
-    const nonMod = {
+describe('runtime procedures no longer require the AUTHORING capability', () => {
+  function nonAuthorViewer() {
+    const nonAuthor = {
       id: 42,
       isModerator: false,
       tier: 'free',
       email: 'u@example.com',
       username: 'u',
     };
-    // Both runtime gates resolve the subject via getSessionUserById; a non-author
-    // subject (default author mock = mod-floor only) fails assertViewerIsAppDeveloper.
-    mockGetUserById.mockResolvedValue(nonMod);
-    mockGetSessionUser.mockResolvedValue(nonMod);
+    mockGetUserById.mockResolvedValue(nonAuthor);
+    mockGetSessionUser.mockResolvedValue(nonAuthor);
+    // The default author mock is the mod floor, so this subject is NOT an author.
+    mockIsAppBlocksAuthorEnabled.mockImplementation(async () => false);
   }
 
-  it('pollWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
+  it('pollWorkflow SERVES a non-author resolved viewer', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
-    nonModViewer();
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    // The orchestrator must never be reached for a non-mod.
-    expect(mockGetWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('cancelWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    nonModViewer();
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(mockCancelWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('estimateWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    nonModViewer();
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    // No orchestrator interaction for a non-mod.
-    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('submitWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
-    nonModViewer();
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    // The prompt audit + orchestrator must never run for a non-mod.
-    expect(mockAuditPromptServer).not.toHaveBeenCalled();
-    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('FORBIDDEN when the resolved viewer has vanished (getSessionUserById → null)', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    // The enabled kill-switch is mocked ON (default), so the FORBIDDEN comes from
-    // the authz gate: a vanished subject → undefined user → no mod floor + the
-    // author mock's `!!undefined?.isModerator` → false → FORBIDDEN.
-    mockGetUserById.mockResolvedValue(null);
-    mockGetSessionUser.mockResolvedValue(null);
-    const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-  });
-
-  it('author-capable NON-MOD subject passes the authz gate (cohort widening)', async () => {
-    // A curated non-mod author: the enabled kill-switch is ON and the
-    // `appBlocksAuthor` capability resolves true for this subject → the runtime
-    // proc gets PAST the authz gate (reaches the orchestrator read).
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    const cohortAuthor = { id: 42, isModerator: false, tier: 'free', username: 'u' };
-    mockGetSessionUser.mockResolvedValue(cohortAuthor);
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+    nonAuthorViewer();
     mockGetWorkflow.mockResolvedValue({
       id: 'wf_1',
       status: 'succeeded',
@@ -3578,11 +3519,71 @@ describe('soft-launch — block-token runtime procedures reject non-author viewe
       steps: [],
     });
     const caller = blocksRouter.createCaller(fakeCtx() as never);
-    const ok = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
-    expect(ok.snapshot.workflowId).toBe('wf_1');
-    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({
-      user: expect.objectContaining({ id: 42, isModerator: false }),
+    const res = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+    expect(res.snapshot.workflowId).toBe('wf_1');
+    // The capability was not even consulted — the claim is that the runtime stopped
+    // asking, not merely that this particular subject was let through.
+    expect(mockIsAppBlocksAuthorEnabled).not.toHaveBeenCalled();
+  });
+
+  it('cancelWorkflow SERVES a non-author resolved viewer', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    nonAuthorViewer();
+    mockCancelWorkflow.mockResolvedValue(undefined);
+    mockGetWorkflow.mockResolvedValue({
+      id: 'wf_1',
+      status: 'canceled',
+      cost: { total: 0 },
+      steps: [],
     });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+    expect(mockCancelWorkflow).toHaveBeenCalled();
+    expect(mockIsAppBlocksAuthorEnabled).not.toHaveBeenCalled();
+  });
+
+  it('submitWorkflow SERVES a non-author resolved viewer', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    nonAuthorViewer();
+    happyVersionLookup();
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 25 },
+        steps: [],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const res = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(res.snapshot.workflowId).toBe('wf_real');
+    expect(mockIsAppBlocksAuthorEnabled).not.toHaveBeenCalled();
+  });
+
+  it('the KILL-SWITCH still rejects a vanished viewer (UNAUTHORIZED, no orchestrator call)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockGetUserById.mockResolvedValue(null);
+    mockGetSessionUser.mockResolvedValue(null);
+    // Model the REAL flag rather than the suite's unconditional `true`: it is
+    // base-false and segment-gated, so a vanished subject (undefined user) is
+    // evaluated globally, matches no segment, and resolves false.
+    mockIsAppBlocksEnabled.mockImplementation(async (opts?: { user?: unknown }) => !!opts?.user);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('updateUserSettings STILL requires the authoring capability (the one surviving site)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    nonAuthorViewer();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.updateUserSettings({ blockToken: 'tok', settings: { theme: 'dark' } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // ...and it is THIS gate that refused, not an incidental one.
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalled();
   });
 });
 
@@ -5287,9 +5288,15 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
 // Money page blocks read the VIEWER's OWN spendable balances via the block
 // token WITHOUT holding buzz:read:self. userId is derived from the self-bound
 // token sub, never client input — a page can only read its own session's user.
+// `getMyBuzzBalance` is no longer the scope-free convenience path it was: it now
+// requires the same `buzz:read:self` CONSENT its sibling self-reads require. The author
+// capability that used to be its only narrowing gate is gone from the runtime, and a
+// scope-free balance read would have been a widening.
+const BALANCE_READ = ['buzz:read:self'];
+
 describe('blocks.getMyBuzzBalance', () => {
   it('returns the three spendable balances for a valid token (from getUserBuzzAccounts)', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BALANCE_READ }));
     happyUser();
     // getUserBuzzAccounts returns every spend type; the proc projects to three.
     mockGetUserBuzzAccounts.mockResolvedValue({ blue: 100, green: 20, yellow: 5, red: 999 });
@@ -5303,7 +5310,7 @@ describe('blocks.getMyBuzzBalance', () => {
   });
 
   it('defaults missing account values to 0', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BALANCE_READ }));
     happyUser();
     mockGetUserBuzzAccounts.mockResolvedValue({ blue: 50 } as never);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -5321,7 +5328,7 @@ describe('blocks.getMyBuzzBalance', () => {
   });
 
   it('rejects an anon subject with UNAUTHORIZED (no balance to read)', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon', scopes: BALANCE_READ }));
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
@@ -5330,7 +5337,7 @@ describe('blocks.getMyBuzzBalance', () => {
   });
 
   it('rejects when the App Blocks flag is disabled (kill-switch)', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BALANCE_READ }));
     happyUser();
     mockIsAppBlocksEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -5341,24 +5348,42 @@ describe('blocks.getMyBuzzBalance', () => {
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
   });
 
-  it('rejects a non-author subject with FORBIDDEN (author gate, no balance read)', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims());
-    // Enabled kill-switch passes, but the subject is not an app author.
-    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+  // REPLACES the old "rejects a non-author subject with FORBIDDEN (author gate)". The
+  // author gate is gone from this procedure; CONSENT is what narrows it now, and this is
+  // the test that keeps the removal from being a widening.
+  it('rejects a token lacking buzz:read:self with FORBIDDEN (no balance read)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['ai:write:budgeted'] }));
+    happyUser();
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
+      message: 'block lacks buzz:read:self scope',
     });
     expect(mockGetUserBuzzAccounts).not.toHaveBeenCalled();
+  });
+
+  // The complement: a NON-AUTHOR carrying the consent scope is SERVED. Without this pair
+  // the FORBIDDEN above could equally be attributed to the subject rather than the scope.
+  it('SERVES a non-author subject whose token carries buzz:read:self', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: BALANCE_READ }));
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    mockGetUserBuzzAccounts.mockResolvedValue({ blue: 1, green: 2, yellow: 3 });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.getMyBuzzBalance({ blockToken: 'tok' })).resolves.toEqual({
+      blue: 1,
+      green: 2,
+      yellow: 3,
+    });
   });
 });
 
 // ---- getMyViewer (host-mediated, token-bound viewer identity read) ----------
 // A page block reads the VIEWER's OWN identity ("who am I") via the block token,
 // backing the SDK useViewer() hook. userId is derived from the self-bound token
-// sub (never client input), gated on the `user:read:self` consent scope (unlike
-// the scope-free getMyBuzzBalance). Mirrors /api/v1/blocks/me: dbWrite ban/mute/
+// sub (never client input), gated on the `user:read:self` consent scope. (So is
+// getMyBuzzBalance now, on `buzz:read:self` — this used to contrast against it as the
+// scope-free read.) Mirrors /api/v1/blocks/me: dbWrite ban/mute/
 // deleted lookup, 404 on deleted, 403 on banned, `status:'muted'` for muted.
 const VIEWER_READ = ['user:read:self'];
 
@@ -5436,15 +5461,18 @@ describe('blocks.getMyViewer', () => {
     expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
   });
 
-  it('rejects a non-author subject with FORBIDDEN (author gate, no db read)', async () => {
+  // REPLACES the old "rejects a non-author subject with FORBIDDEN (author gate)". The
+  // author gate no longer runs here; a non-author holding the CONSENT scope is served,
+  // which is the whole point of the change. The `user:read:self` requirement — asserted
+  // by the sibling test below — is what keeps this narrow.
+  it('SERVES a non-author subject whose token carries user:read:self', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: VIEWER_READ }));
     mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
     mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(caller.getMyViewer({ blockToken: 'tok' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
-    expect(mockDbWriteUserFindUnique).not.toHaveBeenCalled();
+    const result = await caller.getMyViewer({ blockToken: 'tok' });
+    expect(result).toMatchObject({ id: 42 });
+    expect(mockDbWriteUserFindUnique).toHaveBeenCalled();
   });
 
   it('rate-limits per blockInstanceId BEFORE the db read (TOO_MANY_REQUESTS)', async () => {
@@ -5562,7 +5590,7 @@ describe('blocks.listMyWorkflows (G6 — persistent output queue read)', () => {
 
 // ---- Buzz self-read bridges (getMyBuzz{Transactions,Accounts} + -----------
 // getMyDailyCompensation) — host-mediated, token-bound, buzz:read:self consent.
-// A `buzz:read:self` claim is REQUIRED (unlike the scope-free getMyBuzzBalance).
+// A `buzz:read:self` claim is REQUIRED (as it now is on getMyBuzzBalance too).
 // ---------------------------------------------------------------------------
 const BUZZ_READ = ['buzz:read:self'];
 
@@ -5882,6 +5910,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        // NULL: this viewer set no per-app consent budget, so no second reservation
+        // was taken and the settle has nothing extra to unwind.
+        consentBudgetKey: null,
         appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
         ceiling: 90,
         engine: 'zimage-turbo', // ccBody default engine (== recipe default)
@@ -6415,6 +6446,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        consentBudgetKey: null,
         appSpendKey: null,
         devSessionId: 'bki_dev',
         ceiling: 90,
@@ -6437,6 +6469,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        consentBudgetKey: null,
         appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
         devSessionId: 'bki_dev',
         ceiling: 90,

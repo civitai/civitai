@@ -43,6 +43,44 @@ export async function getGrantedScopes(opts: {
 }
 
 /**
+ * Reads the per-(user, app) CONSENT BUDGET — the daily Buzz ceiling the viewer
+ * themselves set for this app when they consented. `null` means the user set no
+ * budget, in which case the app spends under the platform's own per-user daily
+ * ceiling (`BLOCK_BUZZ_CAP_PER_DAY`) alone — the behaviour of every grant written
+ * before the column existed.
+ *
+ * 🔴 A REVOKED GRANT RETURNS `null`, AND THAT IS NOT A LOOSENING. `getGrantedScopes`
+ * already treats a revoked row as an empty grant, so a revoked user's token carries
+ * no `ai:write:budgeted` and can reach no spend path at all — there is nothing left
+ * for a budget to bound. Returning the stored number for a revoked row would be
+ * enforcing a ceiling on spend that cannot happen.
+ *
+ * 🔴 READS THE PRIMARY BY DEFAULT. This runs on the spend path, immediately after a
+ * consent write that may have just LOWERED the budget: served off the replica, a
+ * lag window would spend against the OLD, looser ceiling — the one direction a
+ * money cap must never drift. The read is a single unique-index lookup.
+ */
+export async function getConsentBuzzBudget(opts: {
+  userId: number;
+  appBlockId: string;
+  db?: 'read' | 'write';
+}): Promise<number | null> {
+  const client = opts.db === 'read' ? dbRead : dbWrite;
+  const row = (await client.appUserScopeGrant.findUnique({
+    where: { userId_appBlockId: { userId: opts.userId, appBlockId: opts.appBlockId } },
+    select: { buzzBudgetPerDay: true, revokedAt: true },
+  })) as { buzzBudgetPerDay: number | null; revokedAt: Date | null } | null;
+  if (!row || row.revokedAt) return null;
+  const budget = row.buzzBudgetPerDay;
+  // Guard the VALUE, not just its presence: a non-positive or non-finite number
+  // read back from the DB would otherwise become a cap of 0 or NaN, and `total >
+  // NaN` is false — i.e. a corrupt row would silently DISABLE the cap. Treat any
+  // unusable value as "no budget set" (the platform cap still applies).
+  if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) return null;
+  return Math.floor(budget);
+}
+
+/**
  * Records (or extends) a user's consent for an app block. ADDITIVE — scopes
  * the user already granted persist; the supplied scopes are unioned in. Writing
  * a grant also clears any prior `revoked_at` (re-granting un-revokes), and
@@ -56,14 +94,38 @@ export async function getGrantedScopes(opts: {
  * (install/subscribe already resolve the AppBlock manifest) — this service does
  * NOT re-derive the ceiling; it stores exactly what it is told the user
  * consented to. Unknown/garbage scopes simply never match at mint.
+ *
+ * ## `buzzBudgetPerDay` semantics — NOT additive, and deliberately not
+ *
+ * The scope set unions because "I already let you read my models" and "now also
+ * spend my Buzz" are both true at once. A budget is a single number and cannot
+ * union; it can only be kept or replaced. So:
+ *
+ *   - `buzzBudgetPerDay: <number>` → OVERWRITES the stored value. The user just
+ *     told us what they want; the newest statement wins.
+ *   - `buzzBudgetPerDay: null`     → OVERWRITES with "no budget" (an explicit
+ *     clear — the user removed their limit).
+ *   - key OMITTED (`undefined`)    → LEAVES the stored value untouched.
+ *
+ * That third case is the one that matters, and it is why this is `'buzzBudgetPerDay'
+ * in opts` rather than a `!== undefined` test on the value. A re-consent for a NEW
+ * scope (the host surfaces `needs_consent`, the user clicks Allow) sends only the
+ * scopes; if an omitted budget were written through as NULL, accepting one extra
+ * permission would silently wipe a spend limit the user had deliberately set —
+ * a widening, performed by a dialog that said nothing about money.
  */
 export async function recordScopeGrant(opts: {
   userId: number;
   appBlockId: string;
   version: string;
   scopes: string[];
+  /** Omit to leave any stored budget untouched; `null` explicitly clears it. */
+  buzzBudgetPerDay?: number | null;
 }): Promise<void> {
   const { userId, appBlockId, version } = opts;
+  // Presence of the KEY, not truthiness of the value — see the doc above.
+  const budgetSupplied = 'buzzBudgetPerDay' in opts;
+  const budgetData = budgetSupplied ? { buzzBudgetPerDay: opts.buzzBudgetPerDay ?? null } : {};
   // Dedup + drop empties so the stored array stays clean.
   const incoming = Array.from(new Set(opts.scopes.filter((s) => typeof s === 'string' && s.length > 0)));
 
@@ -76,7 +138,7 @@ export async function recordScopeGrant(opts: {
     const merged = Array.from(new Set([...(existing.grantedScopes ?? []), ...incoming]));
     await dbWrite.appUserScopeGrant.update({
       where: { id: existing.id },
-      data: { grantedScopes: merged, version, revokedAt: null },
+      data: { grantedScopes: merged, version, revokedAt: null, ...budgetData },
     });
     return;
   }
@@ -89,6 +151,7 @@ export async function recordScopeGrant(opts: {
         appBlockId,
         version,
         grantedScopes: incoming,
+        ...budgetData,
       },
     });
   } catch (err) {
@@ -104,7 +167,7 @@ export async function recordScopeGrant(opts: {
     const merged = Array.from(new Set([...(row.grantedScopes ?? []), ...incoming]));
     await dbWrite.appUserScopeGrant.update({
       where: { id: row.id },
-      data: { grantedScopes: merged, version, revokedAt: null },
+      data: { grantedScopes: merged, version, revokedAt: null, ...budgetData },
     });
   }
 }

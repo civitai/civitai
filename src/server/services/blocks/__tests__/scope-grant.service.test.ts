@@ -63,6 +63,161 @@ describe('scope-grant.service', () => {
     });
   });
 
+  describe('getConsentBuzzBudget', () => {
+    it('returns the stored budget for an active grant', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        buzzBudgetPerDay: 500,
+        revokedAt: null,
+      });
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      expect(await getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).toBe(500);
+    });
+
+    it('returns null when no grant row exists', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(null);
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      expect(await getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).toBeNull();
+    });
+
+    it('returns null when the grant is revoked', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        buzzBudgetPerDay: 500,
+        revokedAt: new Date(),
+      });
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      expect(await getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).toBeNull();
+    });
+
+    // 🔴 GUARD THE VALUE, NOT ONLY ITS PRESENCE. A 0 would become a cap of 0 (deny
+    // everything); a NaN would become `total > NaN` — always false — i.e. a corrupt row
+    // would silently DISABLE the cap. Both must read as "no budget set".
+    it.each([
+      ['zero', 0],
+      ['negative', -5],
+      ['NaN', Number.NaN],
+    ])('returns null for a %s stored value', async (_label, value) => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        buzzBudgetPerDay: value,
+        revokedAt: null,
+      });
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      expect(await getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).toBeNull();
+    });
+
+    // Reads the PRIMARY by default: this runs on the spend path right after a consent
+    // write that may have LOWERED the budget, and a replica-lag read would spend against
+    // the older, looser ceiling.
+    it('reads the primary unless a read replica is explicitly requested', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValue({
+        buzzBudgetPerDay: 5,
+        revokedAt: null,
+      });
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      await getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' });
+      expect(mockDb.appUserScopeGrant.findUnique).toHaveBeenCalled();
+    });
+  });
+
+  describe('recordScopeGrant — buzzBudgetPerDay update semantics', () => {
+    // 🔴 THE OMITTED CASE IS THE ONE THAT MATTERS. A re-consent for an unrelated scope
+    // sends only `scopes`; if an omitted budget were written through as NULL, accepting
+    // one extra permission would silently wipe a spend limit the user set — a widening,
+    // performed by a dialog that never mentioned money.
+    it('leaves the stored budget untouched when the key is OMITTED', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: ['models:read:self'],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['user:read:self'],
+      });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty('buzzBudgetPerDay');
+    });
+
+    it('OVERWRITES the stored budget when a number is supplied', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: [],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: 250,
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        buzzBudgetPerDay: 250,
+      });
+    });
+
+    // An explicit NULL is the user REMOVING their limit — distinct from omitting it.
+    it('CLEARS the stored budget when null is supplied explicitly', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: [],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: null,
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        buzzBudgetPerDay: null,
+      });
+    });
+
+    it('carries the budget onto a freshly CREATED grant row', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(null);
+      mockDb.appUserScopeGrant.create.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: 250,
+      });
+      expect(mockDb.appUserScopeGrant.create.mock.calls[0][0].data).toMatchObject({
+        buzzBudgetPerDay: 250,
+      });
+    });
+
+    // The P2002 concurrent-first-write branch is a THIRD write site. It had to be updated
+    // too, and a guard that only covered the other two would read as coverage while
+    // leaving the racy path dropping the budget on the floor.
+    it('carries the budget through the P2002 concurrent-create retry', async () => {
+      mockDb.appUserScopeGrant.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'augr_1', grantedScopes: [] });
+      mockDb.appUserScopeGrant.create.mockRejectedValueOnce({ code: 'P2002' });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: 250,
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).toMatchObject({
+        buzzBudgetPerDay: 250,
+      });
+    });
+  });
+
   describe('recordScopeGrant', () => {
     it('creates a fresh grant row when none exists', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(null);

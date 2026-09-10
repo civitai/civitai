@@ -1,9 +1,13 @@
-import { Button, Group, List, Modal, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Button, Group, List, Modal, NumberInput, Stack, Switch, Text, ThemeIcon } from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
 import { useState } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  isSensitiveBlockScope,
+} from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -15,6 +19,13 @@ interface BlockConsentModalProps {
   /** Called after the grant lands so the host can re-mint the block token. */
   onGranted: () => void;
 }
+
+/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
+const SPEND_SCOPE = 'ai:write:budgeted';
+
+/** Pre-filled suggestion when the user turns a limit on. Deliberately far below the
+ *  platform ceiling: the default should be a limit, not a formality. */
+const DEFAULT_BUDGET_SUGGESTION = 1000;
 
 /**
  * Lazy-consent surface (A6 / design-gaps C2). Opened on demand when a block
@@ -28,6 +39,19 @@ interface BlockConsentModalProps {
  * to manifest∩approved) then closes and calls `onGranted`, which re-mints the
  * block token so it carries the newly-granted scopes. The block observes the
  * scope appear on its token (via TOKEN_REFRESH) and retries the action.
+ *
+ * ## The spend limit
+ *
+ * When `ai:write:budgeted` is among the scopes being consented to, the user can
+ * also set a per-day Buzz limit for THIS app, which the server enforces as a
+ * per-(user, app, UTC-day) reservation on every spend path. The control is shown
+ * ONLY for that scope, because it is the only one that can spend anything — a
+ * limit next to "read your username" would be noise.
+ *
+ * OFF BY DEFAULT, and that is the honest default rather than a lazy one: leaving
+ * it off stores NULL, which is exactly what every already-consented user has, so
+ * nobody is silently tightened and nobody is silently loosened. The platform's own
+ * per-user daily ceiling applies either way; a limit set here only ever narrows.
  */
 export default function BlockConsentModal({
   appBlockId,
@@ -37,6 +61,9 @@ export default function BlockConsentModal({
 }: BlockConsentModalProps) {
   const dialog = useDialogContext();
   const [error, setError] = useState<string | null>(null);
+  const grantsSpend = missingScopes.includes(SPEND_SCOPE);
+  const [limitEnabled, setLimitEnabled] = useState(false);
+  const [budget, setBudget] = useState<number | string>(DEFAULT_BUDGET_SUGGESTION);
   const grant = trpc.blocks.grantScopes.useMutation({
     onSuccess: () => {
       setError(null);
@@ -45,6 +72,18 @@ export default function BlockConsentModal({
     },
     onError: (e) => setError(e.message),
   });
+
+  // Clamp defensively rather than trusting the input's own bounds: Mantine's
+  // NumberInput hands back a string while the field is mid-edit (and an empty
+  // string when cleared), so the value reaching the mutation must be narrowed to a
+  // real integer in range or dropped entirely. The server re-validates regardless —
+  // this only keeps the request well-formed.
+  const parsedBudget = typeof budget === 'number' ? budget : Number.parseInt(String(budget), 10);
+  const budgetValid =
+    Number.isInteger(parsedBudget) &&
+    parsedBudget >= BLOCK_CONSENT_BUDGET_MIN_PER_DAY &&
+    parsedBudget <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
+  const budgetBlocksSubmit = grantsSpend && limitEnabled && !budgetValid;
 
   return (
     <Modal {...dialog} withCloseButton={false} title={`${blockName ?? 'This app'} needs permission`}>
@@ -72,6 +111,37 @@ export default function BlockConsentModal({
             );
           })}
         </List>
+        {grantsSpend ? (
+          <Stack gap="xs" data-testid="block-consent-budget">
+            <Switch
+              size="sm"
+              checked={limitEnabled}
+              onChange={(event) => setLimitEnabled(event.currentTarget.checked)}
+              label="Set a daily Buzz limit for this app"
+              data-testid="block-consent-budget-toggle"
+            />
+            {limitEnabled ? (
+              <NumberInput
+                size="xs"
+                label="Buzz per day"
+                description={`This app can spend at most this much of your Buzz each day. Max ${BLOCK_CONSENT_BUDGET_MAX_PER_DAY.toLocaleString()}.`}
+                min={BLOCK_CONSENT_BUDGET_MIN_PER_DAY}
+                max={BLOCK_CONSENT_BUDGET_MAX_PER_DAY}
+                step={100}
+                allowDecimal={false}
+                allowNegative={false}
+                value={budget}
+                onChange={setBudget}
+                error={budgetValid ? null : 'Enter a whole number within the allowed range'}
+                data-testid="block-consent-budget-input"
+              />
+            ) : (
+              <Text size="xs" c="dimmed">
+                No limit set — this app spends under your account&rsquo;s overall daily cap.
+              </Text>
+            )}
+          </Stack>
+        ) : null}
         {error ? (
           <Text size="xs" c="red">
             {error}
@@ -85,7 +155,20 @@ export default function BlockConsentModal({
             size="xs"
             color="yellow"
             loading={grant.isPending}
-            onClick={() => grant.mutate({ appBlockId, scopes: missingScopes })}
+            disabled={budgetBlocksSubmit}
+            onClick={() =>
+              grant.mutate({
+                appBlockId,
+                scopes: missingScopes,
+                // OMITTED unless the user actually set a limit. Sending `null` here
+                // would be an explicit CLEAR, which would wipe a budget they set in
+                // an earlier consent — a widening performed by a dialog that never
+                // mentioned the existing limit. See `recordScopeGrant`.
+                ...(grantsSpend && limitEnabled && budgetValid
+                  ? { buzzBudgetPerDay: parsedBudget }
+                  : {}),
+              })
+            }
           >
             Allow
           </Button>

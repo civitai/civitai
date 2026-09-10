@@ -134,6 +134,36 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
 
 /**
+ * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
+ * a viewer has installed. The abuse ceiling nobody consents to — a per-call
+ * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is
+ * the aggregate that actually binds. Enforced in `blocks.router.ts`
+ * (`reserveBlockBuzzSpend`, keyed WITHOUT appBlockId so N installed apps share
+ * ONE ceiling rather than multiplying it).
+ *
+ * Lives HERE, in the client-safe shared module, because it is now read by three
+ * places that must agree: the server enforcement, the `blocks.grantScopes` zod
+ * bound on a user-set consent budget, and the consent dialog that shows the user
+ * what the ceiling is. It is also the upper bound on
+ * `app_user_scope_grants.buzz_budget_per_day` — a consent budget ABOVE the
+ * platform cap could never bind, so storing one would be storing a number that
+ * means nothing.
+ */
+export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
+
+/**
+ * Bounds for a user-set per-app consent budget
+ * (`app_user_scope_grants.buzz_budget_per_day`). MIN is 1 rather than 0: a
+ * budget of zero would be a way to consent to `ai:write:budgeted` and
+ * simultaneously make it unusable, which is what DECLINING the scope already
+ * expresses — so zero is rejected at the input rather than stored as a
+ * confusing dead grant. Mirrored by the `app_user_scope_grants_buzz_budget_bounds`
+ * CHECK constraint (migration 20260910120000).
+ */
+export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
+export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+
+/**
  * Membership test against the authoritative scope vocabulary.
  *
  * 🔴 OWN-PROPERTY ONLY — deliberately `hasOwnProperty`, never `in`. `in` walks

@@ -50,6 +50,17 @@ export type ScopeGrantSurface = {
   name: string;
   iconUrl?: string;
   scopes: string[];
+  /**
+   * The per-UTC-day Buzz ceiling the VIEWER set for this app at consent time, or
+   * `null` when they set none (in which case only the platform's own per-user daily
+   * cap applies). Read from `app_user_scope_grants.buzz_budget_per_day` — the same
+   * row + the same NULL semantics the SPEND path enforces against, so the
+   * permissions surface cannot show a limit the enforcement does not honour.
+   *
+   * A REVOKED grant reports `null`, matching `getConsentBuzzBudget`: a revoked
+   * grant carries no spend scope, so there is no spend for a budget to bound.
+   */
+  buzzBudgetPerDay: number | null;
   surfaces: {
     modelInstallCount: number;
     subscriptionScopes: string[];
@@ -132,6 +143,28 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     }
   }
 
+  // The consent BUDGET lives on the grant row, not on the subscription rows this
+  // function aggregates — one indexed read for every app in the result, rather than
+  // an N+1 per row. Apps with no grant row simply do not appear in the map and
+  // report `null`, which is the same thing "no budget set" means everywhere else.
+  const budgetByAppBlock = new Map<string, number | null>();
+  if (byAppBlock.size > 0) {
+    const grants = (await dbRead.appUserScopeGrant.findMany({
+      where: { userId, appBlockId: { in: Array.from(byAppBlock.keys()) } },
+      select: { appBlockId: true, buzzBudgetPerDay: true, revokedAt: true },
+    })) as Array<{ appBlockId: string; buzzBudgetPerDay: number | null; revokedAt: Date | null }>;
+    for (const g of grants) {
+      // Mirror getConsentBuzzBudget's guards EXACTLY — revoked → null, and a
+      // non-positive stored value → null — so this display can never disagree with
+      // what the spend path enforces.
+      const usable =
+        !g.revokedAt && typeof g.buzzBudgetPerDay === 'number' && g.buzzBudgetPerDay > 0
+          ? Math.floor(g.buzzBudgetPerDay)
+          : null;
+      budgetByAppBlock.set(g.appBlockId, usable);
+    }
+  }
+
   const result: ScopeGrantSurface[] = [];
   for (const [appBlockId, entry] of byAppBlock.entries()) {
     const manifest = (entry.appBlock.manifest ?? {}) as {
@@ -158,6 +191,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       name: manifestName,
       iconUrl,
       scopes: manifestScopes,
+      buzzBudgetPerDay: budgetByAppBlock.get(appBlockId) ?? null,
       surfaces: {
         modelInstallCount: entry.modelInstallCount,
         subscriptionScopes: Array.from(entry.subscriptionScopes).sort(),

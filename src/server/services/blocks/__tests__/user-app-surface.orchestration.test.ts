@@ -23,6 +23,9 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
     blockBuzzAttribution: { findMany: vi.fn() },
     appBlockPublishRequest: { groupBy: vi.fn(), findFirst: vi.fn() },
     blockScopeInvocation: { findMany: vi.fn() },
+    // The consent BUDGET lives on the grant row, which `listMyScopeGrants` now reads to
+    // surface the viewer's per-app daily Buzz limit alongside the scopes.
+    appUserScopeGrant: { findMany: vi.fn() },
   },
   mockDbWrite: {
     blockUserSubscription: { update: vi.fn() },
@@ -55,6 +58,9 @@ beforeEach(() => {
   mockDbRead.appBlockPublishRequest.groupBy.mockResolvedValue([]);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([]);
+  // Default: no grant rows ⇒ every app reports `buzzBudgetPerDay: null`, which is the
+  // pre-column behaviour and what the existing expectations below assume.
+  mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([]);
   mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
   mockDbWrite.blockScopeInvocation.create.mockResolvedValue({});
 });
@@ -113,6 +119,55 @@ describe('listMyScopeGrants', () => {
     expect(result[0].appBlockId).toBe('apb_1');
     expect(result[0].surfaces.modelInstallCount).toBe(2);
     expect(result[0].surfaces.subscriptionScopes).toEqual(['viewer_personal']);
+  });
+
+  // ── The CONSENT BUDGET the viewer set for this app. It lives on the grant row, not on
+  // the subscription rows this function aggregates, so it is a separate read — and its
+  // guards must mirror `getConsentBuzzBudget` exactly, or the permissions page would show
+  // a limit the SPEND path does not enforce (or hide one it does).
+  it('surfaces the consent budget from the grant row', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: null },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBe(750);
+    // Scoped to the apps actually in the result — never an unbounded scan.
+    expect(mockDbRead.appUserScopeGrant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 42, appBlockId: { in: ['apb_1'] } } })
+    );
+  });
+
+  it('reports null when the app has no grant row', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
+  });
+
+  it('reports null for a REVOKED grant, matching what the spend path enforces', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: new Date() },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
+  });
+
+  // A non-positive stored value would become a cap of 0 at the spend path, where
+  // `total > 0` denies everything. Both sides treat it as "no budget"; this pins that
+  // they agree rather than each guessing.
+  it('reports null for a non-positive stored budget', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 0, revokedAt: null },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
   });
 
   it('reads scopes from the joined manifest.scopes', async () => {
