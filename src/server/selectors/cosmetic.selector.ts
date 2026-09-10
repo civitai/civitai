@@ -30,8 +30,12 @@ export type SimpleCosmetic = Omit<
   /**
    * Optional because it is selected per query rather than by `simpleCosmetic`:
    * `getUserCosmetics` asks for it so the sticker tray can filter to your own
-   * without a second procedure, and widening the shared selector would put it in
-   * every cosmetic read on the site to serve one tray.
+   * without a second procedure. Widening the shared selector would push it into
+   * the shop reads, which filter on `createdById` server-side and deliberately
+   * do not ship it.
+   *
+   * Present on every cosmetic TYPE that `getUserCosmetics` returns — badges and
+   * decorations carry it too, not only stickers — but on no other procedure.
    */
   createdById?: number | null;
 };

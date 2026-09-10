@@ -141,6 +141,9 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
    * The chip is drawn on this same predicate, so the two cannot come apart and
    * leave the tray filtered to nothing with no control on screen to clear it —
    * on the paid surface, right after a purchase changes the collection.
+   *
+   * Masking rather than clearing is deliberate: if the set repopulates under the
+   * same mounted tray, the filter the placer asked for comes back with it.
    */
   const mineOnly = mineOnlyRequested && madeByYou.size > 0;
 
@@ -335,13 +338,20 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                     /**
                      * 🔴 ALL FOUR OF THESE PIN GEOMETRY, AND NONE IS DECORATION.
                      * Mantine restyles a checked chip: padding drops 16px -> 7.5px,
-                     * the border goes 1px -> 0, and a check icon appears. Those do
-                     * not cancel — measured 105.08px unchecked against 102.73px
-                     * checked — so the control visibly jumped as you toggled it,
-                     * next to two inputs that do not move. Pinning the three that
-                     * vary, and dropping the icon, makes the box the same in both
-                     * states by construction rather than by arithmetic; the filled
-                     * background still says which state it is in.
+                     * the border WIDTH goes 1px -> 0, and a check icon appears.
+                     * Those do not cancel — measured 105.08px unchecked against
+                     * 102.73px checked — so the control visibly jumped as you
+                     * toggled it, next to two inputs that do not move. Pinning the
+                     * three that vary, and dropping the icon, makes the box the
+                     * same in both states by construction rather than by
+                     * arithmetic; the filled background still says which state it
+                     * is in.
+                     *
+                     * `borderWidth`/`borderStyle` do NOT duplicate
+                     * FilterChip.module.scss: that sets the checked border's
+                     * COLOUR, which Mantine then renders at zero width. Measured
+                     * with these in place: 1px solid transparent unchecked, 1px
+                     * solid white checked, 105.08px both.
                      *
                      * The height fallback is load-bearing separately:
                      * `--input-height-xs` is scoped to an Input, so unqualified it
@@ -450,9 +460,7 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
               })}
               {!isLoading && !!sticker.length && !visible.length && (
                 <Text size="sm" c="dimmed" px="xs">
-                  {search.trim()
-                    ? `No ${mineOnly ? 'stickers you made' : 'stickers'} match “${search.trim()}”.`
-                    : 'None of the stickers you own were made by you.'}
+                  {`No ${mineOnly ? 'stickers you made' : 'stickers'} match “${search.trim()}”.`}
                 </Text>
               )}
             </Group>

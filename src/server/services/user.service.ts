@@ -1464,18 +1464,15 @@ export const getUserCosmetics = ({
           claimKey: true,
           data: true,
           cosmetic: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              type: true,
-              source: true,
-              data: true,
-              // Who made it. A scalar on the row already being selected, so no
-              // join and no extra round trip — and it is what lets the sticker
-              // tray filter to your own without asking a second procedure.
-              createdById: true,
-            },
+            // Spread rather than hand-listed, so a field added to the shared
+            // selector reaches this read too — it is the one the whole cosmetics
+            // UI runs on, and a divergence here surfaces as one surface missing a
+            // field nobody thinks to check.
+            //
+            // `createdById` is extra: a scalar on the row already being selected,
+            // so no join and no extra round trip, and it is what lets the sticker
+            // tray filter to your own without asking a second procedure.
+            select: { ...simpleCosmeticSelect, createdById: true },
           },
         },
       },

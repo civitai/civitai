@@ -24,11 +24,8 @@ const VIEWER_ID = 7;
 const mocks = vi.hoisted(() => ({
   owned: [] as { id: number; name: string; slug: string; url: string; animated: boolean }[],
   recentUse: [] as { cosmeticId: number; lastUsedAt: string }[],
-  attribution: [] as { id: number; creatorId: number | null }[],
-  /** One entry per attribution REQUEST built, so the gate and the chunking are both observable. */
-  attributionRequests: [] as number[][],
-  /** Only non-constant so the fake can express "the answer changed". */
-  attributionVersion: 1,
+  /** Every tRPC key the tray reached for that this file does not supply. */
+  unexpectedTrpcKeys: [] as string[],
 }));
 
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
@@ -67,37 +64,43 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: VIEWER_I
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
+  /**
+   * 🔴 A PROXY, NOT AN OBJECT, AND THAT IS THE WHOLE POINT. Reaching for any
+   * tRPC key this file does not supply RECORDS THE NAME and throws saying it —
+   * so "the tray asked for nothing extra" is asserted against a recorder that
+   * demonstrably fires, instead of against one no code path can reach.
+   *
+   * The previous version recorded requests built through a hand-shaped
+   * `useQueries` fake. Nothing under test called `useQueries`, so the assertion
+   * was true the way `expect([]).toEqual([])` is true, and the control that
+   * "proved" it only passed because the reverted code was written in the exact
+   * shape the fake expected. This catches a reintroduced query of ANY shape.
+   */
   trpc: {
-    cosmetic: {
-      getStickerBalances: { useQuery: () => ({ data: [] }) },
-      getStickerRecentUse: { useQuery: () => ({ data: mocks.recentUse }) },
-      getStickerOffers: { useQuery: () => ({ data: [] }) },
-    },
-    // `useOwnedStickerCreators` builds one query per chunk, so this records the
-    // REQUESTS rather than an `enabled` flag: gated off, the list is empty and
-    // nothing is asked for at all.
-    useQueries: (
-      build: (t: {
-        cosmetic: {
-          getStickerAttribution: (input: { ids: number[] }) => { ids: number[] };
-        };
-      }) => { ids: number[] }[]
-    ) => {
-      const requests = build({
-        cosmetic: { getStickerAttribution: (input) => ({ ids: input.ids }) },
-      });
-      for (const request of requests) mocks.attributionRequests.push(request.ids);
-      return requests.map((request) => ({
-        data: mocks.attribution.filter((row) => request.ids.includes(row.id)),
-        dataUpdatedAt: mocks.attributionVersion,
-        isLoading: false,
-      }));
-    },
+    cosmetic: new Proxy(
+      {
+        getStickerBalances: { useQuery: () => ({ data: [] }) },
+        getStickerRecentUse: { useQuery: () => ({ data: mocks.recentUse }) },
+        getStickerOffers: { useQuery: () => ({ data: [] }) },
+      } as Record<string, unknown>,
+      {
+        get(target, key: string) {
+          if (key in target) return target[key];
+          mocks.unexpectedTrpcKeys.push(String(key));
+          throw new Error(
+            `the tray asked for cosmetic.${String(key)} — the creator rides on ` +
+              `user.getCosmetics, so the tray should need no extra query`
+          );
+        },
+      }
+    ),
   },
 }));
 
 import { MantineProvider } from '@mantine/core';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
+// Imported AFTER the mock above, so this is the proxied fake the tray sees.
+import { trpc } from '~/utils/trpc';
 
 /** Ids DESCEND as obtained order advances — see the file header. */
 const sticker = (n: number, name: string, slug: string, createdById: number | null = null) => ({
@@ -170,7 +173,7 @@ const type = async (container: HTMLElement, value: string) => {
 beforeEach(() => {
   mocks.owned = OWNED;
   mocks.recentUse = [];
-  mocks.attributionRequests = [];
+  mocks.unexpectedTrpcKeys = [];
   document.body.innerHTML = '';
 });
 
@@ -217,18 +220,30 @@ describe('the tray can narrow to stickers you made', () => {
     setMine([OWNED[2].id, OWNED[5].id]);
     const container = await render();
 
-    // Reported as text so a regression names what went out rather than printing
+    // Reported as text so a regression names the procedure rather than printing
     // "expected 1 to be 0".
     expect(
-      mocks.attributionRequests.length
-        ? `asked about ${mocks.attributionRequests.flat().length} ids`
-        : 'asked nothing'
-    ).toBe('asked nothing');
+      mocks.unexpectedTrpcKeys.length
+        ? `asked for cosmetic.${mocks.unexpectedTrpcKeys.join(', cosmetic.')}`
+        : 'asked nothing extra'
+    ).toBe('asked nothing extra');
     // And the chip is there anyway — which is what makes the assertion above a
     // statement about efficiency rather than about the feature being absent.
     expect(container.querySelector('input[type="checkbox"]') ? 'chip drawn' : 'chip missing').toBe(
       'chip drawn'
     );
+  });
+
+  /**
+   * THE POSITIVE CONTROL FOR THE ASSERTION ABOVE. Without this, "asked nothing
+   * extra" would be satisfied by a recorder nothing can reach — which is exactly
+   * how the previous version of that test passed while proving nothing.
+   */
+  it('and the recorder it asserts on does fire — reaching for any other key throws', () => {
+    expect(() => (trpc.cosmetic as Record<string, unknown>).getStickerAttribution).toThrow(
+      /cosmetic\.getStickerAttribution/
+    );
+    expect(mocks.unexpectedTrpcKeys).toEqual(['getStickerAttribution']);
   });
 
   it('shows only the ones the viewer created', async () => {

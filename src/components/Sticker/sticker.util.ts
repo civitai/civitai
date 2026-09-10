@@ -43,7 +43,11 @@ export type ResolvedSticker = {
   animated?: boolean;
   /** What one more use costs. Absent = this sticker doesn't sell top-ups. */
   pricePerUse?: number;
-  /** Who made it. Null for a staff-authored cosmetic with no creator. */
+  /**
+   * Who made it. `null` is a staff-authored cosmetic with no creator;
+   * `undefined` means NOT FETCHED — only `useOwnedSticker` populates this, and
+   * `useStickerCosmetics`, which eight other surfaces use, never does.
+   */
   createdById?: number | null;
 };
 
@@ -185,7 +189,6 @@ export function useStickerCosmetics(ids: number[]) {
 
   return { sticker, isLoading: queries.some((q) => q.isLoading) };
 }
-
 
 /**
  * What a top-up costs, for the stickers actually being asked about.

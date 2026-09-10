@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 
@@ -64,6 +64,14 @@ const render = async () => {
   });
   return container;
 };
+
+// The dropdown escapes its container by design, so the assertions query
+// `document`, not the container — which means a leftover dropdown from an
+// earlier test would satisfy them. Only one test renders today; this is here so
+// the next one cannot pass for the wrong reason.
+beforeEach(() => {
+  document.body.innerHTML = '';
+});
 
 describe('the sticker picker escapes whatever clips it', () => {
   it('has an app default that would clip it — the precondition this file rests on', () => {
