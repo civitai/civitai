@@ -53,9 +53,13 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
               <Tabs.Tab
                 key={tab}
                 value={tab}
-                className="flex px-3 py-2"
+                // `shrink-0` because the list is `nowrap` inside a horizontal
+                // scroller: without it the tabs shrink below their content and a
+                // four-character count (`1.33K`) spills over the padding to sit
+                // flush with the pill's edge.
+                className="flex shrink-0 px-4 py-2"
                 classNames={{
-                  tabLabel: 'flex items-center gap-2 capitalize font-semibold',
+                  tabLabel: 'flex items-center gap-1.5 capitalize font-semibold',
                   tabSection: 'shrink-0',
                 }}
                 rightSection={
