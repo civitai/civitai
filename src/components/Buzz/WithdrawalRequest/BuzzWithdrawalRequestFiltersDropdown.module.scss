@@ -5,7 +5,9 @@
   // Mantine puts `data-variant` on the Chip ROOT, not on this label, so a
   // `&[data-variant='filled']` clause here matches nothing and the filled
   // background survives, hiding the border below.
-  &[data-checked] {
+  // `:not([data-disabled])` mirrors how Mantine scopes its own checked rules: without it a
+  // disabled checked chip loses its greyed fill and reads as enabled.
+  &[data-checked]:not([data-disabled]) {
     &,
     &:hover {
       background-color: transparent;
