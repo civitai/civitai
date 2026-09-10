@@ -20,11 +20,7 @@ import {
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import {
-  remainingStickerUses,
-  useOwnedSticker,
-  useOwnedStickerCreators,
-} from '~/components/Sticker/sticker.util';
+import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
@@ -115,34 +111,36 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // 97.6% of sticker owners hold 12 or fewer and never see the sort control;
   // 73.4% hold one, where an order is a no-op. tRPC batching is off, so this is
   // its own round trip on the tray-open path — not worth taking for them.
-  // Named once: the search box, the sort control and the chip all appear at this
-  // size, and the creator lookup is asked for at the same moment.
+  // Governs the search box and the sort control only; the chip below is free and
+  // is drawn on having made something rather than on collection size.
   const worthNarrowing = sticker.length > STICKER_SEARCH_THRESHOLD;
   const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null && sticker.length > 1,
     staleTime: 60_000,
   });
-  const ownedIds = useMemo(() => sticker.map((option) => option.id), [sticker]);
   /**
-   * Reuses the hover card's procedure rather than widening `user.getCosmetics`,
-   * which the shop modal and the creator storefront also read — the creator is
-   * the only field the tray is missing and it is already exposed there.
+   * 🔴 READ OFF THE COLLECTION THE TRAY ALREADY HAS — DO NOT REINTRODUCE A QUERY.
+   * `createdById` rides along on `user.getCosmetics`, which every tray open
+   * fetches anyway, so this costs nothing: no request, no chunking, no threshold
+   * deciding who can afford to know. That is what lets the chip appear for
+   * anyone who has made a sticker rather than only for heavy collectors.
    *
-   * Behind `worthNarrowing`, so the chip and the request that decides whether to
-   * draw it cannot disagree. Prod, 2026-09-09: 49 of 1,544 sticker owners are
-   * over the threshold, and 30 of those 49 made at least one of their own.
+   * It was briefly a second procedure behind a `> 12` gate. Asking instead would
+   * have meant an attribution round trip on every tray open for all 1,545 sticker
+   * owners to serve the 123 who made one — measured 2026-09-09.
    */
-  const madeByYou = useOwnedStickerCreators(
-    ownedIds,
-    !!currentUser && targetImageId != null && worthNarrowing
-  );
+  const madeByYou = useMemo(() => {
+    const viewerId = currentUser?.id;
+    const mine = new Set<number>();
+    if (viewerId == null) return mine;
+    for (const option of sticker) if (option.createdById === viewerId) mine.add(option.id);
+    return mine;
+  }, [sticker, currentUser?.id]);
   /**
    * 🔴 DERIVED, NOT THE RAW TOGGLE — the filter cannot outlive its own control.
-   * The chip is drawn only for someone with something to filter to, and buying a
-   * sticker from the panel directly above remints the query key, so `madeByYou`
-   * empties for a beat. Held as state alone, that left the tray filtered to
-   * nothing with no control on screen to turn it off, on the paid surface,
-   * immediately after money moved.
+   * The chip is drawn on this same predicate, so the two cannot come apart and
+   * leave the tray filtered to nothing with no control on screen to clear it —
+   * on the paid surface, right after a purchase changes the collection.
    */
   const mineOnly = mineOnlyRequested && madeByYou.size > 0;
 
@@ -290,36 +288,43 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                 ))}
               </div>
             </div>
-            {!isLoading && worthNarrowing && (
+            {!isLoading && (worthNarrowing || !!madeByYou.size) && (
               <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
-                <TextInput
-                  size="xs"
-                  radius="xl"
-                  className="min-w-0 flex-1 sm:w-36 sm:flex-none"
-                  value={search}
-                  onChange={(event) => setSearch(event.currentTarget.value)}
-                  placeholder="Search"
-                  aria-label="Search your stickers"
-                  leftSection={<IconSearch size={14} />}
-                />
-                <Select
-                  size="xs"
-                  radius="xl"
-                  className="w-36 shrink-0 sm:w-40"
-                  value={sortBy}
-                  onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
-                  data={[
-                    { value: 'used', label: 'Recently used' },
-                    { value: 'obtained', label: 'Recently acquired' },
-                  ]}
-                  aria-label="Sort your stickers"
-                  allowDeselect={false}
-                  // The panel clips its overflow, and this app defaults Popover to
-                  // `withinPortal: false`, so the menu would open inside the clip.
-                  comboboxProps={{ withinPortal: true }}
-                />
-                {/* Drawn only for someone who has made one. Owning none of your
-                    own is the common case even up here, and a filter that can
+                {/* Search and sort stay on collection size — two widgets above
+                    three stickers is the clutter the threshold exists for. The
+                    chip does not, because it costs nothing and answers a
+                    question a three-sticker creator still has. */}
+                {worthNarrowing && (
+                  <>
+                    <TextInput
+                      size="xs"
+                      radius="xl"
+                      className="min-w-0 flex-1 sm:w-36 sm:flex-none"
+                      value={search}
+                      onChange={(event) => setSearch(event.currentTarget.value)}
+                      placeholder="Search"
+                      aria-label="Search your stickers"
+                      leftSection={<IconSearch size={14} />}
+                    />
+                    <Select
+                      size="xs"
+                      radius="xl"
+                      className="w-36 shrink-0 sm:w-40"
+                      value={sortBy}
+                      onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
+                      data={[
+                        { value: 'used', label: 'Recently used' },
+                        { value: 'obtained', label: 'Recently acquired' },
+                      ]}
+                      aria-label="Sort your stickers"
+                      allowDeselect={false}
+                      // The panel clips its overflow, and this app defaults Popover to
+                      // `withinPortal: false`, so the menu would open inside the clip.
+                      comboboxProps={{ withinPortal: true }}
+                    />
+                  </>
+                )}
+                {/* Drawn only for someone who has made one: a filter that can
                     only ever empty the tray is worse than no filter. */}
                 {!!madeByYou.size && (
                   <FilterChip

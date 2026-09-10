@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
-import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 
 /**
  * The tray's filter and its sort.
@@ -19,6 +18,8 @@ import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
  * this file exists to catch goes green.
  */
 const IMAGE_ID = 1;
+/** Matches the `useCurrentUser` mock below. */
+const VIEWER_ID = 7;
 
 const mocks = vi.hoisted(() => ({
   owned: [] as { id: number; name: string; slug: string; url: string; animated: boolean }[],
@@ -26,11 +27,7 @@ const mocks = vi.hoisted(() => ({
   attribution: [] as { id: number; creatorId: number | null }[],
   /** One entry per attribution REQUEST built, so the gate and the chunking are both observable. */
   attributionRequests: [] as number[][],
-  /**
-   * Stands in for React Query's `dataUpdatedAt`, which the hook memoises on.
-   * A CONSTANT here would make the fake unable to express "the answer changed",
-   * and the tray would look as though it never reacted to a refetch.
-   */
+  /** Only non-constant so the fake can express "the answer changed". */
   attributionVersion: 1,
 }));
 
@@ -66,7 +63,7 @@ vi.mock('~/components/Sticker/StickerShopTile', () => ({ StickerShopTile: () => 
 vi.mock('~/components/Sticker/use-sticker-drag-out', () => ({
   useStickerDragOut: () => ({ grab: () => undefined, dragging: false }),
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: VIEWER_ID }) }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
@@ -103,12 +100,13 @@ import { MantineProvider } from '@mantine/core';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
 /** Ids DESCEND as obtained order advances — see the file header. */
-const sticker = (n: number, name: string, slug: string) => ({
+const sticker = (n: number, name: string, slug: string, createdById: number | null = null) => ({
   id: 500 - n,
   name,
   slug,
   url: `https://example.test/${n}.png`,
   animated: false,
+  createdById,
 });
 
 // Name and slug carry DISJOINT tokens, so a search that matches one cannot be
@@ -172,19 +170,21 @@ const type = async (container: HTMLElement, value: string) => {
 beforeEach(() => {
   mocks.owned = OWNED;
   mocks.recentUse = [];
-  setAttribution([]);
   mocks.attributionRequests = [];
   document.body.innerHTML = '';
 });
 
 /**
- * Attribution has to move through a version bump, because the hook memoises on
- * `dataUpdatedAt` exactly as it would against React Query. Assigning the array
- * alone leaves the tray showing the previous answer.
+ * Marks some of the owned stickers as made by the viewer, by rewriting the
+ * collection — which is the only place the tray now looks. A fresh array each
+ * time, so a re-render sees a changed reference exactly as a refetch would.
  */
-const setAttribution = (rows: { id: number; creatorId: number | null }[]) => {
-  mocks.attribution = rows;
-  mocks.attributionVersion += 1;
+const setMine = (ids: number[]) => {
+  mocks.owned = mocks.owned.map((option) =>
+    ids.includes(option.id)
+      ? { ...option, createdById: VIEWER_ID }
+      : { ...option, createdById: null }
+  );
 };
 
 /** The chip's input is visually hidden, so it is driven rather than clicked. */
@@ -197,25 +197,42 @@ const toggleMineOnly = async (container: HTMLElement) => {
 };
 
 /**
- * 🔴 THE THRESHOLD IS A DECISION, NOT AN OPTIMISATION — do not delete the gate
- * that these two assertions pin.
+ * 🔴 THE CREATOR RIDES ON THE COLLECTION — DO NOT PUT A QUERY BACK.
  *
- * "Made by you" was built on the EXISTING `cosmetic.getStickerAttribution`
- * rather than by adding `createdById` to `user.getCosmetics`, precisely because
- * it can be kept behind the same `> 12` threshold the search and sort controls
- * already use. Prod, 2026-09-09: 49 of 1,544 sticker owners hold more than 12,
- * and 30 of those 49 made at least one of their own. Remove the `enabled`
- * clause and the feature still works in every manual test while the other 1,495
- * owners each pay an uncached round trip on tray-open — which is the whole
- * reason the cheaper option was chosen over widening a shared payload.
+ * `createdById` is selected by `user.getCosmetics`, which every tray open fetches
+ * anyway, so knowing who made a sticker costs no request. That is the whole
+ * reason the chip can be shown to anyone who has made one instead of only to
+ * heavy collectors.
+ *
+ * It was briefly a second procedure (`cosmetic.getStickerAttribution`) behind the
+ * same `> 12` gate as search and sort. Measured on prod 2026-09-09: asking would
+ * have meant an attribution round trip on every tray open for all 1,545 sticker
+ * owners to serve the 123 who made one — about 16 wasted round trips per person
+ * served, against a public procedure with no rate limit and no edge cache.
+ *
+ * The first test below is what stops that coming back.
  */
 describe('the tray can narrow to stickers you made', () => {
+  it('learns who made them without asking anything', async () => {
+    setMine([OWNED[2].id, OWNED[5].id]);
+    const container = await render();
+
+    // Reported as text so a regression names what went out rather than printing
+    // "expected 1 to be 0".
+    expect(
+      mocks.attributionRequests.length
+        ? `asked about ${mocks.attributionRequests.flat().length} ids`
+        : 'asked nothing'
+    ).toBe('asked nothing');
+    // And the chip is there anyway — which is what makes the assertion above a
+    // statement about efficiency rather than about the feature being absent.
+    expect(container.querySelector('input[type="checkbox"]') ? 'chip drawn' : 'chip missing').toBe(
+      'chip drawn'
+    );
+  });
+
   it('shows only the ones the viewer created', async () => {
-    setAttribution([
-      { id: OWNED[2].id, creatorId: 7 },
-      { id: OWNED[5].id, creatorId: 7 },
-      { id: OWNED[8].id, creatorId: 999 },
-    ]);
+    setMine([OWNED[2].id, OWNED[5].id]);
     const container = await render();
     expect(slugs(container)).toHaveLength(OWNED.length);
 
@@ -225,37 +242,34 @@ describe('the tray can narrow to stickers you made', () => {
     expect(slugs(container)).toEqual([OWNED[2].slug, OWNED[5].slug]);
   });
 
-  it('draws no chip for someone who created none of them', async () => {
-    setAttribution([{ id: OWNED[0].id, creatorId: 999 }]);
+  /**
+   * 🔴 THE CHIP IS NOT BEHIND THE SEARCH THRESHOLD, DELIBERATELY. Justin's call,
+   * once it was free: show it to anyone who has made one. A creator holding three
+   * stickers, two of them theirs, is exactly who wants this and would never have
+   * reached a collection-size gate.
+   */
+  it('draws the chip for a light owner who made one, with no search or sort beside it', async () => {
+    mocks.owned = OWNED.slice(0, 3);
+    setMine([mocks.owned[1].id]);
     const container = await render();
 
-    // The search control proves the threshold controls rendered at all, so this
-    // absence is about the chip and not about an empty tray.
+    expect(container.querySelector('input[type="checkbox"]') ? 'chip drawn' : 'chip missing').toBe(
+      'chip drawn'
+    );
+    // Search and sort DO stay behind the threshold — a light owner seeing three
+    // controls over three stickers is a different change from the one approved.
+    expect(container.querySelector('input[aria-label="Search your stickers"]')).toBeNull();
+    expect(container.querySelector('input[aria-label="Sort your stickers"]')).toBeNull();
+  });
+
+  it('draws no chip for someone who created none of them', async () => {
+    setMine([]);
+    const container = await render();
+
+    // The search control proves the controls row rendered at all, so this absence
+    // is about the chip and not about an empty tray.
     expect(container.querySelector('input[aria-label="Search your stickers"]')).not.toBeNull();
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
-  });
-
-  it('does not ask who made them at or below the search threshold', async () => {
-    mocks.owned = OWNED.slice(0, 12);
-    await render();
-
-    // Reported as text rather than as a count, so a revert names how many ids
-    // went out instead of printing "expected 1 to be 0".
-    expect(
-      mocks.attributionRequests.length
-        ? `asked for ${mocks.attributionRequests.flat().length} ids`
-        : 'asked for nothing'
-    ).toBe('asked for nothing');
-  });
-
-  it('does ask above the threshold, so the assertion above can fail', async () => {
-    await render();
-
-    expect(
-      mocks.attributionRequests.length
-        ? `asked for ${mocks.attributionRequests.flat().length} ids`
-        : 'asked for nothing'
-    ).toBe(`asked for ${OWNED.length} ids`);
   });
 
   /**
@@ -264,30 +278,26 @@ describe('the tray can narrow to stickers you made', () => {
    * instead of using the state directly.
    *
    * The chip is drawn on the same predicate, so with the raw toggle the two can
-   * come apart: buying a sticker from the shop panel above the tray prepends an
-   * id, which remints every attribution chunk key, so the creator set empties for
-   * a beat. The chip unmounts, the filter stays on, and the tray sits showing
-   * nothing with no control on screen to clear it — on the paid surface, right
-   * after money moved. Deriving it makes that state unrepresentable.
+   * come apart the moment the collection changes underneath a mounted tray — a
+   * purchase from the shop panel directly above it does exactly that. The chip
+   * unmounts, the filter stays on, and the tray sits showing nothing with no
+   * control on screen to clear it, on the paid surface right after money moved.
    */
   it('un-filters rather than stranding an empty tray when the creator set empties', async () => {
-    setAttribution([
-      { id: OWNED[2].id, creatorId: 7 },
-      { id: OWNED[5].id, creatorId: 7 },
-    ]);
+    setMine([OWNED[2].id, OWNED[5].id]);
     const { container, root } = await renderRoot();
     await toggleMineOnly(container);
     expect(slugs(container)).toEqual([OWNED[2].slug, OWNED[5].slug]);
 
-    // What a purchase does: same mounted tray, creator set gone.
-    setAttribution([]);
+    // What a refetch after a purchase does: same mounted tray, nothing of yours.
+    setMine([]);
     await act(async () => {
       root.render(tray());
     });
 
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
-    // The whole collection, not zero tiles. Named by count AND by a member, so a
-    // revert fails saying the tray is empty rather than "expected 0 to be 14".
+    // The whole collection, not zero tiles. Asserted by count AND by a member, so
+    // a revert fails saying the tray is empty rather than "expected 0 to be 14".
     expect(slugs(container)).toHaveLength(OWNED.length);
     expect(slugs(container)).toContain(OWNED[0].slug);
   });
@@ -295,41 +305,16 @@ describe('the tray can narrow to stickers you made', () => {
   it('and the same sequence without the toggle looks identical — the control', async () => {
     // Without this, the assertion above would pass for a tray that simply never
     // filtered in the first place.
-    setAttribution([
-      { id: OWNED[2].id, creatorId: 7 },
-      { id: OWNED[5].id, creatorId: 7 },
-    ]);
+    setMine([OWNED[2].id, OWNED[5].id]);
     const { container, root } = await renderRoot();
     expect(slugs(container)).toHaveLength(OWNED.length);
 
-    setAttribution([]);
+    setMine([]);
     await act(async () => {
       root.render(tray());
     });
 
     expect(slugs(container)).toHaveLength(OWNED.length);
-  });
-
-  /**
-   * 🔴 THE CAP IS SILENT, WHICH IS WHY THIS IS PINNED. `getStickerCosmeticsSchema`
-   * maxes `ids` at 100; a single request carrying more fails zod, and a failed
-   * query is indistinguishable from "you made none" — the chip simply never
-   * appears. Five owners on prod hold more than 100 stickers, the largest 533,
-   * and they are the heaviest collectors this control exists for.
-   */
-  it('never asks for more than the schema accepts, however many are owned', async () => {
-    mocks.owned = Array.from({ length: 250 }, (_, i) => sticker(i, `Name${i}`, `slug-${i}`));
-    await render();
-
-    const oversized = mocks.attributionRequests.filter((ids) => ids.length > STICKER_OFFER_LIMIT);
-    expect(oversized.map((ids) => ids.length)).toEqual([]);
-    // Every id asked about exactly once. The length alone would pass for a
-    // chunker that dropped one id and repeated another, which is the shape that
-    // leaves the filter quietly WRONG rather than absent — so the set is
-    // compared too, and the length kept to catch a duplicate the set would hide.
-    const asked = mocks.attributionRequests.flat();
-    expect(asked).toHaveLength(250);
-    expect(new Set(asked)).toEqual(new Set(mocks.owned.map((option) => option.id)));
   });
 });
 

@@ -43,6 +43,8 @@ export type ResolvedSticker = {
   animated?: boolean;
   /** What one more use costs. Absent = this sticker doesn't sell top-ups. */
   pricePerUse?: number;
+  /** Who made it. Null for a staff-authored cosmetic with no creator. */
+  createdById?: number | null;
 };
 
 const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
@@ -63,13 +65,14 @@ export function useOwnedSticker() {
   const sticker = useMemo(() => {
     const owned = data?.sticker ?? [];
     const resolved = owned
-      .map(({ id, name, data: stickerData, obtainedAt }) => ({
+      .map(({ id, name, data: stickerData, obtainedAt, createdById }) => ({
         id,
         name,
         slug: stickerData?.slug,
         url: stickerData?.url,
         animated: stickerData?.animated,
         pricePerUse: stickerData?.pricePerUse,
+        createdById,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)
@@ -183,55 +186,6 @@ export function useStickerCosmetics(ids: number[]) {
   return { sticker, isLoading: queries.some((q) => q.isLoading) };
 }
 
-/**
- * Which of these stickers the viewer made.
- *
- * 🔴 CHUNKED FOR THE SAME REASON AS `useStickerCosmetics`, AND IT IS NOT
- * COSMETIC. `getStickerCosmeticsSchema` caps `ids` at `STICKER_OFFER_LIMIT`, so
- * handing it a whole collection fails zod — which surfaces as a query with no
- * data rather than as an error anyone sees. Five owners on prod hold more than
- * 100 stickers (the largest holds 533), and they are the heaviest collectors,
- * i.e. exactly who a narrowing control is for.
- *
- * `enabled` is a parameter rather than a caller-side `if` because a hook cannot
- * be conditional: off, it asks for no chunks and therefore runs no query.
- *
- * ⚠️ Under-reports in two cases the server decides, neither visible from here:
- * `getStickerAttribution` drops a sticker outside its availability window (no
- * sticker cosmetic carries one today — 0 of 659 on prod, 2026-09-09), and nulls
- * `creatorId` for a creator who is deleted or banned, which for a self-check
- * means a banned viewer sees none of their own.
- */
-export function useOwnedStickerCreators(ids: number[], enabled: boolean) {
-  const currentUser = useCurrentUser();
-
-  const chunks = useMemo(
-    () => (enabled ? chunkStickerIds(ids, STICKER_FETCH_CHUNK) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, ids.join(',')]
-  );
-
-  const queries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
-      // Who made a sticker does not change, but this is not `Infinity` like the
-      // artwork above: a creator being banned or deleted withholds the id, and
-      // that should not be pinned for a whole session.
-      t.cosmetic.getStickerAttribution({ ids: chunk }, { staleTime: 5 * 60_000 })
-    )
-  );
-
-  const mine = useMemo(() => {
-    const owned = new Set<number>();
-    const viewerId = currentUser?.id;
-    if (viewerId == null) return owned;
-    for (const query of queries)
-      for (const row of query.data ?? []) if (row.creatorId === viewerId) owned.add(row.id);
-    return owned;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queries.map((q) => q.dataUpdatedAt).join(','), currentUser?.id]);
-
-  return mine;
-}
 
 /**
  * What a top-up costs, for the stickers actually being asked about.

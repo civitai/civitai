@@ -1471,6 +1471,10 @@ export const getUserCosmetics = ({
               type: true,
               source: true,
               data: true,
+              // Who made it. A scalar on the row already being selected, so no
+              // join and no extra round trip — and it is what lets the sticker
+              // tray filter to your own without asking a second procedure.
+              createdById: true,
             },
           },
         },

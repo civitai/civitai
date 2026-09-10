@@ -27,6 +27,13 @@ export type SimpleCosmetic = Omit<
   forType?: CosmeticEntity | null;
   obtainedAt?: Date;
   inUse?: boolean;
+  /**
+   * Optional because it is selected per query rather than by `simpleCosmetic`:
+   * `getUserCosmetics` asks for it so the sticker tray can filter to your own
+   * without a second procedure, and widening the shared selector would put it in
+   * every cosmetic read on the site to serve one tray.
+   */
+  createdById?: number | null;
 };
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data'> & {
