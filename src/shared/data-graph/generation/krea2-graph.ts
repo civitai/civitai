@@ -136,12 +136,31 @@ const krea2AspectRatioDimensions = {
   '9:16': { width: 768, height: 1376 },
 } satisfies Partial<Record<GenerationAspectRatio, AspectRatioDimensions>>;
 
-const krea2AspectRatioOptions = (
-  Object.keys(krea2AspectRatioDimensions) as (keyof typeof krea2AspectRatioDimensions)[]
-).map((ratio) => {
-  const { width, height } = krea2AspectRatioDimensions[ratio];
-  return { label: ratio, value: ratio, width, height };
-});
+/** 2K doubles each ~1MP bucket to ~4MP. The FAL tiers take `size` + `aspectRatio` only, so they get no tier. */
+const krea2ResolutionOptions = [
+  { label: '1K', value: '1K' },
+  { label: '2K', value: '2K' },
+] as const;
+
+const krea2AspectRatioOptionsFor = (scale: number) =>
+  (Object.keys(krea2AspectRatioDimensions) as (keyof typeof krea2AspectRatioDimensions)[]).map(
+    (ratio) => {
+      const { width, height } = krea2AspectRatioDimensions[ratio];
+      return { label: ratio, value: ratio, width: width * scale, height: height * scale };
+    }
+  );
+
+const krea2AspectRatioOptionsByResolution: Record<
+  string,
+  ReturnType<typeof krea2AspectRatioOptionsFor>
+> = {
+  '1K': krea2AspectRatioOptionsFor(1),
+  '2K': krea2AspectRatioOptionsFor(2),
+};
+
+/** Edit runs a comfy build whichever version is picked, so it keeps the tier; unknown ids are community checkpoints, comfy-only. */
+const krea2UsesComfyEngine = (modelId?: number, workflow?: string) =>
+  workflow === 'img2img:edit' || modelId === undefined || !krea2VersionIdToSize.has(modelId);
 
 /** Standard preferred ratios — substitute 4:5 for 3:4 since Krea lacks 3:4. */
 const krea2PriorityRatios = ['16:9', '4:3', '1:1', '4:5', '9:16'];
@@ -327,12 +346,22 @@ export const krea2Graph = new DataGraph<
     ['workflow']
   )
   .node(
+    'resolution',
+    (ctx) => ({
+      ...enumNode({ options: krea2ResolutionOptions, defaultValue: '1K' }),
+      when: krea2UsesComfyEngine(ctx.model?.id, ctx.workflow),
+    }),
+    ['model', 'workflow']
+  )
+  .node(
     'aspectRatio',
-    aspectRatioNode({
-      options: krea2AspectRatioOptions,
-      defaultValue: '1:1',
-      priorityOptions: krea2PriorityRatios,
-    })
+    (ctx) =>
+      aspectRatioNode({
+        options: krea2AspectRatioOptionsByResolution[ctx.resolution ?? '1K'],
+        defaultValue: '1:1',
+        priorityOptions: krea2PriorityRatios,
+      }),
+    ['resolution']
   )
   // Unknown ids are community checkpoints. Only the comfy builds can load one via
   // `diffusionModel`, so they fall back off the FAL tiers — and to the full-step

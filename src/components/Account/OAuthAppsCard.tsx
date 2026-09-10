@@ -3,7 +3,6 @@ import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   Text,
-  Card,
   Stack,
   Group,
   Title,
@@ -25,6 +24,7 @@ import {
   Alert,
   Anchor,
 } from '@mantine/core';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
   IconPlus,
   IconTrash,
@@ -258,9 +258,7 @@ function SecretDisplay({
 // Origin entries are exact-matched against the browser's `Origin` header, so
 // they must be a bare scheme://host[:port]. We pre-validate on the client to
 // give a fast inline error; the server enforces the same rule.
-function parseOriginList(
-  text: string
-): { value: string[]; error: string | null } {
+function parseOriginList(text: string): { value: string[]; error: string | null } {
   const lines = text
     .split('\n')
     .map((line) => line.trim())
@@ -563,9 +561,7 @@ function EditAppModal({
   const [name, setName] = useState(client.name);
   const [description, setDescription] = useState(client.description ?? '');
   const [redirectUrisText, setRedirectUrisText] = useState(client.redirectUris.join('\n'));
-  const [allowedOriginsText, setAllowedOriginsText] = useState(
-    client.allowedOrigins.join('\n')
-  );
+  const [allowedOriginsText, setAllowedOriginsText] = useState(client.allowedOrigins.join('\n'));
   const [tokenScope, setTokenScope] = useState(client.allowedScopes);
   const [uriError, setUriError] = useState<string | null>(null);
   const [originError, setOriginError] = useState<string | null>(null);
@@ -689,7 +685,7 @@ function EditAppModal({
   );
 }
 
-export function OAuthAppsCard() {
+export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const [registerOpened, { open: openRegister, close: closeRegister }] = useDisclosure(false);
   const [editClient, setEditClient] = useState<{
@@ -769,26 +765,37 @@ export function OAuthAppsCard() {
     });
   };
 
+  const registerButton = (
+    <Button
+      size="compact-sm"
+      leftSection={<IconPlus size={14} stroke={1.5} />}
+      onClick={openRegister}
+    >
+      Register App
+    </Button>
+  );
+
   return (
     <>
-      <Card withBorder>
-        <Stack gap={0}>
-          <Group align="start" justify="space-between">
-            <Title order={2}>OAuth Applications</Title>
-            <Button
-              size="compact-sm"
-              leftSection={<IconPlus size={14} stroke={1.5} />}
-              onClick={openRegister}
-            >
-              Register App
-            </Button>
-          </Group>
-          <Text c="dimmed" size="sm">
-            Register OAuth applications to allow third-party integrations to access the Civitai API
-            on behalf of users.
-          </Text>
-        </Stack>
-        <Box mt="md" style={{ position: 'relative' }}>
+      <CardOrSection
+        flat={flat}
+        title="OAuth applications"
+        description="Let third-party apps call the API on a user's behalf."
+        action={flat ? registerButton : undefined}
+      >
+        {!flat && (
+          <Stack gap={0}>
+            <Group align="start" justify="space-between">
+              <Title order={2}>OAuth Applications</Title>
+              {registerButton}
+            </Group>
+            <Text c="dimmed" size="sm">
+              Register OAuth applications to allow third-party integrations to access the Civitai
+              API on behalf of users.
+            </Text>
+          </Stack>
+        )}
+        <Box mt={flat ? 0 : 'md'} style={{ position: 'relative' }}>
           <LoadingOverlay visible={isLoading} />
           {clients.length > 0 ? (
             <Stack gap="sm">
@@ -923,7 +930,7 @@ export function OAuthAppsCard() {
             </Paper>
           )}
         </Box>
-      </Card>
+      </CardOrSection>
 
       <RegisterAppModal opened={registerOpened} onClose={closeRegister} />
 

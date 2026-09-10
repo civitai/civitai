@@ -55,8 +55,11 @@ All four are implemented. Ordering below is the order they landed, not a remaini
   multi-select, and a footer tray that stages a batch. **Per-item strength is NOT edited in the tray**
   — the form's own resource list already owns strength, and a second control for one value is the
   duplication this redesign removes.
-- The `resource` role also gets a left rail of the picker's own resource types, promoted out of the
-  filters dropdown. Not in the original proposal; added so both roles read the same way.
+- The `resource` role has **no rail**. One was built — the picker's resource types, promoted out of
+  the filters dropdown — and removed again: it was a second control writing the same `filters.types`
+  the dropdown owns, with different semantics (rail single-select, dropdown multi-select), so the two
+  could disagree about what was selected. A rail now means the catalog's SCOPE is selectable, and its
+  absence means the catalog is already scoped and the toolbar narrows it.
 - The modal's LAYOUT changed for **every** consumer, not only the roled ones: the header band spans
   the full width, rail beside catalog, footer spans, width 1200 → 1500, and the grid fills its pane
   instead of centring fixed-width columns. Behaviour without a `role` is unchanged; the shared chrome

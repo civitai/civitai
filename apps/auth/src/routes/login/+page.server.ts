@@ -15,8 +15,7 @@ import {
 } from '$lib/server/auth/captcha';
 import {
   emailDomain,
-  getBlockedEmailDomains,
-  isBlockedDomain,
+  isBlockedEmailDomain,
   normalizeEmailAddress,
 } from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
@@ -115,15 +114,13 @@ export const actions: Actions = {
       return fail(400, { email, captcha: true });
     }
 
-    // 3. Blocked email domains: reject NEW signups on a blocklisted domain, but don't retroactively
-    //    lock out EXISTING accounts when a domain is later appended to the upstream list (mirrors the
-    //    existing-user exemption in step 4).
+    // 3. Blocked email domains: reject NEW signups on a blocklisted domain — an exact entry, or a
+    //    domain a moderator opted into suffix blocking — but don't retroactively lock out EXISTING
+    //    accounts when a domain is later added to either list (mirrors the exemption in step 4).
+    //    "Either list" matters: the exact list is appended weekly from upstream, while the suffix
+    //    list is hand-maintained and synced by nothing.
     const domain = emailDomain(email);
-    if (
-      domain &&
-      isBlockedDomain(await getBlockedEmailDomains(), domain) &&
-      !(await userExistsByEmail(email))
-    ) {
+    if (domain && (await isBlockedEmailDomain(domain)) && !(await userExistsByEmail(email))) {
       blockedEmailDomainSignupsTotal.inc({ path: 'email' });
       return fail(400, { email, blockedDomain: true });
     }

@@ -5,7 +5,6 @@ import { openConfirmModal } from '@mantine/modals';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
-  Card,
   Stack,
   Group,
   Title,
@@ -18,6 +17,7 @@ import {
   Progress,
   UnstyledButton,
 } from '@mantine/core';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
   IconPlus,
   IconTrash,
@@ -64,7 +64,7 @@ function getScopeBadgeColor(label: string): string {
   }
 }
 
-export function ApiKeysCard() {
+export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
 
@@ -141,29 +141,40 @@ export function ApiKeysCard() {
     });
   };
 
+  const addKeyButton = (
+    <Button
+      size="compact-sm"
+      leftSection={<IconPlus size={14} stroke={1.5} />}
+      onClick={() => {
+        setPrefill(null);
+        open();
+      }}
+    >
+      Add API key
+    </Button>
+  );
+
   return (
     <>
-      <Card withBorder>
-        <Stack gap={0}>
-          <Group align="start" justify="space-between">
-            <Title order={2}>API Keys</Title>
-            <Button
-              size="compact-sm"
-              leftSection={<IconPlus size={14} stroke={1.5} />}
-              onClick={() => {
-                setPrefill(null);
-                open();
-              }}
-            >
-              Add API key
-            </Button>
-          </Group>
-          <Text c="dimmed" size="sm">
-            You can use API keys to interact with the site through the API as your user. These
-            should not be shared with anyone.
-          </Text>
-        </Stack>
-        <Box mt="md" style={{ position: 'relative' }}>
+      <CardOrSection
+        flat={flat}
+        title="API keys"
+        description="Programmatic access to your account. Treat them like passwords."
+        action={flat ? addKeyButton : undefined}
+      >
+        {!flat && (
+          <Stack gap={0}>
+            <Group align="start" justify="space-between">
+              <Title order={2}>API Keys</Title>
+              {addKeyButton}
+            </Group>
+            <Text c="dimmed" size="sm">
+              You can use API keys to interact with the site through the API as your user. These
+              should not be shared with anyone.
+            </Text>
+          </Stack>
+        )}
+        <Box mt={flat ? 0 : 'md'} style={{ position: 'relative' }}>
           <LoadingOverlay visible={isLoading} />
           {apiKeys.length > 0 ? (
             <Stack gap="sm">
@@ -205,8 +216,9 @@ export function ApiKeysCard() {
                         </LegacyActionIcon>
                       </Group>
 
-                      {/* Meta row: created · last used · spend limit (inline) */}
-                      <Group gap="md" wrap="nowrap" align="center">
+                      {/* Must wrap: the spend-limit meter and its nowrap "n / m per 24h" can't
+                          share a phone-width line with two dates. */}
+                      <Group gap="md" align="center">
                         <Group gap={4} wrap="nowrap">
                           <IconCalendar size={12} color="var(--mantine-color-dimmed)" />
                           <Text size="xs" c="dimmed">
@@ -227,7 +239,7 @@ export function ApiKeysCard() {
                                 <UnstyledButton
                                   onClick={openLimitEditor}
                                   title="Edit spend limit"
-                                  style={{ flex: 1, minWidth: 0 }}
+                                  style={{ flex: '1 1 180px', minWidth: 0 }}
                                 >
                                   <Group gap={4} wrap="nowrap">
                                     <IconCoin size={12} color="var(--mantine-color-dimmed)" />
@@ -288,7 +300,7 @@ export function ApiKeysCard() {
             </Paper>
           )}
         </Box>
-      </Card>
+      </CardOrSection>
       <ApiKeyModal
         // Remount when switching between a manual open and a deeplink prefill so
         // the modal's internal form re-initializes from initialName/scope.

@@ -1,14 +1,5 @@
-import {
-  Alert,
-  Button,
-  Card,
-  Group,
-  LoadingOverlay,
-  Stack,
-  Table,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Alert, Button, Group, LoadingOverlay, Stack, Table, Text, Title } from '@mantine/core';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import { useRouter } from 'next/router';
 import {
   IconBrandDiscord,
@@ -42,7 +33,7 @@ function connectAccount(providerId: string) {
   )}&returnUrl=${encodeURIComponent(returnUrl)}`;
 }
 
-export function AccountsCard() {
+export function AccountsCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { error } = useRouter().query;
@@ -61,14 +52,21 @@ export function AccountsCard() {
   const canRemoveAccounts = accounts.length > 1 || currentUser?.emailVerified;
 
   return (
-    <Card withBorder id="accounts">
+    <CardOrSection
+      flat={flat}
+      title="Sign-in methods"
+      description="Sign in with any account you connect."
+      id="accounts"
+    >
       <Stack>
-        <Stack gap={0}>
-          <Title order={2}>Connected Accounts</Title>
-          <Text c="dimmed" size="sm">
-            Connect multiple accounts to your user and sign in with any of them
-          </Text>
-        </Stack>
+        {!flat && (
+          <Stack gap={0}>
+            <Title order={2}>Connected Accounts</Title>
+            <Text c="dimmed" size="sm">
+              Connect multiple accounts to your user and sign in with any of them
+            </Text>
+          </Stack>
+        )}
         {error && (
           <Alert color="yellow">
             <Stack gap={4}>
@@ -124,6 +122,6 @@ export function AccountsCard() {
           </Table>
         </div>
       </Stack>
-    </Card>
+    </CardOrSection>
   );
 }

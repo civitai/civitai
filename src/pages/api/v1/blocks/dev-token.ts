@@ -585,14 +585,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
-      // NOTE (revocation-wiring caveat): dev page tokens share the
-      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints. The
-      // revocation WRITE path (block-revocation.service.ts revokeInstance /
-      // clearInstance) is currently UNWIRED (no callers). If it is ever wired,
-      // dev instance ids on THIS path must be namespaced distinctly (e.g.
-      // `devpage_`) and/or the revocation marker TTL must cover the 4h dev token
-      // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
-      // production page tokens for the SAME app (collision on `page_<appBlockId>`).
+      // That shared shape means one revocation would reach BOTH, so a caller
+      // that revokes by page instance id must namespace dev ids first (e.g.
+      // `devpage_`). No such caller exists: both wired call sites in
+      // block-registry.service revoke `blockUserSubscription.blockInstanceId`,
+      // which `newBlockInstanceId` mints as `bki_<ulid>`. The marker's TTL is
+      // not what gates this — it decides how long a revocation lasts, never
+      // which id it is written under.
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
       // DEV budget default = the APPROVED manifest's declared per-gen budget so
       // an app whose `page.buzzBudgetPerGen` exceeds the flat 50 default is

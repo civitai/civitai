@@ -100,7 +100,7 @@ publish-restricted.
 | Window length (days)      | **Creator score**                   | Timed                         |
 | Concurrent windows        | **Creator score**                   | Timed                         |
 
-**Every "creator score" in this table is `User.meta.scores.total`** — the figure `/user/account`
+**Every "creator score" in this table is `User.meta.scores.total`** — the figure the account Profile pane
 displays under that name. Monetization and the early-access ladder both compared against the
 per-category `scores.models` until 2026-09-04; 45,216 accounts were above the displayed floor and
 below the enforced one, and had no way to see why. **Any gate that says "creator score" to the user**

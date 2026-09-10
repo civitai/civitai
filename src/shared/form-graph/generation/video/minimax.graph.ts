@@ -5,7 +5,16 @@ import {
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 import { checkpointDef } from '../checkpoint';
-import { SEED, aspectRatioDef, boolDef, imagesDef, sliderDef, workflowScoped } from '../defs';
+import {
+  SEED,
+  aspectRatioDef,
+  boolDef,
+  controlVideoDef,
+  imagesDef,
+  sliderDef,
+  workflowScoped,
+} from '../defs';
+import { minimaxH3ControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import {
   familyResources,
   familyScope,
@@ -71,7 +80,12 @@ const comfy = defineGraph<FamilyExt>()
       ? sliderDef({ min: 1, max: 20, default: 8 })
       : sliderDef({ min: 10, max: 60, default: 30 })),
     scope: turbo === true ? 'turbo' : 'standard',
-  }));
+  }))
+  .field('controlVideo', ({ _ext }) =>
+    _ext.workflow === 'txt2vid'
+      ? controlVideoDef({ preprocessors: minimaxH3ControlNetPreprocessors })
+      : null
+  );
 
 type MinimaxExt = FamilyExt & { model?: unknown };
 

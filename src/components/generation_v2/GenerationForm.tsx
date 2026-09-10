@@ -100,6 +100,7 @@ import { trpc } from '~/utils/trpc';
 import { AspectRatioInput } from './inputs/AspectRatioInput';
 import { SliderInput } from './inputs/SliderInput';
 import { ControlNetsInput, type ControlNetsInputProps } from './inputs/ControlNetsInput';
+import { ControlVideoInput, type ControlVideoInputProps } from './inputs/ControlVideoInput';
 import {
   Krea2StyleReferencesInput,
   type Krea2StyleReferencesInputProps,
@@ -1772,6 +1773,25 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Resolution */}
+            <Controller
+              graph={graph}
+              name="resolution"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Resolution</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
+
             {/* Aspect ratio */}
             <Controller
               graph={graph}
@@ -1855,25 +1875,6 @@ export function GenerationForm() {
                     ))}
                   </Group>
                 </Radio.Group>
-              )}
-            />
-
-            {/* Resolution (Wan/Sora video quality) */}
-            <Controller
-              graph={graph}
-              name="resolution"
-              render={({ value, meta, onChange }) => (
-                <div className="flex flex-col gap-1">
-                  <Input.Label>Resolution</Input.Label>
-                  <SegmentedControlWrapper
-                    value={value}
-                    onChange={(v) => onChange(v as typeof value)}
-                    data={meta.options.map((o: { label: string; value: string }) => ({
-                      label: o.label,
-                      value: o.value,
-                    }))}
-                  />
-                </div>
               )}
             />
 
@@ -2597,8 +2598,7 @@ export function GenerationForm() {
               )}
             /> */}
 
-              {/* ControlNets — disabled for now (the node is when:false in every
-                  ecosystem graph); renders only when a graph declares the node */}
+              {/* Image ControlNets — txt2img only, per ecosystem graph */}
               <Controller
                 graph={graph}
                 name="controlNets"
@@ -2607,6 +2607,20 @@ export function GenerationForm() {
                     value={value as ControlNetsInputProps['value']}
                     onChange={onChange as ControlNetsInputProps['onChange']}
                     meta={meta as ControlNetsInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
+              />
+
+              {/* Video ControlNet — MiniMax H3 comfy txt2vid declares this node */}
+              <Controller
+                graph={graph}
+                name="controlVideo"
+                render={({ value, meta, onChange, error }) => (
+                  <ControlVideoInput
+                    value={value as ControlVideoInputProps['value']}
+                    onChange={onChange as ControlVideoInputProps['onChange']}
+                    meta={meta as ControlVideoInputProps['meta']}
                     error={error?.message}
                   />
                 )}

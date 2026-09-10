@@ -1,15 +1,24 @@
 import { Modal } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ResourceSelectProvider } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ResourceSelectModalContent } from './ResourceSelectModalContent';
-import { ResourceTypeRail } from './ResourceTypeRail';
+
+/**
+ * The catalog is the same size in both roles; the modal is that plus the rail
+ * when there is one. Sized so the grid clears four columns — see
+ * MIN_COLUMN_WIDTH in ResourceHitList.
+ */
+const CATALOG_WIDTH = 1276;
+/** `w-56` on PickerRail's column. */
+const RAIL_WIDTH = 224;
 
 export default function ResourceSelectModal(props: ResourceSelectModalProps) {
   const dialog = useDialogContext();
-  // The resource role brings its own rail; the checkpoint role's comes from the
-  // caller, because only the form-graph form knows about ecosystems.
-  const Rail = props.rail ?? (props.role === 'resource' ? ResourceTypeRail : undefined);
+  // Viewport, not container: the modal sets no containerType, so a container
+  // query never resolves inside it. Matches ReviewListingModal's choice.
+  const isMobile = useIsMobile({ type: 'media' });
 
   function handleClose() {
     dialog.onClose();
@@ -20,7 +29,8 @@ export default function ResourceSelectModal(props: ResourceSelectModalProps) {
     <Modal
       {...dialog}
       onClose={handleClose}
-      size={1500}
+      size={props.rail ? CATALOG_WIDTH + RAIL_WIDTH : CATALOG_WIDTH}
+      fullScreen={isMobile}
       withCloseButton={false}
       padding={0}
       styles={{
@@ -29,7 +39,7 @@ export default function ResourceSelectModal(props: ResourceSelectModalProps) {
       }}
     >
       <ResourceSelectProvider {...props}>
-        <ResourceSelectModalContent Rail={Rail} />
+        <ResourceSelectModalContent Rail={props.rail} />
       </ResourceSelectProvider>
     </Modal>
   );

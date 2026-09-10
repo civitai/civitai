@@ -192,7 +192,8 @@ node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every d
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
-node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR and a prune
+node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
+node .claude/skills/dev-server/scripts/worktree-remove.integration.selftest.mjs  # `wt rm`'s daemon guard, against a throwaway repo
 node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
@@ -663,8 +664,13 @@ What's already handled:
   **The daemon PROCESS also runs from there** — script, pid file and cwd all resolved through
   `resolveDaemonHome`. One daemon serves every tree, and a daemon living inside one of them holds
   that directory open for its whole life, so `wt rm` on it fails EBUSY for whoever finishes their PR
-  first. `wt rm` asks the daemon for its script path and its cwd, and names it when either is inside
-  the target instead of blaming a stray shell.
+  first. `wt rm` **and** `wt stale` ask the daemon for its script path and its cwd, and name it when
+  either is inside the target instead of blaming a stray shell; `wt stale` keeps that tree out of
+  SAFE TO REMOVE. A daemon that is **running but will not say** — one older than this change, whose
+  `/` carries a bare pid — blocks both, for every tree, because it has not been ruled out; `wt rm
+  --force` overrides that verdict, and never a named holder. A daemon that is **not running** blocks
+  nothing, since it holds no directory open — and that is decided by the transport, not by a good
+  response, so a live daemon erroring on `/` still counts as running.
 
   🔴 **This only binds a CLI that has the change.** The skill directory is committed, so every
   worktree runs its own `cli.mjs`, and a tree cut before it re-pins itself the next time the daemon

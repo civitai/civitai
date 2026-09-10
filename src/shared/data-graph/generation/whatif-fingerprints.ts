@@ -16,8 +16,7 @@
  * library has no knowledge of whatIf or cost estimation.
  */
 
-import type { ControlNetsNodeValue } from './common';
-import type { ResourceData } from './common';
+import type { ControlNetsNodeValue, ControlVideoNodeValue, ResourceData } from './common';
 
 export type WhatIfFingerprint = (value: unknown) => unknown;
 
@@ -38,6 +37,13 @@ export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
         imageUrl: entry.image?.url,
       })) ?? []
     );
+  },
+
+  // Strength / start / end percent don't affect cost — only whether a control
+  // video is attached and which preprocessor runs over it.
+  controlVideo: (value) => {
+    const entry = value as ControlVideoNodeValue | undefined;
+    return entry ? { preprocessor: entry.preprocessor, videoUrl: entry.video?.url } : undefined;
   },
 
   // Content fields don't affect cost (site identity determines buzz type;

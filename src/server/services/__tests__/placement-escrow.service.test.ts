@@ -2183,7 +2183,7 @@ describe('what a placement says in the Buzz ledger', () => {
     expect(createBuzzTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         toAccountId: OWNER,
-        description: 'Fee for a sticker you declined',
+        description: 'Fee kept from a sticker you declined',
       }),
       expect.anything()
     );

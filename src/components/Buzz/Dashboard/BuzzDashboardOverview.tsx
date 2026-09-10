@@ -27,13 +27,11 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
 import { formatDate } from '~/utils/date-helpers';
-import { capitalize, getDisplayName } from '~/utils/string-helpers';
-import { getAccountTypeLabel } from '~/utils/buzz';
+import { buzzTransactionLabel, getAccountTypeLabel } from '~/utils/buzz';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
-import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -42,8 +40,6 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { abbreviateValue } from '~/components/Buzz/chart-defaults';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
-
-const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
 const getAccountTypeDescription = (accountType: BuzzSpendType): string => {
   switch (accountType) {
@@ -404,12 +400,7 @@ export const BuzzDashboardOverview = ({
                       >
                         <Stack gap={0}>
                           <Text size="sm" fw="500" lh={1.2}>
-                            {INCLUDE_DESCRIPTION.includes(transaction.type) &&
-                            transaction.description ? (
-                              <>{transaction.description}</>
-                            ) : (
-                              <>{getDisplayName(TransactionType[transaction.type])}</>
-                            )}
+                            {buzzTransactionLabel(transaction)}
                           </Text>
                           <Text size="xs" c="dimmed">
                             <DaysFromNow date={date} />

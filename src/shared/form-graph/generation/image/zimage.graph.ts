@@ -21,9 +21,9 @@ const zImageModeVersionOptions = [
   { label: 'Turbo', value: zImageVersionIds.turbo },
   { label: 'Base', value: zImageVersionIds.base },
 ];
-/** SdCpp sampler/scheduler options. */
 const zImageSamplers = ['euler', 'heun'] as const;
-const zImageSchedules = ['simple', 'discrete'] as const;
+/** Must be valid comfy scheduler names — comfy has no 'discrete'. */
+const zImageSchedules = ['simple'] as const;
 
 const modeOf = (ecosystem: string) => {
   switch (ecosystem) {

@@ -1,6 +1,6 @@
 import { Button, Text } from '@mantine/core';
-import { IconAlertTriangle, IconInfoCircle, IconLock } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
+import { useState } from 'react';
 
 import {
   BaseModelListContent,
@@ -9,8 +9,9 @@ import {
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import type { PartialResourceValue } from '~/components/generation_v2/inputs/resource-select.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { PickerRail } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal/PickerRail';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
-import { ecosystemByKey, getEcosystemDefaults } from '~/shared/constants/basemodel.constants';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { getResourceSelectOptions } from '~/shared/form-graph/generation/defs';
 import type { GateItemState } from '~/shared/data-graph/generation/gates';
 import type { ModelType } from '~/shared/utils/prisma/enums';
@@ -38,50 +39,7 @@ export type EcosystemRailProps = {
   resources?: PartialResourceValue[];
   /** Resource types the catalog is browsing — the pending options are built for these. */
   resourceTypes?: ModelType[];
-  /** The graph's modelLocked for the CURRENT family — see isModelLocked. */
-  currentLocked?: boolean;
 };
-
-/**
- * Whether a family pins its checkpoint. The graph's `correct()` substitutes any
- * version outside such a family's own list back to its default, silently — so a
- * catalog here would hand you a model the form then throws away.
- *
- * The ecosystem constants are only half the answer: `checkpointDef` resolves
- * `opts.modelLocked ?? ecosystemDefaults?.modelLocked`, and graphs set the
- * former per-workflow (Flux locks on `txt2img:draft`). `currentLocked` carries
- * the graph's verdict for the family the form is on; the constants are the
- * fallback for a family being previewed, which the graph cannot be asked about
- * without switching to it.
- */
-function isModelLocked(
-  ecosystemKey: string | undefined,
-  { value, currentLocked }: { value?: string; currentLocked?: boolean }
-) {
-  if (!ecosystemKey) return false;
-  if (ecosystemKey === value && currentLocked !== undefined) return currentLocked;
-  const ecosystem = ecosystemByKey.get(ecosystemKey);
-  return !!(ecosystem && getEcosystemDefaults(ecosystem.id)?.modelLocked);
-}
-
-function PinnedCheckpointNotice({ ecosystemKey }: { ecosystemKey: string }) {
-  const name = ecosystemByKey.get(ecosystemKey)?.displayName ?? ecosystemKey;
-  return (
-    <div className="rounded-lg border border-gray-3 p-4 dark:border-dark-4">
-      <div className="flex items-center gap-2">
-        <IconLock size={16} className="shrink-0 text-gray-6" />
-        <Text size="sm" fw={600}>
-          {name} pins its checkpoint
-        </Text>
-      </div>
-      <Text size="xs" c="dimmed" className="mt-1 leading-snug">
-        There is no catalog to browse here — the family ships a fixed set of weights, and which one
-        you use is chosen by the version selector under the model row. Use {name} below to switch to
-        it.
-      </Text>
-    </div>
-  );
-}
 
 /**
  * Pending and committed ecosystem, both from the store.
@@ -92,35 +50,20 @@ function PinnedCheckpointNotice({ ecosystemKey }: { ecosystemKey: string }) {
  */
 function usePendingEcosystem({
   value,
-  currentLocked,
   resourceTypes = ['Checkpoint'] as ModelType[],
 }: {
   value?: string;
-  currentLocked?: boolean;
   resourceTypes?: ModelType[];
 }) {
-  const { setOptionsOverride, setCatalogNotice } = useResourceSelectContext();
+  const { setOptionsOverride } = useResourceSelectContext();
   const pending = useCheckpointPickerStore((state) => state.pendingEcosystem);
   const committed = useCheckpointPickerStore((state) => state.committedEcosystem) ?? value;
   const setPending = useCheckpointPickerStore((state) => state.setPendingEcosystem);
-  // The graph's lock verdict describes the family the picker opened on; once a
-  // different one is committed the constants fallback takes over.
-  const lockedForCommitted = committed === value ? currentLocked : undefined;
-
-  function aimCatalogAt(ecosystemKey: string | undefined) {
-    setCatalogNotice(
-      ecosystemKey &&
-        isModelLocked(ecosystemKey, { value: committed, currentLocked: lockedForCommitted }) ? (
-        <PinnedCheckpointNotice ecosystemKey={ecosystemKey} />
-      ) : null
-    );
-  }
 
   function select(ecosystemKey: string) {
     if (ecosystemKey === committed) {
       setPending(undefined);
       setOptionsOverride(null);
-      aimCatalogAt(committed);
       return;
     }
     setPending(ecosystemKey);
@@ -131,10 +74,9 @@ function usePendingEcosystem({
         partialSupport: [],
       })),
     });
-    aimCatalogAt(ecosystemKey);
   }
 
-  return { pending, committed, select, aimCatalogAt };
+  return { pending, committed, select };
 }
 
 export function EcosystemRail({
@@ -144,21 +86,9 @@ export function EcosystemRail({
   ecosystemStates,
   outputType,
   resourceTypes,
-  currentLocked,
 }: EcosystemRailProps) {
   const [searchValue, setSearchValue] = useState('');
-  const { pending, committed, select, aimCatalogAt } = usePendingEcosystem({
-    value,
-    resourceTypes,
-    currentLocked,
-  });
-
-  // Re-runs on a commit too, so a family that pins its checkpoint shows the
-  // notice the moment it becomes the committed one — not only on open.
-  useEffect(() => {
-    aimCatalogAt(committed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committed]);
+  const { pending, committed, select } = usePendingEcosystem({ value, resourceTypes });
 
   const picker = useBaseModelPickerState({
     value: pending ?? committed,
@@ -171,7 +101,7 @@ export function EcosystemRail({
   });
 
   return (
-    <div className="flex min-h-0 w-full flex-col gap-2 overflow-y-auto p-2">
+    <PickerRail>
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
         Ecosystem
       </Text>
@@ -189,7 +119,7 @@ export function EcosystemRail({
         searchValue={searchValue}
         onSearchChange={setSearchValue}
       />
-    </div>
+    </PickerRail>
   );
 }
 
@@ -231,7 +161,7 @@ export function EcosystemConsequenceFooter({
     : 0;
 
   return (
-    <div className="flex items-center gap-3 p-3">
+    <div className="flex flex-wrap items-center gap-3 p-3">
       <div className="flex min-w-0 flex-1 items-start gap-2">
         {!switching ? (
           <>

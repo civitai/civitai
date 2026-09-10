@@ -44,7 +44,6 @@ export function AudioGenerationForm() {
                       onEcosystemChange,
                       ecosystem: {
                         value: ecosystem,
-                        modelLocked: meta?.modelLocked,
                         compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
                         excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
                         ecosystemStates: ecosystemMeta?.ecosystemStates,

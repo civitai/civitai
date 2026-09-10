@@ -25,8 +25,9 @@ import type {
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
+import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -97,7 +98,10 @@ export type StepInput =
   | MiniMaxMusic3StepTemplate
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
-  | PreprocessImageStepTemplate;
+  | PreprocessImageStepTemplate
+  // Sourced from @civitai/orchestration-client: the pinned @civitai/client
+  // predates preprocessVideo and has no equivalent type.
+  | PreprocessVideoStepTemplate;
 
 /** Validated output from the generation graph with ecosystem */
 export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -327,13 +331,13 @@ export async function createEcosystemStepInput(
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: set engine to 'comfyui' for every textToImage step
-  // in EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
   if (
-    'enhancedCompatibility' in data &&
-    data.enhancedCompatibility &&
-    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported ecosystem through a non-UI path
-    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(data.ecosystem)
+    usesComfyEngine({
+      ecosystem: data.ecosystem,
+      modelId: 'model' in data ? (data as { model?: { id?: number } }).model?.id : undefined,
+      enhancedCompatibility:
+        'enhancedCompatibility' in data ? (data.enhancedCompatibility as boolean) : undefined,
+    })
   ) {
     for (const step of steps) {
       if (step.$type === 'textToImage') {

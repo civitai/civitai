@@ -25,11 +25,22 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
-const normalizedToggleableFeatures = toggleableFeatures.filter(
+export const normalizedToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key !== 'assistant'
 );
-const assistantToggleableFeatures = toggleableFeatures.filter(
+export const assistantToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key === 'assistant'
+);
+
+const mediaFeatureKeys: string[] = ['largerGenerationImages', 'nativeVideoControls'];
+export const mediaToggleableFeatures = toggleableFeatures.filter((feature) =>
+  mediaFeatureKeys.includes(feature.key)
+);
+
+// Denylist, not an allowlist: a flag added to `featureFlags` and routed to no section still shows
+// up in Features rather than silently vanishing from the pane.
+export const otherToggleableFeatures = normalizedToggleableFeatures.filter(
+  (feature) => !mediaFeatureKeys.includes(feature.key)
 );
 
 export function SettingsCard() {
@@ -207,7 +218,7 @@ export function SettingsCard() {
   );
 }
 
-function AutoplayGifsToggle() {
+export function AutoplayGifsToggle() {
   const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
   const setState = useBrowsingSettings((x) => x.setState);
 
@@ -221,7 +232,7 @@ function AutoplayGifsToggle() {
   );
 }
 
-function SwipeGalleryCardsToggle() {
+export function SwipeGalleryCardsToggle() {
   const { swipeGalleryCards } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
 
@@ -229,7 +240,7 @@ function SwipeGalleryCardsToggle() {
     <Switch
       name="swipeGalleryCards"
       label="Swipe between images on gallery cards"
-      description="Drag left or right on a gallery post to move through its images instead of using the arrows. May feel slower on long feeds or older devices."
+      description="Swipe through a post's images instead of using the arrows."
       checked={swipeGalleryCards ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}
@@ -238,7 +249,7 @@ function SwipeGalleryCardsToggle() {
   );
 }
 
-function StickerMotionToggle() {
+export function StickerMotionToggle() {
   const features = useFeatureFlags();
   const { disableStickerMotion } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
@@ -252,7 +263,7 @@ function StickerMotionToggle() {
     <Switch
       name="stickerMotion"
       label="Animate stickers placed on images"
-      description="Placed stickers pop in and drift gently. Turn this off to keep them still — they stay visible either way. Already off if your device asks for reduced motion."
+      description="Off keeps them still; they stay visible either way."
       // Stored as an opt-out so the default costs no row, and so a creator who
       // never opens this page gets the animation rather than a silent no.
       checked={!(disableStickerMotion ?? false)}
@@ -263,7 +274,7 @@ function StickerMotionToggle() {
   );
 }
 
-function HideBlueBuzzToggle() {
+export function HideBlueBuzzToggle() {
   const { hideBlueBuzzInHeader } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
 
@@ -271,7 +282,7 @@ function HideBlueBuzzToggle() {
     <Switch
       name="hideBlueBuzzInHeader"
       label="Hide Blue Buzz in the header"
-      description="The header adds your Blue Buzz into one balance with the rest. Turn this on to leave it out and show only the rest. Your Blue Buzz is still yours to spend, and the account menu lists both either way."
+      description="Leaves it out of the header balance. You can still spend it."
       checked={hideBlueBuzzInHeader ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
@@ -280,7 +291,7 @@ function HideBlueBuzzToggle() {
   );
 }
 
-function EarlyAdopterToggle() {
+export function EarlyAdopterToggle() {
   const { isEarlyAdopter } = useCurrentUserSettings();
   const currentUser = useCurrentUser();
   // The value is carried on the SESSION (see user.schema `isEarlyAdopter`), and the server
@@ -298,7 +309,7 @@ function EarlyAdopterToggle() {
     <Switch
       name="isEarlyAdopter"
       label="Join the early-adopter program"
-      description="Get in-progress features before they roll out to everyone. They may be rough, change without notice, or be withdrawn. Turn this off any time to go back to the standard experience."
+      description="Features before they roll out. They may be rough or change without notice."
       checked={isEarlyAdopter ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ isEarlyAdopter: e.target.checked })}
@@ -307,7 +318,7 @@ function EarlyAdopterToggle() {
   );
 }
 
-function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
+export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
   const flags = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
@@ -355,5 +366,123 @@ function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
         />
       ))}
     </>
+  );
+}
+
+/**
+ * The selects below are exported so the flat settings panes and the legacy card render the same
+ * control rather than two copies that can drift while the `accountSettingsV2` flag is alive.
+ * They carry no label of their own — the pane's `SettingRow` supplies it.
+ */
+function useFilePreferenceUpdate() {
+  const user = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+  const { mutate, isPending } = trpc.user.update.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getAll.invalidate();
+      await user?.refresh();
+      showSuccessNotification({ message: 'User profile updated' });
+    },
+  });
+
+  const update = (filePreferences: Record<string, unknown>) => {
+    if (!user) return;
+    mutate({ id: user.id, filePreferences: { ...user.filePreferences, ...filePreferences } });
+  };
+
+  return { user, update, isPending };
+}
+
+export function ImageFormatSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  if (!user) return null;
+  return (
+    <Select
+      aria-label="Preferred image format"
+      data={[
+        { value: 'optimized', label: 'Optimized (avif, webp)' },
+        { value: 'metadata', label: 'Unoptimized (jpeg, png)' },
+      ]}
+      value={user.filePreferences?.imageFormat ?? 'metadata'}
+      onChange={(value: string | null) => update({ imageFormat: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+export function ModelFileFormatSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  if (!user) return null;
+  return (
+    <Select
+      aria-label="Preferred model file format"
+      data={validModelFormats}
+      value={user.filePreferences?.format ?? 'SafeTensor'}
+      onChange={(value: string | null) => update({ format: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+export function ModelPrecisionSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  const { precisions } = useModelFileOptions();
+  if (!user) return null;
+  return (
+    <Select
+      aria-label="Preferred precision"
+      data={precisions.map((value) => ({ value, label: value.toUpperCase() }))}
+      value={user.filePreferences?.fp ?? 'fp16'}
+      onChange={(value: string | null) => update({ fp: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+/** Only meaningful for GGUF, which is the one format that ships quantised builds. */
+export function ModelQuantTypeSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  const { quantTypes } = useModelFileOptions();
+  if (!user || user.filePreferences?.format !== 'GGUF') return null;
+  return (
+    <Select
+      aria-label="Preferred quant type"
+      data={quantTypes.filter((x) => x !== UNQUANTIZED_QUANT_TYPE)}
+      allowDeselect={false}
+      value={user.filePreferences?.quantType ?? 'Q4_K_M'}
+      onChange={(value: string | null) => update({ quantType: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+export function AssistantPersonalitySelect() {
+  const flags = useFeatureFlags();
+  const { assistantPersonality } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Tooltip
+      withArrow
+      label="Available to subscribers only"
+      disabled={flags.assistantPersonality}
+      offset={-10}
+    >
+      <div>
+        <Select
+          aria-label="Assistant personality"
+          disabled={isPending || !flags.assistantPersonality}
+          data={[
+            { value: 'civbot', label: 'CivBot' },
+            { value: 'civchan', label: 'CivChan' },
+          ]}
+          value={assistantPersonality ?? 'civbot'}
+          onChange={(value: string | null) => {
+            if (flags.assistantPersonality)
+              mutate({ assistantPersonality: value as UserAssistantPersonality });
+          }}
+        />
+      </div>
+    </Tooltip>
   );
 }

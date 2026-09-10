@@ -5,10 +5,10 @@ import { img2imgImages, SEED, aspectRatioDef, boolDef } from '../defs';
 import { familyScope, modelIdOf, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * OpenAI (v1 / v1.5 / v2), ported from `openai-graph.ts`. GPT-1 builds expose
- * a transparency toggle; both expose quality. Seed lives at the top level
- * even though GPT-2 ignores it (keeps the ctx union shape consistent). No
- * negative prompt.
+ * OpenAI (v1 / v1.5 / v2 / 2.5 flare + sunburst), ported from
+ * `openai-graph.ts`. GPT-1 builds expose a transparency toggle; both variants
+ * expose quality. Seed lives at the top level even though GPT-2 and 2.5 ignore
+ * it (keeps the ctx union shape consistent). No negative prompt.
  */
 
 // ---- copied from openai-graph.ts, which dies with the data-graph engine -----
@@ -17,15 +17,19 @@ export const openaiVersionIds = {
   v1: 1733399,
   'v1.5': 2512167,
   v2: 2880272,
+  'v2.5-flare': 3311434,
+  'v2.5-sunburst': 3311436,
 } as const;
 
 const openaiModeVersionOptions = [
   { label: 'v1', value: openaiVersionIds.v1 },
   { label: 'v1.5', value: openaiVersionIds['v1.5'] },
   { label: 'v2', value: openaiVersionIds.v2 },
+  { label: 'v2.5 Flare', value: openaiVersionIds['v2.5-flare'] },
+  { label: 'v2.5 Sunburst', value: openaiVersionIds['v2.5-sunburst'] },
 ];
 
-const defaultOpenaiVersionId = Object.values(openaiVersionIds).slice(-1)[0];
+const defaultOpenaiVersionId = openaiVersionIds.v2;
 
 type OpenAIVariant = 'gpt1' | 'gpt2';
 
@@ -33,6 +37,8 @@ const versionIdToVariant = new Map<number, OpenAIVariant>([
   [openaiVersionIds.v1, 'gpt1'],
   [openaiVersionIds['v1.5'], 'gpt1'],
   [openaiVersionIds.v2, 'gpt2'],
+  [openaiVersionIds['v2.5-flare'], 'gpt2'],
+  [openaiVersionIds['v2.5-sunburst'], 'gpt2'],
 ]);
 
 const openaiAspectRatios = [

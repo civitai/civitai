@@ -205,6 +205,9 @@ export function SubNav({
   return (
     <div
       {...props}
+      // Read by anything that pins itself below the subnav: it keeps its layout box while hidden,
+      // so a fixed offset leaves a gap once it retracts. See `useStickyTop` in AccountLayout.
+      data-subnav=""
       className={clsx(
         'sticky inset-x-0 top-0 z-50 mb-3 bg-gray-1 shadow transition-transform dark:bg-dark-6',
         className

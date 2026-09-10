@@ -46,6 +46,16 @@ export const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; h
       { label: '3:2', width: 1536, height: 1024 },
       { label: '2:3', width: 1024, height: 1536 },
     ],
+    OpenAI25Flare: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
+    OpenAI25Sunburst: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
     Qwen: [
       { label: '16:9', width: 1664, height: 928 },
       { label: '4:3', width: 1472, height: 1104 },
@@ -70,6 +80,8 @@ export const COMIC_MODEL_MAX_IMAGES: Record<string, number> = {
   SeedreamLite: 7,
   OpenAI: 7,
   OpenAI2: 7,
+  OpenAI25Flare: 7,
+  OpenAI25Sunburst: 7,
   Qwen: 3,
   Grok: 7,
 };
@@ -84,6 +96,8 @@ export const COMIC_MODEL_OPTIONS = [
   { value: 'SeedreamLite', label: 'Seedream 5 Lite' },
   { value: 'OpenAI', label: 'OpenAI GPT-Image' },
   { value: 'OpenAI2', label: 'OpenAI GPT-Image 2' },
+  { value: 'OpenAI25Flare', label: 'OpenAI GPT-Image 2.5 Flare' },
+  { value: 'OpenAI25Sunburst', label: 'OpenAI GPT-Image 2.5 Sunburst' },
   { value: 'Qwen', label: 'Qwen' },
   { value: 'Grok', label: 'Grok Imagine' },
 ];

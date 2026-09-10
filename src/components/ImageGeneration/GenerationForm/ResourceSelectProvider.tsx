@@ -61,13 +61,6 @@ type ResourceSelectState = Omit<
    */
   optionsOverride: ResourceSelectOptions | null;
   setOptionsOverride: (options: ResourceSelectOptions | null) => void;
-  /**
-   * Set by a rail when the catalog must not be browsed — the family pins its
-   * checkpoint, so anything picked here would be substituted back. Rendered in
-   * place of the results.
-   */
-  catalogNotice: React.ReactNode | null;
-  setCatalogNotice: (notice: React.ReactNode | null) => void;
   multiSelect: boolean;
   staged: GenerationResource[];
   addStaged: (value: GenerationResource) => void;
@@ -125,7 +118,6 @@ export function ResourceSelectProvider({
   const [sort, setSort] = useState<ResourceSort>('relevance');
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const [optionsOverride, setOptionsOverride] = useState<ResourceSelectOptions | null>(null);
-  const [catalogNotice, setCatalogNotice] = useState<React.ReactNode | null>(null);
   const activeOptions = optionsOverride ?? props.options;
   // Memoised because staging a resource now re-renders this provider, and a new
   // `resources` identity invalidates the hit list's `filterVersions` callback —
@@ -213,8 +205,6 @@ export function ResourceSelectProvider({
         onSelect: handleSelect,
         optionsOverride,
         setOptionsOverride,
-        catalogNotice,
-        setCatalogNotice,
         multiSelect,
         staged,
         addStaged,

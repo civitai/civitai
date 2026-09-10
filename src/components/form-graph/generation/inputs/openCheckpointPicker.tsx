@@ -45,13 +45,6 @@ export function openCheckpointPicker({
     excludeEcosystems?: string[];
     ecosystemStates?: GateItemState[];
     outputType?: 'image' | 'video' | 'audio' | 'model3d';
-    /**
-     * The graph's own answer for the CURRENT family, from the checkpoint field's
-     * meta. It resolves `opts.modelLocked ?? ecosystemDefaults.modelLocked`, so
-     * it catches graph-level locks (Flux on the draft workflow) that reading the
-     * ecosystem constants alone cannot see.
-     */
-    modelLocked?: boolean;
   };
   onSelect: (resource: GenerationResource) => void;
   onEcosystemChange: (ecosystemKey: string) => void;
@@ -98,7 +91,6 @@ export function openCheckpointPicker({
         ecosystemStates={ecosystem.ecosystemStates}
         outputType={ecosystem.outputType}
         resourceTypes={resourceTypes}
-        currentLocked={ecosystem.modelLocked}
       />
     ),
     footer: () => (

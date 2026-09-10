@@ -17,6 +17,7 @@ import { Krea2StyleReferencesInput } from '~/components/generation_v2/inputs/Kre
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
+import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
 import { UpscaleDimensionsInput } from '~/components/generation_v2/inputs/UpscaleDimensionsInput';
@@ -74,7 +75,6 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                           resources: readResources(store),
                           ecosystem: {
                             value: ecosystem,
-                            modelLocked: meta?.modelLocked,
                             compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
                             excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
                             ecosystemStates: ecosystemMeta?.ecosystemStates,
@@ -225,55 +225,9 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={generationHub}
         name="kindParams"
-        render={({ value, meta, onChange }) => {
-          const specs = meta?.specs;
-          if (!specs?.length) return null;
-          const params = value ?? {};
-          const setParam = (key: string, v: unknown) => onChange({ ...params, [key]: v });
-          return (
-            <div className="flex flex-col gap-2">
-              {specs.map((spec) => {
-                if (spec.type === 'slider') {
-                  const current = (params[spec.key] as number | undefined) ?? spec.defaultValue;
-                  return (
-                    <SliderInput
-                      key={spec.key}
-                      label={spec.label}
-                      value={current}
-                      onChange={(v) => setParam(spec.key, v)}
-                      min={spec.min}
-                      max={spec.max}
-                      step={spec.step ?? 1}
-                    />
-                  );
-                }
-                if (spec.type === 'boolean') {
-                  const current = (params[spec.key] as boolean | undefined) ?? spec.defaultValue;
-                  return (
-                    <Switch
-                      key={spec.key}
-                      label={spec.label}
-                      checked={current}
-                      onChange={(e) => setParam(spec.key, e.currentTarget.checked)}
-                    />
-                  );
-                }
-                const current = (params[spec.key] as string | undefined) ?? spec.defaultValue;
-                return (
-                  <Select
-                    key={spec.key}
-                    label={spec.label}
-                    data={spec.options.map((o) => ({ label: o, value: o }))}
-                    value={current}
-                    onChange={(v) => v && setParam(spec.key, v)}
-                    allowDeselect={false}
-                    comboboxProps={{ withinPortal: true }}
-                  />
-                );
-              })}
-            </div>
-          );
-        }}
+        render={({ value, meta, onChange }) => (
+          <PreprocessKindParamsInput value={value} onChange={onChange} specs={meta?.specs} />
+        )}
       />
       <Controller
         graph={imageHub}
@@ -338,6 +292,23 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={imageHub}
+        name="resolution"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Resolution</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
+                label: o.label,
+                value: o.value,
+              }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={imageHub}
         name="aspectRatio"
         render={({ value, meta, onChange }) => {
           const priorityOptions =
@@ -355,23 +326,6 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             />
           );
         }}
-      />
-      <Controller
-        graph={imageHub}
-        name="resolution"
-        render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
-        )}
       />
       <Controller
         graph={imageHub}

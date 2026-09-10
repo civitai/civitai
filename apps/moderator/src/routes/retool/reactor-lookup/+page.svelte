@@ -8,7 +8,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { num } from '$lib/format';
+  import { LINK_CLASS, num } from '$lib/format';
   import type { PageData } from './$types';
   import ActorTable from './ActorTable.svelte';
   import SharedIpPanel from './SharedIpPanel.svelte';
@@ -25,16 +25,18 @@
     term = data.q;
   });
 
-  const navigate = (patch: Record<string, string>) => {
-    const params = new URLSearchParams({
+  const hrefFor = (patch: Record<string, string>) =>
+    `?${new URLSearchParams({
       q: data.q,
       category: data.category,
       days: String(data.days),
       minCount: String(data.minCount),
       groupIpv4: data.groupIpv4 ? '1' : '0',
       ...patch,
-    });
-    goto(`?${params}`, { keepFocus: true });
+    })}`;
+
+  const navigate = (patch: Record<string, string>) => {
+    goto(hrefFor(patch), { keepFocus: true });
   };
 
   const search = (e: SubmitEvent) => {
@@ -88,17 +90,19 @@
     </Select.Root>
   </div>
 
-  <div class="flex flex-col gap-1">
-    <Label for="minCount" class="text-xs text-dark-2">Min {meta.countLabel.toLowerCase()}</Label>
-    <Input
-      id="minCount"
-      type="number"
-      min="1"
-      value={data.minCount}
-      class="w-24"
-      onchange={(e) => navigate({ minCount: e.currentTarget.value || '1' })}
-    />
-  </div>
+  {#if meta.hasFloor}
+    <div class="flex flex-col gap-1">
+      <Label for="minCount" class="text-xs text-dark-2">Min {meta.countLabel.toLowerCase()}</Label>
+      <Input
+        id="minCount"
+        type="number"
+        min="1"
+        value={data.minCount}
+        class="w-24"
+        onchange={(e) => navigate({ minCount: e.currentTarget.value || '1' })}
+      />
+    </div>
+  {/if}
 
   <div class="flex items-center gap-2 pb-2">
     <Checkbox
@@ -121,6 +125,15 @@
       the engagement.
     </p>
   </section>
+{:else if data.unknownUser}
+  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+    <p class="text-sm text-dark-2">
+      No user has ID <code>{data.q}</code>. This page takes the ID of the creator receiving the
+      engagement — if that number is an image ID, look it up in
+      <a href="/retool/image-lookup?q={data.q}" class={LINK_CLASS}>Image Lookup</a> and search the
+      creator it belongs to.
+    </p>
+  </section>
 {:else}
   <div class="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
     <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -132,10 +145,22 @@
           {:else}
             {num(data.total)}
           {/if}
-          over {num(data.minCount)}
+          {#if meta.hasFloor}over {num(data.minCount)}{/if}
         </span>
       </div>
       <p class="mb-3 text-xs text-dark-2">{meta.subtitle} Last {lookbackLabel.toLowerCase()}.</p>
+      {#if data.belowFloor > 0}
+        <p class="mb-3 text-xs text-yellow-300">
+          {num(data.belowFloor)}
+          {data.belowFloor === 1 ? 'account is' : 'accounts are'} under the floor of {num(
+            data.minCount
+          )}
+          {meta.countLabel.toLowerCase()} and not counted here.
+          <a class={LINK_CLASS} href={hrefFor({ minCount: '1' })}>Drop the floor to 1</a>
+          to include them — many accounts acting once each is a different shape of ring from a few
+          acting often, and concentration cannot rank it.
+        </p>
+      {/if}
       {#if data.capped}
         <p class="mb-3 text-xs text-yellow-300">
           This creator has more images than one pass walks, so only their most recent are counted.
@@ -145,6 +170,7 @@
       <ActorTable
         actors={data.actors}
         {meta}
+        belowFloor={data.belowFloor}
         sharesWithTarget={data.sharesWithTarget}
         sharesWithOther={data.sharesWithOther}
       />

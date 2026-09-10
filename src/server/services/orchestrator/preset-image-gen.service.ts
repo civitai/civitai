@@ -113,6 +113,22 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
     maxReferenceImages: 7,
     sizes: OPENAI_SIZES,
   },
+  OpenAI25Flare: {
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    ecosystem: 'OpenAI',
+    versionId: 3311434,
+    maxReferenceImages: 7,
+    sizes: OPENAI_SIZES,
+  },
+  OpenAI25Sunburst: {
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    ecosystem: 'OpenAI',
+    versionId: 3311436,
+    maxReferenceImages: 7,
+    sizes: OPENAI_SIZES,
+  },
   Qwen: {
     engine: 'qwen',
     baseModel: 'Qwen',

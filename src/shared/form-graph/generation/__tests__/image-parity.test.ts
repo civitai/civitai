@@ -153,6 +153,8 @@ const OPENAI_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: 1733399, transparent: true, quality: 'low' }, // gpt1
   { prompt: 'a cat', model: 2512167 }, // v1.5 -> gpt1
   { prompt: 'a cat', quality: 'medium' }, // default v2 -> gpt2
+  { prompt: 'a cat', model: 3311434, quality: 'low' }, // 2.5 flare -> gpt2
+  { prompt: 'a cat', model: 3311436 }, // 2.5 sunburst -> gpt2
 ];
 const LENS_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: 2982241 }, // turbo ranges
@@ -203,6 +205,9 @@ const KREA2_ONLY_SHAPES: AnyRecord[] = [
     styleReferences: [{ image: 'https://example.com/s.png', strength: 0.7 }, {}],
   },
   { prompt: 'a cat', model: 3072332 }, // comfy turbo
+  { prompt: 'a cat', model: 3072332, resolution: '2K' }, // comfy 2K tier
+  { prompt: 'a cat', model: 2983023, resolution: '2K' }, // FAL: no tier to accept
+  { prompt: 'a cat', model: 2983023, images: [IMG], resolution: '2K' }, // edit keeps the tier
   { prompt: 'a cat', model: 2983023, images: [IMG] }, // fal model where edit rows substitute
   // community checkpoints (unknown ids): comfy-only, so they fall to the RAW
   // full-step build — and to editRaw on edit (kaydaxter's custom-checkpoint fix)

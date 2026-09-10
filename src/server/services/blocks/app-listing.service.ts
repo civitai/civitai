@@ -35,7 +35,14 @@ import {
   readListingBetaManyForRender,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
-import { queryCache } from '~/server/utils/cache-helpers';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+// The cache TAG NAMES live in a dependency-free LEAF module, never here — a router
+// that must `await import()` this service cannot name a constant exported from it
+// without making that lazy import graph-inert. See that module's header.
+import {
+  APP_LISTING_CATALOG_TAG,
+  APP_LISTING_RECOMMEND_MEAN_TAG,
+} from '~/server/services/blocks/app-listing-cache.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -708,9 +715,155 @@ export async function getGlobalRecommendMean(): Promise<number> {
       WHERE al.status = 'approved'
         AND (m.thumbs_up_count + m.thumbs_down_count) > 0
     `,
-    { ttl: CacheTTL.hour, tag: ['app-listing:recommend-global-mean'] }
+    { ttl: CacheTTL.hour, tag: [APP_LISTING_RECOMMEND_MEAN_TAG] }
   );
   return rows[0]?.mean ?? DEFAULT_RECOMMEND_MEAN;
+}
+
+// ---------------------------------------------------------------------------
+// The unified store CATALOG cache (`listAvailableListings`) + its ONE buster.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the read-through cache for the `/apps` store's keyset id page, for ONE
+ * viewer class.
+ *
+ * 🔴 THE TWO SECURITY-BOUNDARY AXES ARE LITERAL KEY SEGMENTS, NOT HASH INPUT.
+ *
+ * `queryCache` builds its redis key as `[key, version, hashifyObject(query)]
+ * .join(':')` (`~/server/utils/cache-helpers`). `hashifyObject` → `hashify`
+ * (`~/utils/string-helpers`) is a **32-bit** rolling hash
+ * (`hash = (hash << 5) - hash + chr; hash |= 0`). It is neither injective nor
+ * one-way, and it is LINEAR — collisions against a chosen target are constructed
+ * algebraically, not brute-forced. An earlier revision of this code passed a
+ * single constant `key` and relied on "every axis is interpolated into the
+ * statement, so every axis is in the key". That reasoning silently assumes the
+ * hash is injective, and it is not.
+ *
+ * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
+ * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
+ * arbitrary free strings (only `cursorMean` is range-validated), the router
+ * validates `cursor` only as `z.string().max(128)`, and both land in this
+ * statement as bound params. That is enough tuning room to steer the 32-bit hash
+ * onto any target value.
+ *
+ * So the two axes that are SECURITY BOUNDARIES are lifted out of the hashed
+ * payload and into the `key` string itself:
+ *
+ *   · `scope` — `listingPublicVisibilityFilter`. `full` is the whole approved
+ *     catalog; `public-external` is offsite-only. That is the public/onsite
+ *     boundary (civitai#3983). A cross-scope collision would serve on-site apps
+ *     into the anonymous `GET /api/v1/apps` response, and the reverse direction
+ *     is cache poisoning.
+ *   · `redCapable` — `listingMatureFilter`. A cross-capability collision serves
+ *     `r`/`x` listings onto a SFW host.
+ *
+ * With both in the literal prefix, a hash collision can only ever mix two pages
+ * WITHIN one viewer class — the class boundary is no longer hash-dependent.
+ * `__tests__/app-listing.catalog-cache.test.ts` pins that the boundary lives in
+ * the un-hashed segments.
+ *
+ * 🔴 WHAT IS LEFT UN-CONTAINED, STATED AS A RESIDUAL RATHER THAN A REASSURANCE. The
+ * remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the hash, and
+ * a constructed collision across them is CROSS-USER CACHE POISONING of the shared
+ * `/apps` grid — not, as an earlier version of this comment said, "the attacker's own
+ * page served back to themselves". The entry is shared by every viewer in the class,
+ * and `full` is the class for ordinary logged-in users. The attacker's crafted-cursor
+ * request MISSES, so it is the request that WRITES the colliding key; every later
+ * reader deriving that key HITS it. So one request can pin the store's first page to
+ * an arbitrary filtered — or empty — result for up to `CacheTTL.sm` (180s) for everyone
+ * in that class.
+ *
+ * What it is NOT is a disclosure boundary: every row in a poisoned page came from a
+ * statement carrying the SAME `scope` and `redCapable` predicates, so no listing
+ * appears that the viewer was not already entitled to see. That is the whole reason
+ * those two axes, and only those two, were lifted out of the hash.
+ *
+ * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
+ * grid defect above. The alternative to accepting it is putting the remaining axes in
+ * the literal key too, and the blocker is `cursor`: it is a free-form 128-byte string,
+ * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
+ * label request-controlled and unbounded — exactly the property the note at the bottom
+ * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
+ * `limit` is 1..50, so those four could be lifted; they would multiply the label
+ * cardinality by their product, and they do not help while `cursor` stays hashed,
+ * because `cursor` is the tuning room the collision is built out of.) Widening
+ * `hashify` is the other alternative and it is global — see below.
+ *
+ * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
+ * cursor DIGEST computed with a real hash, not to widen `hashify`.
+ *
+ * 🔴 DO NOT "FIX" THIS BY WIDENING `hashify` — it is used across the codebase for
+ * cache keys, DOM ids and de-dup, so changing its output is a global blast radius.
+ * The containment belongs here, at the one call site that has a security boundary.
+ *
+ * Why `queryCache` + a bust tag, and not the alternatives:
+ *
+ * · **NOT `fetchThroughCache`** — it takes no `tag` option, so `bustCacheTag`
+ *   cannot drive it and a moderator's approve/delist would not be visible until
+ *   the TTL expired.
+ *
+ * · **NOT `clearCacheByPattern`** — banned for bust-on-mutation; see that
+ *   function's own header. A prior use ran a cluster SCAN over a ~60M-key shard,
+ *   producing redis timeouts and 504 waves, and was reverted.
+ *
+ * · **NOT a generation counter** — a counter folded into the key leaves the old
+ *   entries in redis to expire on their own, so a bust multiplies the keyspace
+ *   instead of reclaiming it. The tag set holds the exact keys to delete.
+ *
+ * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
+ * is bounded at 6 (3 scopes × 2 capabilities) — every component is a closed enum,
+ * never a request-controlled string.
+ */
+function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
+  return queryCache(
+    dbRead,
+    `listAvailableAppListings:${scope}:${redCapable ? 'red' : 'sfw'}`,
+    'v1'
+  );
+}
+
+/**
+ * Bust the `/apps` store catalog cache. THE one buster — nothing else deletes the tag.
+ *
+ * 🔴 THE RULE IS "BUST WHEN A CACHED AXIS OR CATALOG MEMBERSHIP MOVES", NOT "every
+ * listing-state mutation busts". Several call sites used to invoke the latter as a
+ * "uniform rule"; it is not uniform, and stating it that way made a reader's model of
+ * the cache wrong in the expensive direction — it implies that a writer WITHOUT a bust
+ * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
+ * statement reads
+ * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
+ * `al.app_block_id` + `ab.current_version_deployed_at` (the deploy gate and its join
+ * key) and the `sort_key` inputs (`al.name`, `al.created_at`, the metric rollup) — and
+ * nothing else. Every other column on the card is hydrated live below the cache and can
+ * never be served stale. ⚠️ The metric rollup is on `app_listing_metrics`, not on this
+ * table, and its two writers deliberately do NOT bust; `APP_LISTING_CATALOG_TAG`'s
+ * header in `app-listing-cache.constants.ts` states that exception in full.
+ *
+ * Some busts ARE kept on paths that are inert today, as cheap defence-in-depth against
+ * a future edit promoting the row into the catalog: `updateListing`'s `removed` and
+ * `draft`/`pending` branches, its material-shadow branch, `submitListingRevision`,
+ * `rejectExternalRequest` and `claimListing`. Each says so at its own call site. They
+ * are a judgement, not the rule.
+ *
+ * ⚠️ THAT LIST IS PROSE AND NOTHING ASSERTS ON IT. The ledger pins WHICH functions bust
+ * and which are `EXEMPT`; it does not pin which of the busts are inert, because that is
+ * a claim about the SQL a branch can write rather than about a call site. Re-derive it
+ * from the call-site comments rather than trusting the enumeration here.
+ *
+ * The asserted form of the rule — every `AppListing` writer either busts or is on an
+ * `EXEMPT` list with a reason — is
+ * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`. That
+ * file, not this paragraph, is what a new mutation has to satisfy.
+ *
+ * Fire-and-forget by the caller's convention (mirrors `bustRecommendMeanCache` in
+ * `app-listing-review.service`): a cache-bus outage must never fail the mutation
+ * that already committed. The worst case of a swallowed failure is a stale store
+ * grid for at most `CacheTTL.sm`; the worst case of a thrown one is a moderator
+ * action that reports failure after having succeeded.
+ */
+export async function bustAppListingCatalogCache(): Promise<void> {
+  await bustCacheTag([APP_LISTING_CATALOG_TAG]);
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +909,31 @@ export async function listAvailableListings(
   const kindParam = kind === 'all' ? null : kind;
   const categoryParam = category ?? null;
 
-  const idRows = await dbRead.$queryRaw<{ id: string; sort_key: string }[]>(Prisma.sql`
+  // 🔴 CACHED. Only the keyset ID PAGE is cached — the hydration below stays a live
+  // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
+  // a card's mutable projection fields are never served from two different ages.
+  // `nextCursor` is derived from these (now cached) rows, same as there.
+  //
+  // The cache is built PER VIEWER CLASS: `scope` and `redCapable` are literal segments
+  // of the redis key, deliberately outside the 32-bit `hashifyObject` of the statement.
+  // See {@link catalogPageCache} for why that is load-bearing rather than stylistic.
+  //
+  // TTL = `CacheTTL.sm` (180s). The catalog is MOD-GATED and low-churn: rows enter and
+  // leave only through moderator approve/delist/reject/purge or an owner
+  // unpublish/republish, and every one of those paths calls
+  // `bustAppListingCatalogCache()`.
+  //
+  // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
+  // no mutation to hang a bust on — chiefly a row that ages into visibility. It is NOT
+  // a redis-outage backstop: `queryCache` has no try/catch and no fail-open (unlike
+  // `fetchThroughCache`), so a redis outage does not degrade to a live DB read here, it
+  // throws — a 500 on `/apps` and on `GET /api/v1/apps`. That is the dependency this
+  // change accepts; the TTL does nothing about it. What 180s does buy is collapsing the
+  // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
+  // bust cannot stretch past.
+  const cacheable = catalogPageCache(scope, redCapable);
+  const idRows = await cacheable<{ id: string; sort_key: string }[]>(
+    Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
@@ -786,7 +963,9 @@ export async function listAvailableListings(
       )
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
-  `);
+  `,
+    { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+  );
 
   const trimmed = idRows.slice(0, limit);
   const last = trimmed[trimmed.length - 1];

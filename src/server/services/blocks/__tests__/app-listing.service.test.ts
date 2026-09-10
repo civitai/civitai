@@ -35,13 +35,17 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }
 // getEdgeUrl → identity so URL fields assert against the stored key.
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
+vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 // queryCache → passthrough to the mocked $queryRaw (no Redis in unit tests).
 vi.mock('~/server/utils/cache-helpers', () => ({
+  // 🔴 BOTH EXPORTS. `app-listing.service` now imports `bustCacheTag` as well as
+  // `queryCache` (it owns `bustAppListingCatalogCache`), and a one-key factory makes the
+  // WHOLE FILE fail to import with `No "bustCacheTag" export is defined on the … mock`.
   queryCache:
     () =>
     async (sql: unknown): Promise<unknown[]> =>
       mockDbRead.$queryRaw(sql),
+  bustCacheTag: vi.fn(async () => undefined),
 }));
 
 import fs from 'fs';
