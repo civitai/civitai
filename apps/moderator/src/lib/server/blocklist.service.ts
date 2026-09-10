@@ -39,7 +39,7 @@ async function setCache(data: BlocklistDTO) {
  * ⚠️ What this does NOT close, stated because the obvious reading of "deletes commute" is that it
  * does: a DELETE does not commute with the POPULATE in `getBlocklistDTO`, which is plain
  * cache-aside. A reader that missed and read the row before the commit can `set` its pre-write
- * snapshot AFTER the bust, pinning it for the whole month TTL.
+ * snapshot AFTER the bust, pinning it until the key expires.
  *
  * The causation runs to the NEXT write, not this one: a bust guarantees the following read misses,
  * and the page reloads through `load` on every submit, so a reader is typically mid-fill when the
@@ -137,7 +137,7 @@ export class BlocklistRowMismatchError extends Error {
   }
 }
 
-/** What a write did, and whether readers will see it before the month TTL expires. */
+/** What a write did, and whether readers will see it before the cache TTL expires. */
 export type BlocklistWriteResult = { count: number; cacheStale: boolean };
 
 /** What the transaction changed, and which row it changed — `recordModActivity` needs the row id.
@@ -218,7 +218,7 @@ export async function upsertBlocklist({
 
 /**
  * Returns how many entries were actually dropped, which is NOT the number submitted: a stale `id`
- * (the DTO is Redis-cached for a month), an `id` belonging to another type, an entry already gone,
+ * (the DTO is Redis-cached for `CACHE_TTL`), an `id` belonging to another type, an entry already gone,
  * or one stored in a case the lowercased needle cannot match all end in zero. The page reports this
  * number, so "Removed 1 item." above a chip that is still there is a state the UI can no longer
  * reach.

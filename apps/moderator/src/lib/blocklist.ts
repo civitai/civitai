@@ -2,6 +2,7 @@
 // people. (Blocklist.type is a plain string column — no shared DB enum to import.)
 export const BLOCKLIST_TYPES = [
   'EmailDomain',
+  'EmailDomainSuffix',
   'LinkDomain',
   'MessagePattern',
   'UsernameExact',
@@ -29,6 +30,19 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     ' upstream disposable-email-domains project, and it re-adds anything it still carries. So' +
     ' removing a domain that is on the upstream list holds until the next Sunday run and then' +
     ' silently comes back. Removing one the upstream list does not carry is permanent.',
+  EmailDomainSuffix:
+    'Blocks a domain AND every subdomain of it at signup — one entry of "evil.example" refuses' +
+    ' anything@a.evil.example as well as anything@evil.example. Use it for a domain whose owner' +
+    ' mints fresh subdomains per account; the plain Email Domain list matches the exact domain' +
+    ' only, which such a farm never trips twice.' +
+    ' 🔴 Check what else lives under the domain before adding it. Blocking a shared host takes' +
+    ' every one of its users with it. Filter the Email Domain tab for the domain first — shared' +
+    ' hosts like "dynv6.net" carry many separate entries there, and "co.uk" and "org.uk" are on' +
+    ' that list too.' +
+    ' Entries here are yours: nothing syncs this list, so what you add stays and what you remove' +
+    ' stays removed. An entry refuses NEW signups on the domain. It does not touch accounts that' +
+    ' already have an address there and cannot lock anyone out of signing in. Single-label entries' +
+    ' ("com") are ignored, so a typo cannot take out a whole TLD.',
   MessagePattern:
     'Case-insensitive substrings matched against chat messages and comments. A chat message that' +
     ' contains one is REFUSED; a comment is accepted and reported instead — it lands in the report' +
