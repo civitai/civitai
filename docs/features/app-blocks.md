@@ -41,7 +41,9 @@ install. Each app is served from its own platform-owned subdomain
 ## Tokens
 
 - RS256, signed by `BLOCK_TOKEN_PRIVATE_KEY`, verified via JWKS.
-- 15-minute lifetime by default; 5-minute lifetime for `block:settings:*` scopes.
+- 15-minute lifetime by default; 5-minute lifetime for `block:settings:*` scopes
+  — a RETIRED scope family (see the Scopes table), so a manifest can no longer
+  declare it and that shorter lifetime is unreachable today.
 - Claims: `iss`, `aud`, `sub` (`user:<id>` or `anon`), `iat`, `nbf`, `exp`,
   `jti`, `blockId`, `appId`, `blockInstanceId`, `ctx`, `scopes`,
   `buzzBudget?`.
@@ -57,12 +59,12 @@ check at request time (`enforceContextBinding`).
 | Scope                            | Bind                                              | Notes                                                                                                                                                                   |
 | -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `models:read:self`               | `query.id == ctx.modelId`                         |                                                                                                                                                                         |
-| `media:read:owned`               | non-anon `sub`                                    |                                                                                                                                                                         |
+| ~~`media:read:owned`~~           | —                                                 | **REMOVED** from the scope registry (purely decorative — no endpoint ever checked it). A manifest declaring it is REJECTED. The OAuth `MediaRead` bit is unaffected |
 | `buzz:read:self`                 | non-anon `sub`                                    | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN) |
 | `social:tip:self`                | non-anon `sub`                                    |                                                                                                                                                                         |
 | `user:read:self`                 | non-anon `sub`                                    | viewer identity — read via the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Also gates the **deprecated** `/api/v1/blocks/me` REST route (retiring) |
 | `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
-| `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance; `SKIP_OAUTH_CHECK`                                                                                                                   |
+| ~~`block:settings:read` / `:write`~~ | —                                             | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED |
 | `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                      |
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
@@ -111,7 +113,9 @@ fine-grained tool for ops.
 - **Ownership escalation**: `block:settings:*` tokens require caller
   is the install's `installedByUserId` at issuance. The check is
   authoritative at issue time; deleted-publisher installs (FK SET NULL)
-  fail closed.
+  fail closed. ⚠️ The scope family is RETIRED (see the Scopes table), so this
+  check still exists in `block-tokens/index.ts` but nothing can reach it —
+  the scope cannot be declared, approved or minted.
 
 ## BLOCK_INIT contract
 

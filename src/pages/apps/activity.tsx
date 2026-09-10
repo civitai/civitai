@@ -401,6 +401,16 @@ const SPEND_SCOPE = 'ai:write:budgeted';
  * CLEARING sends an explicit `null`, which is the service's "clear it" state — a
  * DIFFERENT thing from omitting the key (leave it alone), and the only caller of that
  * branch.
+ *
+ * ⚠️ KNOWN LIMIT, STATED RATHER THAN PAPERED OVER: `grantScopes` requires the app to be
+ * `approved` AND the sent scope to be inside `manifest ∩ approvedScopes`. If an app is
+ * later un-approved, or a moderator narrows its approved set so it no longer includes
+ * `ai:write:budgeted`, this control surfaces the server's error instead of editing —
+ * the user's stored limit is then not editable here. It is also not ENFORCING anything
+ * in that state (no token can carry the spend scope, so no spend reaches the budget),
+ * so nothing is stuck at a ceiling; the limit is simply frozen until the app is
+ * approved again. Fixing it properly means a budget-only server path that does not go
+ * through the scope ceiling.
  */
 function AppBudgetControl({
   appBlockId,
