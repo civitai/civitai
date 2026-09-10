@@ -74,7 +74,13 @@ export async function serveFromFeed<T extends { id: number }>(
     requestCounter.inc({ outcome: 'served' });
     return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
   }
-  const rows = await deps.hydrate(answer.ids);
+  let rows: T[];
+  try {
+    rows = await deps.hydrate(answer.ids);
+  } catch {
+    requestCounter.inc({ outcome: 'error' });
+    return { ok: false, reason: 'hydrate:error' };
+  }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const data = answer.ids.flatMap((id) => {
     const row = byId.get(id);
