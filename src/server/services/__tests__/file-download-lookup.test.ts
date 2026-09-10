@@ -555,8 +555,24 @@ describe('serialized downloadUrl → getFileForModelVersion (the pair actually r
       noAuth: true,
       user: PUBLIC_REQUESTER,
     });
-    const where = modelFileFindFirst.mock.calls[0][0].where;
-    expect(where).toMatchObject({ id: 21, modelVersionId: 4242 });
+    // The pin is applied in memory so the file's siblings come back too (they decide whether its
+    // download name needs a variant suffix), which leaves the version — the boundary that matters —
+    // as the only thing keeping another version's file out of the result set.
+    const where = modelFileFindMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ modelVersionId: 4242 });
+  });
+
+  it('a pinned URL serves the file that was pinned, not the first on the version', async () => {
+    // Guards the in-memory half of the pin above: version 4242 holds files 21 and 22, and 21 is
+    // both lower-numbered and the primary, so picking wrongly still returns a plausible file.
+    const result = (await getFileForModelVersion({
+      ...toRouteInput('/api/download/models/4242?fileId=22'),
+      noAuth: true,
+      user: PUBLIC_REQUESTER,
+    })) as { status: string; fileId?: number };
+
+    expect(result.status).toBe('success');
+    expect(result.fileId).toBe(22);
   });
 });
 

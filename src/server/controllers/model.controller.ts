@@ -1157,7 +1157,7 @@ export const getDownloadCommandHandler = async ({
       }
     }
 
-    const fileName = getDownloadFilename({ model, modelVersion, file });
+    const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
     const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
 
     const commands: CommandResourcesAdd[] = [];
@@ -1179,7 +1179,12 @@ export const getDownloadCommandHandler = async ({
       const additionalFile = files.find((f) => f.type === type);
       if (!additionalFile) continue;
 
-      const additionalFileName = getDownloadFilename({ model, modelVersion, file: additionalFile });
+      const additionalFileName = getDownloadFilename({
+        model,
+        modelVersion,
+        file: additionalFile,
+        versionFiles: files,
+      });
       commands.push({
         type: 'resources:add',
         resource: {
