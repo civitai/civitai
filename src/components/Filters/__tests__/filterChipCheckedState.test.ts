@@ -31,26 +31,32 @@ import { describe, expect, it } from 'vitest';
  * `--chip-icon-color` does the same job for the check mark, which Mantine also draws white.
  *
  * WHY THIS IS A SOURCE GUARD, MEASURED RATHER THAN ASSUMED. A rendered version was
- * written and run in the browser `component` project, and it cannot work: that harness
- * loads neither `@mantine/core/styles.css` nor Mantine's runtime theme variables. With
- * the fix in place, a checked `FilterChip` there computes `border-top-width: 0px`,
- * `border-top-style: none`, and BOTH `--mantine-primary-color-filled` and
- * `--mantine-color-text` read as the empty string on `:root` and on the label. So the
- * rendered assertion fails identically whether the fix is present or absent — it
- * distinguishes nothing. (`test/component-setup.tsx` injects only the `:root` custom
- * properties parsed out of `globals.css`.) The browser evidence for this change is the
- * manual measurement recorded above, not a suite.
+ * written and run in the browser `component` project, and it cannot work: with the fix in
+ * place a checked `FilterChip` there computes `border-top-width: 0px` and
+ * `border-top-style: none`, and both `--mantine-primary-color-filled` and
+ * `--mantine-color-text` read as the EMPTY STRING on `:root` and on the label — so the
+ * assertion fails identically whether the fix is present or absent. `MantineProvider`
+ * does inject theme variables, but `deduplicateCssVariables` (default true) strips every
+ * variable matching Mantine's default on the assumption `styles.css` is loaded, and the
+ * harness loads only the `:root` properties parsed out of `globals.css`
+ * (`test/component-setup.tsx`). The browser evidence for this change is the manual
+ * measurement recorded above, not a suite.
+ *
+ * 🔴 EVERY ASSERTION HERE IS TEXTUAL. It reads source, not rendered CSS, so it can be
+ * satisfied by text that does not have the claimed effect and can refuse a valid edit it
+ * does not recognise. Where a message below sounds definite, it is describing what the
+ * source says, not what a browser computed.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
-// Resolved through node rather than joined onto REPO_ROOT: pnpm's layout is a symlink
-// farm, and a hand-built path is the thing that goes stale when a worktree is laid out
-// differently from the primary checkout.
-// `styles.layer.css`, not `styles.css`: that is the build the app imports
-// (`src/pages/_app.tsx`), and the layered one is what the cascade claim below rests on.
-const MANTINE_CSS = createRequire(__filename).resolve('@mantine/core/styles.layer.css');
 
-/** The modules whose `.label` class is actually handed to a Mantine `Chip`. */
+/**
+ * The modules in THIS change's scope — five of the seven `.label` modules handed to a
+ * Mantine `Chip`. NOT an inventory: `ImageGeneration/GenerationForm/ResourceSelectFilters`
+ * and `PurchasableRewards/PurchasableRewardsModeratorFiltersDropdown` are the same copied
+ * rule and are deliberately not listed, so a checked chip there still renders as a filled
+ * pill. Add them here when they are brought into line.
+ */
 const CHIP_LABEL_MODULES = [
   'src/components/Filters/FilterChip.module.scss',
   'src/components/CosmeticShop/ShopFiltersDropdown.module.scss',
@@ -70,7 +76,7 @@ function read(file: string): string {
  * Strip comments — every token searched for below is also discussed in the file it is
  * sought in. Trailing `//` comments are stripped too, not just full-line ones: a trailing
  * comment can otherwise satisfy a positive assertion whose declaration was deleted, and
- * can trip the negative one with prose.
+ * can trip a negative one with prose.
  */
 function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
@@ -90,33 +96,68 @@ function blockAt(src: string, at: number): string | null {
 }
 
 /**
- * The `&[data-checked]` body inside the `.label` rule.
+ * The `.label` rule body.
  *
- * 🔴 SCOPED TO `.label` FIRST, DELIBERATELY. Searching the whole file for the first
- * `&[data-checked]` would read a decoy in any rule above it — and if that decoy happened
- * to be compliant while `.label`'s own copy rotted, the pass would be silent. This is the
- * one failure mode in the file that would not be loud.
+ * 🔴 EVERYTHING BELOW IS SCOPED THROUGH THIS, DELIBERATELY. Searching a whole module for a
+ * selector or a declaration reads decoys in unrelated rules — and a decoy that happens to
+ * be compliant while `.label`'s own copy rots is the one failure mode in this file that
+ * would not be loud.
  */
-function checkedBlock(src: string): string | null {
-  const label = blockAt(src, src.search(/^\.label\s*\{/m));
-  if (label === null) return null;
-  return blockAt(label, label.indexOf('&[data-checked]'));
+function labelBlock(src: string): string | null {
+  return blockAt(src, src.search(/^\.label\s*\{/m));
 }
 
-/** How many times a property is declared — `color:` must not match `background-color:`. */
-function declarationCount(block: string, property: string): number {
-  const re = new RegExp(`(^|[;{}\\s])${property.replace(/-/g, '\\-')}\\s*:`, 'g');
-  return (block.match(re) ?? []).length;
+/**
+ * The declarations that apply to a checked chip: the body of the `&, &:hover` group inside
+ * `&[data-checked]`. Scoped to that group rather than to the whole checked block so a
+ * sibling rule — `&:focus-visible`, a `@media` — is not counted as an override of it.
+ */
+function checkedDeclarations(label: string): string | null {
+  const checked = blockAt(label, label.indexOf('&[data-checked]'));
+  if (checked === null) return null;
+  return blockAt(checked, checked.search(/&\s*,\s*\n?\s*&:hover/));
+}
+
+/**
+ * How many times any member of a shorthand family is declared.
+ *
+ * 🔴 THE FAMILY, NOT THE PROPERTY. `border: 1px solid …; border-width: 0;` overrides the
+ * pinned value while leaving exactly one `border:` — and longhand override of a chip
+ * border is a live idiom here (`StickerPlacementTray.tsx` does it inline, on purpose).
+ * Counting only the exact property would miss the very shape this check exists for.
+ */
+function declarationCount(block: string, family: readonly string[]): number {
+  return family.reduce((total, property) => {
+    const re = new RegExp(`(^|[;{}\\s])${property.replace(/-/g, '\\-')}\\s*:`, 'g');
+    return total + (block.match(re) ?? []).length;
+  }, 0);
 }
 
 describe('filter chips render a visible border when checked', () => {
   it.each(CHIP_LABEL_MODULES)('%s', (relative) => {
     const src = code(read(path.join(REPO_ROOT, relative)));
-    const block = checkedBlock(src);
+    const label = labelBlock(src);
+    expect(
+      label,
+      `${relative} no longer has a top-level \`.label\` rule — re-point this guard deliberately ` +
+        'rather than letting it pass over a renamed selector.'
+    ).not.toBeNull();
+
+    // Asserted against the selector text, not against the file: the same substring appearing
+    // on some unrelated rule would otherwise satisfy this while the scoping had moved.
+    expect(
+      /&\[data-checked\]:not\(\[data-disabled\]\)\s*\{/.test(label as string),
+      `${relative} no longer excludes disabled chips from the checked rule. Mantine scopes every ` +
+        'one of its own checked rules that way; unscoped, this clears the greyed disabled ' +
+        'background too and a disabled checked chip reads as enabled. Keep the `:not()` on the ' +
+        'checked selector rather than on `.label`, or the chip typography gets scoped behind it too.'
+    ).toBe(true);
+
+    const block = checkedDeclarations(label as string);
     expect(
       block,
-      `${relative} no longer has a \`&[data-checked]\` block inside its \`.label\` rule — ` +
-        're-point this guard deliberately rather than letting it pass over a renamed selector.'
+      `${relative} no longer has an \`&, &:hover\` group inside \`&[data-checked]\` — the ` +
+        'declarations below are read from that group, so this guard now checks nothing. Re-point it.'
     ).not.toBeNull();
     const checked = block as string;
 
@@ -150,25 +191,24 @@ describe('filter chips render a visible border when checked', () => {
     ).toBe(true);
 
     // 🔴 A SECOND DECLARATION IS HOW A REPAIRED RULE GOES BACK TO BEING INEFFECTIVE, and a
-    // fragment match cannot see the cascade: `border: 1px solid var(…); border: none;`
-    // satisfies every assertion above while drawing nothing. That is this bug's own history
-    // — a declaration present and overridden — so it is checked by count, not by presence.
-    for (const property of ['border', 'background-color', 'color'] as const) {
-      const count = declarationCount(checked, property);
+    // fragment match cannot see the cascade: `border: 1px solid var(…); border-width: 0;`
+    // satisfies every assertion above while drawing nothing. That is this bug's own history —
+    // a declaration present and overridden — so it is checked by count across the family.
+    const families = {
+      border: ['border', 'border-width', 'border-style', 'border-color'],
+      background: ['background', 'background-color'],
+      color: ['color'],
+    } as const;
+    for (const [name, family] of Object.entries(families)) {
+      const count = declarationCount(checked, family);
       expect(
         count,
-        `${relative} declares \`${property}\` ${count} times in the checked block. The later one ` +
-          'wins, so the pinned value above may not be what renders. Keep one declaration per ' +
-          'property here.'
+        `${relative} declares ${name} ${count} times in the checked group (counting ` +
+          `${family.join(', ')}). The later one wins, so the pinned value above may not be what ` +
+          'renders. Keep one declaration per family here; a legitimate second one belongs in its ' +
+          'own nested rule, which this count does not read.'
       ).toBe(1);
     }
-
-    expect(
-      /:not\(\[data-disabled\]\)/.test(src),
-      `${relative} no longer excludes disabled chips from the checked rule. Mantine scopes every ` +
-        'one of its own checked rules with `:not([data-disabled])`; unscoped, this clears the ' +
-        'greyed disabled background too and a disabled checked chip reads as enabled.'
-    ).toBe(true);
 
     // 🔴 The dead selector, kept out by name. It is the plausible "fix" someone re-adds.
     expect(
@@ -180,17 +220,20 @@ describe('filter chips render a visible border when checked', () => {
   });
 
   /**
-   * The LIBRARY half: the property the source half names has to exist, and has to exist
-   * UNCONDITIONALLY. Pinned against the installed package so a Mantine upgrade that drops it,
-   * or moves it behind a colour scheme, is caught HERE with an explanation.
+   * The LIBRARY half: the property the source half names has to exist. Pinned against the
+   * installed package so a Mantine upgrade that drops it is caught HERE with an explanation.
+   *
+   * Scope note, so this claims no more than it proves: only the FIRST hop is asserted to be
+   * unconditional. `--mantine-primary-color-filled` resolves to `--mantine-color-blue-filled`,
+   * which Mantine defines per colour scheme and never unconditionally — that is by design
+   * (`ColorSchemeScript` always sets the attribute), and it is not what this pins.
    */
   it('`--mantine-primary-color-filled` is defined on Mantine’s unconditional `:root`', () => {
-    const css = read(MANTINE_CSS);
+    // Resolved here rather than at module scope: a tree without `node_modules` then fails this
+    // one test with its own message instead of taking the whole file down as a collection error.
+    const mantineCss = createRequire(__filename).resolve('@mantine/core/styles.layer.css');
+    const css = read(mantineCss);
     const root = blockAt(css, css.search(/:root\s*\{/));
-    // The control is real only because the assertion below reads THIS slice: an unscoped
-    // search over the whole file would stay green if the definition moved into a
-    // scheme-specific or @media rule, which is the failure that would cost light mode its
-    // border again.
     expect(
       root,
       "Mantine no longer ships a bare `:root` rule — this guard's extraction is stale, not the claim."
@@ -205,24 +248,30 @@ describe('filter chips render a visible border when checked', () => {
   });
 
   /**
-   * 🔴 THE WHOLE FIX RESTS ON CASCADE LAYERS, AND SPECIFICITY IS A TIE UNDERNEATH.
-   * `.label[data-checked]` and Mantine's `.m_fa109255:not([data-disabled]):where([data-checked])`
-   * are both (0,2,0). What makes the module win is that `postcss.config.js` wraps every
-   * `*.module.scss` in `@layer modules`, `_app.tsx` imports Mantine's `styles.layer.css`
-   * (`@layer mantine`), and `_document.tsx` declares `modules` AFTER `mantine`. Remove or
-   * reorder that declaration and these five rules lose to Mantine on source order — a coin
-   * flip that would restore the filled background with nothing else changing.
+   * 🔴 THE FIX RESTS ON CASCADE LAYERS, AND A LAYER BEATS ANY SPECIFICITY.
+   * `postcss.config.js` wraps every `*.module.scss` in `@layer modules`, `_app.tsx` imports
+   * Mantine's `styles.layer.css` (`@layer mantine`), and `_document.tsx` declares `modules`
+   * AFTER `mantine`. The module rule also out-specifies Mantine's since it gained
+   * `:not([data-disabled])` — (0,3,0) against (0,2,0) — but that is no defence: reorder the
+   * declaration and the `mantine` layer wins regardless of specificity, restoring the filled
+   * background with nothing else changing.
    */
   it('the `modules` layer still outranks `mantine`, which is why these rules apply at all', () => {
     const doc = read(path.join(REPO_ROOT, 'src/pages/_document.tsx'));
-    const order = /@layer ([a-z-]+(?:,\s*[a-z-]+)*);/.exec(doc);
+    // Matched on the string that SHIPS, not on the first `@layer` in the file: the comment above
+    // that line quotes the declaration, and prose would otherwise satisfy this.
+    const order = /__html:\s*'@layer ([^']+);'/.exec(doc);
     expect(
       order,
-      'src/pages/_document.tsx no longer declares a `@layer` order. Without it the checked-chip ' +
-        'rules below fall back to source order against Mantine, which is not something anything ' +
-        'in this repo controls.'
+      'src/pages/_document.tsx no longer emits a `@layer` order via `__html`. Without that ' +
+        'declaration the checked-chip rules fall back to layer order as encountered, which is not ' +
+        'something anything in this repo controls.'
     ).not.toBeNull();
     const names = (order as RegExpExecArray)[1].split(',').map((n) => n.trim());
+    // Membership before comparison: `indexOf` returns -1 for an absent name, so an ordering
+    // assertion alone passes when `mantine` is simply gone.
+    expect(names, `the declared layer order is [${names.join(', ')}]`).toContain('mantine');
+    expect(names, `the declared layer order is [${names.join(', ')}]`).toContain('modules');
     expect(
       names.indexOf('modules'),
       `the declared layer order is [${names.join(
@@ -231,7 +280,23 @@ describe('filter chips render a visible border when checked', () => {
         "or every checked filter chip goes back to Mantine's filled background and the border " +
         'becomes invisible again.'
     ).toBeGreaterThan(names.indexOf('mantine'));
-    expect(names).toContain('mantine');
+  });
+
+  /**
+   * The other half of that: Mantine has to be IN a layer for the order to bind. Swapping this
+   * one import for `@mantine/core/styles.css` leaves Mantine unlayered, and unlayered
+   * declarations beat every named layer — so the filled background returns and the border goes
+   * invisible again, with nothing else in the repo changing. It is a one-word edit of exactly
+   * the kind someone makes while debugging a layer problem.
+   */
+  it('Mantine is imported as its LAYERED build', () => {
+    const app = code(read(path.join(REPO_ROOT, 'src/pages/_app.tsx')));
+    expect(
+      /@mantine\/core\/styles\.layer\.css/.test(app),
+      'src/pages/_app.tsx no longer imports `@mantine/core/styles.layer.css`. The unlayered ' +
+        '`styles.css` build beats every layered rule, including the checked-chip rules in ' +
+        '`*.module.scss`, so the filled background comes back and the border becomes invisible.'
+    ).toBe(true);
   });
 
   /**
@@ -244,7 +309,8 @@ describe('filter chips render a visible border when checked', () => {
     const relative = 'src/components/Filters/AdaptiveFiltersDropdown.module.scss';
     const src = code(read(path.join(REPO_ROOT, relative)));
     // Matches the class wherever a selector could reintroduce it — grouped (`.label, .x`),
-    // qualified (`.label:not(…)`) or nested — rather than the one spelling it had.
+    // qualified (`.label:not(…)`) or nested — rather than the one spelling it had. A descendant
+    // form (`.wrap .label`) is not matched and would be equally unreachable style.
     expect(
       /(^|[,{}])\s*\.label\b/m.test(src),
       `${relative} has a \`.label\` rule again. Nothing applies it — the component passes only ` +
