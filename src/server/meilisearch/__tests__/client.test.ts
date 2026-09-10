@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { MeiliSearch } from 'meilisearch';
 
 // Tests for the fail-fast safety net on fetchDocumentsAbortable. Goal: prove
 // that (a) the function rejects within ~timeoutMs when upstream is slow,
@@ -28,6 +29,7 @@ vi.mock('~/env/server', () => ({
     MEILI_CALL_TIMEOUT_MS: 2500,
     MEILI_CALL_CONCURRENCY: 50,
     MEILI_RESOURCE_SELECT_CONCURRENCY: 500,
+    MEILI_RESOURCE_SELECT_TIMEOUT_MS: 100,
     MEILI_CIRCUIT_TRIP_THRESHOLD: 10,
     MEILI_CIRCUIT_WINDOW_SECONDS: 30,
     MEILI_CIRCUIT_COOLDOWN_SECONDS: 30,
@@ -1264,5 +1266,114 @@ describe('service-catch → meiliFetchFailfastTotal{route, reason} on a transien
 
     expect(reThrown).toBe(apiError500);
     expect(incMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('withMeiliResourceSelect cancellation', () => {
+  function abortableCall(signal: AbortSignal) {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<never>((_, reject) =>
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    );
+  }
+
+  it('aborts the signal handed to the call when the timeout fires', async () => {
+    const { withMeiliResourceSelect, MeiliCallTimeoutError } = await import(
+      '~/server/meilisearch/client'
+    );
+    let seen: AbortSignal | undefined;
+
+    const call = withMeiliResourceSelect((signal) => {
+      seen = signal;
+      return new Promise<never>(() => undefined);
+    });
+
+    await expect(call).rejects.toBeInstanceOf(MeiliCallTimeoutError);
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it('aborts the signal handed to the call when the caller aborts', async () => {
+    const { withMeiliResourceSelect } = await import('~/server/meilisearch/client');
+    const caller = new AbortController();
+    let seen: AbortSignal | undefined;
+
+    const call = withMeiliResourceSelect(
+      (signal) => {
+        seen = signal;
+        return abortableCall(signal);
+      },
+      { signal: caller.signal }
+    );
+    caller.abort();
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+    expect(seen?.aborted).toBe(true);
+  });
+});
+
+describe('searchWithSignal', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  // A 200 whose body stalls after a partial chunk, then fails on abort or after
+  // `failAfterMs` — the shape that makes meilisearch-js resolve `undefined`.
+  function stallingBodyFetch(failAfterMs = 1000) {
+    const seen: { signal?: AbortSignal } = {};
+    const fetchFn = (_input: unknown, init?: { signal?: AbortSignal }) => {
+      seen.signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"hits":['));
+          const timer = setTimeout(
+            () => controller.error(new Error('socket hang up')),
+            failAfterMs
+          );
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              controller.error(init.signal?.reason);
+            },
+            { once: true }
+          );
+        },
+      });
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })
+      );
+    };
+    return { fetchFn: fetchFn as unknown as typeof fetch, seen };
+  }
+
+  it('rejects with the abort, not an empty result, when aborted mid-body', async () => {
+    const { searchWithSignal } = await import('~/server/meilisearch/client');
+    const { fetchFn, seen } = stallingBodyFetch();
+    global.fetch = fetchFn;
+    const ctrl = new AbortController();
+    const index = new MeiliSearch({ host: 'http://meili-search.example' }).index('models');
+
+    const call = searchWithSignal(index, '', {}, ctrl.signal);
+    setTimeout(() => ctrl.abort(), 10);
+
+    await expect(call).rejects.toMatchObject({ name: 'AbortError' });
+    expect(seen.signal).toBeDefined();
+  });
+
+  it('treats a body that never arrives as a transient upstream failure', async () => {
+    const { searchWithSignal, isTransientMeiliError, MeilisearchFetchError } = await import(
+      '~/server/meilisearch/client'
+    );
+    global.fetch = stallingBodyFetch(10).fetchFn;
+    const index = new MeiliSearch({ host: 'http://meili-search.example' }).index('models');
+
+    const err = await searchWithSignal(index, '', {}, new AbortController().signal).catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(MeilisearchFetchError);
+    expect(isTransientMeiliError(err)).toBe(true);
   });
 });
