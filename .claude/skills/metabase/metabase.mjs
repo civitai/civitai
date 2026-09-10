@@ -528,24 +528,22 @@ function assertNoBareSqlComment(sql, what = 'SQL') {
   }
 }
 
-// Metabase normalises `{{snippet:name}}` to a tag named `snippet: name`, but does NOT normalise a space
-// BEFORE the colon, and it preserves the CASE of the prefix -- `{{SNIPPET: x}}` is a working reference
-// whose tag is named `SNIPPET: x`. The reference regex below matches a lowercase prefix only, so an
-// uppercase one is invisible to it exactly as a space-before-colon is. The checker matches
-// case-insensitively so both are refused rather than written; the reference regex stays case-sensitive,
-// so the only accepted spelling is the one it can see.
-// BEFORE the colon: `{{snippet : name}}` requires a tag named literally `snippet : name`. That spelling
-// is invisible to the reference regex below, so the card is written with no tag, cannot run, and the tag
-// verification stays silent because it has nothing to expect. Refusing it here is the cheap close --
-// it costs an odd spelling nobody wants and removes the one path where the verification is vacuous.
+// Metabase normalises `{{snippet:name}}` to a tag named `snippet: name`, but it does NOT normalise a
+// space before the colon, and it preserves the CASE of the prefix -- `{{snippet : x}}` and `{{SNIPPET: x}}`
+// are references it demands a tag for under that exact spelling. Both are invisible to the reference regex
+// below, which matches a lowercase prefix with no leading space, so a card written with either gets no
+// tag, cannot run, and the tag verification stays silent because it has nothing to expect. The checker
+// matches case-insensitively so both are refused rather than written; the reference regex stays
+// case-sensitive, so the only accepted spelling is the one it can see.
 function assertCanonicalSnippetRefs(sql) {
   const bad = [...sql.matchAll(/\{\{\s*(snippet[^:}]*:[^}]*?)\s*\}\}/gi)]
     .map((m) => m[1].trim())
     .filter((ref) => !/^snippet:\s*\S/.test(ref));
   if (bad.length) {
     console.error(`Error: unusable snippet reference(s): ${bad.map((r) => `{{${r}}}`).join(', ')}`);
-    console.error('Write them as {{snippet: name}}. A space before the colon, an uppercase prefix, or an');
-    console.error('empty name gives a card this tool cannot tag, and Metabase then cannot run it.');
+    console.error('Write them as {{snippet: name}}. A space before the colon, an uppercase prefix, an');
+    console.error('empty name, or a prefix that is not exactly `snippet` gives a card this tool cannot');
+    console.error('tag, and Metabase then cannot run it.');
     process.exit(1);
   }
 }
