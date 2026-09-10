@@ -37,7 +37,7 @@ export type ModeratorReportRow = {
 /**
  * Where to send a moderator for a reported thing that has no page of its own.
  *
- * Six of the fifteen report types name something the site only reaches through a parent — a comment
+ * Six of the sixteen report types name something the site only reaches through a parent — a comment
  * through its thread, a bounty entry through its bounty — so `entityUrl` returns null for them and the
  * row rendered as dead grey text. That was most of a moderator's clicks on the reports surfaces: the
  * only way to the words being reported was to search for them.
@@ -110,9 +110,8 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       SELECT '/user/' || u.username FROM "User" u WHERE u.id = ${entityId} AND u.username IS NOT NULL
     )`,
 
-  // An announcement has no page of its own, so `entityUrl` returns null and the row would
-  // render as dead grey text. The author's profile is where their announcements are rendered.
-  // Null for a sitewide row (`userId IS NULL`), which is not reportable.
+  // The author's profile is where an announcement is rendered; null for a sitewide row
+  // (`userId IS NULL`), which is not reportable.
   announcement: (entityId) =>
     sql<string | null>`(
       SELECT '/user/' || u.username
@@ -397,7 +396,7 @@ export type MostReportedRow = {
   reportCount: number;
   /** The reporter's own free-form fields. The only thing left to judge an `other` row on. */
   details: unknown;
-  /** `other` only when the report has no row in ANY of the fifteen report tables. */
+  /** `other` only when the report has no row in ANY of the sixteen report tables. */
   entity: ReportEntity | 'other';
   entityId: number | null;
   /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
@@ -531,7 +530,7 @@ async function fetchMostReported({
   offset = 0,
   days = 7,
 }: MostReportedParams): Promise<MostReportedRow[]> {
-  // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the fifteen
+  // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the sixteen
   // per-type id columns are generated from `reportEntityJoin` rather than written out.
   //
   // The +1 is the report's own filer: `alsoReportedBy` holds every reporter EXCEPT `Report.userId`,

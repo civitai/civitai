@@ -121,7 +121,7 @@ describe('getReportHistory', () => {
 });
 
 describe('the queries that fan out over every entity at once', () => {
-  it('getReportCounts names all fifteen report tables', async () => {
+  it('getReportCounts names all sixteen report tables', async () => {
     await service.getReportCounts();
 
     const [sql] = emitted();
@@ -188,6 +188,7 @@ describe('report rows link to what was reported', () => {
       'context:bountyEntry',
       'context:model3dReview',
       'context:reportedUser',
+      'context:announcement',
     ])
       expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
   });

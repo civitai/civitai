@@ -78,7 +78,7 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     }
   );
 
-  it('getReportCounts — the materialized CTE and all fifteen union branches', async () => {
+  it('getReportCounts — the materialized CTE and all sixteen union branches', async () => {
     await service.getReportCounts();
 
     const [counts] = h.queries;

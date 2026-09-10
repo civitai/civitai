@@ -122,7 +122,7 @@
 
   // `getReportItemUrl`, not `entityUrl`: a chat has no page on the site (its transcript is Chat Audit,
   // in this app) and a comment hangs off a parent, so neither is derivable from the entity id.
-  // 'other' is what `Report` looks like when it joins none of the fifteen report tables — the row it
+  // 'other' is what `Report` looks like when it joins none of the sixteen report tables — the row it
   // named is gone, or was never written. "unknown" read as a rendering bug rather than a fact about
   // the report, which is what the mod team asked about.
   const entityLabel = (row: Reported) =>
