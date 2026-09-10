@@ -6,6 +6,7 @@ import type {
   DriftReport,
   ParsedModel,
   ParsedSchema,
+  SkipClassification,
   SkippedModel,
   SkippedRelation,
 } from './types';
@@ -79,6 +80,8 @@ export function assessCoverage(report: DriftReport): string[] {
 
 interface CatalogIndex {
   tables: Set<string>;
+  /** `null` when the snapshot carries no view list — unclassifiable, not empty. */
+  views: Set<string> | null;
   columns: Map<string, boolean>;
   foreignKeys: Map<string, CatalogForeignKey>;
   uniqueIndexes: Set<string>;
@@ -98,7 +101,13 @@ function indexCatalog(catalog: DbCatalog): CatalogIndex {
   const uniqueIndexes = new Set<string>();
   for (const u of catalog.uniqueIndexes) uniqueIndexes.add(key([u.table, ...u.columns]));
 
-  return { tables: new Set(catalog.tables), columns, foreignKeys, uniqueIndexes };
+  return {
+    tables: new Set(catalog.tables),
+    views: catalog.views ? new Set(catalog.views) : null,
+    columns,
+    foreignKeys,
+    uniqueIndexes,
+  };
 }
 
 function columnFor(model: ParsedModel, fieldName: string): string | null {
@@ -116,6 +125,8 @@ function emptyCounts(): DriftCounts {
     referentialActionUnknown: 0,
     columnsChecked: 0,
     missingColumns: 0,
+    missingTables: 0,
+    modelsUnclassified: 0,
     nullabilityDrifts: 0,
     uniqueDeclarationsChecked: 0,
     uniquenessDrifts: 0,
@@ -141,24 +152,45 @@ export function compareSchemaToCatalog(schema: ParsedSchema, catalog: DbCatalog)
   for (const model of schema.models) {
     counts.declaredRelations += model.relations.length;
 
-    // A model Prisma does not manage, or one backed by a view or a table that no longer
-    // exists, is skipped wholesale. Reporting it would be noise, not drift: there is no
-    // table for a constraint to live on.
-    const unmanaged = model.ignored
-      ? 'model carries @@ignore'
-      : !live.tables.has(model.table)
-      ? `table "${model.table}" is not an ordinary table (view, or absent)`
-      : null;
+    // A model Prisma does not manage, or one backed by a view, is skipped wholesale:
+    // reporting it would be noise, not drift, because there is no table for a constraint to
+    // live on. A model backed by NOTHING is the opposite — it is the largest divergence this
+    // tool can encounter — and until the catalog carried a view list the two arrived here
+    // indistinguishable and were both silently dropped. Measured on the 2026-08-03 snapshot:
+    // 45 of 316 models took this branch, the gate printed none of them, and appending a model
+    // on an invented table produced output byte-identical to a clean run.
+    const skip = classifySkip(model, live);
 
-    if (unmanaged) {
-      skippedModels.push({ model: model.name, table: model.table, reason: unmanaged });
+    if (skip) {
+      skippedModels.push({
+        model: model.name,
+        table: model.table,
+        classification: skip.classification,
+        reason: skip.reason,
+      });
+      if (skip.classification === 'absent') {
+        counts.missingTables += 1;
+        findings.push({
+          kind: 'missing-table',
+          table: model.table,
+          columns: [],
+          model: model.name,
+          declared: `model ${model.name} mapped to table "${model.table}"`,
+          actual: 'no such table or view',
+          detail:
+            `nothing about ${model.name} was compared — its ${model.fields.length} field(s), ` +
+            `${model.relations.length} relation(s) and ${model.uniques.length} unique ` +
+            'declaration(s) are all unchecked',
+        });
+      }
+      if (skip.classification === 'unclassified') counts.modelsUnclassified += 1;
       counts.relationsSkipped += model.relations.length;
       for (const relation of model.relations) {
         skippedRelations.push({
           model: model.name,
           table: model.table,
           field: relation.field,
-          reason: unmanaged,
+          reason: skip.reason,
         });
       }
       continue;
@@ -170,6 +202,27 @@ export function compareSchemaToCatalog(schema: ParsedSchema, catalog: DbCatalog)
   }
 
   return { counts, findings, skippedRelations, skippedModels };
+}
+
+function classifySkip(
+  model: ParsedModel,
+  live: CatalogIndex
+): { classification: SkipClassification; reason: string } | null {
+  if (model.ignored) return { classification: 'ignored', reason: 'model carries @@ignore' };
+  if (live.tables.has(model.table)) return null;
+  if (live.views === null) {
+    return {
+      classification: 'unclassified',
+      reason: `table "${model.table}" is not an ordinary table (view, or absent — this snapshot carries no view list)`,
+    };
+  }
+  if (live.views.has(model.table)) {
+    return { classification: 'view', reason: `"${model.table}" is a view` };
+  }
+  return {
+    classification: 'absent',
+    reason: `"${model.table}" is neither a table nor a view in this catalog`,
+  };
 }
 
 function checkRelations(

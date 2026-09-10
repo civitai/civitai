@@ -40,7 +40,14 @@
  * by being structurally unmeasurable rather than by being waved through, and the gate says
  * so on its own line rather than printing a clean zero. See `assertMeasuredSomething`.
  */
-import type { CatalogColumn, DbCatalog, DriftFinding, DriftReport } from './types';
+import type {
+  CatalogColumn,
+  DbCatalog,
+  DriftFinding,
+  DriftReport,
+  SkipClassification,
+  SkippedModel,
+} from './types';
 
 export type GateTier = 'enforced' | 'pending';
 
@@ -93,6 +100,15 @@ export interface GateResult {
   total: number;
   /** Referential-action comparisons the catalog could not support. */
   referentialActionUnknown: number;
+  /**
+   * Models the differ compared nothing about.
+   *
+   * Printed on every run for the same reason `matched of N` is: a verdict that lists no
+   * findings for a model is indistinguishable from one that never looked at it. On the
+   * 2026-08-03 snapshot this is 45 of 316 models, and none of them appeared anywhere in the
+   * gate's output before.
+   */
+  skipped: SkippedModel[];
 }
 
 export interface EscalatedFinding {
@@ -189,8 +205,9 @@ export function tierOf(finding: DriftFinding, catalog: DbCatalog): GateTier {
 function tierWith(finding: DriftFinding, known: Set<string>): GateTier {
   switch (finding.kind) {
     case 'missing-column':
-      // The column's absence IS the finding, so this is always the schema running ahead of
-      // the snapshot. Never blocking.
+    case 'missing-table':
+      // The absence IS the finding, so this is always the schema running ahead of the
+      // snapshot. Never blocking.
       return 'pending';
     case 'nullability':
     case 'uniqueness':
@@ -316,6 +333,7 @@ export function evaluateGate(
     matched,
     total: report.findings.length,
     referentialActionUnknown: report.counts.referentialActionUnknown,
+    skipped: report.skippedModels,
   };
 }
 
@@ -429,9 +447,45 @@ export function snapshotAge(capturedAt: string | null | undefined, now: Date): S
 export const STALE_AFTER_DAYS = 90;
 
 function describe(finding: DriftFinding): string {
-  const where = `${finding.table}.${finding.columns.join('+')}`;
+  // A missing-table finding is about the whole relation, so it carries no columns.
+  const where =
+    finding.columns.length === 0 ? finding.table : `${finding.table}.${finding.columns.join('+')}`;
   const via = finding.field ? ` (${finding.model}.${finding.field})` : ` (${finding.model})`;
   return `${finding.kind}  ${where}${via}\n      declared: ${finding.declared}\n      database: ${finding.actual}`;
+}
+
+/**
+ * What the run did not look at.
+ *
+ * A gate that lists no finding for a model reads exactly like a gate that found it clean.
+ * These lines are the difference, and they are printed unconditionally for the same reason
+ * the snapshot's age is: a coverage hole that is only shown once it crosses a threshold is
+ * one nobody has a feel for when it does.
+ */
+function skippedLines(skipped: readonly SkippedModel[]): string[] {
+  if (skipped.length === 0) return [];
+  const by = (c: SkipClassification) => skipped.filter((s) => s.classification === c);
+  const ignored = by('ignored');
+  const views = by('view');
+  const absent = by('absent');
+  const unclassified = by('unclassified');
+
+  const lines: string[] = ['', `Models NOT compared at all — ${skipped.length}`];
+  if (ignored.length > 0) lines.push(`  @@ignore                 : ${ignored.length}`);
+  if (views.length > 0) lines.push(`  backed by a view         : ${views.length}`);
+  if (absent.length > 0) {
+    lines.push(`  table absent entirely    : ${absent.length}  <- reported as missing-table`);
+  }
+  if (unclassified.length > 0) {
+    lines.push(
+      `  view or absent, unknown  : ${unclassified.length}\n` +
+        '  This snapshot carries no view list, so a model on a view and a model on nothing\n' +
+        '  are indistinguishable here and BOTH are unchecked. Recapture the catalog\n' +
+        '  (`drift --dump-catalog`) to split them.'
+    );
+    for (const s of unclassified) lines.push(`    ${s.model} -> ${s.table}`);
+  }
+  return lines;
 }
 
 export function formatGateResult(
@@ -471,6 +525,8 @@ export function formatGateResult(
       lines.push(`  STALE: ${note}`);
     }
   }
+
+  lines.push(...skippedLines(result.skipped));
 
   if (result.escalated.length > 0) {
     lines.push('');

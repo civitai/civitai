@@ -78,9 +78,19 @@ regardless of `--strict` rather than reporting a reassuring zero.
 - **Block attributes are read with comments stripped.** `@@map` / `@@ignore` / `@@unique`
   are matched against the model body, so a stray `// @@ignore` left behind by a revert
   would otherwise skip an entire model and every constraint on it, silently.
-- **Models mapped to a view or to a table that does not exist are skipped**, along with
-  models carrying `@@ignore`. They are counted and listed (`--verbose`), not reported as
-  drift: there is no table for a constraint to live on.
+- **Models mapped to a view are skipped**, along with models carrying `@@ignore`: there is
+  no table for a constraint to live on. **A model mapped to nothing at all is a
+  `missing-table` finding**, not a skip. Those two used to be the same branch, and that
+  inverted the tool: an absent column was at least a pending finding, so the bigger the
+  divergence the quieter it got — appending a model on an invented table produced output
+  byte-identical to a clean run. The discriminator is the catalog's `views` list.
+- **Every skipped model is printed, by both the report and the gate**, with its count. A
+  verdict that lists no finding for a model is otherwise indistinguishable from one that
+  never looked at it. On the 2026-08-03 snapshot that is 45 of 316 models.
+- **A snapshot with no `views` key cannot classify a skip**, and says so rather than
+  guessing. Reading an absent list as an empty one would accuse all 24 view-backed models in
+  that snapshot of being missing tables — fabricated findings, in the direction that looks
+  like progress.
 - **Partial unique indexes do not count.** A `WHERE`-clause index enforces uniqueness only
   over the rows it matches; a `@unique` declaration is a promise about every row.
 - **Expression indexes are dropped** rather than matched by name, so a `lower(email)` index
@@ -180,28 +190,44 @@ pnpm --filter @civitai/db-schema drift \
 ```
 
 ```
-declared owning-side relations : 509
+declared owning-side relations : 512
 checked against the database   : 448
-skipped (view / absent table)  : 61
+skipped (view / absent table)  : 64
 MISSING foreign key            : 40
 wrong referential action       : 0   <- see below
-MISSING column                 : 18
-nullability checked            : 2348
+models NOT compared at all     : 45
+MISSING table                  : 0   <- see below
+view or absent, not classified : 45
+MISSING column                 : 23
+nullability checked            : 2345
 nullability drift              : 13
-uniqueness declarations checked: 122
+uniqueness declarations checked: 120
 missing unique index           : 1
 ```
 
-72 findings in total. The 13 nullability findings are `Purchase.userId`,
+77 findings in total. **`MISSING table: 0` is "not measured", not "clean"** — this snapshot
+predates the `views` query, so all 45 skipped models are unclassifiable and the check cannot
+fire. Measured against production on 2026-08-24, those 45 are 24 views and **21 ordinary
+tables that exist right now**, absent here only because the capture is 21 days old. A
+recapture turns that 0 into 21 and gives the 21 tables their first comparison of any kind. The 13 nullability findings are `Purchase.userId`,
 `ChallengeEvent.createdById`, nine `*Metric.updatedAt` columns, and
 `CosmeticShopItem.cosmeticId` / `UserCosmeticShopPurchases.cosmeticId`. Those last two are
 artefacts of the snapshot's age, not live drift: the packs migration made them nullable on
-2026-08-04 and the database has it. A recapture drops them. The 18 missing columns are
+2026-08-04 and the database has it. A recapture drops them. The 23 missing columns are
 `ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, `Challenge.judgingEngine`,
 `ChallengeJudge.judgingEngine`, `Collection.collaborationDisabledAt`,
 `CollectionItem.rejectionDetail`, three `Announcement.*`, three `Cosmetic.pHash*`,
-four `UserProfile.sfw*`, and two `app_block_publish_requests.source*`. The single uniqueness finding is
-`ImageResource(modelVersionId, name, imageId)`.
+three `ChatMember.*`, `ChatMessage.deletedAt`, four `UserProfile.sfw*`,
+two `app_block_publish_requests.source*`, and `app_listings.source_repo_url`. The single
+uniqueness finding is `ImageResource(modelVersionId, name, imageId)`.
+
+The three `Announcement.*` are worth knowing about, because they are the state the pending
+tier is NOT describing. `userId`, `coverId` and `profileOnly` are all present in production
+(checked 2026-08-24) and **no committed migration adds any of them** — an applied change with
+no migration, rather than a migration awaiting application. Both look identical here, which is
+why "the migrations directory says so" is not a sound discriminator for phantom declarations
+in either direction: measured on this pair, 3 of 3 columns with no migration were real, and 23
+of 23 models with no `CREATE TABLE` were views.
 
 **Nullability was 246 when this tool shipped.** #3592 then marked the seven `*Rank` families'
 columns optional to match the database and 235 of them went away — a real remediation, and
@@ -240,8 +266,9 @@ it looks like a usable substitute until you enumerate the foreign keys.
 ### A note on `/// @view`
 
 The tool does not read the `/// @view` annotation, and does not need to. Whether a model is
-backed by a view is decided from the catalog — `relkind IN ('r','p')` — so a model on a view
-is skipped because the database says it is a view, not because the schema says so. That
+backed by a view is decided from the catalog — `relkind IN ('v','m')`, captured alongside the
+`('r','p')` tables — so a model on a view is skipped because the database says it is a view,
+not because the schema says so. That
 matters, because the annotation is unreliable: the strip regex in
 `scripts/prisma-migrate-with-views-workaround.mjs` requires `/// @view` to be immediately
 followed by `model`, and 26 of the 32 annotated models have a blank line in between.
@@ -366,7 +393,17 @@ that **already exists**?
 | **enforced** | the columns are in the catalog and the constraint is not       | **fails the check** |
 | **pending**  | the column is not in the catalog, so the schema is ahead of it | warns               |
 
-`missing-column` is always pending by construction — the column's absence _is_ the finding.
+`missing-column` and `missing-table` are always pending by construction — the absence _is_ the
+finding.
+
+🔴 **Pending means the check exits 0, so a green run is not evidence that nothing was found.**
+That is the deliberate consequence of the split above, and it is worth stating plainly because
+it reads exactly like a clean run to anyone checking CI: on `main` today the gate prints 17 new
+pending findings and exits 0. Whether `missing-column` should be promoted out of pending is
+tracked in ClickUp `868ku7w6f`; it is a policy decision, and the blast radius is that those 17
+unbaselined findings go red for everyone until they are triaged. What the gate does do is print
+what it did not enforce, and what it did not look at.
+
 `nullability` and `uniqueness` are always enforced by construction — the differ only emits
 them for columns it found. `missing-foreign-key` is the only kind that can be either, decided
 by looking **every** one of its constrained columns up in the catalog: a composite key with one
