@@ -53,9 +53,14 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 /**
  * The modules in THIS change's scope — five of the seven `.label` modules handed to a
  * Mantine `Chip`. NOT an inventory: `ImageGeneration/GenerationForm/ResourceSelectFilters`
- * and `PurchasableRewards/PurchasableRewardsModeratorFiltersDropdown` are the same copied
- * rule and are deliberately not listed, so a checked chip there still renders as a filled
- * pill. Add them here when they are brought into line.
+ * and `PurchasableRewards/PurchasableRewardsModeratorFiltersDropdown` are deliberately not
+ * listed, so a checked chip there still renders as a filled pill.
+ *
+ * They are the AFTER-STATE OF A HALF-FIX, not untouched copies: both already name
+ * `--mantine-primary-color-filled` correctly, so their border draws — and is then hidden by
+ * the fill that the same dead `&[data-variant='filled']` clause fails to remove. Anyone
+ * fixing them should not go looking for the undefined variable; it is not there. Their label
+ * colours also differ from each other. Add them here when they are brought into line.
  */
 const CHIP_LABEL_MODULES = [
   'src/components/Filters/FilterChip.module.scss',
@@ -233,8 +238,12 @@ describe('filter chips render a visible border when checked', () => {
         'border-left',
         'border-block',
         'border-inline',
+        // Single-EDGE longhands (`border-top-width`, `border-inline-start`, …) are deliberately
+        // out of scope: each removes one edge rather than the border, so none reproduces this
+        // bug. Prefix-matching `border*` instead would sweep in `border-radius`, which is
+        // ordinary CSS on a chip, and refuse it.
       ],
-      background: ['background', 'background-color'],
+      background: ['background', 'background-color', 'background-image'],
       color: ['color'],
     } as const;
     for (const [name, family] of Object.entries(families)) {
@@ -289,8 +298,11 @@ describe('filter chips render a visible border when checked', () => {
    * background with nothing else changing.
    *
    * That contract is repo-wide, not a filter-chip one — `globals.css` documents it as governing
-   * every `*.module.scss`. This test and the one below it are currently its ONLY guards. The next
-   * module-level fix that leans on it should MOVE them into a shared guard, not copy them.
+   * every `*.module.scss`. This test and the one below it are the only guards that READ the
+   * declaration; `src/tests/geometry/geometryHarness.geometry.test.tsx` asserts a hand-copied
+   * literal of the same order against its own CSSOM, so a reorder of `_document.tsx` reddens these
+   * two and leaves that one green on the stale order. The next module-level fix that leans on this
+   * contract should MOVE all three into one shared guard rather than adding a fourth copy.
    */
   it('the `modules` layer still outranks `mantine`, which is why these rules apply at all', () => {
     // Comment-stripped: `_document.tsx` already carries a commented-out element
