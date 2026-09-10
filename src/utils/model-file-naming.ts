@@ -14,6 +14,12 @@ export type NameableFile = {
   metadata?: unknown;
 };
 
+/** A version name that only repeated the model name leaves nothing behind, and an empty segment
+ * would otherwise show up as a trailing or doubled underscore. */
+function joinNameParts(...parts: string[]) {
+  return parts.filter(Boolean).join('_');
+}
+
 function computeFileName({
   model,
   modelVersion,
@@ -25,16 +31,27 @@ function computeFileName({
 }) {
   let fileName = file.name;
   const modelName = filenamize(model.name);
-  let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
+  // Strip the model name in both spellings: a version called "BB Bunny v2" repeats it raw, one
+  // called "bbBunnyV2" repeats it filenamized, and either way the segment would be doubled.
+  // Trimmed because the strip leaves the separator behind, and a leading empty segment is what
+  // `camelCase` capitalises — "BB Bunny v2" would come out as `V2` rather than `v2`.
+  let versionName = filenamize(
+    replaceInsensitive(replaceInsensitive(modelVersion.name, model.name, ''), modelName, '').trim()
+  );
+  if (versionName === modelName) versionName = '';
 
-  if (modelName.length === 0) return fileName;
+  // A LoRA keeps the name its creator uploaded — creators encode the base model, the variant or the
+  // character there, and `<model>_<version>` cannot carry any of it.
+  const keepsUploadedName =
+    model.type === ModelType.LORA || model.type === ModelType.LoCon || modelName.length === 0;
+  if (keepsUploadedName) return fileName;
 
   const ext = file.name.split('.').pop();
   if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
   const fileType = file.type as ModelFileType;
 
   if (fileType === 'Training Data') {
-    fileName = `${modelName}_${versionName}_trainingData.zip`;
+    fileName = `${joinNameParts(modelName, versionName, 'trainingData')}.zip`;
   } else if (model.type === ModelType.TextualInversion) {
     const trainedWord = modelVersion.trainedWords?.[0];
     let fileSuffix = '';
@@ -51,7 +68,7 @@ function computeFileName({
       fileSuffix = '.instruct-pix2pix';
     } else if (fileType === 'Text Encoder') fileSuffix = '_txt';
 
-    fileName = `${modelName}_${versionName}${fileSuffix}.${ext}`;
+    fileName = `${joinNameParts(modelName, versionName)}${fileSuffix}.${ext}`;
   }
   return fileName;
 }

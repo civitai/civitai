@@ -90,41 +90,58 @@ describe('resolveModelFileName', () => {
   describe('LoRA files', () => {
     const version = { name: 'V1' };
 
-    it('names a LoRA after its model, whatever the stored file is called', () => {
-      // Both of these used to pass straight through: an uploaded name because LoRAs were
-      // special-cased to keep it, and a trainer job id because it is stored the same way.
-      for (const stored of ['Squirm__Dandys_World.safetensors', jobIdName]) {
-        const file = { id: 1, name: stored, type: 'Model' };
-        expect(
-          resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
-        ).toBe('bbBunny_v1.safetensors');
-      }
+    it('keeps the name its creator uploaded', () => {
+      // Creators encode the base model, the variant or the character in that filename, and
+      // `<model>_<version>` carries none of it. Measured before this was left alone: computing it
+      // instead collapsed three separate models in one series onto a single name.
+      const file = { id: 1, name: 'AshleyGraves_Krea2_byKonan.safetensors', type: 'Model' };
+      expect(
+        resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
+      ).toBe('AshleyGraves_Krea2_byKonan.safetensors');
     });
 
-    it('separates two LoRA files on one version', () => {
-      const a = { id: 1, name: jobIdName, type: 'Model', metadata: { fp: 'fp16' } };
-      const b = {
-        id: 2,
-        name: '3ZWN9BZEYR9VV60RPTJD4059V0.safetensors',
-        type: 'Model',
-        metadata: { fp: 'fp8' },
-      };
+    it('still separates two files on one LoRA version', () => {
+      const a = { id: 1, name: 'shared.safetensors', type: 'Model', metadata: { fp: 'fp16' } };
+      const b = { id: 2, name: 'shared.safetensors', type: 'Model', metadata: { fp: 'fp8' } };
       const versionFiles = [a, b];
 
-      const nameA = resolveModelFileName({
-        model: lora,
-        modelVersion: version,
-        file: a,
-        versionFiles,
-      });
-      const nameB = resolveModelFileName({
-        model: lora,
-        modelVersion: version,
-        file: b,
-        versionFiles,
+      expect(
+        resolveModelFileName({ model: lora, modelVersion: version, file: a, versionFiles })
+      ).not.toBe(
+        resolveModelFileName({ model: lora, modelVersion: version, file: b, versionFiles })
+      );
+    });
+  });
+
+  describe('a version name that repeats the model name', () => {
+    const file = { id: 1, name: 'stored.safetensors', type: 'Model' };
+    const nameFor = (modelName: string, versionName: string) =>
+      resolveModelFileName({
+        model: { name: modelName, type: ModelType.Checkpoint },
+        modelVersion: { name: versionName },
+        file,
+        versionFiles: [file],
       });
 
-      expect(nameA).not.toBe(nameB);
+    it('does not leave a trailing separator when nothing is left of it', () => {
+      expect(nameFor('Grace', 'Grace')).toBe('grace.safetensors');
+    });
+
+    it('does not double the segment when the repeat is spelled differently', () => {
+      // `filenamize('Beet Cookie')` is `beetCookie`, which does not appear in the raw version name,
+      // so stripping only the filenamized spelling left the whole thing behind.
+      expect(nameFor('Beet Cookie', 'Beet Cookie')).toBe('beetCookie.safetensors');
+      expect(nameFor('BB Bunny', 'BB Bunny')).toBe('bbBunny.safetensors');
+    });
+
+    it('keeps the part of the version name that is not the model name', () => {
+      expect(nameFor('BB Bunny', 'BB Bunny v2')).toBe('bbBunny_v2.safetensors');
+    });
+
+    it('leaves an unrelated version name alone', () => {
+      expect(nameFor('Realistic Vision', 'V5.1 Hyper (VAE)')).toBe(
+        'realisticVision_v51HyperVAE.safetensors'
+      );
     });
   });
 
@@ -144,7 +161,7 @@ describe('resolveModelFileName', () => {
     const file = { id: 1, name: jobIdName, type: 'Model' };
     expect(
       resolveModelFileName({
-        model: { name: 'キュアスパークル', type: ModelType.LORA },
+        model: { name: 'キュアスパークル', type: ModelType.Checkpoint },
         modelVersion: { name: 'V1' },
         file,
         versionFiles: [file],

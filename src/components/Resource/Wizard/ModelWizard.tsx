@@ -30,7 +30,7 @@ import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/uti
 import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
-import { resolveModelFileName } from '~/utils/model-file-naming';
+import { resolveTrainedFileName } from '~/utils/file-display-helpers';
 import { QS } from '~/utils/qs';
 import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -325,23 +325,20 @@ const TrainSteps = ({
   const modelFile = modelVersion.files.find((f) => f.type === 'Model');
   // null means untouched; '' is a real edit that clears the override.
   const [editedFileName, setEditedFileName] = useState<string | null>(null);
-  const computedFileName = modelFile
-    ? resolveModelFileName({
-        model,
-        modelVersion,
-        file: { ...modelFile, overrideName: null },
-        versionFiles: modelVersion.files,
+  const fileName = modelFile
+    ? resolveTrainedFileName({
+        editedName: editedFileName,
+        overrideName: modelFile.overrideName,
+        modelName: model.name,
+        versionName: modelVersion.name,
+        fileName: modelFile.name,
       })
     : '';
-  const fileName = editedFileName ?? modelFile?.overrideName ?? computedFileName;
   const updateFileMutation = trpc.modelFile.update.useMutation();
 
   const handleVersionNext = async () => {
     if (modelFile?.id) {
-      const typed = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
-      // Only a name that differs from the computed one is worth storing. Storing the computed name
-      // pins it, and renaming the model afterwards would leave the download called the old thing.
-      const next = typed === computedFileName ? null : typed;
+      const next = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
       const current = modelFile.overrideName ?? null;
       if (next !== current) {
         try {
