@@ -1,4 +1,5 @@
 import {
+  Air,
   getWorkflow,
   submitWorkflow,
   updateWorkflow,
@@ -71,9 +72,8 @@ function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
   return picked.length ? picked : CURRENCIES;
 }
 // Opt each epoch job into an NDJSON live trace (step progress + console logs), exposed as
-// `output.epochs[].traceUrl` (ai-toolkit only). OFF by default: sending this unknown field before the
-// orchestrator's trace feature is live could get the whole submit rejected, so it's gated on an env flag —
-// set TRAINING_TRACE_MODE=events (or logs) once the orchestrator side has shipped.
+// `output.epochs[].traceUrl` (ai-toolkit only). Gated because an unknown field on the submit could get the
+// whole workflow rejected, so it stays off unless TRAINING_TRACE_MODE is set (`events` or `logs`).
 const TRACE_MODE = env.TRAINING_TRACE_MODE ?? 'none';
 
 /** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
@@ -197,10 +197,10 @@ type EpochOutput = {
 
 // `continueFrom` must reference the epoch's trained LoRA, and the orchestrator resolves it as a LoRA only
 // when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is rejected with
-// "continueFrom must reference a LoRA resource". This is the same shape the main app builds for a
-// blob-backed epoch (`getEpochJobAndFileName` → jobId `blob`): urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
+// "continueFrom must reference a LoRA resource". Built with @civitai/client's `Air` (the same builder the
+// main app's stringifyAIR wraps) for a blob-backed epoch: urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
 const loraBlobAir = (ecosystem: string, blobKey: string) =>
-  `urn:air:${ecosystem}:lora:orchestrator:blob@${blobKey}`;
+  Air.stringify({ ecosystem, type: 'lora', source: 'orchestrator', id: 'blob', version: blobKey });
 
 export interface ContinueOpts {
   workflowId: string;

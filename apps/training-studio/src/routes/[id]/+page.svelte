@@ -73,7 +73,6 @@
     });
   });
 
-  // Inline rename of the run title (updates metadata + name tag on the workflow).
   let renaming = $state(false);
   let draft = $state('');
   let saving = $state(false);
@@ -104,7 +103,6 @@
     }
   }
 
-  // Copy the workflow id (handy for support / debugging). Shows a brief "Copied" acknowledgement.
   let copied = $state(false);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   async function copyWorkflowId() {
@@ -216,9 +214,7 @@
     }
   }
 
-  // Start a new training pre-loaded with this run's dataset. We reuse the blob airs directly (already
-  // uploaded + scanned — no re-upload), handed to the new flow via sessionStorage; the flow pre-fills the
-  // Data step once a model is picked. Captions come along; the user re-picks the model.
+  // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
   function reuseDataset() {
     handoffReuse(
       d.dataset.map((item, i) => ({
@@ -230,9 +226,6 @@
     );
   }
 
-  // Keep training: continue from the recommended checkpoint with more epochs (same dataset + settings),
-  // landing on the new run. Priced via a whatif and gated behind an explicit confirm (fail-safe: no charge).
-  const KEEP_TRAINING_ENABLED = true;
   let furtherEpochs = $state(5);
   let confirming = $state(false);
   let continuing = $state(false);
@@ -243,8 +236,9 @@
   // Re-quote when the epoch count changes (debounced) so the confirm always shows the current price.
   $effect(() => {
     const epochs = Number(furtherEpochs) || 0;
-    if (!browser || !KEEP_TRAINING_ENABLED || !runComplete || !publishTarget || epochs < 1) {
+    if (!browser || !runComplete || !publishTarget || epochs < 1) {
       quote = null;
+      quoteError = '';
       return;
     }
     const wf = d.workflowId;
@@ -269,7 +263,8 @@
   });
 
   async function doTrainFurther() {
-    if (!publishTarget || continuing) return;
+    // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
+    if (!publishTarget || continuing || quote == null) return;
     continuing = true;
     continueError = '';
     try {
@@ -283,14 +278,6 @@
     }
   }
 
-  function openPublish() {
-    if (!publishTarget) return;
-    window.location.assign(
-      `${data.civitaiUrl}/models/train/from-orchestrator?workflowId=${encodeURIComponent(
-        d.workflowId
-      )}&epoch=${publishTarget.number}`
-    );
-  }
 
   // The user's chosen checkpoint drives the featured view. `null` follows the recommended one. Resolving
   // the id against the CURRENT run's epochs means a stale id carried across a /[id]→/[id] navigation just
@@ -310,11 +297,16 @@
     if (epochIndex !== -1) viewer = { epochIndex, sampleIndex };
   }
 
-  // A param-only /[id]→/[id'] navigation reuses this component, so the viewer would keep an index into the
-  // previous run's epochs — close it when the run changes.
+  // A param-only /[id]→/[id'] navigation reuses this component — and Train-further's own goto lands on
+  // exactly such a navigation — so per-run UI state must not ride onto the new subject: an open confirm, a
+  // stale price/error, or a viewer index into the previous run's epochs.
   $effect(() => {
     void d.workflowId;
     viewer = null;
+    confirming = false;
+    continueError = '';
+    quote = null;
+    quoteError = '';
   });
 </script>
 
@@ -631,7 +623,7 @@
       {/if}
     {/if}
 
-    {#if publishTarget && KEEP_TRAINING_ENABLED && runComplete}
+    {#if publishTarget && runComplete}
       <div id="train-further" class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <div class="flex flex-wrap items-center gap-3">
           <div class="min-w-0">
@@ -657,7 +649,7 @@
                 class="w-20"
               />
               {#if confirming}
-                <Button onclick={doTrainFurther} disabled={continuing}>
+                <Button onclick={doTrainFurther} disabled={continuing || quote == null}>
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
                         >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
@@ -690,18 +682,17 @@
     {/if}
 
     <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-7 px-4 py-3">
-      <div class="flex flex-wrap gap-2">
-        <Button size="sm" disabled={!publishTarget} onclick={openPublish}>
-          Publish a model page
-        </Button>
+      <div class="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled>Publish a model page</Button>
+        <span
+          class="rounded-full border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-dark-2"
+        >
+          Coming soon
+        </span>
       </div>
       <p class="m-0 font-mono text-[11px] text-dark-2">
-        {#if publishTarget}
-          Uses the <IconStarFilled size={11} class="inline text-buzz" /> recommended checkpoint (epoch {publishTarget.number}) — opens on Civitai to name it,
-          set visibility, and finish, where you can pick a different epoch.
-        {:else}
-          Available once a checkpoint with downloadable weights is ready.
-        {/if}
+        Publishing a trained model to Civitai from here is coming soon. For now, download the
+        weights above.
       </p>
     </div>
   {/if}

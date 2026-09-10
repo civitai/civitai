@@ -12,6 +12,7 @@
   import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
@@ -68,9 +69,7 @@
   let starting = $state(false);
   let startError = $state('');
 
-  // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit
-  // attestation. Yellow/Blue carry no such restriction. Reset the tick if the user switches away
-  // from Green so a stale attestation can't ride along.
+  // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
   const needsAttestation = $derived(buzzMode.value === 'green');
   $effect(() => {
@@ -430,19 +429,15 @@
     </p>
 
     {#if needsAttestation}
-      <label
-        class="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-[12px] leading-snug text-dark-1"
+      <div
+        class="mt-3 flex items-start gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-[12px] leading-snug text-dark-1"
       >
-        <input
-          type="checkbox"
-          bind:checked={attestSfw}
-          class="mt-0.5 h-4 w-4 shrink-0 accent-emerald-500"
-        />
-        <span>
+        <Checkbox id="attest-sfw" bind:checked={attestSfw} class="mt-0.5 shrink-0" />
+        <label for="attest-sfw" class="cursor-pointer">
           I confirm this training won't produce NSFW content.
           <span class="text-emerald-400">Green</span> (membership) Buzz can't be spent on NSFW training.
-        </span>
-      </label>
+        </label>
+      </div>
     {/if}
 
     <Button class="mt-4 w-full" onclick={start} disabled={starting || (needsAttestation && !attestSfw)}>
