@@ -20,6 +20,12 @@ export function MatureContentSettings({ flat }: { flat?: boolean } = {}) {
           description="Confirms you are over 18."
           control={<Switch checked={showNsfw} onChange={toggleShowNsfw} />}
         />
+        <SettingRow
+          label="Blur mature content"
+          control={
+            <Switch checked={showNsfw && blurNsfw} onChange={toggleBlurNsfw} disabled={!showNsfw} />
+          }
+        />
         {showNsfw && (
           <SettingRow
             block
@@ -29,12 +35,6 @@ export function MatureContentSettings({ flat }: { flat?: boolean } = {}) {
             <BrowsingLevelsStacked />
           </SettingRow>
         )}
-        <SettingRow
-          label="Blur mature content"
-          control={
-            <Switch checked={showNsfw && blurNsfw} onChange={toggleBlurNsfw} disabled={!showNsfw} />
-          }
-        />
       </>
     );
 

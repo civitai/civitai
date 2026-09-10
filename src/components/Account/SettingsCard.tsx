@@ -32,15 +32,14 @@ export const assistantToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key === 'assistant'
 );
 
-/**
- * Which pane section a toggleable flag belongs to. Anything not named here lands in Features, so a
- * flag added to `featureFlags` shows up somewhere rather than silently disappearing from the pane.
- */
 const mediaFeatureKeys: string[] = ['largerGenerationImages', 'nativeVideoControls'];
 export const mediaToggleableFeatures = toggleableFeatures.filter((feature) =>
   mediaFeatureKeys.includes(feature.key)
 );
-export const otherToggleableFeatures = toggleableFeatures.filter(
+
+// Denylist, not an allowlist: a flag added to `featureFlags` and routed to no section still shows
+// up in Features rather than silently vanishing from the pane.
+export const otherToggleableFeatures = normalizedToggleableFeatures.filter(
   (feature) => !mediaFeatureKeys.includes(feature.key)
 );
 

@@ -14,6 +14,7 @@ import {
   resolveLegacyAnchor,
   searchAccountSections,
 } from '~/components/Account/account-sections';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -166,7 +167,8 @@ function AccountNav({ activeId }: { activeId: string }) {
 
 function MobileIndex() {
   const currentUser = useCurrentUser();
-  const { data: buzz } = useQueryBuzz();
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
+  const { data: buzz } = useQueryBuzz(availableBuzzTypes);
   const [query, setQuery] = useState('');
   const matches = useMemo(() => searchAccountSections(query), [query]);
 

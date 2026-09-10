@@ -1,6 +1,5 @@
-import { Alert, Button, Card, Text } from '@mantine/core';
+import { Button, Card, Text } from '@mantine/core';
 import {
-  IconAlertTriangle,
   IconArrowUpRight,
   IconBell,
   IconCreditCard,
@@ -15,6 +14,7 @@ import {
 import React from 'react';
 
 import { accountSections, getAccountSectionHref } from '~/components/Account/account-sections';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -77,7 +77,8 @@ const quickLinks: { id: string; icon: React.ReactNode }[] = [
 export function AccountOverview() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { data: buzz } = useQueryBuzz();
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
+  const { data: buzz } = useQueryBuzz(availableBuzzTypes);
   const { data: strikeSummary } = trpc.strike.getMyStrikeSummary.useQuery(undefined, {
     enabled: !!currentUser && !!features.strikes,
   });
@@ -91,6 +92,8 @@ export function AccountOverview() {
   if (!currentUser) return null;
 
   const emailVerified = !!currentUser.emailVerified;
+  // This endpoint returns every OWNED cosmetic, and `Username` takes the first of each type.
+  const equippedCosmetics = profile?.cosmetics?.filter((cosmetic) => !!cosmetic.equippedAt);
   const standing = accountStandingFromPoints(strikeSummary?.totalActivePoints ?? 0);
   const StandingIcon = standing.good ? IconShieldCheck : IconShieldExclamation;
   const tierBadge = subscription ? getPlanDetails(subscription.product, features).image : undefined;
@@ -98,14 +101,6 @@ export function AccountOverview() {
 
   return (
     <>
-      {!emailVerified && (
-        <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="Verify your email">
-          <Text size="sm">
-            Until you do, you can&apos;t publish models, withdraw Buzz, or recover the account.
-          </Text>
-        </Alert>
-      )}
-
       <Card withBorder padding="lg">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
           <div className="flex min-w-0 flex-1 items-center gap-4">
@@ -113,14 +108,15 @@ export function AccountOverview() {
             <div className="flex min-w-0 flex-col gap-1">
               <Username
                 username={currentUser.username}
-                cosmetics={profile?.cosmetics}
+                cosmetics={equippedCosmetics}
                 size="xl"
                 badgeSize={26}
               />
-              <Text size="sm" c="dimmed">
-                {currentUser.email}
-                {currentUser.createdAt && ` · Member since ${formatDate(currentUser.createdAt)}`}
-              </Text>
+              {currentUser.createdAt && (
+                <Text size="sm" c="dimmed">
+                  {`Member since ${formatDate(currentUser.createdAt)}`}
+                </Text>
+              )}
             </div>
           </div>
           <Button
