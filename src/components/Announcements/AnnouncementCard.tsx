@@ -11,6 +11,9 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
+import { openExternalLinkWarning } from '~/components/ExternalLinkWarning/openExternalLinkWarning';
+import { useInternalHosts } from '~/hooks/useInternalHosts';
+import { isExternalHref } from '~/utils/external-link';
 
 export type AnnouncementCardAction = {
   link: string;
@@ -101,6 +104,7 @@ export function AnnouncementCard({
 }: AnnouncementCardProps) {
   const impressionRef = useTrackImpression<HTMLElement>(impressions);
   const theme = useMantineTheme();
+  const internalHosts = useInternalHosts();
   const borderColor = theme.colors[color]?.[4] ?? theme.colors.blue[4];
 
   const body = (
@@ -165,18 +169,28 @@ export function AnnouncementCard({
         </CustomMarkdown>
         {!!actions.length && (
           <div className="flex gap-2">
-            {actions.map((action, index) => (
-              <Button
-                key={index}
-                component={Link}
-                href={action.link}
-                onClick={() => onActionClick?.(action, index)}
-                variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
-                color={action.color ?? color}
-              >
-                {action.linkText}
-              </Button>
-            ))}
+            {actions.map((action, index) => {
+              const external = isExternalHref(action.link, internalHosts);
+              const handleClick = () => {
+                onActionClick?.(action, index);
+                if (external) openExternalLinkWarning(action.link);
+              };
+
+              const shared = {
+                onClick: handleClick,
+                variant: (action.variant ? (action.variant as ButtonVariant) : 'outline') as ButtonVariant,
+                color: action.color ?? color,
+                children: action.linkText,
+              };
+
+              // No `href` when the destination is off-site: an anchor is still middle- and
+              // cmd-clickable, which is a path around the interstitial rather than through it.
+              return external ? (
+                <Button key={index} {...shared} />
+              ) : (
+                <Button key={index} component={Link} href={action.link} {...shared} />
+              );
+            })}
           </div>
         )}
         {footer}
