@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Per-APP spend-BOUNTY accrual cap (audit 🟡-2 / App-Blocks Sybil-economics
@@ -65,7 +65,26 @@ import {
 
 const APP_BLOCK_ID = 'apb_test';
 
+/**
+ * Mid-day on purpose: 12 hours from either UTC midnight. This cap is DAILY-only
+ * — there is no short velocity window here — so the boundary that matters is
+ * the UTC day rollover, and the freeze parks well clear of it.
+ */
+const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
+
 beforeEach(() => {
+  // 🔴 FIRST, before anything derives a key. The accrual key is a UTC-day
+  // string, and the cases below accumulate in a loop and then RE-DERIVE `today`
+  // to read the counter back. If the day rolls between the loop and the read —
+  // or inside the loop — the counter is split across two keys and the read
+  // lands on the wrong one.
+  //
+  // MEASURED at this file's base: with the clock stepped 100ms per read and UTC
+  // midnight landing ~500 calls into the 1,000-iteration loop, the `SYBIL CASE`
+  // fails `expected 50000 to be 25000`. Freezing takes it to 0. Rarer than the
+  // sibling 60s-bucket flake (a 24h boundary, not a 60s one) and the same class.
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_CLOCK);
   store.clear();
   ttls.clear();
   mockSysRedis.incrBy.mockClear();
@@ -75,6 +94,11 @@ beforeEach(() => {
   mockSysRedis.ttl.mockImplementation(async (key: string) =>
     ttls.has(key) ? ttls.get(key)! : 1000
   );
+});
+
+afterEach(() => {
+  // Hand the clock back so a fake timer cannot leak into a later file.
+  vi.useRealTimers();
 });
 
 describe('BLOCK_APP_BOUNTY_CAP_CENTS_PER_DAY', () => {

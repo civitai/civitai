@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * OBSERVABILITY of the per-app spend-cap REJECTION path.
@@ -114,7 +114,29 @@ function reasons(): string[] {
   return mockRecordRejection.mock.calls.map((c) => c[0] as string);
 }
 
+/**
+ * Mid-bucket AND mid-day on purpose: 30s into a 60s velocity window and 12
+ * hours from either UTC midnight, so neither boundary is anywhere near.
+ * Matches the instant `app-spend-cap.service.test.ts` freezes at, deliberately
+ * — these two files exercise the same service and the same key shapes.
+ */
+const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
+
 beforeEach(() => {
+  // 🔴 FIRST, before anything derives a key. `reserveAppSpend`'s velocity key is
+  // `floor(Date.now()/1000/60)` — a FIXED 60s window — and the denial-count
+  // cases below loop to a ceiling and then assert an EXACT total. That is only
+  // sound while the bucket holds still for the whole loop: a boundary inside it
+  // restarts the counter, more submits are allowed, and the total comes up
+  // short for a reason that has nothing to do with the code.
+  //
+  // MEASURED at this file's base: with the clock advanced 100ms per read and a
+  // bucket boundary landing ~25 calls into the 50-iteration loop, the
+  // `counts AFFECTED GENERATIONS` case fails `expected 44 to be 47` — 3 submits
+  // allowed in each of two buckets instead of 3 in one. Freezing takes it to 0.
+  // Same defect and same fix as civitai#4742 on the sibling suite.
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_CLOCK);
   store.clear();
   ttls.clear();
   for (const fn of [
@@ -152,6 +174,12 @@ beforeEach(() => {
   mockRecordRejection.mockReset();
   mockRecordRejection.mockImplementation(() => undefined);
   metricsModule.brokenExport = false;
+});
+
+afterEach(() => {
+  // Hand the clock back — a leaked fake timer would silently change how every
+  // later file in the same worker behaves.
+  vi.useRealTimers();
 });
 
 describe('spend-cap rejection signal — every deny is counted, with the reason that applied', () => {
