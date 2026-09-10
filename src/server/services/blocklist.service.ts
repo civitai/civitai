@@ -135,8 +135,10 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         // nothing, so two concurrent no-id upserts for a type with no row both reach it and the
         // type ends up with two. Unreachable from this app — the only caller always passes an id —
         // but the spoke's twin is reachable, and the close is a unique index on `Blocklist.type`,
-        // not this predicate. That index is migration `20260909220000_blocklist_type_unique`; until
-        // it is applied by hand this branch can still produce a second row.
+        // not this predicate. That index is migration `20260909220000_blocklist_type_unique`.
+        // Verified 2026-09-09: production ALREADY has `Blocklist_type_key`, recorded in no
+        // committed migration, so there the duplicate is already unrepresentable and the migration
+        // is a no-op. Environments that lack it can still produce a second row until it is applied.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;
@@ -186,8 +188,8 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  * union the rows: for a deny-list a union blocks more, but for the benign lists a union
  * strips more, which is a moderation bypass — one helper cannot silently pick a safe
  * direction for both. Nor does it throw: this read gates account signup, so a duplicate
- * row would become an outage. Deterministic-and-loud is the compromise until migration
- * `20260909220000_blocklist_type_unique` is applied by hand and makes it unrepresentable.
+ * row would become an outage. Deterministic-and-loud is the compromise for environments without
+ * `Blocklist_type_key`; production already has that index, so this guard is inert there.
  */
 async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
   const rows = await dbWrite.blocklist.findMany({
@@ -671,6 +673,19 @@ export async function throwOnBlockedUserContent(
 // #region [blocked emails]
 
 const TRAILING_DOTS = /\.+$/;
+
+/**
+ * The one spelling of "this domain, comparable". Written FOUR times by hand before this, and the
+ * copies drifted: the suffix matcher stripped trailing dots after its final trim and the exact
+ * comparison did not, so an entry of `evil.example .` normalised to `evil.example ` here and to
+ * `evil.example` in the auth hub — 88 cells apart on a fuzz, every one of them this app admitting
+ * what the hub blocked. Twin of `normalizeDomain` in `apps/auth/src/lib/server/auth/blocklist.ts`;
+ * the next normalisation rule (an IDNA fold, a unicode-dot fold) must land here and there, not in
+ * whichever copies its author happened to be looking at.
+ */
+function normalizeDomain(domain: string) {
+  return domain.trim().toLowerCase().replace(TRAILING_DOTS, '');
+}
 export async function getBlockedEmailDomains() {
   return await getBlocklistData(BlocklistType.EmailDomain);
 }
@@ -701,17 +716,14 @@ const SUFFIX_ENTRY_PREFIX = /^(?:\*)?\.+/;
 export function matchesBlockedSuffix(entries: string[], domain: string) {
   if (!domain) return false;
   return entries.some((raw) => {
-    // 🔴 TRIM ON BOTH SIDES OF THE STRIP, and the second trim is not redundant.
+    // 🔴 NORMALIZE ON BOTH SIDES OF THE STRIP, and the second pass is not redundant.
     // `SUFFIX_ENTRY_PREFIX` is `^`-anchored, so whitespace BEFORE the wildcard stops it matching at
     // all (` *.evil.example` keeps its `*.` and then matches no address), and whitespace AFTER it
     // survives into the entry (`*. evil.example` becomes ` evil.example`, which also matches
     // nothing). Both are silent: a suffix entry's only feedback is accounts continuing to arrive.
-    const entry = raw
-      .trim()
-      .toLowerCase()
-      .replace(SUFFIX_ENTRY_PREFIX, '')
-      .trim()
-      .replace(TRAILING_DOTS, '');
+    // Character-for-character the hub's expression; the two have diverged three times on exactly
+    // this line, always on whitespace, and always found by review rather than by a test.
+    const entry = normalizeDomain(normalizeDomain(raw).replace(SUFFIX_ENTRY_PREFIX, ''));
     // 🔴 A SINGLE LABEL IS REFUSED, and this is the only guard standing between a typo and an
     // outage. Nothing validates what a moderator types: an entry of `com` is one keystroke from
     // `com.example` and would refuse every email address under the whole TLD, on every signup and
@@ -747,7 +759,7 @@ export async function assertEmailAllowed(email: string) {
   // Kept identical to the hub's `emailDomain` -- fixing one side only is how the two diverge.
   const at = email.lastIndexOf('@');
   const rawDomain = at === -1 ? '' : email.slice(at + 1);
-  const domain = rawDomain.trim().toLowerCase().replace(TRAILING_DOTS, '');
+  const domain = normalizeDomain(rawDomain);
   if (!domain) throw throwBadRequestError('Please provide a valid email address');
 
   // 🔴 DEGRADE OPEN. This lookup is a redis GET falling back to a `dbWrite` read, neither of which
@@ -789,7 +801,7 @@ export async function assertEmailAllowed(email: string) {
 
   // Normalize BOTH sides: the upstream sync writes lowercase today, but the same row is hand-edited
   // by moderators, and a single capital letter would silently make an entry match nothing.
-  if (blocked.some((entry) => entry.trim().toLowerCase().replace(TRAILING_DOTS, '') === domain))
+  if (blocked.some((entry) => normalizeDomain(entry) === domain))
     throw throwBadRequestError('Please use a different email address');
 
   if (matchesBlockedSuffix(blockedSuffixes, domain))

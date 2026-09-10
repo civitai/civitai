@@ -20,6 +20,7 @@ vi.mock('dns/promises', () => ({ default: { resolveMx }, resolveMx }));
 import { assertEmailAllowed, matchesBlockedSuffix } from '../blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const redisGet = redisMock.redis.get;
 
@@ -284,6 +285,10 @@ describe('assertEmailAllowed', () => {
       });
 
       expect(await reject('someone@still-enforced.test')).toBeInstanceOf(TRPCError);
+      // Directional: without this line the test passes even if the two lists are SWAPPED, because
+      // `still-enforced.test` is matchable by either the exact comparison or the suffix matcher.
+      // A subdomain is matchable only by the suffix one, so this pins WHICH list survived.
+      await expect(assertEmailAllowed('someone@sub.still-enforced.test')).resolves.toBeUndefined();
     });
 
     it('still enforces the SUFFIX list when only the exact read fails', async () => {
@@ -298,6 +303,15 @@ describe('assertEmailAllowed', () => {
       });
 
       expect(await reject('someone@a.suffix-survives.test')).toBeInstanceOf(TRPCError);
+      // 🔴 Half-open enforcement must be OBSERVABLE. Delete the `logToAxiom` in
+      // `readOrDegradeOpen` and the guard still degrades open correctly — silently, with the only
+      // remaining tell being a metric that quietly stops incrementing. Pin which list failed.
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'email-blocklist-lookup-failed',
+          details: expect.objectContaining({ blocklistType: BlocklistType.EmailDomain }),
+        })
+      );
     });
 
     it('checks the SUFFIX list before DNS, so a blocked subdomain never costs a lookup', async () => {
@@ -306,7 +320,9 @@ describe('assertEmailAllowed', () => {
       // a real lookup against the 3s budget.
       setBlockedSuffixes(['no-dns-farm.test']);
 
-      await reject('someone@a.no-dns-farm.test');
+      // Both halves: refused AND no lookup. Without the first, replacing the throw with an early
+      // return passes this test — allowed-and-cheap reads identical to blocked-and-cheap here.
+      expect(await reject('someone@a.no-dns-farm.test')).toBeInstanceOf(TRPCError);
 
       expect(resolveMx).not.toHaveBeenCalled();
     });
@@ -328,6 +344,17 @@ describe('assertEmailAllowed', () => {
 
       await expect(assertEmailAllowed('someone@sub.exact-only.test')).resolves.toBeUndefined();
       expect(await reject('someone@exact-only.test')).toBeInstanceOf(TRPCError);
+    });
+
+    it('matches an entry with whitespace BEFORE a trailing dot', async () => {
+      // 🔴 The third whitespace cell these two copies diverged on, and the one a review fuzz found
+      // rather than a hand-written table: `evil.example .` must normalise to `evil.example`. Strip
+      // the trailing dot BEFORE the final trim and it stays `evil.example ` and matches nothing —
+      // 88 cells apart from the hub on a 1.6M-case comparison, every one this app admitting what
+      // the hub blocked. The two other whitespace cases are pinned directly below.
+      setBlockedSuffixes(['tail-dot.test .']);
+
+      expect(await reject('someone@a.tail-dot.test')).toBeInstanceOf(TRPCError);
     });
 
     it('matches a wildcard entry with whitespace AFTER the prefix', async () => {
@@ -367,13 +394,13 @@ describe('assertEmailAllowed', () => {
     });
 
     it('an entry that normalizes to EMPTY matches nothing, even for an unnormalized domain', () => {
-      // Called DIRECTLY, because that is what makes it capable of failing. Through
-      // `assertEmailAllowed` the domain always has its trailing dots stripped, so `endsWith('.')`
-      // is false and this assertion passes with the `if (!entry)` guard deleted. Handed a domain
-      // nobody normalized, a `'.'` entry without that guard blocks every address on the site.
+      // Called DIRECTLY, because that is the only way this can fail: through `assertEmailAllowed`
+      // the domain always arrives with its trailing dots stripped, so `endsWith('.')` is false
+      // whatever the entry. Handed a domain nobody normalized, a `'.'` entry blocks every address
+      // on the site unless the single-label check runs on the NORMALIZED entry — which is the
+      // mutation this catches, and the only test in the file that does. Applying
+      // `entry.includes('.')` to the raw string instead type-checks and reads as equivalent.
       expect(matchesBlockedSuffix(['.'], 'example.test.')).toBe(false);
-      expect(matchesBlockedSuffix([''], 'example.test')).toBe(false);
-      expect(matchesBlockedSuffix(['   '], 'example.test')).toBe(false);
     });
   });
 });
