@@ -87,6 +87,15 @@ node .claude/skills/metabase/metabase.mjs update-question --id 123 --display lin
   --visualization '{"graph.dimensions":["date"],"graph.metrics":["count"]}'
 ```
 
+**Pass real SQL as `--query-file`, not `--query`.** A query with a comment header does not survive a
+shell argument intact, and a swallowed value is parsed as boolean `true` — which writes a card with no
+query and reports success. `create-question` takes `--query-file` too.
+
+🔴 **A comment line that is exactly `--` breaks parameter binding for the whole query** on the
+ClickHouse driver: every variable fails with *"we got more parameters than we can handle"*, which points
+at neither the line nor the cause. One trailing space per line is the fix, and both write commands now
+refuse SQL that contains one.
+
 **Display types:** `table`, `bar`, `line`, `area`, `pie`, `scalar`, `row`, `funnel`, `map`, `scatter`, `waterfall`, `combo`, `smartscalar`, `progress`, `gauge`, `pivot`
 
 ### create-dashboard — New dashboard
@@ -209,6 +218,28 @@ node .claude/skills/metabase/metabase.mjs search --query "challenge" --type ques
 node .claude/skills/metabase/metabase.mjs get --type question --id 101
 node .claude/skills/metabase/metabase.mjs get --type dashboard --id 456
 ```
+
+### Snippets — one derivation shared by many cards
+
+A snippet is text pasted into `{{snippet: <name>}}` at run time, so several cards can share one
+expression instead of each carrying a copy that drifts.
+
+```bash
+node .claude/skills/metabase/metabase.mjs list-snippets
+node .claude/skills/metabase/metabase.mjs create-snippet --name "image engine" --file engine.sql \
+  --description "what it derives, and what must not be added to it"
+node .claude/skills/metabase/metabase.mjs update-snippet --id 1 --file engine.sql
+```
+
+**A snippet takes no parameters** — it is literal substitution, not a function. So a fragment can only
+reference bare column names, and a card using it must select from the table with **no alias** on those
+columns.
+
+Referencing one from a card is handled for you: both `create-question` and `update-question` scan the
+SQL for `{{snippet: ...}}` and add the matching template tag, because a card missing that tag fails at
+run time with `missing required parameters` and the auto-detect for ordinary `{{variable}}` syntax does
+not match a name containing a colon. A reference to a snippet that does not exist is refused before
+anything is written.
 
 ### list-collections / list-databases
 

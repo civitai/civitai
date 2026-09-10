@@ -21,6 +21,7 @@ import { parseOpts } from './parse-opts.mjs';
  */
 
 import { readFileSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -123,12 +124,29 @@ async function runQuery(opts) {
 }
 
 async function createQuestion(opts) {
-  const { name, database, query, collection, description, variables } = opts;
+  const { name, database, collection, description, variables } = opts;
   const dbId = parseInt(database, 10);
-  if (!name || !dbId || !query) {
-    console.error('Usage: create-question --name "Name" --database <id> --query "SQL" [--collection <id>] [--description "..."] [--variables \'{"name":{"type":"text","display-name":"Name"}}\']');
+
+  const queryFile = opts['query-file'];
+  if (opts.query && queryFile) {
+    console.error('Error: pass --query or --query-file, not both');
     process.exit(1);
   }
+  let query = opts.query;
+  if (queryFile) {
+    try {
+      query = readFileSync(resolve(process.cwd(), queryFile), 'utf-8');
+    } catch (e) {
+      console.error(`Error: cannot read --query-file ${queryFile}: ${e.message}`);
+      process.exit(1);
+    }
+  }
+
+  if (!name || !dbId || !query) {
+    console.error('Usage: create-question --name "Name" --database <id> (--query "SQL" | --query-file <path>) [--collection <id>] [--description "..."] [--variables \'{"name":{"type":"text","display-name":"Name"}}\']');
+    process.exit(1);
+  }
+  assertNoBareSqlComment(query);
 
   // Parse template tags from variables JSON or auto-detect {{variable}} patterns
   let templateTags = {};
@@ -152,6 +170,9 @@ async function createQuestion(opts) {
       };
     }
   }
+
+  const addedTags = await syncSnippetTags(templateTags, query);
+  if (addedTags.length) console.log(`Snippet tags added: ${addedTags.join(', ')}`);
 
   const body = {
     name,
@@ -461,8 +482,177 @@ async function runCard(opts) {
   console.log(`\n${result.data.rows.length} row(s)`);
 }
 
+// A comment line that is exactly `--` breaks parameter binding for the WHOLE query on Metabase's
+// ClickHouse driver: every variable fails with "we got more parameters than we can handle", which names
+// neither the line nor the cause and reads as "you have too many variables". One trailing space is the
+// entire fix, so refusing here is cheaper than diagnosing it from the error.
+function assertNoBareSqlComment(sql) {
+  const lines = sql.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+  const bad = lines.map((l, i) => (l === '--' ? i + 1 : 0)).filter(Boolean);
+  if (bad.length) {
+    console.error(`Error: ${bad.length} bare "--" comment line(s) at line ${bad.join(', ')}.`);
+    console.error('They break parameter binding on the ClickHouse driver. Add a trailing space to each.');
+    process.exit(1);
+  }
+}
+
+// A `{{snippet: name}}` reference needs its own entry in the card's template-tags, or the card fails to
+// run with `missing required parameters`. The UI writes that entry; a programmatic PUT does not. Tags
+// arrive as an object in the `native` shape and an array in the `stages` one.
+async function syncSnippetTags(tags, sql) {
+  const names = [...sql.matchAll(/\{\{\s*snippet:\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]);
+  if (!names.length) return [];
+
+  const all = await api('GET', '/native-query-snippet');
+  const byName = new Map(all.map((sn) => [sn.name, sn]));
+  const isArray = Array.isArray(tags);
+  const existing = new Set((isArray ? tags : Object.values(tags)).map((t) => t.name));
+
+  const added = [];
+  for (const name of names) {
+    const tagName = `snippet: ${name}`;
+    if (existing.has(tagName)) continue;
+    const snippet = byName.get(name);
+    if (!snippet) {
+      console.error(`Error: the SQL references {{snippet: ${name}}} but no snippet of that name exists.`);
+      console.error(`Existing snippets: ${all.map((sn) => sn.name).join(', ') || '(none)'}`);
+      process.exit(1);
+    }
+    if (isArray) {
+      tags.push({
+        id: randomUUID(),
+        name: tagName,
+        'display-name': tagName,
+        type: 'snippet',
+        'snippet-name': name,
+        'snippet-id': snippet.id,
+      });
+    } else {
+      tags[tagName] = {
+        id: randomUUID(),
+        name: tagName,
+        'display-name': tagName,
+        type: 'snippet',
+        'snippet-name': name,
+        'snippet-id': snippet.id,
+      };
+    }
+    added.push(tagName);
+  }
+  return added;
+}
+
+// A snippet is literal text substitution into `{{snippet: <name>}}` and takes NO parameters, so a fragment
+// can only reference bare column names -- a consuming card must not alias the table they come from.
+
+async function listSnippets(opts) {
+  const snippets = await api('GET', '/native-query-snippet');
+  if (opts.json) {
+    console.log(JSON.stringify(snippets, null, 2));
+    return;
+  }
+  if (!snippets.length) {
+    console.log('No snippets on this instance.');
+    return;
+  }
+  for (const sn of snippets) {
+    console.log(`  ${sn.id}  ${sn.name}${sn.archived ? '  (archived)' : ''}`);
+    console.log(`      ${(sn.content || '').replace(/\s+/g, ' ').slice(0, 100)}`);
+  }
+}
+
+// Read without `api()`'s exit-on-failure, for the reason `readCard` exists: a failed read-back must not be
+// reported as a failed write, because the two call for different next actions.
+async function readSnippet(id) {
+  try {
+    const res = await fetch(`${METABASE_URL}/api/native-query-snippet/${id}`, {
+      headers: { 'x-api-key': METABASE_API_KEY },
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+function snippetContent(opts) {
+  if (opts.content && opts.file) {
+    console.error('Error: pass --content or --file, not both');
+    process.exit(1);
+  }
+  if (!opts.file) return opts.content;
+  try {
+    return readFileSync(resolve(process.cwd(), opts.file), 'utf-8');
+  } catch (e) {
+    console.error(`Error: cannot read --file ${opts.file}: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+function reportSnippetWrite(label, stored, sent) {
+  if (stored === null) {
+    console.log('  WARNING: could not read it back. Verify by hand.');
+    process.exitCode = 1;
+  } else if (sent && stored.content !== sent) {
+    console.log('  WARNING: stored content DIFFERS from what was sent. Stored:');
+    console.log(stored.content);
+    process.exitCode = 1;
+  } else {
+    console.log('  Verified: the stored content matches what was sent');
+  }
+}
+
+async function createSnippet(opts) {
+  const content = snippetContent(opts);
+  if (!opts.name || !content) {
+    console.error('Usage: create-snippet --name "Name" (--content "SQL" | --file <path>) [--description "..."]');
+    process.exit(1);
+  }
+  const snippet = await api('POST', '/native-query-snippet', {
+    name: opts.name,
+    content,
+    description: opts.description ?? null,
+  });
+  console.log(`Snippet created: ${snippet.name} (id ${snippet.id})`);
+  console.log(`  Reference it as: {{snippet: ${snippet.name}}}`);
+  reportSnippetWrite('create', await readSnippet(snippet.id), content);
+}
+
+async function updateSnippet(opts) {
+  const snippetId = parseInt(opts.id, 10);
+  const content = snippetContent(opts);
+  if (!snippetId || (!content && !opts.name && opts.description === undefined)) {
+    console.error('Usage: update-snippet --id <id> [--content "SQL" | --file <path>] [--name "Name"] [--description "..."]');
+    process.exit(1);
+  }
+  const body = {};
+  if (content) body.content = content;
+  if (opts.name) body.name = opts.name;
+  if (opts.description !== undefined) body.description = opts.description;
+  await api('PUT', `/native-query-snippet/${snippetId}`, body);
+  console.log(`Snippet ${snippetId} updated`);
+  reportSnippetWrite('update', await readSnippet(snippetId), content);
+}
+
 async function updateQuestion(opts) {
-  const { id, display, visualization, query, description, archived, variables } = opts;
+  const { id, display, visualization, description, archived, variables } = opts;
+
+  // SQL long enough to carry a comment header does not survive a shell argument intact, and the parser
+  // degrades a swallowed value to `true`, which writes a card with no query and reports success.
+  const queryFile = opts['query-file'];
+  if (opts.query && queryFile) {
+    console.error('Error: pass --query or --query-file, not both');
+    process.exit(1);
+  }
+  let query = opts.query;
+  if (queryFile) {
+    try {
+      query = readFileSync(resolve(process.cwd(), queryFile), 'utf-8');
+    } catch (e) {
+      console.error(`Error: cannot read --query-file ${queryFile}: ${e.message}`);
+      process.exit(1);
+    }
+  }
+  if (query) assertNoBareSqlComment(query);
   const cardId = parseInt(id, 10);
   if (!cardId) {
     console.error('Usage: update-question --id <id> [--display <type>] [--visualization \'{"key":"value"}\'] [--query "SQL"] [--variables \'{...}\'] [--description "..."] [--archived true|false]');
@@ -492,6 +682,8 @@ async function updateQuestion(opts) {
         process.exit(1);
       }
     }
+    const addedTags = await syncSnippetTags(templateTags, query);
+    if (addedTags.length) console.log(`  Snippet tags added: ${addedTags.join(', ')}`);
     body.dataset_query = {
       database: existing.database_id ?? existing.dataset_query?.database,
       type: 'native',
@@ -747,6 +939,9 @@ const commands = {
   'create-question': createQuestion,
   'update-question': updateQuestion,
   'run-card': runCard,
+  'list-snippets': listSnippets,
+  'create-snippet': createSnippet,
+  'update-snippet': updateSnippet,
   'create-dashboard': createDashboard,
   'add-to-dashboard': addToDashboard,
   'add-dashboard-filter': addDashboardFilter,
