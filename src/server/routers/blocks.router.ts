@@ -2773,9 +2773,21 @@ export const blocksRouter = router({
       const alreadyGrantsSpend =
         !grantsSpend &&
         input.buzzBudgetPerDay !== undefined &&
-        (await getGrantedScopes({ userId: ctx.user!.id, appBlockId: input.appBlockId })).has(
-          'ai:write:budgeted'
-        );
+        // 🔴 `db: 'write'` — READ THE PRIMARY, because the write below goes to the
+        // primary. Off the replica this decision lags the grant it is asking about: a
+        // user who consents to `ai:write:budgeted` and then raises their limit lands
+        // inside the replication window, the check answers "no spend scope", and the
+        // budget they just set is silently ignored. Found by the seam test in
+        // blocks.router.getInstallConfig.test.ts — the scopes merged correctly (that
+        // path already used the primary) while the budget alone went missing, which is
+        // exactly how this would have presented in production.
+        (
+          await getGrantedScopes({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+            db: 'write',
+          })
+        ).has('ai:write:budgeted');
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
       await recordScopeGrant({
         userId: ctx.user!.id,

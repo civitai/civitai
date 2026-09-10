@@ -81,6 +81,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -289,5 +290,129 @@ describe('blocks.getInstallConfig', () => {
     const out = await caller.getInstallConfig({ appBlockId: 'ab_x' });
     expect(out).toEqual({ settings: {}, scopes: [] });
     expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `blocks.grantScopes` — the CONSENT BUDGET write half.
+ *
+ * 🔴 THIS IS A SEAM TEST, AND THAT IS WHY IT EXISTS. The enforcement side
+ * (`blocks.router.scopeEnforcement.test.ts`) mocks the grant READ directly, and the
+ * service side (`scope-grant.service.test.ts`) mocks the DB. Both are hermetic and both
+ * pass whether or not the two halves are wired together — nothing in either builds the
+ * combined state. What is asserted here is the RELATIONSHIP: the value `grantScopes`
+ * hands to the write path is the same shape `getConsentBuzzBudget` reads back, so a
+ * budget the user sets can actually reach the spend path.
+ *
+ * The budget is meaningful only alongside `ai:write:budgeted` — nothing else in the
+ * vocabulary can spend — so a budget sent without it is IGNORED rather than rejected.
+ * See the call site for why ignoring beats erroring.
+ */
+describe('blocks.grantScopes — consent budget', () => {
+  /** ctx with the appBlocks feature on (the proc gates on `ctx.features.appBlocks`). */
+  function consentCtx(userId = 42) {
+    const ctx = authedCtx(userId, false) as unknown as { features: Record<string, unknown> };
+    ctx.features = { ...ctx.features, appBlocks: true };
+    return ctx;
+  }
+
+  const grantMock = dbMock.dbWrite.appUserScopeGrant;
+
+  beforeEach(() => {
+    mockDbReadAppBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      version: '1.2.3',
+      manifest: APPROVED_MANIFEST,
+      approvedScopes: ['ai:write:budgeted', 'models:read:self'],
+    });
+    grantMock.findUnique.mockReset();
+    grantMock.create.mockReset();
+    grantMock.update.mockReset();
+    grantMock.findUnique.mockResolvedValue(null); // no prior grant
+    grantMock.create.mockResolvedValue({});
+    grantMock.update.mockResolvedValue({});
+  });
+
+  it('PERSISTS the budget when ai:write:budgeted is among the granted scopes', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: 750,
+    });
+    expect(out.granted).toEqual(['ai:write:budgeted']);
+    // The number reached the WRITE, under the column name the read selects.
+    expect(grantMock.create.mock.calls[0][0].data).toMatchObject({ buzzBudgetPerDay: 750 });
+    // ...and the response echoes what was stored, so a client needs no second round-trip.
+    expect(out.buzzBudgetPerDay).toBe(750);
+  });
+
+  it('IGNORES a budget sent without any spend scope (does not error, stores nothing)', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['models:read:self'],
+      buzzBudgetPerDay: 750,
+    });
+    expect(out.granted).toEqual(['models:read:self']);
+    // The KEY is absent, not null: an explicit null would CLEAR a stored budget, and
+    // "ignore" must not double as "erase".
+    const data = grantMock.create.mock.calls[0][0].data;
+    expect(Object.hasOwn(data, 'buzzBudgetPerDay')).toBe(false);
+    expect(out.buzzBudgetPerDay).toBeUndefined();
+  });
+
+  it('HONOURS a budget for an app that ALREADY holds the spend scope', async () => {
+    // Raising a limit on an app you consented to earlier: the scope is not in THIS
+    // call's grant, so the meaningfulness test has to consult the stored grant.
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['models:read:self'],
+      buzzBudgetPerDay: 300,
+    });
+    expect(grantMock.update.mock.calls[0][0].data).toMatchObject({ buzzBudgetPerDay: 300 });
+    expect(out.buzzBudgetPerDay).toBe(300);
+  });
+
+  it('OMITTING the budget leaves a stored one untouched', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await caller.grantScopes({ appBlockId: 'ab_x', scopes: ['models:read:self'] });
+    const data = grantMock.update.mock.calls[0][0].data;
+    expect(Object.hasOwn(data, 'buzzBudgetPerDay')).toBe(false);
+  });
+
+  it('REJECTS a budget above the platform daily cap at the input boundary', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await expect(
+      caller.grantScopes({
+        appBlockId: 'ab_x',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: BLOCK_BUZZ_CAP_PER_DAY + 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(grantMock.create).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS a zero budget (declining the scope is how you express "never")', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await expect(
+      caller.grantScopes({
+        appBlockId: 'ab_x',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: 0,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(grantMock.create).not.toHaveBeenCalled();
   });
 });
