@@ -38,6 +38,7 @@ import {
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
+  getPendingCollectionReviewCounts,
   getPendingReviewCount,
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
@@ -176,7 +177,16 @@ export const getAllUserCollectionsHandler = async ({
       },
     });
 
-    return collections;
+    if (!input.withPendingReviewCounts) return collections;
+
+    const { byCollection } = await getPendingCollectionReviewCounts({ userId: user.id }).catch(
+      () => ({ total: 0, byCollection: {} as Record<number, number> })
+    );
+
+    return collections.map((collection) => ({
+      ...collection,
+      pendingReviewCount: byCollection[collection.id] ?? 0,
+    }));
   } catch (error) {
     throw throwDbError(error);
   }

@@ -105,6 +105,11 @@ export const getAllUserCollectionsInputSchema = z
     // The model the picker is targeting. Active contests only surface when the user owns it —
     // you can only submit your own models — so this gates the includeActiveContests branch.
     contestModelId: z.number(),
+    // Attaches `pendingReviewCount` per collection, for the sidebar badges. Opt-in because the
+    // picker in AddToCollectionModal calls this too and draws no badge — and because a caller that
+    // renders inside the sidebar must pass the SAME value as the sidebar or the two split into
+    // separate React Query cache entries and fetch the list twice.
+    withPendingReviewCounts: z.boolean(),
   })
   .partial();
 
