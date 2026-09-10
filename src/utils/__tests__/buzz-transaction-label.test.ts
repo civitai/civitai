@@ -126,6 +126,25 @@ describe('declined-fee copy reads as money kept, not money charged', () => {
 });
 
 /**
+ * Justin's call, 2026-09-10: the 74 rows written between #4212 and the reword
+ * carry the superseded copy and stay HIDDEN, showing the type name.
+ *
+ * Do not "fix" this by adding the old strings to the allowlist. They are credits
+ * to the owner, so the row shows a positive amount, and "Fee FOR a sticker you
+ * declined" beside a positive amount reads as a charge to the person being paid
+ * — the contradiction the reword exists to remove. A remap was offered and
+ * declined: the set is closed at 74 and nothing writes that copy any more.
+ */
+describe('superseded declined-fee copy stays hidden', () => {
+  it.each(['Fee for a sticker you declined', 'Fee for a remix you declined'])(
+    '%s renders the type name',
+    (description) => {
+      expect(buzzTransactionLabel({ type: TransactionType.Fee, description })).toBe('Fee');
+    }
+  );
+});
+
+/**
  * The helper is pure, so every test above passes against a dashboard that never
  * calls it. A text scan cannot see rendering; what it can see is this component
  * holding the raw field at all. It says nothing about `/user/transactions`, which
