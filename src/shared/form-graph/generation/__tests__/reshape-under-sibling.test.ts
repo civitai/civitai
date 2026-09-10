@@ -152,9 +152,24 @@ describe('image hub: bogo quantity floor', () => {
     store.set({ quantity: 1 });
     expectValid(store, 'quantity pre-bogo');
 
-    store.set({ ecosystem: 'ZImageBase' });
+    // Must be on SDCPP_SUPPORTED_ECOSYSTEMS (the bogo list), and not the starting SDXL.
+    store.set({ ecosystem: 'Flux2Klein_9B' });
     expect(Number(val(store, 'quantity'))).toBeGreaterThanOrEqual(2);
     expectValid(store, 'quantity under bogo');
+  });
+
+  it('ZImage is off the 2-for-1 bonus, so a stored quantity of 1 stands', () => {
+    const ext: GenerationCtx = {
+      ...EXT,
+      flags: { enhancedCompatibilitySdcpp: true } as GenerationCtx['flags'],
+    };
+    const store = generationHub.createStore({ ext });
+    store.set({ workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'x' });
+    store.set({ quantity: 1 });
+
+    store.set({ ecosystem: 'ZImageBase' });
+    expect(Number(val(store, 'quantity'))).toBe(1);
+    expectValid(store, 'ZImage quantity');
   });
 });
 

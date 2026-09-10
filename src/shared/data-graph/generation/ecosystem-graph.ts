@@ -98,10 +98,8 @@ function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boo
 }
 
 /**
- * Whether the given ecosystem/model pair runs through sdcpp and qualifies for
- * the 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility` —
- * includes ecosystems without the `enhancedCompatibility` toggle, minus
- * specific model versions excluded via SDCPP_EXCLUDED_MODEL_IDS.
+ * Whether the given ecosystem/model pair qualifies for the 2-for-1 quantity bonus. Not an engine
+ * test — see SDCPP_SUPPORTED_ECOSYSTEMS.
  */
 function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
   if (!SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return false;

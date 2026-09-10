@@ -2,22 +2,17 @@
  * ZImage Ecosystem Handler
  *
  * Handles ZImageTurbo and ZImageBase workflows using imageGen step type.
- * Uses SdCpp samplers (euler, heun) and schedulers (simple, discrete).
  * Supports LoRA resources.
  */
 
+import type { ImageGenStepTemplate, PreprocessImageStepTemplate } from '@civitai/client';
 import type {
-  ZImageTurboCreateImageGenInput,
-  ZImageBaseCreateImageGenInput,
-  ImageGenStepTemplate,
-  PreprocessImageStepTemplate,
-} from '@civitai/client';
+  ComfyZImageBaseCreateImageGenInput,
+  ComfyZImageTurboCreateImageGenInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type {
-  ControlNetsNodeValue,
-  ResourceData,
-} from '~/shared/data-graph/generation/common';
+import type { ControlNetsNodeValue, ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 import { buildControlNetSteps } from './controlnets.helper';
 
@@ -26,7 +21,7 @@ type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: st
 type ZImageCtx = EcosystemGraphOutput & { ecosystem: 'ZImageTurbo' | 'ZImageBase' };
 
 // Return type union
-type ZImageInput = ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
+type ZImageInput = ComfyZImageTurboCreateImageGenInput | ComfyZImageBaseCreateImageGenInput;
 
 // Map baseModel to model variant
 const baseModelToModel: Record<string, 'turbo' | 'base'> = {
@@ -36,7 +31,6 @@ const baseModelToModel: Record<string, 'turbo' | 'base'> = {
 
 /**
  * Creates imageGen input for ZImage ecosystems (ZImageTurbo and ZImageBase).
- * Uses SdCpp samplers/schedulers. Supports LoRA resources.
  */
 export const createZImageInput = defineHandler<
   ZImageCtx,
@@ -62,12 +56,8 @@ export const createZImageInput = defineHandler<
 
   const genStep: ImageGenStepTemplate = {
     $type: 'imageGen',
-    // Cast: `controlNets` is not yet declared on ZImage*ImageGenInput in the
-    // @civitai/client types but is accepted by the orchestrator for ZImage
-    // workflows. Drop the cast once the client SDK is regenerated with the
-    // field on SdCpp imageGen inputs.
     input: removeEmpty({
-      engine: 'sdcpp',
+      engine: 'comfy',
       ecosystem: 'zImage',
       model,
       operation: 'createImage' as const,
@@ -77,8 +67,8 @@ export const createZImageInput = defineHandler<
       height: data.aspectRatio.height,
       cfgScale: data.cfgScale ?? 1,
       steps: data.steps ?? 4,
-      sampleMethod: 'sampler' in data ? data.sampler : 'euler',
-      schedule: 'scheduler' in data ? data.scheduler : 'simple',
+      sampler: 'sampler' in data ? data.sampler : 'euler',
+      scheduler: 'scheduler' in data ? data.scheduler : 'simple',
       quantity,
       seed: data.seed,
       loras: Object.keys(loras).length > 0 ? loras : undefined,

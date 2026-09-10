@@ -10,7 +10,7 @@
  */
 
 import { maxRandomSeed } from '~/server/common/constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChromaInput } from './chroma.handler';
@@ -121,13 +121,12 @@ export async function createFormGraphStepInput(
 
   const steps = await createStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: comfyui engine for every textToImage step.
-  // Assumes parsed data: the graph never emits enhancedCompatibility for flux
-  // ultra (whose step must keep its own engine) — unparsed input would bypass
-  // that guarantee.
   if (
-    loose.enhancedCompatibility &&
-    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(loose.ecosystem ?? '')
+    usesComfyEngine({
+      ecosystem: loose.ecosystem ?? '',
+      modelId: loose.model?.id,
+      enhancedCompatibility: loose.enhancedCompatibility,
+    })
   ) {
     for (const step of steps) {
       if (step.$type === 'textToImage') {
