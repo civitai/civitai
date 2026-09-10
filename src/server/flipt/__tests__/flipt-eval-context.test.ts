@@ -61,7 +61,7 @@ describe('flipt evaluation context — what a missing context costs', () => {
   // The one property this app adds on top of the shared `@civitai/flipt/context` builder, and the
   // only one no package test can cover.
   //
-  // 🔴 THREE ARMS, AND THE FIRST ONE IS WHY. A real member's `onboarding` carries the completion
+  // 🔴 FOUR ARMS, AND THE FIRST ONE IS WHY. A real member's `onboarding` carries the completion
   // bits too (`OnboardingComplete` is 15, so a member reads 31) — so an arm that sets the
   // CreatorProgram bit ALONE cannot tell `hasFlag` from `===`, and `===` returns false for every
   // real member. That is the segment going dark for 100% of the people it targets, with no error
@@ -76,8 +76,8 @@ describe('flipt evaluation context — what a missing context costs', () => {
       buildFliptContext(sessionUser({ onboarding: OnboardingComplete })).isInCreatorProgram
     ).toBe('false');
     expect(buildFliptContext(sessionUser()).isInCreatorProgram).toBe('false');
-    // A HIGHER bit set without this one — someone banned from the program. Kills a `>=` mutant,
-    // which the three arms above cannot see, and which would read every banned user as a member.
+    // A HIGHER bit set without this one. Kills a `>=` mutant, which the three arms above cannot
+    // see.
     expect(
       buildFliptContext(
         sessionUser({ onboarding: OnboardingComplete | OnboardingSteps.BannedCreatorProgram })
