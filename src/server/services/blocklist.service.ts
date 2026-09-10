@@ -135,10 +135,10 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         // nothing, so two concurrent no-id upserts for a type with no row both reach it and the
         // type ends up with two. Unreachable from this app — the only caller always passes an id —
         // but the spoke's twin is reachable, and the close is a unique index on `Blocklist.type`,
-        // not this predicate. That index is migration `20260909220000_blocklist_type_unique`.
-        // Verified 2026-09-09: production ALREADY has `Blocklist_type_key`, recorded in no
-        // committed migration, so there the duplicate is already unrepresentable and the migration
-        // is a no-op. Environments that lack it can still produce a second row until it is applied.
+        // not this predicate. That index is `Blocklist_type_key`, created by migration
+        // `20260819211000_blocklist_type_unique`, and production already has it (verified against
+        // `pg_index`, 2026-09-09), so the duplicate is already unrepresentable there. An
+        // environment where that migration has not been applied by hand can still produce one.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;
@@ -188,8 +188,9 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
  * union the rows: for a deny-list a union blocks more, but for the benign lists a union
  * strips more, which is a moderation bypass — one helper cannot silently pick a safe
  * direction for both. Nor does it throw: this read gates account signup, so a duplicate
- * row would become an outage. Deterministic-and-loud is the compromise for environments without
- * `Blocklist_type_key`; production already has that index, so this guard is inert there.
+ * row would become an outage. Deterministic-and-loud is the compromise for environments where
+ * `20260819211000_blocklist_type_unique` has not been applied; production has that index already,
+ * so this guard is inert there.
  */
 async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
   const rows = await dbWrite.blocklist.findMany({
