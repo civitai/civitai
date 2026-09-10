@@ -1842,6 +1842,7 @@ export type Collection = {
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
   collaborationDisabledAt: Timestamp | null;
+  archivedAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
