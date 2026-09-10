@@ -46,7 +46,7 @@ export type ResolvedSticker = {
   /**
    * Who made it. `null` is a staff-authored cosmetic with no creator;
    * `undefined` means NOT FETCHED — only `useOwnedSticker` populates this, and
-   * `useStickerCosmetics`, which eight other surfaces use, never does.
+   * `useStickerCosmetics`, which every other sticker surface uses, never does.
    */
   createdById?: number | null;
 };

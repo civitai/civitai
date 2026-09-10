@@ -104,9 +104,6 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: {
-    // The tray asks who made each sticker through `useQueries`; owning none of
-    // your own is the state this file cares about, so it asks for no chunks.
-    useQueries: () => [],
     cosmetic: {
       getStickerBalances: { useQuery: () => ({ data: [] }) },
       getStickerRecentUse: { useQuery: () => ({ data: [] }) },

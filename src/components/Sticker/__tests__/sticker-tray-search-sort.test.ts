@@ -24,7 +24,7 @@ const VIEWER_ID = 7;
 const mocks = vi.hoisted(() => ({
   owned: [] as { id: number; name: string; slug: string; url: string; animated: boolean }[],
   recentUse: [] as { cosmeticId: number; lastUsedAt: string }[],
-  /** Every tRPC key the tray reached for that this file does not supply. */
+  /** Every `trpc.cosmetic` key the tray reached for that this file does not supply. */
   unexpectedTrpcKeys: [] as string[],
 }));
 
@@ -72,9 +72,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
    *
    * The previous version recorded requests built through a hand-shaped
    * `useQueries` fake. Nothing under test called `useQueries`, so the assertion
-   * was true the way `expect([]).toEqual([])` is true, and the control that
-   * "proved" it only passed because the reverted code was written in the exact
-   * shape the fake expected. This catches a reintroduced query of ANY shape.
+   * was true the way an empty-equals-empty assertion is true, and the control
+   * that "proved" it only passed because the reverted code was written in the
+   * exact shape the fake expected. This catches a reintroduced query of any
+   * shape — though it only NAMES the `cosmetic.*` ones; a query under another
+   * router still reds, as an opaque undefined-property error.
    */
   trpc: {
     cosmetic: new Proxy(
@@ -84,7 +86,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         getStickerOffers: { useQuery: () => ({ data: [] }) },
       } as Record<string, unknown>,
       {
-        get(target, key: string) {
+        get(target, key: string | symbol) {
+          // Framework probes (`then`, `Symbol.toPrimitive`, a spread) reach the
+          // trap too, and recording those would report a confusing key.
+          if (typeof key !== 'string') return target[key as unknown as string];
           if (key in target) return target[key];
           mocks.unexpectedTrpcKeys.push(String(key));
           throw new Error(
@@ -99,7 +104,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 import { MantineProvider } from '@mantine/core';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
-// Imported AFTER the mock above, so this is the proxied fake the tray sees.
+// The same module-registry instance the tray resolves — `vi.mock` is hoisted and
+// nothing calls `resetModules`, so this IS the proxy under test, not a copy.
 import { trpc } from '~/utils/trpc';
 
 /** Ids DESCEND as obtained order advances — see the file header. */
@@ -238,6 +244,12 @@ describe('the tray can narrow to stickers you made', () => {
    * THE POSITIVE CONTROL FOR THE ASSERTION ABOVE. Without this, "asked nothing
    * extra" would be satisfied by a recorder nothing can reach — which is exactly
    * how the previous version of that test passed while proving nothing.
+   */
+  /**
+   * ⚠️ This proves the recorder fires. That it fires FOR THE TRAY rests on the
+   * sort tests below, which only pass because the tray reads `getStickerRecentUse`
+   * off this same proxy. Delete those and this guard quietly weakens to "a
+   * recorder that fires when a test pokes it".
    */
   it('and the recorder it asserts on does fire — reaching for any other key throws', () => {
     expect(() => (trpc.cosmetic as Record<string, unknown>).getStickerAttribution).toThrow(

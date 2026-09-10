@@ -347,10 +347,17 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                      * arithmetic; the filled background still says which state it
                      * is in.
                      *
-                     * `borderWidth`/`borderStyle` do NOT duplicate
-                     * FilterChip.module.scss: that sets the checked border's
-                     * COLOUR, which Mantine then renders at zero width. Measured
-                     * with these in place: 1px solid transparent unchecked, 1px
+                     * `borderWidth`/`borderStyle` are NOT a duplicate of
+                     * FilterChip.module.scss. That file sets the whole shorthand
+                     * for the checked state — but it names
+                     * `--mantine-color-primary`, which nothing defines (Mantine
+                     * ships `--mantine-primary-color-filled`; six module files
+                     * copy the undefined name). An unresolvable `var()` is invalid
+                     * at computed-value time, so the shorthand is dropped entirely
+                     * and the checked border computes to `none`. These two
+                     * longhands put the width back; the white that shows is
+                     * `currentColor` from the `color` beside it, not a colour
+                     * anyone set. Measured: 1px solid transparent unchecked, 1px
                      * solid white checked, 105.08px both.
                      *
                      * The height fallback is load-bearing separately:
