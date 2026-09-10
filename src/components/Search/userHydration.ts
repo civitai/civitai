@@ -1,5 +1,4 @@
 import type { InstantSearchProps } from 'react-instantsearch';
-import { trpcVanilla } from '~/utils/trpc';
 
 /**
  * Replaces the avatar baked into a search document with the current one.
@@ -44,10 +43,15 @@ type HitWithUser = { user?: { id?: number; profilePicture?: unknown } | null };
 
 type ProfilePictures = Record<number, unknown>;
 
-const fetchProfilePictures = (ids: number[]): Promise<ProfilePictures> =>
-  trpcVanilla.user.getSearchHydration
-    .query({ ids })
-    .then((r) => r.profilePictures as ProfilePictures);
+// Imported lazily so this module does not pull the tRPC client in at load. That import
+// reaches a large graph, and every test importing anything downstream of here would have
+// to mock it — a mock that replaces the module wholesale, which is the failure mode
+// `no-wholesale-module-mock` exists to stop.
+const fetchProfilePictures = async (ids: number[]): Promise<ProfilePictures> => {
+  const { trpcVanilla } = await import('~/utils/trpc');
+  const result = await trpcVanilla.user.getSearchHydration.query({ ids });
+  return result.profilePictures as ProfilePictures;
+};
 
 function collectUserIds(response: SearchResponse) {
   const ids = new Set<number>();

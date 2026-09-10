@@ -7,8 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * failure to do so still returns the search.
  */
 
-vi.mock('~/utils/trpc', () => ({ trpcVanilla: { user: { getSearchHydration: { query: vi.fn() } } } }));
-
 import { withUserHydration } from '~/components/Search/userHydration';
 
 const USER_A = 3319;
@@ -40,8 +38,9 @@ describe('withUserHydration', () => {
     const result = (await client.search([] as never)) as ReturnType<typeof response>;
 
     expect(fetchPictures).toHaveBeenCalledWith([USER_A]);
-    expect((result.results[0].hits[0] as { user: { profilePicture: unknown } }).user.profilePicture)
-      .toEqual(CURRENT_PICTURE);
+    expect(
+      (result.results[0].hits[0] as { user: { profilePicture: unknown } }).user.profilePicture
+    ).toEqual(CURRENT_PICTURE);
   });
 
   // A user who removed their avatar reads as `null` from the cache, and that null is the
@@ -55,8 +54,9 @@ describe('withUserHydration', () => {
 
     const result = (await client.search([] as never)) as ReturnType<typeof response>;
 
-    expect((result.results[0].hits[0] as { user: { profilePicture: unknown } }).user.profilePicture)
-      .toBeNull();
+    expect(
+      (result.results[0].hits[0] as { user: { profilePicture: unknown } }).user.profilePicture
+    ).toBeNull();
   });
 
   it('asks once for a user appearing on many hits', async () => {
@@ -109,8 +109,9 @@ describe('withUserHydration', () => {
 
     const result = (await client.search([] as never)) as ReturnType<typeof response>;
 
-    expect((result.results[0].hits[0] as { user: { profilePicture: unknown } }).user.profilePicture)
-      .toEqual(STALE_PICTURE);
+    expect(
+      (result.results[0].hits[0] as { user: { profilePicture: unknown } }).user.profilePicture
+    ).toEqual(STALE_PICTURE);
   });
 
   // A rejection here reaches react-instantsearch as a failed search: no results, not stale
