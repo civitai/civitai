@@ -54,7 +54,7 @@ export function isMissingColumnError(err: unknown): boolean {
  * migration is outstanding, and the operator has to be told.
  */
 let missingBudgetColumnLogged = false;
-function logMissingBudgetColumn(site: string, err: unknown): void {
+export function logMissingBudgetColumn(site: string, err: unknown): void {
   if (missingBudgetColumnLogged) return;
   missingBudgetColumnLogged = true;
   logToAxiom(

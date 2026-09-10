@@ -798,10 +798,11 @@ function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_C
  * until some later submit's `ttl < 0` branch re-arms it and extends the burn another
  * ~25h.
  *
- * MEASURED on this branch (adversarial audit round 1) against the CONSENT leg: an
- * `expire` rejection left `consent = 25` charged while the platform leg was correctly
- * refunded to 0 — the two counters diverging is precisely what
- * `refundBlockBuzzReservation` exists to prevent. The platform and run-for-real legs
+ * MEASURED on this branch (adversarial audit round 1) against the CONSENT leg: with
+ * `sysRedis.expire` made to reject for consent keys, the platform counter came back to
+ * its pre-attempt value and the consent counter stayed charged 25 for a submit that
+ * never happened — the two diverging is precisely what `refundBlockBuzzReservation`
+ * exists to prevent. The platform and run-for-real legs
  * had the identical shape, so all three are fixed here rather than at one call site:
  * open-coding this three times is what let the same defect sit in three places.
  *

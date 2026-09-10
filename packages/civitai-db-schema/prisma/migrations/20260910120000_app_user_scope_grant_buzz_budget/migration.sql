@@ -51,7 +51,7 @@ ALTER TABLE "app_user_scope_grants"
 -- DELIBERATELY A PLAIN `ADD CONSTRAINT`, NOT `NOT VALID` + `VALIDATE CONSTRAINT`.
 -- A plain ADD scans the whole table under ACCESS EXCLUSIVE to prove the existing rows
 -- satisfy it. That is the right trade HERE and only because of what this table is: the
--- column was created NULL two statements earlier in this same migration, so EVERY row
+-- column is created NULL by the statement immediately above, so EVERY row
 -- trivially satisfies the check (`IS NULL`), and the scan is over a consent ledger with
 -- one row per (user, approved app) on a pre-GA, moderator-gated feature — small, and
 -- nothing in the transaction can grow it. The two-step form buys a shorter lock at the

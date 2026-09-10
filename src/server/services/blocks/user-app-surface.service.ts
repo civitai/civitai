@@ -190,8 +190,11 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // what the spend path enforces in that same database. Any other error still
       // throws: a permissions page that quietly renders "no limits" because the DB is
       // unreachable would be a lie about the user's own settings.
-      const { isMissingColumnError } = await import('~/server/services/blocks/scope-grant.service');
+      const { isMissingColumnError, logMissingBudgetColumn } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
       if (!isMissingColumnError(err)) throw err;
+      logMissingBudgetColumn('listMyScopeGrants', err);
     }
     for (const g of grants) {
       // Mirror getConsentBuzzBudget's guards EXACTLY — revoked → null, and a
