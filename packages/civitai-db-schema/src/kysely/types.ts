@@ -180,6 +180,10 @@ export type Announcement = {
    */
   profileOnly: Generated<boolean>;
 };
+export type AnnouncementReport = {
+  announcementId: number;
+  reportId: number;
+};
 export type AnnouncementSpend = {
   id: Generated<number>;
   userId: number;
@@ -4300,6 +4304,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementReport: AnnouncementReport;
   AnnouncementSpend: AnnouncementSpend;
   AnnouncementUser: AnnouncementUser;
   Answer: Answer;
