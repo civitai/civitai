@@ -8,7 +8,11 @@ import type {
   GetResourceLoadQueueInput,
   ResourceLoadAvailability,
 } from '~/server/schema/resource-load.schema';
-import { resourceAvailabilitySchema } from '~/server/schema/resource-load.schema';
+import {
+  resourceAvailabilitySchema,
+  UNLOADABLE_MESSAGES,
+} from '~/server/schema/resource-load.schema';
+import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -30,20 +34,6 @@ const PREPARE_STEP_NAME = 'prepare-resource';
  */
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
 const LOADABLE_FORMAT = 'SafeTensor';
-
-/**
- * Why a version cannot be loaded. The two are different things to tell a user: an API model has
- * nothing to load and never will, while a GGUF checkpoint has weights the cluster cannot serve.
- * Collapsing them is what made the old copy claim every unloadable resource was external.
- */
-export type UnloadableReason = 'no-weights' | 'unsupported-format';
-
-/** Exported so the load CTA states the reason in the same words the mutation refuses it in. */
-export const UNLOADABLE_MESSAGES: Record<UnloadableReason, string> = {
-  'no-weights': 'This resource has no model file to load — it runs through an external provider.',
-  'unsupported-format':
-    'The generator can only load SafeTensor files, and this version does not have one.',
-};
 
 function checkLoadable(
   files: VersionForAir['files'],

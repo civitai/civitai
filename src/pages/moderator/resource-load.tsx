@@ -19,12 +19,14 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useResourceLoadProgress } from '~/components/ResourceLoad/resource-load.utils';
-import { UNLOADABLE_MESSAGES } from '~/server/services/resource-load.service';
-import type { UnloadableReason } from '~/server/services/resource-load.service';
+import { UNLOADABLE_MESSAGES } from '~/server/schema/resource-load.schema';
+import type {
+  ResourceLoadAvailability,
+  UnloadableReason,
+} from '~/server/schema/resource-load.schema';
 import { useResourceLoadStore } from '~/store/resource-load.store';
 import type { TrackedResourceLoad } from '~/store/resource-load.store';
 import type { ResourceLoadProgress } from '~/components/ResourceLoad/resource-load.utils';
-import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
