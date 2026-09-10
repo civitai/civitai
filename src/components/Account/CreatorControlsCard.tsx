@@ -24,9 +24,9 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
  * user holds a valid Creator Program membership (enforced read-side); non/lapsed
  * members see an upsell and disabled toggles.
  *
- * Renting out space on your own images — stickers, and remix galleries — sits
- * above that gate and is NOT a membership benefit. The alert says "below this
- * point" for that reason; it is a boundary in the card, not a description of it.
+ * Renting out space on your own images — stickers and remix galleries — is NOT a
+ * membership benefit. In the legacy card that boundary is positional: the alert says
+ * "below this point", so nothing ungated may be moved beneath it.
  */
 export function CreatorControlsCard({
   flat,
@@ -42,8 +42,7 @@ export function CreatorControlsCard({
   const { mutate: mutateSetting, isPending: isLoadingSetting } = useMutateUserSettings();
 
   if (!user) return null;
-  // Renting out your own images is not a Creator Program benefit, so the two
-  // halves are gated apart. With neither, the card would be a bare heading.
+  // With neither half, the card would be a bare heading.
   if (!flags.creatorControls && !flags.stickerPlacement && !flags.remixGallery)
     return <>{stickerFooter}</>;
 
@@ -114,8 +113,6 @@ export function CreatorControlsCard({
   if (flat)
     return (
       <div id="creator-controls" className="flex flex-col gap-8">
-        <PlacementSpaceSection flat footer={stickerFooter} />
-        <RemixGallerySettings flat />
         {flags.creatorControls && (
           <SettingsSection
             title={
@@ -150,6 +147,8 @@ export function CreatorControlsCard({
             ))}
           </SettingsSection>
         )}
+        <PlacementSpaceSection flat footer={stickerFooter} />
+        <RemixGallerySettings flat />
       </div>
     );
 

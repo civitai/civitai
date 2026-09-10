@@ -180,7 +180,7 @@ The type "lies" — it claims every flag is present and boolean, when at runtime
 - The wire payload is still sparse (Phase 2 stays — half the win was the bytes)
 - **The flag-removal safety net still works**: `FeatureFlagKey` is the keyspace, so removing a flag from the registry shrinks the union and produces a type error at every consumer (including destructure sites)
 
-**What we lose:** the type doesn't enforce write safety (`features.X = false` compiles even though wire payload never produces `false`). Acceptable — no consumer writes to the cache except [SettingsCard.tsx:334](../src/components/Account/SettingsCard.tsx#L334), and that one assignment is internal optimistic-cache state, not the wire payload.
+**What we lose:** the type doesn't enforce write safety (`features.X = false` compiles even though wire payload never produces `false`). Acceptable — no consumer writes to the cache except [SettingsCard.tsx:335](../src/components/Account/SettingsCard.tsx#L335), and that one assignment is internal optimistic-cache state, not the wire payload.
 
 ### Phase 4 — Benefits realized
 
