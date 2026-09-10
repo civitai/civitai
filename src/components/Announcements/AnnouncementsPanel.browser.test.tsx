@@ -10,6 +10,7 @@ import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvider';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as Trpc from '~/utils/trpc';
+import type * as ReportTrigger from '~/components/Dialog/triggers/report';
 import {
   clearDismissedCreatorAnnouncements,
   CREATOR_ANNOUNCEMENTS_DISMISSED_KEY,
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   civitai: [] as any[],
   creators: [] as any[],
   featureEnabled: true,
+  openReportModal: vi.fn(),
 }));
 
 vi.mock('~/components/Announcements/announcements.utils', async (importOriginal) => ({
@@ -41,6 +43,10 @@ vi.mock('~/components/Announcements/creator-announcements.utils', async (importO
   }),
   useMutedCreators: () => [],
   useDeleteCreatorAnnouncement: () => ({ deleteAnnouncement: vi.fn(), isLoading: false }),
+  // `AnnouncementMuteMenuItem` only renders once the kebab is opened, so no earlier test in
+  // this file reached it. Left on the real implementation it calls `trpc.useUtils()`, which
+  // this scaffold's tRPC stub doesn't cover.
+  useToggleAnnouncementMute: () => ({ toggle: vi.fn(), isLoading: false }),
 }));
 
 // The panel's leaves read providers `renderWithProviders` does not mount: `useCurrentUser`
@@ -99,6 +105,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
+
+vi.mock('~/components/Dialog/triggers/report', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReportTrigger>()),
+  openReportModal: mocks.openReportModal,
+}));
 
 const civitaiAnnouncement = {
   id: 1,
@@ -276,5 +287,43 @@ describe('AnnouncementsPanel', () => {
     mocks.creators = [creatorAnnouncement];
     await renderPanel(['civitai', 'creators']);
     await expect.element(page.getByText('Creator says hello')).toBeInTheDocument();
+  });
+
+  test("the kebab offers Report on someone else's announcement", async () => {
+    // `ReportMenuItem` wraps in `LoginRedirect`, which gates on `window.isAuthed` — set by
+    // `CivitaiSessionProvider` post-hydration in production — rather than on `useCurrentUser()`,
+    // so the mocked user above is not enough on its own to reach `onReport`.
+    window.isAuthed = true;
+    try {
+      await renderPanel(['creators']);
+
+      await page.getByRole('button', { name: 'Announcement options' }).click();
+      const report = page.getByRole('menuitem', { name: 'Report announcement' });
+      await expect.element(report).toBeVisible();
+
+      await report.click();
+      expect(mocks.openReportModal).toHaveBeenCalledWith({
+        entityType: 'announcement',
+        entityId: 2,
+      });
+    } finally {
+      window.isAuthed = undefined;
+    }
+  });
+
+  test('the kebab does not offer Report on your own announcement', async () => {
+    // The scaffold's `useCurrentUser` returns id 1; the fixture's author is 99.
+    mocks.creators = [
+      { ...creatorAnnouncement, userId: 1, user: { ...creatorAnnouncement.user, id: 1 } },
+    ];
+    await renderPanel(['creators']);
+
+    await page.getByRole('button', { name: 'Announcement options' }).click();
+    // The menu is open — assert on a sibling that IS there, so this cannot pass by the
+    // dropdown simply never having rendered.
+    await expect.element(page.getByRole('menuitem', { name: /Delete announcement/ })).toBeVisible();
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Report announcement' }))
+      .not.toBeInTheDocument();
   });
 });
