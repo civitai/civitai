@@ -100,7 +100,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
 
   // Already in flight for the notification bell — one request per session,
   // `staleTime: Infinity`. Reading it here adds no round trip.
-  const { pendingPlacements } = useQueryNotificationsCount();
+  const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
 
   return [
     {
@@ -155,6 +155,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconBookmark,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Collections',
+          badge: pendingCollectionReviews,
         },
         {
           href: `/collections/${bookmarkedModelsCollection?.id}`,
