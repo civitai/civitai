@@ -78,10 +78,15 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
-    { permission: CollectionContributorPermission.VIEW },
+  const { data, isLoading } = trpc.collection.getAllUser.useQuery(
+    { permission: CollectionContributorPermission.VIEW, withPendingReviewCounts: true },
     { enabled: !!currentUser }
   );
+  // withPendingReviewCounts:true guarantees pendingReviewCount here, but CollectionGetAllUserModel
+  // stays a union (see Task 4) since most callers of getAllUser omit the flag.
+  const collections = (data ?? []) as (CollectionGetAllUserModel & {
+    pendingReviewCount?: number;
+  })[];
 
   const selectCollection = (id: number) => {
     router.push(`/collections/${id}`);
@@ -196,6 +201,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
                     isActive={router.query?.collectionId === c.id.toString()}
                     roleLabel={roleLabelFor(permissionsMap.get(c.id))}
                     onClick={() => selectCollection(c.id)}
+                    pendingReviewCount={c.pendingReviewCount}
                   />
                 ))}
             </div>

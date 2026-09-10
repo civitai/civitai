@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { createElement } from 'react';
 import type { CollectionListView } from './collection-list.utils';
 import { collectionTypeData } from './collection.utils';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { CollectionGetAllUserModel } from '~/types/router';
 import classes from './MyCollections.module.scss';
 
@@ -12,12 +13,14 @@ export function CollectionListRow({
   isActive,
   roleLabel,
   onClick,
+  pendingReviewCount,
 }: {
   collection: CollectionGetAllUserModel;
   view: CollectionListView;
   isActive: boolean;
   roleLabel: string | null;
   onClick: () => void;
+  pendingReviewCount?: number;
 }) {
   const typeData = collection.type ? collectionTypeData[collection.type] : undefined;
   const meta = [typeData?.label, roleLabel].filter(Boolean).join(' · ');
@@ -28,6 +31,9 @@ export function CollectionListRow({
       active={isActive}
       onClick={onClick}
       className={clsx(classes.navLinkWrapper, view === 'default' && classes.rowDefault)}
+      rightSection={
+        pendingReviewCount ? <QueueCountBadge count={pendingReviewCount} max={99} /> : undefined
+      }
       leftSection={
         view === 'default' && typeData ? (
           <ThemeIcon size={18} variant="subtle" color={typeData.color} className={classes.rowIcon}>

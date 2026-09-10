@@ -28,8 +28,11 @@ export const getServerSideProps = createServerSideProps({
 
 const CollectionsHome = () => {
   const currentUser = useCurrentUser();
+  // Matches MyCollections' input exactly. This page renders CollectionsLayout, which renders
+  // MyCollections, so both call getAllUser on the same mount — and a React Query cache key
+  // includes the input. Differing inputs would split one request into two.
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
-    { permission: CollectionContributorPermission.VIEW },
+    { permission: CollectionContributorPermission.VIEW, withPendingReviewCounts: true },
     { enabled: !!currentUser }
   );
   const router = useRouter();
