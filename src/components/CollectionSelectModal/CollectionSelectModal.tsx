@@ -11,6 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { withUserHydration } from '~/components/Search/userHydration';
 import { IconCloudOff, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import React, { useContext, useEffect, useRef } from 'react';
 import type { InstantSearchProps } from 'react-instantsearch';
@@ -271,9 +272,11 @@ const meilisearch = instantMeiliSearch(
 
 // Wrapped so a Meili outage degrades to empty results instead of an uncaught
 // `MeiliSearchCommunicationError`. Fails quietly (modal picker, no banner).
-const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient({
-  ...meilisearch,
-  search(requests) {
-    return meilisearch.search(requests);
-  },
-});
+const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
+  createResilientSearchClient({
+    ...meilisearch,
+    search(requests) {
+      return meilisearch.search(requests);
+    },
+  })
+);

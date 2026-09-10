@@ -45,6 +45,7 @@ import type {
   UserByReferralCodeSchema,
   UserOnboardingSchema,
   UserUpdateInput,
+  GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
 import type {
@@ -80,6 +81,7 @@ import {
   getUserBookmarkCollections,
   getBanContentPreview,
   getUserById,
+  getProfilePicturesForUsers,
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
@@ -241,6 +243,32 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+/**
+ * The authoritative avatar for a set of users, for search results to render.
+ *
+ * The search indexes carry a COPY of this, baked in when the document was last built, and
+ * nothing rebuilds an existing document when the user changes their avatar — so the copy
+ * is stale for as long as the document is not otherwise touched, and becomes a broken
+ * image once `remove-replaced-images` reaps the original. Measured on production: 100 of
+ * 120 sampled `collections_v3` documents, and 69 of 120 `models_v9`.
+ *
+ * Reads through `profilePictureCache`, so this is a Redis hit rather than a query.
+ *
+ * Public because search is public, and this returns nothing a search hit does not already
+ * expose. The id list is capped in the schema.
+ */
+export const getUserSearchHydrationHandler = async ({
+  input,
+}: {
+  input: GetUserSearchHydrationInput;
+}) => {
+  try {
+    return { profilePictures: await getProfilePicturesForUsers([...new Set(input.ids)]) };
+  } catch (error) {
+    throw throwDbError(error);
   }
 };
 
