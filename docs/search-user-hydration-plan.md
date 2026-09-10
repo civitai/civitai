@@ -29,9 +29,27 @@ Staleness was measured by taking documents whose owner has a pending
 `ReplacedImageDelete` row and comparing the document's `user.profilePicture.id` against
 `User.profilePictureId` in the database.
 
-Username is a different story: 200 `models_v9` documents compared against the database
-found **0** stale usernames. The field that is expensive to keep fresh and the field the
-index actually needs for matching are not the same field.
+Username goes stale too, and hydration cannot fix it. A random sample of 200 `models_v9`
+documents found 0 stale usernames, but random sampling is biased toward documents that get
+rebuilt often. Re-measured against documents already known to carry a stale avatar,
+**3 of 17 distinct creators had renamed** — the old name survives only inside the
+document.
+
+That matters more than the display, because `user.username` is what the search UI
+**filters** on: every parser refines on `refinementList['user.username']`. So the facet
+list offers a creator who no longer exists, filtering by the current name misses their
+older documents, and `?users=<old-name>` is a shareable link keyed to a dead value.
+
+🔴 **Read-time hydration cannot fix a field the engine matches on.** The filter is
+evaluated inside Meilisearch against the stored value; anything done to the response is
+too late. That splits the problem in two, and the split is the design rule:
+
+- A field the index must **match** on has to be kept fresh **in** the index — so it stays
+  denormalized, and something must reindex on change.
+- A field that is only **displayed** should not be in the index at all — hydrate it.
+
+`user.username` is the first kind. `user.profilePicture` is the second. They need
+different mechanisms, which is why one fix does not cover both.
 
 ## Why the enqueue approach was abandoned
 
