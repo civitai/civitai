@@ -23,6 +23,7 @@ import {
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
   getDailyCompensationRewardByUser,
@@ -396,11 +397,17 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
 
 /**
  * Shared authorization gate for the buzz self-read bridges (`getMyBuzz*` below).
- * Mirrors `getMyBuzzBalance`'s gate but adds the `buzz:read:self` CONSENT check:
- * these reads (full ledger / all-pool balances incl. creator payout pools /
- * per-model earnings) are MORE sensitive than the spendable-balance convenience
- * read, so unlike the scope-free `getMyBuzzBalance` they require the token to
- * carry the declared+granted `buzz:read:self` scope.
+ * Verify token → require the `buzz:read:self` CONSENT scope → self-bind → kill-switch
+ * → rate limit.
+ *
+ * ⚠️ `getMyBuzzBalance` IS NOT SCOPE-FREE ANY MORE — this docblock said it was until
+ * the round-1 audit caught the contradiction with the one on `getMyBuzzBalance`
+ * itself. That proc now performs the SAME `buzz:read:self` check inline (it cannot
+ * call this helper: it is not rate-limited on `blockInstanceId` and its error copy
+ * differs). What still separates these bridges from it is SENSITIVITY, not the scope:
+ * the full ledger / all-pool balances incl. creator payout pools / per-model earnings,
+ * versus a spendable-balance read — which is why these three also carry the
+ * per-instance rate limit below.
  *
  * Order (each step fail-closed): verify token → require consent scope → self-bind
  * the userId off `claims.sub` (never client input) → App-Blocks kill-switch
@@ -776,25 +783,66 @@ function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_C
 }
 
 /**
+ * THE ONE reserve primitive behind every cumulative Buzz counter in this router
+ * (per-user daily, run-for-real session, consent budget). Atomic INCRBY, then arm
+ * the window's TTL on the (effectively) first write, with a `ttl < 0` re-arm for a
+ * key that somehow lost it.
+ *
+ * 🔴 IT SELF-UNWINDS ITS OWN INCRBY, AND THAT IS THE REASON IT IS ONE FUNCTION.
+ * Everything after the INCRBY is a SEPARATE Redis round-trip that can throw on its
+ * own, and by then `cost` is already ON the counter. The caller cannot clean that up
+ * — it never learns the key, because the throw happens before the return — so the
+ * reservation would leak for the rest of the window with nothing left holding a
+ * reference to it. Worse on the FIRST write of a window: the call that throws is the
+ * `expire` that would have armed the TTL, so the leaked counter has NO expiry at all
+ * until some later submit's `ttl < 0` branch re-arms it and extends the burn another
+ * ~25h.
+ *
+ * MEASURED on this branch (adversarial audit round 1) against the CONSENT leg: an
+ * `expire` rejection left `consent = 25` charged while the platform leg was correctly
+ * refunded to 0 — the two counters diverging is precisely what
+ * `refundBlockBuzzReservation` exists to prevent. The platform and run-for-real legs
+ * had the identical shape, so all three are fixed here rather than at one call site:
+ * open-coding this three times is what let the same defect sit in three places.
+ *
+ * Still fails CLOSED — the error is rethrown after the unwind, so the submit aborts.
+ * The unwind is best-effort (`refundBlockBuzzSpend` never throws); a lost unwind
+ * over-counts, which only makes the cap STRICTER.
+ */
+async function reserveCumulativeBuzzKey(
+  key: RedisKeyTemplateSys,
+  cost: number,
+  ttlSeconds: number
+): Promise<number> {
+  const amount = Math.ceil(cost);
+  const total = await sysRedis.incrBy(key, amount);
+  try {
+    if (total <= amount) {
+      await sysRedis.expire(key, ttlSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, ttlSeconds);
+    }
+  } catch (e) {
+    await refundBlockBuzzSpend(key, amount);
+    throw e;
+  }
+  return total;
+}
+
+/**
  * Atomically reserves `cost` against this user's cumulative UTC-day counter and
  * returns the new running total. INCRBY is atomic, so concurrent submits
- * accumulate correctly with no read→check→record TOCTOU. Sets the TTL on the
- * (effectively) first write so the per-window key self-expires (the ttl<0 guard
- * also re-arms a key that somehow lost its TTL). No try/catch: a Redis error
- * throws and fails the submit CLOSED, identical to the old read path.
+ * accumulate correctly with no read→check→record TOCTOU. A Redis error throws and
+ * fails the submit CLOSED, identical to the old read path — see
+ * `reserveCumulativeBuzzKey` for the TTL arming and the self-unwind.
  */
 async function reserveBlockBuzzSpend(
   userId: number,
   cost: number
 ): Promise<{ total: number; key: ReturnType<typeof buzzCapRedisKey> }> {
   const key = buzzCapRedisKey(userId);
-  const total = await sysRedis.incrBy(key, Math.ceil(cost));
-  if (total <= Math.ceil(cost)) {
-    await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
-  } else {
-    const ttl = await sysRedis.ttl(key);
-    if (ttl < 0) await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
-  }
+  const total = await reserveCumulativeBuzzKey(key, cost, BLOCK_BUZZ_CAP_TTL_SECONDS);
   // Return the resolved key so the caller refunds against the EXACT same key it
   // reserved — see refundBlockBuzzSpend for why re-deriving is unsafe.
   return { total, key };
@@ -849,8 +897,9 @@ function reviewRunForRealBuzzCapKey(
 
 /**
  * Atomically reserves `cost` against the (mod, publishRequestId) run-for-real
- * cumulative counter. Identical atomic INCRBY + first-write-EX (+ ttl<0 re-arm)
- * shape as `reserveBlockBuzzSpend`; fails CLOSED on a Redis error (throws).
+ * cumulative counter. Same shared `reserveCumulativeBuzzKey` primitive as
+ * `reserveBlockBuzzSpend` (atomic INCRBY + first-write-EX + ttl<0 re-arm +
+ * self-unwind); fails CLOSED on a Redis error (throws).
  */
 async function reserveReviewRunForRealBuzzSpend(
   userId: number,
@@ -858,13 +907,7 @@ async function reserveReviewRunForRealBuzzSpend(
   cost: number
 ): Promise<{ total: number; key: ReturnType<typeof reviewRunForRealBuzzCapKey> }> {
   const key = reviewRunForRealBuzzCapKey(userId, publishRequestId);
-  const total = await sysRedis.incrBy(key, Math.ceil(cost));
-  if (total <= Math.ceil(cost)) {
-    await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
-  } else {
-    const ttl = await sysRedis.ttl(key);
-    if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
-  }
+  const total = await reserveCumulativeBuzzKey(key, cost, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
   return { total, key };
 }
 
@@ -897,8 +940,15 @@ function consentBudgetRedisKey(
 
 /**
  * Atomically reserves `cost` against the (user, app, UTC-day) consent-budget
- * counter. Identical atomic INCRBY + first-write-EX (+ ttl<0 re-arm) shape as
- * `reserveBlockBuzzSpend`; fails CLOSED on a Redis error (throws).
+ * counter. Same shared `reserveCumulativeBuzzKey` primitive as
+ * `reserveBlockBuzzSpend` (atomic INCRBY + first-write-EX + ttl<0 re-arm +
+ * self-unwind); fails CLOSED on a Redis error (throws).
+ *
+ * The self-unwind matters MOST here: this is the SECOND leg, so a throw after its
+ * INCRBY is caught by the caller, which refunds the PLATFORM key and rethrows. The
+ * caller has no handle on this key — it is created inside this function — so without
+ * the unwind the consent counter alone stays charged for a submit that never
+ * happened.
  */
 async function reserveConsentBudgetSpend(
   userId: number,
@@ -906,13 +956,7 @@ async function reserveConsentBudgetSpend(
   cost: number
 ): Promise<{ total: number; key: ReturnType<typeof consentBudgetRedisKey> }> {
   const key = consentBudgetRedisKey(userId, appBlockId);
-  const total = await sysRedis.incrBy(key, Math.ceil(cost));
-  if (total <= Math.ceil(cost)) {
-    await sysRedis.expire(key, CONSENT_BUDGET_TTL_SECONDS);
-  } else {
-    const ttl = await sysRedis.ttl(key);
-    if (ttl < 0) await sysRedis.expire(key, CONSENT_BUDGET_TTL_SECONDS);
-  }
+  const total = await reserveCumulativeBuzzKey(key, cost, CONSENT_BUDGET_TTL_SECONDS);
   return { total, key };
 }
 
@@ -8268,12 +8312,24 @@ async function submitStepWorkflow(opts: {
         // a divergent submit inside a dev tunnel left that counter under-reading
         // by the overage: precisely the drift direction the same comment forbids.
         try {
-          // Corrects BOTH legs the original reservation held: the platform
+          // Charges the overage on BOTH LEGS THIS CALL DERIVES — the platform
           // cumulative counter and, when the viewer set one, their consent budget.
-          // This is an ACCOUNTING CORRECTION for money already spent, not a gate —
-          // it deliberately has no deny path, so a consent budget that this pushes
-          // over its cap simply binds on the NEXT submit rather than retroactively
-          // refusing one that already billed.
+          //
+          // ⚠️ NOT the same keys the original reservation held, and the difference is
+          // observable. This takes a NEW reservation, so both keys are re-derived
+          // from `buzzCapWindowKey()` at correction time: a submit that STRADDLES
+          // midnight UTC charges its overage to the NEXT day's keys, leaving the day
+          // it actually spent on under-counted by the overage. It mirrors the
+          // pre-existing behaviour of the platform leg exactly (this call site
+          // predates the consent budget), and correcting it means threading the
+          // original keys down here — a change to how the reservation is carried, not
+          // to this comment. The window is one submit's duration per day, and the
+          // drift direction is "looser on the next day", never "spends more today".
+          //
+          // This is an ACCOUNTING CORRECTION for money already spent, not a gate — it
+          // deliberately has no deny path, so a consent budget that this pushes over
+          // its cap simply binds on the NEXT submit rather than retroactively refusing
+          // one that already billed.
           await reserveBlockBuzzSpendForClaims(claims, userId, capOverage);
         } catch {
           /* best-effort correction — a lost one under-counts by the overage only */

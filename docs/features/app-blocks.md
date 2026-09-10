@@ -58,7 +58,7 @@ check at request time (`enforceContextBinding`).
 | -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `models:read:self`               | `query.id == ctx.modelId`                         |                                                                                                                                                                         |
 | `media:read:owned`               | non-anon `sub`                                    |                                                                                                                                                                         |
-| `buzz:read:self`                 | non-anon `sub`                                    |                                                                                                                                                                         |
+| `buzz:read:self`                 | non-anon `sub`                                    | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN) |
 | `social:tip:self`                | non-anon `sub`                                    |                                                                                                                                                                         |
 | `user:read:self`                 | non-anon `sub`                                    | viewer identity — read via the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Also gates the **deprecated** `/api/v1/blocks/me` REST route (retiring) |
 | `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
@@ -310,6 +310,11 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   `blocks.getMyBuzzBalance` mutation, which returns `{ blue, green, yellow }` for
   the token's subject (other account types — red / cash / creator-program — are
   omitted). This backs the SDK `useBuzzBalance()` hook + the account picker.
+  **Declare `buzz:read:self`** — this read requires it, like every other
+  host-mediated buzz read. It used to be scope-free (gated on an authoring
+  capability instead); that capability gate was removed from the runtime, and the
+  user's own scope grant is the authority now. A token without the scope gets
+  `block lacks buzz:read:self scope`.
 - **Choose the funding pool**: a workflow submit body may carry `accountType`
   (`blue | green | yellow`). It is honored **preferred-first** while the maturity
   policy clamp still applies (a SFW-domain block can't widen to a mature currency);
@@ -318,6 +323,39 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
+
+### The user's per-app spend limit (consent budget)
+
+A viewer who grants `ai:write:budgeted` may also set a **daily Buzz limit for that
+one app**, stored on their grant row (`app_user_scope_grants.buzz_budget_per_day`).
+It is the only one of the three spend ceilings the user chooses:
+
+| Ceiling | Scope of the key | Who set it |
+| --- | --- | --- |
+| Platform per-user daily cap | one user, ALL their apps | the platform |
+| Per-app aggregate cap | one app, ALL its users | the platform |
+| **Consent budget** | one (user, app) pair, per UTC day | **the user** |
+
+- **Both apply; the tighter one binds.** The consent budget is bounded above by the
+  platform per-user daily cap, so it can only ever narrow. `null` (the default, and
+  the state of every grant made before the field existed) means "no limit of my own"
+  and behaves exactly as it did before.
+- **Set at consent time** in the permission modal (shown only when the scope being
+  granted is `ai:write:budgeted` — a limit next to "read your username" bounds
+  nothing), and **changed, cleared or simply read afterwards** on
+  **Apps → Permissions** (`/apps/activity`). Both write through
+  `blocks.grantScopes`, whose `buzzBudgetPerDay` input has three distinct states: a
+  number sets/replaces, `null` clears, and an **omitted** key leaves the stored value
+  alone (so re-consenting to an unrelated scope can never wipe a limit).
+- **What an app sees when it binds.** The submit is refused before any spend with a
+  `failed` snapshot whose error names the user's own number — e.g. `app Buzz limit
+  reached: 400 already spent today by this app on your behalf, this generation may
+  cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
+  (a platform secret), this ceiling is the user's own setting, so telling the app is
+  what makes the rejection actionable: surface it and let the user raise the limit.
+- **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
+  as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
+  when it reaches a terminal state.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

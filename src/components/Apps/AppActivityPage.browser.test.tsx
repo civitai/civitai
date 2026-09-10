@@ -56,6 +56,9 @@ import type * as TrpcMod from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
   flags: {} as Record<string, boolean>,
+  /** Shared `mutate` spy for every `useMutation` in the tree — the budget editor is the
+   *  only mutation these tests drive, and they clear it first. */
+  mutate: vi.fn(),
 }));
 
 /**
@@ -127,6 +130,21 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               slug: 'demo-app',
               scopes: ['read:profile'],
               surfaces: { modelInstallCount: 1, subscriptionScopes: [] },
+              // No spend scope granted → no budget control on this card. Keeping one
+              // such row is what makes the control's presence on the OTHER row a fact
+              // about `spendScopeGranted` rather than about the panel rendering at all.
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
+            {
+              appBlockId: 'apb_spend',
+              blockId: 'spender',
+              name: 'Spender',
+              slug: 'spender',
+              scopes: ['ai:write:budgeted'],
+              surfaces: { modelInstallCount: 0, subscriptionScopes: ['viewer_personal'] },
+              buzzBudgetPerDay: 750,
+              spendScopeGranted: true,
             },
           ]
         : [],
@@ -151,7 +169,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             // Called at RENDER time, so `mocks.flags` is the arm's own value.
             return () => (read === undefined ? inert : { ...inert, data: read() });
           }
-          if (key === 'useMutation') return () => inert;
+          if (key === 'useMutation') return () => ({ ...inert, mutate: mocks.mutate });
           if (key === 'invalidate' || key === 'fetch') return vi.fn();
           if (key === 'then') return undefined; // never look thenable to await
           return node();
@@ -469,5 +487,116 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
       bodyMarketplaceLinks().some((el) => el.textContent?.trim() === 'Browse marketplace'),
       'the removed header CTA is back'
     ).toBe(false);
+  });
+});
+
+/**
+ * The per-app daily Buzz limit on the Permissions panel.
+ *
+ * 🔴 WHY THIS SUITE EXISTS. Before it, `buzzBudgetPerDay` was returned by the API and
+ * read by NO component: the consent modal is the only writer and it only offers the
+ * field while `ai:write:budgeted` is still MISSING, which is true exactly once per app,
+ * forever. A user could therefore set a limit and then had no way to see it, raise it,
+ * lower it or clear it — and the floor is 1, so a too-low value refused every generation
+ * with no path back through the product. `recordScopeGrant`'s documented null-clears
+ * branch had ZERO callers.
+ *
+ * ── RED BEFORE THIS CHANGE ────────────────────────────────────────────────────
+ * Every test below fails against the previous revision of `pages/apps/activity.tsx` for
+ * the reason it names: there is no `app-budget-row`, no `app-budget-edit`, and no
+ * mutation to observe.
+ */
+describe('Apps & permissions — the per-app daily Buzz limit', () => {
+  beforeEach(() => {
+    mocks.mutate.mockClear();
+    // Select the Permissions tab. Mantine keeps every panel MOUNTED but the unselected
+    // ones are not VISIBLE, and a browser-mode `click`/`fill` waits for visibility — so
+    // without this the interaction tests hang to timeout and read as a broken control.
+    router.query = { tab: 'permissions' };
+  });
+
+  test('renders the stored limit for an app the viewer granted the spend scope', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByTestId('app-budget-value')).toBeInTheDocument();
+    // The whole line, not a keyword: "750" alone would pass on copy that said the
+    // opposite of what the number means.
+    await expect
+      .element(page.getByTestId('app-budget-value'))
+      .toHaveTextContent('Daily Buzz limit: 750 Buzz/day');
+  });
+
+  // 🔴 THE DISCRIMINATING HALF. The fixture holds TWO apps and only one has the spend
+  // scope GRANTED, so exactly one control may render. Without this, a control rendered
+  // unconditionally would pass the test above.
+  test('renders NO limit control for an app without the granted spend scope', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
+    // Positive control: BOTH apps really rendered, so "one control" is a fact about the
+    // grant and not about a panel that only drew one card.
+    expect(page.getByTestId('app-budget-value').elements()).toHaveLength(1);
+    const names = Array.from(
+      document.querySelectorAll('[data-testid="apps-installed-grants-grid"] .truncate')
+    ).map((el) => el.textContent?.trim());
+    expect(names).toContain('Demo App');
+    expect(names).toContain('Spender');
+    expect(page.getByTestId('app-budget-row').elements()).toHaveLength(1);
+  });
+
+  test('Save sends the new limit for THAT app, and widens no scope', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    const input = page.getByTestId('app-budget-input');
+    await input.clear();
+    await input.fill('2500');
+    await page.getByTestId('app-budget-save').click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    // 🔴 `scopes` IS THE SPEND SCOPE ALONE. `grantScopes` is ADDITIVE, so sending the
+    // app's manifest scopes here would GRANT every scope it declares — a silent widening
+    // performed by a control that says "limit". Re-sending the one scope the user has
+    // already granted unions with itself and cannot change the stored set.
+    expect(mocks.mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'apb_spend',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: 2500,
+    });
+  });
+
+  test('Remove limit sends an EXPLICIT null (the clear branch), not an omitted key', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    await page.getByTestId('app-budget-clear').click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const payload = mocks.mutate.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toEqual({
+      appBlockId: 'apb_spend',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: null,
+    });
+    // The SERVER distinguishes an omitted key (leave the stored value alone) from an
+    // explicit null (clear it) via an `in` test, and `toEqual` above would also accept
+    // an absent key. This is the half that pins the clear.
+    expect(Object.hasOwn(payload, 'buzzBudgetPerDay')).toBe(true);
+    expect(payload.buzzBudgetPerDay).toBeNull();
+  });
+
+  test('an out-of-range value disables Save rather than sending one the server refuses', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    const input = page.getByTestId('app-budget-input');
+    await input.clear();
+    await input.fill('999999');
+    await expect.element(page.getByTestId('app-budget-save')).toBeDisabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('warns when the entered limit is too low to fund a generation', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    // 750 (the stored value the editor opens on) is fundable → no warning.
+    expect(page.getByTestId('app-budget-low-warning').elements()).toHaveLength(0);
+    const input = page.getByTestId('app-budget-input');
+    await input.clear();
+    await input.fill('5');
+    await expect.element(page.getByTestId('app-budget-low-warning')).toBeInTheDocument();
   });
 });

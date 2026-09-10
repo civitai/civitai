@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 // Type-only: names the shape `importOriginal()` returns for the step registry
 // mock below. A `typeof import(...)` annotation there is an eslint error
@@ -568,6 +568,19 @@ redisMock.sysRedis.expire.mockImplementation(async () => true);
 redisMock.sysRedis.ttl.mockImplementation(async () => -1);
 const mockDbRead = dbMock.dbRead;
 const mockDbWriteUserFindUnique = dbMock.dbWrite.user.findUnique;
+/**
+ * The CONSENT-BUDGET read. `getConsentBuzzBudget` goes to the PRIMARY (`dbWrite`) by
+ * design — see its docblock — so this is the handle that decides whether a submit
+ * takes the second reservation at all. Post-`mockReset` the shared db mock answers
+ * `null` for any `findUnique`, i.e. "no grant row" → no consent budget → the pre-PR
+ * behaviour, which is why every other test in this file is unaffected.
+ */
+const mockScopeGrantFindUnique = dbMock.dbWrite.appUserScopeGrant.findUnique;
+const CONSENT_KEY_RE = /^system:blocks:consent-budget:42:apb_test:/;
+/** Declare the viewer's stored per-app daily limit for the app under test. */
+function withConsentBudget(buzzBudgetPerDay: number | null) {
+  mockScopeGrantFindUnique.mockResolvedValue({ buzzBudgetPerDay, revokedAt: null });
+}
 const mockLogToAxiom = loggingMock.logToAxiom;
 
 function validClaims(over: Record<string, unknown> = {}) {
@@ -6528,6 +6541,190 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     });
   });
 
+  // ── CONSENT BUDGET — the per-(user, app, UTC-day) ceiling the VIEWER set for this
+  // app (`app_user_scope_grants.buzz_budget_per_day`).
+  //
+  // 🔴 THIS SUITE EXISTS BECAUSE THE WHOLE LEG WAS UNGUARDED. Audit round 1 ran a
+  // mutation sweep against the shipped 5,214-test suite: neutralising the customComfy
+  // consent DENY (M3), and blanking `consentBudgetKey` on the settle record (M6), both
+  // SURVIVED — because no test in this file ever drove a submit with a NON-NULL budget,
+  // so the second reservation was never taken and every assertion read `null`.
+  describe("submitWorkflow — CONSENT BUDGET (the viewer's own per-app ceiling)", () => {
+    afterEach(() => {
+      // Per-FILE reset only (see src/__tests__/mocks) — hand the shared handle back to
+      // its "no grant row" default so nothing after this suite inherits a budget.
+      mockScopeGrantFindUnique.mockReset();
+    });
+
+    it('reserves the CEILING on the consent key too and persists that key on the settle record', async () => {
+      withConsentBudget(5000); // comfortably above the 90 ceiling — non-binding
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(result.snapshot.workflowId).toBe('wf_cc_1');
+      // BOTH legs reserved the same per-engine CEILING (zimage default = 90).
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        90
+      );
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(expect.stringMatching(CONSENT_KEY_RE), 90);
+      // 🔴 M6: the settle record must carry the consent key, or the post-paid refund
+      // has nothing to unwind and the user's limit stays charged the CEILING all day.
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: 'wf_cc_1',
+          consentBudgetKey: expect.stringMatching(CONSENT_KEY_RE),
+          ceiling: 90,
+        })
+      );
+    });
+
+    it('🔴 DENIES the submit when the ceiling would exceed the budget — no spend, BOTH legs refunded', async () => {
+      withConsentBudget(100); // 90-Buzz ceiling on top of prior spend → over
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      // Prior spend on the CONSENT key only: the platform 50k cap stays non-binding,
+      // so a denial can only come from the consent leg. (A test that let both bind
+      // could not tell which guard fired.)
+      mockSysRedis.incrBy.mockImplementation(async (key: string) =>
+        CONSENT_KEY_RE.test(key) ? 150 : 90
+      );
+
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      // NUMBER-BEARING copy — the user's own setting, so it is theirs to be told.
+      expect(result.snapshot.error).toBe(
+        'app Buzz limit reached: 60 already spent today by this app on your behalf, ' +
+          'this generation may cost up to 90, your limit for this app is 100'
+      );
+      // NOTHING was spent…
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // …and BOTH counters were given back — a denial that burned either one would
+      // charge the user for a generation that never ran.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        90
+      );
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(expect.stringMatching(CONSENT_KEY_RE), 90);
+    });
+
+    it('ALLOWS a submit that lands exactly ON the budget (the boundary is not a breach)', async () => {
+      withConsentBudget(100);
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      // running total === cap → `total > cap` is false → allowed.
+      mockSysRedis.incrBy.mockImplementation(async (key: string) =>
+        CONSENT_KEY_RE.test(key) ? 100 : 90
+      );
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(result.snapshot.workflowId).toBe('wf_cc_1');
+    });
+
+    it('a NULL budget takes NO second reservation and persists a null key (pre-PR behaviour)', async () => {
+      withConsentBudget(null);
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      const consentIncrs = mockSysRedis.incrBy.mock.calls.filter((c) =>
+        String(c[0]).startsWith('system:blocks:consent-budget:')
+      );
+      expect(consentIncrs).toHaveLength(0);
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({ consentBudgetKey: null })
+      );
+    });
+
+    it('a DEV token skips the consent leg entirely (self-bound; synthetic appBlockId joins no grant row)', async () => {
+      withConsentBudget(100);
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ dev: true }));
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      // Not even READ — the skip is before the DB call, so a dev token can never be
+      // denied by someone else's grant row.
+      expect(mockScopeGrantFindUnique).not.toHaveBeenCalled();
+      const consentIncrs = mockSysRedis.incrBy.mock.calls.filter((c) =>
+        String(c[0]).startsWith('system:blocks:consent-budget:')
+      );
+      expect(consentIncrs).toHaveLength(0);
+    });
+
+    // ── The PARTIAL-FAILURE unwind (audit round 1, finding 2). The INCRBY lands, then
+    // the SEPARATE `expire`/`ttl` round-trip throws. The caller refunds the PLATFORM
+    // key and rethrows — it never learns the consent key, because the throw happens
+    // before the reserve returns — so without a self-unwind inside the reserve the
+    // consent counter alone stays charged. Worse on a first write: the call that threw
+    // IS the `expire` that would have armed the TTL, so the leak has no expiry.
+    it('🔴 an expire FAILURE on the consent leg unwinds BOTH counters to their pre-attempt values', async () => {
+      withConsentBudget(5000);
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      // A running tally, so the assertion is about the NET position of each counter
+      // rather than about which calls happened to be made.
+      const net = new Map<string, number>();
+      mockSysRedis.incrBy.mockImplementation(async (key: string, by: number) => {
+        const total = (net.get(key) ?? 0) + by;
+        net.set(key, total);
+        return total;
+      });
+      mockSysRedis.decrBy.mockImplementation(async (key: string, by: number) => {
+        const total = (net.get(key) ?? 0) - by;
+        net.set(key, total);
+        return total;
+      });
+      mockSysRedis.expire.mockImplementation(async (key: string) => {
+        if (CONSENT_KEY_RE.test(key)) throw new Error('redis expire failed');
+        return true;
+      });
+
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ccBody() })).rejects.toThrow(
+        /redis expire failed/
+      );
+
+      // Fail CLOSED — nothing was submitted…
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // …and NEITHER counter is left holding the reservation.
+      const consentKey = [...net.keys()].find((k) => CONSENT_KEY_RE.test(k));
+      expect(consentKey, 'the consent leg must have been reserved at all').toBeDefined();
+      expect(net.get(consentKey as string)).toBe(0);
+      const platformKey = [...net.keys()].find((k) => k.startsWith('system:blocks:buzz-cap:42:'));
+      expect(net.get(platformKey as string)).toBe(0);
+    });
+
+    it('🔴 an expire FAILURE on the PLATFORM leg unwinds it too (same primitive, same guarantee)', async () => {
+      withConsentBudget(null); // consent leg absent — this is purely the platform leg
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      const net = new Map<string, number>();
+      mockSysRedis.incrBy.mockImplementation(async (key: string, by: number) => {
+        const total = (net.get(key) ?? 0) + by;
+        net.set(key, total);
+        return total;
+      });
+      mockSysRedis.decrBy.mockImplementation(async (key: string, by: number) => {
+        const total = (net.get(key) ?? 0) - by;
+        net.set(key, total);
+        return total;
+      });
+      mockSysRedis.expire.mockRejectedValue(new Error('redis expire failed'));
+
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ccBody() })).rejects.toThrow(
+        /redis expire failed/
+      );
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      const platformKey = [...net.keys()].find((k) => k.startsWith('system:blocks:buzz-cap:42:'));
+      expect(platformKey, 'the platform leg must have been reserved at all').toBeDefined();
+      expect(net.get(platformKey as string)).toBe(0);
+    });
+  });
+
   describe('submitWorkflow — security seams', () => {
     it('page-only guard: a MODEL token is rejected fail-closed BEFORE any spend', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 500 })); // model token
@@ -7852,6 +8049,79 @@ describe("step-type registry bridge (kind: 'step')", () => {
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         STEP_PRICE
       );
+    });
+
+    // ── CONSENT BUDGET on the registry-step money path. Same requirement as the
+    // per-app cap above and for the same reason: `kind:'step'` must not be a spend
+    // surface a guardrail cannot see.
+    //
+    // 🔴 MUTATION-PROVEN (audit round 1, M4): neutralising the consent deny in the
+    // step branch SURVIVED the shipped suite, because nothing here ever drove a
+    // submit with a NON-NULL budget.
+    describe("consent budget (the viewer's own per-app ceiling)", () => {
+      afterEach(() => {
+        mockScopeGrantFindUnique.mockReset();
+      });
+
+      it('reserves the declared price on the consent key too when the viewer set a budget', async () => {
+        withConsentBudget(5000);
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        happyStepSubmit();
+        const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+        expect(result.snapshot.workflowId).toBe('wf_step_1');
+        expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+          expect.stringMatching(CONSENT_KEY_RE),
+          STEP_PRICE
+        );
+      });
+
+      it('🔴 DENIES the step when it would exceed the budget — no spend, BOTH legs refunded', async () => {
+        withConsentBudget(10);
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        happyStepSubmit();
+        // Only the CONSENT key is over; the platform 50k cap stays non-binding, so a
+        // denial can only have come from this guard.
+        mockSysRedis.incrBy.mockImplementation(async (key: string) =>
+          CONSENT_KEY_RE.test(key) ? 12 : STEP_PRICE
+        );
+
+        const result = await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+        expect(result.snapshot).toMatchObject({
+          workflowId: 'failed',
+          status: 'failed',
+          cost: { total: STEP_PRICE },
+        });
+        expect(result.snapshot.error).toBe(
+          'app Buzz limit reached: 11 already spent today by this app on your behalf, ' +
+            'this step costs 1, your limit for this app is 10'
+        );
+        expect(
+          realSubmitCalls(),
+          'the free QUOTE may have run; NOTHING may have been SPENT'
+        ).toHaveLength(0);
+        expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+          expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+          STEP_PRICE
+        );
+        expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+          expect.stringMatching(CONSENT_KEY_RE),
+          STEP_PRICE
+        );
+      });
+
+      it('a NULL budget takes no consent reservation (pre-PR behaviour on this path)', async () => {
+        withConsentBudget(null);
+        mockVerifyBlockToken.mockResolvedValue(stepClaims());
+        happyUser();
+        happyStepSubmit();
+        await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+        const consentIncrs = mockSysRedis.incrBy.mock.calls.filter((c) =>
+          String(c[0]).startsWith('system:blocks:consent-budget:')
+        );
+        expect(consentIncrs).toHaveLength(0);
+      });
     });
 
     it('SKIPS the per-app cap for a DEV token (synthetic non-FK appBlockId), like every other kind', async () => {

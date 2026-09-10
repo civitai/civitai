@@ -165,6 +165,61 @@ describe('BlockConsentModal — per-app spend limit', () => {
     });
   });
 
+  // ── OFF-STATE COPY. 🔴 PINNED AS A WHOLE NORMALISED STRING, not by keyword, because
+  // the defect this replaces was a keyword-passing sentence: "No limit set — this app
+  // spends under your account's overall daily cap." That was FALSE whenever a limit was
+  // already stored (this modal never reads the stored value; an off toggle OMITS the
+  // field, meaning "leave it alone", not "there is none"), so it told a user with a live
+  // limit that nothing bounded the app. A word-level guard would walk straight past a
+  // reworded relapse; the whole string will not.
+  test('the OFF-state copy does not claim there is no limit', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-8"
+        blockName="Generator"
+        missingScopes={[SPEND]}
+        onGranted={vi.fn()}
+      />
+    );
+    const el = page.getByTestId('block-consent-budget-off');
+    await expect.element(el).toBeInTheDocument();
+    const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toBe(
+      'Any limit you have already set for this app stays as it is. Manage it under ' +
+        'Apps \u2192 Permissions. This app always spends under your account\u2019s overall ' +
+        'daily cap.'
+    );
+  });
+
+  // A very low limit is storable (the floor is 1) and enforced exactly as given, so the
+  // dialog has to say what it does at the moment it is chosen — otherwise the app just
+  // looks broken afterwards, with no explanation and (before the editor existed) no way
+  // back. 90 is the lowest per-engine post-paid ceiling any registered recipe declares.
+  test('warns when the entered limit is too low to fund a generation', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-9"
+        blockName="Generator"
+        missingScopes={[SPEND]}
+        onGranted={vi.fn()}
+      />
+    );
+    await page.getByTestId('block-consent-budget-toggle').click();
+    const input = page.getByTestId('block-consent-budget-input');
+    // 1000 (the default) is comfortably fundable → no warning.
+    expect(page.getByTestId('block-consent-budget-low-warning').elements()).toHaveLength(0);
+    await input.clear();
+    await input.fill('5');
+    await expect.element(page.getByTestId('block-consent-budget-low-warning')).toBeInTheDocument();
+    // …and it goes away again above the threshold, so the warning tracks the VALUE and
+    // is not just "shown once the field was touched".
+    await input.clear();
+    await input.fill('500');
+    await expect
+      .element(page.getByTestId('block-consent-budget-low-warning'))
+      .not.toBeInTheDocument();
+  });
+
   test('an out-of-range budget blocks Allow rather than sending a value the server will refuse', async () => {
     mutate.mockClear();
     renderWithProviders(

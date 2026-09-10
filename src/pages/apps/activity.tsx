@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   Loader,
+  NumberInput,
   Select,
   Stack,
   Tabs,
@@ -25,7 +26,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
@@ -53,6 +54,12 @@ import {
 import type { ActivityTab } from '~/components/Apps/appsActivityTabs';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import {
+  BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+} from '~/shared/constants/block-scope.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -369,6 +376,152 @@ function buildSurfaceLine(surfaces: {
   return parts.join(' · ');
 }
 
+/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
+const SPEND_SCOPE = 'ai:write:budgeted';
+
+/**
+ * The per-app daily Buzz limit, rendered and EDITABLE.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL. Before it, the budget was write-once and invisible: the
+ * consent modal is the only writer and it only sends the field while
+ * `ai:write:budgeted` is still MISSING, which is true exactly once per app, forever.
+ * So a user could set a limit and then had no way to raise it, lower it, clear it, or
+ * even SEE it — and a low value (the floor is 1) meant every generation from that app
+ * was refused with no recoverable path through the product. The server raise/clear
+ * path already existed (`blocks.grantScopes`); nothing was wired to it.
+ *
+ * 🔴 THE `scopes` PAYLOAD IS DELIBERATELY `[SPEND_SCOPE]` AND MUST STAY THAT WAY.
+ * `grantScopes` is ADDITIVE over the scope set, so sending the app's manifest scopes
+ * here would GRANT every scope the app declares — a silent widening performed by a
+ * control that says "limit". Re-sending the one scope the user has already granted
+ * (which `spendScopeGranted` is exactly the proof of) unions with itself: the stored
+ * set cannot change. It is also the scope the server requires to be present for a
+ * budget to mean anything, so the write can never be the ignored-budget no-op.
+ *
+ * CLEARING sends an explicit `null`, which is the service's "clear it" state — a
+ * DIFFERENT thing from omitting the key (leave it alone), and the only caller of that
+ * branch.
+ */
+function AppBudgetControl({
+  appBlockId,
+  appName,
+  budget,
+}: {
+  appBlockId: string;
+  appName: string;
+  budget: number | null;
+}) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState<number | string>(
+    budget ?? BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY
+  );
+  const mutation = trpc.blocks.grantScopes.useMutation({
+    onSuccess: async () => {
+      await utils.blocks.listMyScopeGrants.invalidate();
+      setEditing(false);
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not change the limit', error: new Error(e.message) }),
+  });
+
+  // Mantine's NumberInput hands back a string mid-edit (and '' when cleared), so
+  // narrow to a real integer in range before it can reach the mutation. The server
+  // re-validates the same bounds regardless — this only keeps the request well-formed
+  // and the Save button honest.
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value), 10);
+  const valid =
+    Number.isInteger(parsed) &&
+    parsed >= BLOCK_CONSENT_BUDGET_MIN_PER_DAY &&
+    parsed <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
+
+  const save = (next: number | null) =>
+    mutation.mutate({ appBlockId, scopes: [SPEND_SCOPE], buzzBudgetPerDay: next });
+
+  if (!editing) {
+    return (
+      <Group justify="space-between" gap="xs" wrap="nowrap" data-testid="app-budget-row">
+        <Text size="xs" c="dimmed" data-testid="app-budget-value">
+          {budget === null
+            ? 'Daily Buzz limit: none — only your account-wide daily cap applies'
+            : `Daily Buzz limit: ${budget.toLocaleString()} Buzz/day`}
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          data-testid="app-budget-edit"
+          onClick={() => {
+            setValue(budget ?? BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
+            setEditing(true);
+          }}
+        >
+          {budget === null ? 'Set limit' : 'Change'}
+        </Button>
+      </Group>
+    );
+  }
+
+  return (
+    <Stack gap={6} data-testid="app-budget-editor">
+      <NumberInput
+        size="xs"
+        label={`Daily Buzz limit for ${appName}`}
+        description={`Most this app can spend of your Buzz per day. Max ${BLOCK_CONSENT_BUDGET_MAX_PER_DAY.toLocaleString()}.`}
+        min={BLOCK_CONSENT_BUDGET_MIN_PER_DAY}
+        max={BLOCK_CONSENT_BUDGET_MAX_PER_DAY}
+        step={100}
+        allowDecimal={false}
+        allowNegative={false}
+        value={value}
+        onChange={setValue}
+        error={valid ? null : 'Enter a whole number within the allowed range'}
+        data-testid="app-budget-input"
+      />
+      {/* A very low limit is a real setting, not a mistake — but it is also the one
+          that makes an app look broken, so say what it does at the point it is set.
+          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY. */}
+      {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
+        <Text size="xs" c="orange" data-testid="app-budget-low-warning">
+          {parsed.toLocaleString()} Buzz/day is lower than most generations cost — this app will
+          refuse to generate until you raise it. You can change it here at any time.
+        </Text>
+      ) : null}
+      <Group gap="xs" justify="flex-end">
+        <Button
+          size="compact-xs"
+          variant="default"
+          disabled={mutation.isPending}
+          onClick={() => setEditing(false)}
+        >
+          Cancel
+        </Button>
+        {budget !== null ? (
+          <Button
+            size="compact-xs"
+            variant="light"
+            color="gray"
+            loading={mutation.isPending}
+            data-testid="app-budget-clear"
+            onClick={() => save(null)}
+          >
+            Remove limit
+          </Button>
+        ) : null}
+        <Button
+          size="compact-xs"
+          color="yellow"
+          disabled={!valid}
+          loading={mutation.isPending}
+          data-testid="app-budget-save"
+          onClick={() => save(parsed)}
+        >
+          Save
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
 function ScopeGrantsPanel() {
   const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
 
@@ -404,6 +557,20 @@ function ScopeGrantsPanel() {
             </Group>
             <Divider />
             <BlockScopeList scopes={grant.scopes} />
+            {/* Only for an app the viewer has actually GRANTED the spend scope to —
+                `spendScopeGranted` is the grant row, not the manifest. A budget on an
+                app that cannot spend bounds nothing, and the server would ignore the
+                write. */}
+            {grant.spendScopeGranted ? (
+              <>
+                <Divider />
+                <AppBudgetControl
+                  appBlockId={grant.appBlockId}
+                  appName={grant.name}
+                  budget={grant.buzzBudgetPerDay}
+                />
+              </>
+            ) : null}
           </Stack>
         </Card>
       ))}

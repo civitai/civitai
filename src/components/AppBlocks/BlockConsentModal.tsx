@@ -14,6 +14,8 @@ import { useState } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
+  BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   isSensitiveBlockScope,
@@ -32,10 +34,6 @@ interface BlockConsentModalProps {
 
 /** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
 const SPEND_SCOPE = 'ai:write:budgeted';
-
-/** Pre-filled suggestion when the user turns a limit on. Deliberately far below the
- *  platform ceiling: the default should be a limit, not a formality. */
-const DEFAULT_BUDGET_SUGGESTION = 1000;
 
 /**
  * Lazy-consent surface (A6 / design-gaps C2). Opened on demand when a block
@@ -58,10 +56,20 @@ const DEFAULT_BUDGET_SUGGESTION = 1000;
  * ONLY for that scope, because it is the only one that can spend anything — a
  * limit next to "read your username" would be noise.
  *
- * OFF BY DEFAULT, and that is the honest default rather than a lazy one: leaving
- * it off stores NULL, which is exactly what every already-consented user has, so
- * nobody is silently tightened and nobody is silently loosened. The platform's own
- * per-user daily ceiling applies either way; a limit set here only ever narrows.
+ * OFF BY DEFAULT, and that is the honest default rather than a lazy one: with the
+ * switch off the field is OMITTED from the mutation, so a first-time grant stores
+ * NULL — exactly what every already-consented user has — and an app that already has
+ * a limit KEEPS it. Nobody is silently tightened and nobody is silently loosened. The
+ * platform's own per-user daily ceiling applies either way; a limit set here only ever
+ * narrows.
+ *
+ * ⚠️ THIS MODAL IS A WRITE-ONLY SURFACE, BY DESIGN. It is opened on `missingScopes`,
+ * which is empty for every scope the user has already granted — so it can be shown at
+ * most once per app for the spend scope, and it never reads the stored budget.
+ * Raising, lowering, clearing and even SEEING a limit live on /apps/activity
+ * (`AppBudgetControl`), which does read it. Do not add "your current limit is …" copy
+ * here without giving the modal that read; the off-state copy below is worded to be
+ * true WITHOUT it.
  */
 export default function BlockConsentModal({
   appBlockId,
@@ -73,7 +81,7 @@ export default function BlockConsentModal({
   const [error, setError] = useState<string | null>(null);
   const grantsSpend = missingScopes.includes(SPEND_SCOPE);
   const [limitEnabled, setLimitEnabled] = useState(false);
-  const [budget, setBudget] = useState<number | string>(DEFAULT_BUDGET_SUGGESTION);
+  const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
   const grant = trpc.blocks.grantScopes.useMutation({
     onSuccess: () => {
       setError(null);
@@ -150,10 +158,27 @@ export default function BlockConsentModal({
                 data-testid="block-consent-budget-input"
               />
             ) : (
-              <Text size="xs" c="dimmed">
-                No limit set — this app spends under your account&rsquo;s overall daily cap.
+              // 🔴 THIS DOES NOT SAY "no limit set", AND THAT IS THE FIX. This modal
+              // never reads the stored budget — leaving the switch off OMITS the field,
+              // which means "leave whatever is stored alone", not "there is no limit".
+              // A user who set a limit earlier (or who re-consents after a revoke, which
+              // does not clear the stored number) would have been told, falsely, that
+              // nothing bounds this app while their old limit was still being enforced.
+              // Manage the actual value on /apps/activity, which reads it.
+              <Text size="xs" c="dimmed" data-testid="block-consent-budget-off">
+                Any limit you have already set for this app stays as it is. Manage it under Apps →
+                Permissions. This app always spends under your account&rsquo;s overall daily cap.
               </Text>
             )}
+            {/* A very low limit is storable (the floor is 1) and enforced exactly as
+                given, so say what it does at the moment it is chosen. */}
+            {limitEnabled && budgetValid && parsedBudget < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
+              <Text size="xs" c="orange" data-testid="block-consent-budget-low-warning">
+                {parsedBudget.toLocaleString()} Buzz/day is lower than most generations cost — this
+                app will refuse to generate until you raise it. You can change it later under Apps →
+                Permissions.
+              </Text>
+            ) : null}
           </Stack>
         ) : null}
         {error ? (

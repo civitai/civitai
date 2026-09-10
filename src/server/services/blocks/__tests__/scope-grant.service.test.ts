@@ -118,6 +118,109 @@ describe('scope-grant.service', () => {
     });
   });
 
+  // ── PRE-MIGRATION SAFETY. Migrations here are applied BY HAND, per environment, so
+  // an image can legitimately run against a database WITHOUT `buzz_budget_per_day`.
+  // MEASURED on this PR's own preview environment before these guards existed: Prisma
+  // raised P2022 and every install / subscribe / re-consent returned
+  // INTERNAL_SERVER_ERROR.
+  describe('a database WITHOUT the buzz_budget_per_day column (P2022)', () => {
+    /** The shape Prisma raises for "the column does not exist in the current database". */
+    function missingColumnError() {
+      return Object.assign(new Error('The column ... does not exist in the current database.'), {
+        code: 'P2022',
+      });
+    }
+
+    it('getConsentBuzzBudget returns null (= no budget can have been set — the TRUE state)', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockRejectedValueOnce(missingColumnError());
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      expect(await getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).toBeNull();
+    });
+
+    // 🔴 THE OTHER HALF, AND THE ONE THAT MAKES THE CATCH SAFE. A bare catch here would
+    // turn a connection loss / timeout into "no budget", i.e. silently disable a money
+    // cap the user set — the exact fail-open this feature exists to prevent.
+    it('getConsentBuzzBudget RETHROWS any other Prisma error (never fails open)', async () => {
+      const other = Object.assign(new Error('connection refused'), { code: 'P1001' });
+      mockDb.appUserScopeGrant.findUnique.mockRejectedValueOnce(other);
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      await expect(getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).rejects.toThrow(
+        /connection refused/
+      );
+    });
+
+    it('an error with NO code at all still throws', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockRejectedValueOnce(new Error('boom'));
+      const { getConsentBuzzBudget } = await import('../scope-grant.service');
+      await expect(getConsentBuzzBudget({ userId: 1, appBlockId: 'ab_x' })).rejects.toThrow(/boom/);
+    });
+
+    // 🔴 THE WRITE HALF. Prisma's DEFAULT selection is every scalar, so a create/update
+    // with no `select` emits `RETURNING … buzz_budget_per_day` and 500s on a database
+    // without the column — even though the write itself needs nothing back. These pin
+    // the explicit select on ALL THREE write sites (update, create, and the P2002
+    // concurrent-create retry); a guard covering only two would read as coverage while
+    // leaving a live 500 on the racy path.
+    it('the UPDATE write reads back only `id`', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: [],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['user:read:self'],
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].select).toEqual({ id: true });
+    });
+
+    it('the CREATE write reads back only `id`', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(null);
+      mockDb.appUserScopeGrant.create.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['user:read:self'],
+      });
+      expect(mockDb.appUserScopeGrant.create.mock.calls[0][0].select).toEqual({ id: true });
+    });
+
+    it('the P2002 concurrent-create RETRY update reads back only `id`', async () => {
+      mockDb.appUserScopeGrant.findUnique
+        .mockResolvedValueOnce(null) // first look-up: no row
+        .mockResolvedValueOnce({ id: 'augr_1', grantedScopes: [] }); // post-race re-read
+      mockDb.appUserScopeGrant.create.mockRejectedValueOnce({ code: 'P2002' });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: ['user:read:self'],
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].select).toEqual({ id: true });
+    });
+
+    // The READ that mint depends on never touched the new column, and must not start.
+    it('getGrantedScopes still selects only the columns that predate the migration', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        grantedScopes: ['user:read:self'],
+        revokedAt: null,
+      });
+      const { getGrantedScopes } = await import('../scope-grant.service');
+      await getGrantedScopes({ userId: 1, appBlockId: 'ab_x' });
+      expect(mockDb.appUserScopeGrant.findUnique.mock.calls[0][0].select).toEqual({
+        grantedScopes: true,
+        revokedAt: true,
+      });
+    });
+  });
+
   describe('recordScopeGrant — buzzBudgetPerDay update semantics', () => {
     // 🔴 THE OMITTED CASE IS THE ONE THAT MATTERS. A re-consent for an unrelated scope
     // sends only `scopes`; if an omitted budget were written through as NULL, accepting

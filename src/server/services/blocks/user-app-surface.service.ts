@@ -59,8 +59,23 @@ export type ScopeGrantSurface = {
    *
    * A REVOKED grant reports `null`, matching `getConsentBuzzBudget`: a revoked
    * grant carries no spend scope, so there is no spend for a budget to bound.
+   * ⚠️ That branch is an INVARIANT guard over a state nothing in this codebase can
+   * produce — no code path ever writes a non-null `revoked_at` — see
+   * `getConsentBuzzBudget`.
    */
   buzzBudgetPerDay: number | null;
+  /**
+   * True when the viewer's LIVE (non-revoked) grant row for this app actually carries
+   * `ai:write:budgeted` — the one scope in the vocabulary that can spend their Buzz.
+   *
+   * 🔴 THIS IS NOT DERIVABLE FROM `scopes` ABOVE, and that is why it exists. `scopes`
+   * is the app's MANIFEST-declared set (what it asks for); this is the USER'S GRANT
+   * (what they agreed to). The budget editor on /apps/activity keys off this one: a
+   * budget only bounds something when the spend scope is granted, and `grantScopes`
+   * IGNORES a budget sent for an app that does not hold it — so offering the control
+   * off the manifest set would render a field whose value the server silently drops.
+   */
+  spendScopeGranted: boolean;
   surfaces: {
     modelInstallCount: number;
     subscriptionScopes: string[];
@@ -148,11 +163,36 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   // an N+1 per row. Apps with no grant row simply do not appear in the map and
   // report `null`, which is the same thing "no budget set" means everywhere else.
   const budgetByAppBlock = new Map<string, number | null>();
+  const spendGrantedByAppBlock = new Set<string>();
   if (byAppBlock.size > 0) {
-    const grants = (await dbRead.appUserScopeGrant.findMany({
-      where: { userId, appBlockId: { in: Array.from(byAppBlock.keys()) } },
-      select: { appBlockId: true, buzzBudgetPerDay: true, revokedAt: true },
-    })) as Array<{ appBlockId: string; buzzBudgetPerDay: number | null; revokedAt: Date | null }>;
+    type GrantRow = {
+      appBlockId: string;
+      buzzBudgetPerDay: number | null;
+      revokedAt: Date | null;
+      grantedScopes: string[];
+    };
+    let grants: GrantRow[] = [];
+    try {
+      grants = (await dbRead.appUserScopeGrant.findMany({
+        where: { userId, appBlockId: { in: Array.from(byAppBlock.keys()) } },
+        select: {
+          appBlockId: true,
+          buzzBudgetPerDay: true,
+          revokedAt: true,
+          grantedScopes: true,
+        },
+      })) as GrantRow[];
+    } catch (err) {
+      // 🔴 P2022 ONLY — the deploy is running ahead of its migration and
+      // `buzz_budget_per_day` does not exist yet. See `isMissingColumnError`. With no
+      // column there is no budget any user could have set, so an empty map is the TRUE
+      // state and every app reports `null` (= "platform cap only"), which is exactly
+      // what the spend path enforces in that same database. Any other error still
+      // throws: a permissions page that quietly renders "no limits" because the DB is
+      // unreachable would be a lie about the user's own settings.
+      const { isMissingColumnError } = await import('~/server/services/blocks/scope-grant.service');
+      if (!isMissingColumnError(err)) throw err;
+    }
     for (const g of grants) {
       // Mirror getConsentBuzzBudget's guards EXACTLY — revoked → null, and a
       // non-positive stored value → null — so this display can never disagree with
@@ -162,6 +202,10 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
           ? Math.floor(g.buzzBudgetPerDay)
           : null;
       budgetByAppBlock.set(g.appBlockId, usable);
+      // Mirror `getGrantedScopes`: a revoked row grants nothing.
+      if (!g.revokedAt && (g.grantedScopes ?? []).includes('ai:write:budgeted')) {
+        spendGrantedByAppBlock.add(g.appBlockId);
+      }
     }
   }
 
@@ -192,6 +236,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       iconUrl,
       scopes: manifestScopes,
       buzzBudgetPerDay: budgetByAppBlock.get(appBlockId) ?? null,
+      spendScopeGranted: spendGrantedByAppBlock.has(appBlockId),
       surfaces: {
         modelInstallCount: entry.modelInstallCount,
         subscriptionScopes: Array.from(entry.subscriptionScopes).sort(),

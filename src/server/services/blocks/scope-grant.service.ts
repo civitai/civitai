@@ -21,7 +21,58 @@
  */
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
+
+/**
+ * True for the ONE Prisma failure that means "this deploy is running ahead of its
+ * migration": P2022 — the column named in the query does not exist in the database.
+ *
+ * Migrations in this project are applied BY HAND, per environment, so the image and
+ * the schema are not deployed atomically and `buzz_budget_per_day` can legitimately
+ * be absent from a database the current code is talking to. Every OTHER Prisma error
+ * — connection loss, timeout, constraint violation — must still propagate: a bare
+ * `catch` here would swallow real DB failures and silently return "no budget", which
+ * is the fail-OPEN this whole feature exists to prevent.
+ *
+ * Narrow by CODE, not by message text. The message is a human string that upstream
+ * is free to reword; the code is the contract.
+ */
+export function isMissingColumnError(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'P2022';
+}
+
+/**
+ * ONCE PER PROCESS, not once per deploy and not once globally — this is a
+ * module-level boolean in one Node process, so a fleet of N pods emits up to N
+ * lines and a restart re-arms it. That is deliberate and sufficient: the signal
+ * wanted is "somebody is running ahead of the migration", which one line per pod
+ * carries, and the alternative (a line per spend attempt) would bury it.
+ *
+ * `error` level on purpose. Reading past a missing column is CORRECT (see
+ * `getConsentBuzzBudget`) but it is never an intended steady state — it means a
+ * migration is outstanding, and the operator has to be told.
+ */
+let missingBudgetColumnLogged = false;
+function logMissingBudgetColumn(site: string, err: unknown): void {
+  if (missingBudgetColumnLogged) return;
+  missingBudgetColumnLogged = true;
+  logToAxiom(
+    {
+      name: 'app-blocks-scope-grant',
+      type: 'error',
+      message:
+        `app_user_scope_grants.buzz_budget_per_day is MISSING from this database — ` +
+        `apply migration 20260910120000_app_user_scope_grant_buzz_budget. Consent budgets ` +
+        `read as "not set" until it lands; the platform per-user daily Buzz cap still applies.`,
+      site,
+      code: (err as { code?: unknown } | null)?.code,
+    },
+    'webhooks'
+  ).catch(() => {
+    /* logging must never break a spend path */
+  });
+}
 
 /**
  * Returns the set of block-scope strings the user currently has granted for
@@ -55,10 +106,29 @@ export async function getGrantedScopes(opts: {
  * for a budget to bound. Returning the stored number for a revoked row would be
  * enforcing a ceiling on spend that cannot happen.
  *
+ * ⚠️ THE REVOKED BRANCH IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, BECAUSE THE
+ * STATE IS CURRENTLY UNREACHABLE. Nothing in this codebase ever SETS
+ * `app_user_scope_grants.revoked_at` — grep it: every write is `revokedAt: null`
+ * (re-granting un-revokes). A revoked row therefore only exists if an operator writes
+ * one by hand. The `!row || row.revokedAt` tests here, in `getGrantedScopes`, and in
+ * `listMyScopeGrants` are pinning an invariant against a future revoke path, and the
+ * tests that exercise them by constructing a revoked row are testing that invariant —
+ * they are NOT evidence that a bug was ever possible on this path.
+ *
  * 🔴 READS THE PRIMARY BY DEFAULT. This runs on the spend path, immediately after a
  * consent write that may have just LOWERED the budget: served off the replica, a
  * lag window would spend against the OLD, looser ceiling — the one direction a
  * money cap must never drift. The read is a single unique-index lookup.
+ *
+ * 🔴 A MISSING COLUMN (P2022) RETURNS `null`, AND THAT IS THE TRUE ANSWER, NOT A
+ * FALLBACK. Migrations here are applied by hand, so an image can legitimately run
+ * against a database that does not yet have `buzz_budget_per_day`. If the column
+ * does not exist then no user can ever have set a budget — "no budget set" is not a
+ * degraded guess, it is the only state the database can be in — and `null` routes to
+ * exactly the same behaviour every pre-column grant already had: the platform's own
+ * `BLOCK_BUZZ_CAP_PER_DAY` ceiling keeps enforcing, unchanged. Only P2022 is caught;
+ * any other Prisma failure still throws, because for those the budget is UNKNOWN
+ * rather than absent, and treating unknown as "no budget" would be a fail-open.
  */
 export async function getConsentBuzzBudget(opts: {
   userId: number;
@@ -66,10 +136,17 @@ export async function getConsentBuzzBudget(opts: {
   db?: 'read' | 'write';
 }): Promise<number | null> {
   const client = opts.db === 'read' ? dbRead : dbWrite;
-  const row = (await client.appUserScopeGrant.findUnique({
-    where: { userId_appBlockId: { userId: opts.userId, appBlockId: opts.appBlockId } },
-    select: { buzzBudgetPerDay: true, revokedAt: true },
-  })) as { buzzBudgetPerDay: number | null; revokedAt: Date | null } | null;
+  let row: { buzzBudgetPerDay: number | null; revokedAt: Date | null } | null;
+  try {
+    row = (await client.appUserScopeGrant.findUnique({
+      where: { userId_appBlockId: { userId: opts.userId, appBlockId: opts.appBlockId } },
+      select: { buzzBudgetPerDay: true, revokedAt: true },
+    })) as { buzzBudgetPerDay: number | null; revokedAt: Date | null } | null;
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    logMissingBudgetColumn('getConsentBuzzBudget', err);
+    return null;
+  }
   if (!row || row.revokedAt) return null;
   const budget = row.buzzBudgetPerDay;
   // Guard the VALUE, not just its presence: a non-positive or non-finite number
@@ -114,6 +191,21 @@ export async function getConsentBuzzBudget(opts: {
  * permission would silently wipe a spend limit the user had deliberately set —
  * a widening, performed by a dialog that said nothing about money.
  */
+/**
+ * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
+ * "every scalar", so a `create`/`update` with no `select` emits
+ * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
+ * re-consent throw P2022 against a database that has not had the migration applied
+ * yet, i.e. a 500 on every grant write from a deploy that lands first. MEASURED on
+ * this PR's own preview environment before this select existed.
+ *
+ * `id` is picked because it is the primary key: it predates this feature, it can
+ * never be the column a future migration is racing, and no caller uses the return
+ * value (both writers return `void`). Do NOT widen this to include a column added by
+ * a pending migration — the whole point is that these writes read nothing new.
+ */
+const WRITE_RETURN_SELECT = { id: true } as const;
+
 export async function recordScopeGrant(opts: {
   userId: number;
   appBlockId: string;
@@ -141,6 +233,7 @@ export async function recordScopeGrant(opts: {
     await dbWrite.appUserScopeGrant.update({
       where: { id: existing.id },
       data: { grantedScopes: merged, version, revokedAt: null, ...budgetData },
+      select: WRITE_RETURN_SELECT,
     });
     return;
   }
@@ -155,6 +248,7 @@ export async function recordScopeGrant(opts: {
         grantedScopes: incoming,
         ...budgetData,
       },
+      select: WRITE_RETURN_SELECT,
     });
   } catch (err) {
     // Concurrent first-write race on the (user, app_block) unique index →
@@ -170,6 +264,7 @@ export async function recordScopeGrant(opts: {
     await dbWrite.appUserScopeGrant.update({
       where: { id: row.id },
       data: { grantedScopes: merged, version, revokedAt: null, ...budgetData },
+      select: WRITE_RETURN_SELECT,
     });
   }
 }
