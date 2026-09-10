@@ -14,15 +14,13 @@ import {
 import React from 'react';
 
 import { accountSections, getAccountSectionHref } from '~/components/Account/account-sections';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { useQueryBuzz } from '~/components/Buzz/useBuzz';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { UserBuzz } from '~/components/User/UserBuzz';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -38,7 +36,7 @@ function StatTile({
 }: {
   label: string;
   href: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -77,8 +75,6 @@ const quickLinks: { id: string; icon: React.ReactNode }[] = [
 export function AccountOverview() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const availableBuzzTypes = useAvailableBuzz(['blue']);
-  const { data: buzz } = useQueryBuzz(availableBuzzTypes);
   const { data: strikeSummary } = trpc.strike.getMyStrikeSummary.useQuery(undefined, {
     enabled: !!currentUser && !!features.strikes,
   });
@@ -97,7 +93,6 @@ export function AccountOverview() {
   const standing = accountStandingFromPoints(strikeSummary?.totalActivePoints ?? 0);
   const StandingIcon = standing.good ? IconShieldCheck : IconShieldExclamation;
   const tierBadge = subscription ? getPlanDetails(subscription.product, features).image : undefined;
-  const funded = (buzz?.accounts ?? []).filter((account) => account.balance > 0);
 
   return (
     <>
@@ -147,28 +142,16 @@ export function AccountOverview() {
           </Text>
         </StatTile>
 
-        <StatTile
-          label="Buzz balance"
-          href="/user/buzz-dashboard"
-          icon={<CurrencyIcon currency="BUZZ" size={16} />}
-        >
-          <div className="flex min-w-0 flex-col">
-            <Text size="lg" fw={700}>
-              {(buzz?.total ?? 0).toLocaleString()}
-            </Text>
-            {funded.length > 1 && (
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                {funded.map((account) => (
-                  <div key={account.type} className="flex items-center gap-0.5">
-                    <CurrencyIcon currency="BUZZ" type={account.type} size={11} />
-                    <Text size="xs" c="dimmed">
-                      {account.balance.toLocaleString()}
-                    </Text>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        <StatTile label="Buzz balance" href="/user/buzz-dashboard">
+          {/* `UserBuzz` hardcodes `lh={0}` on the balance span and spreads props onto its outer
+              wrapper, so a plain `lh` prop cannot reach it. */}
+          <UserBuzz
+            iconSize={18}
+            textSize="lg"
+            withAbbreviation={false}
+            withTooltip
+            className="[&_span]:!leading-[var(--mantine-line-height-lg)]"
+          />
         </StatTile>
 
         <StatTile
