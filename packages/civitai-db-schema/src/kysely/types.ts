@@ -577,6 +577,17 @@ export type AppUserScopeGrant = {
   granted_scopes: Generated<string[]>;
   granted_at: Generated<Timestamp>;
   revoked_at: Timestamp | null;
+  /**
+   * The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
+   * NULL = the user set no budget, and the app spends under the platform's own
+   * per-user daily ceiling (`BLOCK_BUZZ_CAP_PER_DAY`, 50,000) alone — which is
+   * exactly the behaviour of every grant written before this column existed, so
+   * no backfill is needed and nobody is silently tightened. Non-NULL adds a
+   * SECOND reservation at spend time keyed on (user, app, UTC-day); both caps
+   * apply and the tighter one binds. Meaningful only alongside the
+   * `ai:write:budgeted` scope (nothing else in a grant can spend).
+   */
+  buzz_budget_per_day: number | null;
 };
 export type Article = {
   id: Generated<number>;

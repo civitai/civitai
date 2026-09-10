@@ -134,6 +134,70 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
 
 /**
+ * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
+ * a viewer has installed. The abuse ceiling nobody consents to — a per-call
+ * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is
+ * the aggregate that actually binds. Enforced in `blocks.router.ts`
+ * (`reserveBlockBuzzSpend`, keyed WITHOUT appBlockId so N installed apps share
+ * ONE ceiling rather than multiplying it).
+ *
+ * Lives HERE, in the client-safe shared module, because it is now read by three
+ * places that must agree: the server enforcement, the `blocks.grantScopes` zod
+ * bound on a user-set consent budget, and the consent dialog that shows the user
+ * what the ceiling is. It is also the upper bound on
+ * `app_user_scope_grants.buzz_budget_per_day` — a consent budget ABOVE the
+ * platform cap could never bind, so storing one would be storing a number that
+ * means nothing.
+ */
+export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
+
+/**
+ * Bounds for a user-set per-app consent budget
+ * (`app_user_scope_grants.buzz_budget_per_day`). MIN is 1 rather than 0: a
+ * budget of zero would be a way to consent to `ai:write:budgeted` and
+ * simultaneously make it unusable, which is what DECLINING the scope already
+ * expresses — so zero is rejected at the input rather than stored as a
+ * confusing dead grant. Mirrored by the `app_user_scope_grants_buzz_budget_bounds`
+ * CHECK constraint (migration 20260910120000).
+ *
+ * 🔴 MIN = 1 WAS RE-EXAMINED (audit round 1) AND DELIBERATELY KEPT. The objection
+ * was that a floor of 1 lets a user store a budget that refuses every generation.
+ * That is TRUE — 1 is below every registered per-engine ceiling — but it stopped
+ * being a TRAP once the limit became editable: the budget is now rendered and
+ * raise/lower/clearable on /apps/activity (`AppBudgetControl`), so a too-low value
+ * is one click from recoverable IN the product, and the editor shows an explicit
+ * warning below `BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY` saying what a low number
+ * does. Raising the floor instead would silently overrule a user who deliberately
+ * wants a tiny allowance for a step-priced app (`convert-image` costs 1 Buzz), which
+ * is a real and legitimate setting. Recoverability + a warning beats a floor that
+ * decides for them.
+ */
+export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
+export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+
+/**
+ * Pre-filled suggestion when a user turns a limit ON (consent modal + the editor on
+ * /apps/activity). Deliberately far below the platform ceiling: the default should be
+ * a limit, not a formality.
+ */
+export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
+
+/**
+ * Below this, the UI warns that the limit is low enough to refuse ordinary
+ * generations. NOT a validation bound — anything from MIN up is storable and
+ * enforced exactly as given.
+ *
+ * The number is the LOWEST per-engine post-paid ceiling any registered recipe
+ * declares today: `STARTER_BUDGET.maxBuzz` = 90 and `seamless-pano`'s cheapest engine
+ * (`zimage-turbo`) = 90. A budget under it cannot fund a single customComfy
+ * generation, so an app using one will appear broken. Registry steps can be far
+ * cheaper (`convert-image` = 1 Buzz), which is why this warns instead of blocking.
+ * If a cheaper recipe engine is ever registered this number is free to drop — it
+ * changes copy, never enforcement.
+ */
+export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
+
+/**
  * Membership test against the authoritative scope vocabulary.
  *
  * 🔴 OWN-PROPERTY ONLY — deliberately `hasOwnProperty`, never `in`. `in` walks

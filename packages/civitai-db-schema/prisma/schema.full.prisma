@@ -3720,6 +3720,15 @@ model AppUserScopeGrant {
   grantedScopes  String[]  @default([]) @map("granted_scopes")
   grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
   revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  /// The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
+  /// NULL = the user set no budget, and the app spends under the platform's own
+  /// per-user daily ceiling (`BLOCK_BUZZ_CAP_PER_DAY`, 50,000) alone — which is
+  /// exactly the behaviour of every grant written before this column existed, so
+  /// no backfill is needed and nobody is silently tightened. Non-NULL adds a
+  /// SECOND reservation at spend time keyed on (user, app, UTC-day); both caps
+  /// apply and the tighter one binds. Meaningful only alongside the
+  /// `ai:write:budgeted` scope (nothing else in a grant can spend).
+  buzzBudgetPerDay Int?    @map("buzz_budget_per_day")
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")

@@ -2355,6 +2355,7 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  buzzBudgetPerDay: number | null;
 }
 
 export interface AppDevForgejoIdentity {

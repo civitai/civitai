@@ -16,8 +16,14 @@ import {
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
-import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
+import {
+  BLOCK_BUZZ_CAP_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  REVIEW_RUN_FOR_REAL_BUZZ_CAP,
+} from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
   getDailyCompensationRewardByUser,
@@ -262,19 +268,29 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
 });
 
 /**
- * AUTHZ gate for the BLOCK-TOKEN-authed runtime procs (estimate/submit/poll/
- * cancelWorkflow, updateUserSettings). These are `publicProcedure` authenticated
- * by a block JWT that resolves to a viewer userId rather than `ctx.user`, so the
- * `appDeveloperProcedure` middleware can't gate them — we re-assert the AUTHOR
- * capability against the RESOLVED subject here (defense-in-depth: don't trust
- * "only authors get block tokens" — the mint is gated too, but each call
- * re-checks).
+ * AUTHORING gate — the `appBlocksAuthor` capability (Flipt `app-blocks-author`,
+ * static fallback mod-only), asserted against a BLOCK-TOKEN-resolved subject.
  *
- * Developer soft-launch (Phase B): this replaced the old
- * `assertViewerIsModerator` — the subject must hold the `appBlocksAuthor`
- * capability (Flipt `app-blocks-author`, static fallback mod-only), so a curated
- * non-mod cohort can generate + spend Buzz from their OWN block while a random
- * non-author subject is still FORBIDDEN.
+ * 🔴 EXACTLY ONE CALL SITE REMAINS: `updateUserSettings`. Read that as the whole
+ * scope of this function, because it used to be fifteen.
+ *
+ * WHY IT SHRANK. This is an AUTHORING capability, and it was standing in front of
+ * RUNTIME procedures — generate, estimate, poll, cancel, read-my-balance,
+ * read-my-viewer. The effect was that a user who was not an app AUTHOR could not
+ * USE an app at all, which is not what an authoring capability is for and which
+ * blocked the whole non-author cohort. The platform enforces the user's own
+ * SCOPE GRANTS on those paths instead (`claims.scopes.includes(...)`, plus the
+ * per-(user, app) consent budget) — consent is the right authority for "may this
+ * app act on my behalf", and it is per-user rather than per-cohort.
+ *
+ * 🔴 THE REMAINING SITE IS A DELIBERATE EXCEPTION, NOT AN OVERSIGHT — do not
+ * "unify" it. `updateUserSettings` writes the block INSTALL's persisted settings,
+ * which is an authoring/publishing-shaped action rather than a runtime one, and
+ * no block scope expresses it.
+ *
+ * These procs are `publicProcedure` authenticated by a block JWT that resolves to
+ * a viewer userId rather than `ctx.user`, so the `appDeveloperProcedure`
+ * middleware cannot gate them — hence the explicit re-assert here.
  *
  * Hydrates the subject IDENTICALLY to `assertAppBlocksEnabledForTokenUser` (the
  * enabled kill-switch that runs right before this) — `sessionClient
@@ -285,7 +301,8 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
  * segment) → FORBIDDEN (fail-closed).
  *
  * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
- * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged.
+ * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged — it
+ * is the kill-switch and it stays on EVERY block-token proc.
  */
 async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
@@ -339,9 +356,10 @@ async function assertAppEditAccess(
  * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
  * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
  * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
- * tokens before this runs, and `assertViewerIsAppDeveloper` + every other belt
- * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
- * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
+ * tokens before this runs, and every other belt (the per-scope consent checks,
+ * budget cap, daily Buzz cap, the per-(user, app) consent budget,
+ * reserveBlockBuzzSpend, getOrchestratorToken, forced-SFW) is unchanged — this
+ * only swaps which identity the FLAG sees.
  *
  * Resolves the FULL server-side SessionUser via `sessionClient.getSessionUserById`
  * (the hub-backed resolver; never a client-supplied value) so the segment match
@@ -366,8 +384,9 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // Full, authoritative SessionUser (cached; tier derived from active
   // subscriptions) so buildFliptContext sees the user's REAL tier/isMember,
   // not type-defaults. A vanished user → undefined → global eval → flag false
-  // → blocked (fail-closed; the subsequent assertViewerIsAppDeveloper would also
-  // reject).
+  // → blocked (fail-closed). This is the LAST identity-shaped belt on most runtime
+  // procs now that the author gate is off them, so its fail-closed posture is not
+  // backed up by a second one — do not weaken it.
   // getSessionUserById returns the package SessionUser (loosely typed at this boundary — cast as bearer-token.ts
   // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
@@ -378,17 +397,27 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
 
 /**
  * Shared authorization gate for the buzz self-read bridges (`getMyBuzz*` below).
- * Mirrors `getMyBuzzBalance`'s gate but adds the `buzz:read:self` CONSENT check:
- * these reads (full ledger / all-pool balances incl. creator payout pools /
- * per-model earnings) are MORE sensitive than the spendable-balance convenience
- * read, so unlike the scope-free `getMyBuzzBalance` they require the token to
- * carry the declared+granted `buzz:read:self` scope.
+ * Verify token → require the `buzz:read:self` CONSENT scope → self-bind → kill-switch
+ * → rate limit.
+ *
+ * ⚠️ `getMyBuzzBalance` IS NOT SCOPE-FREE ANY MORE — this docblock said it was until
+ * the round-1 audit caught the contradiction with the one on `getMyBuzzBalance`
+ * itself. That proc now performs the SAME `buzz:read:self` check inline (it cannot
+ * call this helper: it is not rate-limited on `blockInstanceId` and its error copy
+ * differs). What still separates these bridges from it is SENSITIVITY, not the scope:
+ * the full ledger / all-pool balances incl. creator payout pools / per-model earnings,
+ * versus a spendable-balance read — which is why these three also carry the
+ * per-instance rate limit below.
  *
  * Order (each step fail-closed): verify token → require consent scope → self-bind
- * the userId off `claims.sub` (never client input) → App-Blocks kill-switch +
- * author gate against the token subject → per-instance rate limit (keyed on the
- * stable `blockInstanceId`, BEFORE any db/ClickHouse work). Returns the
- * self-bound `userId` + verified `claims`.
+ * the userId off `claims.sub` (never client input) → App-Blocks kill-switch
+ * against the token subject → per-instance rate limit (keyed on the stable
+ * `blockInstanceId`, BEFORE any db/ClickHouse work). Returns the self-bound
+ * `userId` + verified `claims`.
+ *
+ * The consent scope — not an authoring capability — is the authority here: the
+ * author gate that used to follow the kill-switch is gone from every runtime
+ * proc (see `assertViewerIsAppDeveloper`).
  */
 async function authorizeBlockBuzzRead(
   blockToken: string
@@ -406,7 +435,6 @@ async function authorizeBlockBuzzRead(
     });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
-  await assertViewerIsAppDeveloper(userId);
   // Per-instance rate limit (shared blocks limiter) — bounds a block hammering
   // these private reads (esp. daily-compensation → ClickHouse) onto the origin.
   // Runs BEFORE any service call. Fail-open on a redis incident.
@@ -510,10 +538,15 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 // early-access / Private — it does not.
 //
 // Pass the REAL viewer context (their id + real isModerator + the request's
-// sfwOnly/wildcards flags) — never an elevated context. Today the viewer is
-// always an author (assertViewerIsAppDeveloper), so they see the appropriate
-// access; when GA opens further the same gate bounds them properly. Fail-closed:
-// a version missing from the result Map → FORBIDDEN.
+// sfwOnly/wildcards flags) — never an elevated context.
+//
+// 🔴 THE VIEWER IS NO LONGER ALWAYS AN APP AUTHOR. This comment used to say they
+// were, and leaned on it ("so they see the appropriate access"); the author gate
+// has since been removed from every runtime proc, so an ORDINARY consented viewer
+// reaches here. That is exactly why the gate must be passed the real viewer
+// context and must stay fail-closed — it is now the only thing standing between a
+// non-author viewer and an early-access / Private version. Fail-closed: a version
+// missing from the result Map → FORBIDDEN.
 //
 // Page-LoRA (Increment 1): generalized from 1→N versions. The checkpoint AND
 // every picked LoRA are gated in ONE `resolveCanGenerateForVersions` call (it
@@ -724,10 +757,16 @@ async function resolvePageLoraGates(opts: {
 // error on the reserve throws and fails the submit CLOSED, identical to the old
 // read path's fail-closed posture.
 //
-// The aggregate ceiling is a fixed platform default today. When the W5 consent
-// layer lands (app_user_scope_grants), the per-install/consent aggregate limit
-// should override this default — surfaced to the user at install/consent time.
-const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
+// The aggregate ceiling is a fixed PLATFORM default and stays one. The W5 consent
+// layer (app_user_scope_grants) has since landed, and its per-(user, app) budget
+// does NOT override this — it is a SECOND, strictly-narrower reservation on top of
+// it (see `reserveBlockBuzzSpendForClaims`). The earlier plan to have consent
+// REPLACE the platform ceiling would have let a user consent their way OUT of the
+// abuse cap, so the two stack instead and the tighter one binds.
+//
+// The value itself now lives in `~/shared/constants/block-scope.constants` because
+// three places must agree on it: this enforcement, the zod bound on a user-set
+// consent budget, and the consent dialog that shows the user the ceiling.
 // 25h TTL: comfortably covers a UTC-day window plus clock skew; the key is
 // re-derived per day so a stale counter never bleeds into the next window.
 const BLOCK_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
@@ -744,25 +783,67 @@ function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_C
 }
 
 /**
+ * THE ONE reserve primitive behind every cumulative Buzz counter in this router
+ * (per-user daily, run-for-real session, consent budget). Atomic INCRBY, then arm
+ * the window's TTL on the (effectively) first write, with a `ttl < 0` re-arm for a
+ * key that somehow lost it.
+ *
+ * 🔴 IT SELF-UNWINDS ITS OWN INCRBY, AND THAT IS THE REASON IT IS ONE FUNCTION.
+ * Everything after the INCRBY is a SEPARATE Redis round-trip that can throw on its
+ * own, and by then `cost` is already ON the counter. The caller cannot clean that up
+ * — it never learns the key, because the throw happens before the return — so the
+ * reservation would leak for the rest of the window with nothing left holding a
+ * reference to it. Worse on the FIRST write of a window: the call that throws is the
+ * `expire` that would have armed the TTL, so the leaked counter has NO expiry at all
+ * until some later submit's `ttl < 0` branch re-arms it and extends the burn another
+ * ~25h.
+ *
+ * MEASURED on this branch (adversarial audit round 1) against the CONSENT leg: with
+ * `sysRedis.expire` made to reject for consent keys, the platform counter came back to
+ * its pre-attempt value and the consent counter stayed charged 25 for a submit that
+ * never happened — the two diverging is precisely what `refundBlockBuzzReservation`
+ * exists to prevent. The platform and run-for-real legs
+ * had the identical shape, so all three are fixed here rather than at one call site:
+ * open-coding this three times is what let the same defect sit in three places.
+ *
+ * Still fails CLOSED — the error is rethrown after the unwind, so the submit aborts.
+ * The unwind is best-effort (`refundBlockBuzzSpend` never throws); a lost unwind
+ * over-counts, which only makes the cap STRICTER.
+ */
+async function reserveCumulativeBuzzKey(
+  key: RedisKeyTemplateSys,
+  cost: number,
+  ttlSeconds: number
+): Promise<number> {
+  const amount = Math.ceil(cost);
+  const total = await sysRedis.incrBy(key, amount);
+  try {
+    if (total <= amount) {
+      await sysRedis.expire(key, ttlSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, ttlSeconds);
+    }
+  } catch (e) {
+    await refundBlockBuzzSpend(key, amount);
+    throw e;
+  }
+  return total;
+}
+
+/**
  * Atomically reserves `cost` against this user's cumulative UTC-day counter and
  * returns the new running total. INCRBY is atomic, so concurrent submits
- * accumulate correctly with no read→check→record TOCTOU. Sets the TTL on the
- * (effectively) first write so the per-window key self-expires (the ttl<0 guard
- * also re-arms a key that somehow lost its TTL). No try/catch: a Redis error
- * throws and fails the submit CLOSED, identical to the old read path.
+ * accumulate correctly with no read→check→record TOCTOU. A Redis error throws and
+ * fails the submit CLOSED, identical to the old read path — see
+ * `reserveCumulativeBuzzKey` for the TTL arming and the self-unwind.
  */
 async function reserveBlockBuzzSpend(
   userId: number,
   cost: number
 ): Promise<{ total: number; key: ReturnType<typeof buzzCapRedisKey> }> {
   const key = buzzCapRedisKey(userId);
-  const total = await sysRedis.incrBy(key, Math.ceil(cost));
-  if (total <= Math.ceil(cost)) {
-    await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
-  } else {
-    const ttl = await sysRedis.ttl(key);
-    if (ttl < 0) await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
-  }
+  const total = await reserveCumulativeBuzzKey(key, cost, BLOCK_BUZZ_CAP_TTL_SECONDS);
   // Return the resolved key so the caller refunds against the EXACT same key it
   // reserved — see refundBlockBuzzSpend for why re-deriving is unsafe.
   return { total, key };
@@ -817,8 +898,9 @@ function reviewRunForRealBuzzCapKey(
 
 /**
  * Atomically reserves `cost` against the (mod, publishRequestId) run-for-real
- * cumulative counter. Identical atomic INCRBY + first-write-EX (+ ttl<0 re-arm)
- * shape as `reserveBlockBuzzSpend`; fails CLOSED on a Redis error (throws).
+ * cumulative counter. Same shared `reserveCumulativeBuzzKey` primitive as
+ * `reserveBlockBuzzSpend` (atomic INCRBY + first-write-EX + ttl<0 re-arm +
+ * self-unwind); fails CLOSED on a Redis error (throws).
  */
 async function reserveReviewRunForRealBuzzSpend(
   userId: number,
@@ -826,37 +908,192 @@ async function reserveReviewRunForRealBuzzSpend(
   cost: number
 ): Promise<{ total: number; key: ReturnType<typeof reviewRunForRealBuzzCapKey> }> {
   const key = reviewRunForRealBuzzCapKey(userId, publishRequestId);
-  const total = await sysRedis.incrBy(key, Math.ceil(cost));
-  if (total <= Math.ceil(cost)) {
-    await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
-  } else {
-    const ttl = await sysRedis.ttl(key);
-    if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
-  }
+  const total = await reserveCumulativeBuzzKey(key, cost, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
+  return { total, key };
+}
+
+// ---- CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) ceiling the VIEWER set
+//      for THIS app at consent time (`app_user_scope_grants.buzz_budget_per_day`).
+//
+// The two caps above are PLATFORM caps: BLOCK_BUZZ_CAP_PER_DAY bounds one user
+// across ALL their apps (deliberately no appBlockId in the key), and the G8
+// per-app cap bounds one app across ALL users. Neither can express "I am happy for
+// THIS app to spend 500 of my Buzz a day and no more" — which is the thing a user
+// actually consents to. This is that third axis, and it is the ONLY one of the
+// three the user chooses.
+//
+// BOTH CAPS APPLY; THE TIGHTER ONE BINDS. The consent budget does not replace the
+// platform ceiling — it is bounded ABOVE by it (see BLOCK_CONSENT_BUDGET_MAX_PER_DAY),
+// so it can only ever narrow.
+//
+// A NULL budget writes NO key and takes NO reservation: behaviour is byte-identical
+// to before this existed, which is what makes shipping it without a backfill safe.
+const CONSENT_BUDGET_TTL_SECONDS = 25 * 60 * 60;
+
+function consentBudgetRedisKey(
+  userId: number,
+  appBlockId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${string}` {
+  // PER-(user, app) — the appBlockId IS in the key, which is the whole difference
+  // from buzzCapRedisKey. Same UTC-day window so the two counters roll together.
+  return `${REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${userId}:${appBlockId}:${buzzCapWindowKey()}`;
+}
+
+/**
+ * Atomically reserves `cost` against the (user, app, UTC-day) consent-budget
+ * counter. Same shared `reserveCumulativeBuzzKey` primitive as
+ * `reserveBlockBuzzSpend` (atomic INCRBY + first-write-EX + ttl<0 re-arm +
+ * self-unwind); fails CLOSED on a Redis error (throws).
+ *
+ * The self-unwind matters MOST here: this is the SECOND leg, so a throw after its
+ * INCRBY is caught by the caller, which refunds the PLATFORM key and rethrows. The
+ * caller has no handle on this key — it is created inside this function — so without
+ * the unwind the consent counter alone stays charged for a submit that never
+ * happened.
+ */
+async function reserveConsentBudgetSpend(
+  userId: number,
+  appBlockId: string,
+  cost: number
+): Promise<{ total: number; key: ReturnType<typeof consentBudgetRedisKey> }> {
+  const key = consentBudgetRedisKey(userId, appBlockId);
+  const total = await reserveCumulativeBuzzKey(key, cost, CONSENT_BUDGET_TTL_SECONDS);
   return { total, key };
 }
 
 /**
- * Picks the correct cumulative Buzz reservation for a submit given its verified
- * token claims: a RUN-FOR-REAL token (signed `reviewRunForReal:true`) reserves
- * against the tight per-(mod, publishRequestId) cumulative ceiling (rolling ~25h
- * window); every other token keeps the ordinary per-user daily cap —
- * BYTE-IDENTICAL to before. Returns the reserved `key` (all refund sites key off
- * it) plus the `cap` to compare the running `total` against. The run-for-real
- * reservation id is the token's `appBlockId` claim (the `pubreq_<ULID>` request id
- * the mint stamps).
+ * The reservation a spend path holds. `key`/`total`/`cap` are the PLATFORM
+ * cumulative reservation (daily per-user, or the run-for-real session ceiling) —
+ * unchanged names so every existing destructure still reads the same thing.
+ * `consent` is the SECOND reservation, present only when the viewer set a budget
+ * for this app; `null` means no consent budget applies and nothing extra was
+ * written.
+ */
+type BlockBuzzReservation = {
+  total: number;
+  key: string;
+  cap: number;
+  consent: { total: number; key: string; cap: number } | null;
+};
+
+/**
+ * Picks the correct cumulative Buzz reservation(s) for a submit given its verified
+ * token claims.
+ *
+ * PLATFORM leg (unchanged): a RUN-FOR-REAL token (signed `reviewRunForReal:true`)
+ * reserves against the tight per-(mod, publishRequestId) cumulative ceiling
+ * (rolling ~25h window); every other token keeps the ordinary per-user daily cap.
+ * Returns the reserved `key` (all refund sites key off it) plus the `cap` to
+ * compare the running `total` against. The run-for-real reservation id is the
+ * token's `appBlockId` claim (the `pubreq_<ULID>` request id the mint stamps).
+ *
+ * CONSENT leg (new): when the grant row for (userId, `claims.appBlockId`) carries a
+ * non-null `buzzBudgetPerDay`, ALSO reserve `cost` against a per-(user, app,
+ * UTC-day) counter capped at that value.
+ *
+ * 🔴 TWO SKIPS, EACH FOR ITS OWN REASON — they are not one condition wearing two
+ * hats:
+ *   - `claims.dev === true` — a dev/live-harness token is SELF-BOUND (only the
+ *     owner can spend, and only their own Buzz) and carries an appBlockId that is
+ *     frequently SYNTHETIC (`ephemeral-…`, `page_local_…`, `pubreq_…`) and joins to
+ *     no grant row at all. It is the same exclusion `reserveAppSpend` already
+ *     takes, for the same reason: an author iterating locally is not the audience a
+ *     consent budget exists to protect, and there is no consent to read.
+ *   - `claims.reviewRunForReal === true` — that arm deliberately SWAPS IN its own,
+ *     strictly tighter ceiling in place of the daily cap, and its `appBlockId` is a
+ *     `pubreq_<ULID>` publish-request id, not an AppBlock id. Layering a consent
+ *     budget on top would be reading a grant for an app that is not yet approved.
+ *
+ * FAIL-CLOSED, IN BOTH DIRECTIONS THAT MATTER. A Redis error on the consent leg
+ * refunds the platform leg and rethrows, so a failed reservation never leaves the
+ * user's daily allowance burned. A DB error reading the budget likewise throws
+ * rather than being treated as "no budget": absent means UNBOUNDED-within-50k, so
+ * swallowing the error would silently widen the ceiling the user consented to.
  */
 async function reserveBlockBuzzSpendForClaims(
   claims: BlockTokenClaims,
   userId: number,
   cost: number
-): Promise<{ total: number; key: string; cap: number }> {
+): Promise<BlockBuzzReservation> {
   if (claims.reviewRunForReal === true) {
     const { total, key } = await reserveReviewRunForRealBuzzSpend(userId, claims.appBlockId, cost);
-    return { total, key, cap: REVIEW_RUN_FOR_REAL_BUZZ_CAP };
+    return { total, key, cap: REVIEW_RUN_FOR_REAL_BUZZ_CAP, consent: null };
   }
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
-  return { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+  const platform = { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+  if (claims.dev === true) return { ...platform, consent: null };
+
+  // From here any throw must undo the platform reservation just taken — otherwise a
+  // failed attempt permanently burns the viewer's 50k/day allowance for a spend that
+  // never happened. Same rule the consent-DENY path below obeys.
+  let budget: number | null;
+  try {
+    const { getConsentBuzzBudget } = await import('~/server/services/blocks/scope-grant.service');
+    budget = await getConsentBuzzBudget({ userId, appBlockId: claims.appBlockId });
+  } catch (e) {
+    await refundBlockBuzzSpend(key, cost);
+    throw e;
+  }
+  if (budget == null) return { ...platform, consent: null };
+
+  try {
+    const consent = await reserveConsentBudgetSpend(userId, claims.appBlockId, cost);
+    return { ...platform, consent: { ...consent, cap: budget } };
+  } catch (e) {
+    await refundBlockBuzzSpend(key, cost);
+    throw e;
+  }
+}
+
+/**
+ * Refunds a reservation on EVERY key it holds — the platform cumulative counter
+ * and, when present, the consent budget.
+ *
+ * 🔴 THIS EXISTS SO THE TWO CAN NEVER DIVERGE. Every non-committed exit already had
+ * to refund the platform key; adding a second key meant either this helper or a
+ * second `refundBlockBuzzSpend(...)` line at each of the ~12 refund sites, and the
+ * second shape regenerates the same omission bug at every site (one such site would
+ * be enough: a denied attempt that refunds only one of two counters burns the other
+ * for the rest of the day). Callers pass the whole reservation, not a key.
+ *
+ * Best-effort per key, like `refundBlockBuzzSpend`: a lost refund OVER-counts, which
+ * makes a cap stricter — the safe direction. Never throws into the caller.
+ */
+async function refundBlockBuzzReservation(
+  reservation: BlockBuzzReservation,
+  cost: number
+): Promise<void> {
+  await refundBlockBuzzSpend(reservation.key, cost);
+  if (reservation.consent) await refundBlockBuzzSpend(reservation.consent.key, cost);
+}
+
+/** True when the reservation's CONSENT leg exists and its running total is over the
+ *  user's chosen budget. Separate from the platform check because the two produce
+ *  different messages and the platform one must be evaluated first (see below). */
+function consentBudgetExceeded(
+  reservation: BlockBuzzReservation
+): reservation is BlockBuzzReservation & {
+  consent: NonNullable<BlockBuzzReservation['consent']>;
+} {
+  return !!reservation.consent && reservation.consent.total > reservation.consent.cap;
+}
+
+/**
+ * Rejection copy for a consent-budget breach. Deliberately NUMBER-BEARING, unlike
+ * the per-app aggregate cap's message: that ceiling is a platform secret an app
+ * must not learn, while THIS one is the user's own setting — they chose it, they
+ * are the one being told, and hiding it would make the rejection unactionable.
+ * `costClause` differs per path (a fixed estimate vs a post-paid ceiling).
+ */
+function consentBudgetRejection(
+  consent: NonNullable<BlockBuzzReservation['consent']>,
+  cost: number,
+  costClause: string
+): string {
+  return (
+    `app Buzz limit reached: ${consent.total - Math.ceil(cost)} already spent today by ` +
+    `this app on your behalf, ${costClause}, your limit for this app is ${consent.cap}`
+  );
 }
 
 // RUN-FOR-REAL mint rate limit — per-mod fixed window. A privileged,
@@ -2503,6 +2740,26 @@ export const blocksRouter = router({
       z.object({
         appBlockId: z.string().min(1).max(64),
         scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+        /**
+         * The per-UTC-day Buzz ceiling the viewer sets for THIS app, captured at
+         * consent time. Bounded above by the platform's own per-user daily cap: a
+         * larger number could never bind, so accepting one would be storing a value
+         * that means nothing.
+         *
+         * THREE STATES, and they are all distinct:
+         *   - a number → set/replace the budget
+         *   - `null`   → explicitly clear it (back to platform-cap-only)
+         *   - OMITTED  → leave any stored budget untouched
+         * The last is what keeps a re-consent for an unrelated scope from silently
+         * wiping a limit the user set. See `recordScopeGrant`.
+         */
+        buzzBudgetPerDay: z
+          .number()
+          .int()
+          .min(BLOCK_CONSENT_BUDGET_MIN_PER_DAY)
+          .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY)
+          .nullable()
+          .optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -2536,14 +2793,70 @@ export const blocksRouter = router({
           message: 'none of the requested scopes are within the app’s approved manifest',
         });
       }
-      const { recordScopeGrant } = await import('~/server/services/blocks/scope-grant.service');
+      // ── The consent budget only means anything alongside `ai:write:budgeted`:
+      // that is the ONLY scope in the vocabulary that can spend Buzz, so a budget
+      // without it bounds nothing. When it is sent without that scope being GRANTED
+      // (neither in this call nor already on the row) we IGNORE it rather than
+      // erroring.
+      //
+      // WHY IGNORE AND NOT REJECT. The natural client shape is one consent dialog
+      // that always sends its budget field, and the scopes vary by what the app
+      // asked for. Erroring would make a perfectly reasonable client fail on a
+      // request that asks for nothing improper, and the failure mode of ignoring is
+      // benign: nothing is stored, so nothing later reads a budget that bounds
+      // nothing. It is NOT silently dropped from the user's point of view either —
+      // `listMyScopeGrants` reports the stored value, so a budget that was ignored
+      // simply does not appear.
+      //
+      // NOTE the ORDER: this reads the CURRENT grant, so consenting to a budget in
+      // the same call that grants `ai:write:budgeted` works (the scope is in
+      // `toGrant`), and so does raising a budget on an app that already holds it.
+      const { recordScopeGrant, getGrantedScopes } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const grantsSpend = toGrant.includes('ai:write:budgeted');
+      const alreadyGrantsSpend =
+        !grantsSpend &&
+        input.buzzBudgetPerDay !== undefined &&
+        // 🔴 `db: 'write'` — READ THE PRIMARY, because the write below goes to the
+        // primary. Off the replica this decision lags the grant it is asking about: a
+        // user who consents to `ai:write:budgeted` and then raises their limit lands
+        // inside the replication window, the check answers "no spend scope", and the
+        // budget they just set is silently ignored. Found by the seam test in
+        // blocks.router.getInstallConfig.test.ts — the scopes merged correctly (that
+        // path already used the primary) while the budget alone went missing, which is
+        // exactly how this would have presented in production.
+        (
+          await getGrantedScopes({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+            db: 'write',
+          })
+        ).has('ai:write:budgeted');
+      const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
       await recordScopeGrant({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
         version: block.version ?? '',
         scopes: toGrant,
+        // Spread, NOT `buzzBudgetPerDay: input.buzzBudgetPerDay` — the service
+        // distinguishes an omitted key (leave the stored value alone) from an
+        // explicit `null` (clear it), and passing `undefined` through would collapse
+        // that distinction at the `in` test.
+        ...(input.buzzBudgetPerDay !== undefined && budgetIsMeaningful
+          ? { buzzBudgetPerDay: input.buzzBudgetPerDay }
+          : {}),
       });
-      return { ok: true, granted: toGrant };
+      return {
+        ok: true,
+        granted: toGrant,
+        // Echo what was actually stored so a client can tell an ignored budget from
+        // an applied one without a second round-trip.
+        buzzBudgetPerDay:
+          input.buzzBudgetPerDay !== undefined && budgetIsMeaningful
+            ? input.buzzBudgetPerDay
+            : undefined,
+      };
     }),
 
   /**
@@ -3198,7 +3511,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
       const workflow = await getWorkflow({
@@ -3323,7 +3635,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       const { listMyBlockWorkflows } = await import(
         '~/server/services/blocks/block-workflows.service'
       );
@@ -3374,7 +3685,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -3443,8 +3753,9 @@ export const blocksRouter = router({
    * Order (each step fail-closed): verify token → require `ai:write:budgeted`
    * (same trust boundary as submit — an app that can submit gens can read its own
    * subqueue) → self-bind userId off `claims.sub` (UNAUTHORIZED for anon) →
-   * App-Blocks kill-switch + author gate against the TOKEN subject → per-instance
-   * rate limit → orchestrator LIST with the host-forced tag → project + return.
+   * App-Blocks kill-switch against the TOKEN subject → per-instance rate limit →
+   * orchestrator LIST with the host-forced tag → project + return. (The consent
+   * scope above is the authority; the author capability no longer gates runtime.)
    */
   queryAppWorkflows: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -3473,7 +3784,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       // Per-instance rate limit (shared blocks limiter), BEFORE the orchestrator
       // call. Bounds a block hammering the LIST onto the origin. Fail-open on a
       // redis incident (same posture as the buzz self-read bridges).
@@ -3566,7 +3876,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       // Per-instance rate limit (shared blocks limiter), BEFORE any orchestrator
       // read/DELETE or DB query. Cancel is the HEAVIER path (2 orchestrator GETs +
       // 1 DELETE + 1 DB lookup per call), so it MUST be bounded exactly like the
@@ -3671,7 +3980,6 @@ export const blocksRouter = router({
         });
       }
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       // Publish has its OWN (image-weighted) bucket — separate from the catalog
       // read bucket. Charge a base token per call up front (bounds call frequency
       // + the getWorkflow read); the per-image remainder is charged below, once
@@ -3936,7 +4244,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -4188,7 +4495,6 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -4370,8 +4676,11 @@ export const blocksRouter = router({
       // matching the old read path.
       // A RUN-FOR-REAL review token reserves against the tight per-(mod,
       // publishRequestId) cumulative ceiling (rolling ~25h window) instead of the
-      // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one;
-      // every refund site below keys off the returned `buzzCapKey`, unchanged).
+      // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one).
+      // The same call ALSO takes the viewer's per-(user, app) CONSENT BUDGET
+      // reservation when they set one, so a reservation can hold TWO keys — every
+      // refund site below therefore passes the whole `reservation` to
+      // `refundBlockBuzzReservation` rather than a single key.
       //
       // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1). Taken BEFORE the cap reservation +
       //    orchestrator submit, so two CONCURRENT same-key submits (a double-click /
@@ -4426,9 +4735,12 @@ export const blocksRouter = router({
         if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         throw e;
       }
-      const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+      const { total, cap: buzzCap } = reservation;
       if (total > buzzCap) {
-        await refundBlockBuzzSpend(buzzCapKey, cost);
+        // 🔴 REFUND THE WHOLE RESERVATION, NOT JUST THE KEY THAT BREACHED. Both legs
+        // were INCRBY'd before either was checked, so refunding one leaves the other
+        // permanently charged for a generation that never ran.
+        await refundBlockBuzzReservation(reservation, cost);
         if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
           snapshot: {
@@ -4446,6 +4758,32 @@ export const blocksRouter = router({
             // #3520 exit 2 — quotes `cost` with no workflow. Additive + omitted
             // when empty, so this reply is byte-identical whenever nothing was
             // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
+          },
+        };
+      }
+
+      // ── CONSENT BUDGET (the viewer's OWN per-app daily ceiling). Checked AFTER
+      // the platform cap on purpose: the platform cap is the one the user did not
+      // choose, so when both are breached at once the message that explains the
+      // situation is the platform one. 🔴 The refund is the load-bearing half —
+      // without it a denied attempt silently burns the user's 50k/day platform
+      // allowance for a generation the app was never allowed to run.
+      if (consentBudgetExceeded(reservation)) {
+        await refundBlockBuzzReservation(reservation, cost);
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: cost },
+            error: consentBudgetRejection(
+              reservation.consent,
+              cost,
+              `this generation costs ${cost}`
+            ),
             ...(preflightSubstitutions?.length
               ? { modelSubstitutions: preflightSubstitutions }
               : {}),
@@ -4483,7 +4821,7 @@ export const blocksRouter = router({
           // Roll back the per-user reservation made above so a rejected submit
           // doesn't burn the viewer's own daily ceiling for a spend that never
           // happened.
-          await refundBlockBuzzSpend(buzzCapKey, cost);
+          await refundBlockBuzzReservation(reservation, cost);
           // No money moved → release the idempotency claim so a genuine retry can
           // re-run (the app cap may clear; the "retry shortly" messages are transient).
           if (genClaimKey) await releaseGenIdempotency(genClaimKey);
@@ -4549,7 +4887,7 @@ export const blocksRouter = router({
             // (the session reserve rolled ITSELF back on deny) and reject. Also
             // refund the G8 per-app reservation (present only for non-dev tokens;
             // a token with `dev !== true` can still have an active dev tunnel).
-            await refundBlockBuzzSpend(buzzCapKey, cost);
+            await refundBlockBuzzReservation(reservation, cost);
             if (appSpendReserve) {
               const { refundAppSpend } = await import(
                 '~/server/services/blocks/app-spend-cap.service'
@@ -4649,7 +4987,7 @@ export const blocksRouter = router({
         // No resolved submit → undo the reservation (net-equivalent to the old
         // "only record after a resolved submit" behavior) and propagate. Refund
         // against the pinned key, not a re-derived one (midnight-UTC race).
-        await refundBlockBuzzSpend(buzzCapKey, cost);
+        await refundBlockBuzzReservation(reservation, cost);
         // G8 — mirror the daily refund for the per-app aggregate reservation so a
         // failed submit doesn't permanently burn the app's daily ceiling.
         // Best-effort; present only for non-dev tokens.
@@ -4913,18 +5251,31 @@ export const blocksRouter = router({
    * NOTE: `buzz:read:self` is page-safe (PAGE_FORBIDDEN_SCOPES is empty — see
    * slot-registry.ts), and the richer self-reads (ledger / all-pool balances /
    * per-model earnings) live on the sibling `getMyBuzz{Transactions,Accounts}` /
-   * `getMyDailyCompensation` bridges, which REQUIRE that scope. This procedure
-   * stays the scope-free convenience path: the FIRST-PARTY host exposing the
-   * viewer's OWN spendable balance to their OWN page session, mediated by the
-   * proof-of-session block token — userId is derived from the token `sub`
-   * (self-bound), NEVER from client input, so a page can only ever read the
-   * balance of the exact user whose session minted the token.
+   * `getMyDailyCompensation` bridges, which require that scope via
+   * `authorizeBlockBuzzRead`.
    *
-   * Auth model is IDENTICAL to submitWorkflow's block-token gate: verify the
-   * token, require an authenticated (non-anon) subject, then the App-Blocks
-   * enabled kill-switch + author gate evaluated against the TOKEN subject. Only
-   * the three spendable types the UI needs are returned (blue/green/yellow) —
-   * internal types (red / creatorProgram / cash) are omitted.
+   * 🔴 THIS IS NO LONGER "the scope-free convenience path", AND THE CHANGE IS THE
+   * POINT. It used to carry no scope check at all, relying on
+   * `assertViewerIsAppDeveloper` — an AUTHORING capability — to keep it narrow.
+   * Removing that gate (so the non-author cohort can use apps at all) would have
+   * left this proc readable by ANY valid block token, i.e. a widening. The
+   * platform enforces SCOPE GRANTS instead, so this now requires the same
+   * `buzz:read:self` consent its sibling reads require. The self-binding is
+   * unchanged and still absolute: `userId` comes from the token `sub`, NEVER from
+   * client input, so a page can only read the balance of the exact user whose
+   * session minted the token.
+   *
+   * ⚠️ CONSEQUENCE FOR EXISTING APPS: a token that does not carry
+   * `buzz:read:self` now gets FORBIDDEN here where it previously got a balance.
+   * That is the intended tightening — the scope is the user's own consent — but it
+   * is a wire-visible behaviour change for any app that read the balance without
+   * declaring the scope.
+   *
+   * Auth model is otherwise IDENTICAL to submitWorkflow's block-token gate: verify
+   * the token, require the consent scope, require an authenticated (non-anon)
+   * subject, then the App-Blocks enabled kill-switch evaluated against the TOKEN
+   * subject. Only the three spendable types the UI needs are returned
+   * (blue/green/yellow) — internal types (red / creatorProgram / cash) are omitted.
    */
   getMyBuzzBalance: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -4940,6 +5291,12 @@ export const blocksRouter = router({
     .mutation(async ({ input }) => {
       const claims = await verifyBlockToken(input.blockToken);
       if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      // CONSENT gate — the user's own grant is what authorizes this read now that
+      // the author capability no longer gates the runtime. Checked BEFORE the
+      // subject is resolved, matching authorizeBlockBuzzRead's order.
+      if (!claims.scopes.includes('buzz:read:self')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks buzz:read:self scope' });
+      }
       // Derive the user from the SELF-BOUND token subject, never client input.
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
@@ -4948,10 +5305,9 @@ export const blocksRouter = router({
           message: 'buzz balance requires an authenticated viewer',
         });
       }
-      // Same gates as the other block-token procs, evaluated against the TOKEN
-      // subject: the enabled kill-switch AND the author capability.
+      // The App-Blocks kill-switch, evaluated against the TOKEN subject. (The
+      // author capability is deliberately NOT checked — see the docblock.)
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       // getUserBuzzAccounts returns every spend type; project to just the three
       // spendable types the UI needs (omit red / creator-program / cash).
       const accounts = await getUserBuzzAccounts({ userId });
@@ -5044,12 +5400,14 @@ export const blocksRouter = router({
    *
    * CONSENT: requires the `user:read:self` scope — the least-privileged scope
    * that conveys "viewer identity" (audit I3; mirrors how /blocks/me gates via
-   * `withBlockScope({ requiredScope: 'user:read:self' })`). Unlike the scope-free
-   * getMyBuzzBalance, a block must declare+be-granted this scope.
+   * `withBlockScope({ requiredScope: 'user:read:self' })`). A block must
+   * declare+be-granted this scope. (`getMyBuzzBalance` now requires
+   * `buzz:read:self` for the same reason — it is no longer the scope-free path
+   * this line used to contrast against.)
    *
    * Order (each step fail-closed): verify token → require the consent scope →
    * self-bind the userId off `claims.sub` (never client input; UNAUTHORIZED for
-   * anon) → App-Blocks kill-switch + author gate against the TOKEN subject →
+   * anon) → App-Blocks kill-switch against the TOKEN subject →
    * per-instance rate limit (keyed on the stable `blockInstanceId`, BEFORE the
    * db read — the ban/mute lookup hits the PRIMARY, so a hammering block must be
    * bounded) → the /blocks/me identity read.
@@ -5083,12 +5441,10 @@ export const blocksRouter = router({
           message: 'viewer read requires an authenticated viewer',
         });
       }
-      // Same gates as the other block-token procs, evaluated against the TOKEN
-      // subject: the enabled kill-switch AND the author capability (pre-GA
-      // team-only gate — the router-side equivalent of /blocks/me's isModerator
-      // check).
+      // The App-Blocks kill-switch, evaluated against the TOKEN subject. The
+      // `user:read:self` consent scope checked above is what authorizes the read
+      // itself; the author capability is deliberately no longer checked here.
       await assertAppBlocksEnabledForTokenUser(userId);
-      await assertViewerIsAppDeveloper(userId);
       // Per-instance rate limit (shared blocks limiter) — bounds a block
       // hammering the PRIMARY (the ban/mute lookup below reads dbWrite). Runs
       // BEFORE the db read. Fail-open on a redis incident.
@@ -6378,8 +6734,19 @@ function resolveCustomComfyRecipe(body: CustomComfyRecipeBody) {
 /**
  * customComfy ESTIMATE (plan §4). Do NOT run a real whatIf (returns 0 for
  * customComfy) — return the recipe's honest per-engine DISPLAY estimate. Same
- * page-only + developer gates as submit, so a model token / non-developer can't
- * even probe estimates. Fail-closed on an out-of-bounds param (ZodError).
+ * page-only + SCOPE gates as submit, so a model token / an unconsented token
+ * can't even probe estimates. Fail-closed on an out-of-bounds param (ZodError).
+ *
+ * 🔴 THE SCOPE CHECK HERE IS DEFENSE-IN-DEPTH, AND IT IS NOT REACHABLE TODAY —
+ * SAY SO RATHER THAN COUNTING IT AS COVERAGE. The only caller is the
+ * `estimateWorkflow` procedure, which rejects a token lacking
+ * `ai:write:budgeted` BEFORE it dispatches here, so no request can reach this
+ * line with the scope missing. It is written anyway because this helper takes
+ * `claims` and is one refactor away from a caller that does not pre-check (the
+ * `submitCustomComfyWorkflow` / `assertStepRequestAllowed` siblings carry the
+ * identical belt for the identical reason) — but a mutation of THIS line cannot
+ * be observed through the router, and a test asserting the FORBIDDEN would be
+ * graded by the outer proc's check, not this one.
  */
 async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: CustomComfyBody }) {
   const { claims, body } = opts;
@@ -6389,6 +6756,9 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (!isPageToken(claims)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
   }
+  if (!claims.scopes.includes('ai:write:budgeted')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
   const userId = parseSubjectUserId(claims.sub);
   if (userId == null) {
     throw new TRPCError({
@@ -6397,7 +6767,6 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
     });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
-  await assertViewerIsAppDeveloper(userId);
 
   // ── INLINE arm. There is NO honest per-graph number to quote and no way to
   // derive one: the orchestrator forwards the graph opaquely and cannot price
@@ -6469,6 +6838,15 @@ async function submitCustomComfyWorkflow(opts: {
   if (!isPageToken(claims)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
   }
+  // ── CONSENT gate (DEFENSE-IN-DEPTH — see estimateCustomComfyWorkflow). The sole
+  // caller, the `submitWorkflow` procedure, already rejects a token without this
+  // scope before dispatching here, so this line is not reachable with the scope
+  // missing and must not be counted as the gate. It replaces the author-capability
+  // belt that used to sit in this slot, keeping the helper safe on its own terms
+  // if it ever gains a caller that does not pre-check.
+  if (!claims.scopes.includes('ai:write:budgeted')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
   // The outer proc already gated this, but re-narrow here (defense-in-depth) so
   // `buzzBudget` is a positive number the static gate can compare against.
   if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
@@ -6482,7 +6860,6 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
-  await assertViewerIsAppDeveloper(userId);
 
   // Narrow ONCE, into two mutually-exclusive locals. Exactly one is non-null for
   // any schema-valid body, which is what lets the shared belt below stay a single
@@ -6672,7 +7049,8 @@ async function submitCustomComfyWorkflow(opts: {
   }
   const { total, key: buzzCapKey, cap: buzzCap } = reservation;
   if (total > buzzCap) {
-    await refundBlockBuzzSpend(buzzCapKey, ceiling);
+    // Refund EVERY leg of the reservation — see the txt2img path for why.
+    await refundBlockBuzzReservation(reservation, ceiling);
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     return {
       snapshot: {
@@ -6691,6 +7069,27 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
+  // ── CONSENT BUDGET. Post-paid, so the CEILING is what is reserved and therefore
+  // what is judged — a job that would settle cheaper is still refused if its
+  // worst case exceeds the user's limit. That is the conservative direction and
+  // the same one the platform cap already takes on this path.
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error: consentBudgetRejection(
+          reservation.consent,
+          ceiling,
+          `this generation may cost up to ${ceiling}`
+        ),
+      },
+    };
+  }
+
   // (3) Reserve the CEILING against the per-app aggregate cap (G8). Skipped for
   // DEV tokens (synthetic non-FK appBlockId) — matching the txt2img caps.
   let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
@@ -6700,7 +7099,7 @@ async function submitCustomComfyWorkflow(opts: {
     if (!appSpend.allowed) {
       // Roll back the per-user reservation so a rejected submit doesn't burn the
       // viewer's own daily ceiling for a spend that never happened.
-      await refundBlockBuzzSpend(buzzCapKey, ceiling);
+      await refundBlockBuzzReservation(reservation, ceiling);
       // No money moved → release the idempotency claim so a genuine retry runs.
       if (genClaimKey) await releaseGenIdempotency(genClaimKey);
       return {
@@ -6752,7 +7151,7 @@ async function submitCustomComfyWorkflow(opts: {
         // above (the session reserve rolled ITSELF back on deny) and the G8
         // per-app reservation (present only for non-dev tokens; a token with
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
-        await refundBlockBuzzSpend(buzzCapKey, ceiling);
+        await refundBlockBuzzReservation(reservation, ceiling);
         if (appSpendReserve) {
           const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
@@ -6830,7 +7229,7 @@ async function submitCustomComfyWorkflow(opts: {
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
   } catch (e) {
-    await refundBlockBuzzSpend(buzzCapKey, ceiling);
+    await refundBlockBuzzReservation(reservation, ceiling);
     if (appSpendReserve) {
       const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
       await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
@@ -6865,6 +7264,9 @@ async function submitCustomComfyWorkflow(opts: {
     await persistCustomComfySettle({
       workflowId: snapshot.workflowId,
       buzzCapKey,
+      // The consent-budget leg, when the viewer set a per-app budget. Absent
+      // otherwise, so the record shape is unchanged for everyone else.
+      consentBudgetKey: reservation.consent?.key ?? null,
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling,
@@ -7078,12 +7480,20 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
   if (!isPageToken(claims)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'registry steps are page-only' });
   }
+  // CONSENT gate — shared by estimate AND submit (that is this helper's whole
+  // reason to exist), so a caller can never probe a step price it may not run.
+  // DEFENSE-IN-DEPTH TODAY: both callers reach here only from procedures that have
+  // already rejected a token missing `ai:write:budgeted`, so this line is not
+  // reachable with the scope absent — see estimateCustomComfyWorkflow for why it
+  // is written anyway, and why it must not be reported as closing a gap.
+  if (!claims.scopes.includes('ai:write:budgeted')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
   const userId = parseSubjectUserId(claims.sub);
   if (userId == null) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
-  await assertViewerIsAppDeveloper(userId);
   return userId;
 }
 
@@ -7672,7 +8082,8 @@ async function submitStepWorkflow(opts: {
   }
   const { total, key: buzzCapKey, cap: buzzCap } = reservation;
   if (total > buzzCap) {
-    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    // Refund EVERY leg of the reservation — see the txt2img path for why.
+    await refundBlockBuzzReservation(reservation, reserveBuzz);
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     return {
       snapshot: {
@@ -7691,6 +8102,26 @@ async function submitStepWorkflow(opts: {
     };
   }
 
+  // ── CONSENT BUDGET — same belt, same refund-both-legs rule, on the registry-step
+  // money path. `kind:'step'` must not be a spend surface a guardrail cannot see
+  // (see THE MONEY RULE above this function).
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, reserveBuzz);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error: consentBudgetRejection(
+          reservation.consent,
+          reserveBuzz,
+          `this step costs ${reserveBuzz}`
+        ),
+      },
+    };
+  }
+
   // 🔴 (3) Reserve against the PER-APP aggregate cap (daily Buzz + velocity).
   // This is the guardrail the per-user cap structurally cannot provide — it is
   // keyed on `appBlockId` with the spender deliberately absent from the key, so
@@ -7704,7 +8135,7 @@ async function submitStepWorkflow(opts: {
     if (!appSpend.allowed) {
       // Roll back the per-user reservation so a rejected submit doesn't burn the
       // viewer's own daily ceiling for a spend that never happened.
-      await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+      await refundBlockBuzzReservation(reservation, reserveBuzz);
       // No money moved → release the idempotency claim so a genuine retry runs.
       if (genClaimKey) await releaseGenIdempotency(genClaimKey);
       return {
@@ -7740,7 +8171,7 @@ async function submitStepWorkflow(opts: {
         devTunnel.spendCapBuzz
       );
       if (!reserved.allowed) {
-        await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+        await refundBlockBuzzReservation(reservation, reserveBuzz);
         if (appSpendReserve) {
           const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
@@ -7788,7 +8219,7 @@ async function submitStepWorkflow(opts: {
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
   } catch (e) {
-    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    await refundBlockBuzzReservation(reservation, reserveBuzz);
     if (appSpendReserve) {
       const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
       await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
@@ -7882,6 +8313,24 @@ async function submitStepWorkflow(opts: {
         // a divergent submit inside a dev tunnel left that counter under-reading
         // by the overage: precisely the drift direction the same comment forbids.
         try {
+          // Charges the overage on BOTH LEGS THIS CALL DERIVES — the platform
+          // cumulative counter and, when the viewer set one, their consent budget.
+          //
+          // ⚠️ NOT the same keys the original reservation held, and the difference is
+          // observable. This takes a NEW reservation, so both keys are re-derived
+          // from `buzzCapWindowKey()` at correction time: a submit that STRADDLES
+          // midnight UTC charges its overage to the NEXT day's keys, leaving the day
+          // it actually spent on under-counted by the overage. It mirrors the
+          // pre-existing behaviour of the platform leg exactly (this call site
+          // predates the consent budget), and correcting it means threading the
+          // original keys down here — a change to how the reservation is carried, not
+          // to this comment. The window is one submit's duration per day, and the
+          // drift direction is "looser on the next day", never "spends more today".
+          //
+          // This is an ACCOUNTING CORRECTION for money already spent, not a gate — it
+          // deliberately has no deny path, so a consent budget that this pushes over
+          // its cap simply binds on the NEXT submit rather than retroactively refusing
+          // one that already billed.
           await reserveBlockBuzzSpendForClaims(claims, userId, capOverage);
         } catch {
           /* best-effort correction — a lost one under-counts by the overage only */
@@ -7935,6 +8384,9 @@ async function submitStepWorkflow(opts: {
     await persistCustomComfySettle({
       workflowId: snapshot.workflowId,
       buzzCapKey,
+      // The consent-budget leg, when the viewer set a per-app budget. Absent
+      // otherwise, so the record shape is unchanged for everyone else.
+      consentBudgetKey: reservation.consent?.key ?? null,
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling: reserveBuzz,
