@@ -135,10 +135,13 @@ export async function upsertBlocklist({ id, type, blocklist }: UpsertBlocklistSc
         // nothing, so two concurrent no-id upserts for a type with no row both reach it and the
         // type ends up with two. Unreachable from this app — the only caller always passes an id —
         // but the spoke's twin is reachable, and the close is a unique index on `Blocklist.type`,
-        // not this predicate. That index is `Blocklist_type_key`, created by migration
-        // `20260819211000_blocklist_type_unique`, and production already has it (verified against
-        // `pg_index`, 2026-09-09), so the duplicate is already unrepresentable there. An
-        // environment where that migration has not been applied by hand can still produce one.
+        // not this predicate. `Blocklist_type_key` (migration `20260819211000_blocklist_type_unique`)
+        // is what closes it, and production already has it — verified against `pg_index`,
+        // 2026-09-09 — so the duplicate is unrepresentable there. An environment where that
+        // migration has not been applied by hand can still produce one. Note the Prisma schema
+        // does NOT declare `@unique` on this column: the drift-gate catalog snapshot predates the
+        // August migration, so declaring it blocks the gate on a stale snapshot rather than on
+        // real drift. Declare it when that snapshot is recaptured.
         if (id !== undefined) return undefined;
         await tx.blocklist.create({ data: { data: blocklistData, type }, select: { id: true } });
         return blocklistData;
