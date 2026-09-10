@@ -40,6 +40,54 @@ export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: st
   return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
 }
 
+/**
+ * Which of a model's versions the picker will actually offer. A model whose every
+ * version is filtered out renders no card at all, so this predicate decides what the
+ * user sees — extracted from the component so the server-side payload projection can
+ * be tested against the real thing instead of a copy that would silently drift.
+ *
+ * `canGenerate` is compared by IDENTITY, and the index field is tri-state: absent when
+ * a version has no generationCoverage row. So `true === undefined` is false, and
+ * dropping or coercing that field strips every version from every model.
+ */
+export function filterResourceVersions<
+  V extends { id: number; baseModel: string; canGenerate?: boolean | null }
+>(
+  model: { type: string; versions: V[] },
+  {
+    tab,
+    selectSource,
+    canGenerate,
+    resources,
+    excludedIds,
+  }: {
+    tab?: Tabs;
+    selectSource?: string;
+    canGenerate?: boolean;
+    resources: { type: string; baseModels: string[] }[];
+    excludedIds: number[];
+  }
+): V[] {
+  // Mirror the server query's base-model relaxation so we don't strip every
+  // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
+  // The featured tab is a cross-ecosystem podium (the server returns winners
+  // from any baseModel), so don't re-apply the ecosystem's base-model filter.
+  const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource) || tab === 'featured';
+  const modelBaseModels = resources
+    .filter((x) => x.type === model.type)
+    .flatMap((x) => x.baseModels);
+
+  return model.versions.filter((version) => {
+    return (
+      (canGenerate ? canGenerate === version.canGenerate : true) &&
+      (skipBaseModel ||
+        modelBaseModels.length === 0 ||
+        modelBaseModels.includes(version.baseModel)) &&
+      !excludedIds.includes(version.id)
+    );
+  });
+}
+
 export const resourceSort = {
   relevance: 'Relevance',
   popularity: 'Popularity',
