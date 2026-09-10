@@ -86,6 +86,7 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
     ],
   },
   {
@@ -110,6 +111,7 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
     ],
   },
   {
@@ -161,6 +163,7 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
     ],
   },
 ];

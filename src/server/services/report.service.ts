@@ -206,6 +206,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.ComicProject]: 'comicProject',
   [ReportEntity.Model3D]: 'model3d',
   [ReportEntity.Model3DReview]: 'model3dReview',
+  [ReportEntity.Announcement]: 'announcement',
 };
 
 const reportTypeConnectionMap = {
@@ -225,6 +226,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.ComicProject]: 'comicProjectId',
   [ReportEntity.Model3D]: 'model3dId',
   [ReportEntity.Model3DReview]: 'model3dReviewId',
+  [ReportEntity.Announcement]: 'announcementId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {

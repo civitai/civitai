@@ -15,4 +15,5 @@ export enum ReportEntity {
   ComicProject = 'comicProject',
   Model3D = 'model3d',
   Model3DReview = 'model3dReview',
+  Announcement = 'announcement',
 }
