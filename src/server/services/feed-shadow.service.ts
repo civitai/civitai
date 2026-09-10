@@ -1,8 +1,9 @@
 import { trace } from '@opentelemetry/api';
 import { env } from '~/env/server';
-import { clickhouse } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
+import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import {
@@ -11,22 +12,13 @@ import {
   type FeedRequestOutcome,
 } from '~/server/services/feed-request-capture.service';
 
-export const FEED_SHADOW_TABLE = 'feedShadow';
 export const MAX_OFFSET = 20_000;
 const CONFIG_TTL_MS = 15_000;
-const FLUSH_INTERVAL_MS = 2_000;
-const FLUSH_AT_ROWS = 200;
-export const MAX_BUFFERED_ROWS = 2_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
 const requestCounter = registerCounterWithLabels({
   name: 'feed_shadow_requests_total',
   help: 'Image-feed searches mirrored to the candidate feed, by outcome',
-  labelNames: ['outcome'] as const,
-});
-const batchCounter = registerCounterWithLabels({
-  name: 'feed_shadow_batches_total',
-  help: 'Feed shadow ClickHouse inserts by outcome',
   labelNames: ['outcome'] as const,
 });
 
@@ -252,34 +244,6 @@ export function compareIds(meili: number[], feed: number[]) {
   };
 }
 
-export type FeedShadowRow = {
-  time: string;
-  traceId: string;
-  userId: number;
-  sort: string;
-  period: string;
-  browsingLevel: number;
-  useCombinedNsfwLevel: number;
-  cursor: string;
-  input: string;
-  feedQuery: string;
-  skipReason: string;
-  feedStatus: number;
-  feedMs: number;
-  feedRoute: string;
-  feedEstimate: number;
-  feedCandidates: number;
-  feedCount: number;
-  feedIds: number[];
-  meiliMs: number;
-  meiliCount: number;
-  meiliIds: number[];
-  overlap: number;
-  overlapTop10: number;
-  firstMismatch: number;
-  error: number;
-};
-
 const u32 = (n: number | undefined) => Math.min(Math.max(Math.round(n ?? 0), 0), 4_294_967_295);
 
 export function buildFeedShadowRow(
@@ -326,8 +290,6 @@ export function buildFeedShadowRow(
 export type FeedShadow = {
   /** Fire-and-forget at the call site; returns the settled promise for tests. */
   compare: (input: CapturableSearchInput, outcome: FeedRequestOutcome) => Promise<void>;
-  flush: () => Promise<void>;
-  readonly pending: number;
   readonly inflight: number;
   readonly dropped: number;
 };
@@ -335,74 +297,33 @@ export type FeedShadow = {
 type ShadowDeps = {
   getConfig: () => Promise<FeedShadowConfig>;
   fetchFeed: (query: string, timeoutMs: number) => Promise<FeedAnswer>;
-  insert: (rows: FeedShadowRow[]) => Promise<void>;
+  record: (row: FeedShadowRow) => Promise<void>;
   now?: () => number;
   random?: () => number;
-  flushIntervalMs?: number;
-  onError?: (error: Error, rows: number) => void;
+  onError?: (error: Error) => void;
 };
 
 export function createFeedShadow(deps: ShadowDeps): FeedShadow {
   const now = deps.now ?? Date.now;
   const random = deps.random ?? Math.random;
-  const flushIntervalMs = deps.flushIntervalMs ?? FLUSH_INTERVAL_MS;
-  let buffer: FeedShadowRow[] = [];
-  let inflightInsert: Promise<void> | null = null;
   let inflight = 0;
-  let timer: ReturnType<typeof setTimeout> | null = null;
   let dropped = 0;
   let lastErrorAt = 0;
 
-  function reportFailure(e: Error, rows: number) {
-    batchCounter.inc({ outcome: 'failed' });
-    if (deps.onError) return deps.onError(e, rows);
+  function reportFailure(e: Error) {
+    if (deps.onError) return deps.onError(e);
     if (now() - lastErrorAt <= ERROR_LOG_INTERVAL_MS) return;
     lastErrorAt = now();
     logToAxiom(
-      { type: 'error', name: 'feedShadow flush failed', details: { rows }, message: e.message },
+      { type: 'error', name: 'feedShadow insert failed', message: e.message },
       'clickhouse'
     ).catch(() => undefined);
   }
 
-  async function flush() {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    if (inflightInsert || buffer.length === 0) return;
-    const rows = buffer;
-    buffer = [];
-    inflightInsert = deps
-      .insert(rows)
-      .then(
-        () => batchCounter.inc({ outcome: 'ok' }),
-        (e) => reportFailure(e as Error, rows.length)
-      )
-      .finally(() => {
-        inflightInsert = null;
-        if (buffer.length) scheduleFlush();
-      });
-    await inflightInsert;
-  }
-
-  function scheduleFlush() {
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void flush();
-    }, flushIntervalMs);
-    timer.unref?.();
-  }
-
-  function push(row: FeedShadowRow) {
-    if (buffer.length >= MAX_BUFFERED_ROWS) {
-      dropped++;
-      requestCounter.inc({ outcome: 'dropped' });
-      return;
-    }
-    buffer.push(row);
-    if (buffer.length >= FLUSH_AT_ROWS) void flush();
-    else scheduleFlush();
+  // One row per comparison, straight to ClickHouse: `async_insert` on the shared
+  // client batches server-side, so an in-process buffer would only duplicate it.
+  function record(row: FeedShadowRow) {
+    deps.record(row).catch((e) => reportFailure(e as Error));
   }
 
   async function compare(input: CapturableSearchInput, outcome: FeedRequestOutcome) {
@@ -415,7 +336,7 @@ export function createFeedShadow(deps: ShadowDeps): FeedShadow {
       const mapping = mapSearchInputToFeedQuery(input);
       if (!mapping.ok) {
         requestCounter.inc({ outcome: 'skipped' });
-        push(buildFeedShadowRow(input, outcome, at, traceId, mapping));
+        record(buildFeedShadowRow(input, outcome, at, traceId, mapping));
         return;
       }
       if (inflight >= config.maxInflight) {
@@ -436,7 +357,7 @@ export function createFeedShadow(deps: ShadowDeps): FeedShadow {
         inflight--;
       }
       requestCounter.inc({ outcome: answer.status === 200 ? 'compared' : 'error' });
-      push(buildFeedShadowRow(input, outcome, at, traceId, mapping, answer));
+      record(buildFeedShadowRow(input, outcome, at, traceId, mapping, answer));
     } catch {
       // Shadow mode must never surface on the feed path.
     }
@@ -444,10 +365,6 @@ export function createFeedShadow(deps: ShadowDeps): FeedShadow {
 
   return {
     compare,
-    flush,
-    get pending() {
-      return buffer.length;
-    },
     get inflight() {
       return inflight;
     },
@@ -459,8 +376,6 @@ export function createFeedShadow(deps: ShadowDeps): FeedShadow {
 
 const disabledShadow: FeedShadow = {
   compare: async () => undefined,
-  flush: async () => undefined,
-  pending: 0,
   inflight: 0,
   dropped: 0,
 };
@@ -500,9 +415,9 @@ let instance: FeedShadow | undefined;
 
 export function feedShadow(): FeedShadow {
   if (instance) return instance;
-  const client = clickhouse;
   const baseUrl = env.FEED_SERVICE_URL;
-  if (!client || !baseUrl) return (instance = disabledShadow);
+  if (!baseUrl) return (instance = disabledShadow);
+  const tracker = new Tracker();
   return (instance = createFeedShadow({
     getConfig: createTtlMemo(async () => {
       try {
@@ -514,8 +429,6 @@ export function feedShadow(): FeedShadow {
       }
     }, CONFIG_TTL_MS),
     fetchFeed: (query, timeoutMs) => fetchFeedAnswer(baseUrl, query, timeoutMs),
-    insert: async (rows) => {
-      await client.insert({ table: FEED_SHADOW_TABLE, values: rows, format: 'JSONEachRow' });
-    },
+    record: (row) => tracker.feedShadow([row]),
   }));
 }

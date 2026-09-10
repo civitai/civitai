@@ -10,8 +10,8 @@ import {
   parseFeedCursor,
   parseShadowConfig,
   type FeedShadowConfig,
-  type FeedShadowRow,
 } from '../feed-shadow.service';
+import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 
 const T0 = Date.UTC(2026, 8, 9, 12, 0, 0);
 const ALWAYS: FeedShadowConfig = {
@@ -141,27 +141,25 @@ describe('createFeedShadow', () => {
       candidates: 2,
     })
   ) {
-    const batches: FeedShadowRow[][] = [];
+    const rows: FeedShadowRow[] = [];
     const shadow = createFeedShadow({
       getConfig: async () => config,
       fetchFeed,
-      insert: async (rows) => {
-        batches.push(rows);
+      record: async (row) => {
+        rows.push(row);
       },
       now: () => T0,
       random: () => 0.5,
-      flushIntervalMs: 60_000,
       onError: () => undefined,
     });
-    return { shadow, batches };
+    return { shadow, rows };
   }
 
   it('records the comparison and never throws', async () => {
-    const { shadow, batches } = harness(ALWAYS);
+    const { shadow, rows } = harness(ALWAYS);
     await shadow.compare(base, outcome);
-    await shadow.flush();
-    expect(batches).toHaveLength(1);
-    const row = batches[0][0];
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
     expect(row.skipReason).toBe('');
     expect(row.feedIds).toEqual([3, 1, 9]);
     expect(row.overlap).toBeCloseTo(2 / 3);
@@ -171,20 +169,19 @@ describe('createFeedShadow', () => {
 
   it('records skipped shapes without calling the feed', async () => {
     let calls = 0;
-    const { shadow, batches } = harness(ALWAYS, async () => {
+    const { shadow, rows } = harness(ALWAYS, async () => {
       calls++;
       return { status: 200, ms: 1, ids: [] };
     });
     await shadow.compare({ ...base, followed: true }, outcome);
-    await shadow.flush();
     expect(calls).toBe(0);
-    expect(batches[0][0].skipReason).toBe('flag:followed');
+    expect(rows[0].skipReason).toBe('flag:followed');
   });
 
   it('drops when the inflight cap is reached and counts a timeout as an error row', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const { shadow, batches } = harness(ALWAYS, async () => {
+    const { shadow, rows } = harness(ALWAYS, async () => {
       await gate;
       const err = new Error('t');
       err.name = 'TimeoutError';
@@ -197,17 +194,15 @@ describe('createFeedShadow', () => {
     expect(shadow.inflight).toBe(2);
     release();
     await Promise.all([a, b, c]);
-    await shadow.flush();
     expect(shadow.dropped).toBe(1);
-    expect(batches[0]).toHaveLength(2);
-    expect(batches[0][0].feedStatus).toBe(504);
-    expect(batches[0][0].error).toBe(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].feedStatus).toBe(504);
+    expect(rows[0].error).toBe(1);
   });
 
   it('does nothing when off', async () => {
-    const { shadow, batches } = harness({ ...ALWAYS, sampleRate: 0 });
+    const { shadow, rows } = harness({ ...ALWAYS, sampleRate: 0 });
     await shadow.compare(base, outcome);
-    await shadow.flush();
-    expect(batches).toHaveLength(0);
+    expect(rows).toHaveLength(0);
   });
 });
