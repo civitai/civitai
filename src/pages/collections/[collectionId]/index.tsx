@@ -33,6 +33,7 @@ export const getServerSideProps = createServerSideProps({
           ? [
               ssg.collection.getAllUser.prefetch({
                 permission: CollectionContributorPermission.VIEW,
+                withPendingReviewCounts: true,
               }),
               ssg.hiddenPreferences.getHidden.prefetch(),
             ]

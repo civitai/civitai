@@ -84,9 +84,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   );
   // withPendingReviewCounts:true guarantees pendingReviewCount here, but CollectionGetAllUserModel
   // stays a union (see Task 4) since most callers of getAllUser omit the flag.
-  const collections = (data ?? []) as (CollectionGetAllUserModel & {
-    pendingReviewCount?: number;
-  })[];
+  const collections: (CollectionGetAllUserModel & { pendingReviewCount?: number })[] = data ?? [];
 
   const selectCollection = (id: number) => {
     router.push(`/collections/${id}`);

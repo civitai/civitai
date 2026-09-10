@@ -1,9 +1,9 @@
 import { NavLink, Text, ThemeIcon } from '@mantine/core';
 import clsx from 'clsx';
 import { createElement } from 'react';
+import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { CollectionListView } from './collection-list.utils';
 import { collectionTypeData } from './collection.utils';
-import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { CollectionGetAllUserModel } from '~/types/router';
 import classes from './MyCollections.module.scss';
 
