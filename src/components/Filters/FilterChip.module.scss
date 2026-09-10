@@ -2,15 +2,17 @@
   font-size: 12px;
   font-weight: 600;
 
+  // Mantine puts `data-variant` on the Chip ROOT, not on this label, so a
+  // `&[data-variant='filled']` clause here matches nothing and the filled
+  // background survives, hiding the border below.
   &[data-checked] {
     &,
     &:hover {
-      color: var(--mantine-color-white);
-      border: 1px solid var(--mantine-color-primary);
-    }
-
-    &[data-variant="filled"] {
       background-color: transparent;
+      // Mantine's checked colour is white, for the filled background this rule removes.
+      color: var(--mantine-color-text);
+      border: 1px solid var(--mantine-primary-color-filled);
+      --chip-icon-color: var(--mantine-primary-color-filled);
     }
   }
 }
