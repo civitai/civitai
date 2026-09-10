@@ -212,12 +212,17 @@ describe('the harness itself', () => {
    *
    * 🔴 An earlier version of this comment concluded from that "there is no
    * real-time source in scope to compare against". **That was FALSE and is
-   * retracted**: `process.uptime()` is NOT faked (measured — it advanced 29.1ms
-   * across a spin in which `Date.now()` and `performance.now()` both moved 0),
-   * so such a test IS writable. The reason not to write it is different and
-   * narrower: it would pin a deterministic precondition with a real-time race,
-   * in the one file whose entire purpose is removing a real-time race. Keep the
-   * assertion on STATE, not on elapsed time.
+   * retracted**: `process.uptime()` is NOT faked, so such a test IS writable.
+   * Measured — across one busy spin it advances by tens of milliseconds while
+   * `Date.now()` and `performance.now()` both move exactly **0**. (Per this
+   * file's own rule above, the magnitude is not quoted as a bare figure: it is
+   * a property of the spin's LENGTH, which nothing here pins. The ZERO is the
+   * re-derivable part, and it is the part that matters.)
+   *
+   * The reason not to write it is narrower than the retracted one: it would pin
+   * a deterministic precondition on a spin whose TERMINATION TIME depends on
+   * the wall clock, in the one file whose purpose is removing wall-clock
+   * dependence. Keep the assertion on STATE, not on elapsed time.
    */
   it('runs on a FROZEN clock, parked clear of both the bucket and UTC-day edges', () => {
     expect(vi.isFakeTimers()).toBe(true);
