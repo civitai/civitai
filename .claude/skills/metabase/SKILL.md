@@ -98,9 +98,11 @@ deliberately by someone who can see what they typed.
 A write that contains a `{{snippet: ...}}` reference also verifies the snippet tag landed, not just the
 SQL. The two fail independently: a dropped tag leaves the query byte-identical and the card unrunnable.
 
-Write a reference as `{{snippet: name}}`. `{{snippet:name}}` is fine — Metabase normalises it — but a
-space *before* the colon is not normalised and needs a tag named literally `snippet : name`, so a card
-written that way cannot run. That spelling is refused rather than written.
+Write a reference as `{{snippet: name}}`, lowercase. `{{snippet:name}}` is fine — Metabase normalises the
+missing space — but it does **not** normalise a space *before* the colon, and it **preserves the case of
+the prefix**. Both `{{snippet : name}}` and `{{SNIPPET: name}}` are references Metabase demands a tag for
+under that exact spelling, which this tool does not write, so the card cannot run. Both are refused rather
+than written.
 
 🔴 **A comment line whose only content is `--` breaks parameter binding for the whole query** on the
 ClickHouse driver: every variable fails with *"we got more parameters than we can handle"*, which points
