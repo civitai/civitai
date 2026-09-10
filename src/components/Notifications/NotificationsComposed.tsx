@@ -112,17 +112,11 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     return (
       <>
         <div className="flex flex-col gap-4 p-4">
-          <Group justify="space-between">
+          <Group justify="space-between" wrap="nowrap">
             <Title className="text-[21px] sm:text-[34px]" order={1}>
               Notifications
             </Title>
-            <Group gap={8}>
-              <Switch
-                label="Hide Read"
-                labelPosition="left"
-                checked={hideRead}
-                onChange={(e) => setHideRead(e.currentTarget.checked)}
-              />
+            <Group gap={8} wrap="nowrap">
               <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
                 {/* Disabled until the followed set has landed: an empty list dismisses
                     nothing, so an early click would clear the platform half and leave a
@@ -161,6 +155,13 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                 </LegacyActionIcon>
               }
             />
+            <Switch
+              className="shrink-0"
+              label="Hide Read"
+              labelPosition="left"
+              checked={hideRead}
+              onChange={(e) => setHideRead(e.currentTarget.checked)}
+            />
             {creatorAnnouncementsEnabled && selectedTab === 'announcements' && (
               <Chip.Group
                 multiple
@@ -193,7 +194,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                   <NotificationList
                     items={notifications}
                     searchText={searchText}
-                    onItemClick={(notification, keepOpened) => {
+                    onItemClick={(notification, { keepOpened, url }) => {
                       if (notification.type === 'announcement' && !notification.read) {
                         dismissAnnouncements(notification.id);
                       } else if (!notification.read)
@@ -201,7 +202,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                           id: notification.id,
                           category: notification.category,
                         });
-                      if (!keepOpened && notification.details.url) onClose?.();
+                      if (!keepOpened && url) onClose?.();
                     }}
                   />
                   {hasNextPage && (
