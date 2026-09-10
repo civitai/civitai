@@ -91,6 +91,13 @@ node .claude/skills/metabase/metabase.mjs update-question --id 123 --display lin
 shell argument intact, and a swallowed value is parsed as boolean `true` — which writes a card with no
 query and reports success. `create-question` takes `--query-file` too.
 
+An empty or whitespace-only `--query-file` is refused, because a file's emptiness is invisible to the
+caller — the program opened it, not them. An inline `--query "   "` is still accepted: it was typed
+deliberately by someone who can see what they typed.
+
+A write that contains a `{{snippet: ...}}` reference also verifies the snippet tag landed, not just the
+SQL. The two fail independently: a dropped tag leaves the query byte-identical and the card unrunnable.
+
 🔴 **A comment line whose only content is `--` breaks parameter binding for the whole query** on the
 ClickHouse driver: every variable fails with *"we got more parameters than we can handle"*, which points
 at neither the line nor the cause. **Indentation does not save it** — an indented `--`, the usual form

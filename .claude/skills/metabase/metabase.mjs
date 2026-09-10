@@ -13,6 +13,10 @@ import { parseOpts } from './parse-opts.mjs';
  *   list            List questions/dashboards in a collection
  *   search          Search for questions/dashboards by name
  *   get             Get details of a question or dashboard
+ *   run-card        Run a saved question with its parameters
+ *   list-snippets   List native query snippets
+ *   create-snippet  Create a native query snippet
+ *   update-snippet  Update a snippet's content, name or description
  *   set-dropdown     Configure a template tag variable as a dropdown list
  *   set-date-picker  Configure a template tag variable as a date picker
  *   set-parameters   Set all parameters on a question (full JSON)
@@ -133,6 +137,7 @@ async function createQuestion(opts) {
     console.error('Error: pass --query or --query-file, not both');
     process.exit(1);
   }
+  let snippetTagNames = [];
   let query = opts.query;
   if (queryFile) {
     try {
@@ -178,8 +183,7 @@ async function createQuestion(opts) {
     }
   }
 
-  const addedTags = await syncSnippetTags(templateTags, query);
-  if (addedTags.length) console.log(`Snippet tags added: ${addedTags.join(', ')}`);
+  await syncSnippetTags(templateTags, query);
 
   const body = {
     name,
@@ -523,20 +527,24 @@ async function syncSnippetTags(tags, sql) {
   for (const name of names) {
     const tagName = `snippet: ${name}`;
     const snippet = byName.get(name);
-    if (existing.has(tagName)) {
-      // Skipping by name alone leaves a stale `snippet-id` behind when a snippet was deleted and
-      // recreated, and the card then fails at run time. The id is already in hand, so reconcile it.
-      const current = (isArray ? tags : Object.values(tags)).find((t) => t.name === tagName);
-      if (snippet && current && current['snippet-id'] !== snippet.id) {
-        current['snippet-id'] = snippet.id;
-        repointed.push(`${tagName} -> id ${snippet.id}`);
-      }
-      continue;
-    }
+    // Existence is checked before the already-tagged branch on purpose. Checking it after let a
+    // reference to a DELETED snippet through whenever the card already carried a tag of that name --
+    // which is exactly the case the id reconcile below exists for.
     if (!snippet) {
       console.error(`Error: the SQL references {{snippet: ${name}}} but no snippet of that name exists.`);
       console.error(`Existing snippets: ${all.map((sn) => sn.name).join(', ') || '(none)'}`);
       process.exit(1);
+    }
+    if (existing.has(tagName)) {
+      // Skipping by name alone leaves a stale `snippet-id` behind when a snippet was deleted and
+      // recreated, and the card then fails at run time. The id is already in hand, so reconcile it.
+      const current = (isArray ? tags : Object.values(tags)).find((t) => t.name === tagName);
+      if (current && current['snippet-id'] !== snippet.id) {
+        current['snippet-id'] = snippet.id;
+        repointed.push(`${tagName} -> id ${snippet.id}`);
+      }
+      if (current && current['snippet-name'] !== name) current['snippet-name'] = name;
+      continue;
     }
     if (isArray) {
       tags.push({
@@ -560,7 +568,7 @@ async function syncSnippetTags(tags, sql) {
     added.push(tagName);
   }
   if (repointed.length) console.log(`  Snippet tags re-pointed: ${repointed.join(', ')}`);
-  return added;
+  return names.map((name) => `snippet: ${name}`);
 }
 
 // A snippet is literal text substitution into `{{snippet: <name>}}` and takes NO parameters, so a fragment
@@ -651,7 +659,12 @@ async function createSnippet(opts) {
   });
   console.log(`Snippet created: ${snippet.name} (id ${snippet.id})`);
   console.log(`  Reference it as: {{snippet: ${snippet.name}}}`);
-  reportSnippetWrite(await readSnippet(snippet.id), { name: opts.name, content });
+  // Every field this call sends, so the report cannot be a field short of what it wrote.
+  reportSnippetWrite(await readSnippet(snippet.id), {
+    name: opts.name,
+    content,
+    description: opts.description ?? null,
+  });
 }
 
 async function updateSnippet(opts) {
@@ -680,6 +693,7 @@ async function updateQuestion(opts) {
     console.error('Error: pass --query or --query-file, not both');
     process.exit(1);
   }
+  let snippetTagNames = [];
   let query = opts.query;
   if (queryFile) {
     try {
@@ -725,8 +739,7 @@ async function updateQuestion(opts) {
         process.exit(1);
       }
     }
-    const addedTags = await syncSnippetTags(templateTags, query);
-    if (addedTags.length) console.log(`  Snippet tags added: ${addedTags.join(', ')}`);
+    snippetTagNames = await syncSnippetTags(templateTags, query);
     body.dataset_query = {
       database: existing.database_id ?? existing.dataset_query?.database,
       type: 'native',
@@ -753,6 +766,21 @@ async function updateQuestion(opts) {
       process.exit(1);
     }
     console.log('  Verified: the stored query matches what was sent');
+
+    // The tags are the half nothing used to check. A snippet reference whose tag the server dropped
+    // still leaves the SQL byte-identical, so verifying the query alone cannot see it.
+    const storedStage = card.dataset_query?.native ?? card.dataset_query?.stages?.[0];
+    const storedRaw = storedStage?.['template-tags'] ?? {};
+    const storedTagNames = new Set(
+      (Array.isArray(storedRaw) ? storedRaw : Object.values(storedRaw)).map((t) => t.name)
+    );
+    const missing = snippetTagNames.filter((n) => !storedTagNames.has(n));
+    if (missing.length) {
+      console.error(`  WARNING: snippet tag(s) NOT stored: ${missing.join(', ')}. The card will fail to run.`);
+      process.exitCode = 1;
+    } else if (snippetTagNames.length) {
+      console.log(`  Verified: snippet tag(s) stored (${snippetTagNames.join(', ')})`);
+    }
   }
   if (body.archived !== undefined) console.log(`  Archived: ${card.archived}`);
   console.log(`  URL: ${METABASE_URL}/question/${cardId}`);
