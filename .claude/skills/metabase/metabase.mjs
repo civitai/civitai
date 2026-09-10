@@ -110,6 +110,10 @@ async function runQuery(opts) {
       process.exit(1);
     }
   }
+  if (queryFile && typeof query === 'string' && !query.trim()) {
+    console.error(`Error: --query-file ${queryFile} is empty.`);
+    process.exit(1);
+  }
   if (typeof query === 'string') assertNoBareSqlComment(query);
   const dbId = parseInt(database, 10);
   if (!dbId || !query) {
@@ -524,10 +528,28 @@ function assertNoBareSqlComment(sql, what = 'SQL') {
   }
 }
 
+// Metabase normalises `{{snippet:name}}` to a tag named `snippet: name`, but does NOT normalise a space
+// BEFORE the colon: `{{snippet : name}}` requires a tag named literally `snippet : name`. That spelling
+// is invisible to the reference regex below, so the card is written with no tag, cannot run, and the tag
+// verification stays silent because it has nothing to expect. Refusing it here is the cheap close --
+// it costs an odd spelling nobody wants and removes the one path where the verification is vacuous.
+function assertCanonicalSnippetRefs(sql) {
+  const bad = [...sql.matchAll(/\{\{\s*(snippet[^:}]*:[^}]*?)\s*\}\}/g)]
+    .map((m) => m[1].trim())
+    .filter((ref) => !/^snippet:\s*\S/.test(ref));
+  if (bad.length) {
+    console.error(`Error: unusable snippet reference(s): ${bad.map((r) => `{{${r}}}`).join(', ')}`);
+    console.error('Write them as {{snippet: name}} -- a space before the colon, or an empty name, gives');
+    console.error('a card Metabase cannot run.');
+    process.exit(1);
+  }
+}
+
 // A `{{snippet: name}}` reference needs its own entry in the card's template-tags, or the card fails to
 // run with `missing required parameters`. The UI writes that entry; a programmatic PUT does not. Tags
 // arrive as an object in the `native` shape and an array in the `stages` one.
 async function syncSnippetTags(tags, sql) {
+  assertCanonicalSnippetRefs(sql);
   const names = [...new Set([...sql.matchAll(/\{\{\s*snippet:\s*([^}]+?)\s*\}\}/g)].map((m) => m[1]))];
   if (!names.length) return [];
 
@@ -598,6 +620,14 @@ async function syncSnippetTags(tags, sql) {
 // a write's own response -- a server that echoes what it did not persist would otherwise verify itself.
 function verifySnippetTags(card, expectedNames) {
   if (!expectedNames.length) return;
+  // A failed GET is not a failed write. Falling through would report every expected tag as missing and
+  // tell the operator the card is broken when the write may have been fine -- the distinction readCard
+  // exists to preserve.
+  if (!card) {
+    console.error('  WARNING: could not read the card back, so its snippet tags are unverified.');
+    process.exitCode = 1;
+    return;
+  }
   const stage = card?.dataset_query?.native ?? card?.dataset_query?.stages?.[0];
   const raw = stage?.['template-tags'] ?? stage?.template_tags ?? {};
   const stored = new Set((Array.isArray(raw) ? raw : Object.values(raw)).map((t) => t.name));
