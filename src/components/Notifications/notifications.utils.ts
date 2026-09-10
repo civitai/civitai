@@ -173,6 +173,7 @@ export const useQueryNotificationsCount = () => {
         pendingPlacements: 0,
         pendingStickerPlacements: 0,
         pendingRemixSubmissions: 0,
+        pendingCollectionReviews: 0,
       }
     : withAnnouncementCounts(data, {
         platform: announcements.length,
@@ -205,6 +206,7 @@ export const NON_CATEGORY_COUNT_KEYS: ReadonlySet<string> = new Set([
   'pendingPlacements',
   'pendingStickerPlacements',
   'pendingRemixSubmissions',
+  'pendingCollectionReviews',
 ]);
 
 type NotificationCounts = Record<string, number>;

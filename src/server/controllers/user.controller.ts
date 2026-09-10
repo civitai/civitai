@@ -57,6 +57,7 @@ import type {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
@@ -297,12 +298,16 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
-    const [unreadCount, placementCounts] = await Promise.all([
+    const [unreadCount, placementCounts, collectionReviewCounts] = await Promise.all([
       getUserNotificationCount({ userId: id, unread: true }),
       // Degrades to zeroes rather than failing the request, matching
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
+      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
+        total: 0,
+        byCollection: {},
+      })),
     ]);
 
     const reduced = unreadCount.reduce(
@@ -335,6 +340,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       pendingPlacements: placementCounts.sticker + placementCounts.remix,
       pendingStickerPlacements: placementCounts.sticker,
       pendingRemixSubmissions: placementCounts.remix,
+      // The sum only. The per-collection breakdown rides `collection.getAllUser`
+      // instead: `applyMarkReadToCounts` is typed over a Record<string, number>,
+      // so an object here breaks that generic — and if it ever fell out of
+      // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
+      // rather than merely zero a count.
+      pendingCollectionReviews: collectionReviewCounts.total,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
