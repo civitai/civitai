@@ -282,6 +282,26 @@ export const createReport = async ({
   if (!data.details) data.details = {};
   (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
+  // 🔴 The join row cascades on announcement delete, and deleting an announcement is instant
+  // and self-serve — so without this, the fastest way to erase a spam report is to delete the
+  // announcement it was about. Read from the row, never from `details`: the reporter controls
+  // that object, and a snapshot a reporter can author is a snapshot a reporter can forge.
+  if (type === ReportEntity.Announcement) {
+    const announcement = await dbRead.announcement.findUnique({
+      where: { id },
+      select: { title: true, content: true, userId: true, metadata: true },
+    });
+    if (announcement) {
+      const actions = (announcement.metadata as { actions?: { link?: string }[] } | null)?.actions;
+      (data.details as MixedObject).announcement = {
+        title: announcement.title,
+        content: announcement.content,
+        link: actions?.[0]?.link ?? null,
+        userId: announcement.userId,
+      };
+    }
+  }
+
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
