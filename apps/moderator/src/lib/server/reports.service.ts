@@ -109,6 +109,16 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
     sql<string | null>`(
       SELECT '/user/' || u.username FROM "User" u WHERE u.id = ${entityId} AND u.username IS NOT NULL
     )`,
+
+  // An announcement has no page of its own, so `entityUrl` returns null and the row would
+  // render as dead grey text. The author's profile is where their announcements are rendered.
+  // Null for a sitewide row (`userId IS NULL`), which is not reportable.
+  announcement: (entityId) =>
+    sql<string | null>`(
+      SELECT '/user/' || u.username
+      FROM "Announcement" a JOIN "User" u ON u.id = a."userId"
+      WHERE a.id = ${entityId} AND u.username IS NOT NULL
+    )`,
 };
 
 /** The types `entityUrl` cannot answer for. Derived from the resolvers so a new one cannot be written

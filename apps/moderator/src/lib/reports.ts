@@ -19,6 +19,7 @@ export const ReportEntity = {
   ComicProject: 'comicProject',
   Model3D: 'model3d',
   Model3DReview: 'model3dReview',
+  Announcement: 'announcement',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
@@ -89,6 +90,7 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   comicProject: 'Comic',
   model3d: '3D Model',
   model3dReview: '3D Review',
+  announcement: 'Announcement',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
@@ -109,6 +111,7 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   comicProject: 'comic',
   model3d: '3d-model',
   model3dReview: '3d-review',
+  announcement: 'announcement',
 };
 
 const entityBySlug = new Map(
