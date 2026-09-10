@@ -11,7 +11,11 @@ vi.mock('~/env/client', () => ({
 
 import {
   COMMON_IMAGE_WIDTHS,
+  MAX_EDGE_WIDTH,
+  SRCSET_DPR,
   getEdgeUrl,
+  getEdgeUrlSrcSet,
+  resolveOptimized,
   snapWidthToCommonSize,
 } from '~/client-utils/cf-images-utils';
 
@@ -77,5 +81,78 @@ describe('getEdgeUrl width snapping', () => {
   it('does not snap height', () => {
     const url = getEdgeUrl(SRC, { height: 451 });
     expect(url).toContain('height=451');
+  });
+});
+
+describe('getEdgeUrlSrcSet', () => {
+  const SRC = 'abc-image-uuid';
+
+  const descriptors = (srcSet: string | undefined) =>
+    (srcSet ?? '').split(', ').map((entry) => {
+      const [url, descriptor] = entry.split(' ');
+      return { width: Number(url.match(/width=(\d+)/)?.[1]), descriptor };
+    });
+
+  it('pairs the requested width with a variant one ladder-snapped doubling up', () => {
+    // Post detail renders an 800 CSS px box; a 2x display needs 1600 real pixels.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 800 }))).toEqual([
+      { width: 800, descriptor: '1x' },
+      { width: 1600, descriptor: `${SRCSET_DPR}x` },
+    ]);
+  });
+
+  it('snaps both descriptors onto the ladder', () => {
+    // 451 -> 512; 902 -> 1200. Neither number appears verbatim.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 451 }))).toEqual([
+      { width: 512, descriptor: '1x' },
+      { width: 1200, descriptor: `${SRCSET_DPR}x` },
+    ]);
+  });
+
+  it('carries every other option onto BOTH variants', () => {
+    // The 2x URL losing `optimized` is the expensive failure: unoptimized, the 1600px
+    // variant of a detailed image measures ~1MB against ~305kB.
+    const srcSet = getEdgeUrlSrcSet(SRC, { width: 800, optimized: true, anim: false });
+    const urls = (srcSet ?? '').split(', ');
+    expect(urls).toHaveLength(2);
+    for (const url of urls) {
+      expect(url).toContain('optimized=true');
+      expect(url).toContain('anim=false');
+    }
+  });
+
+  it('omits the attribute when the 2x variant cannot exceed the 1x one', () => {
+    // Both clamp to MAX_EDGE_WIDTH, so a srcSet here would list the same URL twice.
+    expect(getEdgeUrlSrcSet(SRC, { width: MAX_EDGE_WIDTH })).toBeUndefined();
+  });
+
+  it('omits the attribute for original and for width-less requests', () => {
+    expect(getEdgeUrlSrcSet(SRC, { width: 800, original: true })).toBeUndefined();
+    expect(getEdgeUrlSrcSet(SRC, {})).toBeUndefined();
+  });
+
+  it('omits the attribute for a src the edge does not serve', () => {
+    expect(getEdgeUrlSrcSet('https://example.test/a.png', { width: 800 })).toBeUndefined();
+    expect(getEdgeUrlSrcSet('blob:whatever', { width: 800 })).toBeUndefined();
+  });
+});
+
+describe('resolveOptimized', () => {
+  it('forces the optimized format for a hi-DPI request whatever the preference', () => {
+    expect(resolveOptimized({ width: 800, hiDpi: true, imageFormat: 'metadata' })).toBe(true);
+  });
+
+  it('leaves a plain wide request on the user preference', () => {
+    expect(resolveOptimized({ width: 800, imageFormat: 'metadata' })).toBe(false);
+    expect(resolveOptimized({ width: 800, imageFormat: 'optimized' })).toBe(true);
+  });
+
+  it('still forces it below the small-preview threshold', () => {
+    expect(resolveOptimized({ width: 450, imageFormat: 'metadata' })).toBe(true);
+  });
+
+  it('leaves an original request on the user preference', () => {
+    // hiDpi never reaches an original request, so the lightbox and downloads keep honouring it.
+    expect(resolveOptimized({ imageFormat: 'metadata' })).toBe(false);
   });
 });
