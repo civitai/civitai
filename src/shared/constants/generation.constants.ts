@@ -518,9 +518,8 @@ export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 // Off (the default) runs sdcpp; on runs comfyui.
 export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = ['SD1', 'SDXL'];
 
-// Ecosystems that always run comfyui, with no toggle to opt out. Deliberately NOT workflow-scoped:
-// these ecosystems have no sdcpp support left, so any textToImage step they emit belongs on comfyui.
-// (Only SD1/SDXL are workflow-scoped, via the toggle, which the form shows on txt2img alone.)
+// Always comfyui, no toggle. Not workflow-scoped: these have no sdcpp support left, so every
+// textToImage step they emit belongs on comfyui.
 export const COMFY_ONLY_ECOSYSTEMS: string[] = [
   'Pony',
   'Illustrious',
@@ -529,24 +528,18 @@ export const COMFY_ONLY_ECOSYSTEMS: string[] = [
   'FluxKrea',
 ];
 
-// Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert.
-// 🔴 No longer a synonym for "runs on sdcpp": Flux2Klein submits 'flux2', and of the SD family only
-// SD1/SDXL still reach sdcpp — on the textToImage path, with `enhancedCompatibility` off.
-// Membership is a pricing decision that outlived the engine it was named for; re-scope it
-// deliberately rather than reading the name as the mechanism.
+// Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert. Historical name: membership
+// is a pricing decision, not "runs on sdcpp" (Flux2Klein submits 'flux2').
 export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   ...EXPERIMENTAL_MODE_SUPPORTED_MODELS,
-  'ZImageBase',
-  'ZImageTurbo',
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
   'Flux2Klein_4B',
   'Flux2Klein_4B_base',
 ];
 
-// Specific model versions inside an SDCPP-supported ecosystem that opt out of
-// the sdcpp/BOGO path (e.g. Flux Pro 1.1 and Flux Ultra run on a different
-// engine even though their ecosystem is `Flux1`).
+// Flux Pro 1.1 / Ultra: versions inside comfy-only Flux1 that keep their handler's engine rather
+// than being forced onto comfyui.
 export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
 
 /** Flux Ultra and Flux Pro keep the engine their handler chose, despite Flux1 being comfy-only. */

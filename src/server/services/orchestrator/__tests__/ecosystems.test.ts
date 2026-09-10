@@ -71,8 +71,6 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     expect((textToImageStep as any).input.engine).toBe('comfyui');
   });
 
-  // Repointed from Flux1, which no longer has the toggle: it is comfyui either way, so the case
-  // passed without exercising the flag. SD1 is the other ecosystem that still has one.
   it('should override engine to "comfyui" for SD1 when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'SD1',
@@ -109,10 +107,59 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
 });
 
 /**
- * Both submission lanes derive the engine from `usesComfyEngine`. Asserting them
- * side by side is what catches one lane being updated and the other not — the
- * failure the differential suite cannot see, because it compares the two lanes
- * to each other rather than to the rule.
+ * Asserts comfy's field names (`sampler`/`scheduler`), not just the engine: an sdcpp-shaped
+ * payload (`sampleMethod`/`schedule`) under engine 'comfy' silently drops the sampler, and the
+ * handlers' casts hide it from typecheck.
+ */
+describe.each([
+  ['data-graph', createEcosystemStepInput],
+  ['form-graph', createFormGraphStepInput],
+] as const)('%s dispatcher — imageGen ecosystems run on comfy', (_lane, dispatch) => {
+  const mockCtx = {
+    airs: { getOrThrow: (id: number) => `urn:air:test:checkpoint:${id}` },
+    user: { id: 1, isModerator: false },
+    baseStepIndex: 0,
+  } as unknown as GenerationHandlerCtx;
+
+  const base = {
+    workflow: 'txt2img',
+    prompt: 'a cat',
+    aspectRatio: { width: 1024, height: 1024 },
+    model: { id: 123 },
+  };
+
+  function imageGenInput(steps: Awaited<ReturnType<typeof dispatch>>) {
+    const step = steps.find((s) => s.$type === 'imageGen');
+    expect(step).toBeDefined();
+    return (step as { input: Record<string, unknown> }).input;
+  }
+
+  // zImageMode 'base': the form-graph lane only forwards sampler/scheduler in base mode.
+  it.each(['ZImageTurbo', 'ZImageBase'])(
+    '%s submits comfy with comfy field names',
+    async (ecosystem) => {
+      const input = imageGenInput(
+        await dispatch(
+          { ...base, ecosystem, zImageMode: 'base', sampler: 'heun', scheduler: 'simple' } as never,
+          mockCtx
+        )
+      );
+      expect(input.engine).toBe('comfy');
+      expect(input).toMatchObject({ sampler: 'heun', scheduler: 'simple' });
+      expect(input).not.toHaveProperty('sampleMethod');
+      expect(input).not.toHaveProperty('schedule');
+    }
+  );
+
+  it('Qwen submits comfy', async () => {
+    const input = imageGenInput(await dispatch({ ...base, ecosystem: 'Qwen' } as never, mockCtx));
+    expect(input.engine).toBe('comfy');
+  });
+});
+
+/**
+ * Pins both lanes to `usesComfyEngine` directly — the differential suite only compares the lanes
+ * to each other.
  */
 describe.each([
   ['data-graph', createEcosystemStepInput],
@@ -138,9 +185,7 @@ describe.each([
     return (step as { input: { engine?: string } }).input.engine;
   }
 
-  // The five ecosystems that lost the toggle. Without the dispatcher change each
-  // of these falls through to sdcpp, so a revert fails here rather than silently
-  // re-routing every Pony and Flux generation.
+  // Comfy-only ecosystems: no toggle, and falling through to sdcpp would silently re-route them.
   it.each(['Pony', 'Illustrious', 'NoobAI', 'Flux1', 'FluxKrea'])(
     '%s runs comfyui with no enhancedCompatibility flag at all',
     async (ecosystem) => {
@@ -157,10 +202,8 @@ describe.each([
     expect(engineOf(steps)).toBe('comfyui');
   });
 
-  // Flux Ultra and Flux Pro are textToImage steps INSIDE comfy-only Flux1, carrying their own
-  // engine. They are the case a blanket per-ecosystem override breaks. Asserting the exact value
-  // rather than `not.toBe('comfyui')` — the negative also passes when the engine is unset for some
-  // unrelated reason, which is how dropping one of the two ids from the exclusion list stayed green.
+  // Pro/Ultra sit inside comfy-only Flux1 but keep their own engine. Assert the exact value:
+  // `not.toBe('comfyui')` also passes when the engine is unset for an unrelated reason.
   it.each([fluxUltraAirId, fluxProAirId])(
     'model %i keeps its own engine inside Flux1',
     async (id) => {

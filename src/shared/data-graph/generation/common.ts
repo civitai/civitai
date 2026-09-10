@@ -393,7 +393,7 @@ export function samplerNode({
 }
 
 /**
- * Creates a scheduler node (for SdCpp-based ecosystems like Flux2 Klein, ZImage).
+ * Creates a scheduler node.
  * Meta contains: options (dynamic - varies by ecosystem)
  */
 export function schedulerNode({

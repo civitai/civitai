@@ -117,8 +117,8 @@ export function supportsEnhancedCompatibility(ecosystem: string, modelId?: numbe
 }
 
 /**
- * Whether the ecosystem/model pair runs through sdcpp and qualifies for the
- * 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility`.
+ * Whether the given ecosystem/model pair qualifies for the 2-for-1 quantity bonus. Not an engine
+ * test — see SDCPP_SUPPORTED_ECOSYSTEMS.
  */
 export function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
   if (!SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return false;

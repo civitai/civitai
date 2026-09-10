@@ -6,14 +6,14 @@ All controllers/nodes rendered inside the `<AccordionLayout label="Advanced">` s
 |---|-----------|-------|-----------------|-------------|-------------|
 | 1 | `cfgScale` | CFG Scale | `SliderInput` | Controls how closely generation follows the text prompt | — |
 | 2 | `sampler` | Sampler | `SelectInput` | Sampling method — each produces different results | — |
-| 3 | `scheduler` | Scheduler | `SelectInput` | Controls the noise schedule during generation | SdCpp ecosystems |
+| 3 | `scheduler` | Scheduler | `SelectInput` | Controls the noise schedule during generation | Anima, Flux2Klein, ZImage |
 | 4 | `steps` | Steps | `SliderInput` | Number of iterations spent generating | — |
 | 5 | `movementAmplitude` | Movement Amplitude | `SegmentedControlWrapper` | Camera movement and subject action scale | Vidu |
 | 6 | `seed` | Seed | `SeedInput` | Random seed for reproducibility | — |
 | 7 | `clipSkip` | CLIP Skip | `SliderInput` | Skip CLIP layers | SD only |
 | 8 | `denoise` | Denoise Strength | `SliderInput` | Denoising strength for img2img | img2img only (renders `null` when no meta) |
 | 9 | `vae` | VAE | `ResourceSelectInput` | Additional color and detail improvements | SD only |
-| 10 | `enhancedCompatibility` | Enhanced Compatibility | `Checkbox` | Toggle enhanced compatibility mode | — |
+| 10 | `enhancedCompatibility` | Enhanced Compatibility | `Checkbox` | Off (default) runs sdcpp; on runs comfyui | SD1, SDXL — txt2img only |
 | 11 | `usePro` | Pro Mode | `Checkbox` | Higher quality generation (more credits) | Sora |
 | 12 | `fluxUltraRaw` | Raw Mode | `Checkbox` | More natural, less processed look | Flux Ultra |
 | 13 | `transparent` | Transparent Background | `Checkbox` | Generate image with transparent background | OpenAI |
