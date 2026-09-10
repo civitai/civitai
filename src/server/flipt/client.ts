@@ -115,7 +115,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // the entity is the content OWNER and no SessionUser for the owner is on hand there. Every
   // identity/tier/cohort segment in flipt-state is a STRING_COMPARISON constraint that reads the
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
-  // off". Nothing checks that automatically — the source gate that did was removed 2026-09-09.
+  // off". Nothing checks that automatically.
   TEXT_BLURBS = 'text-blurbs',
 
   // 🔴 BOOLEAN ONLY — neither a segment NOR a percentage rollout works on this one.
@@ -231,8 +231,11 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // It returns the flag's base `enabled` value instead, which is indistinguishable
 // from an honest "this user is not in the segment" — no error, no log line. Pass
 // `buildFliptContext(user)`, or at minimum the properties you actually know.
-// The mechanism is pinned by `src/server/flipt/__tests__/flipt-eval-context.test.ts`; call sites
-// are not scanned for it any more (source gate removed 2026-09-09).
+// `buildFliptContext`’s output is pinned by `flipt-eval-context.test.ts`, against a HAND-COPIED
+// model of the segment constraints — nothing reads flipt-state, so a segment changing shape
+// upstream is caught by review only. No call site is scanned; the one exception is
+// `resolveTestingAccess`, whose evaluation arguments are asserted by name in
+// `generation.service.testing-access-flag-context.test.ts`.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;

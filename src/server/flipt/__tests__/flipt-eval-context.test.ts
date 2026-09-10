@@ -23,28 +23,15 @@ import type { SessionUser } from '~/types/session';
  * gate (#4042) and `resolveTestingAccess`, whose `testers` rollout was structurally unreachable for
  * every non-moderator.
  *
- * The tests below pin that mechanism against the live segment shapes, so the claim stays true as
- * `buildFliptContext` changes.
+ * The tests below pin what `buildFliptContext` emits, against a model of those segments
+ * HAND-COPIED from flipt-state on 2026-08-20 (`buildFliptContext` at
+ * `~/server/services/feature-flags.service`). Nothing here reads flipt-state, so a segment that
+ * changes shape upstream drifts from this file silently.
  *
- * 🔴 WHAT USED TO BE HERE, AND WHY IT IS NOT — read this before adding it back.
- *
- * The first half of this file was a SOURCE GATE: it walked `src/`, found every Flipt evaluation,
- * and failed if one passed an `entityId` with no context unless the site was listed in a hand-typed
- * ledger. **Justin removed it deliberately on 2026-09-09** (ClickUp 868kwa4w4), on this evidence:
- *
- * - In the three weeks it existed, it caught NOTHING. `git log -S"ENTITY_WITHOUT_CONTEXT_LEDGER"`
- *   over its own file returns zero commits, so no one ever had to ledger a new violation.
- * - It cost ~20 renumberings of its own rows, at least two PRs going CONFLICTING (and a conflicted
- *   PR gets no CI in this repo, so they were unverifiable rather than merely unmergeable), and one
- *   full unit suite going red in a file the diff never touched. The ledger was keyed on `file:line`,
- *   so any two PRs touching `image.service.ts` collided in it for no informational reason.
- *
- * A PR to make the gate cheap (#4726, keyed on file+flag with the sites named) was closed unmerged
- * in favour of this. The trade accepted: the defect class above is now caught by review and by the
- * behavioural tests below, not by a scan — so a NEW context-less evaluation ships silently.
- *
- * If you are about to re-add a source gate here, that is a reversal of a decision made with numbers,
- * not an oversight being corrected. Bring numbers.
+ * 🔴 A source gate that scanned every call site for this used to live here. It was removed
+ * deliberately on 2026-09-09 (PR #4735) after catching nothing in three weeks, at a cost in merge
+ * conflicts. Re-adding one is a reversal of a decision made with numbers, not an oversight being
+ * corrected. Bring numbers.
  */
 
 describe('flipt evaluation context — what a missing context costs', () => {
@@ -71,14 +58,15 @@ describe('flipt evaluation context — what a missing context costs', () => {
   const members = (ctx: Record<string, string>) =>
     ctx.isMember === 'true' || ctx.isModerator === 'true';
 
-  it('an EMPTY context matches none of the live property segments', () => {
-    // This is the whole defect in one line: the entityId is not on offer to any
-    // of these, so a context-less evaluation is a uniform miss.
-    const empty: Record<string, string> = {};
-    expect(earlyAdopters(empty)).toBe(false);
-    expect(moderators(empty)).toBe(false);
-    expect(members(empty)).toBe(false);
-    expect(idListed([String(EARLY_ADOPTER_ID), String(PLAIN_ID)])(empty)).toBe(false);
+  // The one property this app adds on top of the shared `@civitai/flipt/context` builder, and the
+  // only one no package test can cover. Asserted BOTH ways: the false arm alone stays green when the
+  // bit test is replaced by the literal 'false', which is a live CreatorProgram segment going dark.
+  it('reads isInCreatorProgram off the onboarding bit, not a constant', () => {
+    expect(
+      buildFliptContext(sessionUser({ onboarding: OnboardingSteps.CreatorProgram }))
+        .isInCreatorProgram
+    ).toBe('true');
+    expect(buildFliptContext(sessionUser()).isInCreatorProgram).toBe('false');
   });
 
   it('buildFliptContext emits the properties those segments read', () => {
@@ -109,7 +97,7 @@ describe('flipt evaluation context — what a missing context costs', () => {
     expect(members(buildFliptContext(sessionUser({ tier: 'free' })))).toBe(false);
   });
 
-  it('a userId-list segment reads the CONTEXT property, so the entityId cannot serve it', () => {
+  it('a userId-list segment reads context.userId, so an empty context misses it', () => {
     const user = sessionUser({ id: PLAIN_ID });
     const segment = idListed([String(PLAIN_ID)]);
     expect(segment(buildFliptContext(user))).toBe(true);

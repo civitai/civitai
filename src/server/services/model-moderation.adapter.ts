@@ -120,6 +120,8 @@ export function isModelTextNsfw({
 
 /** Is model text moderation submitting at all for this model? */
 async function submitEnabled(entityId: number) {
+  // No context on purpose: the entityId is a MODEL id, and every segment we have describes a
+  // person, so none could match it. Ramp this by threshold or percentage, never a segment.
   return isFlipt(FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD, String(entityId));
 }
 
