@@ -1,4 +1,14 @@
-import { Button, Group, List, Modal, NumberInput, Stack, Switch, Text, ThemeIcon } from '@mantine/core';
+import {
+  Button,
+  Group,
+  List,
+  Modal,
+  NumberInput,
+  Stack,
+  Switch,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
 import { useState } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
@@ -86,7 +96,11 @@ export default function BlockConsentModal({
   const budgetBlocksSubmit = grantsSpend && limitEnabled && !budgetValid;
 
   return (
-    <Modal {...dialog} withCloseButton={false} title={`${blockName ?? 'This app'} needs permission`}>
+    <Modal
+      {...dialog}
+      withCloseButton={false}
+      title={`${blockName ?? 'This app'} needs permission`}
+    >
       <Stack gap="md">
         <Group gap="xs" wrap="nowrap" align="flex-start">
           <ThemeIcon color="yellow" variant="light" size="lg">

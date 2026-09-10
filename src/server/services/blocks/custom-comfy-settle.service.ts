@@ -49,7 +49,9 @@ type BuzzCapKey = `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}`;
 /** Same round-trip-and-cast reasoning as BuzzCapKey, for the consent-budget key. */
 type ConsentBudgetKey = `${typeof REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${string}`;
 
-function settleKey(workflowId: string): `${typeof REDIS_SYS_KEYS.BLOCKS.CUSTOM_COMFY_SETTLE}:${string}` {
+function settleKey(
+  workflowId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.CUSTOM_COMFY_SETTLE}:${string}` {
   return `${REDIS_SYS_KEYS.BLOCKS.CUSTOM_COMFY_SETTLE}:${workflowId}`;
 }
 

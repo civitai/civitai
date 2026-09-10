@@ -672,9 +672,7 @@ describe('per-(user, app) consent budget', () => {
     orchestratorQuoting(25);
 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toThrow();
+    await expect(caller.submitWorkflow({ blockToken: 'tok', body: validBody() })).rejects.toThrow();
 
     expect(counters.get(keyUnder(DAILY_PREFIX))).toBe(300);
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only — no real submit

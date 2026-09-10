@@ -114,9 +114,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await expect
-      .element(page.getByTestId('block-consent-budget-toggle'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('block-consent-budget-toggle')).toBeInTheDocument();
     // OFF by default, so the input is not yet shown.
     expect(page.getByTestId('block-consent-budget-input').elements()).toHaveLength(0);
   });

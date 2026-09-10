@@ -127,7 +127,9 @@ export async function recordScopeGrant(opts: {
   const budgetSupplied = 'buzzBudgetPerDay' in opts;
   const budgetData = budgetSupplied ? { buzzBudgetPerDay: opts.buzzBudgetPerDay ?? null } : {};
   // Dedup + drop empties so the stored array stays clean.
-  const incoming = Array.from(new Set(opts.scopes.filter((s) => typeof s === 'string' && s.length > 0)));
+  const incoming = Array.from(
+    new Set(opts.scopes.filter((s) => typeof s === 'string' && s.length > 0))
+  );
 
   const existing = (await dbWrite.appUserScopeGrant.findUnique({
     where: { userId_appBlockId: { userId, appBlockId } },
