@@ -46,7 +46,9 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import {
   getCollectionItemReviewData,
   useCollection,
+  useOnCollectionItemsReviewed,
 } from '~/components/Collections/collection.utils';
+import { countPendingReviewItems } from '~/components/Collections/collection-review-counts';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -495,6 +497,7 @@ function ModerationControls({
   filters: { collectionId: number; statuses: CollectionItemStatus[]; forReview: boolean };
 }) {
   const queryUtils = trpc.useUtils();
+  const onReviewed = useOnCollectionItemsReviewed();
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -543,7 +546,11 @@ function ModerationControls({
 
         return { prevData };
       },
-      onSuccess() {
+      onSuccess(_, { collectionItemIds, collectionId }) {
+        onReviewed({
+          collectionId,
+          reviewed: countPendingReviewItems(collectionItems, collectionItemIds),
+        });
         showSuccessNotification({ message: `The items have been reviewed` });
       },
       onError(error, _variables, context) {

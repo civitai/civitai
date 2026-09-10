@@ -11,8 +11,12 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import * as z from 'zod';
+import {
+  decrementPendingReviewForCollection,
+  decrementPendingReviewTotal,
+} from '~/components/Collections/collection-review-counts';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -27,6 +31,7 @@ import type {
 } from '~/server/schema/collection.schema';
 import type { CollectionItemExpanded } from '~/server/services/collection.service';
 import {
+  CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
@@ -374,6 +379,44 @@ export const contestCollectionReactionsHidden = (
     collection.mode === CollectionMode.Contest &&
     !!collection.metadata?.votingPeriodStart &&
     isFutureDate(collection.metadata?.votingPeriodStart ?? new Date())
+  );
+};
+
+/**
+ * Bring the pending-review badges down when a reviewer decides items.
+ *
+ * Shared because `updateCollectionItemsStatus` has two call sites — the review page's bulk toolbar
+ * and the approve/decline on a single image's detail page — and a badge that only one of them moves
+ * is a badge that is wrong half the time, for the rest of the session: both queries it writes to
+ * are `staleTime: Infinity`.
+ *
+ * Decrement first so the number moves before the network settles, then invalidate so it ends up
+ * right. Neither half is sufficient: the decrement alone drifts from the database across a session,
+ * and the invalidation alone leaves the badge visibly lagging every click.
+ */
+export const useOnCollectionItemsReviewed = () => {
+  const queryUtils = trpc.useUtils();
+
+  return useCallback(
+    ({ collectionId, reviewed }: { collectionId: number; reviewed: number }) => {
+      // The same input the sidebar and /collections use — a different one is a different cache
+      // entry, and writing to it would move nothing.
+      const listInput = {
+        permission: CollectionContributorPermission.VIEW,
+        withPendingReviewCounts: true,
+      };
+
+      queryUtils.user.checkNotifications.setData(undefined, (old) =>
+        decrementPendingReviewTotal(old, reviewed)
+      );
+      queryUtils.collection.getAllUser.setData(listInput, (old) =>
+        decrementPendingReviewForCollection(old, collectionId, reviewed)
+      );
+
+      queryUtils.user.checkNotifications.invalidate();
+      queryUtils.collection.getAllUser.invalidate(listInput);
+    },
+    [queryUtils]
   );
 };
 
