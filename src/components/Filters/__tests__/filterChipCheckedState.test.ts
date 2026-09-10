@@ -107,15 +107,23 @@ function labelBlock(src: string): string | null {
   return blockAt(src, src.search(/^\.label\s*\{/m));
 }
 
+/** The whole `&[data-checked]…` body, sibling rules included. */
+function checkedBlock(label: string): string | null {
+  return blockAt(label, label.indexOf('&[data-checked]'));
+}
+
 /**
- * The declarations that apply to a checked chip: the body of the `&, &:hover` group inside
- * `&[data-checked]`. Scoped to that group rather than to the whole checked block so a
- * sibling rule — `&:focus-visible`, a `@media` — is not counted as an override of it.
+ * The `&, &:hover` group inside it — where the pinned declarations live.
+ *
+ * 🔴 THE TWO SCOPES ARE NOT INTERCHANGEABLE, AND USING THIS ONE FOR THE COUNTS WAS A BUG.
+ * Presence is asserted here, because this is where the declarations belong. Overrides are
+ * counted over the whole checked body, because a SIBLING rule is a real override: a
+ * `&:hover { background-color: var(--chip-bg); }` beside this group has the same specificity
+ * and comes later, so it restores the filled background on hover — the headline bug of this
+ * change, with every presence assertion still green.
  */
-function checkedDeclarations(label: string): string | null {
-  const checked = blockAt(label, label.indexOf('&[data-checked]'));
-  if (checked === null) return null;
-  return blockAt(checked, checked.search(/&\s*,\s*\n?\s*&:hover/));
+function checkedGroup(checked: string): string | null {
+  return blockAt(checked, checked.search(/&\s*,\s*&:hover/));
 }
 
 /**
@@ -153,16 +161,24 @@ describe('filter chips render a visible border when checked', () => {
         'checked selector rather than on `.label`, or the chip typography gets scoped behind it too.'
     ).toBe(true);
 
-    const block = checkedDeclarations(label as string);
+    const body = checkedBlock(label as string);
     expect(
-      block,
+      body,
+      `${relative} no longer has an \`&[data-checked]\` block inside \`.label\` — re-point this ` +
+        'guard deliberately rather than letting it pass over a renamed selector.'
+    ).not.toBeNull();
+    const checked = body as string;
+
+    const group = checkedGroup(checked);
+    expect(
+      group,
       `${relative} no longer has an \`&, &:hover\` group inside \`&[data-checked]\` — the ` +
         'declarations below are read from that group, so this guard now checks nothing. Re-point it.'
     ).not.toBeNull();
-    const checked = block as string;
+    const pinned = group as string;
 
     expect(
-      /border:\s*1px solid var\(--mantine-primary-color-filled\)\s*;/.test(checked),
+      /border:\s*1px solid var\(--mantine-primary-color-filled\)\s*;/.test(pinned),
       `${relative} no longer draws the checked border from \`--mantine-primary-color-filled\`. ` +
         'If it names a different custom property, check that property is actually DEFINED: ' +
         '`--mantine-color-primary` was not, which made the whole shorthand invalid and drew no ' +
@@ -170,32 +186,54 @@ describe('filter chips render a visible border when checked', () => {
     ).toBe(true);
 
     expect(
-      /background-color:\s*transparent\s*;/.test(checked),
-      `${relative} lets the checked chip keep Mantine's filled background. The border above is ` +
-        'the same colour as that background, so it renders and cannot be seen — the chip looks ' +
-        'exactly as it did when the border was missing entirely.'
+      /background-color:\s*transparent\s*;/.test(pinned),
+      `${relative} has no \`background-color: transparent\` in the checked group. If the fill is ` +
+        'still there, the border above is the same colour as it and cannot be seen — the chip looks ' +
+        'exactly as it did when the border was missing entirely. If you wrote the `background` ' +
+        'shorthand instead, this guard pins the longhand spelling and needs updating deliberately.'
     ).toBe(true);
 
     expect(
-      /(^|[;{}\s])color:\s*var\(--mantine-color-text\)\s*;/.test(checked),
+      /(^|[;{}\s])color:\s*var\(--mantine-color-text\)\s*;/.test(pinned),
       `${relative} no longer pins the checked label colour. Mantine's own value is white, for ` +
         'the filled background this rule removes; without the override a checked chip in light ' +
         'mode is white text on transparent — an empty outlined pill.'
     ).toBe(true);
 
     expect(
-      /--chip-icon-color:\s*var\(--mantine-primary-color-filled\)\s*;/.test(checked),
+      /--chip-icon-color:\s*var\(--mantine-primary-color-filled\)\s*;/.test(pinned),
       `${relative} no longer pins the check mark's colour. Mantine draws it from ` +
         '`--chip-color`, i.e. white — invisible once the fill is gone, exactly like the label ' +
         'colour above.'
     ).toBe(true);
+
+    // 🔴 The dead selector, kept out by name. It is the plausible "fix" someone re-adds, and the
+    // natural place to re-add it is as a SIBLING of the group above — so this reads the whole
+    // checked body, not the group.
+    expect(
+      /\[data-variant/.test(checked),
+      `${relative} matches on \`data-variant\` again. Mantine puts that attribute on the Chip ` +
+        'ROOT, not on the label — such a clause matches nothing, which is exactly how the filled ' +
+        'background survived here for as long as it did.'
+    ).toBe(false);
 
     // 🔴 A SECOND DECLARATION IS HOW A REPAIRED RULE GOES BACK TO BEING INEFFECTIVE, and a
     // fragment match cannot see the cascade: `border: 1px solid var(…); border-width: 0;`
     // satisfies every assertion above while drawing nothing. That is this bug's own history —
     // a declaration present and overridden — so it is checked by count across the family.
     const families = {
-      border: ['border', 'border-width', 'border-style', 'border-color'],
+      border: [
+        'border',
+        'border-width',
+        'border-style',
+        'border-color',
+        'border-top',
+        'border-right',
+        'border-bottom',
+        'border-left',
+        'border-block',
+        'border-inline',
+      ],
       background: ['background', 'background-color'],
       color: ['color'],
     } as const;
@@ -203,20 +241,13 @@ describe('filter chips render a visible border when checked', () => {
       const count = declarationCount(checked, family);
       expect(
         count,
-        `${relative} declares ${name} ${count} times in the checked group (counting ` +
-          `${family.join(', ')}). The later one wins, so the pinned value above may not be what ` +
-          'renders. Keep one declaration per family here; a legitimate second one belongs in its ' +
-          'own nested rule, which this count does not read.'
+        `${relative} declares ${name} ${count} times anywhere in the \`&[data-checked]\` block ` +
+          `(counting ${family.join(', ')}), sibling rules included. The later one wins, so the ` +
+          'pinned value above may not be what renders — a sibling `&:hover { background-color: … }` ' +
+          'restores on hover exactly the fill this change removes. A second declaration may well be ' +
+          'legitimate; if it is, widen this guard deliberately rather than deleting it.'
       ).toBe(1);
     }
-
-    // 🔴 The dead selector, kept out by name. It is the plausible "fix" someone re-adds.
-    expect(
-      /\[data-variant/.test(checked),
-      `${relative} matches on \`data-variant\` again. Mantine puts that attribute on the Chip ` +
-        'ROOT, not on the label — such a clause matches nothing, which is exactly how the filled ' +
-        'background survived here for as long as it did.'
-    ).toBe(false);
   });
 
   /**
@@ -229,8 +260,9 @@ describe('filter chips render a visible border when checked', () => {
    * (`ColorSchemeScript` always sets the attribute), and it is not what this pins.
    */
   it('`--mantine-primary-color-filled` is defined on Mantine’s unconditional `:root`', () => {
-    // Resolved here rather than at module scope: a tree without `node_modules` then fails this
-    // one test with its own message instead of taking the whole file down as a collection error.
+    // Resolved here rather than at module scope: a tree without `node_modules` then fails this one
+    // test instead of taking the whole file down as a collection error. The message in that case is
+    // node's `MODULE_NOT_FOUND`, not `read`'s — the throw happens before the existence check.
     const mantineCss = createRequire(__filename).resolve('@mantine/core/styles.layer.css');
     const css = read(mantineCss);
     const root = blockAt(css, css.search(/:root\s*\{/));
@@ -255,9 +287,16 @@ describe('filter chips render a visible border when checked', () => {
    * `:not([data-disabled])` — (0,3,0) against (0,2,0) — but that is no defence: reorder the
    * declaration and the `mantine` layer wins regardless of specificity, restoring the filled
    * background with nothing else changing.
+   *
+   * That contract is repo-wide, not a filter-chip one — `globals.css` documents it as governing
+   * every `*.module.scss`. This test and the one below it are currently its ONLY guards. The next
+   * module-level fix that leans on it should MOVE them into a shared guard, not copy them.
    */
   it('the `modules` layer still outranks `mantine`, which is why these rules apply at all', () => {
-    const doc = read(path.join(REPO_ROOT, 'src/pages/_document.tsx'));
+    // Comment-stripped: `_document.tsx` already carries a commented-out element
+    // (`{/* <InlineStylesHead /> */}`), so commenting this one out — what someone does while
+    // debugging a layer problem — would otherwise leave a dead declaration satisfying this.
+    const doc = code(read(path.join(REPO_ROOT, 'src/pages/_document.tsx')));
     // Matched on the string that SHIPS, not on the first `@layer` in the file: the comment above
     // that line quotes the declaration, and prose would otherwise satisfy this.
     const order = /__html:\s*'@layer ([^']+);'/.exec(doc);
@@ -297,6 +336,15 @@ describe('filter chips render a visible border when checked', () => {
         '`styles.css` build beats every layered rule, including the checked-chip rules in ' +
         '`*.module.scss`, so the filled background comes back and the border becomes invisible.'
     ).toBe(true);
+    // 🔴 ADDING the unlayered build breaks this exactly as REPLACING it does, and a paste from
+    // Mantine's docs adds rather than replaces. Anchored on `@mantine/core/` so the unrelated
+    // `mantine-react-table/styles.css` import in the same file does not trip it.
+    expect(
+      /@mantine\/core\/styles\.css/.test(app),
+      'src/pages/_app.tsx imports the UNLAYERED `@mantine/core/styles.css` as well. Unlayered ' +
+        'declarations beat every named layer, so this restores the filled background on checked ' +
+        'chips even with the layered build still imported beside it.'
+    ).toBe(false);
   });
 
   /**
