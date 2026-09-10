@@ -34,15 +34,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * and then assert an EXACT denial count. Those assertions are only sound while
  * the bucket is constant for the whole case: if a boundary falls inside the
  * loop the counter restarts mid-run, the expected denials never happen, and the
- * case fails for a reason that has nothing to do with the code. That is a
- * genuine intermittent — it reddened `Unit tests (1)` on civitai#4668 and then
- * passed on a re-run of the identical commit.
+ * case fails for a reason that has nothing to do with the code.
  *
- * MEASURED, not assumed: with the clock advanced 100ms per read starting 30s
- * into a bucket (a slow CI run, made deterministic), FIVE cases in this file go
- * red — the two velocity ceilings, the 0-cost burst, the `trusted`/`platform`
- * tier ceilings and the 120-throttle regression case. Freezing the clock takes
- * that to zero. `frozen clock` below is the guard that keeps it frozen.
+ * ⚠️ The originating report — `Unit tests (1)` red on civitai#4668, then green
+ * on a re-run of the identical commit — is REPEATED FROM THE RECORD, not
+ * measured here: that PR's rollup now shows only its latest run, so the red is
+ * no longer readable. What IS measured is everything below.
+ *
+ * MEASURED, not assumed. 🔴 NAME THE PROBE OR THE NUMBER IS NOT RE-DERIVABLE:
+ * with **`Date.now()` alone** advanced 100ms per CALL, starting 30s into a
+ * bucket (a slow CI run, made deterministic), these cases go red at
+ * `origin/main` — count them, do not trust a total:
+ *   - `DENIES + REFUNDS the daily reserve when the short-window gen ceiling is exceeded`
+ *   - `enforces velocity even for 0-cost gens (a burst of cache-hits is bounded)`
+ *   - `enforces the \`trusted\` tier ceilings, not a global constant`
+ *   - `enforces the \`platform\` tier ceilings, not a global constant`
+ *   - `…and would have been throttled at the 120 ceiling (still the \`standard\` tier)`
+ * Freezing the clock takes that to zero. A probe that ALSO ticks `new Date()`
+ * reddens one more (`standard`), so the set is a property of the probe as well
+ * as of the file — which is why the probe is specified rather than described.
+ * `runs on a FROZEN clock` below is the guard that keeps it frozen.
+ *
+ * ⚠️ WHAT THE FREEZE DOES NOT BUY, disclosed because the position below reads
+ * like an unqualified virtue: parking mid-UTC-day means this file CANNOT catch
+ * a daily key that derives a LOCAL date instead of a UTC one. Measured —
+ * mutating `spendCapWindowKey` to `toLocaleDateString('en-CA')` survives the
+ * whole file under a UTC-negative TZ (America/Chicago) and kills 11 cases under
+ * `TZ=Pacific/Auckland`. That is PRE-EXISTING (the base file survives it too)
+ * and no TZ is pinned in `vitest.config.mts`, so it is a gap this change
+ * neither creates nor closes. Closing it would mean running the midnight
+ * straddle at BOTH `23:30Z` and `00:30Z`, which is TZ-independent.
  */
 
 const SPEND_CAP_PREFIX = 'system:blocks:app-spend-cap';
@@ -183,12 +204,20 @@ describe('the harness itself', () => {
    * still a freeze, and would still be sound here, but it is one careless
    * `setSystemTime` edit away from not being, and the margin is free.
    *
-   * ⚠️ It CANNOT be written the obvious way — as a busy-wait proving real time
+   * ⚠️ Do NOT rewrite it as the obvious busy-wait — a spin proving real time
    * moved while `Date.now()` did not. Measured in this repo (vitest 4.1.11):
-   * under `vi.useFakeTimers()` **`performance.now()` and `process.hrtime()` are
-   * frozen too**, not just `Date`. A spin keyed on either never terminates (one
-   * ran 32s to its iteration cap), so there is no real-time source in scope to
-   * compare against. Do not "improve" this into a timing test.
+   * under `vi.useFakeTimers()` **`performance.now()`, `process.hrtime()` and
+   * `process.hrtime.bigint()` are frozen too**, not just `Date`, so a spin keyed
+   * on any of those never terminates — one ran 32s to its iteration cap.
+   *
+   * 🔴 An earlier version of this comment concluded from that "there is no
+   * real-time source in scope to compare against". **That was FALSE and is
+   * retracted**: `process.uptime()` is NOT faked (measured — it advanced 29.1ms
+   * across a spin in which `Date.now()` and `performance.now()` both moved 0),
+   * so such a test IS writable. The reason not to write it is different and
+   * narrower: it would pin a deterministic precondition with a real-time race,
+   * in the one file whose entire purpose is removing a real-time race. Keep the
+   * assertion on STATE, not on elapsed time.
    */
   it('runs on a FROZEN clock, parked clear of both the bucket and UTC-day edges', () => {
     expect(vi.isFakeTimers()).toBe(true);
