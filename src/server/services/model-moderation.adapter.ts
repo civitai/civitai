@@ -121,7 +121,8 @@ export function isModelTextNsfw({
 /** Is model text moderation submitting at all for this model? */
 async function submitEnabled(entityId: number) {
   // No context on purpose: the entityId is a MODEL id, and every segment we have describes a
-  // person, so none could match it. Ramp this by threshold or percentage, never a segment.
+  // person, so none could match it. Ramp by threshold or percentage, never a segment. There is
+  // also no SessionUser here to build one from — this runs from a webhook.
   return isFlipt(FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD, String(entityId));
 }
 
@@ -227,6 +228,8 @@ export const modelModerationAdapter: ModerationAdapter = {
     const triggeredLabels = [...triggered];
     if (!triggeredLabels.some((label) => LEVEL_LABEL_SET.has(label))) return;
 
+    // Same as the submit gate above: a MODEL id with no context, deliberately. Threshold or
+    // percentage only, and no SessionUser exists on this webhook path.
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_TEXT_MODERATION_XGUARD_APPLY, String(entityId))))
       return;
 

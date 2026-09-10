@@ -233,9 +233,9 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // `buildFliptContext(user)`, or at minimum the properties you actually know.
 // `buildFliptContext`’s output is pinned by `flipt-eval-context.test.ts`, against a HAND-COPIED
 // model of the segment constraints — nothing reads flipt-state, so a segment changing shape
-// upstream is caught by review only. No call site is scanned; the one exception is
-// `resolveTestingAccess`, whose evaluation arguments are asserted by name in
-// `generation.service.testing-access-flag-context.test.ts`.
+// upstream is caught by review only. No call site is SCANNED — though a few high-cost sites
+// have their own seam tests asserting the evaluation arguments by name: `resolveTestingAccess`,
+// the feedback gate, and the app-blocks store pair.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;

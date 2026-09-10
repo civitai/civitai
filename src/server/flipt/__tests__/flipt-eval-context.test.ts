@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OnboardingSteps } from '~/server/common/enums';
+import { OnboardingComplete, OnboardingSteps } from '~/server/common/enums';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
 
@@ -23,15 +23,15 @@ import type { SessionUser } from '~/types/session';
  * gate (#4042) and `resolveTestingAccess`, whose `testers` rollout was structurally unreachable for
  * every non-moderator.
  *
- * The tests below pin what `buildFliptContext` emits, against a model of those segments
- * HAND-COPIED from flipt-state on 2026-08-20 (`buildFliptContext` at
- * `~/server/services/feature-flags.service`). Nothing here reads flipt-state, so a segment that
- * changes shape upstream drifts from this file silently.
+ * The tests below pin what `buildFliptContext` (`~/server/services/feature-flags.service`) emits,
+ * against a model of those segments HAND-COPIED from flipt-state on 2026-08-20. Nothing here
+ * reads flipt-state, so a segment that changes shape upstream drifts from this file silently.
  *
  * 🔴 A source gate that scanned every call site for this used to live here. It was removed
  * deliberately on 2026-09-09 (PR #4735) after catching nothing in three weeks, at a cost in merge
  * conflicts. Re-adding one is a reversal of a decision made with numbers, not an oversight being
- * corrected. Bring numbers.
+ * corrected — and a cheaper file+flag-keyed version was already built and closed unmerged
+ * (#4726), so proposing that is not new either. Bring numbers.
  */
 
 describe('flipt evaluation context — what a missing context costs', () => {
@@ -59,14 +59,30 @@ describe('flipt evaluation context — what a missing context costs', () => {
     ctx.isMember === 'true' || ctx.isModerator === 'true';
 
   // The one property this app adds on top of the shared `@civitai/flipt/context` builder, and the
-  // only one no package test can cover. Asserted BOTH ways: the false arm alone stays green when the
-  // bit test is replaced by the literal 'false', which is a live CreatorProgram segment going dark.
-  it('reads isInCreatorProgram off the onboarding bit, not a constant', () => {
+  // only one no package test can cover.
+  //
+  // 🔴 THREE ARMS, AND THE FIRST ONE IS WHY. A real member's `onboarding` carries the completion
+  // bits too (`OnboardingComplete` is 15, so a member reads 31) — so an arm that sets the
+  // CreatorProgram bit ALONE cannot tell `hasFlag` from `===`, and `===` returns false for every
+  // real member. That is the segment going dark for 100% of the people it targets, with no error
+  // and no log line.
+  it('reads isInCreatorProgram off the onboarding BIT, not the whole value', () => {
+    const withProgram = OnboardingComplete | OnboardingSteps.CreatorProgram;
+    expect(buildFliptContext(sessionUser({ onboarding: withProgram })).isInCreatorProgram).toBe(
+      'true'
+    );
+    // Other bits set, this one not: kills a mutant that reads any onboarding progress as membership.
     expect(
-      buildFliptContext(sessionUser({ onboarding: OnboardingSteps.CreatorProgram }))
-        .isInCreatorProgram
-    ).toBe('true');
+      buildFliptContext(sessionUser({ onboarding: OnboardingComplete })).isInCreatorProgram
+    ).toBe('false');
     expect(buildFliptContext(sessionUser()).isInCreatorProgram).toBe('false');
+    // A HIGHER bit set without this one — someone banned from the program. Kills a `>=` mutant,
+    // which the three arms above cannot see, and which would read every banned user as a member.
+    expect(
+      buildFliptContext(
+        sessionUser({ onboarding: OnboardingComplete | OnboardingSteps.BannedCreatorProgram })
+      ).isInCreatorProgram
+    ).toBe('false');
   });
 
   it('buildFliptContext emits the properties those segments read', () => {
@@ -97,7 +113,7 @@ describe('flipt evaluation context — what a missing context costs', () => {
     expect(members(buildFliptContext(sessionUser({ tier: 'free' })))).toBe(false);
   });
 
-  it('a userId-list segment reads context.userId, so an empty context misses it', () => {
+  it('a userId-list segment reads context.userId, so a context without it misses', () => {
     const user = sessionUser({ id: PLAIN_ID });
     const segment = idListed([String(PLAIN_ID)]);
     expect(segment(buildFliptContext(user))).toBe(true);
