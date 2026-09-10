@@ -87,6 +87,33 @@ node .claude/skills/metabase/metabase.mjs update-question --id 123 --display lin
   --visualization '{"graph.dimensions":["date"],"graph.metrics":["count"]}'
 ```
 
+**Pass real SQL as `--query-file`, not `--query`.** A query with a comment header does not survive a
+shell argument intact, and a swallowed value is parsed as boolean `true` — which writes a card with no
+query and reports success. `create-question` and `run-query` take `--query-file` too.
+
+An empty or whitespace-only `--query-file` is refused, because a file's emptiness is invisible to the
+caller — the program opened it, not them. An inline `--query "   "` is still accepted: it was typed
+deliberately by someone who can see what they typed.
+
+A write that contains a `{{snippet: ...}}` reference also verifies the snippet tag landed, not just the
+SQL. The two fail independently: a dropped tag leaves the query byte-identical and the card unrunnable.
+
+Write a reference as `{{snippet: name}}`, lowercase. `{{snippet:name}}` is fine — Metabase normalises the
+missing space — but it does **not** normalise a space *before* the colon, and it **preserves the case of
+the prefix**. Both `{{snippet : name}}` and `{{SNIPPET: name}}` are references Metabase demands a tag for
+under that exact spelling, which this tool does not write, so the card cannot run. Both are refused rather
+than written.
+
+🔴 **A comment line whose only content is `--` breaks parameter binding for the whole query** on the
+ClickHouse driver: every variable fails with *"we got more parameters than we can handle"*, which points
+at neither the line nor the cause. **Indentation does not save it** — an indented `--`, the usual form
+inside a CTE, breaks binding the same way. A trailing space or tab is the fix.
+
+`create-question`, `update-question`, `run-query`, `create-snippet` and `update-snippet` all refuse text
+containing one. **No test can catch this**: the query runs clean until a variable is *bound*, so an
+unparameterised run and a card that merely exists both look correct. The guard is the only check that
+reaches it.
+
 **Display types:** `table`, `bar`, `line`, `area`, `pie`, `scalar`, `row`, `funnel`, `map`, `scatter`, `waterfall`, `combo`, `smartscalar`, `progress`, `gauge`, `pivot`
 
 ### create-dashboard — New dashboard
@@ -209,6 +236,38 @@ node .claude/skills/metabase/metabase.mjs search --query "challenge" --type ques
 node .claude/skills/metabase/metabase.mjs get --type question --id 101
 node .claude/skills/metabase/metabase.mjs get --type dashboard --id 456
 ```
+
+### Snippets — one derivation shared by many cards
+
+A snippet is text pasted into `{{snippet: <name>}}` at run time, so several cards can share one
+expression instead of each carrying a copy that drifts.
+
+```bash
+node .claude/skills/metabase/metabase.mjs list-snippets [--json]
+node .claude/skills/metabase/metabase.mjs create-snippet --name "image engine" \
+  (--file engine.sql | --content "SQL") [--description "..."]
+node .claude/skills/metabase/metabase.mjs update-snippet --id 1 \
+  [--file engine.sql | --content "SQL"] [--name "..."] [--description "..."]
+```
+
+Each write reads the snippet back and reports only on the fields it actually sent — a metadata-only
+update says "stored description matches", never "content matches", because it did not send content and
+did not check it.
+
+🔴 **Snippet text is the one place the `--` guard could not otherwise reach.** A snippet is substituted
+verbatim into every card that references it, and those cards' own SQL may contain nothing but
+`{{snippet: name}}` — so a bare `--` inside a snippet body breaks binding everywhere it is used and no
+per-card check can see it. `create-snippet` and `update-snippet` guard their content for that reason.
+
+**A snippet takes no parameters** — it is literal substitution, not a function. So a fragment can only
+reference bare column names, and a card using it must select from the table with **no alias** on those
+columns.
+
+Referencing one from a card is handled for you: both `create-question` and `update-question` scan the
+SQL for `{{snippet: ...}}` and add the matching template tag, because a card missing that tag fails at
+run time with `missing required parameters` and the auto-detect for ordinary `{{variable}}` syntax does
+not match a name containing a colon. A reference to a snippet that does not exist is refused before
+anything is written.
 
 ### list-collections / list-databases
 
