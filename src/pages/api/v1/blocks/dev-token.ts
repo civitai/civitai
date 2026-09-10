@@ -585,20 +585,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
-      // NOTE (revocation-wiring caveat): dev page tokens share the
-      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints, so a dev
-      // revocation would bleed into production page tokens for the SAME app.
-      //
-      // The revocation WRITE path (block-revocation.service.ts `revokeInstance` /
-      // `clearInstance`) IS wired — uninstall and `toggleEnabled` in
-      // block-registry.service call it. The collision is nonetheless LATENT, for
-      // a different reason than "no callers": both wired call sites revoke
-      // `blockUserSubscription.blockInstanceId`, a per-install subscription id,
-      // so nothing today hands a `page_` id to `revokeInstance`. What makes it
-      // reachable is a future caller that revokes by PAGE instance id, or raising
-      // REVOCATION_TTL_SECONDS (900) to cover the 4h dev-token lifetime. Either
-      // one needs dev instance ids on THIS path namespaced distinctly first
-      // (e.g. `devpage_`).
+      // That shared shape means one revocation would reach BOTH, so a caller
+      // that revokes by page instance id must namespace dev ids first (e.g.
+      // `devpage_`). No such caller exists: both wired call sites in
+      // block-registry.service revoke `blockUserSubscription.blockInstanceId`,
+      // which `newBlockInstanceId` mints as `bki_<ulid>`. The marker's TTL is
+      // not what gates this — it decides how long a revocation lasts, never
+      // which id it is written under.
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
       // DEV budget default = the APPROVED manifest's declared per-gen budget so
       // an app whose `page.buzzBudgetPerGen` exceeds the flat 50 default is

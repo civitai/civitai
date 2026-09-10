@@ -2,18 +2,17 @@ import { createHash, createPrivateKey, createPublicKey, KeyObject, randomBytes }
 import { SignJWT } from 'jose';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
 
 // L7 (audit-10): shared issuer/audience constants exported for the
 // middleware so a typo in one place can't desynchronize sign-vs-verify.
 export const BLOCK_TOKEN_ISSUER = 'civitai';
 export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';
 
-const TOKEN_LIFETIME_SECONDS = 900; // 15 minutes — default
-const SETTINGS_TOKEN_LIFETIME_SECONDS = 300; // 5 minutes for block:settings:*
-// Exported so the verifier (block-scope.middleware.ts) caps the dev max-age off
-// the SAME constant the signer uses — if these desynced, dev tokens between the
-// two values would silently 401 (fail-closed but confusing).
-export const DEV_TOKEN_LIFETIME_SECONDS = 4 * 60 * 60; // 4h — dev:live pasted tokens (self-bound, budget-capped, mod-only)
+// Re-exported so the verifier (block-scope.middleware.ts) caps the dev max-age
+// off the SAME constant the signer uses — if these desynced, dev tokens between
+// the two values would silently 401 (fail-closed but confusing).
+export const DEV_TOKEN_LIFETIME_SECONDS = BLOCK_TOKEN_LIFETIMES_SECONDS.dev;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX = 60;
 
@@ -244,10 +243,10 @@ export class BlockTokenService {
     // the precedence unambiguous.
     const lifetime =
       input.dev === true
-        ? DEV_TOKEN_LIFETIME_SECONDS
+        ? BLOCK_TOKEN_LIFETIMES_SECONDS.dev
         : input.scopes.some(isSettingsScope)
-        ? SETTINGS_TOKEN_LIFETIME_SECONDS
-        : TOKEN_LIFETIME_SECONDS;
+        ? BLOCK_TOKEN_LIFETIMES_SECONDS.settings
+        : BLOCK_TOKEN_LIFETIMES_SECONDS.default;
     const exp = iat + lifetime;
     const sub = input.userId == null ? 'anon' : `user:${input.userId}`;
 
