@@ -663,13 +663,22 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * setting `revokedAt: null`. Nothing writes a non-null `revoked_at`; nothing deletes a row.
  * So the scopes survive the uninstall and the next mint carries them with no fresh prompt.
  *
- * 🔴 PINNED AS THE WHOLE NORMALISED STRING, DELIBERATELY. The artifact under test is
- * PROSE, so a guard on keywords is walkable by rewording — a future edit could reintroduce
- * "remove the install to revoke" without tripping any `/revoke/`-shaped matcher, because
- * the honest copy contains that word too. Pinning the whole sentence means a cosmetic
- * reword fails this test; that cost is the price of a machine-readable claim about what
- * the page tells users. If you are here because you reworded it, re-read the paragraph
- * above and confirm your new wording is still TRUE before updating the literal.
+ * 🔴 PINNED AS THE WHOLE NORMALISED STRING, AND MATCHED **EXACTLY**. The artifact under
+ * test is PROSE, so a guard on keywords is walkable by rewording — a future edit could
+ * reintroduce "remove the install to revoke" without tripping any `/revoke/`-shaped
+ * matcher, because the honest copy contains that word too. Pinning the whole sentence
+ * means a cosmetic reword fails this test; that cost is the price of a machine-readable
+ * claim about what the page tells users. If you are here because you reworded it, re-read
+ * the paragraph above and confirm your new wording is still TRUE before updating it.
+ *
+ * 🔴 `{ exact: true }` IS LOAD-BEARING, NOT TIDINESS — without it this guard was WALKABLE
+ * and the paragraph above was false. `page.getByText(str)` is SUBSTRING matching, so the
+ * pin caught a reword (which changes the string) and NOT an append (which leaves it
+ * byte-intact). MEASURED at the parent of this commit: appending
+ * "To withdraw a permission, remove the install on the Installs tab." to the same `<Text>`
+ * left the literal untouched and the whole file passed **26/26** — i.e. the exact
+ * instruction this block exists to retract could be put back, as a second sentence, with
+ * every test green. With `exact: true` that same append fails 2 of 26 on this locator.
  */
 describe('🔴 the revoke instruction is retracted, not reworded', () => {
   // 🔴 WIDENED WITH THE DATA SOURCE, NOT REWORDED FOR STYLE. `listMyScopeGrants` now also
@@ -684,12 +693,19 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     'granted — withdrawing one is not possible yet. Recent activity is the full record of ' +
     'what apps have actually done on your account.';
 
+  /**
+   * A string from the ACTIVITY panel, deliberately not from the copy under test. Used as
+   * the render-wait for the absence check below — see the comment there for why the wait
+   * and the assertion must not be the same string.
+   */
+  const ACTIVITY_PANEL_ANCHOR = 'Recent actions apps have taken';
+
   test('the panel states plainly that withdrawing a permission is not possible', async () => {
     // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the
     // DOM without a click — the same property the marketplace-anchor count above relies on.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByText(PERMISSIONS_TAB_COPY)).toBeInTheDocument();
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
   });
 
   test('🔴 …and the retracted sentence is nowhere on the page', async () => {
@@ -698,9 +714,23 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     // because the two fail with very different messages, and this one names the defect.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByText(PERMISSIONS_TAB_COPY)).toBeInTheDocument();
+    // 🔴 WAIT ON A STABLE ANCHOR, NOT ON THE COPY UNDER TEST — and the distinction is the
+    // whole fix here. `renderWithProviders` is async and is not awaited, so an absence
+    // check placed first runs against an EMPTY body and passes vacuously. This tripwire
+    // previously waited on `PERMISSIONS_TAB_COPY` itself, which supplied the await but made
+    // the check unreachable in the one scenario it names: on a literal revert that copy is
+    // gone, so the wait failed first and this assertion never ran — measured, all three
+    // tests died with the same locator error and this message never appeared. Reordering
+    // alone does NOT fix it; it just trades unreachable for vacuous (also measured).
+    //
+    // So: wait on a string from a DIFFERENT panel, which survives any rewrite of the copy
+    // under test. That proves the page rendered without coupling the wait to the thing
+    // being asserted about.
+    await expect.element(page.getByText(ACTIVITY_PANEL_ANCHOR)).toBeInTheDocument();
+    // Lower-cased on both sides: the retracted sentence began a sentence in the copy it
+    // came from, so a capitalised re-add slips past a lower-case `toContain`.
     expect(
-      document.body.textContent ?? '',
+      (document.body.textContent ?? '').toLowerCase(),
       'the copy instructs an uninstall as a way to revoke access, which it is not'
     ).not.toContain('to revoke access, remove the install');
   });
@@ -711,7 +741,7 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     // different panel so it cannot be satisfied by the copy under test.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByText(PERMISSIONS_TAB_COPY)).toBeInTheDocument();
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
     expect(document.body.textContent ?? '').toContain('Recent actions apps have taken');
   });
 });
