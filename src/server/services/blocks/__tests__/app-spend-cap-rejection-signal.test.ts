@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * OBSERVABILITY of the per-app spend-cap REJECTION path.
@@ -104,6 +104,18 @@ import { reserveAppSpend } from '../app-spend-cap.service';
 
 const APP_BLOCK_ID = 'apb_reject_test';
 
+/**
+ * ⚠️ DISCLOSED, NOT FIXED: this derives the expected day with
+ * `new Date().toISOString().slice(0, 10)` — byte-identical to the
+ * implementation's own `spendCapWindowKey` (`../app-spend-cap.service`). The
+ * sibling `block-tip-rate-limit.test.ts` replaced exactly this pattern with an
+ * independent literal in the same change, so the rule is asserted there and not
+ * followed here. It is left alone deliberately: a distinct-constant mutation of
+ * `spendCapWindowKey` is still killed (2 failed / 13), so nothing is currently
+ * uncovered, and changing it is a separate edit with its own justification
+ * rather than something to slip into a de-flaking PR. Named here so the
+ * inconsistency is visible rather than accidental.
+ */
 function dailyKey(app = APP_BLOCK_ID): string {
   const today = new Date().toISOString().slice(0, 10);
   return `${SPEND_CAP_PREFIX}:${app}:${today}`;
@@ -114,7 +126,31 @@ function reasons(): string[] {
   return mockRecordRejection.mock.calls.map((c) => c[0] as string);
 }
 
+/**
+ * Mid-bucket AND mid-day on purpose: 30s into a 60s velocity window and 12
+ * hours from either UTC midnight, so neither boundary is anywhere near.
+ * Matches the instant `app-spend-cap.service.test.ts` freezes at, deliberately
+ * — these two files exercise the same service and the same key shapes.
+ */
+const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
+
 beforeEach(() => {
+  // 🔴 FIRST, before anything derives a key. `reserveAppSpend`'s velocity key is
+  // `floor(Date.now()/1000/BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS)` — a FIXED
+  // window whose width DEFAULTS to 60s but is env-overridable, so do not write
+  // the 60 as though it were a constant — and the denial-count
+  // cases below loop to a ceiling and then assert an EXACT total. That is only
+  // sound while the bucket holds still for the whole loop: a boundary inside it
+  // restarts the counter, more submits are allowed, and the total comes up
+  // short for a reason that has nothing to do with the code.
+  //
+  // MEASURED at this file's base: with the clock advanced 100ms per read and a
+  // bucket boundary landing ~25 calls into the 50-iteration loop, the
+  // `counts AFFECTED GENERATIONS` case fails `expected 44 to be 47` — 3 submits
+  // allowed in each of two buckets instead of 3 in one. Freezing takes it to 0.
+  // Same defect and same fix as civitai#4742 on the sibling suite.
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_CLOCK);
   store.clear();
   ttls.clear();
   for (const fn of [
@@ -152,6 +188,12 @@ beforeEach(() => {
   mockRecordRejection.mockReset();
   mockRecordRejection.mockImplementation(() => undefined);
   metricsModule.brokenExport = false;
+});
+
+afterEach(() => {
+  // Hand the clock back — a leaked fake timer would silently change how every
+  // later file in the same worker behaves.
+  vi.useRealTimers();
 });
 
 describe('spend-cap rejection signal — every deny is counted, with the reason that applied', () => {

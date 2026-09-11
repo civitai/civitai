@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Direct unit coverage for the tip cap/limit REDIS PRIMITIVES
@@ -34,14 +34,12 @@ const { sysStore, sysTtls, mockSys, cacheStore, cacheTtls, mockCache } = vi.hois
       const v = sysStore.get(k);
       return v == null ? null : String(v);
     }),
-    set: vi.fn(
-      async (k: string, val: string, opts?: { NX?: boolean; EX?: number }) => {
-        if (opts?.NX && sysStore.has(k)) return null; // NX: only set when absent
-        sysStore.set(k, val);
-        if (opts?.EX != null) sysTtls.set(k, opts.EX);
-        return 'OK';
-      }
-    ),
+    set: vi.fn(async (k: string, val: string, opts?: { NX?: boolean; EX?: number }) => {
+      if (opts?.NX && sysStore.has(k)) return null; // NX: only set when absent
+      sysStore.set(k, val);
+      if (opts?.EX != null) sysTtls.set(k, opts.EX);
+      return 'OK';
+    }),
     del: vi.fn(async (k: string) => {
       const had = sysStore.has(k);
       sysStore.delete(k);
@@ -86,9 +84,55 @@ import {
   reserveBlockTipSpend,
 } from '../block-tip-rate-limit';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+/**
+ * Mid-day on purpose: 12 hours from either UTC midnight. The tip cap's key is a
+ * UTC-day string, so the day rollover is the only boundary that matters here.
+ */
+const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
+
+/**
+ * 🔴 A LITERAL, NOT A DERIVATION — the UTC day of `FROZEN_CLOCK`, written out.
+ *
+ * It is deliberately NOT computed as `new Date().toISOString().slice(0, 10)`.
+ * That is byte-identical to the expression the implementation uses
+ * (`tipCapWindowKey` in `../block-tip-rate-limit`), so an expectation built that
+ * way moves WITH the implementation — the "never derive a test's expectation
+ * from the implementation it tests" trap. The literal is an INDEPENDENT
+ * expectation, and it is also simply less machinery.
+ *
+ * 🔴 BE PRECISE ABOUT WHAT THAT BUYS — AN EARLIER VERSION OF THIS COMMENT
+ * OVERSOLD IT AND WAS FALSE. It claimed that switching production to a
+ * LOCAL-date derivation would still be caught here. MEASURED, mutating
+ * `tipCapWindowKey` to `toLocaleDateString('en-CA')`: the literal SURVIVES
+ * under `TZ=UTC` and `America/Winnipeg` (29/29) and dies only at UTC+13/+14.
+ * `FROZEN_CLOCK` is 12:00:30Z, so the local and UTC dates agree at every offset
+ * inside ±12h — every deployment TZ, CI's UTC included. The control that
+ * settles it: a FROZEN-but-DERIVED expectation survives that same mutant
+ * (29/29 at both TZs), so against it the two forms are EQUIVALENT, not
+ * better-and-worse. (The unfrozen base did catch it — but only through the
+ * import-vs-call-time skew that is the bug being fixed, so that is not
+ * coverage worth preserving.)
+ *
+ * Choose the literal for INDEPENDENCE and simplicity, which are real. Do not
+ * claim a detection property it does not have.
+ *
+ * ⚠️ A second, separate trap, recorded in case anyone reintroduces a derived
+ * value here: this day string used to be a module-level `const`, evaluated at
+ * IMPORT. A `beforeEach` freeze cannot move such a constant — it is already
+ * computed — so it keeps the real date while the service returns the frozen one.
+ * MEASURED: freeze-only fails 2 of 29 with `expected
+ * 'system:blocks:tip-cap:42:2026-07-31' to be
+ * 'system:blocks:tip-cap:42:2026-09-10'`. A literal sidesteps that entirely,
+ * because it reads no clock at all.
+ */
+const FROZEN_DAY = '2026-07-31';
 
 beforeEach(() => {
+  // 🔴 FIRST, before the service derives any key. This pins what the SERVICE
+  // computes; `FROZEN_DAY` above is the independent literal the assertions
+  // compare against. Both are needed, and neither derives from the other.
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_CLOCK);
   vi.clearAllMocks();
   sysStore.clear();
   sysTtls.clear();
@@ -96,11 +140,16 @@ beforeEach(() => {
   cacheTtls.clear();
 });
 
+afterEach(() => {
+  // Hand the clock back so a fake timer cannot leak into a later file.
+  vi.useRealTimers();
+});
+
 describe('reserveBlockTipSpend', () => {
   it('reserves the amount, returns a UTC-day-scoped key, and SETS the TTL on the first write', async () => {
     const { total, key } = await reserveBlockTipSpend(42, 100);
     expect(total).toBe(100);
-    expect(key).toBe(`system:blocks:tip-cap:42:${TODAY}`);
+    expect(key).toBe(`system:blocks:tip-cap:42:${FROZEN_DAY}`);
     // TTL armed on first write (~25h).
     expect(mockSys.expire).toHaveBeenCalledWith(key, 25 * 60 * 60);
     expect(sysStore.get(key)).toBe(100);
@@ -148,7 +197,7 @@ describe('refundBlockTipSpend', () => {
     expect(mockSys.decrBy).toHaveBeenCalledWith(yesterdayKey, 500);
     expect(sysStore.get(yesterdayKey)).toBe(0);
     // The current-day key is untouched.
-    expect(sysStore.get(`system:blocks:tip-cap:42:${TODAY}`)).toBeUndefined();
+    expect(sysStore.get(`system:blocks:tip-cap:42:${FROZEN_DAY}`)).toBeUndefined();
   });
 
   it('is best-effort — a failed DECRBY never throws (a lost refund only over-counts)', async () => {
@@ -195,7 +244,7 @@ describe('readBlockTipAllowance (item 4)', () => {
   it('reads the CURRENT-day key (same key the reserve path mutates)', async () => {
     await reserveBlockTipSpend(7, 100);
     await readBlockTipAllowance(7);
-    expect(mockSys.get).toHaveBeenCalledWith(`system:blocks:tip-cap:7:${TODAY}`);
+    expect(mockSys.get).toHaveBeenCalledWith(`system:blocks:tip-cap:7:${FROZEN_DAY}`);
   });
 
   it('CLAMPS remaining at 0 when a straddling over-cap reservation pushed spent past the cap', async () => {
@@ -308,12 +357,7 @@ describe('tip idempotency (item 2, tip half)', () => {
       const a = await claimTipIdempotency(42, 'apb_appA', 'tip1', FP);
       expect(a.state).toBe('acquired');
       if (a.state !== 'acquired') throw new Error('unreachable');
-      await finalizeTipIdempotency(
-        a.key,
-        200,
-        { ok: true, tip: { toUserId: 5, amount: 25 } },
-        FP
-      );
+      await finalizeTipIdempotency(a.key, 200, { ok: true, tip: { toUserId: 5, amount: 25 } }, FP);
 
       // App B hardcodes the SAME literal key. It must NOT receive app A's cached
       // body (which would leak A's recipient + amount) and its own tip must run.
@@ -361,7 +405,9 @@ describe('tip idempotency (item 2, tip half)', () => {
       );
       expect(
         computeTipFingerprint({ toUserId: 5, amount: 25, entityType: 'Image', entityId: 1 })
-      ).not.toBe(computeTipFingerprint({ toUserId: 5, amount: 25, entityType: 'Image', entityId: 2 }));
+      ).not.toBe(
+        computeTipFingerprint({ toUserId: 5, amount: 25, entityType: 'Image', entityId: 2 })
+      );
       // Stable for the SAME payload (a retry must replay, not 422).
       expect(computeTipFingerprint({ toUserId: 5, amount: 25 })).toBe(base);
     });
