@@ -82,7 +82,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'FL',
     media: 'image',
     label: 'caption',
-    description: 'High-quality images and accurate text. Great all-rounder.',
+    description: 'High-quality images and accurate text.',
     released: '2024-08-01',
     versions: [
       {
@@ -123,7 +123,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'FK',
     media: 'image',
     label: 'caption',
-    description: 'Efficient Flux.2 Klein base models.',
+    description: 'Efficient Flux.2 with faster generation.',
     released: '2026-01-15',
     versions: [
       {
@@ -152,7 +152,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'CH',
     media: 'image',
     label: 'caption',
-    description: 'Open-source, uncensored, community-built.',
+    description: 'Unfiltered, with real negative prompt control.',
     released: '2025-08-22',
     versions: [
       {
@@ -170,7 +170,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'QW',
     media: 'image',
     label: 'caption',
-    description: 'High-quality generation with strong understanding.',
+    description: 'Complex text and precise edits, English or Chinese.',
     released: '2025-08-04',
     versions: [
       {
@@ -189,7 +189,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ZI',
     media: 'image',
     label: 'caption',
-    description: 'High-speed image generation.',
+    description: 'Photoreal in seconds. The fastest option here.',
     released: '2026-01-28',
     flag: 'recommended',
     versions: [
@@ -216,7 +216,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'HD',
     media: 'image',
     label: 'caption',
-    description: "HiDream.ai's 8B unified transformer for text-to-image.",
+    description: '2K output, editing and storyboards in one model.',
     released: '2026-05-08',
     versions: [
       {
@@ -235,7 +235,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ER',
     media: 'image',
     label: 'caption',
-    description: "Baidu's ERNIE image generation model.",
+    description: 'Poster layouts and text in several languages.',
     released: '2026-04-15',
     versions: [
       {
@@ -254,7 +254,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'tag',
     bothLabels: true,
-    description: "CircleStone Labs' Anima image model (Base v1.0).",
+    description: 'The anime pick. Booru tags or plain English.',
     released: '2026-05-15',
     flag: 'anime',
     versions: [
@@ -274,7 +274,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'BO',
     media: 'image',
     label: 'caption',
-    description: "Boogu's unified multimodal image model (Base v0.1).",
+    description: 'All-rounder: dense 2K text, editing, 4-step speed.',
     released: '2026-06-16',
     versions: [
       {
@@ -293,7 +293,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'K2',
     media: 'image',
     label: 'caption',
-    description: "Krea AI's in-house image generation model.",
+    description: 'The realism pick — skin, hair and light from real photos.',
     released: '2026-06-22',
     flag: 'latest',
     versions: [
@@ -313,7 +313,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'MF',
     media: 'image',
     label: 'caption',
-    description: "Microsoft's 4B native-resolution image model.",
+    description: 'Native 512 to 2048px at any aspect ratio, no cropping.',
     released: '2026-07',
     versions: [
       {
@@ -332,7 +332,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ID',
     media: 'image',
     label: 'caption',
-    description: "Ideogram's text-to-image model with strong typography.",
+    description: 'Design work: logos, signage, layered typography.',
     released: '2026-06-03',
     versions: [
       {
@@ -352,7 +352,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'XL',
     media: 'image',
     label: 'tag',
-    description: 'Fast, versatile, huge community.',
+    description: 'The largest LoRA and ControlNet library.',
     released: '2023-07-26',
     versions: [
       {
@@ -373,7 +373,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'IL',
     media: 'image',
     label: 'tag',
-    description: 'SDXL-based, tuned for illustration / anime.',
+    description: 'Booru-tag anime with clean lines and a big style library.',
     released: '2024-09',
     versions: [
       {
@@ -391,7 +391,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'PN',
     media: 'image',
     label: 'tag',
-    description: 'SDXL-based, tuned for anthro / stylized.',
+    description: 'Anthro and stylised characters, deep LoRA back catalogue.',
     released: '2024-01-07',
     versions: [
       {
@@ -409,7 +409,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: '1.5',
     media: 'image',
     label: 'tag',
-    description: 'Cheapest and fastest. Lower fidelity.',
+    description: 'Fastest and cheapest to iterate on.',
     released: '2022-10-20',
     versions: [
       {
@@ -451,7 +451,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'WAN',
     media: 'video',
     label: 'caption',
-    description: 'Performant, high-quality video LoRA training.',
+    description: 'Silent video with the deepest LoRA ecosystem.',
     released: '2025-07-28',
     versions: [
       {
@@ -480,7 +480,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'HY',
     media: 'video',
     label: 'caption',
-    description: 'Performant video generation (720p).',
+    description: 'Cinematic video, quick to train.',
     released: '2025-11-21',
     versions: [
       {
@@ -500,7 +500,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'LTX',
     media: 'video',
     label: 'caption',
-    description: 'Lightricks video generation.',
+    description: 'Fast video with synced audio and multi-shot scenes.',
     released: '2026-08-11',
     versions: [
       {
@@ -534,7 +534,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'H3',
     media: 'video',
     label: 'caption',
-    description: 'MiniMax H3 video generation.',
+    description: '2K video with stereo sound and consistent characters.',
     released: '2026-08-02',
     flag: 'recommended',
     versions: [
@@ -555,7 +555,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ACE',
     media: 'audio',
     label: 'caption',
-    description: 'ACE-Step music / audio LoRA training.',
+    description: "Teach it a genre or an artist's sound from a few tracks.",
     released: '2026-04-30',
     flag: 'recommended',
     versions: [
