@@ -1,81 +1,62 @@
 -- Make (fromModelId, toModelId, type) unique on "ModelAssociations".
+-- Applied by hand, like every migration here.
 --
--- Migrations in this repo are applied BY HAND. Read this header first.
+-- Five earlier versions of this header tried to enumerate every way the apply can go wrong.
+-- Each one got something wrong, and each wrong thing was introduced while correcting the last.
+-- So it now states only what an operator must do and what decides the outcome. If you hit
+-- something not described here, the answer is in the Postgres docs for CREATE INDEX
+-- CONCURRENTLY, not in a sentence I guessed at.
+--
+--
+-- HOW TO RUN IT
+--
+-- Open ONE interactive psql session against the primary and run the steps in order. Not
+-- through a connection pooler: in transaction mode a pooler can put step 1 and step 5 on
+-- different backends, and step 1 is what keeps step 5 from failing dirty.
+--
+-- Do not use `psql -1` / `--single-transaction`: step 5 cannot run inside a transaction block,
+-- and its failure takes the DELETE back with it. `psql -c` per step is also wrong — each is its
+-- own session, so step 1's settings are gone by step 5.
+--
+-- Step 1 disables the two timeouts that abort an index build DIRTY, leaving an index that
+-- enforces nothing. Before running it, check `pg_stat_activity` for long transactions touching
+-- "ModelAssociations": with no timeout, step 5 waits behind them indefinitely and later lock
+-- requests queue behind it. Cancelling step 5 once it is running costs the whole build and puts
+-- you in RECOVERY. On PostgreSQL 17+ `transaction_timeout` can also abort it and step 1 does
+-- not cover that.
+--
+--
+-- WHAT DECIDES THE OUTCOME
+--
+-- Check 6, and nothing else. Not step 5's output — a build over a broken index and a re-run
+-- after a successful apply print the same "relation already exists".
+--   true      you are done.
+--   false     an index exists and enforces nothing. RECOVERY, at the bottom.
+--   no rows   nothing was created. Re-run step 5.
 --
 --
 -- ORDER RELATIVE TO DEPLOYS
 --
--- Apply this BEFORE deploying any code that inserts into "ModelAssociations" with
--- ON CONFLICT DO NOTHING. That clause is valid with no unique index, but it then conflicts
--- with nothing and silently stops deduplicating. Rows minted in that window are found only
--- at the END of the index build below, which then fails having paid for the whole thing.
---
---
--- WHAT IS LIVE IN THIS FILE
---
--- Six numbered steps. Step 1 issues two SET commands, so seven statements in all. One step is
--- destructive (2, the DELETE), one is expensive (5, the index build), and 3, 4 and 6 are
--- read-only checks.
---
--- The recovery DROP is deliberately NOT live. It is commented out under RECOVERY at the bottom,
--- and it is the only thing here that can destroy working state. Running this file whole must
--- never be able to drop an index that is fine, so the drop is something you paste deliberately
--- after reading check 3, never something the file does on your behalf.
---
---
--- HOW TO INVOKE IT
---
--- Step 5 CANNOT run inside a transaction block, and neither can the commented DROP when you
--- paste it. Everything else may. Two consequences:
---   * do not batch step 5 with anything — `psql -c "a; b"` wraps its argument in an implicit
---     transaction;
---   * do NOT use `psql -1` / `--single-transaction` on this file. That wraps the whole file in
---     one transaction and step 5 fails with "cannot run inside a transaction block", rolling
---     the DELETE back with it. Plain `psql -f` is fine: without that flag psql runs in
---     autocommit and sends each statement separately.
---
--- Step 1 exists because a session timeout is the one thing that turns a clean run into a broken
--- one: CREATE INDEX CONCURRENTLY waits for locks at each end of the build, and a lock_timeout
--- or statement_timeout firing there fails DIRTY, leaving an INVALID index behind. It is a live
--- statement rather than an instruction because an instruction is something you can skip.
--- SET is session-scoped, so step 1 must run in the SAME session as step 5. If you are pasting
--- steps one at a time into separate sessions, paste step 1 again before step 5.
---
---
--- FIRST RUN — 1, 2, 3, 4, 5, 6 in order.
---   Check 3 returns no rows, which is expected: the index does not exist yet.
---   Check 4 must return zero rows before you run 5, or 5 fails at the end of a full build.
---   Check 6 must return exactly one row reading true. Judge the outcome by check 6, not by
---   whether step 5 printed an error — see RECOVERY for why those are not the same question.
---
--- IF STEP 5 FAILED, OR WAS INTERRUPTED — see RECOVERY at the bottom of this file.
---
--- RE-RUNNING THE WHOLE FILE after a successful apply is safe: step 2 deletes nothing, checks 3
--- and 6 report true, check 4 returns nothing, and step 5 fails with "relation already exists"
--- because it carries no IF NOT EXISTS. That absence is deliberate — Postgres matches IF NOT
--- EXISTS on the index NAME and not on its validity, so with it a retry over an INVALID index
--- would report success while duplicate suppression stayed off and everything downstream
--- believed it was on.
+-- Apply this BEFORE deploying code that inserts into "ModelAssociations" with ON CONFLICT DO
+-- NOTHING. That clause is valid with no unique index but conflicts with nothing, so rows minted
+-- in the window are found only at the end of the build, which then fails having paid for it.
 --
 --
 -- Model-to-article rows are unaffected: their "toModelId" is NULL, and Postgres treats NULLs as
 -- distinct in a unique index.
 --
--- Measured on the production replica, 2026-09-11: 571,218 rows; 5 duplicate groups, each of two
--- rows; and none of the four existing indexes (the primary key plus one per @@index) is this
--- one. The dedupe self-join plans at ~255 ms with parallel workers and ~1 s serial, which is
--- what a DELETE gets. The build holds SHARE UPDATE EXCLUSIVE for its duration, which blocks
--- neither reads nor writes; the waits that a timeout can interrupt are at each end of it.
+-- On the production replica, 2026-09-11: 571,218 rows and 5 duplicate groups of two. Other
+-- environments will differ, and a different count there means a different database rather than
+-- drift. The dedupe plans at ~1 s serial. The build is a ~20 MB btree over a ~47 MB heap holding
+-- SHARE UPDATE EXCLUSIVE, which blocks neither reads nor writes.
 
 
--- 1. Session setup. Must be the same session as step 5 — see the header.
+-- 1. Same session as step 5. See the header before running this.
 SET lock_timeout = 0;
 SET statement_timeout = 0;
 
 
--- 2. Remove existing duplicates, keeping the lowest id of each group. Expected to report 5 as
--- of 2026-09-11 — a point-in-time observation, not a gate. If it differs, the difference is
--- duplicates created since. What decides whether you may proceed is check 4 returning nothing.
+-- 2. Remove duplicates, keeping the lowest id of each group.
 DELETE FROM "ModelAssociations" a
 USING "ModelAssociations" b
 WHERE a."toModelId" IS NOT NULL
@@ -85,17 +66,13 @@ WHERE a."toModelId" IS NOT NULL
   AND a."id" > b."id";
 
 
--- 3. Does the index exist, and is it usable? Read this before pasting any DROP.
---   no rows -> it does not exist. Carry on. (If your search_path does not reach the table's
---              schema you also get no rows; step 5 then fails on "already exists".)
---   false   -> a previous build left it broken. See RECOVERY at the bottom.
---   true    -> it is built and correct. You are done.
+-- 3. Does the index already exist? no rows -> carry on. false -> RECOVERY. true -> you are done.
 SELECT indisvalid
 FROM pg_index
 WHERE indexrelid = to_regclass('"ModelAssociations_fromModelId_toModelId_type_key"');
 
 
--- 4. Must return zero rows before step 5. Anything here fails the build at its end.
+-- 4. Must return zero rows. Anything here fails the build at its end, after paying for it.
 SELECT "fromModelId", "toModelId", "type", count(*)
 FROM "ModelAssociations"
 WHERE "toModelId" IS NOT NULL
@@ -103,35 +80,33 @@ GROUP BY 1, 2, 3
 HAVING count(*) > 1;
 
 
--- 5. The index. Cannot run inside a transaction block; needs step 1 in the same session. The
--- name is the one Prisma derives from @@unique([fromModelId, toModelId, type]), so the
--- follow-up declaring it introspects clean.
+-- 5. Cannot run inside a transaction block. No IF NOT EXISTS on purpose: Postgres matches that
+-- on the index NAME and not its validity, so with it a retry over a broken index reports success
+-- while duplicate suppression stays off. The name is the one Prisma derives from
+-- @@unique([fromModelId, toModelId, type]), so the follow-up declaring it introspects clean.
 CREATE UNIQUE INDEX CONCURRENTLY "ModelAssociations_fromModelId_toModelId_type_key"
   ON "ModelAssociations" ("fromModelId", "toModelId", "type");
 
 
--- 6. The verdict. Must return exactly one row reading true. False means the build did not
--- finish: see RECOVERY. This is the check that decides, not step 5's output — a build over an
--- INVALID index and a re-run after a successful apply print the same "relation already exists",
--- and psql sends errors to stderr and results to stdout, so under a pipe they interleave.
+-- 6. The verdict. See the header.
 SELECT indisvalid
 FROM pg_index
 WHERE indexrelid = to_regclass('"ModelAssociations_fromModelId_toModelId_type_key"');
 
 
--- RECOVERY — when check 3 or check 6 returned false.
+-- RECOVERY — only when check 3 or check 6 returned FALSE. Not when either returned no rows;
+-- that means nothing was created, and the answer there is to run step 5 again.
 --
--- An INVALID index enforces nothing, no query uses it, every write maintains it, and Postgres
--- does not remove it for you. Two things leave one: a build interrupted, cancelled or timed
--- out; and a build that ran to completion and then found a duplicate. Both end the same way,
--- so recover the same way and let check 4 tell you which it was.
+-- An index that enforces nothing is left behind by a build that was interrupted, cancelled or
+-- timed out, and equally by one that ran to completion and then found a duplicate. Both end
+-- here and both recover the same way.
 --
--- Paste this — it cannot run inside a transaction block either. Against a VALID index it
--- destroys a working constraint and leaves the table unprotected for a full rebuild, which is
--- why it is not a live statement. Only paste it when a check returned false.
+-- Paste this. It cannot run inside a transaction block either, and against a working index it
+-- destroys a real constraint and leaves the table unprotected for a full rebuild — which is why
+-- it is not a live statement in this file.
 --
 --   DROP INDEX CONCURRENTLY "ModelAssociations_fromModelId_toModelId_type_key";
 --
--- Then run steps 2 and 4 again before 5 and 6 — whichever way the build died, a duplicate may
--- have been minted while the invalid index was enforcing nothing, and re-running 5 without
--- re-checking buys a second full build and the same ending.
+-- Then run steps 1, 2 and 4 again before 5 and 6. Step 1 because a pasted DROP often means a
+-- fresh session; steps 2 and 4 because a duplicate may have been minted while the broken index
+-- was enforcing nothing, and skipping them buys a second full build and the same ending.
