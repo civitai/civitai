@@ -635,18 +635,23 @@ export function projectListingDetail(
     // through the mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in
     // as many words to discriminate on `kind`.
     //
-    // 🔴 THE CONSOLIDATION VEHICLE ALREADY EXISTS — it is `CAPABILITIES_BY_KIND` /
-    // `listingKindSupports` in `src/shared/constants/app-capabilities.constants.ts`,
-    // which has already absorbed ~14 open-coded sites. If this gate is ever
-    // consolidated, ADD A CAPABILITY CELL there; do NOT build a new helper.
-    // Sibling `kind` gates for the same shape: `app-access.service.ts`,
-    // `app-collaborator-earnings.service.ts` and `app-collaborator.service.ts`
-    // (`hasWritableRepo`) — the last two ALREADY route through that table —
-    // plus `app-ownership-transfer.service.ts` and `offsite-listing.service.ts`.
-    // ⚠ Two earlier drafts of this comment were wrong: one said "the third consumer"
-    // and named two sites (an undercount), the next called all five "open-coded by
-    // hand" when two already use the shared table. Count and check before quoting;
-    // this list is not asserted to be closed.
+    // 🔴 THE CONSOLIDATION VEHICLE ALREADY EXISTS — `CAPABILITIES_BY_KIND` /
+    // `listingKindSupports` in `src/shared/constants/app-capabilities.constants.ts`.
+    // If this gate is ever consolidated, ADD A CAPABILITY CELL there; do NOT build a
+    // new helper.
+    //
+    // 🔴 DELIBERATELY NO COUNTS AND NO SITE LIST HERE — read
+    // `KIND_CAPABILITY_LEDGER` in
+    // `src/server/services/blocks/__tests__/app-access.call-site-ledger.test.ts`,
+    // which is growth-and-shrink gated and therefore cannot go stale the way a
+    // sentence can. THREE successive drafts of this comment quoted a number or a
+    // site list and all three were WRONG: "the third consumer" (undercount), then
+    // "five, open-coded by hand" (two already used the table), then "~14 absorbed"
+    // (that figure belongs to `app-access.service.ts`'s separate OWNERSHIP-gate
+    // consolidation, not to the capability table) alongside "two of five already
+    // route through it" (it is four of five). Each wrong draft was written while
+    // fixing the previous one. The form is the defect, not the arithmetic — so the
+    // number now lives only where a test asserts it.
     //
     // Without the gate, such a row renders the off-site disclosure — "This app runs
     // entirely off-platform — no Civitai install, account access, or permissions" —

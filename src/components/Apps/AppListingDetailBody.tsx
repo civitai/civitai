@@ -1246,7 +1246,18 @@ export function AppListingDetailBody({
                 UNREACHABLE and that the heading was therefore an invariant guard. That
                 was wrong, and wrong in the dangerous direction — it licensed deleting a
                 heading and a test that both guard a live moderator-facing path. It
-                counted two of the four writers. */}
+                counted two of the four writers.
+                🔴 "FOUR" IS A POINT-IN-TIME COUNT, RE-DERIVE IT — nothing asserts it.
+                What matters is not the number but that AT LEAST ONE writer copies the
+                kind from a LIVE listing; that is what makes this branch reachable, and
+                it stays true however many writers exist.
+                🔴 AND `app-listing-history.service.ts` CONTRADICTS THIS, IN PROSE THAT
+                IS STALE ON `main` — it asserts "exactly THREE create sites", that
+                `submitListingRevision` is "the ONLY writer that can emit `onsite`", and
+                that "every on-site row in this table is a shadow-revision request".
+                All three were falsified by `routeRepublishToReviewInTx` (#4440). Do not
+                reconcile the two by trusting that one: verify against the create sites
+                themselves. */}
             {detail.scopes.length > 0 && (
               <Stack gap="xs" data-testid="apps-listing-permissions">
                 <Group gap="xs">
