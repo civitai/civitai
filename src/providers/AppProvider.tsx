@@ -80,9 +80,9 @@ export function useAppContext() {
 }
 
 /**
- * 🔴 Non-throwing on purpose. Component tests mount no `AppProvider`, and a hook that throws
- * during render empties the tree — every assertion in the file then times out with nothing
- * pointing at the cause. Only for consumers that have a correct answer without the provider.
+ * 🔴 Non-throwing on purpose, and only for consumers with a correct answer without the
+ * provider: component tests mount no `AppProvider`, and a throw during render empties the tree
+ * into unexplained timeouts.
  */
 export function useMaybeAppContext() {
   return useContext(Context);

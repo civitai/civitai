@@ -37,7 +37,7 @@ export type ModeratorReportRow = {
 /**
  * Where to send a moderator for a reported thing that has no page of its own.
  *
- * Six of the sixteen report types name something the site only reaches through a parent — a comment
+ * Several report types name something the site only reaches through a parent — a comment
  * through its thread, a bounty entry through its bounty — so `entityUrl` returns null for them and the
  * row rendered as dead grey text. That was most of a moderator's clicks on the reports surfaces: the
  * only way to the words being reported was to search for them.
@@ -111,7 +111,7 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
     )`,
 
   // The author's profile is where an announcement is rendered; null for a sitewide row
-  // (`userId IS NULL`), which is not reportable.
+  // (`userId IS NULL`), which has no profile to link to.
   announcement: (entityId) =>
     sql<string | null>`(
       SELECT '/user/' || u.username
@@ -396,7 +396,7 @@ export type MostReportedRow = {
   reportCount: number;
   /** The reporter's own free-form fields. The only thing left to judge an `other` row on. */
   details: unknown;
-  /** `other` only when the report has no row in ANY of the sixteen report tables. */
+  /** `other` only when the report has no row in ANY report table. */
   entity: ReportEntity | 'other';
   entityId: number | null;
   /** Site-relative deep link for entities with no page of their own — see `commentContextUrl`. */
@@ -459,7 +459,7 @@ async function syncResolvedMarker(id: number, status: ReportStatus): Promise<voi
 
 /**
  * The dashboard's twenty and the paginated page are the same query with a different window, so they
- * share it — two copies of a seventeen-subplan statement is how one of them comes to cover five entity
+ * share it — two copies of this statement is how one of them comes to cover five entity
  * types.
  *
  * `days` is the age of the REPORT. The dashboard's week is what makes it a signal about now; the page
@@ -530,7 +530,7 @@ async function fetchMostReported({
   offset = 0,
   days = 7,
 }: MostReportedParams): Promise<MostReportedRow[]> {
-  // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the sixteen
+  // Raw sql throughout: `alsoReportedBy` is a Postgres array and the ordering key, and the
   // per-type id columns are generated from `reportEntityJoin` rather than written out.
   //
   // The +1 is the report's own filer: `alsoReportedBy` holds every reporter EXCEPT `Report.userId`,
@@ -538,7 +538,7 @@ async function fetchMostReported({
   // two-reporter item behind copy promising "more than one reporter", and the dashboard's
   // URGENT_REPORT_COUNT fired a reporter late. `array_length` is NULL on an empty array, not 0.
   //
-  // The LIMIT is taken in a CTE and the seventeen subplans resolved OUTSIDE it. Postgres cannot project
+  // The LIMIT is taken in a CTE and the per-entity subplans resolved OUTSIDE it. Postgres cannot project
   // through a Sort, so in one flat query the target list is evaluated below the ORDER BY — for every
   // pending report of the week, not the twenty kept.
   const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;

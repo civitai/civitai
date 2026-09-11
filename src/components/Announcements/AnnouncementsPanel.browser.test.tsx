@@ -43,9 +43,7 @@ vi.mock('~/components/Announcements/creator-announcements.utils', async (importO
   }),
   useMutedCreators: () => [],
   useDeleteCreatorAnnouncement: () => ({ deleteAnnouncement: vi.fn(), isLoading: false }),
-  // `AnnouncementMuteMenuItem` only renders once the kebab is opened, so no earlier test in
-  // this file reached it. Left on the real implementation it calls `trpc.useUtils()`, which
-  // this scaffold's tRPC stub doesn't cover.
+  // `useToggleAnnouncementMute` calls `trpc.useUtils()`, which the stub below doesn't cover.
   useToggleAnnouncementMute: () => ({ toggle: vi.fn(), isLoading: false }),
 }));
 
@@ -312,7 +310,6 @@ describe('AnnouncementsPanel', () => {
   });
 
   test('the kebab does not offer Report on your own announcement', async () => {
-    // The scaffold's `useCurrentUser` returns id 1; the fixture's author is 99.
     mocks.creators = [
       { ...creatorAnnouncement, userId: 1, user: { ...creatorAnnouncement.user, id: 1 } },
     ];

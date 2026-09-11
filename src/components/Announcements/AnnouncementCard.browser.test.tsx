@@ -25,7 +25,7 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 }));
 
 // `useTrackImpression` calls `useFeatureFlags()` unconditionally, even with no
-// `impressions` passed — same reason it's mocked in the sibling Announcement suites.
+// `impressions` passed.
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
   useFeatureFlags: () => ({}),
@@ -59,8 +59,8 @@ describe('AnnouncementCard actions', () => {
 
     const cta = page.getByRole('button', { name: 'Join the group' });
     await expect.element(cta).toBeVisible();
-    // 🔴 The absence of an href is the fix, not a detail. An anchor stays middle-clickable,
-    // cmd-clickable and copyable — all of which route around the interstitial.
+    // 🔴 An anchor stays middle-, cmd-clickable and copyable — all routes around the
+    // interstitial. The missing href IS the fix.
     await expect.element(cta).not.toHaveAttribute('href');
 
     await cta.click();

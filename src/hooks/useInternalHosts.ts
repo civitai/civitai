@@ -2,9 +2,6 @@ import { useMemo } from 'react';
 import { useMaybeAppContext } from '~/providers/AppProvider';
 
 /**
- * Every host that counts as "still on Civitai": the one being viewed, plus every color's
- * canonical host and aliases.
- *
  * Without the provider this is the current host alone, which OVER-warns (a .com→.red link
  * would be gated). That is the safe direction for a guard: a warning that should not have
  * appeared is a click, a warning that did not appear is the thing this exists to prevent.

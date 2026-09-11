@@ -121,7 +121,7 @@ describe('getReportHistory', () => {
 });
 
 describe('the queries that fan out over every entity at once', () => {
-  it('getReportCounts names all sixteen report tables', async () => {
+  it('getReportCounts names every report table', async () => {
     await service.getReportCounts();
 
     const [sql] = emitted();
@@ -164,7 +164,7 @@ describe('getMostReportedPage', () => {
   it('pages inside the CTE, where the LIMIT already is', async () => {
     await service.getMostReportedPage({ page: 3, limit: 25, days: 7 });
 
-    // OFFSET applied outside it would walk the discarded rows through all seventeen subplans — the
+    // OFFSET applied outside it would walk the discarded rows through every subplan — the
     // reason the LIMIT is in there in the first place.
     const list = emitted()
       .map((sql) => sql.toLowerCase())

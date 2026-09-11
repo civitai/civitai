@@ -13,10 +13,6 @@ import { isExternalHref } from '~/utils/external-link';
 
 type CustomOptions = Options & {
   allowExternalVideo?: boolean;
-  /**
-   * 🔴 Opt-in rather than a caller-supplied `a` renderer: `mergedComponents` spreads
-   * `components` FIRST and then defines `a`, so a caller's own `a` is silently dropped.
-   */
   warnOnExternalLinks?: boolean;
 };
 
@@ -53,6 +49,8 @@ export function CustomMarkdown({
       ? Array.from(new Set([...allowedElements, 'time']))
       : undefined;
 
+  // 🔴 `a` and `time` are defined AFTER the spread, so a caller's own renderers for them are
+  // silently dropped — which is why `warnOnExternalLinks` is a prop rather than a component.
   const mergedComponents: Options['components'] = {
     ...components,
     time: ({ node, ...props }) => {

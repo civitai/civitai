@@ -49,16 +49,13 @@ describe('isExternalHref', () => {
     expect(isExternalHref('https://t.me/SomeGroup', hosts)).toBe(true);
   });
 
-  // A subdomain is a different origin and a different owner. `evil-civitai.com`
-  // and `civitai.com.evil.test` are the attacks a suffix match would let through.
   it('does not treat a lookalike or subdomain host as internal', () => {
     expect(isExternalHref('https://evil-civitai.com/x', hosts)).toBe(true);
     expect(isExternalHref('https://civitai.com.evil.test/x', hosts)).toBe(true);
     expect(isExternalHref('https://cdn.civitai.com/x', hosts)).toBe(true);
   });
 
-  // The announcement schema already refuses to store one, but a helper that reads
-  // `//evil.com` as a relative path is a trap for the next caller.
+  // Only the creator schema refuses to store one; announcementMetaSchema does not.
   it('treats a scheme-relative URL as external', () => {
     expect(isExternalHref('//evil.com/x', hosts)).toBe(true);
   });

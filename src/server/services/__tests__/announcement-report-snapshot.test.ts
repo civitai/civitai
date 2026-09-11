@@ -18,8 +18,8 @@ const reportUpdate = dbMock.dbWrite.report.update;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // `clearAllMocks` clears calls but not implementations, so these are re-declared per test
-  // rather than left to leak from one case into the next.
+  // `clearAllMocks` does not reset implementations, so a mockResolvedValue from one test
+  // leaks into the next without these.
   announcementFindUnique.mockResolvedValue(null);
   reportFindFirst.mockResolvedValue(null);
   reportCreate.mockImplementation(async ({ data }: any) => ({ id: 1, ...data }));

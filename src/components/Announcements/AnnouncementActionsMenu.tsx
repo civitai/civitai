@@ -13,8 +13,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
  * The options menu on a creator announcement, shared by the notifications panel and the author's
- * profile carousel. One component because the two surfaces had no reason to offer different
- * controls, and a second copy is how they would come to.
+ * profile carousel.
  */
 export function AnnouncementActionsMenu({ announcement }: { announcement: CreatorAnnouncement }) {
   const currentUser = useCurrentUser();

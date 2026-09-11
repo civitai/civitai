@@ -11,11 +11,8 @@ import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/Browsing
 import type * as Trpc from '~/utils/trpc';
 
 /**
- * The author's profile carousel carries the same options menu as the notifications panel.
- *
- * It shipped with a bare delete icon and no menu, so a reader looking at a spam announcement on a
- * creator's profile had no way to report it — the only Report action lived in the panel, which
- * requires following that creator first.
+ * Report must be reachable from the profile carousel, not only from the panel — which requires
+ * following the creator first.
  */
 
 const mocks = vi.hoisted(() => ({
