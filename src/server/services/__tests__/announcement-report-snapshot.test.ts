@@ -67,10 +67,20 @@ describe('createReport — announcement snapshot', () => {
     });
   });
 
-  it('does not read the announcement for a report that dedupes into an existing one', async () => {
+  it('does not snapshot onto a report that dedupes into an existing one', async () => {
     // `withAdditionalReport` keeps every key but `reportType`, so a snapshot stamped before the
     // dedupe short-circuit appends a second copy of the unbounded HTML content to the existing
     // row — for a duplicate reporter who wrote nothing at all.
+    //
+    // The row IS read on this path, unlike the snapshot: the sitewide guard needs it, and a
+    // guard below the short-circuit would let a second report on a Civitai announcement fold
+    // into the first and return success.
+    announcementFindUnique.mockResolvedValue({
+      title: 'Free LoRAs',
+      content: 'join my telegram',
+      userId: 99,
+      metadata: {},
+    });
     reportFindFirst.mockResolvedValue({
       id: 5,
       details: {},
@@ -88,7 +98,46 @@ describe('createReport — announcement snapshot', () => {
     });
 
     expect(reportUpdate.mock.calls[0][0].data.details).toBeUndefined();
-    expect(announcementFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses a sitewide Civitai announcement, which has no author', async () => {
+    announcementFindUnique.mockResolvedValue({
+      title: 'Maintenance window',
+      content: 'back shortly',
+      userId: null,
+      metadata: {},
+    });
+
+    await expect(
+      createReport({
+        userId: 7,
+        id: 42,
+        type: ReportEntity.Announcement,
+        reason: ReportReason.Spam,
+        details: { comment: 'spam' } as any,
+      })
+    ).rejects.toThrow(/cannot be reported/i);
+
+    // Refused before anything was written, and before the dedupe lookup that would otherwise
+    // fold a second attempt into an existing report.
+    expect(reportCreate).not.toHaveBeenCalled();
+    expect(reportFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('refuses an announcement that no longer exists', async () => {
+    announcementFindUnique.mockResolvedValue(null);
+
+    await expect(
+      createReport({
+        userId: 7,
+        id: 42,
+        type: ReportEntity.Announcement,
+        reason: ReportReason.Spam,
+        details: { comment: 'spam' } as any,
+      })
+    ).rejects.toThrow(/no longer exists/i);
+
+    expect(reportCreate).not.toHaveBeenCalled();
   });
 
   it('does not snapshot for any other entity type', async () => {

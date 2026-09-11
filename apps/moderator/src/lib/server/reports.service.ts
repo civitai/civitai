@@ -111,7 +111,7 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
     )`,
 
   // The author's profile is where an announcement is rendered; null for a sitewide row
-  // (`userId IS NULL`), which has no profile to link to.
+  // (`userId IS NULL`), which `createReport` refuses to report in the first place.
   announcement: (entityId) =>
     sql<string | null>`(
       SELECT '/user/' || u.username

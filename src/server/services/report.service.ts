@@ -292,6 +292,29 @@ export const createReport = async ({
       'You cannot report your own profile. To reach a moderator about your own account, use the Support Portal at /support-portal.'
     );
 
+  // Read once, here, because the GUARD below needs it and a guard that runs after the dedupe
+  // short-circuit is not a guard — a second report on a sitewide announcement would fold into
+  // the first and return success. The snapshot it also feeds is stamped further down; see there.
+  const reportedAnnouncement =
+    type === ReportEntity.Announcement
+      ? await dbRead.announcement.findUnique({
+          where: { id },
+          select: { title: true, content: true, userId: true, metadata: true },
+        })
+      : null;
+
+  if (type === ReportEntity.Announcement) {
+    if (!reportedAnnouncement) throw throwBadRequestError('That announcement no longer exists.');
+    // A null author IS the definition of a sitewide, Civitai-written announcement (see the
+    // `Announcement.userId` docstring). Reporting Civitai's own announcement to Civitai's
+    // moderators has no destination, and the UI offers no kebab on those rows — this is what
+    // makes that a rule rather than an appearance.
+    if (reportedAnnouncement.userId === null)
+      throw throwBadRequestError(
+        'Civitai announcements cannot be reported. To reach a moderator about one, use the Support Portal at /support-portal.'
+      );
+  }
+
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   const validReport =
@@ -306,24 +329,23 @@ export const createReport = async ({
       : null;
   if (validReport) return validReport;
 
-  // 🔴 The join row cascades on announcement delete, and deleting an announcement is instant
-  // and self-serve — so without this, the fastest way to erase a spam report is to delete the
-  // announcement it was about. Read from the row, never from `details`: the reporter controls
-  // that object, and a snapshot a reporter can author is a snapshot a reporter can forge.
-  if (type === ReportEntity.Announcement) {
-    const announcement = await dbRead.announcement.findUnique({
-      where: { id },
-      select: { title: true, content: true, userId: true, metadata: true },
-    });
-    if (announcement) {
-      const actions = (announcement.metadata as { actions?: { link?: string }[] } | null)?.actions;
-      (data.details as MixedObject).announcement = {
-        title: announcement.title,
-        content: announcement.content,
-        link: actions?.[0]?.link ?? null,
-        userId: announcement.userId,
-      };
-    }
+  // 🔴 Stamped HERE, below the dedupe short-circuit, not at the read above: `withAdditionalReport`
+  // keeps every key but `reportType`, so a snapshot stamped earlier appends a second copy of the
+  // unbounded content to the existing row for a duplicate reporter who wrote nothing.
+  //
+  // 🔴 From the row, never from `details` — the reporter controls that object, and a snapshot a
+  // reporter can author is a snapshot a reporter can forge. The join row cascades on announcement
+  // delete, which is instant and self-serve, so without this the fastest way to erase a spam
+  // report is to delete the announcement it was about.
+  if (reportedAnnouncement) {
+    const actions = (reportedAnnouncement.metadata as { actions?: { link?: string }[] } | null)
+      ?.actions;
+    (data.details as MixedObject).announcement = {
+      title: reportedAnnouncement.title,
+      content: reportedAnnouncement.content,
+      link: actions?.[0]?.link ?? null,
+      userId: reportedAnnouncement.userId,
+    };
   }
 
   let recomputeArticleNsfwLevelId: number | null = null;
