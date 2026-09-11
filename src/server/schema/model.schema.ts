@@ -411,7 +411,10 @@ export const setAssociatedResourcesSchema = z.object({
       resourceId: z.number(),
       resourceType: z.enum(['model', 'article']),
     })
-    .array(),
+    .array()
+    .max(constants.modelAssociations.maxPerSave),
+  // Also add this model to the list of every associated model the same owner holds.
+  reciprocal: z.boolean().optional(),
 });
 // #endregion
 

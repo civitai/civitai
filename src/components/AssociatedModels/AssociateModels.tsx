@@ -2,7 +2,19 @@ import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { ComboboxItem } from '@mantine/core';
-import { Stack, Text, Card, Group, Button, Center, Loader, Alert, Badge, Box } from '@mantine/core';
+import {
+  Stack,
+  Text,
+  Card,
+  Group,
+  Button,
+  Center,
+  Loader,
+  Alert,
+  Badge,
+  Box,
+  Checkbox,
+} from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -20,6 +32,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { constants } from '~/server/common/constants';
+import { showWarningNotification } from '~/utils/notifications';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
@@ -27,7 +41,7 @@ export function AssociateModels({
   fromId,
   type,
   onSave,
-  limit = 10,
+  limit = constants.modelAssociations.limit,
 }: {
   fromId: number;
   type: AssociationType;
@@ -46,9 +60,17 @@ export function AssociateModels({
   });
   const [associatedResources, setAssociatedResources] = useState<State>(data);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
+  const [reciprocal, setReciprocal] = useState(false);
 
   const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      const atLimit = result.reciprocal.skipped.filter((x) => x.reason === 'atLimit').length;
+      if (atLimit)
+        showWarningNotification({
+          title: 'Some links back were skipped',
+          message: `${atLimit} of your resources already have ${limit} suggested resources, so this model was not added to them.`,
+        });
+
       queryUtils.model.getAssociatedResourcesSimple.setData(
         { fromId, type, browsingLevel: allBrowsingLevelsFlag },
         () => associatedResources as ModelGetAssociatedResourcesSimple
@@ -110,6 +132,7 @@ export function AssociateModels({
         resourceType,
         resourceId: item.id,
       })),
+      reciprocal,
     });
   };
 
@@ -123,6 +146,9 @@ export function AssociateModels({
   }, [data]);
 
   const onlyMe = searchMode === 'me';
+  const models = associatedResources.filter(({ resourceType }) => resourceType === 'model');
+  const modelCount = models.length;
+  const ownModelCount = models.filter(({ item }) => item.user.id === currentUser?.id).length;
 
   return (
     <Stack>
@@ -213,6 +239,22 @@ export function AssociateModels({
           )}
         </Stack>
       )}
+      {modelCount > 0 && (
+        <Checkbox
+          checked={reciprocal}
+          onChange={(event) => {
+            setReciprocal(event.currentTarget.checked);
+            setChanged(true);
+          }}
+          label="Link both ways"
+          description={
+            ownModelCount === modelCount
+              ? 'Also adds this model to the suggested resources of each one above.'
+              : `Also adds this model to the suggested resources of the ${ownModelCount} of ${modelCount} above that you own. The rest are left alone.`
+          }
+        />
+      )}
+
       {changed && (
         <Group justify="flex-end">
           <Button variant="default" onClick={handleReset}>

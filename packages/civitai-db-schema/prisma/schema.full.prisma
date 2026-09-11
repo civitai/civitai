@@ -1417,6 +1417,7 @@ model ModelAssociations {
   type           AssociationType
   index          Int?
 
+  @@unique([fromModelId, toModelId, type])
   @@index([toModelId], type: Hash)
   @@index([fromModelId], type: Hash)
   @@index([toArticleId], type: Hash)

@@ -20,6 +20,8 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { planReciprocalAssociations } from '~/server/services/model-association.utils';
+import type { AssociationType } from '~/shared/utils/prisma/enums';
 import {
   getDbWithoutLag,
   preventModelVersionLagBatch,
@@ -4067,7 +4069,7 @@ export const getAssociatedResourcesSimple = async ({
 };
 
 export const setAssociatedResources = async (
-  { fromId, type, associations }: SetAssociatedResourcesInput,
+  { fromId, type, associations, reciprocal }: SetAssociatedResourcesInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -4091,7 +4093,7 @@ export const setAssociatedResources = async (
     (existingToId) => !associations.find((item) => item.id === existingToId)
   );
 
-  return await dbWrite.$transaction([
+  const result = await dbWrite.$transaction([
     // remove associated resources not included in payload
     dbWrite.modelAssociations.deleteMany({
       where: {
@@ -4114,6 +4116,82 @@ export const setAssociatedResources = async (
       });
     }),
   ]);
+
+  const reciprocalResult = reciprocal
+    ? await addReciprocalAssociations({
+        fromId,
+        ownerId: fromModel.userId,
+        type,
+        targetIds: associations
+          .filter((association) => association.resourceType === 'model')
+          .map((association) => association.resourceId),
+        actorId: user?.id,
+      })
+    : { linked: 0, skipped: [] };
+
+  return { associations: result, reciprocal: reciprocalResult };
+};
+
+/**
+ * Writes the "link both ways" back-links: adds `fromId` to the suggested-resource list of
+ * every target that `ownerId` also owns. Targets owned by anyone else are skipped, not
+ * rejected, so a mixed selection still saves its forward links.
+ *
+ * This is the only path that writes an association whose `fromModelId` is a model the
+ * request did not name, so ownership is re-derived here from the database rather than
+ * trusted from the caller.
+ */
+const addReciprocalAssociations = async ({
+  fromId,
+  ownerId,
+  type,
+  targetIds,
+  actorId,
+}: {
+  fromId: number;
+  ownerId: number;
+  type: AssociationType;
+  targetIds: number[];
+  actorId?: number;
+}) => {
+  const ids = [...new Set(targetIds)].filter((id) => id !== fromId);
+  if (!ids.length) return { linked: 0, skipped: [] };
+
+  const [targets, existing] = await Promise.all([
+    dbRead.model.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true } }),
+    dbRead.modelAssociations.findMany({
+      where: { fromModelId: { in: ids }, type },
+      select: { fromModelId: true, toModelId: true },
+    }),
+  ]);
+
+  const existingCounts = new Map<number, number>();
+  const alreadyLinked = new Set<number>();
+  for (const association of existing) {
+    existingCounts.set(
+      association.fromModelId,
+      (existingCounts.get(association.fromModelId) ?? 0) + 1
+    );
+    if (association.toModelId === fromId) alreadyLinked.add(association.fromModelId);
+  }
+
+  const { create, skipped } = planReciprocalAssociations({
+    sourceModelId: fromId,
+    ownerId,
+    candidates: targets.map((target) => ({ modelId: target.id, ownerId: target.userId })),
+    existingCounts,
+    alreadyLinked,
+    limit: constants.modelAssociations.limit,
+  });
+
+  if (create.length) {
+    await dbWrite.modelAssociations.createMany({
+      data: create.map((row) => ({ ...row, type, associatedById: actorId })),
+      skipDuplicates: true,
+    });
+  }
+
+  return { linked: create.length, skipped };
 };
 // #endregion
 
