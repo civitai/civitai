@@ -10,9 +10,15 @@
 --
 -- HOW TO RUN IT
 --
--- Open ONE interactive psql session against the primary and run the steps in order. Not
--- through a connection pooler: in transaction mode a pooler can put step 1 and step 5 on
+-- Open ONE interactive psql session against the primary and run the steps in order. Confirm you
+-- are on the primary with `SELECT pg_is_in_recovery();` — it must be false. On a replica steps
+-- 1, 3, 4 and 6 all succeed and only 2 and 5 error, so a misrouted run looks nearly normal. Not
+-- through a connection pooler either: in transaction mode a pooler can put step 1 and step 5 on
 -- different backends, and step 1 is what keeps step 5 from failing dirty.
+--
+-- Autocommit must be on, which is psql's default. A .psqlrc carrying `\set AUTOCOMMIT off` puts
+-- every statement in a transaction block, and step 5 then fails with the same message `-1`
+-- produces — so that error does not by itself mean you used `-1`.
 --
 -- Do not use `psql -1` / `--single-transaction`: step 5 cannot run inside a transaction block,
 -- and its failure takes the DELETE back with it. `psql -c` per step is also wrong — each is its
@@ -20,10 +26,16 @@
 --
 -- Step 1 disables the two timeouts that abort an index build DIRTY, leaving an index that
 -- enforces nothing. Before running it, check `pg_stat_activity` for long transactions touching
--- "ModelAssociations": with no timeout, step 5 waits behind them indefinitely and later lock
--- requests queue behind it. Cancelling step 5 once it is running costs the whole build and puts
--- you in RECOVERY. On PostgreSQL 17+ `transaction_timeout` can also abort it and step 1 does
--- not cover that.
+-- anything: the build waits on concurrent transactions across the whole database, not only ones
+-- touching this table, and `pg_stat_activity` does not record which tables a transaction has
+-- touched — so searching it for the table name comes back clean in exactly the state that
+-- stalls you. Look at the oldest `xact_start` in the database instead. With no timeout, step 5
+-- waits behind those indefinitely and later lock requests queue behind it. Cancelling step 5
+-- once it is running costs the whole build and puts you in RECOVERY.
+--
+-- On PostgreSQL 17+ there is a third knob, `transaction_timeout`, which can also abort the build
+-- and which step 1 does not set. Check it with `SHOW transaction_timeout;` — do not add it to
+-- step 1, because on 16 and below that is an error and step 1 stops working.
 --
 --
 -- WHAT DECIDES THE OUTCOME
@@ -32,7 +44,8 @@
 -- after a successful apply print the same "relation already exists".
 --   true      you are done.
 --   false     an index exists and enforces nothing. RECOVERY, at the bottom.
---   no rows   nothing was created. Re-run step 5.
+--   no rows   nothing was created. Recover as below — nothing was enforcing uniqueness here
+--             either, and the session that died took step 1's settings with it.
 --
 --
 -- ORDER RELATIVE TO DEPLOYS
@@ -41,14 +54,23 @@
 -- NOTHING. That clause is valid with no unique index but conflicts with nothing, so rows minted
 -- in the window are found only at the end of the build, which then fails having paid for it.
 --
+-- Applying it first is not free either, and this is the part to weigh rather than assume. Once
+-- the index is live, the writer already in production (setAssociatedResources) inserts without
+-- conflict handling, so a save that would previously have created a duplicate now raises a
+-- unique violation instead of succeeding quietly. The five existing duplicate groups are proof
+-- that path fires, though five in 571,218 rows over the table's life is the rate. Rejecting the
+-- duplicate is the correct outcome; surfacing it to the creator as an error is a change in
+-- behaviour, and it lands when this is applied rather than at the next deploy.
+--
 --
 -- Model-to-article rows are unaffected: their "toModelId" is NULL, and Postgres treats NULLs as
 -- distinct in a unique index.
 --
 -- On the production replica, 2026-09-11: 571,218 rows and 5 duplicate groups of two. Other
 -- environments will differ, and a different count there means a different database rather than
--- drift. The dedupe plans at ~1 s serial. The build is a ~20 MB btree over a ~47 MB heap holding
--- SHARE UPDATE EXCLUSIVE, which blocks neither reads nor writes.
+-- drift. The dedupe plans at ~1 s serial. The heap is 46 MB and one existing single-column index
+-- on it is 14 MB, so expect this three-column btree to be somewhat larger than that. The build
+-- holds SHARE UPDATE EXCLUSIVE, which blocks neither reads nor writes.
 
 
 -- 1. Same session as step 5. See the header before running this.
@@ -56,7 +78,9 @@ SET lock_timeout = 0;
 SET statement_timeout = 0;
 
 
--- 2. Remove duplicates, keeping the lowest id of each group.
+-- 2. THE ONE IRREVERSIBLE STEP. Removes duplicates, keeping the lowest id of each group.
+-- On production it should report DELETE 5. A number far from that means you are not where you
+-- think you are — stop and establish which database this is before running anything else.
 DELETE FROM "ModelAssociations" a
 USING "ModelAssociations" b
 WHERE a."toModelId" IS NOT NULL
@@ -94,8 +118,12 @@ FROM pg_index
 WHERE indexrelid = to_regclass('"ModelAssociations_fromModelId_toModelId_type_key"');
 
 
--- RECOVERY — only when check 3 or check 6 returned FALSE. Not when either returned no rows;
--- that means nothing was created, and the answer there is to run step 5 again.
+-- RECOVERY — when check 6 returned FALSE or no rows, or when check 3 returned FALSE.
+-- Check 3 returning no rows on a first run is the normal path, not a failure: carry on to 4.
+--
+-- FALSE means an index exists and enforces nothing: start with the DROP below.
+-- NO ROWS at check 6 means the build died before its catalog entry appeared, so there is
+-- nothing to drop: skip to the replay.
 --
 -- An index that enforces nothing is left behind by a build that was interrupted, cancelled or
 -- timed out, and equally by one that ran to completion and then found a duplicate. Both end
@@ -107,6 +135,7 @@ WHERE indexrelid = to_regclass('"ModelAssociations_fromModelId_toModelId_type_ke
 --
 --   DROP INDEX CONCURRENTLY "ModelAssociations_fromModelId_toModelId_type_key";
 --
--- Then run steps 1, 2 and 4 again before 5 and 6. Step 1 because a pasted DROP often means a
--- fresh session; steps 2 and 4 because a duplicate may have been minted while the broken index
--- was enforcing nothing, and skipping them buys a second full build and the same ending.
+-- REPLAY, from either state: steps 1, 2 and 4, then 5 and 6. Step 1 because a failed build
+-- usually means a fresh session and its settings went with the old one; steps 2 and 4 because a
+-- duplicate may have been minted while nothing was enforcing uniqueness, and skipping them buys
+-- a second full build and the same ending.
