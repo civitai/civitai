@@ -69,6 +69,7 @@ import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 import { ernieGraph } from './ernie-graph';
+import { ideogramGraph } from './ideogram-graph';
 import { lensGraph } from './lens-graph';
 import { krea2Graph } from './krea2-graph';
 import { maiGraph } from './mai-graph';
@@ -393,6 +394,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
     { values: ['Ernie'] as const, graph: ernieGraph },
+    { values: ['Ideogram'] as const, graph: ideogramGraph },
     { values: ['Lens'] as const, graph: lensGraph },
     { values: ['Krea2'] as const, graph: krea2Graph },
     { values: ['MAI'] as const, graph: maiGraph },

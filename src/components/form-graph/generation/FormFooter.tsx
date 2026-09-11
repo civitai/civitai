@@ -53,6 +53,7 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
+import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
@@ -292,6 +293,7 @@ function PriorityAlertSpace({
     <>
       <QueueSnackbar right={snackbarRight} />
       <ExperimentalWarnings />
+      <BaseModelWarnings />
       {priorityAlert}
     </>
   );
@@ -304,6 +306,16 @@ function ExperimentalWarnings() {
       graph={generationHub}
       names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
       render={({ values }) => <ExperimentalAlerts selection={values} />}
+    />
+  );
+}
+
+function BaseModelWarnings() {
+  return (
+    <Controller
+      graph={generationHub}
+      name="ecosystem"
+      render={({ value: ecosystem }) => <EcosystemBaseModelWarnings ecosystem={ecosystem} />}
     />
   );
 }

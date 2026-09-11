@@ -159,6 +159,17 @@ const CASES: Record<string, unknown>[] = [
     resources: [{ id: 444, baseModel: 'Ernie', model: { type: 'LORA' }, strength: 0.7 }],
   },
   { workflow: 'txt2img', ecosystem: 'Ernie', prompt: 'a cat', seed: 42, model: 2863892 },
+  // Ideogram: locked checkpoint, with and without LoRA
+  { workflow: 'txt2img', ecosystem: 'Ideogram', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ideogram',
+    prompt: 'a cat',
+    seed: 42,
+    cfgScale: 6,
+    steps: 30,
+    resources: [{ id: 555, baseModel: 'Ideogram 4.0', model: { type: 'LORA' }, strength: 0.6 }],
+  },
   { workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat', seed: 42 },
   {
     workflow: 'txt2img',
