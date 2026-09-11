@@ -471,4 +471,33 @@ describe('csam archive streaming upload', () => {
 
     await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(/images\.zip/);
   }, 20_000);
+
+  it('reports the ORIGINAL failure when the archive fails, not the upload it knocks over', async () => {
+    // Tearing the sink down to fail the report also makes the in-flight upload fail, so BOTH
+    // errors exist by the time anything is rethrown. Reporting the upload's would bury every
+    // fetch/DB failure on this path behind a generic "failed to upload", pointing whoever reads
+    // the job log at object storage for a fault that was never there.
+    const failure = new Error('blob fetch exploded');
+    mockFetchBlob = async (url: unknown) => {
+      const match = /image-uuid-(\d+)/.exec(String(url));
+      if (!match) return null;
+      if (Number(match[1]) === 11) throw failure;
+      return fakeBlob(Number(match[1]));
+    };
+    mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;
+
+    const rejection = await archiveCsamDataForReport(report as never).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+
+    // Positive control: something must actually have failed, or both assertions below are
+    // assertions about `undefined`.
+    expect(
+      rejection,
+      'the archive did not fail — the fault injection is wired to nothing'
+    ).toBeDefined();
+    expect((rejection as Error).message).toBe(failure.message);
+    expect((rejection as Error).message).not.toMatch(/failed to upload/);
+  }, 20_000);
 });

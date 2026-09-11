@@ -1130,7 +1130,20 @@ function uploadStream({
       //   console.log({ progress });
       // });
 
-      readStream.pipe(passThroughStream);
+      // 🔴 `pipeline`, NOT `readStream.pipe(passThroughStream)` — `.pipe()` DOES NOT FORWARD
+      // ERRORS. When the source failed, `.pipe()` merely unpiped: the destination was never
+      // ended and never errored, so `done()` below waited on a stream nothing would ever write
+      // to again and the upload hung FOREVER rather than rejecting. `pipeline` destroys the
+      // destination with the error, which is what makes `done()` reject.
+      //
+      // This is not only the streaming path's concern. The disk path's `fs.createReadStream` can
+      // fail mid-read too (the scratch directory is removed by the caller's error handler), and
+      // it had exactly the same latent hang.
+      //
+      // The callback is required — `pipeline` throws `ERR_MISSING_ARGS` without one, and an
+      // error it reports is already surfaced by `done()` rejecting, so there is nothing to do
+      // with it here beyond not crashing the process on an unhandled 'error' event.
+      stream.pipeline(readStream, passThroughStream, () => undefined);
       await parallelUploads3.done();
       // console.dir('upload finished', { depth: null });
       resolve();
@@ -1230,6 +1243,12 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
  *   archiver went on to deflate all 60 of 60 queued entries; with `abort()` it stopped dead —
  *   0 further entries on node 26, 1 on node 24 (whichever was already in flight). So it does
  *   real work; it is just bounded work here, recorded as untested rather than as covered.
+ *
+ * ⚠️ `output.destroy()` takes no error argument, and it does not need one. Destroying the sink is
+ * NOT what settles an in-flight upload reading from it — `stream.pipeline` in `uploadStream` is,
+ * and it is the only thing that is. Passing the error in here as well was tried, and measured
+ * REDUNDANT: with `pipeline` in place the failure path settles either way, and with `.pipe()` in
+ * place it hangs either way. Recorded so nobody re-adds it believing it does work.
  */
 function closeArchiveOnFailure(archive: Archiver, output: stream.Writable) {
   archive.abort();
@@ -1337,11 +1356,21 @@ async function archiveAndUpload({
     // closed. Here "the sink has closed" means the uploader has drained every byte.
     await boundedArchive.finalize();
   } catch (e) {
+    // 🔴 READ THIS BEFORE `closeArchiveOnFailure`, because that call CREATES the other error.
+    // Two different things reach this catch and they need opposite attribution:
+    //
+    //  - the upload failed first → it destroyed the sink → `finalize()` rejected with the
+    //    destroy error, so `e` is the downstream symptom and `uploadError` is the cause;
+    //  - the append/finalize failed first → we are about to destroy the sink ourselves, which
+    //    will make the upload fail as a consequence, so `e` is the cause.
+    //
+    // Latching which came first is the only way to tell them apart afterwards. Reporting the
+    // upload error unconditionally would bury a fetch or DB failure behind "failed to upload".
+    const uploadFailedFirst = uploadError !== undefined;
     closeArchiveOnFailure(archive, passThrough);
-    // Settle the upload before rethrowing so nothing is left in flight, and prefer the upload's
-    // own error when it is the thing that failed — `e` is then just the downstream symptom.
+    // Settle the upload before rethrowing so nothing is left in flight.
     await uploadPromise;
-    if (uploadError) throw uploadError;
+    if (uploadFailedFirst) throw uploadError;
     throw e;
   }
 
