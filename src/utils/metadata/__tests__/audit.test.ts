@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { includesInappropriate, includesMinor, includesMinorAge } from '~/utils/metadata/audit';
+import {
+  includesInappropriate,
+  includesMinor,
+  includesMinorAge,
+  includesPoi,
+} from '~/utils/metadata/audit';
 
 describe('includesMinorAge', () => {
   describe('danbooru/pony tag false positives', () => {
@@ -118,6 +123,50 @@ describe('young-word anchoring (minor-review queue)', () => {
       '1girl is child, nude, and wearing school swimsuit',
     ]) {
       expect(includesInappropriate({ prompt }, true), prompt).toBe('minor');
+    }
+  });
+});
+
+// These 16 names are a legal commitment, not ordinary blocklist tuning. If a POI-list
+// migration drops them, this fails by name — do not delete it without confirming with a
+// maintainer that the obligation is discharged elsewhere.
+describe('POI — Diddl character names', () => {
+  const diddlNames = [
+    'diddl',
+    'diddlina',
+    'pimboli',
+    'loupsily',
+    'galupy',
+    'wollywell',
+    'simsaly',
+    'lollilovebear',
+    'mimihopps',
+    'ackaturbo',
+    'vanillivi',
+    'bibombl',
+    'milimits',
+    'tiplitaps',
+    'diddldaddl',
+    'blubberpeng',
+  ];
+
+  it('blocks each name', () => {
+    for (const name of diddlNames) {
+      expect(includesPoi(`a drawing of ${name}, pastel colours`), name).toBe(name);
+    }
+  });
+
+  // The half that can fail on a too-loose entry: POI is a hard block with no user override,
+  // so a name matching inside an unrelated word is an unappealable false positive.
+  it('does not block benign prompts that merely contain a name as a substring', () => {
+    for (const prompt of [
+      'diddley bow, blues guitar',
+      'a vanilla milkshake',
+      'mimicry, a mockingbird',
+      'galaxy in the night sky',
+      'a simple mouse drawing',
+    ]) {
+      expect(includesPoi(prompt), prompt).toBe(false);
     }
   });
 });
