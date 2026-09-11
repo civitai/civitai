@@ -143,6 +143,7 @@ import type { FeatureAccess } from '../services/feature-flags.service';
 import {
   computeUserFeatureFlagsOverlay,
   defaultToggleableFeatures,
+  getFliptGatedEligibility,
 } from '../services/feature-flags.service';
 import {
   getEntityCoverImage,
@@ -1498,7 +1499,11 @@ export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: ProtectedContex
 
     // Shared pure overlay computation — also used by the SSR seed in _app
     // getInitialProps so the injected initialData byte-matches this response.
-    return computeUserFeatureFlagsOverlay(features, ctx.features);
+    return computeUserFeatureFlagsOverlay(
+      features,
+      ctx.features,
+      getFliptGatedEligibility({ user: ctx.user, req: ctx.req })
+    );
   } catch (error) {
     throw throwDbError(error);
   }

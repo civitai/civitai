@@ -5,6 +5,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import {
   computeUserFeatureFlagsOverlay,
   getFeatureFlagsLazy,
+  getFliptGatedEligibility,
 } from '~/server/services/feature-flags.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
@@ -39,7 +40,11 @@ export default AuthedEndpoint(async (req, res, user) => {
   // provider performs (overlay over host flags; the overlay withholds the key when Flipt denies).
   const hostFlags = getFeatureFlagsLazy({ user, req });
   const { features: userFeatures } = await getUserSettings(user.id);
-  const overlay = computeUserFeatureFlagsOverlay(userFeatures, hostFlags);
+  const overlay = computeUserFeatureFlagsOverlay(
+    userFeatures,
+    hostFlags,
+    getFliptGatedEligibility({ user, req })
+  );
   if (!{ ...hostFlags, ...overlay }.trainingStudioUi)
     return res.status(403).json({ error: 'Training Studio is not available on this account' });
 

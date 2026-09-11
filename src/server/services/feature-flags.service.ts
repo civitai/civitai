@@ -691,10 +691,12 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // --------------------------
 // Logic
 // --------------------------
-type FeatureAccessContext = {
+export type FeatureAccessContext = {
   user?: SessionUser;
   host?: string;
-  req: NextApiRequest | IncomingMessage;
+  /** Optional: `_app`'s client-side getInitialProps has no request. Every consumer already guards
+   *  a nullish req (featureAccessKey, checkRegionAccess, `req?.headers.host`). */
+  req?: NextApiRequest | IncomingMessage;
 };
 
 /**
@@ -1116,6 +1118,21 @@ export const fliptGatedToggleableKeys = new Set(
     .map(([key]) => key as FeatureFlagKey)
 );
 
+/** Host-level ELIGIBILITY for the Flipt-gated toggleable keys. These keys are toggleable with
+ *  `default: false`, so `isFeatureFlagKeyPresent` keeps them out of every FeatureAccess payload
+ *  (the base layer must stay off for users who haven't opted in) — which means PRESENCE in host
+ *  flags can never answer "may this user opt in": it reads false for eligible users too, and an
+ *  overlay gated on it withholds the toggle from everyone. Evaluate `hasFeature` directly (Flipt
+ *  gate, or the static fallback when the flag is missing) for exactly these keys. */
+export function getFliptGatedEligibility(
+  ctx: FeatureAccessContext
+): Partial<Record<FeatureFlagKey, boolean>> {
+  const fliptContext = buildFliptContext(ctx.user);
+  const out: Partial<Record<FeatureFlagKey, boolean>> = {};
+  for (const key of fliptGatedToggleableKeys) out[key] = hasFeature(key, ctx, fliptContext);
+  return out;
+}
+
 export const defaultToggleableFeatures = toggleableFeatures.reduce(
   (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
   {} as FeatureAccess
@@ -1133,7 +1150,10 @@ export const defaultToggleableFeatures = toggleableFeatures.reduce(
  */
 export function computeUserFeatureFlagsOverlay(
   userFeatures: Record<string, boolean> | undefined,
-  hostFeatures: FeatureAccess
+  hostFeatures: FeatureAccess,
+  /** From `getFliptGatedEligibility` — presence in `hostFeatures` cannot stand in for it (see that
+   *  helper). Without it the Flipt-gated keys fall back to presence and are withheld from everyone. */
+  gatedEligibility?: Partial<Record<FeatureFlagKey, boolean>>
 ): FeatureAccess {
   const features = userFeatures ?? {};
 
@@ -1156,7 +1176,8 @@ export function computeUserFeatureFlagsOverlay(
     }
   }
   for (const key of fliptGatedToggleableKeys) {
-    if (key in result && !hostFeatures[key]) {
+    const eligible = gatedEligibility ? !!gatedEligibility[key] : !!hostFeatures[key];
+    if (key in result && !eligible) {
       delete result[key];
     }
   }
