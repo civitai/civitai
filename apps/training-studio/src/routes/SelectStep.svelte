@@ -38,7 +38,6 @@
     type Run,
     type Selection,
   } from './trainingFlow';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
 
   let {
     onContinue,
@@ -107,8 +106,10 @@
   function pickMedia(m: Media) {
     if (m === media) return;
     media = m;
-    // A dataset can't span media, so switching resets to that media's recommended type + model.
-    const t = typesForMedia(m)[0]!;
+    // A dataset can't span media, so the MODEL always resets. The type carries over when the new media
+    // offers it — switching Image→Video with Style chosen should stay Style, not silently become Character.
+    const next = typesForMedia(m);
+    const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
     runs = [newRun(recommendedCardFor(t.id, m))];
     focus = 0;
@@ -160,8 +161,8 @@
 
   function versionsFor(card: ModelCard) {
     return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label, note: v.note, surcharge: 0 })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom…', note: 'pick a model', surcharge: CUSTOM_MODEL_SURCHARGE },
+      ...card.versions.map((v) => ({ key: v.key, label: v.label, surcharge: 0 })),
+      { key: CUSTOM_VERSION_KEY, label: 'Custom', surcharge: CUSTOM_MODEL_SURCHARGE },
     ];
   }
 
@@ -351,7 +352,6 @@
               {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
           >
             <div class="flex items-center gap-2">
-              <ModelCodeBadge code={card.code} size="sm" />
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
               </div>
@@ -417,7 +417,6 @@
         {@const runPrice = price(primary.cardType, isCustom(primary))}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
-            <ModelCodeBadge code={card.code} size="md" />
             <div class="min-w-0">
               <div class="truncate text-sm font-bold text-dark-0">
                 {card.name}
@@ -434,7 +433,7 @@
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
           {#if versionsFor(card).length > 1}
-            <div class="mt-1 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
+            <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
               role="radiogroup"
@@ -452,17 +451,16 @@
                     : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
                     {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
                 >
-                  <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
-                  {#if v.surcharge}
-                    <div
-                      class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
-                    >
-                      +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                    </div>
-                  {/if}
-                  {#if v.note}
-                    <div class="font-mono text-xs text-dark-2">{v.note}</div>
-                  {/if}
+                  <div class="flex items-center gap-2">
+                    <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
+                    {#if v.surcharge}
+                      <span
+                        class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
+                      >
+                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
+                      </span>
+                    {/if}
+                  </div>
                 </button>
               {/each}
             </div>
@@ -507,7 +505,6 @@
                   onclick={() => (focus = ri)}
                   class="flex min-w-0 flex-1 items-center gap-3 text-left"
                 >
-                  <ModelCodeBadge code={card.code} size="md" />
                   <div class="min-w-0">
                     <div class="truncate text-sm font-bold text-dark-0">
                       Run {ri + 1} · {card.name}
@@ -547,17 +544,16 @@
                       : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
                       {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
                   >
-                    <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
-                    {#if v.surcharge}
-                      <div
-                        class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
-                      >
-                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                      </div>
-                    {/if}
-                    {#if v.note}
-                      <div class="font-mono text-xs text-dark-2">{v.note}</div>
-                    {/if}
+                    <div class="flex items-center gap-2">
+                      <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
+                      {#if v.surcharge}
+                        <span
+                          class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
+                        >
+                          +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
+                        </span>
+                      {/if}
+                    </div>
                   </button>
                 {/each}
               </div>
@@ -580,7 +576,8 @@
   </div>
 
   <!-- summary -->
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <div class="sticky top-4 h-fit">
+  <aside class="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">{media}</span>
@@ -588,15 +585,17 @@
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
     </div>
-    <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
-      <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
-    </div>
+    {#if multi}
+      <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
+        <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
+      </div>
+    {/if}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
       <span class="text-dark-2">Labeling</span>
       <span class="font-semibold text-dark-0">{labelMode === 'tag' ? 'Tags' : 'Captions'}</span>
     </div>
-    <div class="mt-3.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
-      <span class="text-sm text-dark-2">Starting at</span>
+    <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
+      <span class="text-sm font-semibold text-white">Starting at</span>
       {#if total != null}
         <span class="font-mono text-2xl font-bold text-buzz">
           <IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}
@@ -606,10 +605,10 @@
       {/if}
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      final price after your data &amp; settings
+      price changes depending on data and settings
     </div>
     <Button
-      class="mt-4 w-full"
+      class="mt-4 h-11 w-full"
       disabled={customIncomplete}
       onclick={() => onContinue({ media, loraType, runs })}
     >
@@ -620,24 +619,25 @@
         Paste a Civitai model AIR for the custom base to continue.
       </p>
     {/if}
-    <p
-      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="var(--color-buzz)"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="h-3.5 w-3.5 shrink-0"
-        aria-hidden="true"
-      >
-        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-        <path d="M12 9v4" />
-        <path d="M12 17h.01" />
-      </svg>
-      Nothing is saved until you start training
-    </p>
   </aside>
+  <p
+    class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
+  >
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--color-buzz)"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class="h-3 w-3 shrink-0"
+      aria-hidden="true"
+    >
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+    Nothing is saved until you start training
+  </p>
+  </div>
 </div>
