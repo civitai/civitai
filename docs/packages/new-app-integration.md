@@ -21,7 +21,7 @@ app:
    accessible, Tailwind-styled primitives we'd otherwise get wrong by hand.
 
 The shadcn-svelte primitives are already vendored as the shared **[@civitai/ui](../../packages/civitai-ui/README.md)**
-package (24 components + theme, Tailwind v4). New SvelteKit apps consume it rather than re-running the CLI —
+package (shadcn-svelte primitives + theme, Tailwind v4). New SvelteKit apps consume it rather than re-running the CLI —
 see its README for the 4-line bootstrap (`workspace:*` dep, `ssr.noExternal`, `@import "@civitai/ui/theme.css"`,
 one `@source`). Add new shared components *into* that package, not into an app.
 
