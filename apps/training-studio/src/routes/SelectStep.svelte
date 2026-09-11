@@ -328,7 +328,6 @@
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const disabled = multi && !selected && !labelOptions(card).includes(labelMode)}
-          {@const isRecommended = card.type === recommendedType}
           {@const cardPrice = price(card.type)}
           <button
             type="button"
@@ -339,7 +338,7 @@
             onclick={() => pickBase(card)}
             aria-label={`${card.name}. ${card.description} ${
               cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
-            } ${isRecommended ? 'Recommended. ' : ''}${
+            } ${card.flag ? `${card.flag}. ` : ''}${
               card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
             }${disabled ? `Unavailable — uses ${labelNoun(card)}, your sweep uses ${labelModeNoun}.` : ''}`}
             title={disabled
@@ -355,9 +354,9 @@
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
               </div>
-              {#if isRecommended}
+              {#if card.flag}
                 <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  <IconStarFilled size={8} />Recommended
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
                 </span>
               {/if}
               {#if selected}

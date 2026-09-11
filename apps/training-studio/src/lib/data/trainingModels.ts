@@ -64,6 +64,9 @@ export interface ModelCard {
    *  defaulting to `label`. Most models are single-format. */
   bothLabels?: boolean;
   description: string;
+  /** Free-text badge on the card — 'recommended', 'anime', 'latest', anything. Absent means no badge.
+   *  Independent of `TYPES[].recommended`, which picks the default selection rather than labelling it. */
+  flag?: string;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
 }
@@ -179,6 +182,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'High-speed image generation.',
+    flag: 'recommended',
     versions: [
       {
         key: 'zimageturbo',
@@ -240,6 +244,7 @@ export const MODEL_CARDS: ModelCard[] = [
     label: 'tag',
     bothLabels: true,
     description: "CircleStone Labs' Anima image model (Base v1.0).",
+    flag: 'anime',
     versions: [
       {
         key: 'anima',
@@ -276,6 +281,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "Krea AI's in-house image generation model.",
+    flag: 'latest',
     versions: [
       {
         key: 'krea2',
@@ -506,6 +512,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'video',
     label: 'caption',
     description: 'MiniMax H3 video generation.',
+    flag: 'recommended',
     versions: [
       {
         key: 'minimaxh3',
@@ -525,6 +532,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'audio',
     label: 'caption',
     description: 'ACE-Step music / audio LoRA training.',
+    flag: 'recommended',
     versions: [
       {
         key: 'acestep_15',
