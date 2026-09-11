@@ -39,6 +39,7 @@ import {
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
   type DetailActionMode,
@@ -765,17 +766,45 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                   // look-alike. The href is already host-allowlisted and normalised
                   // server-side (`validateRepositoryUrl`); this is the second control, and
                   // `appListingDetailRows.ts` documents the contract on `href`.
-                  <Text
+                  // 🔴 `Anchor`, NOT `Text component="a"` — this is an AFFORDANCE fix,
+                  // not a component preference. As a `Text` the value rendered in the
+                  // body colour with no underline, so it was visually identical to the
+                  // non-link values sitting directly above and below it in the same
+                  // rail. Reported by a tester 2026-09-10: "I see that 'Source' is
+                  // clickable, but there is no indication." `Anchor` is the repo's
+                  // inline-link idiom (used throughout this file and the sibling Apps
+                  // components) and carries the link colour; `underline="always"` is
+                  // explicit because a colour difference alone is not an accessible
+                  // affordance — it fails for a viewer who cannot separate the two hues.
+                  <Anchor
                     size="sm"
-                    component="a"
                     href={row.href}
                     target="_blank"
                     rel="noopener noreferrer"
+                    underline="always"
                     data-listing-detail-link={row.key}
                     style={{ wordBreak: 'break-all' }}
                   >
                     {row.value}
-                  </Text>
+                  </Anchor>
+                ) : row.anchorId ? (
+                  // SAME-PAGE jump — deliberately NOT `target="_blank"`/`noopener`.
+                  // Those belong to `row.href` (an outbound third-party URL) and would
+                  // open this page's own reviews section in a new tab. See the two
+                  // fields' docstrings in `appListingDetailRows.ts`.
+                  // A real fragment link rather than a scroll handler: it works with
+                  // the keyboard, with middle-click, before hydration, and it can be
+                  // copied.
+                  <Anchor
+                    size="sm"
+                    href={`#${row.anchorId}`}
+                    underline="always"
+                    c={row.color}
+                    tt={row.key === 'reviews' ? 'capitalize' : undefined}
+                    data-listing-detail-anchor={row.key}
+                  >
+                    {row.value}
+                  </Anchor>
                 ) : (
                   <Text
                     size="sm"
@@ -1293,7 +1322,14 @@ export function AppListingDetailBody({
           heading. Omitted in preview: a shadow listing has no review rows and we must
           not query them. */}
       {!preview && (
-        <Stack gap="md">
+        // 🔴 `id` is the jump TARGET for the Details rail's "Reviews" row, which is a
+        // link a viewer can follow (a tester found the rail's reviews line and
+        // reasonably expected it to take them somewhere). Renaming or removing this id
+        // silently breaks that link — an `href="#…"` to a missing id is inert with no
+        // error — so it is pinned by `appListingReviewsAnchor.test.ts`.
+        // Not a `scrollIntoView` handler: a real fragment link works with the keyboard,
+        // with middle-click, and before hydration, and it survives being copied.
+        <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
           <Title order={2}>Reviews</Title>
           <AppListingReviews appListingId={detail.id} />

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getListingBadge } from '~/components/Apps/appListingCardView';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { LISTING_FACET_LABELS } from '~/components/Apps/listingKindLabels';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -55,7 +56,12 @@ describe('buildListingDetailRows — order', () => {
     const by = Object.fromEntries(rows.map((r) => [r.key, r]));
     // The `… app` form, not the bare word: the noun is what disambiguates "Embedded"
     // from the `Embedding` model type. See `listingKindLabels`' header.
-    expect(by.kind).toMatchObject({ label: 'Kind', value: 'Embedded app' });
+    // The facet LABEL is single-sourced (`LISTING_FACET_LABELS.kind`) so the detail
+    // rail and the store filter cannot drift apart again — they said "Kind" and
+    // "Type" for one field. Asserted through the constant rather than the word, so a
+    // later copy change edits one place instead of reddening this file.
+    // The row's `key` is deliberately still `kind`: that is its stable identity.
+    expect(by.kind).toMatchObject({ label: LISTING_FACET_LABELS.kind, value: 'Embedded app' });
     // 🔴 DISPLAY labels, not the stored enum. The fixture stores `utility` / `pg`.
     expect(by.category).toMatchObject({ label: 'Category', value: 'Utility' });
     expect(by.rating).toMatchObject({ label: 'Rating', value: 'PG' });
