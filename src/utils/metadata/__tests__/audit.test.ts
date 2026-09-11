@@ -127,9 +127,7 @@ describe('young-word anchoring (minor-review queue)', () => {
   });
 });
 
-// Added under a rightsholder obligation, not as ordinary blocklist tuning. Do not delete
-// these entries or this test without confirming with a maintainer that the obligation is
-// discharged elsewhere.
+// Do not delete these entries or this test without checking with a maintainer first.
 describe('POI — Diddl character names', () => {
   const diddlNames = [
     'diddl',
@@ -148,8 +146,8 @@ describe('POI — Diddl character names', () => {
     'tiplitaps',
     'diddldaddl',
     'blubberpeng',
-    // The merchandise is branded "Diddl Maus". The poi preprocessor DELETES `-` rather than
-    // splitting on it, so `diddl-maus` arrives as one token that `diddl` cannot match.
+    // Not redundant with `diddl`: the poi preprocessor DELETES `-` rather than splitting on
+    // it, so `diddl-maus` arrives as one token that `diddl` cannot match.
     'diddlmaus',
   ];
 
@@ -157,6 +155,10 @@ describe('POI — Diddl character names', () => {
     for (const name of diddlNames) {
       expect(includesPoi(`a drawing of ${name}, pastel colours`), name).toBe(name);
     }
+  });
+
+  it('blocks the hyphenated spelling, which the preprocessor fuses into one token', () => {
+    expect(includesPoi('a drawing of diddl-maus')).toBe('diddlmaus');
   });
 
   // POI is a hard block with no user override, so a name matching inside a longer word is an
