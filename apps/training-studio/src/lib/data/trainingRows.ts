@@ -80,6 +80,11 @@ export interface TrainingStudioMeta {
   trigger?: string;
   /** Set once the user publishes a public model page off this workflow. */
   published?: boolean;
+  /** Lineage of a "train further" run: the run it continued from and the checkpoint it forked at.
+   *  Stamped by the continuation submit; absent on fresh runs and on continuations submitted
+   *  before lineage shipped. */
+  sourceWorkflowId?: string;
+  sourceEpoch?: number;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
@@ -291,12 +296,15 @@ export interface TrainingDetail {
   epochs: TrainingDetailEpoch[];
   /** The images the run trained on, with their captions. Empty for runs whose dataset isn't blob-backed. */
   dataset: DatasetItem[];
+  /** "Train further" lineage (see TrainingStudioMeta): the run this one continued from, when known. */
+  sourceWorkflowId?: string;
+  sourceEpoch?: number;
 }
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
-  const { input, state, output, media, base, code, name, progress } = resolveWorkflow(w);
+  const { meta, input, state, output, media, base, code, name, progress } = resolveWorkflow(w);
   if (!state) return null;
 
   const prompts = input.samples?.prompts ?? [];
@@ -354,6 +362,11 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     liveTraceUrl: liveTraceUrl ?? undefined,
     epochs,
     dataset,
+    sourceWorkflowId:
+      typeof meta.sourceWorkflowId === 'string' && meta.sourceWorkflowId
+        ? meta.sourceWorkflowId
+        : undefined,
+    sourceEpoch: typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined,
   };
 }
 

@@ -266,7 +266,15 @@ async function buildContinuation(
 
   const srcMeta = (wf.metadata ?? {}) as TrainingStudioMeta;
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
-  const metadata: TrainingStudioMeta = { ...srcMeta, name: name ?? srcMeta.name, v: META_VERSION };
+  // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the
+  // source's own metadata would skip a link in the chain.
+  const metadata: TrainingStudioMeta = {
+    ...srcMeta,
+    name: name ?? srcMeta.name,
+    v: META_VERSION,
+    sourceWorkflowId: opts.workflowId,
+    sourceEpoch: opts.fromEpoch,
+  };
   const slug = name ? nameSlug(name) : '';
 
   // Only the fields we submit (mirrors buildStep) — never the server-computed read-only ones the orch echoes

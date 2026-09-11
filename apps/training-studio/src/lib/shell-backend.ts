@@ -3,7 +3,7 @@
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
 import type { AutoLabelResult, StudioBackend, TrainingRunPayload } from '$lib/backend';
-import type { GenerationItem, TrainingRow } from '$lib/data/trainingRows';
+import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -24,10 +24,13 @@ export const shellBackend: StudioBackend = {
     return (await res.json()) as TrainingRow[];
   },
 
-  // The shell never reads run detail through the seam — the /[id] route's server load provides it
-  // (and refresh() re-runs that load). Only the web-component host resolves detail client-side.
-  getRunDetail: () =>
-    Promise.reject(new Error('run detail comes from the /[id] server load in the shell')),
+  // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
+  // read serves RunDetail's ancestor-chain fetches (combined epochs).
+  getRunDetail: async (workflowId) => {
+    const res = await fetch(`/api/run-detail?id=${encodeURIComponent(workflowId)}`);
+    if (!res.ok) throw new Error(await messageOf(res, `Failed to load training (${res.status})`));
+    return (await res.json()) as TrainingDetail;
+  },
 
   getRunDataset: async (workflowId) => {
     const res = await fetch(`/api/run-dataset?id=${encodeURIComponent(workflowId)}`);

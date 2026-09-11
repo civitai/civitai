@@ -7,12 +7,17 @@
     alt = 'training sample',
     isVideo = false,
     isAudio = false,
+    pending = null,
     class: className = '',
   }: {
     url: string | null;
     alt?: string;
     isVideo?: boolean;
     isAudio?: boolean;
+    /** How to read a missing sample: `true` = the run is still training (the sample is being
+     *  generated), `false` = the run is terminal (this sample will never arrive — it failed),
+     *  `null` = unknown, render the neutral placeholder. */
+    pending?: boolean | null;
     class?: string;
   } = $props();
 
@@ -59,12 +64,22 @@
     <img src={url} {alt} loading="lazy" class={cn(tileClass, className)} />
   {/if}
 {:else}
+  {@const tone =
+    pending === true
+      ? { cls: 'animate-pulse border-dark-4 text-dark-2', label: 'generating…' }
+      : pending === false
+        ? { cls: 'border-red-500/25 text-red-400/80', label: 'sample failed' }
+        : {
+            cls: 'border-dark-4 text-dark-2',
+            label: `no ${isAudio ? 'audio' : isVideo ? 'video' : 'image'}`,
+          }}
   <div
     class={cn(
-      'grid aspect-square w-full place-items-center rounded border border-dashed border-dark-4 bg-dark-7 font-mono text-[10px] text-dark-2',
+      'grid aspect-square w-full place-items-center rounded border border-dashed bg-dark-7 font-mono text-[10px]',
+      tone.cls,
       className
     )}
   >
-    no {isAudio ? 'audio' : isVideo ? 'video' : 'image'}
+    {tone.label}
   </div>
 {/if}

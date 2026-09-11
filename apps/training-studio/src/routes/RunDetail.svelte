@@ -20,6 +20,7 @@
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
@@ -57,6 +58,9 @@
   // fork off a checkpoint that's still being superseded. `ready` (succeeded) or `published` are the terminal
   // success states; `training`/`failed` are not.
   const runComplete = $derived(d.state === 'ready' || d.state === 'published');
+  // Missing samples read differently by run state: still training → the sample is being generated;
+  // terminal (ready/published/failed) → it will never arrive.
+  const samplesPending = $derived(d.state === 'training');
 
   // Live updates while training: re-read the run every few seconds so new epochs/samples stream in.
   // Each tick re-arms after the refetch settles — success or failure, so one bad refetch can't end
@@ -295,16 +299,42 @@
   let quote = $state<{ cost: number | null; eta: number | null } | null>(null);
   let quoteError = $state('');
 
-  // Primitive keys for the quote effect: `detail` (and so `d` and `publishTarget`) gets a NEW identity
-  // on every poll/rename refresh, so keying the effect on those objects would re-issue a quote each
-  // tick even when nothing the quote depends on changed.
-  const quoteWorkflowId = $derived(d.workflowId);
+  // Primitive keys for the quote/ancestor derivations: `detail` (and so `d` and `publishTarget`) gets
+  // a NEW identity on every poll/rename refresh, so keying on those objects would re-issue a quote —
+  // or re-fetch the ancestor chain — each tick even when nothing they depend on changed.
+  const workflowIdKey = $derived(d.workflowId);
   const quoteFromEpoch = $derived(publishTarget?.number ?? null);
+  const lineageParentId = $derived(d.sourceWorkflowId ?? null);
+
+  // Combined epochs: opt-in load of the "train further" ancestor chain, rendered read-only in the
+  // compare grid. Only continuations submitted after lineage shipped carry the metadata.
+  let showLineage = $state(false);
+  // Bumped by the {:catch} Retry — part of the derived expression, so the promise rebuilds.
+  let lineageVersion = $state(0);
+  const ancestors = $derived.by(() => {
+    if (!browser || !showLineage || !lineageParentId) return null;
+    void lineageVersion;
+    return loadAncestorChain(workflowIdKey, lineageParentId);
+  });
+
+  async function loadAncestorChain(selfId: string, firstParent: string): Promise<TrainingDetail[]> {
+    // Depth cap + cycle guard — the chain lives in workflow metadata, which is user-space data.
+    const seen = new Set([selfId]);
+    const chain: TrainingDetail[] = [];
+    let next: string | undefined = firstParent;
+    while (next && !seen.has(next) && chain.length < 5) {
+      seen.add(next);
+      const anc = await backend().getRunDetail(next);
+      chain.push(anc);
+      next = anc.sourceWorkflowId;
+    }
+    return chain;
+  }
 
   // Re-quote when the epoch count changes (debounced) so the confirm always shows the current price.
   $effect(() => {
     const epochs = Number(furtherEpochs) || 0;
-    const wf = quoteWorkflowId;
+    const wf = workflowIdKey;
     const from = quoteFromEpoch;
     if (!browser || !runComplete || from === null || epochs < 1) {
       quote = null;
@@ -358,7 +388,10 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   let mode = $state<'epoch' | 'compare'>('epoch');
-  const showCompare = $derived(mode === 'compare' && newestFirst.length > 1);
+  // A single-epoch continuation still has ancestors worth comparing against, so lineage alone
+  // unlocks the compare view.
+  const canCompare = $derived(newestFirst.length > 1 || Boolean(d.sourceWorkflowId));
+  const showCompare = $derived(mode === 'compare' && canCompare);
 
   // The fullscreen viewer navigates over `newestFirst` (↑ = newer epoch, matching the in-app trainer).
   let viewer = $state<{ epochIndex: number; sampleIndex: number } | null>(null);
@@ -371,15 +404,18 @@
 
   // A param-only /[id]→/[id'] navigation reuses this component — and Train-further's own goto lands on
   // exactly such a navigation — so per-run UI state must not ride onto the new subject: an open confirm, a
-  // stale price/error, or a viewer index into the previous run's epochs.
+  // stale price/error, or a viewer index into the previous run's epochs. Keyed on `workflowIdKey`, NOT
+  // `d.workflowId`: reading through `d` re-runs this on every poll refresh (new object identity), which
+  // reset all of this state every 5s while training.
   $effect(() => {
-    void d.workflowId;
+    void workflowIdKey;
     viewer = null;
     confirming = false;
     continueError = '';
     quote = null;
     quoteError = '';
     downloadError = '';
+    showLineage = false;
   });
 </script>
 
@@ -425,6 +461,20 @@
         <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-dark-2">
           <span class="text-dark-0">{d.base}</span>
         </div>
+        {#if d.sourceWorkflowId && d.sourceEpoch != null}
+          <p class="mb-0 mt-1 flex items-center gap-1 text-[12px] text-dark-2">
+            <IconRepeat size={12} stroke={2} class="shrink-0" />
+            Continued from epoch {d.sourceEpoch} of
+            <a
+              href={hrefFor({ view: 'run', workflowId: d.sourceWorkflowId })}
+              use:locationHref={{ view: 'run', workflowId: d.sourceWorkflowId }}
+              class="max-w-[14ch] truncate font-mono text-primary hover:underline"
+              title={d.sourceWorkflowId}
+            >
+              {d.sourceWorkflowId}
+            </a>
+          </p>
+        {/if}
       </div>
       <RunStateBadge state={d.state} />
     </div>
@@ -490,7 +540,7 @@
     <!-- Key on the run, not the epoch: the panel persists across epoch switches (holding its last view) but
          resets cleanly when navigating to a different training. -->
     {#key d.workflowId}
-      <TrainingTrace traceUrl={d.liveTraceUrl} />
+      <TrainingTrace traceUrl={d.liveTraceUrl} plannedEpochs={d.plannedEpochs ?? null} {currentEpoch} />
     {/key}
   {/if}
 
@@ -524,7 +574,7 @@
       {/if}
     </div>
   {:else}
-    {#if newestFirst.length > 1}
+    {#if canCompare}
       <ToggleGroup
         type="single"
         value={mode}
@@ -541,17 +591,36 @@
     {/if}
 
     {#if showCompare}
-      <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-        <p class="mb-4 text-[11px] text-dark-2">
-          Each prompt across every checkpoint — scan a row to see how a sample evolved. Click a checkpoint
-          to open and download it.
-        </p>
+      {#snippet compareGrid(ancestorRuns: TrainingDetail[])}
+        <!-- Ancestor columns render oldest run first so the whole grid reads as one evolution
+             left→right; each run's epoch numbers restart at 1, so the run name disambiguates. -->
+        {@const ancestorCols = [...ancestorRuns]
+          .reverse()
+          .flatMap((run) =>
+            [...run.epochs]
+              .sort((a, b) => a.number - b.number)
+              .map((epoch) => ({ run, epoch }))
+          )}
+        {#if ancestorRuns.length && ancestorCols.length === 0}
+          <p class="mb-3 font-mono text-[11px] text-dark-2">
+            No checkpoints in the earlier runs — showing this run only.
+          </p>
+        {/if}
         <div class="overflow-x-auto">
           <div
             class="grid gap-2"
-            style="grid-template-columns: minmax(150px, 190px) repeat({oldestFirst.length}, 116px)"
+            style="grid-template-columns: minmax(150px, 190px) repeat({ancestorCols.length +
+              oldestFirst.length}, 116px)"
           >
             <div></div>
+            {#each ancestorCols as col (`${col.run.workflowId}:${col.epoch.id}`)}
+              <div
+                class="flex items-center justify-center rounded border border-dashed border-dark-4 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-dark-2"
+                title="Epoch {col.epoch.number} of {col.run.name}"
+              >
+                <span class="truncate">epoch {col.epoch.number} · {col.run.name}</span>
+              </div>
+            {/each}
             {#each oldestFirst as epoch (epoch.id)}
               <button
                 type="button"
@@ -576,6 +645,18 @@
               >
                 <span class="line-clamp-4">{prompt}</span>
               </div>
+              {#each ancestorCols as col (`${col.run.workflowId}:${col.epoch.id}`)}
+                <!-- Beyond the ancestor's own slot count, "sample failed" would assert a failure for a
+                     sample that run was never asked to generate — stay neutral there. -->
+                <SampleImage
+                  isVideo={col.run.isVideo}
+                  isAudio={col.run.media === 'audio'}
+                  url={col.epoch.samples[r] ?? null}
+                  pending={r < col.epoch.samples.length ? col.run.state === 'training' : null}
+                  alt="Epoch {col.epoch.number} of {col.run.name}, prompt {r + 1}"
+                  class="opacity-80"
+                />
+              {/each}
               {#each oldestFirst as epoch (epoch.id)}
                 {@const cellUrl = epoch.samples[r] ?? null}
                 {#if cellUrl}
@@ -588,12 +669,46 @@
                     <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
                   </button>
                 {:else}
-                  <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} />
+                  <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} pending={samplesPending} />
                 {/if}
               {/each}
             {/each}
           </div>
         </div>
+      {/snippet}
+      <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+        <div class="mb-4 flex flex-wrap items-center gap-3">
+          <p class="m-0 text-[11px] text-dark-2">
+            Each prompt across every checkpoint — scan a row to see how a sample evolved. Click a checkpoint
+            to open and download it.
+          </p>
+          {#if d.sourceWorkflowId}
+            <Toggle
+              bind:pressed={() => showLineage, (v) => (showLineage = v)}
+              variant="outline"
+              size="sm"
+              class="ml-auto text-[11px]"
+            >
+              <IconRepeat size={12} stroke={2} />{showLineage ? 'Hide earlier runs' : 'Include earlier runs'}
+            </Toggle>
+          {/if}
+        </div>
+        {#if ancestors}
+          {#await ancestors}
+            {@render compareGrid([])}
+            <p class="mt-3 font-mono text-[11px] text-dark-2">Loading earlier runs…</p>
+          {:then chain}
+            {@render compareGrid(chain)}
+          {:catch err}
+            {@render compareGrid([])}
+            <p class="mt-3 flex items-center gap-2 font-mono text-[11px] text-red-400">
+              Couldn't load earlier runs: {err instanceof Error ? err.message : String(err)}
+              <Button variant="outline" size="sm" onclick={() => (lineageVersion += 1)}>Retry</Button>
+            </p>
+          {/await}
+        {:else}
+          {@render compareGrid([])}
+        {/if}
       </div>
     {:else if featured}
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -639,7 +754,7 @@
                   <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
                 </button>
               {:else}
-                <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} />
+                <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} pending={samplesPending} />
               {/if}
               <figcaption class="text-[11px] leading-relaxed text-dark-2" title={prompt}>
                 {prompt}
@@ -683,6 +798,7 @@
                     <SampleImage
                       isVideo={d.isVideo} isAudio={d.media === 'audio'}
                       url={epoch.samples[si] ?? null}
+                      pending={samplesPending}
                       alt="Epoch {epoch.number} preview {si + 1}"
                     />
                   {/each}

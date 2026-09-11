@@ -9,7 +9,19 @@
     type TrainingPhase,
   } from '$lib/trace';
 
-  let { traceUrl }: { traceUrl: string } = $props();
+  let {
+    traceUrl,
+    plannedEpochs = null,
+    currentEpoch = null,
+  }: {
+    traceUrl: string;
+    /** The run's requested epoch count — lets the step bar read per-epoch instead of duplicating the
+     *  header's overall bar. Null (unknown) falls back to the run-global step readout. */
+    plannedEpochs?: number | null;
+    /** The epoch being trained per the workflow poll — the label fallback until the trace's own
+     *  attempt/phase events name one. */
+    currentEpoch?: number | null;
+  } = $props();
 
   const MAX_RAW = 400;
 
@@ -58,9 +70,36 @@
   }
 
   const phaseLabel = $derived(phase ? PHASE_LABEL[phase] : null);
-  const stepPct = $derived(
-    step !== null && maxSteps ? Math.min(100, Math.max(0, (step / maxSteps) * 100)) : 0
+  // The worker's `step`/`maxSteps` are RUN-GLOBAL (the counter climbs across epoch boundaries), so a
+  // bar over them duplicates the header's overall progress. Scope this panel to the current epoch:
+  // steps-per-epoch from the plan, position from the worker's own epoch-scoped `epochStepsRemaining`
+  // when it's present, else the global counter folded into the epoch.
+  const stepsPerEpoch = $derived(
+    maxSteps && plannedEpochs && plannedEpochs > 0
+      ? Math.max(1, Math.round(maxSteps / plannedEpochs))
+      : null
   );
+  const epochStep = $derived.by(() => {
+    if (step === null || stepsPerEpoch === null) return null;
+    if (stepsRemaining !== null)
+      return Math.min(stepsPerEpoch, Math.max(0, stepsPerEpoch - stepsRemaining));
+    // Fold the global counter into the epoch. The epoch index is clamped so the FINAL epoch absorbs
+    // the rounding remainder when maxSteps doesn't divide evenly — a plain modulo wraps the bar back
+    // to ~0% on the run's last steps, which reads as the run restarting.
+    const epochIndex = Math.min(
+      Math.floor((Math.max(1, step) - 1) / stepsPerEpoch),
+      (plannedEpochs ?? 1) - 1
+    );
+    return Math.min(stepsPerEpoch, Math.max(1, step) - epochIndex * stepsPerEpoch);
+  });
+  // The trace's checkpoint epoch (attempt/phase events) wins; the poll-derived one covers the gap
+  // before the first such event arrives.
+  const epochLabel = $derived(epoch ?? currentEpoch);
+  const stepPct = $derived.by(() => {
+    if (epochStep !== null && stepsPerEpoch !== null)
+      return Math.min(100, Math.max(0, (epochStep / stepsPerEpoch) * 100));
+    return step !== null && maxSteps ? Math.min(100, Math.max(0, (step / maxSteps) * 100)) : 0;
+  });
   const etaSeconds = $derived(
     phase === 'training' && stepsRemaining !== null && secondsPerStep !== null && stepsRemaining > 0
       ? Math.round(stepsRemaining * secondsPerStep)
@@ -140,7 +179,7 @@
     <span class="text-sm font-semibold text-dark-0">Live progress</span>
     {#if phaseLabel}
       <span class="text-sm text-dark-1">
-        {phaseLabel}{#if epoch !== null}<span class="text-dark-2"> · epoch {epoch}</span>{/if}
+        {phaseLabel}{#if epochLabel !== null}<span class="text-dark-2"> · epoch {epochLabel}</span>{/if}
       </span>
     {/if}
   </div>
@@ -153,7 +192,16 @@
       </div>
     {:else if phase === 'training' && step !== null && maxSteps}
       <div class="mb-1.5 flex items-baseline justify-between gap-2 text-sm">
-        <span class="text-dark-1">step {step.toLocaleString()} / {maxSteps.toLocaleString()}</span>
+        {#if epochStep !== null && stepsPerEpoch !== null}
+          <span class="text-dark-1">
+            step {epochStep.toLocaleString()} / {stepsPerEpoch.toLocaleString()}{#if epochLabel !== null}<span
+                class="text-dark-2"
+              > · epoch {epochLabel}</span
+              >{/if}
+          </span>
+        {:else}
+          <span class="text-dark-1">step {step.toLocaleString()} / {maxSteps.toLocaleString()} overall</span>
+        {/if}
         {#if etaSeconds !== null}
           <span class="font-mono text-[11px] text-dark-2">{fmtEta(etaSeconds)} left in this epoch</span>
         {/if}
