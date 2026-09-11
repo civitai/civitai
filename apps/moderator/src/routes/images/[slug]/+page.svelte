@@ -3,6 +3,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { optimisticEnhancer } from '$lib/form-action';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
@@ -33,7 +34,7 @@
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
   // Multiselect: selected card keys (image id, or report id on the reported queue).
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
   $effect(() => {
     data.items;
     acted.clear();

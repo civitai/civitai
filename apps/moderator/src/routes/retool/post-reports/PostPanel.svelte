@@ -5,7 +5,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
@@ -45,7 +45,7 @@
   let strikeReason = $state('');
   let notifying = $state(false);
 
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
   const blockedIds = $derived(
     new Set<string | number>(lookup.images.filter((i) => i.ingestion === 'Blocked').map((i) => i.id))
   );
