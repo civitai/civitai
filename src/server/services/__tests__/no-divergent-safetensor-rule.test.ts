@@ -121,3 +121,36 @@ describe('the SafeTensor rule has one meaning in SQL and TypeScript', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The OTHER SafeTensor rule — a custom training base model must ship SafeTensor weights — CAN be
+ * stated once, because both consumers are TypeScript: the main app's `checkCustomModel`
+ * (training.orch.ts, format read from the ModelFile row) and the training studio's submit
+ * validator (train-core.ts, format read from the orchestrator's `getResource`). Its single home is
+ * `@civitai/shared/training-custom-model`; a local `'SafeTensor'`/`'safeTensor'` literal in either
+ * consumer is the divergence starting again.
+ */
+const TRAINING_HELPER = 'packages/civitai-shared/src/training-custom-model.ts';
+const TRAINING_ORCH = 'src/server/services/orchestrator/training/training.orch.ts';
+const STUDIO_CORE = 'apps/training-studio/src/lib/train-core.ts';
+const HELPER_SPECIFIER = "'@civitai/shared/training-custom-model'";
+
+describe('the custom-model training rule has one home', () => {
+  const helper = readFileSync(path.join(repoRoot, TRAINING_HELPER), 'utf8');
+  const orch = readFileSync(path.join(repoRoot, TRAINING_ORCH), 'utf8');
+  const studio = readFileSync(path.join(repoRoot, STUDIO_CORE), 'utf8');
+
+  it('the shared helper states the rule case-insensitively (the DB spells it SafeTensor, the orchestrator safeTensor)', () => {
+    expect(helper).toMatch(/toLowerCase\(\) === 'safetensor'/);
+  });
+
+  it('the main app imports the rule instead of restating it', () => {
+    expect(orch).toContain(HELPER_SPECIFIER);
+    expect(orch).not.toMatch(/['"`]safetensor['"`]/i);
+  });
+
+  it('the training studio imports the same rule', () => {
+    expect(studio).toContain(HELPER_SPECIFIER);
+    expect(studio).not.toMatch(/['"`]safetensor['"`]/i);
+  });
+});

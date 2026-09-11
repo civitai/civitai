@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Trainings - Civitai</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+      --civitai-blue: #1971c2;
+      --civitai-buzz: #ffd740;
+      --civitai-success: #40c057;
+      --civitai-error: #fa5252;
+      --bg-primary: #1a1b1e;
+      --bg-secondary: #25262b;
+      --bg-elevated: #2c2e33;
+      --text-primary: #c1c2c5;
+      --text-heading: #ffffff;
+      --text-dimmed: #909296;
+    }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Animations */
+    @keyframes pulse-live {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(25, 113, 194, 0.7); }
+      70% { box-shadow: 0 0 0 6px rgba(25, 113, 194, 0); }
+    }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -1000px 0; }
+      100% { background-position: 1000px 0; }
+    }
+
+    .live-indicator {
+      width: 8px;
+      height: 8px;
+      background: var(--civitai-blue);
+      border-radius: 50%;
+      animation: pulse-dot 2s infinite;
+    }
+
+    .pulse-animate {
+      animation: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    .card-hover {
+      transition: all 200ms ease;
+      border: 1px solid transparent;
+    }
+
+    .card-hover:hover {
+      border-color: var(--bg-elevated);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .card-base {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid var(--bg-elevated);
+    }
+
+    /* Status Pills */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-training {
+      background: rgba(25, 113, 194, 0.15);
+      color: #64b5f6;
+    }
+
+    .status-ready {
+      background: rgba(64, 192, 87, 0.15);
+      color: var(--civitai-success);
+    }
+
+    .status-published {
+      background: rgba(76, 175, 80, 0.15);
+      color: #81c784;
+    }
+
+    .status-failed {
+      background: rgba(250, 82, 82, 0.15);
+      color: #ef5350;
+    }
+
+    .status-draft {
+      background: rgba(144, 146, 150, 0.15);
+      color: var(--text-dimmed);
+    }
+
+    /* Progress Bar */
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-elevated);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--civitai-blue), #42a5f5);
+      border-radius: 3px;
+      transition: width 400ms ease;
+    }
+
+    /* Sample Thumbnails */
+    .sample-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .sample-thumb {
+      width: 100%;
+      aspect-ratio: 1;
+      background: linear-gradient(135deg, #3d4555 0%, #2c3e50 100%);
+      border-radius: 8px;
+      border: 1px solid var(--bg-elevated);
+      overflow: hidden;
+      position: relative;
+      cursor: pointer;
+      transition: all 200ms ease;
+    }
+
+    .sample-thumb:hover {
+      border-color: var(--civitai-blue);
+      box-shadow: 0 4px 12px rgba(25, 113, 194, 0.2);
+      transform: scale(1.05);
+    }
+
+    .sample-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .sample-loading {
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      background-size: 1000px 100%;
+      animation: shimmer 2s infinite;
+    }
+
+    /* Chip Filters */
+    .chip {
+      background: transparent;
+      border: 1px solid var(--bg-elevated);
+      border-radius: 20px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      color: var(--text-primary);
+    }
+
+    .chip:hover {
+      border-color: var(--civitai-blue);
+      color: var(--civitai-blue);
+    }
+
+    .chip.active {
+      background: var(--civitai-blue);
+      border-color: var(--civitai-blue);
+      color: white;
+    }
+
+    /* Badge */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(25, 113, 194, 0.15);
+      color: #64b5f6;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge.buzz {
+      background: rgba(255, 215, 64, 0.15);
+      color: var(--civitai-buzz);
+    }
+
+    /* Button Styles */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 200ms ease;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--civitai-blue);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #1565c0;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 16px rgba(25, 113, 194, 0.3);
+    }
+
+    .btn-secondary {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--bg-elevated);
+    }
+
+    .btn-secondary:hover {
+      background: transparent;
+      border-color: var(--text-primary);
+    }
+
+    .btn-small {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    /* Layout */
+    .container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+    }
+
+    .header h1 {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin: 0;
+    }
+
+    .filters {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 28px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+
+    .filters-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dimmed);
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    /* Card Layout */
+    .card {
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      animation: slide-in 300ms ease forwards;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .card-title-group {
+      flex: 1;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin: 0 0 4px 0;
+    }
+
+    .card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-dimmed);
+    }
+
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .menu-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-dimmed);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 20px;
+      transition: color 200ms ease;
+    }
+
+    .menu-btn:hover {
+      color: var(--text-primary);
+    }
+
+    /* Card Sections */
+    .card-section {
+      margin-bottom: 16px;
+    }
+
+    .card-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .stat-label {
+      color: var(--text-dimmed);
+    }
+
+    .stat-value {
+      color: var(--text-heading);
+      font-weight: 600;
+    }
+
+    .badge-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .action-buttons .btn {
+      flex: 1;
+      justify-content: center;
+    }
+
+    /* Live Indicator */
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--civitai-blue);
+      margin-bottom: 12px;
+    }
+
+    /* Refund Note */
+    .refund-note {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(64, 192, 87, 0.1);
+      color: var(--civitai-success);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+      }
+
+      .header h1 {
+        font-size: 24px;
+      }
+    }
+
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      grid-column: 1 / -1;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      color: var(--text-dimmed);
+      margin-bottom: 16px;
+    }
+
+    .empty-state-text {
+      color: var(--text-dimmed);
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>My Trainings</h1>
+      <button class="btn btn-primary">
+        <i class="ti ti-plus"></i>
+        New Training
+      </button>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters">
+      <span class="filters-label">Filter:</span>
+      <button class="chip active">All</button>
+      <button class="chip">Training</button>
+      <button class="chip">Ready to Publish</button>
+      <button class="chip">Published</button>
+      <button class="chip">Failed</button>
+    </div>
+
+    <!-- Grid -->
+    <div class="grid">
+
+      <!-- Card 1: IN PROGRESS -->
+      <div class="card card-base card-hover">
+        <div class="live-badge">
+          <div class="live-indicator"></div>
+          Live Training
+        </div>
+
+        <div class="card-header">
+          <div class="card-title-group">
+            <h3 class="card-title">Anime Style LoRA v2</h3>
+            <div class="status-pill status-training">
+              <i class="ti ti-player-play-filled"></i>
+              Training
+            </div>
+          </div>
+          <button class="menu-btn">⋯</button>
+        </div>
+
+        <div class="card-section">
+          <div class="stat-row">
+            <span class="stat-label">Progress</span>
+            <span class="stat-value">Epoch 6 of 10 · 62%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: 62%"></div>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="stat-row">
+            <span class="stat-label">Elapsed Time</span>
+            <span class="stat-value">2h 34m</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Est. Completion</span>
+            <span class="stat-value">~45 min</span>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div style="font-size: 12px; color: var(--text-dimmed); margin-bottom: 8px;">Sample Previews</div>
+          <div class="sample-grid">
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart1/128/128" alt="sample 1">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart2/128/128" alt="sample 2">
+            </div>
+            <div class="sample-thumb sample-loading"></div>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="badge-group">
+            <span class="badge">Flux</span>
+            <span class="badge buzz">
+              <i class="ti ti-bolt"></i>
+              ⚡ 2,340 / 5,000
+            </span>
+          </div>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-item">
+            <i class="ti ti-calendar"></i>
+            Started Aug 23, 2026
+          </span>
+          <span class="meta-item">
+            <i class="ti ti-file-type-pdf"></i>
+            LoRA
+          </span>
+        </div>
+      </div>
+
+      <!-- Card 2: READY TO PUBLISH -->
+      <div class="card card-base card-hover">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h3 class="card-title">Portrait Lighting Study</h3>
+            <div class="status-pill status-ready">
+              <i class="ti ti-check-circle"></i>
+              Ready
+            </div>
+          </div>
+          <button class="menu-btn">⋯</button>
+        </div>
+
+        <div class="card-section">
+          <div style="font-size: 12px; color: var(--text-dimmed); margin-bottom: 8px;">
+            Completed in 3h 22m · Pick your favorite epoch
+          </div>
+          <div class="sample-grid">
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart3/128/128" alt="epoch 1">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart4/128/128" alt="epoch 2">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart5/128/128" alt="epoch 3">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart6/128/128" alt="epoch 4">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart7/128/128" alt="epoch 5">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart8/128/128" alt="epoch 6">
+            </div>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="badge-group">
+            <span class="badge">Flux</span>
+            <span class="badge buzz">
+              <i class="ti ti-bolt"></i>
+              ⚡ Charged: 5,000
+            </span>
+          </div>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-item">
+            <i class="ti ti-calendar"></i>
+            Completed Aug 22, 2026
+          </span>
+          <span class="meta-item">
+            <i class="ti ti-file-type-pdf"></i>
+            LoRA
+          </span>
+        </div>
+
+        <div class="action-buttons">
+          <button class="btn btn-primary">
+            <i class="ti ti-eye-check"></i>
+            Review & Publish
+          </button>
+        </div>
+      </div>
+
+      <!-- Card 3: PUBLISHED -->
+      <div class="card card-base card-hover">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h3 class="card-title">Cinematic Depth v1</h3>
+            <div class="status-pill status-published">
+              <i class="ti ti-star-filled"></i>
+              Published
+            </div>
+          </div>
+          <button class="menu-btn">⋯</button>
+        </div>
+
+        <div class="card-section">
+          <div class="sample-grid">
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart9/128/128" alt="published 1">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart10/128/128" alt="published 2">
+            </div>
+            <div class="sample-thumb">
+              <img src="https://picsum.photos/seed/aiart11/128/128" alt="published 3">
+            </div>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="stat-row">
+            <span class="stat-label">Downloads</span>
+            <span class="stat-value">1,247</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Rating</span>
+            <span class="stat-value">4.8 ⭐</span>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="badge-group">
+            <span class="badge">Flux</span>
+            <span class="badge buzz">
+              <i class="ti ti-bolt"></i>
+              ⚡ 5,000
+            </span>
+          </div>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-item">
+            <i class="ti ti-calendar"></i>
+            Published Aug 15, 2026
+          </span>
+          <span class="meta-item">
+            <i class="ti ti-file-type-pdf"></i>
+            LoRA
+          </span>
+        </div>
+
+        <div class="action-buttons">
+          <button class="btn btn-secondary btn-small">
+            <i class="ti ti-external-link"></i>
+            View Model
+          </button>
+          <button class="btn btn-secondary btn-small">
+            <i class="ti ti-download"></i>
+            Download
+          </button>
+        </div>
+      </div>
+
+      <!-- Card 4: FAILED -->
+      <div class="card card-base card-hover">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h3 class="card-title">Experimental Blend v3</h3>
+            <div class="status-pill status-failed">
+              <i class="ti ti-alert-circle"></i>
+              Failed
+            </div>
+          </div>
+          <button class="menu-btn">⋯</button>
+        </div>
+
+        <div class="card-section">
+          <div style="font-size: 13px; color: #ef5350; margin-bottom: 8px;">
+            <i class="ti ti-info-circle" style="vertical-align: -2px;"></i>
+            Training crashed at epoch 8. Memory exceeded.
+          </div>
+          <div class="refund-note">
+            <i class="ti ti-check"></i>
+            Refunded ⚡ 2,400
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="badge-group">
+            <span class="badge">Flux</span>
+          </div>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-item">
+            <i class="ti ti-calendar"></i>
+            Failed Aug 20, 2026
+          </span>
+          <span class="meta-item">
+            <i class="ti ti-file-type-pdf"></i>
+            LoRA
+          </span>
+        </div>
+
+        <div class="action-buttons">
+          <button class="btn btn-primary btn-small">
+            <i class="ti ti-repeat"></i>
+            Retry
+          </button>
+          <button class="btn btn-secondary btn-small">View Error</button>
+        </div>
+      </div>
+
+      <!-- Card 5: DRAFT -->
+      <div class="card card-base card-hover">
+        <div class="card-header">
+          <div class="card-title-group">
+            <h3 class="card-title">Untitled Training</h3>
+            <div class="status-pill status-draft">
+              <i class="ti ti-file"></i>
+              Draft
+            </div>
+          </div>
+          <button class="menu-btn">⋯</button>
+        </div>
+
+        <div class="card-section">
+          <div style="font-size: 13px; color: var(--text-dimmed); line-height: 1.5;">
+            Set up your training dataset, choose a base model, and configure your LoRA parameters to get started.
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="stat-row">
+            <span class="stat-label">Base Model</span>
+            <span class="stat-value">Not selected</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Images</span>
+            <span class="stat-value">0 uploaded</span>
+          </div>
+        </div>
+
+        <div class="card-section">
+          <div class="badge-group">
+            <span class="badge">Awaiting setup</span>
+          </div>
+        </div>
+
+        <div class="card-meta">
+          <span class="meta-item">
+            <i class="ti ti-calendar"></i>
+            Created Aug 24, 2026
+          </span>
+        </div>
+
+        <div class="action-buttons">
+          <button class="btn btn-primary">
+            <i class="ti ti-pencil"></i>
+            Resume Setup
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

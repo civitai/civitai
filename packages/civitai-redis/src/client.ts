@@ -1999,6 +1999,10 @@ export const REDIS_SYS_KEYS = {
     ENGINES: 'generation:engines',
     /** @deprecated See REDIS_KEYS.GENERATION.TOKENS_OWNED — bearers moved to an owner-tagged key. */
     TOKENS: 'generation:tokens',
+    // The training-studio app's own per-user orchestrator-token cache (packed hash, field=userId).
+    // Distinct from TOKENS (the main app's raw-string hash) so its wrapper-packed writes can't corrupt
+    // the main app's raw reads of the same field.
+    ORCHESTRATOR_TOKENS: 'packed:generation:orchestrator-tokens',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
@@ -2037,6 +2041,9 @@ export const REDIS_SYS_KEYS = {
   },
   TRAINING: {
     STATUS: 'training:status',
+    // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
+    // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
+    STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
   },
   CLIENT: 'client',
   SYSTEM: {

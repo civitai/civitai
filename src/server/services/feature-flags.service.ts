@@ -250,6 +250,18 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
+  // The embedded Training Studio (/training-studio). Flipt segments own WHO can use it; within
+  // that population it's an opt-in settings toggle (default off). The overlay withholds the key
+  // from users Flipt hasn't granted (see fliptGatedToggleableKeys), so a toggle can't override
+  // the gate; the mod static fallback keeps a missing Flipt flag from opening it to everyone.
+  trainingStudioUi: {
+    toggleable: true,
+    default: false,
+    displayName: 'Training Studio (new)',
+    description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
+    availability: ['mod'],
+    fliptKey: 'training-studio-ui',
+  },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -679,10 +691,12 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // --------------------------
 // Logic
 // --------------------------
-type FeatureAccessContext = {
+export type FeatureAccessContext = {
   user?: SessionUser;
   host?: string;
-  req: NextApiRequest | IncomingMessage;
+  /** Optional: `_app`'s client-side getInitialProps has no request. Every consumer already guards
+   *  a nullish req (featureAccessKey, checkRegionAccess, `req?.headers.host`). */
+  req?: NextApiRequest | IncomingMessage;
 };
 
 /**
@@ -1095,6 +1109,30 @@ export const domainRestrictedToggleableKeys = new Set(
     .map(([key]) => key as FeatureFlagKey)
 );
 
+/** Toggleable flags whose ELIGIBILITY is decided by Flipt: the toggle only exists for users the
+ *  Flipt flag grants. The overlay withholds these keys when the host-resolved flag is off, so a
+ *  written toggle can't override the gate (the client merges overlay over host flags). */
+export const fliptGatedToggleableKeys = new Set(
+  Object.entries(featureFlags)
+    .filter(([, value]) => value.toggleable && 'fliptKey' in value && value.fliptKey)
+    .map(([key]) => key as FeatureFlagKey)
+);
+
+/** Host-level ELIGIBILITY for the Flipt-gated toggleable keys. These keys are toggleable with
+ *  `default: false`, so `isFeatureFlagKeyPresent` keeps them out of every FeatureAccess payload
+ *  (the base layer must stay off for users who haven't opted in) — which means PRESENCE in host
+ *  flags can never answer "may this user opt in": it reads false for eligible users too, and an
+ *  overlay gated on it withholds the toggle from everyone. Evaluate `hasFeature` directly (Flipt
+ *  gate, or the static fallback when the flag is missing) for exactly these keys. */
+export function getFliptGatedEligibility(
+  ctx: FeatureAccessContext
+): Partial<Record<FeatureFlagKey, boolean>> {
+  const fliptContext = buildFliptContext(ctx.user);
+  const out: Partial<Record<FeatureFlagKey, boolean>> = {};
+  for (const key of fliptGatedToggleableKeys) out[key] = hasFeature(key, ctx, fliptContext);
+  return out;
+}
+
 export const defaultToggleableFeatures = toggleableFeatures.reduce(
   (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
   {} as FeatureAccess
@@ -1112,7 +1150,10 @@ export const defaultToggleableFeatures = toggleableFeatures.reduce(
  */
 export function computeUserFeatureFlagsOverlay(
   userFeatures: Record<string, boolean> | undefined,
-  hostFeatures: FeatureAccess
+  hostFeatures: FeatureAccess,
+  /** From `getFliptGatedEligibility` — presence in `hostFeatures` cannot stand in for it (see that
+   *  helper). Without it the Flipt-gated keys fall back to presence and are withheld from everyone. */
+  gatedEligibility?: Partial<Record<FeatureFlagKey, boolean>>
 ): FeatureAccess {
   const features = userFeatures ?? {};
 
@@ -1128,9 +1169,15 @@ export function computeUserFeatureFlagsOverlay(
     ...filteredUserFeatures,
   } as FeatureAccess;
 
-  // Don't let toggleable defaults override domain restrictions
+  // Don't let toggleable defaults override domain restrictions or Flipt eligibility gates
   for (const key of domainRestrictedToggleableKeys) {
     if (key in result && !hostFeatures[key]) {
+      delete result[key];
+    }
+  }
+  for (const key of fliptGatedToggleableKeys) {
+    const eligible = gatedEligibility ? !!gatedEligibility[key] : !!hostFeatures[key];
+    if (key in result && !eligible) {
       delete result[key];
     }
   }

@@ -14,7 +14,8 @@
     "./type-guards": "./src/type-guards.ts",
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",
-    "./image-ingestion": "./src/image-ingestion.ts"
+    "./image-ingestion": "./src/image-ingestion.ts",
+    "./training-custom-model": "./src/training-custom-model.ts"
   },
   "scripts": {
     "test": "vitest run",

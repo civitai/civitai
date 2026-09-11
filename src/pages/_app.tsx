@@ -491,9 +491,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
   } = settingsBootstrap;
-  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay } = await import(
-    '~/server/services/feature-flags.service'
-  );
+  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
+    await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,
@@ -519,7 +518,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   rides down through pageProps to AppProvider as-is.
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
-    userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
+    userFeatureFlags = computeUserFeatureFlagsOverlay(
+      settings.features,
+      flags,
+      getFliptGatedEligibility({ user: session.user, host: request?.headers.host, req: request })
+    );
   }
 
   // SSR-seed `chat.getUserSettings` (logged-in only) so the chat widget reads a
