@@ -121,6 +121,24 @@ describe('getEdgeUrlSrcSet', () => {
     }
   });
 
+  it('escapes whitespace in a name so the candidate is not silently dropped', () => {
+    // A raw space TERMINATES a srcset URL: the rest of the filename is read as the
+    // descriptor, found invalid, and the candidate is dropped — leaving the browser on
+    // `src`, i.e. 1x, with no error. Image names routinely contain spaces.
+    const srcSet = getEdgeUrlSrcSet(SRC, { width: 800, name: 'Unstable Bastard_312879214.png' });
+    // Every candidate must be `<url><space><descriptor>` with no space inside the url.
+    for (const candidate of (srcSet ?? '').split(', ')) {
+      const [url, descriptor, ...extra] = candidate.split(' ');
+      expect(extra).toEqual([]);
+      expect(descriptor).toMatch(/^\dx$/);
+      expect(url).toContain('%20');
+    }
+    expect(descriptors(srcSet)).toEqual([
+      { width: 800, descriptor: '1x' },
+      { width: 1600, descriptor: `${SRCSET_DPR}x` },
+    ]);
+  });
+
   it('omits the attribute when the 2x variant cannot exceed the 1x one', () => {
     // Both clamp to MAX_EDGE_WIDTH, so a srcSet here would list the same URL twice.
     expect(getEdgeUrlSrcSet(SRC, { width: MAX_EDGE_WIDTH })).toBeUndefined();

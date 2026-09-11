@@ -147,9 +147,28 @@ export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'>
   if (scaled <= base) return undefined;
 
   return [
-    `${getEdgeUrl(src, { ...options, width: base })} 1x`,
-    `${getEdgeUrl(src, { ...options, width: scaled })} ${SRCSET_DPR}x`,
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: base }))} 1x`,
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${SRCSET_DPR}x`,
   ].join(', ');
+}
+
+/**
+ * A delivery URL ends in the image's `name`, which routinely contains spaces
+ * ("..._Unstable Bastard_312879214.png"). `src` tolerates that — the browser encodes it — but
+ * in `srcset` whitespace TERMINATES the URL, so the rest of the filename is read as the
+ * descriptor, found invalid, and the candidate is silently dropped. Every candidate drops and
+ * the browser falls back to `src`, i.e. the 1x variant, with no error anywhere.
+ *
+ * Only ASCII whitespace needs escaping, and each character is encoded as itself: the srcset
+ * parser ends a URL at whitespace alone, so the commas `getEdgeUrl` puts in the params segment
+ * are already safe where they sit, and a non-breaking space is not a terminator — rewriting one
+ * to %20 would request a different object than `src` does.
+ */
+function srcSetSafe(url: string) {
+  return url.replace(
+    /[\t\n\f\r ]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`
+  );
 }
 
 export function getEdgeUrl(
