@@ -4123,7 +4123,8 @@ export const setAssociatedResources = async (
     }),
   ]);
 
-  const reciprocalResult = reciprocal
+  const reciprocalRequested = new Set(reciprocal ?? []);
+  const reciprocalResult = reciprocalRequested.size
     ? await addReciprocalAssociations({
         fromId,
         ownerId: fromModel.userId,
@@ -4139,7 +4140,11 @@ export const setAssociatedResources = async (
         // about that more often than it looks: it writes its own id-less array into the query
         // cache after a save, so a second save in the same page session presents every row as
         // new. Comparing model ids is immune to that, and to a caller omitting an id on purpose.
-        targetIds: selectNewlyAddedModelIds(associations, existingModelTargets),
+        // The shared derivation decides what is eligible; the request only narrows it. A caller
+        // naming a model that was already on the list, or one it does not own, gets nothing.
+        targetIds: selectNewlyAddedModelIds(associations, existingModelTargets).filter((id) =>
+          reciprocalRequested.has(id)
+        ),
         actorId: user?.id,
       })
     : { linked: 0, skipped: [] };

@@ -13,7 +13,7 @@ import {
   Alert,
   Badge,
   Box,
-  Checkbox,
+  Chip,
 } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
@@ -61,7 +61,7 @@ export function AssociateModels({
     browsingLevel: allBrowsingLevelsFlag,
   });
   const [associatedResources, setAssociatedResources] = useState<State>(data);
-  const [reciprocal, setReciprocal] = useState(false);
+  const [linkBack, setLinkBack] = useState<number[]>([]);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
 
   const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
@@ -85,7 +85,7 @@ export function AssociateModels({
         queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type }),
       ]);
       setChanged(false);
-      setReciprocal(false);
+      setLinkBack([]);
       onSave?.();
     },
   });
@@ -129,7 +129,7 @@ export function AssociateModels({
 
   const handleReset = () => {
     setChanged(false);
-    setReciprocal(false);
+    setLinkBack([]);
     setAssociatedResources(data);
   };
 
@@ -142,7 +142,7 @@ export function AssociateModels({
         resourceType,
         resourceId: item.id,
       })),
-      reciprocal: reciprocal && newlyAdded.length > 0,
+      reciprocal: linkBack.filter((id) => reciprocalEligible.has(id)),
     });
   };
 
@@ -167,9 +167,20 @@ export function AssociateModels({
     savedTargetIds
   );
   const newlyAddedIds = new Set(newlyAdded);
-  const ownedNewCount = associatedResources.filter(
-    ({ item }) => newlyAddedIds.has(item.id) && item.user.id === ownerId
-  ).length;
+  // A row can be linked back only if it is newly added AND the creator owns it. The first half
+  // comes from the shared derivation the server also uses; the second is the same ownership
+  // rule the server re-derives from the database, which remains the authority.
+  const reciprocalEligible = new Set(
+    associatedResources
+      .filter(({ item }) => newlyAddedIds.has(item.id) && item.user.id === ownerId)
+      .map(({ item }) => item.id)
+  );
+  const toggleLinkBack = (modelId: number) => {
+    setChanged(true);
+    setLinkBack((current) =>
+      current.includes(modelId) ? current.filter((id) => id !== modelId) : [...current, modelId]
+    );
+  };
 
   return (
     <Stack>
@@ -213,7 +224,18 @@ export function AssociateModels({
                 <Stack gap={4}>
                   {associatedResources.map((association) => (
                     <SortableItem key={association.item.id} id={association.item.id}>
-                      <Card withBorder pl={4} pr={6} pt={4} pb={6}>
+                      <Card
+                        withBorder
+                        pl={4}
+                        pr={6}
+                        pt={4}
+                        pb={6}
+                        className={
+                          newlyAddedIds.has(association.item.id)
+                            ? 'border-blue-5 dark:border-blue-5'
+                            : undefined
+                        }
+                      >
                         <Group justify="space-between" wrap="nowrap">
                           <Group align="center" gap="xs" wrap="nowrap">
                             <IconGripVertical />
@@ -227,17 +249,22 @@ export function AssociateModels({
                                 <Badge size="xs">
                                   {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
-                                {newlyAddedIds.has(association.item.id) && (
-                                  <Badge size="xs" color="green">
-                                    New
+                                {reciprocalEligible.has(association.item.id) ? (
+                                  <Chip
+                                    size="xs"
+                                    checked={linkBack.includes(association.item.id)}
+                                    onChange={() => toggleLinkBack(association.item.id)}
+                                  >
+                                    Link back
+                                  </Chip>
+                                ) : (
+                                  <Badge size="xs" pl={4}>
+                                    <Group gap={2}>
+                                      <IconUser size={12} strokeWidth={2.5} />
+                                      {association.item.user.username}
+                                    </Group>
                                   </Badge>
                                 )}
-                                <Badge size="xs" pl={4}>
-                                  <Group gap={2}>
-                                    <IconUser size={12} strokeWidth={2.5} />
-                                    {association.item.user.username}
-                                  </Group>
-                                </Badge>
                                 {!getIsSafeBrowsingLevel(association.item.nsfwLevel) && (
                                   <Badge color="red" size="xs">
                                     NSFW
@@ -265,26 +292,6 @@ export function AssociateModels({
           )}
         </Stack>
       )}
-      {newlyAdded.length > 0 && (
-        <Checkbox
-          checked={reciprocal}
-          onChange={(event) => {
-            setReciprocal(event.currentTarget.checked);
-            setChanged(true);
-          }}
-          label="Link both ways"
-          description={`Also adds this model to the suggested resources of ${
-            ownedNewCount === newlyAdded.length
-              ? newlyAdded.length === 1
-                ? 'the model marked New'
-                : `the ${newlyAdded.length} models marked New`
-              : `the ${ownedNewCount} of ${newlyAdded.length} models marked New that ${
-                  currentUser?.id === ownerId ? 'you own' : 'this creator owns'
-                }`
-          }. Resources already on the list are untouched, and a link added this way stays on the other model until it is removed there.`}
-        />
-      )}
-
       {changed && (
         <Group justify="flex-end">
           <Button variant="default" onClick={handleReset}>

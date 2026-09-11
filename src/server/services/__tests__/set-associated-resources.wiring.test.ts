@@ -154,7 +154,45 @@ describe('setAssociatedResources — reciprocal wiring', () => {
   // The opt-in itself. Deleting the `reciprocal` ternary in model.service.ts makes every
   // Suggested-Resources save on the site rewrite other models' lists; before this test, that
   // mutation turned nothing red. If you are removing the flag, you are removing the opt-in.
-  it('writes no back-link at all when the checkbox was not ticked', async () => {
+  // The request is a request, not an instruction. A caller naming a model that was already on
+  // the list, or one the owner does not own, gets nothing for it — the shared derivation and
+  // the ownership check both still run and the list only narrows them.
+  it('ignores a requested model that was not added in this edit', async () => {
+    givenSourceModel([[11, 2]]);
+    givenTargets([
+      { id: 2, userId: OWNER },
+      { id: 3, userId: OWNER },
+    ]);
+
+    await save(
+      [
+        { resourceId: 2, resourceType: 'model', id: 11 },
+        { resourceId: 3, resourceType: 'model' },
+      ],
+      { reciprocal: [2, 3] }
+    );
+
+    expect(createdRows().map((row) => row.fromModelId)).toEqual([3]);
+  });
+
+  it('links back only the rows the caller asked for', async () => {
+    givenTargets([
+      { id: 2, userId: OWNER },
+      { id: 3, userId: OWNER },
+    ]);
+
+    await save(
+      [
+        { resourceId: 2, resourceType: 'model' },
+        { resourceId: 3, resourceType: 'model' },
+      ],
+      { reciprocal: [3] }
+    );
+
+    expect(createdRows().map((row) => row.fromModelId)).toEqual([3]);
+  });
+
+  it('writes no back-link at all when nothing was asked for', async () => {
     givenTargets([{ id: 2, userId: OWNER }]);
 
     await save([{ resourceId: 2, resourceType: 'model' }]);
@@ -165,7 +203,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
   it('writes the back-link when it was ticked', async () => {
     givenTargets([{ id: 2, userId: OWNER }]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbWrite.modelAssociations.createMany).toHaveBeenCalledTimes(1);
     expect(createdRows()).toEqual([
@@ -188,7 +226,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
         { resourceId: 2, resourceType: 'model' },
         { resourceId: 3, resourceType: 'model' },
       ],
-      { reciprocal: true, user: moderator }
+      { reciprocal: [2, 3], user: moderator }
     );
 
     expect(createdRows()).toEqual([
@@ -199,7 +237,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
   it('asks the database for each target owner', async () => {
     givenTargets([{ id: 2, userId: 555 }]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ select: { id: true, userId: true } })
@@ -213,7 +251,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
   it('reads ownership from the writer, never the replica', async () => {
     givenTargets([{ id: 2, userId: OWNER }]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.modelAssociations.findMany).not.toHaveBeenCalled();
@@ -227,7 +265,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
     givenTargets([{ id: 2, userId: OWNER }]);
     givenTargetLists([{ fromModelId: 2, toModelId: SOURCE }]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbWrite.modelAssociations.createMany).not.toHaveBeenCalled();
   });
@@ -241,7 +279,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
       { fromModelId: 99, toModelId: 73 },
     ]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(createdRows()).toEqual([
       { fromModelId: 2, toModelId: SOURCE, index: 3, type: 'Suggested', associatedById: OWNER },
@@ -270,7 +308,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
         { resourceId: 2, resourceType: 'model' },
         { resourceId: 3, resourceType: 'model' },
       ],
-      { reciprocal: true }
+      { reciprocal: [2, 3, 5] }
     );
 
     expect(createdRows().map((row) => [row.fromModelId, row.index])).toEqual([
@@ -291,7 +329,9 @@ describe('setAssociatedResources — reciprocal wiring', () => {
       }))
     );
 
-    const result = await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    const result = await save([{ resourceId: 2, resourceType: 'model' }], {
+      reciprocal: [2, 3, 5],
+    });
 
     expect(dbMock.dbWrite.modelAssociations.createMany).not.toHaveBeenCalled();
     expect(result.reciprocal).toEqual({
@@ -306,7 +346,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
   it('asks Postgres to swallow a duplicate rather than fail the save', async () => {
     givenTargets([{ id: 2, userId: OWNER }]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbWrite.modelAssociations.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ skipDuplicates: true })
@@ -330,7 +370,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
         { resourceId: 2, resourceType: 'model', id: 11 },
         { resourceId: 3, resourceType: 'model' },
       ],
-      { reciprocal: true }
+      { reciprocal: [2, 3, 5] }
     );
 
     expect(createdRows().map((row) => row.fromModelId)).toEqual([3]);
@@ -345,7 +385,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
     givenSourceModel([[11, 2]]);
     givenTargets([{ id: 2, userId: OWNER }]);
 
-    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbWrite.modelAssociations.createMany).not.toHaveBeenCalled();
   });
@@ -358,7 +398,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
         { resourceId: 2, resourceType: 'model' },
         { resourceId: 7, resourceType: 'article' },
       ],
-      { reciprocal: true }
+      { reciprocal: [2, 3, 5] }
     );
 
     expect(dbMock.dbWrite.model.findMany).toHaveBeenCalledWith(
@@ -379,7 +419,7 @@ describe('setAssociatedResources — reciprocal wiring', () => {
     ]);
     givenTargets([{ id: 2, userId: OWNER }]);
 
-    await save([{ resourceId: 2, resourceType: 'model', id: 11 }], { reciprocal: true });
+    await save([{ resourceId: 2, resourceType: 'model', id: 11 }], { reciprocal: [2, 3, 5] });
 
     expect(dbMock.dbWrite.modelAssociations.deleteMany).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.modelAssociations.deleteMany).toHaveBeenCalledWith({
