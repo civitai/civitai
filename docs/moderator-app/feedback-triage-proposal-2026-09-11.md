@@ -32,7 +32,7 @@ Faro at submit time and is *not* produced by the context builder.
 
 ### The motivating problem
 
-Measured against `cnpg-cluster-nvme0-5`, db `civitai`, 2026-09-11:
+Measured against the production `civitai` database, 2026-09-11:
 
 | area | rows | window | status |
 | --- | --- | --- | --- |
@@ -226,12 +226,14 @@ pod rather than from a manifest, so this is what Grafana actually loaded. It is 
 will not change under a redeploy — it is declared in the GitOps values. Grafana is **13.1.1**, so the
 `panes` Explore state is the current form and the legacy `?left=` parameter is not something to build on.
 
-**Base URL: `https://grafana-new.civitai.com`.** New config for this app — it carries no Grafana variable
-today. A public var (`PUBLIC_GRAFANA_URL`), because the link is built for the browser; **the link must
-not render at all when it is unset**, rather than pointing at `undefined/explore`.
+**Base URL: a new `PUBLIC_GRAFANA_URL`.** This app carries no Grafana variable today. A *public* var,
+because the link is built for the browser; **the link must not render at all when it is unset**, rather
+than pointing at `undefined/explore`. 🔴 The origin itself is deliberately not written down here — this
+repo is public, and the Grafana origin is internal. Take the value from the infra repo's
+`civitai-moderator` deployment config when wiring it.
 
 ```
-https://grafana-new.civitai.com/explore
+${PUBLIC_GRAFANA_URL}/explore
   ?schemaVersion=1
   &orgId=1
   &panes=<encodeURIComponent(JSON.stringify(pane))>
