@@ -433,18 +433,34 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     // intermediate — then 0.8482, then 0.8499 after one more paragraph landed here); every
     // line added to `activity.tsx`, code or comment, moves both. The BOUNDS are asserted in
     // code below and cannot go stale; the ratios are outputs. Re-derive rather than trusting
-    // a number in prose:
-    //   node -e 'const f=require("fs").readFileSync("src/pages/apps/activity.tsx","utf8"),
-    //     r=t=>t.split("").filter(c=>c===" ").length/t.length, i=f.indexOf("app's");
-    //     console.log(r(f.slice(0,i)+f.slice(i).replace(/[^\n]/g," ")))'
+    // a number in prose — run this from the repo root:
+    //   node -e "const f=require('fs').readFileSync('src/pages/apps/activity.tsx','utf8'),
+    //     r=t=>t.split('').filter(c=>c===' ').length/t.length,
+    //     i=f.indexOf(String.fromCharCode(97,112,112,39,115));
+    //     console.log(r(f.slice(0,i)+f.slice(i).replace(/[^\n]/g,' ')))"
+    // ⚠️ THE `String.fromCharCode` IS NOT AFFECTATION — it spells the apostrophe in `app's`,
+    // and an earlier revision of this command wrote that literal inside a SINGLE-quoted
+    // `node -e '…'`. The apostrophe closed the shell string, so pasting it gave
+    // `unexpected EOF` and printed nothing: a re-derivation instruction that could not be
+    // run, replacing figures that were merely stale. Verified by RUNNING the form above, as
+    // written, in both bash and zsh — test the pasted form, not the program.
     // That prints the CONTROL; the live masked ratio is whatever this test reports when the
-    // bound below fails. A bound set just above whatever the file currently reads would be
-    // the 0.0018-headroom mistake again.
+    // bound below fails. A bound set just above whatever the file currently reads would
+    // repeat the no-headroom mistake — for the 0.55 bound that margin was 0.0014 (see five
+    // paragraphs up); against 0.65 on `origin/main` it was ≈0.0049, per the measurement
+    // above. (An earlier revision wrote 0.0018 here, which is the margin at THIS PR's own
+    // round-1 commit — a tree this comment never names, and irreconcilable with the ≈0.645
+    // figure 25 lines up.)
     //
     // ⚠️ KNOWN COST, recorded rather than discovered later: 0.70 is less sensitive to a
-    // PARTIAL, late-file desync — one blanking ≲13% of the tail now passes. Accepted
-    // because 0.65 was unusable at 0.0018 headroom, and because the functional check in
-    // this test is the `features.appBlocks` occurrence count above, not the ratio.
+    // PARTIAL, late-file desync than 0.65 was — a blanking confined to the tail can now
+    // pass. ⚠️ NO PERCENTAGE IS QUOTED ON PURPOSE: the naive model (`L + p(1−L) = 0.70`)
+    // overstates the sensitivity badly, because the tail of this file is comment- and
+    // JSX-dense and so is ALREADY mostly spaces after masking, and two revisions of this
+    // clause have now put a wrong figure here. Measure it against the masked text if it
+    // ever matters. Accepted regardless: 0.65 was unusable at the headroom above, and the
+    // functional check in this test is the `features.appBlocks` occurrence count, not the
+    // ratio.
     const spaceRatio = (text: string) =>
       text.split('').filter((c) => c === ' ').length / text.length;
     expect(spaceRatio(masked)).toBeLessThan(0.7);
