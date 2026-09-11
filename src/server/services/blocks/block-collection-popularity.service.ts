@@ -83,6 +83,55 @@ export type WindowedPeriod = keyof typeof PERIOD_WINDOW_DAYS;
 export const CH_RANKING_DEPTH = 10_000;
 
 /**
+ * How many times one request may ASK ClickHouse for its ranking.
+ *
+ * 🔴 MORE THAN ONE, BECAUSE THE TRANSPORT UNDER THIS QUERY DROPS REQUESTS AT A RATE A
+ * ONE-SHOT READ CANNOT ABSORB, AND A DROP HERE IS USER-VISIBLE. `@clickhouse/client`
+ * 0.2.10 pools keep-alive sockets and proactively destroys any it hands out that has
+ * been idle longer than `keep_alive.socket_ttl` (2500 ms, set in
+ * `packages/civitai-clickhouse/src/client.ts`). When the socket it is handed is stale
+ * it destroys that socket and asks the agent for another — four times — and then
+ * throws `Socket hang up after 3 retries`, instantly, before a byte reaches
+ * ClickHouse. Measured against the production deployment on 2026-09-11: **~341 such
+ * throws per hour** app-wide, and the single live `period=Month` request in that
+ * day's ingress access log (21:58:27Z) is one of them — it degraded to the all-time Postgres
+ * ordering and rendered the app's "ranking isn't available right now" note.
+ *
+ * 🔴 THE CLIENT'S OWN FOUR ATTEMPTS ARE NOT A SUBSTITUTE, AND AN ATTEMPT HERE IS BEST
+ * READ AS "DRAIN UP TO FOUR MORE STALE SOCKETS". No `max_open_connections` is
+ * configured, so Node's agent pools without bound and a burst can leave more than four
+ * idle sockets behind; each failed `$query` retires the four it touched, so a further
+ * ask is materially more likely to reach a live or brand-new connection than the one
+ * before it. THREE is therefore a probability improvement, not a guarantee — the
+ * durable fix is at the shared client (bound the pool, or stop handing out sockets
+ * this close to their TTL), which is an app-wide change and deliberately not made from
+ * this feature.
+ *
+ * 🔴 IT IS A RETRY OF A `SELECT`, AND NOTHING ELSE MAY EVER BE RETRIED HERE. This
+ * query reads; it has no side effect to duplicate. A future writer on this path must
+ * not inherit the loop.
+ */
+export const CH_RANKING_MAX_ATTEMPTS = 3;
+
+/**
+ * How long a FAILED attempt may have taken and still earn a retry.
+ *
+ * 🔴 THE BUDGET IS WHAT KEEPS THE RETRY FROM DOUBLING A HANG — it is the reason this
+ * is a budget and not a plain attempt count. The failure mode above is instantaneous
+ * (the socket is destroyed locally, nothing is sent), so every attempt it allows fits
+ * inside the budget many times over. The failure mode that must NOT be retried is a
+ * slow one — `@clickhouse/client`'s own 30 s `request_timeout` against a saturated or
+ * unreachable server — because retrying that parks a user-facing discovery request for
+ * a further 30 s to reach the same answer it already had. Elapsed time is the signal
+ * that separates them, so elapsed time is what is measured.
+ *
+ * 1500 ms sits an order of magnitude above the whole healthy query (Month ranks
+ * 10,000 ids in ~33 ms server-side) and two orders below the hang it excludes, so
+ * neither boundary is near it.
+ */
+export const CH_RANKING_RETRY_BUDGET_MS = 1_500;
+
+/**
  * Is this period one ClickHouse can serve?
  *
  * `AllTime` and an absent period are BOTH false — the caller must take its
@@ -156,20 +205,42 @@ export async function getWindowedCollectionRanking({
     LIMIT ${Math.trunc(depth)}
   `;
 
-  try {
-    const rows = await clickhouse.$query<{ id: number }>(query);
-    return { ids: rows.map((r) => Number(r.id)), source: 'clickhouse' };
-  } catch (error) {
-    // Swallowed on purpose: discovery must keep serving. The caller degrades to
-    // its Postgres ordering and SAYS SO in the response, so the degradation is
-    // observable from the outside rather than only in this log line.
-    logToAxiom({
-      name: 'block-collection-ranking-degraded',
-      type: 'error',
-      message: error instanceof Error ? error.message : String(error),
-      period,
-      since,
-    }).catch(() => null);
-    return { ids: null, source: 'unavailable', reason: 'clickhouse-error' };
+  // ATTEMPT LOOP — see CH_RANKING_MAX_ATTEMPTS / CH_RANKING_RETRY_BUDGET_MS. The
+  // budget is measured from the START of the first attempt, not per attempt, so the
+  // whole loop costs at most CH_RANKING_RETRY_BUDGET_MS plus one final attempt —
+  // never CH_RANKING_MAX_ATTEMPTS × the client's own 30 s request_timeout.
+  const startedAt = Date.now();
+  let lastError: unknown;
+  let attempts = 0;
+  for (let attempt = 1; attempt <= CH_RANKING_MAX_ATTEMPTS; attempt++) {
+    attempts = attempt;
+    try {
+      const rows = await clickhouse.$query<{ id: number }>(query);
+      return { ids: rows.map((r) => Number(r.id)), source: 'clickhouse' };
+    } catch (error) {
+      lastError = error;
+      if (Date.now() - startedAt >= CH_RANKING_RETRY_BUDGET_MS) break;
+    }
   }
+
+  // Swallowed on purpose: discovery must keep serving. The caller degrades to
+  // its Postgres ordering and SAYS SO in the response, so the degradation is
+  // observable from the outside rather than only in this log line.
+  //
+  // `attempts` and `elapsedMs` are carried because together they are the one thing that
+  // separates the two faults this degrade can be. `attempts: 1` means the FIRST failure
+  // spent the whole retry budget — a slow fault (a hang, a saturated server), and the
+  // budget correctly declined to double it. `attempts: CH_RANKING_MAX_ATTEMPTS` with a
+  // small `elapsedMs` means every ask was refused instantly — the socket-pool fault, and
+  // a sign the retry is no longer enough on its own.
+  logToAxiom({
+    name: 'block-collection-ranking-degraded',
+    type: 'error',
+    message: lastError instanceof Error ? lastError.message : String(lastError),
+    period,
+    since,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+  }).catch(() => null);
+  return { ids: null, source: 'unavailable', reason: 'clickhouse-error' };
 }
