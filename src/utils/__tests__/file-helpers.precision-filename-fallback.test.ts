@@ -181,6 +181,19 @@ describe('inferPrecisionFromFileName', () => {
     );
   });
 
+  // Known-accepted, pinned so nobody reads the rule above as total coverage. Both shapes reach a
+  // word start with nothing in front to judge: the token at index 0, and the token behind a digit
+  // run that reaches the start of the name. 1 row in 40,351 job-id names, which is not worth a
+  // special case — if it becomes one, change these assertions, not the rule.
+  it('does accept a job id that begins with a precision token', () => {
+    expect(inferPrecisionFromFileName('NF4J1W4CGCKYETAEQJT9B5A0XY.safetensors', precisions)).toBe(
+      'nf4'
+    );
+    expect(inferPrecisionFromFileName('53NF4ZXWSGYEHXWCGH8B60.safetensors', precisions)).toBe(
+      'nf4'
+    );
+  });
+
   it('does not read int4 out of an ordinary word', () => {
     expect(
       inferPrecisionFromFileName(

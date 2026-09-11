@@ -101,9 +101,10 @@ const isAlphanumeric = (char: string) => /[A-Za-z0-9]/.test(char);
  * lowercase letter may sit behind a version number, as in `v20NF4` and `_51NVFP4`. An UPPERCASE
  * letter before the token does not count, digits between or not: trained-file job ids are 26-char
  * base32, uppercase letters AND digits, so `F2NF4J1W4CGCKYETAEQJT9B5A0` has to be refused by the
- * same rule that accepts `TzigoAnimeFlux_v2NF4`. Of the 16 prod names with a digit before an
- * uppercase token, 12 are job ids. Missing an all-lowercase glued name (`ltx23devnvfp4`) is the
- * side to fail on.
+ * same rule that accepts `TzigoAnimeFlux_v2NF4`. That refuses all 12 of the prod names where a
+ * digit precedes an uppercase token and keeps the 4 real ones. Index 0 is a word start by
+ * construction, so an id that BEGINS with a token is still accepted — 1 row in 40,351, left
+ * alone. Missing an all-lowercase glued name (`ltx23devnvfp4`) is the side to fail on.
  */
 function startsWord(name: string, index: number) {
   if (index === 0) return true;
@@ -138,9 +139,12 @@ function tokenPattern(precision: string) {
 }
 
 /**
- * Find a packaging scheme named in a file's name. Only values `precisions` offers and a dtype
- * cannot state are considered, so this can never contradict a header that was able to answer.
- * Longest option first, so `fp8_scaled` is not read as `fp8` and `nvfp4` not as `fp4`.
+ * Find a precision named in a file's name. Candidates are the values `precisions` offers minus
+ * `DTYPE_STATEABLE_FP` — which is narrower than "what a dtype can state", so `int8` and `mxfp8`
+ * are candidates here and a header answering one of the other four CAN be contradicted. That is
+ * the accepted tradeoff, not an oversight; `resolveUploadPrecision` carries the rest of the rule.
+ * Longest option first, which matters only when a mod adds a variant of an existing option —
+ * `fp4` inside `nvfp4` is refused by the word-start rule, not by the ordering.
  */
 export function inferPrecisionFromFileName(
   fileName: string,
@@ -166,9 +170,11 @@ export function inferPrecisionFromFileName(
 }
 
 /**
- * Combine the two signals for an upload. The header wins wherever it can speak: it only loses to
- * a name that claims a scheme no dtype can express, and it keeps a scheme it observed directly
- * (F8_E8M0 scales are MXFP8 whatever the name says).
+ * Combine the two signals for an upload. A header answer outside `DTYPE_STATEABLE_FP` was
+ * observed directly and wins outright (F8_E8M0 scales are MXFP8 whatever the name says). One
+ * inside it loses to any name that claims a candidate precision — deliberately, since that is
+ * how a U8-packed NVFP4 body stops being read as the fp32 of its leftover tensors, and the
+ * uploader can still edit the field.
  */
 export function resolveUploadPrecision({
   fileName,
