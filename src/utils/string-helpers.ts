@@ -312,12 +312,6 @@ export function isAir(identifier: string) {
   return Air.isAir(identifier);
 }
 
-export function getAirModelLink(identifier: string) {
-  const parsed = parseAIRSafe(identifier);
-  if (!parsed) return '/';
-  return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
-}
-
 export function safeDecodeURIComponent(str: string) {
   try {
     return decodeURIComponent(str);
