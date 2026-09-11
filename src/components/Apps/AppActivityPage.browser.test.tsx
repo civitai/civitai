@@ -679,6 +679,24 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * left the literal untouched and the whole file passed **26/26** — i.e. the exact
  * instruction this block exists to retract could be put back, as a second sentence, with
  * every test green. With `exact: true` that same append fails 2 of 26 on this locator.
+ *
+ * 🔴 BUT `exact: true` ALONE CLOSES ONLY THE SAME-ELEMENT APPEND — it is geometry, not
+ * string semantics, and an audit walked it: the locator matches the deepest element whose
+ * whole normalised subtree text equals the string, so moving the same sentence into a
+ * SIBLING `<Text>` in the same `<Stack>` leaves the pinned `<p>` byte-identical and the
+ * pin matches again. MEASURED: that sibling walk passed 26/26 with `exact: true` in place.
+ * Adding a line of copy as a new `<Text>` is at least as natural as extending an existing
+ * one, so this was the likely shape, not an exotic one. What closes it is the PAGE-WIDE
+ * absence check in the tripwire below — which is why that assertion is a phrase class
+ * rather than a literal, and why it reads `document.body.textContent` rather than this
+ * element. The two guards cover different geometry ON PURPOSE: this one pins the exact
+ * sentence, that one bans the instruction anywhere on the page.
+ *
+ * ⚠️ CONTAINMENT NOTE for the tripwire's wait: its anchor comes from the ACTIVITY panel,
+ * which is ungated, while the permissions panel is gated on `appBlocks`. So in a state
+ * where the permissions panel is absent entirely, the tripwire passes vacuously — the
+ * coverage for that state lives in the two tests that DO wait on the copy itself, which
+ * fail loudly in the same run. Do not read the tripwire alone as proof the panel exists.
  */
 describe('🔴 the revoke instruction is retracted, not reworded', () => {
   // 🔴 WIDENED WITH THE DATA SOURCE, NOT REWORDED FOR STYLE. `listMyScopeGrants` now also
@@ -727,12 +745,26 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     // under test. That proves the page rendered without coupling the wait to the thing
     // being asserted about.
     await expect.element(page.getByText(ACTIVITY_PANEL_ANCHOR)).toBeInTheDocument();
-    // Lower-cased on both sides: the retracted sentence began a sentence in the copy it
-    // came from, so a capitalised re-add slips past a lower-case `toContain`.
+    // 🔴 A PHRASE CLASS, NOT A LITERAL — and for an ABSENCE check that is the STRONGER
+    // choice, which is the exact inverse of the presence pin above. There, prose is
+    // walkable by rewording, so the whole string is pinned. Here, rewording IS the attack:
+    // a literal `toContain('to revoke access, remove the install')` is walked by
+    // "remove your install", "to withdraw a permission, remove the install", or any other
+    // spelling of the same false instruction.
+    //
+    // 🔴 PURPOSIVE, NOT MERELY CO-OCCURRING, because the honest copy legitimately mentions
+    // BOTH halves in one sentence in order to CONTRAST them ("Removing an install … does
+    // not withdraw a permission"). MEASURED against a looser co-occurrence pattern: it
+    // false-positives on an imperative rewrite of the HONEST copy ("Remove an install …
+    // but it does not withdraw a permission"). Requiring the infinitive-of-purpose
+    // ("to revoke/withdraw … remove … install", or the reverse order) rejects all three
+    // honest variants tried and catches all four dishonest ones.
+    const REVOKE_BY_UNINSTALL =
+      /\bto\s+(revoke|withdraw)\b[\s\S]{0,60}\bremov\w*\b[\s\S]{0,25}\binstall|\bremov\w*\b[\s\S]{0,25}\binstall[\s\S]{0,60}\bto\s+(revoke|withdraw)\b/i;
     expect(
-      (document.body.textContent ?? '').toLowerCase(),
+      document.body.textContent ?? '',
       'the copy instructs an uninstall as a way to revoke access, which it is not'
-    ).not.toContain('to revoke access, remove the install');
+    ).not.toMatch(REVOKE_BY_UNINSTALL);
   });
 
   test('🔴 POSITIVE CONTROL: the body text really is readable from here', async () => {
@@ -742,6 +774,6 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
-    expect(document.body.textContent ?? '').toContain('Recent actions apps have taken');
+    expect(document.body.textContent ?? '').toContain(ACTIVITY_PANEL_ANCHOR);
   });
 });
