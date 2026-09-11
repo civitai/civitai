@@ -127,9 +127,9 @@ describe('young-word anchoring (minor-review queue)', () => {
   });
 });
 
-// These 16 names are a legal commitment, not ordinary blocklist tuning. If a POI-list
-// migration drops them, this fails by name — do not delete it without confirming with a
-// maintainer that the obligation is discharged elsewhere.
+// Added under a rightsholder obligation, not as ordinary blocklist tuning. Do not delete
+// these entries or this test without confirming with a maintainer that the obligation is
+// discharged elsewhere.
 describe('POI — Diddl character names', () => {
   const diddlNames = [
     'diddl',
@@ -148,6 +148,9 @@ describe('POI — Diddl character names', () => {
     'tiplitaps',
     'diddldaddl',
     'blubberpeng',
+    // The merchandise is branded "Diddl Maus". The poi preprocessor DELETES `-` rather than
+    // splitting on it, so `diddl-maus` arrives as one token that `diddl` cannot match.
+    'diddlmaus',
   ];
 
   it('blocks each name', () => {
@@ -156,15 +159,14 @@ describe('POI — Diddl character names', () => {
     }
   });
 
-  // The half that can fail on a too-loose entry: POI is a hard block with no user override,
-  // so a name matching inside an unrelated word is an unappealable false positive.
-  it('does not block benign prompts that merely contain a name as a substring', () => {
+  // POI is a hard block with no user override, so a name matching inside a longer word is an
+  // unappealable false positive. Every control below really does contain `diddl`; only that
+  // entry is short enough to occur inside English words, so the others would assert nothing.
+  it('does not block longer real words that contain a name', () => {
     for (const prompt of [
       'diddley bow, blues guitar',
-      'a vanilla milkshake',
-      'mimicry, a mockingbird',
-      'galaxy in the night sky',
-      'a simple mouse drawing',
+      'diddling with the exposure slider',
+      'a paradiddle drum pattern',
     ]) {
       expect(includesPoi(prompt), prompt).toBe(false);
     }
