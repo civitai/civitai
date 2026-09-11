@@ -11,8 +11,13 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import * as z from 'zod';
+import {
+  MY_COLLECTIONS_LIST_INPUT,
+  decrementPendingReviewForCollection,
+  decrementPendingReviewTotal,
+} from '~/components/Collections/collection-review-counts';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -374,6 +379,32 @@ export const contestCollectionReactionsHidden = (
     collection.mode === CollectionMode.Contest &&
     !!collection.metadata?.votingPeriodStart &&
     isFutureDate(collection.metadata?.votingPeriodStart ?? new Date())
+  );
+};
+
+/**
+ * Bring the pending-review badges down when a reviewer decides items.
+ *
+ * Decrement first so the number moves before the network settles, then invalidate so it ends up
+ * right. Neither half is sufficient: the decrement alone drifts from the database across a session,
+ * and the invalidation alone leaves the badge visibly lagging every click.
+ */
+export const useOnCollectionItemsReviewed = () => {
+  const queryUtils = trpc.useUtils();
+
+  return useCallback(
+    ({ collectionId, reviewed }: { collectionId: number; reviewed: number }) => {
+      queryUtils.user.checkNotifications.setData(undefined, (old) =>
+        decrementPendingReviewTotal(old, reviewed)
+      );
+      queryUtils.collection.getAllUser.setData(MY_COLLECTIONS_LIST_INPUT, (old) =>
+        decrementPendingReviewForCollection(old, collectionId, reviewed)
+      );
+
+      queryUtils.user.checkNotifications.invalidate();
+      queryUtils.collection.getAllUser.invalidate(MY_COLLECTIONS_LIST_INPUT);
+    },
+    [queryUtils]
   );
 };
 

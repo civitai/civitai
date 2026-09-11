@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { CollectionInvitesButton } from '~/components/Collections/CollectionCollaborators/CollectionInvitesButton';
 import { MyCollections } from '~/components/Collections/MyCollections';
+import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
@@ -87,6 +88,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const [showSidebar, setShowSidebar] = useState(true);
+  const subnavBottom = useSubnavBottom();
 
   return (
     <Container fluid className={classes.container}>
@@ -106,7 +108,18 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 // `overflow: visible` on .sidebar and clip it out of existence. The
                 // list scrolls in its own ScrollArea, so the Card does not need to.
                 marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
+                // ⚠️ Does NOT account for the adhesive ad, which is a later in-flow child of the
+                // 100%-height `#__next` column and so shortens the scroll area without shortening
+                // the viewport — the sidebar's last rows sit behind it for users who see ads.
+                // Sizing this off the scroll area instead fixes that but exposes a second problem:
+                // the list below carries its own independent `68vh` cap, so a shorter card just
+                // makes the list overflow it (the card is `overflow: visible` for the gutter
+                // toggle). Both caps have to become one budget before this can shrink safely.
                 maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
+                // Follows the subnav's real bottom edge rather than a fixed header offset: the
+                // subnav hides by translating, so it keeps its layout box and a static `top`
+                // strands the sidebar a subnav-height below where it should sit.
+                top: subnavBottom + SUBNAV_STICKY_GAP,
               }}
               withBorder
             >
