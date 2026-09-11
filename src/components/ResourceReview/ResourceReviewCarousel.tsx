@@ -9,6 +9,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -28,6 +29,7 @@ export function ResourceReviewCarousel({
   reviewId: number;
 }) {
   const mobile = useContainerSmallerThan('md');
+  const features = useFeatureFlags();
 
   // today, typescript was not cool.
   // functions will only check extra parameters if it's fresh
@@ -87,6 +89,7 @@ export function ResourceReviewCarousel({
                                 alt={image.name ?? undefined}
                                 type={image.type}
                                 width={800}
+                                hiDpi={features.hiDpiPreviews}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}
                               />
