@@ -646,6 +646,20 @@ jobs:
       - name: Next SVG loader patch applied
         run: node scripts/ci/assert-next-svg-patch-applied.mjs
 
+      # Parked here for the same reason as the step above: it must run in a job that FAILS
+      # the build, and it needs nothing but a checkout (~50ms, no test runner, no install —
+      # it reads next.config.mjs and the route files as text).
+      #
+      # What it guards: Next truncates a request body at
+      # `experimental.proxyClientMaxBodySize` (default 10MB) and then ENDS THE STREAM
+      # without telling the route, so a route declaring a larger `sizeLimit` silently
+      # receives a short body and reads it as a complete one. That shipped once already —
+      # the image-upload relay's 50MB cap was unreachable, and a valid 14.5MB PNG was stored
+      # truncated and undecodable while the route answered 200. Four routes still declare
+      # more than the framework delivers; those are baselined and warn. A NEW one fails.
+      - name: API body size limits are deliverable
+        run: node scripts/ci/body-size-limit-gate.mjs
+
       # Parked here for the same two reasons as the step above: it needs a completed
       # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
       # both. `postinstall` has already run `db:generate`, so the re-run inside the script is

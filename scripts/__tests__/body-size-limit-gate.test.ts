@@ -1,0 +1,98 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  NEXT_DEFAULT_PROXY_CLIENT_MAX_BODY_SIZE,
+  parseSizeLimit,
+  effectiveBodyLimit,
+  collectDeclaredLimits,
+} from '../ci/body-size-limit-gate.mjs';
+
+const REPO_ROOT = join(__dirname, '..', '..');
+
+describe('body-size-limit-gate', () => {
+  // 🔴 THE LOAD-BEARING CASE. The gate hardcodes Next's default because reading a private
+  // build artifact at runtime would make it depend on that artifact's shape. The cost of
+  // hardcoding is that a Next upgrade could change the default and silently widen what the
+  // gate permits — nothing would fail, the number would just be wrong. This is what makes
+  // that impossible: it reads the default out of the INSTALLED Next and requires the
+  // constant to match. A Next bump that moves it fails here, in one named place.
+  it('pins the hardcoded default against the INSTALLED Next', () => {
+    const src = readFileSync(
+      join(REPO_ROOT, 'node_modules', 'next', 'dist', 'server', 'config-shared.js'),
+      'utf8'
+    );
+    const m = /proxyClientMaxBodySize:\s*(\d+)/.exec(src);
+
+    // Positive control on the extraction itself: if Next ever renames or restructures
+    // this, "no match" must fail loudly rather than skip the comparison and read green.
+    expect(m, 'could not find proxyClientMaxBodySize in the installed Next').not.toBeNull();
+    expect(Number(m![1])).toBe(NEXT_DEFAULT_PROXY_CLIENT_MAX_BODY_SIZE);
+  });
+
+  it('parses every SizeLimit spelling Next accepts', () => {
+    expect(parseSizeLimit('10mb')).toBe(10 * 1024 * 1024);
+    expect(parseSizeLimit('500kb')).toBe(500 * 1024);
+    expect(parseSizeLimit('1gb')).toBe(1024 ** 3);
+    expect(parseSizeLimit('2048')).toBe(2048); // bare number = bytes
+    expect(parseSizeLimit(4096)).toBe(4096);
+    expect(parseSizeLimit('1.5mb')).toBe(Math.round(1.5 * 1024 * 1024));
+    expect(parseSizeLimit('not-a-size')).toBeNull();
+  });
+
+  describe('effectiveBodyLimit', () => {
+    it('falls back to the framework default when the config sets neither key', () => {
+      const r = effectiveBodyLimit('export default { experimental: { ppr: true } };');
+      expect(r.bytes).toBe(NEXT_DEFAULT_PROXY_CLIENT_MAX_BODY_SIZE);
+      expect(r.source).toBe('next default');
+    });
+
+    it('reads proxyClientMaxBodySize when set', () => {
+      const r = effectiveBodyLimit("experimental: { proxyClientMaxBodySize: '72mb' }");
+      expect(r.bytes).toBe(72 * 1024 * 1024);
+      expect(r.source).toBe('proxyClientMaxBodySize');
+    });
+
+    it('still honours the DEPRECATED middlewareClientMaxBodySize alone', () => {
+      // Next maps the deprecated key onto the new one rather than ignoring it, so a repo
+      // that only sets the old name really does get a raised limit. Treating it as unset
+      // would make the gate fail routes that are in fact fine.
+      const r = effectiveBodyLimit("experimental: { middlewareClientMaxBodySize: '30mb' }");
+      expect(r.bytes).toBe(30 * 1024 * 1024);
+      expect(r.source).toBe('middlewareClientMaxBodySize');
+    });
+
+    it('prefers proxyClientMaxBodySize when BOTH are present, mirroring Next', () => {
+      const r = effectiveBodyLimit(
+        "experimental: { middlewareClientMaxBodySize: '30mb', proxyClientMaxBodySize: '60mb' }"
+      );
+      expect(r.bytes).toBe(60 * 1024 * 1024);
+      expect(r.source).toBe('proxyClientMaxBodySize');
+    });
+  });
+
+  // Guards the SCANNER, not the routes. A zero here would make the gate vacuous — it would
+  // report "0 over" forever and read as a clean repo. This is the reassuring-zero trap:
+  // an empty match set is indistinguishable from a probe wired to nothing.
+  it('actually finds the sizeLimit declarations in the tree', () => {
+    const found = collectDeclaredLimits(join(REPO_ROOT, 'src', 'pages', 'api'), REPO_ROOT);
+    expect(found.length).toBeGreaterThan(5);
+    expect(found.every((f) => typeof f.bytes === 'number' && f.bytes > 0)).toBe(true);
+  });
+
+  // Keeps the recorded baseline honest: a route added over the limit without regenerating
+  // makes this fail even if someone only ran the unit tier and never the gate script.
+  it('baseline lists exactly the routes currently over the limit', () => {
+    const baseline = JSON.parse(
+      readFileSync(join(REPO_ROOT, 'scripts', 'ci', 'body-size-limit-baseline.json'), 'utf8')
+    );
+    const limit = effectiveBodyLimit(readFileSync(join(REPO_ROOT, 'next.config.mjs'), 'utf8'));
+    const over = collectDeclaredLimits(join(REPO_ROOT, 'src', 'pages', 'api'), REPO_ROOT)
+      .filter((d: { bytes: number }) => d.bytes > limit.bytes)
+      .map((d: { file: string }) => d.file)
+      .sort();
+
+    expect(Object.keys(baseline.routes).sort()).toEqual(over);
+    expect(baseline.effectiveLimitBytes).toBe(limit.bytes);
+  });
+});

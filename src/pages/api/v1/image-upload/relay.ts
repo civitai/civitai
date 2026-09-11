@@ -59,8 +59,18 @@ export const config = {
  * 🔴 This is a property of the framework, not a choice of ours, and it is the reason
  * this route cannot simply pick its own limit. Next 16 caps the body it will hand a
  * route at 10MB by default and then just ENDS the stream — the route sees a clean
- * end-of-body, not an error. `next.config.mjs` does not set
- * `middlewareClientMaxBodySize`, so the default applies.
+ * end-of-body, not an error. `next.config.mjs` sets neither of the keys that would
+ * raise it, so the default applies.
+ *
+ * ⚠ CORRECTED. An earlier version of this comment named `middlewareClientMaxBodySize`
+ * as a plain `next.config.mjs` option. Both halves were wrong in a way that would waste
+ * someone's afternoon: the key lives under **`experimental`**, and that spelling is
+ * **deprecated** in favour of `experimental.proxyClientMaxBodySize` (Next maps the old
+ * name onto the new one and warns). Set at the top level it is simply ignored, so the
+ * "fix" would change nothing and the truncation would persist.
+ * `config-shared.js` declares the default as `proxyClientMaxBodySize: 10485760` —
+ * exactly the boundary measured below, which is the cross-check that this number is the
+ * framework's and not a coincidence.
  *
  * Measured on a deployed preview (Next 16.3.1), sent vs what actually reached the
  * store, reproduced BOTH through the ingress and by POSTing from inside the container
@@ -89,9 +99,10 @@ export const NEXT_BODY_TRUNCATION_BYTES = 1024 * 1024 * 10;
  * and the 413 branch below was dead code.
  *
  * Raising this above the truncation point requires raising
- * `middlewareClientMaxBodySize` in `next.config.mjs` IN THE SAME CHANGE — that is a
- * repo-wide widening of how large a body every route may receive, so it was not done
- * here. It buys little: sampled 111,097 rows of `Image.metadata->>'size'`, **0.679%**
+ * `experimental.proxyClientMaxBodySize` in `next.config.mjs` IN THE SAME CHANGE — that
+ * is a repo-wide widening of how large a body every route may receive, so it was not
+ * done here. `scripts/ci/body-size-limit-gate.mjs` fails the build if the two ever
+ * disagree, so this pairing is enforced rather than merely described. It buys little: sampled 111,097 rows of `Image.metadata->>'size'`, **0.679%**
  * of images exceed 10MB (p99 = 7.63MB), and this is a fallback that only fires for
  * clients who cannot resolve the storage host at all. Those few now get an honest 413
  * instead of a silently corrupted file.

@@ -1,0 +1,11 @@
+{
+  "_comment": "Routes declaring a bodyParser sizeLimit LARGER than Next will deliver, so the declared value is not what the route receives — Next truncates and the route is not told. Entries may shrink or disappear freely; adding one, or raising a byte count, fails the gate and is a deliberate act visible in review. Regenerate with: node scripts/ci/body-size-limit-gate.mjs --write-baseline",
+  "effectiveLimitBytes": 10485760,
+  "effectiveLimitSource": "next default",
+  "routes": {
+    "src/pages/api/blocks/submit-version.ts": 75497472,
+    "src/pages/api/mod/clavata-image-process.ts": 17825792,
+    "src/pages/api/trpc/[trpc].ts": 17825792,
+    "src/pages/api/v1/blocks/submit-version.ts": 75497472
+  }
+}
