@@ -58,9 +58,40 @@ export const config = {
  *
  * 🔴 This is a property of the framework, not a choice of ours, and it is the reason
  * this route cannot simply pick its own limit. Next 16 caps the body it will hand a
- * route at 10MB by default and then just ENDS the stream — the route sees a clean
- * end-of-body, not an error. `next.config.mjs` does not set
- * `middlewareClientMaxBodySize`, so the default applies.
+ * route and then just ENDS the stream — the route sees a clean end-of-body, not an
+ * error.
+ *
+ * 🔴 IT APPLIES TO THIS ROUTE BECAUSE OF ITS PATH, NOT BECAUSE IT IS A NEXT ROUTE —
+ * do not generalise this to `/api/*`. The cap lives inside `cloneBodyStream()`, which
+ * runs only when `src/proxy.ts`'s `matcher` covers the request path. `/api/v1/:path*`
+ * is matched, so this route is capped; the matcher's catch-all explicitly EXCLUDES
+ * `api`, so an unmatched route receives its body whole. Measured on a deployed
+ * preview, one 12,000,000-byte POST per path, reading the server's own
+ * `Request body exceeded 10MB for <path>` line:
+ *
+ *     /api/v1/image-upload/relay       matched     -> truncation warning
+ *     /api/trpc/audit.probe            matched     -> truncation warning
+ *     /api/blocks/submit-version       NOT matched -> none
+ *     /api/mod/clavata-image-process   NOT matched -> none
+ *
+ * Both matched arms fired in the same run, so the two absences are real, not a probe
+ * wired to nothing. ⚠ An earlier version of this comment asserted the cap as a
+ * property of "Next", generalised from a single measurement taken on THIS route — a
+ * matched path. A CI gate was then built on that reading and had to be closed
+ * unmerged (`#4758`): it would have blocked correct code on every unmatched `/api/*`
+ * route. The size axis was measured at both sides of the boundary; the PATH axis was
+ * never varied at all.
+ *
+ * The limit itself is `experimental.proxyClientMaxBodySize`, default **10485760**
+ * (`next/dist/server/config-shared.js`), read at runtime as
+ * `nextConfig.experimental?.proxyClientMaxBodySize` (`next-server.js`).
+ * `next.config.mjs` does not set it, so the default applies.
+ *
+ * ⚠ NOT `middlewareClientMaxBodySize`, which an earlier version of this comment named,
+ * and NOT a top-level key. That spelling is deprecated (Next maps it onto the new one
+ * and warns), and because the value is read off `experimental`, a key placed at the
+ * TOP LEVEL is never read — so raising it there changes nothing and the truncation
+ * persists. Both halves of the old sentence would have cost someone an afternoon.
  *
  * Measured on a deployed preview (Next 16.3.1), sent vs what actually reached the
  * store, reproduced BOTH through the ingress and by POSTing from inside the container
@@ -89,9 +120,12 @@ export const NEXT_BODY_TRUNCATION_BYTES = 1024 * 1024 * 10;
  * and the 413 branch below was dead code.
  *
  * Raising this above the truncation point requires raising
- * `middlewareClientMaxBodySize` in `next.config.mjs` IN THE SAME CHANGE — that is a
- * repo-wide widening of how large a body every route may receive, so it was not done
- * here. It buys little: sampled 111,097 rows of `Image.metadata->>'size'`, **0.679%**
+ * `experimental.proxyClientMaxBodySize` in `next.config.mjs` IN THE SAME CHANGE — that
+ * is a repo-wide widening of how large a body every proxy-matched route may receive, so
+ * it was not done here. ⚠ Nothing enforces that pairing: a gate for it was built and
+ * closed unmerged (`#4758`), and it could not have covered this route anyway, because
+ * the scan reads declared `bodyParser.sizeLimit` values and this route sets
+ * `bodyParser: false` and declares none. If you raise one, raise the other by hand. It buys little: sampled 111,097 rows of `Image.metadata->>'size'`, **0.679%**
  * of images exceed 10MB (p99 = 7.63MB), and this is a fallback that only fires for
  * clients who cannot resolve the storage host at all. Those few now get an honest 413
  * instead of a silently corrupted file.
@@ -106,11 +140,17 @@ export const MAX_RELAY_BYTES = NEXT_BODY_TRUNCATION_BYTES;
 /**
  * Ceiling on relays held in memory at once, PER POD.
  *
- * 8 x `MAX_RELAY_BYTES` is 400MB of body, and `Buffer.concat` roughly doubles that at
- * peak (see `readCappedBody`), so the real bound this sets is **~800MB** — survivable
+ * 8 x `MAX_RELAY_BYTES` is **80MB** of body, and `Buffer.concat` roughly doubles that
+ * at peak (see `readCappedBody`), so the real bound this sets is **~160MB** — survivable
  * beside a steady-state heap under the pod's memory limit, where an unbounded queue
  * is not. Buffers are external, so `--max-old-space-size` does not bound them and
  * this constant is the only thing that does.
+ *
+ * ⚠ These numbers were 400MB / ~800MB until this correction — 5x too high. They were
+ * computed when `MAX_RELAY_BYTES` was 50MB and were not revisited when it was pinned to
+ * the 10MB truncation point in the same change that introduced the pin. Derive them from
+ * `MAX_RELAY_BYTES` rather than copying them: this is the figure someone would size a pod
+ * memory limit against, or cite when arguing this cap could be raised.
  *
  * 🔴 This is a MEMORY bound, not a throughput target. ⚠ An earlier version of this
  * comment claimed a dropzone batch of 10 against a cap of 8 routinely sheds two, and
