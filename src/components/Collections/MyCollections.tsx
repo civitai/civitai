@@ -82,8 +82,8 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const { data, isLoading } = trpc.collection.getAllUser.useQuery(MY_COLLECTIONS_LIST_INPUT, {
     enabled: !!currentUser,
   });
-  // withPendingReviewCounts:true guarantees pendingReviewCount here, but CollectionGetAllUserModel
-  // stays a union (see Task 4) since most callers of getAllUser omit the flag.
+  // withPendingReviewCounts guarantees pendingReviewCount here, but CollectionGetAllUserModel stays
+  // a union because the handler only attaches the field when the flag is set.
   const collections: (CollectionGetAllUserModel & { pendingReviewCount?: number })[] = data ?? [];
 
   const selectCollection = (id: number) => {
