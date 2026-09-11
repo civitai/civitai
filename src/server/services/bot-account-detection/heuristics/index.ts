@@ -36,6 +36,8 @@ export const BOT_ACCOUNT_HEURISTICS: readonly BotAccountHeuristic[] = [
 export { postingVelocityHeuristic } from './velocity';
 export {
   registrationClusterHeuristic,
+  registrationClusterGroupKey,
+  domainClusterIsNamedInReason,
   isCommonEmailDomain,
   COMMON_EMAIL_DOMAINS,
 } from './clustering';

@@ -12,10 +12,26 @@
 --   psql "$MODERATOR_DATABASE_URL" -f apps/moderator/abuse-detection/schema.sql
 --
 -- 🔴 AS THE APPLICATION ROLE (`internal_tools`), which is what that URL connects as. Running this
--- as `postgres` — the natural `kubectl exec … psql -U postgres` shortcut — creates postgres-owned
--- tables the app cannot read, and the page then reports a permission error it cannot distinguish
--- from an outage without the 42501 branch it now carries. If you already did that, either re-run as
--- the app role or:
+-- as `postgres` — the natural `psql -U postgres` shortcut — creates postgres-owned tables the app
+-- cannot read, and the page then reports a permission error it cannot distinguish from an outage
+-- without the 42501 branch it now carries.
+--
+-- 🔴 IF YOU ALREADY RAN IT AS THE WRONG ROLE, THE FIX IS OWNERSHIP, NOT A GRANT. This used to say
+-- "either re-run as the app role or GRANT SELECT, INSERT, UPDATE, DELETE …", and that remedy was
+-- correct only while this file did nothing but `CREATE TABLE IF NOT EXISTS`. It now runs
+-- `ALTER TABLE`, which Postgres permits ONLY to a table's owner (or a member of its owning role) —
+-- no combination of table privileges grants it. Measured: as a granted-but-not-owner role the first
+-- `ALTER TABLE` fails `42501 must be owner of table abuse_detection_finding`, and the stop-on-error
+-- directive below then halts the file — so it fails closed, adding no verdict columns rather than a
+-- subset, but a re-run as that role can never succeed. Transfer ownership first, as a superuser or
+-- as the current owner. One statement per object — `OWNER TO` takes a single object name, and the
+-- comma-separated form is a SYNTAX ERROR, which halts the recovery the same way:
+--   ALTER TABLE    abuse_detection_run               OWNER TO internal_tools;
+--   ALTER TABLE    abuse_detection_finding           OWNER TO internal_tools;
+--   ALTER SEQUENCE abuse_detection_run_id_seq        OWNER TO internal_tools;
+--   ALTER SEQUENCE abuse_detection_finding_id_seq    OWNER TO internal_tools;
+-- …then re-run this file as `internal_tools`. The GRANTs below are still what a read-only or
+-- reporting role needs, and are NOT a substitute for the four statements above:
 --   GRANT SELECT, INSERT, UPDATE, DELETE ON abuse_detection_run, abuse_detection_finding TO internal_tools;
 --   GRANT USAGE, SELECT ON SEQUENCE abuse_detection_run_id_seq, abuse_detection_finding_id_seq TO internal_tools;
 --
@@ -99,3 +115,69 @@ CREATE INDEX IF NOT EXISTS abuse_detection_finding_run_idx
 -- "What has any detector said about this account?" — the per-user lookup the moderator app joins on.
 CREATE INDEX IF NOT EXISTS abuse_detection_finding_user_idx
   ON abuse_detection_finding (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------------------------
+-- THE MODERATOR'S RULING.
+--
+-- 🔴 `verdict` IS NOT `actioned`, AND CONFLATING THE TWO IS THE MOST LIKELY BUG THIS TABLE WILL EVER
+-- HAVE. `actioned`/`action` above are the PRODUCER's self-report: what the detector did, written by
+-- the detector, never cross-checked. The three columns below are a HUMAN's judgement of whether the
+-- detector was right, written by a moderator in the board's UI. They answer different questions and
+-- move independently — the common row is `actioned = false` (the detector left the account alone)
+-- carrying `verdict = 'tp'` (and it was right to flag it). Nothing reads one to infer the other, and
+-- recording a verdict must leave `actioned`/`action` untouched.
+--
+-- NULL `verdict` means UNRULED, which is the state every finding starts in and the state a run's
+-- "still to review" count is derived from. It is not a fourth verdict: `skip` is the moderator
+-- saying "I looked and I am not calling it", which is a decision, and an unruled row is not.
+ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS verdict text;
+-- Who ruled, and when. Overwritten on a re-ruling — a moderator correcting a mistake must leave the
+-- record showing the CURRENT ruling and who stands behind it, not the first one.
+--
+-- 🔴 `verdict_by` HOLDS THE MODERATOR'S ID, AS TEXT — not their username. A username is reassignable:
+-- months later the record would name a handle that belongs to somebody else, which is the one thing
+-- an audit field must not do. `text` rather than an integer because this column identifies whoever
+-- made the ruling and nothing joins on it, so a future non-user actor does not need a migration.
+ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS verdict_by text;
+ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS verdict_at timestamptz;
+-- 🔴 The producer's cluster key: findings the detector believes are ONE actor, ruled once instead of
+-- N times. NULL for an ungrouped finding, which is most of them. Scoped to the run — the same key in
+-- two runs is two separate decisions, because the cohort behind it is different — so every read and
+-- write of it pairs `group_key` with `run_id`.
+--
+-- 🔴 IT MUST NOT CARRY ANYTHING THE FINDING'S OWN `reason` DOES NOT ALREADY SAY. The board is a wider
+-- audience than the investigative tools, and a key is rendered; the producer therefore derives it
+-- only from an attribute it has already written into the reason text.
+ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS group_key text;
+
+-- 🔴 EXACTLY THREE VERDICTS, OR NULL. Without this the column is free text, and a typo (`TP`, `fp `,
+-- `false-positive`) becomes a fourth silent category that every count query drops on the floor — the
+-- reassuring-zero failure the rest of this surface is built to refuse. `ADD CONSTRAINT` has no
+-- `IF NOT EXISTS` in Postgres, so the existence test is explicit; the whole file must stay
+-- re-runnable.
+--
+-- ⚠️ `verdict IS NULL OR` IS EXPLICITNESS, NOT ENFORCEMENT — stated because a comment claiming more
+-- than the code delivers is worse than none. A CHECK passes whenever its expression evaluates to
+-- NULL, so `verdict IN (…)` alone already admits an unruled row; deleting this clause changes no
+-- behaviour, and a mutation test proves it (the whole suite stays green). It is kept because the
+-- reader of a constraint should not have to know that rule to see that NULL is legal here. What a
+-- test CAN catch is the opposite edit — `verdict IS NOT NULL AND verdict IN (…)`, which would make
+-- every finding unwritable — and that is what the "accepts NULL" case guards.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'abuse_detection_finding'::regclass
+       AND conname = 'abuse_detection_finding_verdict_valid'
+  ) THEN
+    ALTER TABLE abuse_detection_finding
+      ADD CONSTRAINT abuse_detection_finding_verdict_valid
+      CHECK (verdict IS NULL OR verdict IN ('tp', 'fp', 'skip'));
+  END IF;
+END
+$$;
+
+-- No index on `verdict` or `group_key`, deliberately. Both are only ever read WITHIN one run — the
+-- unruled count is `WHERE run_id = $1`, and a group ruling is `WHERE run_id = $1 AND group_key = $2`
+-- — so `abuse_detection_finding_run_idx` above already selects the rows, and a report carries at
+-- most MAX_FINDINGS_PER_REPORT of them. A second index here would be write cost for no read.

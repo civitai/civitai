@@ -282,6 +282,54 @@ export function domainClusterSize(
   return membersPerDomain.get(emailDomain) ?? 0;
 }
 
+/**
+ * Whether a domain cluster of this size is NAMED IN THE REASON TEXT.
+ *
+ * 🔴 ONE RULE, ONE PLACE, and the place is here because two callers need the SAME answer for two
+ * different purposes: `explain` below uses it to decide whether to write the domain into the reason,
+ * and `registrationClusterGroupKey` uses it to decide whether the domain may be used as a group key.
+ * Those two must agree exactly — the group key is only allowed to carry what the reason already
+ * discloses — and open-coding `> DOMAIN_ZERO_AT` at both sites is how they would silently stop
+ * agreeing the first time either boundary moved.
+ */
+export const domainClusterIsNamedInReason = (size: number): boolean => size > DOMAIN_ZERO_AT;
+
+/**
+ * The cluster key for a finding: which RING this account belongs to, or `null` for none.
+ *
+ * 🔴 WHY THE EMAIL DOMAIN AND NOT THE REGISTRATION IP, when the IP is the stronger signal. The IP is
+ * DELIBERATELY not in the reason text — see `explain` below, which says so and points a moderator at
+ * `getAccountsOnIps` instead — so keying on it would publish, to the board's wider audience, the one
+ * fact this heuristic goes out of its way not to publish. The domain is already written into the
+ * reason whenever it scores, and only then. That is the whole rule, and it is why this returns `null`
+ * for a cluster too small to be named: a key on a domain the reason never mentions would be a
+ * disclosure the finding does not otherwise make.
+ *
+ * Stable within a run by construction: it is a pure function of the member's own domain and the
+ * run's `membersPerDomain` index, both fixed for the whole run, so every member of one cluster
+ * derives the identical string.
+ *
+ * Prefixed, so a second kind of key could never collide with a domain that happened to look like
+ * one. No second kind is added here — see the IP paragraph above for why that is not a gap.
+ *
+ * 🔴 UNBOUNDED ON PURPOSE, AND BOUNDED DOWNSTREAM. `normalizeEmailDomain` caps nothing, so a
+ * pathological domain produces a key longer than the wire contract's 200 characters — which would
+ * refuse the whole REPORT, not the one finding. `report.ts`'s `boundGroupKey` is where that is
+ * handled, next to `truncateReason`, because a finding is constructed in exactly one place and the
+ * contract's caps belong at that choke point. Capping the domain HERE instead would be worse: two
+ * different long domains would truncate to one string and silently merge two unrelated clusters
+ * into a single ruling.
+ */
+export function registrationClusterGroupKey(
+  member: { emailDomain: string | null },
+  signals: { membersPerDomain: Map<string, number> }
+): string | null {
+  const size = domainClusterSize(member.emailDomain, signals.membersPerDomain);
+  if (!domainClusterIsNamedInReason(size)) return null;
+  // `domainClusterSize` returns 0 for a null or common domain, so reaching here means there is one.
+  return `domain:${member.emailDomain}`;
+}
+
 export const registrationClusterHeuristic: BotAccountHeuristic = {
   id: REGISTRATION_CLUSTER_ID,
   description:
@@ -308,7 +356,7 @@ export const registrationClusterHeuristic: BotAccountHeuristic = {
     // than that tool.
     if (ip.size > IP_ZERO_AT)
       clauses.push(`${ip.size} new posting accounts share its registration IP`);
-    if (domain > DOMAIN_ZERO_AT)
+    if (domainClusterIsNamedInReason(domain))
       clauses.push(
         `${domain} share its email domain ${member.emailDomain ?? ''} (not a common provider)`
       );
