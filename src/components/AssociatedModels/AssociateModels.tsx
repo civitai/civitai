@@ -244,7 +244,7 @@ export function AssociateModels({
                                 : association.item.title}
                             </Text>
                             <Group gap={4}>
-                              <Badge size="md" radius="xl" variant="light">
+                              <Badge size="md" radius="xl">
                                 {'type' in association.item
                                   ? getDisplayName(association.item.type)
                                   : 'Article'}
