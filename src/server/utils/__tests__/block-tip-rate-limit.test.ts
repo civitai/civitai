@@ -91,33 +91,31 @@ import {
 const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
 
 /**
- * 🔴 DERIVED AT CALL TIME, NOT AT IMPORT — and that is the whole fix for this
- * file, not a style preference.
+ * 🔴 A LITERAL, NOT A DERIVATION — the UTC day of `FROZEN_CLOCK`, written out.
  *
- * This used to be a module-level constant evaluated once when the module was
- * imported. Two consequences, and the second is why freezing alone is not
- * enough here:
+ * It is deliberately NOT computed as `new Date().toISOString().slice(0, 10)`.
+ * That is byte-identical to the expression the implementation uses
+ * (`tipCapWindowKey` in `../block-tip-rate-limit`), so an expectation built that
+ * way moves WITH the implementation and can never catch it changing — the
+ * "never derive a test's expectation from the implementation it tests" trap. A
+ * literal is an independent expectation: switch production to a LOCAL-date
+ * derivation and this still pins the UTC answer.
  *
- *   1. At base it is a genuine (if rare) flake: the constant is captured at
- *      import while the service derives its key at CALL time, so a UTC-day
- *      rollover in between makes the two disagree and the key assertions fail.
- *   2. A `beforeEach` freeze CANNOT fix that on its own — worse, it BREAKS the
- *      file. The constant is already computed by the time `beforeEach` runs, so
- *      it keeps the real date while the service starts returning the frozen one.
- *      MEASURED: adding only the freeze fails 2 of 29 cases with
- *      `expected 'system:blocks:tip-cap:42:2026-07-31' to be
- *      'system:blocks:tip-cap:42:2026-09-10'`.
- *
- * So both halves are required: the freeze below pins what the SERVICE derives,
- * and this function makes the TEST read the same clock instead of a stale copy.
+ * ⚠️ A second, separate trap, recorded in case anyone reintroduces a derived
+ * value here: this day string used to be a module-level `const`, evaluated at
+ * IMPORT. A `beforeEach` freeze cannot move such a constant — it is already
+ * computed — so it keeps the real date while the service returns the frozen one.
+ * MEASURED: freeze-only fails 2 of 29 with `expected
+ * 'system:blocks:tip-cap:42:2026-07-31' to be
+ * 'system:blocks:tip-cap:42:2026-09-10'`. A literal sidesteps that entirely,
+ * because it reads no clock at all.
  */
-function todayKey(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+const FROZEN_DAY = '2026-07-31';
 
 beforeEach(() => {
-  // 🔴 FIRST, before anything derives a key — see `todayKey` above for why
-  // this freeze and that function only work as a PAIR.
+  // 🔴 FIRST, before the service derives any key. This pins what the SERVICE
+  // computes; `FROZEN_DAY` above is the independent literal the assertions
+  // compare against. Both are needed, and neither derives from the other.
   vi.useFakeTimers();
   vi.setSystemTime(FROZEN_CLOCK);
   vi.clearAllMocks();
@@ -136,7 +134,7 @@ describe('reserveBlockTipSpend', () => {
   it('reserves the amount, returns a UTC-day-scoped key, and SETS the TTL on the first write', async () => {
     const { total, key } = await reserveBlockTipSpend(42, 100);
     expect(total).toBe(100);
-    expect(key).toBe(`system:blocks:tip-cap:42:${todayKey()}`);
+    expect(key).toBe(`system:blocks:tip-cap:42:${FROZEN_DAY}`);
     // TTL armed on first write (~25h).
     expect(mockSys.expire).toHaveBeenCalledWith(key, 25 * 60 * 60);
     expect(sysStore.get(key)).toBe(100);
@@ -184,7 +182,7 @@ describe('refundBlockTipSpend', () => {
     expect(mockSys.decrBy).toHaveBeenCalledWith(yesterdayKey, 500);
     expect(sysStore.get(yesterdayKey)).toBe(0);
     // The current-day key is untouched.
-    expect(sysStore.get(`system:blocks:tip-cap:42:${todayKey()}`)).toBeUndefined();
+    expect(sysStore.get(`system:blocks:tip-cap:42:${FROZEN_DAY}`)).toBeUndefined();
   });
 
   it('is best-effort — a failed DECRBY never throws (a lost refund only over-counts)', async () => {
@@ -231,7 +229,7 @@ describe('readBlockTipAllowance (item 4)', () => {
   it('reads the CURRENT-day key (same key the reserve path mutates)', async () => {
     await reserveBlockTipSpend(7, 100);
     await readBlockTipAllowance(7);
-    expect(mockSys.get).toHaveBeenCalledWith(`system:blocks:tip-cap:7:${todayKey()}`);
+    expect(mockSys.get).toHaveBeenCalledWith(`system:blocks:tip-cap:7:${FROZEN_DAY}`);
   });
 
   it('CLAMPS remaining at 0 when a straddling over-cap reservation pushed spent past the cap', async () => {
