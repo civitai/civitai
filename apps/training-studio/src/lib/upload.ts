@@ -1,6 +1,8 @@
-// Client-side dataset upload: mint a presigned URL from our server, then POST the file straight to the
-// orchestrator, which scans it and returns the registered blob. Mirrors the main app's per-image path
-// (src/utils/training/auto-label-orchestrator.ts) — 2 hops, concurrency-limited, no zip.
+// Client-side dataset upload: mint a presigned URL through the backend seam, then POST the file straight
+// to the orchestrator, which scans it and returns the registered blob. Mirrors the main app's per-image
+// path (src/utils/training/auto-label-orchestrator.ts) — 2 hops, concurrency-limited, no zip.
+
+import { backend } from '$lib/host';
 
 /** The scanned blob the orchestrator returns from the upload POST. `url` is the media URL (absent until
  *  the blob is available / when blocked); `id` is the training-data reference. */
@@ -26,7 +28,7 @@ export const isAbort = (err: unknown) => (err as DOMException | undefined)?.name
 
 /** Pull a short human line out of an error body, falling back to the raw text. Covers both the
  *  orchestrator's ProblemDetails (`title`/`detail`) and SvelteKit's `error()` shape (`message`). */
-function problem(text: string, status: number): string {
+export function uploadProblem(text: string, status: number): string {
   try {
     const body = JSON.parse(text) as { title?: string; detail?: string; message?: string };
     const msg = body.detail ?? body.title ?? body.message;
@@ -40,10 +42,7 @@ function problem(text: string, status: number): string {
 }
 
 async function presign(signal: AbortSignal): Promise<string> {
-  const res = await fetch('/api/upload-url', { method: 'POST', signal });
-  if (!res.ok)
-    throw new UploadError(res.status, problem(await res.text().catch(() => ''), res.status));
-  const { uploadUrl } = (await res.json()) as { uploadUrl: string };
+  const { uploadUrl } = await backend().uploadUrl(signal);
   return uploadUrl;
 }
 
@@ -68,7 +67,7 @@ function post(
           reject(new UploadError(xhr.status, 'The upload response could not be read.'));
         }
       } else {
-        reject(new UploadError(xhr.status, problem(xhr.responseText, xhr.status)));
+        reject(new UploadError(xhr.status, uploadProblem(xhr.responseText, xhr.status)));
       }
     };
     xhr.onerror = () => reject(new UploadError(0, 'Network error during upload.'));

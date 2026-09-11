@@ -1,8 +1,8 @@
 import { REDIS_SYS_KEYS } from '@civitai/redis';
-import { MODEL_CARDS, type FromPrices } from '$lib/data/trainingModels';
-import { pool } from '$lib/pool';
+import type { FromPrices } from '$lib/data/trainingModels';
+import { computeFromPrices } from '$lib/pricing-core';
 import { getSysRedis } from './redis';
-import { trainingWhatIf } from './orchestrator';
+import { orchestratorClient } from './orchestrator';
 
 const CACHE_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_FROM_PRICES;
 // Stale-while-revalidate: a cached map older than FRESH is still served immediately, but triggers a
@@ -10,9 +10,6 @@ const CACHE_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_FROM_PRICES;
 // lull, so we can serve stale rather than recompute on a user's load.
 const FRESH_SECONDS = 6 * 60 * 60;
 const HARD_TTL_SECONDS = 7 * 24 * 60 * 60;
-// The estimate calls are independent one-per-model round-trips; a few at a time keeps the sweep quick
-// without hammering the orchestrator with ~20 at once.
-const WHATIF_CONCURRENCY = 4;
 
 type CacheEntry = { prices: FromPrices; at: number };
 
@@ -53,36 +50,7 @@ function refresh(token: string): Promise<FromPrices> {
 }
 
 async function computeAndCache(token: string): Promise<FromPrices> {
-  const prices: FromPrices = {};
-  const unpriced: string[] = [];
-  await pool(MODEL_CARDS, WHATIF_CONCURRENCY, async (card) => {
-    const version = card.versions[0];
-    if (!version) return;
-    try {
-      const cost = await trainingWhatIf(token, {
-        ecosystem: version.ecosystem,
-        modelVariant: version.modelVariant,
-        version: version.version,
-        model: version.air,
-        engine: version.engine,
-      });
-      if (typeof cost === 'number' && cost > 0) prices[card.type] = Math.round(cost);
-      else unpriced.push(card.type);
-    } catch {
-      // Leave this card unpriced (shown as "—"); one model's failure shouldn't blank the rest.
-      unpriced.push(card.type);
-    }
-  });
-
-  // Some catalog ecosystems aren't submittable as configured (a bad AIR, a missing modelVariant, an
-  // unsupported engine). Surface it so a partial or total blackout is visible in logs.
-  if (unpriced.length) {
-    console.warn(
-      `[training-studio] from-price whatif: ${unpriced.length}/${
-        MODEL_CARDS.length
-      } models unpriced (${unpriced.join(', ')})`
-    );
-  }
+  const prices = await computeFromPrices(orchestratorClient(token));
 
   if (Object.keys(prices).length === 0) return prices; // nothing priced (e.g. bad token) — keep any stale value, don't overwrite with empty
   try {

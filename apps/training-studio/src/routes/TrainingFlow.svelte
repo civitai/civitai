@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
-  import { goto } from '$app/navigation';
+  import { backend, navigate } from '$lib/host';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
@@ -16,7 +16,6 @@
     type LaunchedRun,
     type Selection,
   } from './trainingFlow';
-  import { postTraining } from '$lib/train';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
 
   let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
@@ -93,10 +92,13 @@
       currencies,
       labelMode
     );
-    const ids = await postTraining(runs);
+    const ids = await backend().submitTraining(runs);
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
-    await goto(runs.length === 1 && ids[0] ? `/${ids[0]}` : '/', { invalidateAll: true });
+    await navigate(
+      runs.length === 1 && ids[0] ? { view: 'run', workflowId: ids[0] } : { view: 'home' },
+      { refreshAll: true }
+    );
   }
 </script>
 

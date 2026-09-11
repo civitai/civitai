@@ -10,6 +10,9 @@
    is gold (yellow buzz); `.buzz-green` on <html> flips it to green. */
 @theme {
   --color-buzz: #f59f00;
+  /* White that must NOT flip with the scheme — text on colored surfaces (overlay chips, badges).
+     Plain `text-white` participates in the .light palette remap below. */
+  --color-on-accent: #ffffff;
 }
 html.buzz-green {
   --color-buzz: #3bd671;
@@ -19,6 +22,29 @@ html.buzz-green {
    here (the app is always `.dark`). Buzz/price stays gold: that's the literal `#f59f00`, not `--primary`,
    so it's unaffected. Unlayered on purpose so it wins over the theme's layered `.dark`. */
 .dark {
+  --primary: #1971c2;
+  --primary-foreground: #ffffff;
+}
+
+/* Light scheme for the WEB COMPONENT: the element build maps `.dark` onto
+   `civitai-training-studio:not(.light)` and this block onto `civitai-training-studio.light`
+   (vite.element.config.ts), so a host toggles the scheme with a `light` class on the element —
+   the shared theme's :root light tokens show through, and the fixed dark-scale utilities keep
+   their CONTRAST ROLE (dark-0 stays "primary text", dark-6 stays "card surface") remapped onto
+   Mantine's light grays. The shell never sets `.light`, so this is inert standalone. */
+.light {
+  color-scheme: light;
+  --color-white: #141517;
+  --color-dark-0: #212529;
+  --color-dark-1: #343a40;
+  --color-dark-2: #495057;
+  --color-dark-3: #868e96;
+  --color-dark-4: #dee2e6;
+  --color-dark-5: #e9ecef;
+  --color-dark-6: #ffffff;
+  --color-dark-7: #f8f9fa;
+  --color-dark-8: #f1f3f5;
+  --color-dark-9: #e9ecef;
   --primary: #1971c2;
   --primary-foreground: #ffffff;
 }

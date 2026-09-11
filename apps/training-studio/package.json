@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "svelte-kit sync && vite build",
+    "build": "vite build --config vite.element.config.ts && svelte-kit sync && vite build",
     "preview": "vite preview",
     "prepare": "svelte-kit sync",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
-    "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
+    "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata",
+    "build:element": "vite build --config vite.element.config.ts"
   },
   "dependencies": {
     "@civitai/auth": "workspace:*",

@@ -23,6 +23,7 @@
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
+  import { portalProps } from '$lib/host';
   import {
     ToggleGroup,
     ToggleGroupItem,
@@ -708,7 +709,7 @@
                       type="button"
                       aria-label="Edit label"
                       onclick={() => openEditor(img.id)}
-                      class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-white hover:bg-primary"
+                      class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-on-accent hover:bg-primary"
                     >
                       <IconPencil size={13} stroke={2} />
                     </button>
@@ -717,14 +718,14 @@
                     type="button"
                     aria-label="Remove"
                     onclick={() => remove(img.id)}
-                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-white hover:bg-red-500"
+                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-on-accent hover:bg-red-500"
                   >
                     <IconX size={13} stroke={2} />
                   </button>
                 </div>
 
                 {#if img.status === 'uploaded'}
-                  <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-white">
+                  <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-on-accent">
                     <IconCheck size={12} stroke={3} />
                   </span>
                 {/if}
@@ -768,7 +769,7 @@
               >
                 ?
               </Tooltip.Trigger>
-              <Tooltip.Content class="max-w-[240px] text-xs">
+              <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
                 An optional word prepended to every label. The model learns to associate it with your
                 subject, so you type it in prompts to summon the LoRA. Less essential on modern caption
                 models; handy for characters. Some large/video models can't train it (no-op).

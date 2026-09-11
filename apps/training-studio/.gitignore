@@ -20,3 +20,6 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Custom-element bundle (pnpm build:element)
+/static/element

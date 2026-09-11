@@ -1,6 +1,8 @@
 <script lang="ts">
   import { IconAlertTriangle, IconPlus } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { hrefFor } from '$lib/host';
+  import { locationHref } from '$lib/actions/locationHref';
   import { remixFromRun } from '$lib/reuse';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
@@ -59,12 +61,17 @@
   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {#each rows as r (r.workflowId ?? r.name)}
       <div
-        class="group relative flex flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 transition-colors hover:border-dark-3"
+        class="group relative flex flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 transition-colors hover:border-dark-3 hover:bg-dark-5/50"
       >
         <!-- Stretched link: the whole card opens the run. Sits under the action buttons (z-index below), so
              clicking the title/samples navigates while the buttons keep their own behaviour. -->
         {#if r.workflowId}
-          <a href={`/${r.workflowId}`} class="absolute inset-0 z-[1]" aria-label={`Open ${r.name}`}></a>
+          <a
+            href={hrefFor({ view: 'run', workflowId: r.workflowId })}
+            use:locationHref={{ view: 'run', workflowId: r.workflowId }}
+            class="absolute inset-0 z-[1]"
+            aria-label={`Open ${r.name}`}
+          ></a>
         {/if}
 
         <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">

@@ -1,22 +1,12 @@
-// Client side of auto-labeling: submit uploaded blobs in batches to our server, poll each workflow, and
-// stream results back per tile via `onResult`. Mirrors the main app's poll loop (5s in prod; a touch
-// faster here). Labels are keyed by the tile id we send as `key`.
+// Client side of auto-labeling: submit uploaded blobs in batches through the backend seam, poll each
+// workflow, and stream results back per tile via `onResult`. Mirrors the main app's poll loop (5s in
+// prod; a touch faster here). Labels are keyed by the tile id we send as `key`.
 
+import { backend } from '$lib/host';
 import type { Media } from '$lib/data/trainingModels';
+import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend';
 
-export type AutoLabelMode = 'tag' | 'caption';
-
-export interface AutoLabelResult {
-  key: string;
-  status: 'succeeded' | 'failed' | 'pending';
-  tags?: string[];
-  caption?: string;
-}
-
-export interface AutoLabelItem {
-  key: string;
-  mediaUrl: string;
-}
+export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend';
 
 const BATCH_SIZE = 16;
 const POLL_INTERVAL_MS = 3000;
@@ -47,23 +37,15 @@ async function submitBatch(
   media: Media,
   items: AutoLabelItem[]
 ): Promise<string> {
-  const res = await fetch('/api/auto-label', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ mode, media, items }),
-  });
-  if (!res.ok) throw new Error(`auto-label submit failed (${res.status})`);
-  const { workflowId } = (await res.json()) as { workflowId: string };
+  const { workflowId } = await backend().autoLabelSubmit(items, mode, media);
   return workflowId;
 }
 
-async function pollOnce(
+function pollOnce(
   workflowId: string,
   signal: AbortSignal
 ): Promise<{ done: boolean; results: AutoLabelResult[] }> {
-  const res = await fetch(`/api/auto-label/${workflowId}`, { signal });
-  if (!res.ok) throw new Error(`auto-label poll failed (${res.status})`);
-  return (await res.json()) as { done: boolean; results: AutoLabelResult[] };
+  return backend().autoLabelPoll(workflowId, signal);
 }
 
 const isAbort = (err: unknown) => (err as DOMException | undefined)?.name === 'AbortError';

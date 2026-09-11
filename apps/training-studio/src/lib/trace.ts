@@ -2,7 +2,7 @@
 // trace modes — `events` lines are NDJSON objects, `logs` lines are plain text (parseTraceLine falls back
 // to raw text when a line isn't JSON).
 
-import { dev } from '$app/environment';
+import { isDev } from '$lib/host';
 
 export const isAbort = (err: unknown) => (err as DOMException | undefined)?.name === 'AbortError';
 
@@ -28,7 +28,7 @@ export async function tailTrace(
   onLine: (line: string) => void,
   signal: AbortSignal
 ): Promise<{ ready: boolean }> {
-  const url = dev ? `/api/trace?url=${encodeURIComponent(traceUrl)}` : traceUrl;
+  const url = isDev ? `/api/trace?url=${encodeURIComponent(traceUrl)}` : traceUrl;
   const res = await fetch(url, { signal });
   if (res.status === 404) return { ready: false };
   if (!res.ok || !res.body) throw new Error(`trace failed (${res.status})`);

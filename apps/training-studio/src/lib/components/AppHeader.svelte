@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { browser } from '$lib/host';
   import { IconBoltFilled, IconCheck, IconChevronDown } from '@tabler/icons-svelte';
   import { getEdgeUrl } from '$lib/edge-url';
   import { buzzMode, type BuzzMode } from '$lib/buzz-mode.svelte';

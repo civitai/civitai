@@ -1,0 +1,11 @@
+@import '../src/global.css';
+
+/* The build scopes every selector above onto this tag (vite.element.config.ts), so the element is
+ * the embed's "page" — it must establish its own box; custom elements default to inline.
+ * Background is the HOST's by default: the scoped theme would paint a near-black slab that clashes
+ * with the embedding page (all internal surfaces carry their own bg). A host that needs one sets
+ * --ts-host-background on the element. Unlayered on purpose so it beats the @layer base body rule. */
+civitai-training-studio {
+  display: block;
+  background-color: var(--ts-host-background, transparent);
+}

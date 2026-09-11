@@ -11,6 +11,7 @@
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
+  import { portalProps } from '$lib/host';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -346,7 +347,7 @@
                   <span class="text-dark-2">LR scheduler</span>
                   <Select.Root type="single" bind:value={params[i]!.lrScheduler}>
                     <Select.Trigger class="h-7 font-mono">{params[i]!.lrScheduler}</Select.Trigger>
-                    <Select.Content>
+                    <Select.Content portalProps={portalProps()}>
                       {#each LR_SCHEDULERS as s (s)}
                         <Select.Item value={s}>{s}</Select.Item>
                       {/each}
@@ -357,7 +358,7 @@
                   <span class="text-dark-2">Optimizer</span>
                   <Select.Root type="single" bind:value={params[i]!.optimizer}>
                     <Select.Trigger class="h-7 font-mono">{params[i]!.optimizer}</Select.Trigger>
-                    <Select.Content>
+                    <Select.Content portalProps={portalProps()}>
                       {#each OPTIMIZERS as o (o)}
                         <Select.Item value={o}>{o}</Select.Item>
                       {/each}

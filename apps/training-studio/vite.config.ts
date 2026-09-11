@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [tailwindcss(), sveltekit()],
 
+    // Editors write-then-rename `foo.tmp.*` files; HMR picking up the transient file crashes the
+    // dev server.
+    server: { watch: { ignored: ['**/*.tmp.*'] } },
+
     // The workspace @civitai/* packages ship raw TS (main: ./src/index.ts). @civitai/client is a
     // built ESM package whose index.js bare-re-exports a directory (`export * from './generated'`)
     // with no `exports` map, which Node's SSR resolver rejects (ERR_UNSUPPORTED_DIR_IMPORT). Both

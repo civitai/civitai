@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { backend, browser } from '$lib/host';
 
 // The live header balance. Module-scope `$state`, but only ever WRITTEN in the browser (seed/refresh guard
 // on `browser`), so it never holds one user's balance during another user's SSR render — the same
@@ -21,11 +21,9 @@ export const buzzBalance = {
   async refresh() {
     if (!browser) return;
     try {
-      const res = await fetch('/api/buzz');
-      if (!res.ok) return;
-      // A 200-with-null is a buzz-service blip (getSpendableBuzz fails open), not a real zero — keep the
+      // A null is a buzz-service blip (getSpendableBuzz fails open), not a real zero — keep the
       // last known value rather than blanking the header.
-      const next = (await res.json()) as Balances | null;
+      const next = await backend().getBuzz();
       if (next) balances = next;
     } catch {
       // Keep the last known value — the header just doesn't update this tick.

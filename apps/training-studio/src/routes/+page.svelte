@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { navigate } from '$lib/host';
   import AppHeader from '$lib/components/AppHeader.svelte';
   import MyTrainings from './MyTrainings.svelte';
   import type { PageData } from './$types';
@@ -8,4 +8,4 @@
 </script>
 
 <AppHeader username={data.username} image={data.image} logoutUrl={data.logoutUrl} buzz={data.buzz} />
-<MyTrainings rows={data.rows} onNew={() => goto('/new')} />
+<MyTrainings rows={data.rows} onNew={() => navigate({ view: 'new' })} />

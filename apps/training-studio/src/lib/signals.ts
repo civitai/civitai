@@ -1,5 +1,4 @@
-import { browser } from '$app/environment';
-import { env } from '$env/dynamic/public';
+import { browser, hostConfig } from '$lib/host';
 import { HubConnectionBuilder, HttpTransportType, type HubConnection } from '@microsoft/signalr';
 
 // A single SignalR connection for the tab, opened once from the root layout and shared across navigations.
@@ -34,7 +33,7 @@ async function fetchToken(): Promise<string> {
  *  outlives navigations and is never `.stop()`-ed; the root layout that opens it only dies on full teardown. */
 export function connectSignals() {
   if (!browser || connection) return;
-  const endpoint = env.PUBLIC_SIGNALS_ENDPOINT?.replace(/\/+$/, '');
+  const endpoint = hostConfig().signalsEndpoint?.replace(/\/+$/, '');
   if (!endpoint) return;
 
   const conn = new HubConnectionBuilder()

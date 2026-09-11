@@ -4,6 +4,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
+  import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
   import { captionTriggerHit, isTriggerTag, tagsHaveTrigger, type Img } from './trainingFlow';
 
@@ -100,7 +101,7 @@
 {/snippet}
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-2xl">
+  <Dialog.Content class="sm:max-w-2xl" portalProps={portalProps()}>
     {#if editing}
       <Dialog.Header>
         <Dialog.Title>{labelMode === 'tag' ? 'Edit tags' : 'Edit caption'}</Dialog.Title>

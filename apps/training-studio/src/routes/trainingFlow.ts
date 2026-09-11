@@ -9,7 +9,7 @@ import {
   type Media,
   type ModelCard,
 } from '$lib/data/trainingModels';
-import type { TrainingRunPayload } from '$lib/train';
+import type { TrainingRunPayload } from '$lib/backend';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;

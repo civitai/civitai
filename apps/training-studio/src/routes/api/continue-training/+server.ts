@@ -14,11 +14,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   const fromEpoch = parse(url.searchParams.get('fromEpoch'));
   const addEpochs = parse(url.searchParams.get('addEpochs'));
   if (!workflowId || fromEpoch === null || addEpochs === null) error(400, 'Bad request.');
-  const opts: ContinueOpts = {
-    workflowId,
-    fromEpoch,
-    addEpochs: Math.min(20, Math.max(1, Math.round(addEpochs))),
-  };
+  const opts: ContinueOpts = { workflowId, fromEpoch, addEpochs };
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
     return json(await continueTrainingWhatIf(token, locals.user.id, opts));
@@ -34,13 +30,16 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     workflowId?: string;
     fromEpoch?: number;
     addEpochs?: number;
+    currencies?: string[];
   } | null;
   if (!body?.workflowId || typeof body.fromEpoch !== 'number' || typeof body.addEpochs !== 'number')
     error(400, 'Bad request.');
   const opts: ContinueOpts = {
     workflowId: body.workflowId,
     fromEpoch: body.fromEpoch,
-    addEpochs: Math.min(20, Math.max(1, Math.round(body.addEpochs))),
+    addEpochs: body.addEpochs,
+    // Filtered + defaulted by resolveCurrencies core-side — never trusted from the wire.
+    currencies: Array.isArray(body.currencies) ? body.currencies : undefined,
   };
 
   const token = await requireToken(locals, 'Training is unavailable right now.');

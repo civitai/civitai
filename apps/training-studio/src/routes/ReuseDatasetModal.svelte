@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { backend, browser, portalProps } from '$lib/host';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import type { TrainingRow } from '$lib/data/trainingRows';
@@ -19,11 +19,7 @@
   } = $props();
 
   // Derive the fetch from `open` so the list re-loads each time it's opened; never rejects the panel.
-  const trainings = $derived(
-    browser && open
-      ? fetch('/api/trainings').then((r) => r.json() as Promise<TrainingRow[]>)
-      : null
-  );
+  const trainings = $derived(browser && open ? backend().listTrainings() : null);
 
   let loadingId = $state<string | null>(null);
   let error = $state('');
@@ -33,15 +29,13 @@
     loadingId = row.workflowId;
     error = '';
     try {
-      const res = await fetch(`/api/run-dataset?id=${encodeURIComponent(row.workflowId)}`);
-      if (!res.ok) throw new Error('fetch failed');
-      const dataset = (await res.json()) as { air: string; caption: string }[];
+      const dataset = await backend().getRunDataset(row.workflowId);
       if (dataset.length === 0) {
         error = "That run's dataset can't be reused (no per-image blobs).";
         return;
       }
       onReuse(
-        toReuseItems(dataset, row.workflowId).map((i) => ({
+        (await toReuseItems(dataset, row.workflowId)).map((i) => ({
           blobId: i.air,
           url: i.previewUrl,
           name: i.name,
@@ -58,7 +52,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-2xl">
+  <Dialog.Content class="sm:max-w-2xl" portalProps={portalProps()}>
     <Dialog.Header>
       <Dialog.Title>Reuse a dataset</Dialog.Title>
       <Dialog.Description>

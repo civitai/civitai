@@ -48,10 +48,15 @@ interface TrainingStudioHost {
     orchestratorMode: 'dev' | 'prod';
   };
 
-  /** Host-owned navigation (publish handoff, model links, "leave the studio"). The component
-   *  never does top-level navigation itself when embedded. */
-  navigate(url: string): void;
+  /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps
+   *  them onto its own routes. `hrefFor` exists so run cards render real <a href>s (middle-click,
+   *  open-in-new-tab); `navigate` is the programmatic form. `refreshAll` marks server data stale
+   *  everywhere (e.g. Buzz was just spent). Already implemented — see `src/lib/host.ts`. */
+  hrefFor(loc: StudioLocation): string;
+  navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
 }
+
+type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };
 ```
 
 Everything else the current server does — session gating, the Flipt closed-beta segment,

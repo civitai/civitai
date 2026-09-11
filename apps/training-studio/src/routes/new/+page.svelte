@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { navigate } from '$lib/host';
   import AppHeader from '$lib/components/AppHeader.svelte';
   import TrainingFlow from '../TrainingFlow.svelte';
   import type { PageData } from './$types';
@@ -14,7 +14,7 @@
 {#await data.fromPrices}
   <div class="grid place-items-center py-20 font-mono text-sm text-dark-2">Loading pricing…</div>
 {:then prices}
-  <TrainingFlow {prices} onExit={() => goto('/')} />
+  <TrainingFlow {prices} onExit={() => navigate({ view: 'home' })} />
 {:catch}
-  <TrainingFlow prices={{}} onExit={() => goto('/')} />
+  <TrainingFlow prices={{}} onExit={() => navigate({ view: 'home' })} />
 {/await}

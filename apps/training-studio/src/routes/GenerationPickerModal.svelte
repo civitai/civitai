@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { backend, browser, portalProps } from '$lib/host';
   import { SvelteSet } from 'svelte/reactivity';
   import { IconMusic, IconCheck } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -19,17 +19,7 @@
   } = $props();
 
   // Derive the promise from `open` so each open (false→true) refetches — generations change between visits.
-  const itemsPromise = $derived(
-    open && browser
-      ? fetch(`/api/generations?media=${media}`).then(async (r) => {
-          if (!r.ok) {
-            const body = (await r.json().catch(() => null)) as { message?: string } | null;
-            throw new Error(body?.message ?? `Failed to load generations (${r.status})`);
-          }
-          return ((await r.json()) as { items: GenerationItem[] }).items;
-        })
-      : null
-  );
+  const itemsPromise = $derived(open && browser ? backend().listGenerations(media) : null);
 
   const selected = new SvelteSet<string>();
   // Anchor for shift-click range selection — the last plain-clicked tile.
@@ -71,7 +61,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-3xl">
+  <Dialog.Content class="sm:max-w-3xl" portalProps={portalProps()}>
     <Dialog.Header>
       <Dialog.Title>From my generations</Dialog.Title>
       <Dialog.Description>

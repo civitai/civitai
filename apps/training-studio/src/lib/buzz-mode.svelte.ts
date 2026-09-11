@@ -1,4 +1,4 @@
-import { browser } from '$app/environment';
+import { browser } from '$lib/host';
 
 // The global Buzz spend mode. Blue (generation) is ALWAYS available; this toggle picks the primary
 // account — yellow (purchased) or green (membership). It drives two things app-wide: the `--color-buzz`
