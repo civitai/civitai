@@ -1,4 +1,4 @@
-import { Stack, Text, Title, Modal } from '@mantine/core';
+import { Title, Modal } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { AssociateModels } from '~/components/AssociatedModels/AssociateModels';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -18,15 +18,7 @@ export default function AssociateModelsModal({
   return (
     <Modal
       {...dialog}
-      title={
-        <Stack gap={2}>
-          <Title order={3}>{`Manage ${getDisplayName(type)} Resources`}</Title>
-          <Text size="sm" c="dimmed">
-            Drag to reorder
-          </Text>
-        </Stack>
-      }
-      styles={{ header: { alignItems: 'flex-start' } }}
+      title={<Title order={3}>{`Manage ${getDisplayName(type)} Resources`}</Title>}
       centered
     >
       <AssociateModels fromId={fromId} type={type} ownerId={ownerId} onSave={dialog.onClose} />

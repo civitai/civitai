@@ -159,12 +159,19 @@ export function AssociateModels({
     savedTargetIds
   );
   const newlyAddedIds = new Set(newlyAdded);
+  // Ownership is the model owner's, never the viewer's — a moderator editing someone else's
+  // model links that creator's resources. Derived once here and read by both the chip gate
+  // and the author badge, so the two can never disagree.
+  const creatorOwnedIds = new Set(
+    associatedResources.filter(({ item }) => item.user.id === ownerId).map(({ item }) => item.id)
+  );
+  const viewerIsCreator = currentUser?.id === ownerId;
   // A row can be linked back only if it is newly added AND the creator owns it. The first half
   // comes from the shared derivation the server also uses; the second is the same ownership
   // rule the server re-derives from the database, which remains the authority.
   const reciprocalEligible = new Set(
     associatedResources
-      .filter(({ item }) => newlyAddedIds.has(item.id) && item.user.id === ownerId)
+      .filter(({ item }) => newlyAddedIds.has(item.id) && creatorOwnedIds.has(item.id))
       .map(({ item }) => item.id)
   );
   const toggleLinkBack = (modelId: number) => {
@@ -204,9 +211,14 @@ export function AssociateModels({
         </Text>
       ) : (
         <Stack gap="xs">
-          <Text c="dimmed" size="xs">
-            {associatedResources.length} of {limit} selected
-          </Text>
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text c="dimmed" size="xs">
+              Drag to reorder
+            </Text>
+            <Text c="dimmed" size="xs">
+              {associatedResources.length} of {limit} selected
+            </Text>
+          </Group>
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -249,14 +261,14 @@ export function AssociateModels({
                                   ? getDisplayName(association.item.type)
                                   : 'Article'}
                               </Badge>
-                              {!reciprocalEligible.has(association.item.id) && (
-                                <Badge size="md" radius="xl" pl={4} color="gray" variant="light">
-                                  <Group gap={2}>
-                                    <IconUser size={12} strokeWidth={2.5} />
-                                    {association.item.user.username}
-                                  </Group>
-                                </Badge>
-                              )}
+                              <Badge size="md" radius="xl" pl={4} color="gray">
+                                <Group gap={2}>
+                                  <IconUser size={12} strokeWidth={2.5} />
+                                  {creatorOwnedIds.has(association.item.id) && viewerIsCreator
+                                    ? 'You'
+                                    : association.item.user.username}
+                                </Group>
+                              </Badge>
                               {!getIsSafeBrowsingLevel(association.item.nsfwLevel) && (
                                 <Badge color="red" size="md" radius="xl">
                                   NSFW
@@ -267,6 +279,13 @@ export function AssociateModels({
                                   size="xs"
                                   checked={linkBack.includes(association.item.id)}
                                   onChange={() => toggleLinkBack(association.item.id)}
+                                  styles={{
+                                    label: {
+                                      textTransform: 'uppercase',
+                                      fontWeight: 700,
+                                      letterSpacing: '0.25px',
+                                    },
+                                  }}
                                 >
                                   Link back
                                 </Chip>
