@@ -75,6 +75,18 @@ describe('upload precision: filename fallback under the header', () => {
     expect(resolveUploadPrecision({ fileName: file.name, headerFp, precisions })).toBe('bf16');
   });
 
+  // Both production headers happen to have their tensor COUNT order agree with their BYTE
+  // order, so they cannot tell the byte weighting from one-point-per-tensor. This one disagrees:
+  // scoring per tensor reads fp32.
+  it('decides the header vote on bytes, not on how many tensors carry a dtype', async () => {
+    const file = safetensorsFile('plain.safetensors', [
+      ['BF16', 2, 20_000_000],
+      ['F32', 50, 50_000],
+    ]);
+
+    expect(await inferSafetensorsPrecision(file)).toBe('bf16');
+  });
+
   it('keeps a scheme the header observed directly over a contradicting name', async () => {
     const file = safetensorsFile('something_nf4.safetensors', [
       ['F8_E4M3', 8, 8_000_000],
@@ -88,7 +100,7 @@ describe('upload precision: filename fallback under the header', () => {
 });
 
 describe('inferPrecisionFromFileName', () => {
-  it('prefers the longest option, so fp8_scaled is not read as fp8', () => {
+  it('reads a separator inside an option as optional', () => {
     expect(inferPrecisionFromFileName('mymodel_fp8_scaled.safetensors', precisions)).toBe(
       'fp8_scaled'
     );
@@ -97,8 +109,41 @@ describe('inferPrecisionFromFileName', () => {
     );
   });
 
+  // The live list cannot exercise the longest-first sort: no option in it is a word-start-legal
+  // prefix of another, and `fp4` inside `nvfp4` is refused by the word-start rule rather than by
+  // the ordering. It becomes load-bearing the moment a mod adds a variant of an existing option,
+  // which is what this pins — without the sort, `fp8_scaled` wins because it is listed first.
+  it('prefers the longest option when a shorter one is a legal prefix of it', () => {
+    expect(
+      inferPrecisionFromFileName('mymodel_fp8_scaled_v2.safetensors', [
+        ...precisions,
+        'fp8_scaled_v2',
+      ])
+    ).toBe('fp8_scaled_v2');
+  });
+
+  // `modelFileOptions` is trimmed but never lowercased, so a mod can add `FP8`. Without a
+  // case-folded filter it escapes the dtype-stateable check and overrides a correct header.
+  it('does not offer a dtype-stateable option a mod typed in capitals', () => {
+    expect(inferPrecisionFromFileName('mymodel_fp8.safetensors', [...precisions, 'FP8'])).toBe(
+      null
+    );
+  });
+
   it('accepts a camelCase hump as a word start', () => {
     expect(inferPrecisionFromFileName('RawGirlKreaNVFP4.safetensors', precisions)).toBe('nvfp4');
+  });
+
+  // Real prod names. A version number between the lowercase hump and the token is the common
+  // shape and must survive the rule that refuses job ids.
+  it('accepts a version number between the hump and the token', () => {
+    expect(inferPrecisionFromFileName('TzigoAnimeFlux_v2NF4.safetensors', precisions)).toBe('nf4');
+    expect(
+      inferPrecisionFromFileName('fluxedUpFluxNSFW_51NVFP4-Nunchaku.safetensors', precisions)
+    ).toBe('nvfp4');
+    expect(
+      inferPrecisionFromFileName('projectGaiaFlux1D_v20NF4Uncensored.safetensors', precisions)
+    ).toBe('nf4');
   });
 
   it('offers a precision a mod added at runtime and the constants do not carry', () => {
@@ -118,11 +163,20 @@ describe('inferPrecisionFromFileName', () => {
     expect(inferPrecisionFromFileName('lora_int4.safetensors', precisions)).toBe('int4');
   });
 
+  // 🔴 The digit-preceded ids are the ones that matter. Base32 is uppercase letters AND digits,
+  // so a rule that accepted any [a-z0-9] before an uppercase token minted `nf4` for 12 real prod
+  // job ids while every fixture here passed. Keep at least one digit-preceded id in this list.
   it('does not read a precision out of a trained-file job id', () => {
     expect(inferPrecisionFromFileName('PW2MQDNF4ZXWSGYEHXWCGH8B60.safetensors', precisions)).toBe(
       null
     );
     expect(inferPrecisionFromFileName('AGAGENF442Q05F8KABM73JT1C0.safetensors', precisions)).toBe(
+      null
+    );
+    expect(inferPrecisionFromFileName('F2NF4J1W4CGCKYETAEQJT9B5A0.safetensors', precisions)).toBe(
+      null
+    );
+    expect(inferPrecisionFromFileName('3HAF53NF4S8FDQMV8HC9Z8C300.safetensors', precisions)).toBe(
       null
     );
   });
@@ -137,5 +191,11 @@ describe('inferPrecisionFromFileName', () => {
     expect(inferPrecisionFromFileName('SM-FinetunePaint40Art-Remake.safetensors', precisions)).toBe(
       null
     );
+  });
+
+  // The only case `endsWord` decides on its own: a separator satisfies `startsWord`, so
+  // nothing else can refuse it.
+  it('does not read int4 out of a longer number at a word start', () => {
+    expect(inferPrecisionFromFileName('model_int40_fix.safetensors', precisions)).toBe(null);
   });
 });

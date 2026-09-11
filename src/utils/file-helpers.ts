@@ -85,30 +85,35 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
 }
 
 /**
- * The precisions a safetensors dtype can state on its own. Every other value a mod adds to
- * `modelFileOptions` is a packaging scheme layered over a dtype — NVFP4 and NF4 pack their
- * weights into U8, GPTQ int8 into I32, and MXFP8's shared-exponent scales are usually written
- * as U8 rather than F8_E8M0 — all of which the mapper deliberately leaves unmapped, so the
- * quantized bulk contributes no bytes and the vote is won by whatever housekeeping tensors
- * are left. Measured on two production files: an MXFP8 checkpoint reads as fp8, and an NVFP4
- * one as fp32.
+ * The precisions whose answer from the header is authoritative, so a file name may never
+ * contradict one. Deliberately NOT every precision `SAFETENSORS_DTYPE_TO_FP` can emit: that map
+ * also emits `int8` and `mxfp8`, which a dtype states only sometimes — MXFP8 scales are usually
+ * written as U8 rather than F8_E8M0, and GPTQ int8 packs into the unmapped I32 — so a name may
+ * supply those, and `resolveUploadPrecision` still keeps either when the header did observe it.
+ * Adding a row to that map does not update this set; keep the two in step by hand.
  */
 const DTYPE_STATEABLE_FP = new Set(['fp32', 'fp16', 'bf16', 'fp8']);
 
 const isAlphanumeric = (char: string) => /[A-Za-z0-9]/.test(char);
 
 /**
- * Whether `name[index]` starts a word. A separator counts, and so does a camelCase hump
- * (`RawGirlKreaNVFP4`), but a letter running straight into the token does not — the trained-file
- * job ids are 26-char base32 (`PW2MQDNF4ZXWSGYEHXWCGH8B60`) and 50 of them contain `nf4` by
- * chance. Inventing a precision for those is the failure worth avoiding; missing an all-lowercase
- * glued name like `ltx23devnvfp4` is not.
+ * Whether `name[index]` starts a word. A separator counts, and so does a camelCase hump — whose
+ * lowercase letter may sit behind a version number, as in `v20NF4` and `_51NVFP4`. An UPPERCASE
+ * letter before the token does not count, digits between or not: trained-file job ids are 26-char
+ * base32, uppercase letters AND digits, so `F2NF4J1W4CGCKYETAEQJT9B5A0` has to be refused by the
+ * same rule that accepts `TzigoAnimeFlux_v2NF4`. Of the 16 prod names with a digit before an
+ * uppercase token, 12 are job ids. Missing an all-lowercase glued name (`ltx23devnvfp4`) is the
+ * side to fail on.
  */
 function startsWord(name: string, index: number) {
   if (index === 0) return true;
-  const prev = name[index - 1];
-  if (!isAlphanumeric(prev)) return true;
-  return /[a-z0-9]/.test(prev) && /[A-Z]/.test(name[index]);
+  if (!isAlphanumeric(name[index - 1])) return true;
+  if (!/[A-Z]/.test(name[index])) return false;
+
+  let before = index - 1;
+  while (before >= 0 && /[0-9]/.test(name[before])) before--;
+  if (before < 0 || !isAlphanumeric(name[before])) return true;
+  return /[a-z]/.test(name[before]);
 }
 
 /** A trailing digit means the token was part of a longer number (`_int40_`), not the token. */
@@ -142,7 +147,7 @@ export function inferPrecisionFromFileName(
   precisions: readonly string[]
 ): ModelFileFp | null {
   const candidates = precisions
-    .filter((precision) => precision && !DTYPE_STATEABLE_FP.has(precision))
+    .filter((precision) => precision && !DTYPE_STATEABLE_FP.has(precision.toLowerCase()))
     .sort((a, b) => b.length - a.length);
 
   for (const precision of candidates) {
