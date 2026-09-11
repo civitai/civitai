@@ -9,10 +9,12 @@ export function SortableItem({
   disabled,
   children,
   id,
+  cursor = 'pointer',
 }: {
   disabled?: boolean;
   children: React.ReactElement<React.ComponentPropsWithRef<'div'>>;
   id: UniqueIdentifier;
+  cursor?: CSSProperties['cursor'];
 }) {
   const sortable = useSortable({ id });
 
@@ -21,7 +23,7 @@ export function SortableItem({
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    cursor: isDragging ? 'grabbing' : !disabled ? 'pointer' : 'auto',
+    cursor: isDragging ? 'grabbing' : !disabled ? cursor : 'auto',
     zIndex: isDragging ? 1 : undefined,
     touchAction: 'none',
   };

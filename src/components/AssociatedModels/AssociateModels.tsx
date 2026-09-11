@@ -2,19 +2,7 @@ import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { ComboboxItem } from '@mantine/core';
-import {
-  Stack,
-  Text,
-  Card,
-  Group,
-  Button,
-  Center,
-  Loader,
-  Alert,
-  Badge,
-  Box,
-  Chip,
-} from '@mantine/core';
+import { Stack, Text, Card, Group, Button, Center, Loader, Badge, Box, Chip } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -35,6 +23,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { constants } from '~/server/common/constants';
 import { selectNewlyAddedModelIds } from '~/server/services/model-association.utils';
 import { showWarningNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
@@ -206,103 +195,107 @@ export function AssociateModels({
         <Center p="xl">
           <Loader />
         </Center>
+      ) : !associatedResources.length ? (
+        <Text align="center" c="dimmed" size="sm" py="lg">
+          No {type.toLowerCase()} resources yet — search above to add one
+        </Text>
       ) : (
-        <Stack gap={0}>
-          <Text align="right" c="dimmed" size="xs">
-            You can select {limit - associatedResources.length} more resources
+        <Stack gap="xs">
+          <Text c="dimmed" size="xs">
+            {associatedResources.length} of {limit} selected
           </Text>
-          {!!associatedResources.length ? (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={associatedResources.map(({ item }) => item.id)}
+              strategy={verticalListSortingStrategy}
             >
-              <SortableContext
-                items={associatedResources.map(({ item }) => item.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                <Stack gap={4}>
-                  {associatedResources.map((association) => (
-                    <SortableItem key={association.item.id} id={association.item.id}>
-                      <Card
-                        withBorder
-                        pl={4}
-                        pr={6}
-                        pt={4}
-                        pb={6}
-                        className={
-                          newlyAddedIds.has(association.item.id)
-                            ? 'border-blue-5 dark:border-blue-5'
-                            : undefined
-                        }
-                      >
-                        <Group justify="space-between" wrap="nowrap">
-                          <Group align="center" gap="xs" wrap="nowrap">
-                            <IconGripVertical />
-                            <Stack gap={4}>
-                              <Text size="md" lineClamp={2}>
-                                {'name' in association.item
-                                  ? association.item.name
-                                  : association.item.title}
-                              </Text>
-                              <Group gap={4}>
-                                <Badge size="md" radius="xl">
-                                  {'type' in association.item ? association.item.type : 'Article'}
+              <Stack gap={4}>
+                {associatedResources.map((association) => (
+                  <SortableItem key={association.item.id} id={association.item.id} cursor="grab">
+                    <Card
+                      withBorder
+                      pl={4}
+                      pr={6}
+                      pt={4}
+                      pb={6}
+                      className={
+                        newlyAddedIds.has(association.item.id)
+                          ? 'border-blue-5 dark:border-blue-5'
+                          : undefined
+                      }
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Group align="center" gap="xs" wrap="nowrap">
+                          <IconGripVertical
+                            size={20}
+                            className="shrink-0 text-gray-6 dark:text-dark-2"
+                          />
+                          <Stack gap={4}>
+                            <Text size="md" lineClamp={2}>
+                              {'name' in association.item
+                                ? association.item.name
+                                : association.item.title}
+                            </Text>
+                            <Group gap={4}>
+                              <Badge size="md" radius="xl">
+                                {'type' in association.item
+                                  ? getDisplayName(association.item.type)
+                                  : 'Article'}
+                              </Badge>
+                              {!reciprocalEligible.has(association.item.id) && (
+                                <Badge size="md" radius="xl" pl={4} color="gray" variant="light">
+                                  <Group gap={2}>
+                                    <IconUser size={12} strokeWidth={2.5} />
+                                    {association.item.user.username}
+                                  </Group>
                                 </Badge>
-                                {!reciprocalEligible.has(association.item.id) && (
-                                  <Badge size="md" radius="xl" pl={4}>
-                                    <Group gap={2}>
-                                      <IconUser size={12} strokeWidth={2.5} />
-                                      {association.item.user.username}
-                                    </Group>
-                                  </Badge>
-                                )}
-                                {!getIsSafeBrowsingLevel(association.item.nsfwLevel) && (
-                                  <Badge color="red" size="md" radius="xl">
-                                    NSFW
-                                  </Badge>
-                                )}
-                                {reciprocalEligible.has(association.item.id) && (
-                                  <Chip
-                                    size="xs"
-                                    checked={linkBack.includes(association.item.id)}
-                                    onChange={() => toggleLinkBack(association.item.id)}
-                                  >
-                                    Link back
-                                  </Chip>
-                                )}
-                              </Group>
-                            </Stack>
-                          </Group>
-                          <LegacyActionIcon
-                            variant="outline"
-                            color="red"
-                            onClick={() => handleRemove(association.item.id)}
-                          >
-                            <IconTrash size={20} />
-                          </LegacyActionIcon>
+                              )}
+                              {!getIsSafeBrowsingLevel(association.item.nsfwLevel) && (
+                                <Badge color="red" size="md" radius="xl">
+                                  NSFW
+                                </Badge>
+                              )}
+                              {reciprocalEligible.has(association.item.id) && (
+                                <Chip
+                                  size="xs"
+                                  checked={linkBack.includes(association.item.id)}
+                                  onChange={() => toggleLinkBack(association.item.id)}
+                                >
+                                  Link back
+                                </Chip>
+                              )}
+                            </Group>
+                          </Stack>
                         </Group>
-                      </Card>
-                    </SortableItem>
-                  ))}
-                </Stack>
-              </SortableContext>
-            </DndContext>
-          ) : (
-            <Alert>There are no {type.toLowerCase()} resources associated with this model</Alert>
-          )}
+                        <LegacyActionIcon
+                          variant="subtle"
+                          color="red"
+                          aria-label="Remove resource"
+                          onClick={() => handleRemove(association.item.id)}
+                        >
+                          <IconTrash size={20} />
+                        </LegacyActionIcon>
+                      </Group>
+                    </Card>
+                  </SortableItem>
+                ))}
+              </Stack>
+            </SortableContext>
+          </DndContext>
         </Stack>
       )}
-      {changed && (
-        <Group justify="flex-end">
-          <Button variant="default" onClick={handleReset}>
-            Reset
-          </Button>
-          <Button onClick={handleSave} loading={isSaving}>
-            Save Changes
-          </Button>
-        </Group>
-      )}
+      <Group justify="flex-end">
+        <Button variant="default" onClick={handleReset} disabled={!changed || isSaving}>
+          Reset
+        </Button>
+        <Button onClick={handleSave} loading={isSaving} disabled={!changed}>
+          Save Changes
+        </Button>
+      </Group>
     </Stack>
   );
 }
