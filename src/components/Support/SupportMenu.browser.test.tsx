@@ -71,16 +71,19 @@ beforeEach(() => {
 });
 
 describe('the destinations that used to live in the support modal', () => {
-  test('all four are in the menu, plus the portal as the fallback', async () => {
+  // Labels AND hrefs: the four cards all pointed somewhere specific, and a menu that
+  // lists the right words against the wrong destinations is the failure this replaces.
+  // "Known Issues" is deliberately NOT in the FAQ label — the footer already renders a
+  // "Known Issues" link to the onsite /issues two elements away, and the same words in
+  // the same row pointing at two places is worse than a longer label.
+  test.each([
+    ['Education Hub', '/education'],
+    ['FAQ', 'https://education.civitai.com/civitai-faq'],
+    ['Discord Community', '/discord'],
+    ['Support Portal', '/support-portal'],
+  ])('%s links to %s', async (name, href) => {
     await openMenu();
-    for (const name of [
-      'Report a bug',
-      'Education Hub',
-      'FAQ & Known Issues',
-      'Discord Community',
-      'Support Portal',
-    ])
-      await expect.element(page.getByRole('menuitem', { name })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name })).toHaveAttribute('href', href);
   });
 });
 

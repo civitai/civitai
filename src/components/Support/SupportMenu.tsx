@@ -96,7 +96,7 @@ export function SupportMenu() {
           rel="nofollow noreferrer"
           leftSection={<IconQuestionMark size={ICON_SIZE} />}
         >
-          FAQ &amp; Known Issues
+          FAQ
         </Menu.Item>
         <Menu.Item
           component="a"

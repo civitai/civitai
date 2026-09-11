@@ -5,6 +5,7 @@ import {
   FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_MESSAGE_MAX_LENGTH,
+  FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
 } from '~/shared/constants/feedback.constants';
 
@@ -23,7 +24,7 @@ export const feedbackAreaSchema = z.enum(FEEDBACK_AREAS);
 // ordinary case, not an error. Every one of them is bounded because a JSONB
 // column will store exactly what it is handed.
 const feedbackContextSchema = z.object({
-  path: z.string().max(300).optional(),
+  path: z.string().max(FEEDBACK_PATH_MAX_LENGTH).optional(),
   reportedSource: z.string().max(50).optional(),
   reportedPageSources: z.array(z.string().max(50)).max(500).optional(),
   pagesLoaded: z.number().int().min(0).max(10_000).optional(),

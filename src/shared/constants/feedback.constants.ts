@@ -46,6 +46,16 @@ export const FEEDBACK_IMAGE_MAX_COUNT = 3;
 /** Cloudflare image ids written here are `randomUUID()` (36 chars); this is headroom, not a fit. */
 export const FEEDBACK_IMAGE_ID_MAX_LENGTH = 100;
 
+/**
+ * Length ceiling on `context.path`.
+ *
+ * Exported for the same reason as FEEDBACK_FILTER_VALUE_MAX_LENGTH below: a caller
+ * has to clip to it, and `feedbackContextSchema` REJECTS an over-long value rather
+ * than clipping, so a drifted copy fails the whole submission on the surface that
+ * exists to collect reports.
+ */
+export const FEEDBACK_PATH_MAX_LENGTH = 300;
+
 /** Faro session ids are short opaque strings; bounded because it is still client-supplied. */
 export const FEEDBACK_SESSION_ID_MAX_LENGTH = 64;
 

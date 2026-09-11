@@ -8,6 +8,7 @@ import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import {
   FEEDBACK_MESSAGE_MAX_LENGTH,
+  FEEDBACK_PATH_MAX_LENGTH,
   SITE_BUG_REPORT_AREA,
 } from '~/shared/constants/feedback.constants';
 
@@ -29,16 +30,27 @@ export default function FeedbackDrawer() {
 
   const feedback = useFeedbackSubmission({
     area: SITE_BUG_REPORT_AREA,
-    // The route the reporter was on when they opened the menu. `asPath` rather than
-    // `window.location.pathname` so a shallow-routed page reports where the user
-    // believes they are; clipped because `context` is a JSONB column and the schema
-    // rejects (never truncates) an over-long value.
-    context: { path: router.asPath.slice(0, 300) },
+    // 🔴 THE ROUTE ONLY — the query string is cut off deliberately. This entry point
+    // is reachable from the footer on every route, including ones that carry a secret
+    // in the URL (`/redeem-code?code=…`, `/payment/coinbase?key=…`), and `context` is
+    // a JSONB column that triage reads. Storing `asPath` whole would write a live
+    // redeemable code into it, permanently, without ever telling the reporter. The
+    // inline /apps prompt already splits this way: it reports a bare pathname and
+    // sends its search term through the bounded `filters` field.
+    context: { path: router.asPath.split(/[?#]/)[0].slice(0, FEEDBACK_PATH_MAX_LENGTH) },
   });
   const { sent, message, setMessage, busy, canSubmit, handleSubmit } = feedback;
 
   return (
     <Drawer
+      // 🔴 KEEPS THE PANEL OUT OF ITS OWN SCREENSHOT. `captureConsentedScreenshot`
+      // draws `document.body`, and this Drawer portals into it — so without this the
+      // capture a reporter opts into is 480px of this form plus the page dimmed
+      // behind the overlay, which is the one artifact that makes a report better
+      // than a ticket. html2canvas-pro's cloner skips any element carrying this
+      // attribute and its whole subtree; it sits on the Drawer ROOT so the overlay
+      // goes with it. Pinned by FeedbackDrawer.browser.test.tsx.
+      data-html2canvas-ignore
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '100dvh' : 480}
       shadow="lg"

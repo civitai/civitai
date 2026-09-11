@@ -83,9 +83,16 @@ export function useFeedbackSubmission({
   // because this must run on unmount with whatever was live at that moment, and a
   // cleanup closed over `attachments` would see the value from its own render.
   const liveObjectUrls = useRef<Set<string>>(new Set());
+  // 🔴 A capture can resolve AFTER the surface is gone. The drawer unmounts every
+  // time it closes (the inline prompt never did), so a reporter who ticks the box and
+  // closes the panel lands here routinely: the cleanup below has already emptied the
+  // set, and a blob URL minted afterwards would be tracked by nothing and revoked by
+  // nothing. Checked before any post-await state write.
+  const mounted = useRef(true);
   useEffect(() => {
     const urls = liveObjectUrls.current;
     return () => {
+      mounted.current = false;
       urls.forEach(revoke);
       urls.clear();
     };
@@ -178,6 +185,9 @@ export function useFeedbackSubmission({
     setCapturing(true);
     try {
       const file = await captureConsentedScreenshot({ consented: checked });
+      // Closed mid-capture: mint no blob URL at all, rather than one tracked by a set
+      // the cleanup has already drained.
+      if (!mounted.current) return;
       if (!file) {
         // Defensive: `null` is the module's "no consent" answer, which this call
         // site cannot currently produce. Handled rather than asserted away so a
@@ -192,6 +202,7 @@ export function useFeedbackSubmission({
         objectUrl: trackObjectUrl(URL.createObjectURL(file)),
       });
     } catch (error) {
+      if (!mounted.current) return;
       // A failed capture must not look like a silently attached one.
       setScreenshotConsent(false);
       showErrorNotification({
