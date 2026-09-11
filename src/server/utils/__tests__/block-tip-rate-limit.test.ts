@@ -96,10 +96,25 @@ const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
  * It is deliberately NOT computed as `new Date().toISOString().slice(0, 10)`.
  * That is byte-identical to the expression the implementation uses
  * (`tipCapWindowKey` in `../block-tip-rate-limit`), so an expectation built that
- * way moves WITH the implementation and can never catch it changing — the
- * "never derive a test's expectation from the implementation it tests" trap. A
- * literal is an independent expectation: switch production to a LOCAL-date
- * derivation and this still pins the UTC answer.
+ * way moves WITH the implementation — the "never derive a test's expectation
+ * from the implementation it tests" trap. The literal is an INDEPENDENT
+ * expectation, and it is also simply less machinery.
+ *
+ * 🔴 BE PRECISE ABOUT WHAT THAT BUYS — AN EARLIER VERSION OF THIS COMMENT
+ * OVERSOLD IT AND WAS FALSE. It claimed that switching production to a
+ * LOCAL-date derivation would still be caught here. MEASURED, mutating
+ * `tipCapWindowKey` to `toLocaleDateString('en-CA')`: the literal SURVIVES
+ * under `TZ=UTC` and `America/Winnipeg` (29/29) and dies only at UTC+13/+14.
+ * `FROZEN_CLOCK` is 12:00:30Z, so the local and UTC dates agree at every offset
+ * inside ±12h — every deployment TZ, CI's UTC included. The control that
+ * settles it: a FROZEN-but-DERIVED expectation survives that same mutant
+ * (29/29 at both TZs), so against it the two forms are EQUIVALENT, not
+ * better-and-worse. (The unfrozen base did catch it — but only through the
+ * import-vs-call-time skew that is the bug being fixed, so that is not
+ * coverage worth preserving.)
+ *
+ * Choose the literal for INDEPENDENCE and simplicity, which are real. Do not
+ * claim a detection property it does not have.
  *
  * ⚠️ A second, separate trap, recorded in case anyone reintroduces a derived
  * value here: this day string used to be a module-level `const`, evaluated at

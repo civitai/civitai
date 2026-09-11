@@ -104,6 +104,18 @@ import { reserveAppSpend } from '../app-spend-cap.service';
 
 const APP_BLOCK_ID = 'apb_reject_test';
 
+/**
+ * ⚠️ DISCLOSED, NOT FIXED: this derives the expected day with
+ * `new Date().toISOString().slice(0, 10)` — byte-identical to the
+ * implementation's own `spendCapWindowKey` (`../app-spend-cap.service`). The
+ * sibling `block-tip-rate-limit.test.ts` replaced exactly this pattern with an
+ * independent literal in the same change, so the rule is asserted there and not
+ * followed here. It is left alone deliberately: a distinct-constant mutation of
+ * `spendCapWindowKey` is still killed (2 failed / 13), so nothing is currently
+ * uncovered, and changing it is a separate edit with its own justification
+ * rather than something to slip into a de-flaking PR. Named here so the
+ * inconsistency is visible rather than accidental.
+ */
 function dailyKey(app = APP_BLOCK_ID): string {
   const today = new Date().toISOString().slice(0, 10);
   return `${SPEND_CAP_PREFIX}:${app}:${today}`;
@@ -124,7 +136,9 @@ const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
 
 beforeEach(() => {
   // 🔴 FIRST, before anything derives a key. `reserveAppSpend`'s velocity key is
-  // `floor(Date.now()/1000/60)` — a FIXED 60s window — and the denial-count
+  // `floor(Date.now()/1000/BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS)` — a FIXED
+  // window whose width DEFAULTS to 60s but is env-overridable, so do not write
+  // the 60 as though it were a constant — and the denial-count
   // cases below loop to a ceiling and then assert an EXACT total. That is only
   // sound while the bucket holds still for the whole loop: a boundary inside it
   // restarts the counter, more submits are allowed, and the total comes up
