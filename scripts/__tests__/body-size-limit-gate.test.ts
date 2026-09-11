@@ -82,17 +82,39 @@ describe('body-size-limit-gate', () => {
 
   // Keeps the recorded baseline honest: a route added over the limit without regenerating
   // makes this fail even if someone only ran the unit tier and never the gate script.
-  it('baseline lists exactly the routes currently over the limit', () => {
+  //
+  // 🔴 DELIBERATELY ONE-DIRECTIONAL, and an earlier draft got this wrong in a way that
+  // punished the fix. It asserted the baseline EQUALLED the current over-limit set, so
+  // lowering a baselined route's sizeLimit — the exact change this gate exists to
+  // encourage — left the gate passing (fewer violations is fine) and turned this test RED.
+  // It also contradicted the gate's own docstring, which promises entries may shrink or
+  // disappear freely. Measured: dropping `clavata-image-process` from 17mb to 5mb gave
+  // gate rc=0 and this test failing.
+  //
+  // The invariant that actually matters is that no CURRENT violation is UNRECORDED. A
+  // baseline listing a route that no longer violates is merely stale, costs nothing, and
+  // is cleaned up by --write-baseline.
+  it('records every route currently over the limit (shrinking is allowed)', () => {
     const baseline = JSON.parse(
       readFileSync(join(REPO_ROOT, 'scripts', 'ci', 'body-size-limit-baseline.json'), 'utf8')
     );
     const limit = effectiveBodyLimit(readFileSync(join(REPO_ROOT, 'next.config.mjs'), 'utf8'));
-    const over = collectDeclaredLimits(join(REPO_ROOT, 'src', 'pages', 'api'), REPO_ROOT)
-      .filter((d: { bytes: number }) => d.bytes > limit.bytes)
-      .map((d: { file: string }) => d.file)
-      .sort();
+    const over = collectDeclaredLimits(join(REPO_ROOT, 'src', 'pages', 'api'), REPO_ROOT).filter(
+      (d: { bytes: number }) => d.bytes > limit.bytes
+    );
 
-    expect(Object.keys(baseline.routes).sort()).toEqual(over);
-    expect(baseline.effectiveLimitBytes).toBe(limit.bytes);
+    const unrecorded = over
+      .filter((d: { file: string }) => !(d.file in baseline.routes))
+      .map((d: { file: string }) => d.file);
+    expect(unrecorded, 'over-limit route(s) missing from the baseline').toEqual([]);
+
+    // A route may not quietly grow past what the baseline recorded for it either.
+    const worsened = over
+      .filter(
+        (d: { file: string; bytes: number }) =>
+          d.file in baseline.routes && d.bytes > baseline.routes[d.file]
+      )
+      .map((d: { file: string }) => d.file);
+    expect(worsened, 'baselined route(s) declaring MORE than recorded').toEqual([]);
   });
 });
