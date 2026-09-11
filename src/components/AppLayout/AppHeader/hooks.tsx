@@ -394,7 +394,9 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Generate 3D Model',
     },
     {
-      href: '/models/train',
+      // The user-toggleable trainingStudioUi flag swaps the trainer entry for the new Training
+      // Studio; the old wizard stays reachable by toggling it back off.
+      href: features.trainingStudioUi ? '/training-studio' : '/models/train',
       visible: !isMuted && features.imageTraining,
       redirectReason: 'train-model',
       rel: 'nofollow',

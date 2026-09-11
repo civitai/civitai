@@ -232,6 +232,9 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
+  // The embedded Training Studio (/training-studio). Flipt segments own the rollout; the mod
+  // static fallback keeps a missing flag from opening it to everyone.
+  trainingStudioUi: { availability: ['mod'], fliptKey: 'training-studio-ui' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
