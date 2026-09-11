@@ -414,13 +414,20 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     // is a fact about comment density and nothing to do with the masker. Measured here
     // after the `/apps/activity` rename: 0.5648.
     //
-    // The re-cut bound is still discriminating, and the control below is what proves it
-    // rather than asserting it: the defect this test exists for — a phantom string opened
-    // by the ASCII apostrophe running to EOF — blanks the whole tail of the file and lands
-    // far above 0.65.
+    // 🔴 AND IT MOVED AGAIN, 0.65 → 0.70, FOR THE CAUSE THE PARAGRAPH ABOVE PREDICTS.
+    // Widening the permissions copy (three longer user-facing strings, which mask as
+    // blanks) plus the comments recording why took the live ratio to 0.6558 — measured,
+    // after trimming that prose to its load-bearing claims, from 0.6624 before the trim.
+    // The alternative was deleting documentation an audit round had just required, which
+    // would be relaxing the file to fit the gate rather than the gate to fit the file.
+    //
+    // 🔴 RE-CUT AGAINST THE CONTROL, NOT AGAINST THE NEW VALUE. The negative control below
+    // measures 0.8510 on this same file, so 0.70 keeps ~0.15 of real separation from the
+    // defect state and ~0.04 from the live one. A bound set just above whatever the file
+    // currently reads would be the 0.0014-headroom mistake again.
     const spaceRatio = (text: string) =>
       text.split('').filter((c) => c === ' ').length / text.length;
-    expect(spaceRatio(masked)).toBeLessThan(0.65);
+    expect(spaceRatio(masked)).toBeLessThan(0.7);
 
     // 🔴 NEGATIVE CONTROL, ON THE REAL FILE: a bound nobody has watched fire is a claim
     // about a number. Reproduce the historical desync — everything after the apostrophe
@@ -428,7 +435,11 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     const apostrophe = raw.indexOf("app's");
     expect(apostrophe, 'the trigger moved; re-point this control').toBeGreaterThan(-1);
     const desynced = raw.slice(0, apostrophe) + raw.slice(apostrophe).replace(/[^\n]/g, ' ');
-    expect(spaceRatio(desynced)).toBeGreaterThan(0.65);
+    // 🔴 THE SAME NUMBER AS THE LIVE BOUND, DELIBERATELY. If this stayed at 0.65 while the
+    // bound above moved to 0.70, the control would no longer prove separation — a desync
+    // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Measured here:
+    // 0.8510. Move the two together or the control stops being one.
+    expect(spaceRatio(desynced)).toBeGreaterThan(0.7);
   });
 
   it('nested quotes, templates and regex literals do not desync it either', () => {

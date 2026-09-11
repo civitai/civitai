@@ -118,14 +118,30 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              consent grant, where absence of a row is still not absence of access.
 
              🔴 `grant.scopes` IS THE APP'S MANIFEST-DECLARED SET, NOT THE VIEWER'S GRANTED SET.
-             Granted ⊆ manifest by construction (`recordInstallConsent` grants
-             `consentGatedScopes(manifest ∩ approvedScopes)`, and a manifest that later adds a
-             scope leaves the old grant standing until re-consent), so this can OVERSTATE what
-             the viewer agreed to. Pre-existing, and deliberately NOT changed here: the grant's
-             own `grantedScopes` is empty for an install-backed row that carries no consent
-             grant, so swapping the field would blank those rows instead. Widening the
-             population makes this the common case rather than a ~4-row edge, so it is recorded
-             as an open decision rather than silently expanded — see the PR discussion. */
+             ⚠️ AN EARLIER REVISION OF THIS COMMENT SAID "granted ⊆ manifest BY CONSTRUCTION".
+             THAT IS FALSE and the containment holds only AT GRANT TIME. Two writes break it
+             afterwards, and they compose: `recordScopeGrant` UNIONS on re-consent
+             (`grantedScopes = existing ∪ incoming`, `scope-grant.service.ts:232` and `:263`)
+             and nothing ever writes a non-null `revoked_at`, so the granted set only GROWS;
+             meanwhile a subsequent approved version REPLACES `manifest` + `approvedScopes`
+             IN PLACE on the same `AppBlock` row (`publish-request.service.ts`, "Subsequent
+             version: refresh manifest + version + approvedScopes"), while the grant is unique
+             on `(userId, appBlockId)` and survives. So a publisher who DROPS a scope in v2
+             leaves the viewer holding a granted scope that is no longer in the manifest.
+
+             Consequence for this list, in BOTH directions: it OVERSTATES when the manifest
+             declares more than the viewer granted (the ordinary case), and UNDERSTATES when a
+             version removed a scope the viewer still holds — the second being the one a
+             "permissions you granted" surface most needs to show, since nothing else reveals
+             it and a later version re-declaring that scope is signed through by
+             `partitionByConsent` with NO fresh prompt.
+
+             Pre-existing, and deliberately NOT changed here: `grantedScopes` is not on
+             `ScopeGrantSurface` at all, and it is EMPTY for an install-backed row carrying no
+             consent grant, so this is a new field plus a per-row choice of which set to show —
+             not a swap. Widening the population makes it the common case rather than a
+             ~4-row edge, so it is recorded as an open decision rather than silently
+             expanded — see the PR discussion. */
           <BlockScopeList
             scopes={grant?.scopes ?? []}
             emptyLabel="No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."

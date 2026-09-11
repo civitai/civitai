@@ -374,7 +374,13 @@ function buildSurfaceLine(surfaces: {
         .join(' / ')}`
     );
   } else if (surfaces.modelInstallCount === 0) {
-    parts.push('Subscriptions: none');
+    /* 🔴 THE GRANT-ONLY ROW — a consented full-page app, which THIS PR makes reachable for
+       the first time: every earlier row came from a subscription, seeded with either
+       `modelInstallCount > 0` or one scope, so `0 / 0` could not occur and the previous text
+       ("Subscriptions: none") was unreachable. Replaced because on a consent surface it
+       reads as "this app has no access", under copy promising "…and where you have it".
+       This is the one copy site a literal sweep cannot find — it is computed. */
+    parts.push('Granted at consent · no install or subscription');
   }
   return parts.join(' · ');
 }
@@ -550,11 +556,14 @@ function ScopeGrantsPanel() {
        to make, and it was false.
        ⚠️ THE REASON HAS NARROWED, SO THE SENTENCE HAS WIDENED. #4722 wrote "reads
        `block_user_subscriptions` ONLY … silent about full-page apps", which was true then;
-       `listMyScopeGrants` now also enumerates live `app_user_scope_grants`, so a full-page
-       app the viewer consented to DOES appear and is no longer part of the silence. What an
-       empty result still cannot speak for is blocks OTHER people installed, which carry no
-       row of the viewer's at all. The label names the population it actually covers and
-       points at the feed that knows the rest. */
+       `listMyScopeGrants` now also enumerates live `app_user_scope_grants`, so a consented
+       full-page app DOES appear and is no longer part of the silence. ⚠️ TWO populations
+       remain, not one: (a) blocks OTHER people installed, which carry no row of the
+       viewer's; and (b) an app whose scopes are ALL in `CONSENT_EXEMPT_SCOPES`
+       (`scope-grant.service.ts`), for which `partitionByConsent` returns `missing: []`, so no
+       modal fires, `recordInstallConsent` is never reached, and it writes to the account with
+       NO grant row. The string stays true — they granted nothing — but the silence is wider
+       than "other people's installs". */
     return (
       <EmptyState label="No apps installed, subscribed to, or granted permissions yet. This tab covers your own installs and consents — Recent activity is the full record of what apps have done on your account." />
     );

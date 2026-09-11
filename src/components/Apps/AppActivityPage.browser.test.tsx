@@ -146,6 +146,37 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               buzzBudgetPerDay: 750,
               spendScopeGranted: true,
             },
+            // 🔴 THE GRANT-ONLY SHAPE — `0` installs AND `0` subscription scopes. This is the
+            // row `listMyScopeGrants` only began emitting when it started enumerating
+            // `app_user_scope_grants`, and by the production counts it is the DOMINANT
+            // population, not an edge case. Without it no fixture at this tier renders the
+            // card the change exists to create, so a regression in how it renders — the
+            // surface line, the budget control, an empty scope list — ships green.
+            // Distinct from `apb_spend` in exactly the field under test: that row also has
+            // `modelInstallCount: 0` but carries a subscription scope, so it cannot
+            // exercise the `0 / 0` branch of `buildSurfaceLine`.
+            //
+            // 🔴 `spendScopeGranted: false` DELIBERATELY, and this is a REAL COVERAGE GAP,
+            // not a tidy choice — recorded rather than glossed. With it `true` the card
+            // renders an `AppBudgetControl` (a null budget still emits `app-budget-row` AND
+            // `app-budget-value`, showing the "none" copy), which would flip the two
+            // `toHaveLength(1)` assertions below to 2 and make `app-budget-edit` ambiguous
+            // for the Save test's `.click()`. Those counts are the discriminating half of
+            // the budget tests, so quietly relaxing them to 2 would weaken a real guard to
+            // admit a fixture. RESIDUAL: no component-tier case renders a budget control on
+            // a GRANT-ONLY card. That combination is covered at the service tier
+            // (`user-app-surface.orchestration.test.ts` asserts `spendScopeGranted: true`
+            // plus a budget for a grant-only row), and the service tier cannot see the card.
+            {
+              appBlockId: 'apb_grant_only',
+              blockId: 'consented',
+              name: 'Consented Only',
+              slug: 'consented-only',
+              scopes: ['ai:write:budgeted'],
+              surfaces: { modelInstallCount: 0, subscriptionScopes: [] },
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
           ]
         : [],
     'blocks.listMyAppActivity': () => ({ pages: [{ items: [], nextCursor: null }] }),
@@ -539,6 +570,22 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     ).map((el) => el.textContent?.trim());
     expect(names).toContain('Demo App');
     expect(names).toContain('Spender');
+    // 🔴 THE GRANT-ONLY CARD RENDERS AT ALL. Before `listMyScopeGrants` enumerated
+    // `app_user_scope_grants`, a row with no install and no subscription could not exist,
+    // so nothing at this tier ever drew this card — and by the production counts it is the
+    // dominant population. Asserting it here is what makes the two length checks below
+    // "one control across THREE cards" rather than "one control across the two that
+    // happened to render".
+    expect(names).toContain('Consented Only');
+    // Its surface line names the provenance it actually came from. Pinned as the whole
+    // string: a keyword match would pass on the previous text ("Subscriptions: none"),
+    // which on a consent surface reads as a claim that the app has no access.
+    expect(
+      Array.from(document.querySelectorAll('[data-testid="apps-installed-grants-grid"]')).some(
+        (el) => el.textContent?.includes('Granted at consent · no install or subscription')
+      ),
+      'the grant-only card must name its provenance, not report "Subscriptions: none"'
+    ).toBe(true);
     expect(page.getByTestId('app-budget-row').elements()).toHaveLength(1);
   });
 
