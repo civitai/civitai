@@ -246,19 +246,11 @@ export function AssociateModels({
                                   : association.item.title}
                               </Text>
                               <Group gap={4}>
-                                <Badge size="xs">
+                                <Badge size="md" radius="xl">
                                   {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
-                                {reciprocalEligible.has(association.item.id) ? (
-                                  <Chip
-                                    size="xs"
-                                    checked={linkBack.includes(association.item.id)}
-                                    onChange={() => toggleLinkBack(association.item.id)}
-                                  >
-                                    Link back
-                                  </Chip>
-                                ) : (
-                                  <Badge size="xs" pl={4}>
+                                {!reciprocalEligible.has(association.item.id) && (
+                                  <Badge size="md" radius="xl" pl={4}>
                                     <Group gap={2}>
                                       <IconUser size={12} strokeWidth={2.5} />
                                       {association.item.user.username}
@@ -266,9 +258,18 @@ export function AssociateModels({
                                   </Badge>
                                 )}
                                 {!getIsSafeBrowsingLevel(association.item.nsfwLevel) && (
-                                  <Badge color="red" size="xs">
+                                  <Badge color="red" size="md" radius="xl">
                                     NSFW
                                   </Badge>
+                                )}
+                                {reciprocalEligible.has(association.item.id) && (
+                                  <Chip
+                                    size="xs"
+                                    checked={linkBack.includes(association.item.id)}
+                                    onChange={() => toggleLinkBack(association.item.id)}
+                                  >
+                                    Link back
+                                  </Chip>
                                 )}
                               </Group>
                             </Stack>
