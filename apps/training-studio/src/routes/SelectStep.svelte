@@ -369,7 +369,9 @@
                 </span>
               {/if}
             </div>
-            <div class="mt-1 line-clamp-1 text-xs leading-snug text-dark-2">
+            <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
+                 and letting the height follow the text made the price rows sit at different heights. -->
+            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
               {card.description}
             </div>
             <div class="mt-2 flex items-center gap-2">
