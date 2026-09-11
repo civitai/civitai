@@ -26,7 +26,7 @@ import { SpamForm } from '~/components/Report/SpamForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/shared/utils/report-helpers';
+import { ReportEntity, reportEntityLabels } from '~/shared/utils/report-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -239,7 +239,7 @@ export default function ReportModal({
     },
     async onSuccess(_, variables) {
       showSuccessNotification({
-        title: 'Resource reported',
+        title: `${reportEntityLabels[entityType]} reported`,
         message: 'Your request has been received',
       });
       dialog.onClose();
