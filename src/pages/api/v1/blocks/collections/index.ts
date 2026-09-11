@@ -445,7 +445,27 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // figure that had been measured WITHOUT the ordering.
       const ceilingOk = (c: (typeof rows)[number]) =>
         collectionWithinCeiling(c.nsfwLevel ?? 0, browsingLevel);
-      const candidateIds = rows.filter(ceilingOk).map((c) => c.id);
+      // 🔴 THE SAMPLE'S BUDGET IS CAPPED AT THE *POSTGRES* OVER-FETCH ON BOTH PATHS,
+      // WHICH IS THE ONE PLACE THE WIDER CLICKHOUSE HYDRATE COULD HAVE LEAKED COST.
+      // The sample's price scales with the number of ids handed to it (~400 ms for
+      // 97), and the ClickHouse path hydrates up to `CH_HYDRATE_MAX` ids rather
+      // than `OVERFETCH` — so passing every survivor straight through would have
+      // made this the most expensive query on the new path, quietly, and only on
+      // whichever window happened to survive filtering best. Capping it changes
+      // nothing on the Postgres path, where `rows` is already at most `OVERFETCH`.
+      //
+      // Taking the candidates IN RANK ORDER is what makes the cap harmless: the
+      // walk below consumes in that same order and stops at `limit`, so the cap
+      // only ever bites on rows a full page never reaches. A row past it has no
+      // sample entry, which `meetsPlayableFloor` reads as "nothing to judge, keep"
+      // — a weakened RANKING heuristic on the deep tail, never a weakened gate.
+      // Nothing on this path protects a viewer from mature media (per-item maturity
+      // is enforced on the detail endpoint and on the cover), so the degradation is
+      // cosmetic by construction.
+      const rankOf = chSlice ? new Map(chSlice.map((id, i) => [id, i] as const)) : null;
+      const candidates = rows.filter(ceilingOk);
+      if (rankOf) candidates.sort((a, b) => rankOf.get(a.id)! - rankOf.get(b.id)!);
+      const candidateIds = candidates.slice(0, OVERFETCH).map((c) => c.id);
       const playableSample = await getCollectionPlayableSample(candidateIds, browsingLevel);
 
       const items: typeof rows = [];

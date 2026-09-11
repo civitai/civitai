@@ -341,6 +341,32 @@ describe('period selects the window and ClickHouse orders the page', () => {
     expect(input.types).toEqual(['Image']);
   });
 
+  it('caps the playable-sample budget at the POSTGRES over-fetch, in RANK order', async () => {
+    // 🔴 The cost pin for the wider hydrate. The sample's price scales with the id
+    // count (~400 ms for 97), and this path hydrates up to 1,000 ids rather than
+    // `limit * 4 + 1`. Handing every survivor to the sample would make it the most
+    // expensive query on the new path — silently, and only on whichever window
+    // survives filtering best.
+    const many = Array.from({ length: 60 }, (_, i) => 600 + i);
+    installCollectionsDouble(
+      many.map((id) => ({ id, read: 'Public' as const, type: 'Image' as const }))
+    );
+    // Ranked in an order the double will NOT return them in (it sorts id-DESC).
+    mockRanking.mockResolvedValueOnce({ ids: many, source: 'clickhouse' });
+    const { req, res } = createMocks({
+      query: { mode: 'public', sort: 'popular', period: MetricTimeframe.Month, limit: '2' },
+    });
+    await handler(req as never, res as never);
+    const sampled = mockPlayableSample.mock.calls[0][0] as number[];
+    // limit 2 → the Postgres over-fetch is 2 * 4 + 1 = 9, so 60 survivors are
+    // trimmed to the 9 the walk could possibly reach…
+    expect(sampled).toHaveLength(9);
+    // …and they are the top NINE BY RANK, not the nine Postgres happened to return
+    // first. Ordering the cap by the double's id-DESC output would have sampled
+    // 659…651 and left the actual page-1 collections unjudged.
+    expect(sampled).toEqual(many.slice(0, 9));
+  });
+
   it('AllTime keeps the Postgres source and says so', async () => {
     const { req, res } = createMocks({
       query: { mode: 'public', sort: 'popular', period: MetricTimeframe.AllTime },
