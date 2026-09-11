@@ -188,6 +188,19 @@ export function buildListingDetailPreview(
     // mod who only ever saw THIS builder's output would not see the source link, so:
     // if the fallback ever becomes the primary path, this must be revisited.
     sourceRepoUrl: null,
+    // 🔴 `[]`, NEVER omitted. `AppListingDetailBody` reads `detail.scopes.length` to
+    // decide whether to render the pre-launch permission disclosure, so leaving this
+    // field off would not degrade the preview — it would THROW on every render of
+    // this fallback (`Cannot read properties of undefined`). This builder is the
+    // SECOND producer of a `ListingDetail`; the first is `projectListingDetail`,
+    // which guarantees an array. Keep both guarantees, so the component never has to
+    // defend against a malformed DTO with `?? []` and hide a real contract break.
+    //
+    // `[]` is also the HONEST value rather than a placeholder: this fallback is built
+    // from an OFF-SITE publish request, and an off-site listing has no backing
+    // AppBlock and therefore no approved scopes — the same answer
+    // `projectListingDetail` gives an off-site row.
+    scopes: [],
     // Same limitation, same reason, same safe direction as the card builder's `isBeta`.
     isBeta: false,
     betaMessage: null,

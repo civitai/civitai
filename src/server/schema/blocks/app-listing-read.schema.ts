@@ -397,6 +397,59 @@ export type ListingDetail = {
    */
   sourceRepoUrl: string | null;
   /**
+   * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
+   * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:
+   *   1. the listing's `kind` is not `onsite`;
+   *   2. an on-site app approved with no scopes;
+   *   3. 🔴 an on-site listing with NO BACKING `appBlock` ROW — every revision SHADOW
+   *      (`beginListingRevision` writes `appBlockId: null` onto a shadow whose `kind`
+   *      is cloned from the parent). A shadow is `kind: 'onsite'` and still gets `[]`.
+   * Case 3 is why "preview implies `[]`" is a tempting and WRONG inference: the
+   * owner-republish re-review targets the LIVE listing, not a shadow, so it has a
+   * backing block and does get scopes. See `AppListingDetailBody`'s section comment.
+   *
+   * ⚠ `[]` for an off-site listing because of its **`kind`**, NOT because it lacks a
+   * backing block — an off-site row CAN carry a non-null `appBlockId` (the
+   * `blocks.backfillAppListings` shape), and an earlier draft of this line used that
+   * retired nullness predicate. See the gate in `projectListingDetail`.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — AND THIS FIELD IS A NEW PUBLIC EXPOSURE, NOT A
+   * RESTATEMENT OF AN EXISTING ONE. Say so plainly, because an earlier draft of this
+   * docstring claimed the ids were "already shipped to anonymous callers by
+   * `BlockRegistry.getAppDetail`", and that was FALSE: `blocks.getAppDetail` runs
+   * `enforceAppBlocksFlag` and is mod-segmented — dark to a genuine anonymous caller
+   * — whereas this DTO is returned verbatim by `GET /api/v1/apps/{slug}`, which has
+   * no ENABLE gate and serves unauthenticated callers at `PUBLIC_APPS_CATALOG_SCOPE =
+   * 'full'`. So this change MOVES approved scope ids from a flag-dark surface to a
+   * genuinely public one. That is the decision being taken here; it is not a no-op.
+   *
+   * ⚠ "No enable gate" is not "no lever": there IS an operator kill switch,
+   * `PUBLIC_APPS_CATALOG_DISABLED_FLAG = 'apps-public-catalog-disabled'`
+   * (`public-apps-catalog.ts`), absent in Flipt today so public access is on. It is
+   * blunt — it withholds the whole catalog, not this field.
+   *
+   * Why it is the right call anyway: these are coarse capability labels
+   * (`ai:write:budgeted`, `models:read:self`) describing what an APPROVED, PUBLICLY
+   * LISTED app is permitted to do. Publishing them is the entire point — a viewer
+   * cannot weigh a permission they cannot see, and the store page is the only place
+   * they can see it BEFORE launching the app. They identify no user, carry no
+   * per-user grant state, and no manifest internals (`trustTier`, `iframe.src`,
+   * `renderMode`, settings) ride along.
+   *
+   * They are NOT the manifest's raw self-declared `scopes`: only the approve paths
+   * write `approvedScopes`. ⚠ "Moderator-granted" is accurate about the WRITER, not
+   * about granularity — a moderator approves or rejects a whole manifest; there is
+   * no per-scope narrowing mechanism.
+   *
+   * 🔴 DETAIL-ONLY, like `sourceRepoUrl` — a store card is a low-attention grid tile
+   * with no room for the context that makes a capability list meaningful. The
+   * exact-key-set assertions in `app-listing.service.test.ts` pin both halves.
+   *
+   * An array of STRINGS: this DTO also crosses the transformer-less public REST
+   * `GET /api/v1/apps/{slug}` boundary, so it must be a JSON-safe scalar shape.
+   */
+  scopes: string[];
+  /**
    * AUTHOR-DECLARED "this app is in beta" flag. Same allowlist justification as
    * `ListingCard.isBeta` — a label the author publishes about their own app.
    *

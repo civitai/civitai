@@ -317,6 +317,10 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     betaMessage: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
+    // No declared scopes: this file is not about the permission disclosure, and an
+    // empty array renders no section at all. `projectListingDetail` guarantees an
+    // array, so a fixture omitting it would not match any real payload.
+    scopes: [],
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',
