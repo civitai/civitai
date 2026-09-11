@@ -1,5 +1,11 @@
 import type { Workflow, WorkflowStatus } from '@civitai/client';
-import { cardByEcosystem, cardByType, findByAir, type Media } from './trainingModels';
+import {
+  cardByEcosystem,
+  cardByType,
+  findByAir,
+  versionSuffix,
+  type Media,
+} from './trainingModels';
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
@@ -38,7 +44,11 @@ export const RUN_STATE_BADGE: Record<RunState, { label: string; cls: string; dot
     cls: 'text-primary bg-primary/15',
     dot: 'bg-primary animate-pulse',
   },
-  published: { label: 'Published', cls: 'text-emerald-400 bg-emerald-500/15', dot: 'bg-emerald-400' },
+  published: {
+    label: 'Published',
+    cls: 'text-emerald-400 bg-emerald-500/15',
+    dot: 'bg-emerald-400',
+  },
   failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
 };
 
@@ -160,7 +170,13 @@ function resolveWorkflow(w: Workflow) {
     output,
     progress,
     media: card?.media ?? 'image',
-    base: card ? `${card.name}${version ? ` · ${version.label}` : ''}` : 'Training run',
+    base: card
+      ? `${card.name}${
+          versionSuffix(card.name, version?.label)
+            ? ` · ${versionSuffix(card.name, version?.label)}`
+            : ''
+        }`
+      : 'Training run',
     code: card?.code ?? '??',
     // TODO(write-path): main-app runs carry no name tag, so we show the trigger word or a fallback. The
     // Start slice should stamp a `name` (and a `name:<slug>` workflow tag) so runs are titled properly.

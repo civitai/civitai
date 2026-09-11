@@ -661,6 +661,16 @@ export const cardsForMedia = (media: Media): ModelCard[] =>
   MODEL_CARDS.filter((c) => c.media === media);
 
 /**
+ * The version label to show beside a card's name, blank when it only repeats it. A single-version card
+ * whose version carries the family name would otherwise read "Illustrious · Illustrious". Shared by the
+ * flow and the orchestrator row mapper so the rule is stated once.
+ */
+export function versionSuffix(cardName: string, versionLabel: string | undefined): string {
+  if (!versionLabel) return '';
+  return versionLabel.trim().toLowerCase() === cardName.trim().toLowerCase() ? '' : versionLabel;
+}
+
+/**
  * How old a base model is, for the card. Relative inside six months ("3 months ago") because that is the
  * window where recency is the point; absolute after it ("Aug 2024"), because "26 months ago" is arithmetic
  * the reader has to do and a year is what they actually want to know. Month-only inputs (`YYYY-MM`, where
