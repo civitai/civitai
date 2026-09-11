@@ -6,9 +6,11 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 export default function AssociateModelsModal({
   fromId,
   type,
+  ownerId,
 }: {
   fromId: number;
   type: AssociationType;
+  ownerId: number;
 }) {
   const dialog = useDialogContext();
 
@@ -19,7 +21,7 @@ export default function AssociateModelsModal({
           <Text>{`Manage ${type} Resources`}</Text>
           <CloseButton onClick={dialog.onClose} />
         </Group>
-        <AssociateModels fromId={fromId} type={type} onSave={dialog.onClose} />
+        <AssociateModels fromId={fromId} type={type} ownerId={ownerId} onSave={dialog.onClose} />
       </Stack>
     </Modal>
   );

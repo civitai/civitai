@@ -2,7 +2,19 @@ import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { ComboboxItem } from '@mantine/core';
-import { Stack, Text, Card, Group, Button, Center, Loader, Alert, Badge, Box } from '@mantine/core';
+import {
+  Stack,
+  Text,
+  Card,
+  Group,
+  Button,
+  Center,
+  Loader,
+  Alert,
+  Badge,
+  Box,
+  Checkbox,
+} from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -20,20 +32,24 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { constants } from '~/server/common/constants';
+import { selectNewlyAddedModelIds } from '~/server/services/model-association.utils';
+import { showWarningNotification } from '~/utils/notifications';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
 export function AssociateModels({
   fromId,
   type,
+  ownerId,
   onSave,
-  limit = 10,
 }: {
   fromId: number;
   type: AssociationType;
+  ownerId: number;
   onSave?: () => void;
-  limit?: number;
 }) {
+  const limit = constants.modelAssociations.limit;
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [changed, setChanged] = useState(false);
@@ -45,16 +61,31 @@ export function AssociateModels({
     browsingLevel: allBrowsingLevelsFlag,
   });
   const [associatedResources, setAssociatedResources] = useState<State>(data);
+  const [reciprocal, setReciprocal] = useState(false);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
 
   const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
-    onSuccess: async () => {
-      queryUtils.model.getAssociatedResourcesSimple.setData(
-        { fromId, type, browsingLevel: allBrowsingLevelsFlag },
-        () => associatedResources as ModelGetAssociatedResourcesSimple
-      );
-      await queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type });
+    onSuccess: async (result) => {
+      const declined = result.reciprocal.skipped.filter((x) => x.reason !== 'alreadyLinked');
+      if (declined.length)
+        showWarningNotification({
+          title: 'Some links back were not added',
+          message: `${declined.length} of the resources you added could not be linked back — either they belong to someone else, or their own suggested resources are already full.`,
+        });
+
+      // Refetch instead of seeding the cache with the local rows. They carry no association
+      // ids, and staleTime is Infinity, so writing them back leaves the next open of this
+      // modal unable to tell a saved resource from a newly added one.
+      await Promise.all([
+        queryUtils.model.getAssociatedResourcesSimple.invalidate({
+          fromId,
+          type,
+          browsingLevel: allBrowsingLevelsFlag,
+        }),
+        queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type }),
+      ]);
       setChanged(false);
+      setReciprocal(false);
       onSave?.();
     },
   });
@@ -98,6 +129,7 @@ export function AssociateModels({
 
   const handleReset = () => {
     setChanged(false);
+    setReciprocal(false);
     setAssociatedResources(data);
   };
 
@@ -110,6 +142,7 @@ export function AssociateModels({
         resourceType,
         resourceId: item.id,
       })),
+      reciprocal: reciprocal && newlyAdded.length > 0,
     });
   };
 
@@ -123,6 +156,20 @@ export function AssociateModels({
   }, [data]);
 
   const onlyMe = searchMode === 'me';
+
+  // The model ids this model already points at, taken from the saved list rather than from
+  // whether a row carries an association id. Same question the server asks, same answer.
+  const savedTargetIds = new Set(
+    data.filter(({ resourceType }) => resourceType === 'model').map(({ item }) => item.id)
+  );
+  const newlyAdded = selectNewlyAddedModelIds(
+    associatedResources.map(({ resourceType, item }) => ({ resourceType, resourceId: item.id })),
+    savedTargetIds
+  );
+  const newlyAddedIds = new Set(newlyAdded);
+  const ownedNewCount = associatedResources.filter(
+    ({ item }) => newlyAddedIds.has(item.id) && item.user.id === ownerId
+  ).length;
 
   return (
     <Stack>
@@ -180,6 +227,11 @@ export function AssociateModels({
                                 <Badge size="xs">
                                   {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
+                                {newlyAddedIds.has(association.item.id) && (
+                                  <Badge size="xs" color="green">
+                                    New
+                                  </Badge>
+                                )}
                                 <Badge size="xs" pl={4}>
                                   <Group gap={2}>
                                     <IconUser size={12} strokeWidth={2.5} />
@@ -213,6 +265,26 @@ export function AssociateModels({
           )}
         </Stack>
       )}
+      {newlyAdded.length > 0 && (
+        <Checkbox
+          checked={reciprocal}
+          onChange={(event) => {
+            setReciprocal(event.currentTarget.checked);
+            setChanged(true);
+          }}
+          label="Link both ways"
+          description={`Also adds this model to the suggested resources of ${
+            ownedNewCount === newlyAdded.length
+              ? newlyAdded.length === 1
+                ? 'the model marked New'
+                : `the ${newlyAdded.length} models marked New`
+              : `the ${ownedNewCount} of ${newlyAdded.length} models marked New that ${
+                  currentUser?.id === ownerId ? 'you own' : 'this creator owns'
+                }`
+          }. Resources already on the list are untouched, and a link added this way stays on the other model until it is removed there.`}
+        />
+      )}
+
       {changed && (
         <Group justify="flex-end">
           <Button variant="default" onClick={handleReset}>
