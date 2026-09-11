@@ -151,9 +151,6 @@ beforeEach(() => {
 });
 
 describe('setAssociatedResources — reciprocal wiring', () => {
-  // The opt-in itself. Deleting the `reciprocal` ternary in model.service.ts makes every
-  // Suggested-Resources save on the site rewrite other models' lists; before this test, that
-  // mutation turned nothing red. If you are removing the flag, you are removing the opt-in.
   // The request is a request, not an instruction. A caller naming a model that was already on
   // the list, or one the owner does not own, gets nothing for it — the shared derivation and
   // the ownership check both still run and the list only narrows them.
@@ -175,6 +172,12 @@ describe('setAssociatedResources — reciprocal wiring', () => {
     expect(createdRows().map((row) => row.fromModelId)).toEqual([3]);
   });
 
+  // This is the opt-in, and the line that carries it is the
+  // `.filter((id) => reciprocalRequested.has(id))` — NOT the `reciprocalRequested.size` ternary
+  // above it, which is a pure short-circuit: deleting the ternary changes no behaviour, because
+  // an empty request set already yields an empty target list. Delete the filter and every save
+  // links back everything newly added, whether the caller asked or not. That mutation turned
+  // nothing red before this test.
   it('links back only the rows the caller asked for', async () => {
     givenTargets([
       { id: 2, userId: OWNER },

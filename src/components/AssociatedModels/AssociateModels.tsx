@@ -159,19 +159,17 @@ export function AssociateModels({
     savedTargetIds
   );
   const newlyAddedIds = new Set(newlyAdded);
-  // Ownership is the model owner's, never the viewer's — a moderator editing someone else's
-  // model links that creator's resources. Derived once here and read by both the chip gate
-  // and the author badge, so the two can never disagree.
-  const creatorOwnedIds = new Set(
-    associatedResources.filter(({ item }) => item.user.id === ownerId).map(({ item }) => item.id)
-  );
-  const viewerIsCreator = currentUser?.id === ownerId;
   // A row can be linked back only if it is newly added AND the creator owns it. The first half
   // comes from the shared derivation the server also uses; the second is the same ownership
   // rule the server re-derives from the database, which remains the authority.
+  //
+  // This asks whether the MODEL OWNER owns the row. The author badge below asks whether the
+  // VIEWER does. They are different questions and they disagree for a moderator, so do not
+  // merge them into one derivation — an earlier revision did, and the shared set mixed model
+  // ids with article ids because only this half is model-only.
   const reciprocalEligible = new Set(
     associatedResources
-      .filter(({ item }) => newlyAddedIds.has(item.id) && creatorOwnedIds.has(item.id))
+      .filter(({ item }) => newlyAddedIds.has(item.id) && item.user.id === ownerId)
       .map(({ item }) => item.id)
   );
   const toggleLinkBack = (modelId: number) => {
@@ -216,7 +214,11 @@ export function AssociateModels({
               Drag to reorder
             </Text>
             <Text c="dimmed" size="xs">
-              {associatedResources.length} of {limit} selected
+              {/* The list is seeded from the saved set, which predates the cap — 9 models hold
+                  11-12 — so it can exceed `limit` and "12 of 10" would be nonsense. */}
+              {associatedResources.length > limit
+                ? `${associatedResources.length} selected`
+                : `${associatedResources.length} of ${limit} selected`}
             </Text>
           </Group>
           <DndContext
@@ -264,7 +266,7 @@ export function AssociateModels({
                               <Badge size="md" radius="xl" pl={4} color="gray">
                                 <Group gap={2}>
                                   <IconUser size={12} strokeWidth={2.5} />
-                                  {creatorOwnedIds.has(association.item.id) && viewerIsCreator
+                                  {association.item.user.id === currentUser?.id
                                     ? 'You'
                                     : association.item.user.username}
                                 </Group>
@@ -279,13 +281,7 @@ export function AssociateModels({
                                   size="xs"
                                   checked={linkBack.includes(association.item.id)}
                                   onChange={() => toggleLinkBack(association.item.id)}
-                                  styles={{
-                                    label: {
-                                      textTransform: 'uppercase',
-                                      fontWeight: 700,
-                                      letterSpacing: '0.25px',
-                                    },
-                                  }}
+                                  classNames={{ label: 'uppercase font-bold tracking-[0.25px]' }}
                                 >
                                   Link back
                                 </Chip>
