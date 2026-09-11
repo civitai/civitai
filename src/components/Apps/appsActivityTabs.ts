@@ -49,10 +49,10 @@ export function isActivityTab(value: unknown): value is ActivityTab {
  *   · `permissions` reads `blocks.listMyScopeGrants` and NOTHING else — one `useQuery`
  *     with no `enabled:`. That procedure runs `enforceAppBlocksFlag`, which evaluates the
  *     `app-blocks-enabled` Flipt key (exactly `features.appBlocks`) and short-circuits to
- *     `[]` for anyone without it. So the panel rendered "No apps installed or subscribed
- *     yet." for every slotless viewer, ALWAYS — there was no cohort for whom the ungated
- *     tab showed anything. Gating it loses nothing that was ever displayed, and it closes
- *     the #3899 / #4668 class: a tab offered whose own gate refuses its content.
+ *     `[]` for anyone without it. So the panel rendered its installs empty state for every
+ *     slotless viewer, ALWAYS — there was no cohort for whom the ungated tab showed
+ *     anything. Gating it loses nothing that was ever displayed, and it closes the
+ *     #3899 / #4668 class: a tab offered whose own gate refuses its content.
  *
  * 🔴 `permissions` USED TO BE EXCLUDED ON THE PREMISE THAT A PAGE-FLAG-ONLY VIEWER HAS
  * GRANTS TO READ. That premise is false at the data layer (above), and it was ALREADY

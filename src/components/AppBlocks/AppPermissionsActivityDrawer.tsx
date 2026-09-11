@@ -80,14 +80,17 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
     <Stack gap="lg">
       {appName && (
         <Text size="sm" c="dimmed">
-          What <strong>{appName}</strong> can do on your behalf, and what it has done recently.
-          Only you can see this.
+          The permissions <strong>{appName}</strong> carries through your own installs, and what it
+          has done recently. Only you can see this.
         </Text>
       )}
 
       <Stack gap="xs">
+        {/* "…from your installs", not "Granted permissions" — the section's only source is
+            install-backed, so the wider heading was the same overstatement as the empty
+            label it sits above. */}
         <Text fw={600} size="sm">
-          Granted permissions
+          Permissions from your installs
         </Text>
         {!isAuthed ? (
           <Text size="xs" c="dimmed" fs="italic">
@@ -98,9 +101,19 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
             <Loader size="sm" />
           </Center>
         ) : (
+          /* 🔴 THE EMPTY LABEL IS NOT "no permissions granted", AND THE PANEL BELOW IS WHY.
+             `grant` is `grants.find(g => g.appBlockId === appBlockId)` over
+             `listMyScopeGrants`, whose only source is the viewer's OWN
+             `block_user_subscriptions` rows. A full-page app has no install, so that lookup
+             is `undefined` for every such app — and the drawer then claimed the viewer had
+             granted it nothing WHILE `AppActivityPanel` a few lines down listed the
+             scope-gated calls that same app had just made, possibly minutes after they
+             accepted its consent modal. Two halves of one drawer contradicting each other.
+             Absence of an install-backed row is not absence of granted permission; the label
+             says which of the two it is and sends the reader to the half that knows. */
           <BlockScopeList
             scopes={grant?.scopes ?? []}
-            emptyLabel="You haven't granted this app any permissions yet."
+            emptyLabel="No permissions recorded from an install of this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."
           />
         )}
       </Stack>

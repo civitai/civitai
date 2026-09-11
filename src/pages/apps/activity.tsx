@@ -338,7 +338,10 @@ function EmptyState({ label }: { label: string }) {
     <Center py="md">
       <Stack align="center" gap="xs">
         <IconPlugConnected size={28} opacity={0.5} />
-        <Text size="sm" c="dimmed">
+        {/* `ta`/`maw` so a two-sentence label wraps as a centred block rather than one
+            page-wide line — the labels here now name what the tab covers, not just what
+            is absent. Mirrors `HiddenBlocksPanel`'s own empty state. */}
+        <Text size="sm" c="dimmed" ta="center" maw={460}>
           {label}
         </Text>
         {canSeeStore && (
@@ -543,7 +546,14 @@ function ScopeGrantsPanel() {
     );
   }
   if (!grants || grants.length === 0) {
-    return <EmptyState label="No apps installed or subscribed yet." />;
+    /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
+       to make, and it was false. `listMyScopeGrants` reads `block_user_subscriptions`
+       ONLY, so an empty result means "no install or subscription of your own", which is
+       silent about full-page apps and about blocks other people installed. Naming the
+       tab's actual population and pointing at the feed is what keeps the sentence true. */
+    return (
+      <EmptyState label="No apps installed or subscribed yet. This tab covers your own installs — Recent activity is the full record of what apps have done on your account." />
+    );
   }
   return (
     <AppsCardGrid testId="apps-installed-grants-grid">
@@ -737,7 +747,7 @@ export default function AppActivityPage() {
       <Meta title="App activity — Civitai" deIndex />
       <AppsPageLayout
         title="Your app activity"
-        subtitle="What Civitai Apps have done on your behalf, what they can access, and where they show up."
+        subtitle="What Civitai Apps have done on your account, what the apps you've installed declare they can access, and where they show up."
       >
         {/* 🔴 CONTROLLED, NOT `defaultValue` — that is what puts the selection in the
             URL. `replace` + `shallow`: no re-run of `getServerSideProps`, and no history
@@ -808,16 +818,33 @@ export default function AppActivityPage() {
 
           {/* 🔴 GATED, AND ITS OWN DATA SOURCE IS WHY. `ScopeGrantsPanel`'s only read is
               `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware returns
-              `[]` for a viewer without the `appBlocks` slot flag — so ungated this showed
-              the "No apps installed or subscribed yet." empty state to every such viewer,
-              always. Gating it displays nothing that was ever displayed. */}
+              `[]` for a viewer without the slot flag — so ungated this showed the installs
+              empty state to every such viewer, always. Gating it displays nothing that was
+              ever displayed.
+
+              🔴 THE COPY BELOW USED TO INSTRUCT AN ACTION THAT DOES NOT DO WHAT THE SENTENCE
+              SAID: "to revoke access, remove the install or subscription on the Installs
+              tab". Neither uninstall path touches the consent row.
+              `BlockRegistry.deleteSubscription` deletes the `block_user_subscriptions` row
+              and nothing else; `uninstallFromModel` additionally revokes the block INSTANCE
+              token, which kills tokens already minted but leaves the grant standing. The
+              grant lives in `app_user_scope_grants`, and the only writes to it anywhere in
+              the repo are in `~/server/services/blocks/scope-grant.service.ts`, both of
+              which set `revokedAt: null` — nothing writes a non-null `revoked_at` and
+              nothing deletes a row. So `getGrantedScopes` keeps returning the same scopes
+              afterwards and the next mint carries them with no fresh prompt. Withdrawing
+              consent is genuinely not implemented; the copy says so rather than pointing at
+              a control that does not do it. Do not soften this back into an instruction
+              until a real revoke path exists. */}
           {isActivityTabVisible('permissions', visibility) && (
             <Tabs.Panel value="permissions" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  What each app you've installed can request, and where you have it. This is a
-                  reflection of the current state — to revoke access, remove the install or
-                  subscription on the Installs tab.
+                  The apps you've installed or subscribed to, the permissions each one declares it
+                  may use, and where you have it. Removing an install on the Installs tab takes the
+                  app off that surface, but it does not withdraw a permission you have already
+                  granted — withdrawing one is not possible yet. Recent activity is the full record
+                  of what apps have actually done on your account.
                 </Text>
                 <ScopeGrantsPanel />
               </Stack>
