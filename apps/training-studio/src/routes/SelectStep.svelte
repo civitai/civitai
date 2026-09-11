@@ -17,6 +17,7 @@
     MEDIA_OPTIONS,
     cardByType,
     cardsForMedia,
+    releasedLabel,
     typesForMedia,
     type Media,
     type ModelCard,
@@ -76,9 +77,12 @@
   const recommendedType = $derived(type.recommended[media]);
   const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
-  // more" toggle so the list isn't a wall of ~20 models. Only image has enough models to warrant it —
-  // video/audio show everything. `featuredCards` keeps the FEATURED order (recommended is first in it).
-  const FEATURED: Partial<Record<Media, string[]>> = { image: ['zimage', 'anima', 'krea2'] };
+  // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
+  // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
+  const FEATURED: Partial<Record<Media, string[]>> = {
+    image: ['zimage', 'anima', 'krea2'],
+    video: ['minimaxh3', 'wan', 'ltx'],
+  };
   const featuredCards = $derived.by(() => {
     const cards = cardsForMedia(media);
     const featured = FEATURED[media];
@@ -378,6 +382,9 @@
               {:else}
                 <span class="font-mono text-xs text-dark-2">—</span>
               {/if}
+              {#if releasedLabel(card.released)}
+                <span class="font-mono text-xs text-dark-2">{releasedLabel(card.released)}</span>
+              {/if}
               {#if card.versions.length > 1}
                 <span
                   aria-hidden="true"
@@ -402,7 +409,10 @@
           {#if modelsExpanded}
             <IconMinus size={12} stroke={2} />Show fewer models
           {:else}
-            <IconPlus size={12} stroke={2} />Show {otherCards.length} more models ({otherCards
+            <IconPlus size={12} stroke={2} />Show {otherCards.length} more model{otherCards.length ===
+            1
+              ? ''
+              : 's'} ({otherCards
               .slice(0, 3)
               .map((c) => c.name)
               .join(', ')}…)

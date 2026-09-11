@@ -67,6 +67,9 @@ export interface ModelCard {
   /** Free-text badge on the card — 'recommended', 'anime', 'latest', anything. Absent means no badge.
    *  Independent of `TYPES[].recommended`, which picks the default selection rather than labelling it. */
   flag?: string;
+  /** Public release of the NEWEST selectable version, `YYYY-MM-DD` or `YYYY-MM` where only the month
+   *  could be established. Hand-researched — re-check it when a card gains a version. */
+  released?: string;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
 }
@@ -80,6 +83,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'High-quality images and accurate text. Great all-rounder.',
+    released: '2024-08-01',
     versions: [
       {
         key: 'flux_dev',
@@ -99,6 +103,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'Next-gen Flux. Highest fidelity.',
+    released: '2025-11-25',
     versions: [
       {
         key: 'flux2_dev',
@@ -119,6 +124,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'Efficient Flux.2 Klein base models.',
+    released: '2026-01-15',
     versions: [
       {
         key: 'flux2klein_9b',
@@ -147,6 +153,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'Open-source, uncensored, community-built.',
+    released: '2025-08-22',
     versions: [
       {
         key: 'chroma',
@@ -164,6 +171,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'High-quality generation with strong understanding.',
+    released: '2025-08-04',
     versions: [
       {
         key: 'qwen_image',
@@ -182,6 +190,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'High-speed image generation.',
+    released: '2026-01-28',
     flag: 'recommended',
     versions: [
       {
@@ -208,6 +217,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "HiDream.ai's 8B unified transformer for text-to-image.",
+    released: '2026-05-08',
     versions: [
       {
         key: 'hidream_o1',
@@ -226,6 +236,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "Baidu's ERNIE image generation model.",
+    released: '2026-04-15',
     versions: [
       {
         key: 'ernie',
@@ -244,6 +255,7 @@ export const MODEL_CARDS: ModelCard[] = [
     label: 'tag',
     bothLabels: true,
     description: "CircleStone Labs' Anima image model (Base v1.0).",
+    released: '2026-05-15',
     flag: 'anime',
     versions: [
       {
@@ -263,6 +275,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "Boogu's unified multimodal image model (Base v0.1).",
+    released: '2026-06-16',
     versions: [
       {
         key: 'boogu',
@@ -281,6 +294,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "Krea AI's in-house image generation model.",
+    released: '2026-06-22',
     flag: 'latest',
     versions: [
       {
@@ -300,6 +314,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "Microsoft's 4B native-resolution image model.",
+    released: '2026-07',
     versions: [
       {
         key: 'mageflow',
@@ -318,6 +333,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: "Ideogram's text-to-image model with strong typography.",
+    released: '2026-06-03',
     versions: [
       {
         key: 'ideogram4',
@@ -337,6 +353,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'tag',
     description: 'Fast, versatile, huge community.',
+    released: '2023-07-26',
     versions: [
       {
         key: 'sdxl',
@@ -357,6 +374,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'tag',
     description: 'SDXL-based, tuned for illustration / anime.',
+    released: '2024-09',
     versions: [
       {
         key: 'illustrious',
@@ -374,6 +392,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'tag',
     description: 'SDXL-based, tuned for anthro / stylized.',
+    released: '2024-01-07',
     versions: [
       {
         key: 'pony',
@@ -391,6 +410,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'tag',
     description: 'Cheapest and fastest. Lower fidelity.',
+    released: '2022-10-20',
     versions: [
       {
         key: 'sd_1_5',
@@ -432,6 +452,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'video',
     label: 'caption',
     description: 'Performant, high-quality video LoRA training.',
+    released: '2025-07-28',
     versions: [
       {
         key: 'wan_2_2_t2v_a14b',
@@ -460,6 +481,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'video',
     label: 'caption',
     description: 'Performant video generation (720p).',
+    released: '2025-11-21',
     versions: [
       {
         key: 'hy_720_fp8',
@@ -479,6 +501,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'video',
     label: 'caption',
     description: 'Lightricks video generation.',
+    released: '2026-08-11',
     versions: [
       {
         key: 'ltx25',
@@ -512,6 +535,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'video',
     label: 'caption',
     description: 'MiniMax H3 video generation.',
+    released: '2026-08-02',
     flag: 'recommended',
     versions: [
       {
@@ -532,6 +556,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'audio',
     label: 'caption',
     description: 'ACE-Step music / audio LoRA training.',
+    released: '2026-02',
     flag: 'recommended',
     versions: [
       {
@@ -634,6 +659,37 @@ export const cardByType = (type: string): ModelCard | undefined =>
 
 export const cardsForMedia = (media: Media): ModelCard[] =>
   MODEL_CARDS.filter((c) => c.media === media);
+
+/**
+ * How old a base model is, for the card. Relative inside six months ("3 months ago") because that is the
+ * window where recency is the point; absolute after it ("Aug 2024"), because "26 months ago" is arithmetic
+ * the reader has to do and a year is what they actually want to know. Month-only inputs (`YYYY-MM`, where
+ * the release day could not be established) anchor to the 1st, so they can read a few days young in the
+ * relative window — immaterial at this granularity, and never wrong in the absolute one.
+ */
+export function releasedLabel(released: string | undefined, now: Date = new Date()): string | null {
+  if (!released) return null;
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(released);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const then = new Date(Date.UTC(Number(y), Number(mo) - 1, d ? Number(d) : 1));
+  if (Number.isNaN(then.getTime())) return null;
+
+  const months =
+    (now.getUTCFullYear() - then.getUTCFullYear()) * 12 + (now.getUTCMonth() - then.getUTCMonth());
+  const absolute = then.toLocaleDateString('en-US', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  if (months >= 6 || months < 0) return absolute;
+
+  const days = Math.floor((now.getTime() - then.getTime()) / 86_400_000);
+  if (days < 7) return 'new this week';
+  if (days < 14) return 'last week';
+  if (days < 60) return `${Math.max(1, Math.round(days / 7))} weeks ago`;
+  return `${Math.max(2, months)} months ago`;
+}
 
 /** Resolve a training workflow's exact base model from the `air` on its training step. */
 export const findByAir = (
