@@ -38,7 +38,7 @@ export const RUN_STATE_BADGE: Record<RunState, { label: string; cls: string; dot
     cls: 'text-primary bg-primary/15',
     dot: 'bg-primary animate-pulse',
   },
-  published: { label: 'Published', cls: 'text-buzz bg-buzz/15', dot: 'bg-buzz' },
+  published: { label: 'Published', cls: 'text-emerald-400 bg-emerald-500/15', dot: 'bg-emerald-400' },
   failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
 };
 

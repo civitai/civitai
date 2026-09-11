@@ -4,7 +4,6 @@
   import { hrefFor } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
   import { remixFromRun } from '$lib/reuse';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
@@ -75,7 +74,6 @@
         {/if}
 
         <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">
-          <ModelCodeBadge code={r.code} size="lg" />
           <div class="min-w-0">
             <div class="truncate text-sm font-bold text-dark-0 transition-colors group-hover:text-white">
               {r.name}

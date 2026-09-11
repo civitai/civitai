@@ -534,7 +534,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'H3',
     media: 'video',
     label: 'caption',
-    description: '2K video with stereo sound and consistent characters.',
+    description: 'Video with stereo sound and consistent characters.',
     released: '2026-08-02',
     flag: 'recommended',
     versions: [
