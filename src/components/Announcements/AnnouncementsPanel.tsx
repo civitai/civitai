@@ -9,20 +9,13 @@ import {
   selectUndismissedAnnouncements,
   useDismissedCreatorAnnouncements,
 } from '~/components/Announcements/creator-announcement-dismissals';
-import { DeleteCreatorAnnouncementButton } from '~/components/Announcements/CreatorAnnouncementsCarousel';
-import { AnnouncementMuteMenuItem } from '~/components/Announcements/AnnouncementMuteToggle';
+import { AnnouncementActionsMenu } from '~/components/Announcements/AnnouncementActionsMenu';
 import {
   useCreatorAnnouncementsFeature,
-  useMutedCreators,
   useQueryFollowedAnnouncements,
 } from '~/components/Announcements/creator-announcements.utils';
-import { Menu } from '@mantine/core';
-import { IconDotsVertical, IconX } from '@tabler/icons-react';
+import { IconX } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { openReportModal } from '~/components/Dialog/triggers/report';
-import { ReportEntity } from '~/shared/utils/report-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type AnnouncementSource = 'civitai' | 'creators';
 
@@ -30,7 +23,6 @@ export type AnnouncementSource = 'civitai' | 'creators';
 const EMPTY_CREATOR_ITEMS: never[] = [];
 
 export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] }) {
-  const currentUser = useCurrentUser();
   const creatorAnnouncementsEnabled = useCreatorAnnouncementsFeature();
   const showCivitai = sources.includes('civitai');
   const showCreators = sources.includes('creators') && creatorAnnouncementsEnabled;
@@ -38,7 +30,6 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
   const { data: civitai, isLoading: loadingCivitai } = useGetAnnouncements();
   const { announcements: creators, isLoading: loadingCreators } =
     useQueryFollowedAnnouncements(showCreators);
-  const mutedCreatorIds = useMutedCreators();
   const dismissedCreatorIds = useDismissedCreatorAnnouncements();
 
   const isLoading = (showCivitai && loadingCivitai) || (showCreators && loadingCreators);
@@ -89,41 +80,7 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
           withAuthor
           actions={
             <div className="flex items-center gap-1">
-              <Menu withinPortal position="bottom-end">
-                <Menu.Target>
-                  <LegacyActionIcon
-                    variant="subtle"
-                    color="gray"
-                    radius="xl"
-                    aria-label="Announcement options"
-                  >
-                    <IconDotsVertical size={16} />
-                  </LegacyActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {/* Muting needs an author to mute; deleting does not, and a moderator
-                      should not lose the control on the row most likely to need it. */}
-                  {!!announcement.user && (
-                    <AnnouncementMuteMenuItem
-                      creatorId={announcement.user.id}
-                      creatorName={announcement.user.username}
-                      muted={mutedCreatorIds.includes(announcement.user.id)}
-                    />
-                  )}
-                  {currentUser?.id !== announcement.userId && (
-                    <ReportMenuItem
-                      label="Report announcement"
-                      onReport={() =>
-                        openReportModal({
-                          entityType: ReportEntity.Announcement,
-                          entityId: announcement.id,
-                        })
-                      }
-                    />
-                  )}
-                  <DeleteCreatorAnnouncementButton announcement={announcement} as="menu-item" />
-                </Menu.Dropdown>
-              </Menu>
+              <AnnouncementActionsMenu announcement={announcement} />
               <LegacyActionIcon
                 variant="subtle"
                 color="gray"
