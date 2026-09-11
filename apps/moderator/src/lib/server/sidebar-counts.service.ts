@@ -4,7 +4,7 @@ import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getImageReviewCounts } from './image-review.service';
-import { countImagesPendingIngestion, countIngestionErrorImages } from './ingestion.service';
+import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getArticleRatingReviewCounts } from './article-rating-reviews.service';
@@ -28,7 +28,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articles,
     articleRatings,
     reports,
-    toIngest,
+    stuckIngestion,
     ingestionErrors,
   ] = await Promise.all([
     getImageReviewCounts(),
@@ -59,9 +59,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     countModeratorArticles(),
     getArticleRatingReviewCounts(),
     getReportCounts(),
-    // Both queues were populated and badgeless — the counts simply had no key. Bounded because
-    // neither predicate has an index of its own; see `bounded`.
-    bounded(countImagesPendingIngestion),
+    // Bounded: neither count is served by an index alone; see `bounded`.
+    bounded(countStuckIngestion),
     bounded(countIngestionErrorImages),
   ]);
   return {
@@ -73,7 +72,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reported: Number(reported?.count ?? 0),
     articles,
     articleRatings: articleRatings.Pending,
-    ...(toIngest != null ? { toIngest } : {}),
+    ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };
 }

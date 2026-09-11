@@ -29,8 +29,8 @@ export type NavLink = {
   path?: string;
   countKey?: string;
   external?: boolean;
-  // Count is informational only — the dashboard keeps it out of "needs attention". For backlogs nobody
-  // works through, like articles unpublished for spam.
+  // Count is informational only — kept out of the dashboard's "needs attention" total and the sidebar
+  // group badge. For counts nobody works through: spam-unpublished articles, stuck scans.
   informational?: boolean;
   // The section is granted as one page and its children are neither granted nor checked individually. Making
   // these children grantable would drop the grants already stored against the parent path.
@@ -81,12 +81,12 @@ export const NAVIGATION: NavLink[] = [
       { path: '/images/tags', label: 'Image Tags', countKey: 'imageTags' },
       { path: '/images/ratings', label: 'Image Ratings', countKey: 'imageRatings' },
       { path: '/images/downleveled', label: 'Downleveled' },
-      // `informational`: the page has no actions — the count is upload throughput, and the whole
-      // backlog whenever the scanner stalls. Summed into the group badge it reads as a review backlog.
+      // `informational`: stuck scans are a pipeline fault with no moderator action; summed into
+      // the group badge they would read as a review backlog.
       {
         path: '/images/to-ingest',
         label: 'Images to Ingest',
-        countKey: 'toIngest',
+        countKey: 'stuckIngestion',
         informational: true,
       },
       { path: '/images/ingestion-errors', label: 'Ingestion Errors', countKey: 'ingestionErrors' },

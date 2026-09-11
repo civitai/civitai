@@ -45,6 +45,8 @@ const THRESHOLDS: Record<string, readonly number[]> = {
   urgent: [5, 4, 1, 1, 0],
   errors: [30, 20, 10, 5, 0],
   articleReviews: [30, 20, 10, 5, 0],
+  // Ours, not Retool's: a healthy pipeline holds 0.
+  stuckIngestion: [200, 50, 10, 1, 0],
 };
 
 /** Retool's five-step scale, worst first. Tailwind rather than its hex, so the palette stays ours. */

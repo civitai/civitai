@@ -20,6 +20,7 @@ import {
 import type { RedisMetricsBridge } from '@civitai/redis';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
+import { STUCK_PENDING_MINUTES } from '@civitai/shared/image-ingestion';
 // request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
 import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
@@ -82,34 +83,59 @@ declare global {
 }
 
 // Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
-// so they must NOT hit Postgres on every /metrics scrape (~15s). The query is served
+// so they must NOT hit Postgres on every /metrics scrape (~15s). The queries are served
 // from an in-process cache with a short TTL and refreshed lazily off the scrape path
 // (fire-and-forget) — a scrape only ever kicks a background refresh, never blocks on
 // it, and reads the last-known values.
 //
-// DB SAFETY: the Image table is enormous and Scanned dominates it, so an unfiltered
-// GROUP BY over `ingestion` would seq-scan the whole table. Instead each working state
-// is counted independently and UNION ALL'd, which lets Postgres serve every branch
-// index-only from the existing per-state indexes (~1s). A defensive statement_timeout
-// caps the rare replica cold-cache spike; on timeout we keep the last-known values.
+// DB SAFETY (backlog query): the Image table is enormous and Scanned dominates it, so an unfiltered
+// GROUP BY over `ingestion` would seq-scan the whole table. Instead each working state is counted
+// independently and UNION ALL'd, so each branch walks only its own state's index (~1s). A defensive
+// statement_timeout caps the rare replica cold-cache spike; on timeout we keep the last-known values.
 const INGESTION_GAUGE_TTL_MS = 45_000;
 const INGESTION_GAUGE_STATEMENT_TIMEOUT_MS = 10_000;
 
+// Capped at 24h: months-old stranded rows would hold the count above zero, so the alert could
+// never resolve.
+const STUCK_WINDOW = `"createdAt" < now() - interval '${STUCK_PENDING_MINUTES} minutes'
+  AND "createdAt" > now() - interval '24 hours'`;
+
+// The stuck counts ride the Pending walk rather than a query of their own: `createdAt` only filters
+// that index scan, so a separate query repeats the whole walk (~200k buffers on the replica).
 const INGESTION_BACKLOG_SQL = `
-  SELECT 'Pending' AS status, count(*) AS backlog, min("createdAt") AS oldest
+  SELECT 'Pending' AS status, count(*) AS backlog, min("createdAt") AS oldest,
+         count(*) FILTER (WHERE type::text = 'image' AND ${STUCK_WINDOW}) AS stuck_image,
+         count(*) FILTER (WHERE type::text = 'video' AND ${STUCK_WINDOW}) AS stuck_video,
+         count(*) FILTER (WHERE type::text = 'audio' AND ${STUCK_WINDOW}) AS stuck_audio
     FROM "Image" WHERE ingestion='Pending'
   UNION ALL
-  SELECT 'Error', count(*), min("createdAt")
+  SELECT 'Error', count(*), min("createdAt"), NULL, NULL, NULL
     FROM "Image" WHERE ingestion='Error'
   UNION ALL
-  SELECT 'Rescan', count(*), min("createdAt")
+  SELECT 'Rescan', count(*), min("createdAt"), NULL, NULL, NULL
     FROM "Image" WHERE ingestion='Rescan'
   UNION ALL
-  SELECT 'PendingManualAssignment', count(*), min("createdAt")
+  SELECT 'PendingManualAssignment', count(*), min("createdAt"), NULL, NULL, NULL
     FROM "Image" WHERE ingestion='PendingManualAssignment'`;
+
+// Uncapped, unlike image_ingest_cron_queue_depth, which is the length of a `take`-limited read.
+const SCAN_QUEUE_SQL = `
+  SELECT count(*) AS depth, EXTRACT(EPOCH FROM now() - min("createdAt"))::float8 AS oldest_age
+    FROM "JobQueue" WHERE type='ImageScan'`;
+
+type IngestionBacklogQueryRow = {
+  status: string;
+  backlog: string;
+  oldest: Date | null;
+  stuck_image: string | null;
+  stuck_video: string | null;
+  stuck_audio: string | null;
+};
 
 type IngestionBacklogRow = { status: string; backlog: number; oldestAgeSeconds: number };
 let ingestionBacklogCache: IngestionBacklogRow[] = [];
+let stuckPendingCache: Record<string, number> = {};
+let scanQueueCache: { depth: number; oldestAgeSeconds: number } | null = null;
 let ingestionBacklogFetchedAt = 0;
 let ingestionBacklogInflight: Promise<void> | null = null;
 
@@ -117,31 +143,45 @@ async function queryIngestionBacklog() {
   // SET LOCAL binds the statement_timeout to this backend for the txn only, so the
   // pool's default policy is untouched. Checkout is required for it to apply.
   const dbClient = await pgDbRead.connect();
+  let failure: Error | undefined;
   try {
     await dbClient.query('BEGIN');
     await dbClient.query(`SET LOCAL statement_timeout = ${INGESTION_GAUGE_STATEMENT_TIMEOUT_MS}`);
-    const res = await dbClient.query<{ status: string; backlog: string; oldest: Date | null }>(
-      INGESTION_BACKLOG_SQL
+    const backlog = await dbClient.query<IngestionBacklogQueryRow>(INGESTION_BACKLOG_SQL);
+    const queue = await dbClient.query<{ depth: string; oldest_age: number | null }>(
+      SCAN_QUEUE_SQL
     );
     await dbClient.query('COMMIT');
-    return res.rows;
+    return { backlog: backlog.rows, queue: queue.rows[0] };
   } catch (e) {
+    failure = e as Error;
     await dbClient.query('ROLLBACK').catch(() => undefined);
     throw e;
   } finally {
-    dbClient.release();
+    // Passing the error discards the client instead of pooling a possibly-dead connection.
+    dbClient.release(failure);
   }
 }
 
 function refreshIngestionBacklog() {
   if (ingestionBacklogInflight) return ingestionBacklogInflight;
   ingestionBacklogInflight = queryIngestionBacklog()
-    .then((rows) => {
-      ingestionBacklogCache = rows.map((r) => ({
+    .then(({ backlog, queue }) => {
+      ingestionBacklogCache = backlog.map((r) => ({
         status: r.status,
         backlog: Number(r.backlog),
         oldestAgeSeconds: r.oldest != null ? (Date.now() - new Date(r.oldest).getTime()) / 1000 : 0,
       }));
+      const pending = backlog.find((r) => r.status === 'Pending');
+      stuckPendingCache = {
+        image: Number(pending?.stuck_image ?? 0),
+        video: Number(pending?.stuck_video ?? 0),
+        audio: Number(pending?.stuck_audio ?? 0),
+      };
+      scanQueueCache = {
+        depth: Number(queue?.depth ?? 0),
+        oldestAgeSeconds: Number(queue?.oldest_age ?? 0),
+      };
       ingestionBacklogFetchedAt = Date.now();
     })
     .catch(() => {
@@ -154,41 +194,82 @@ function refreshIngestionBacklog() {
   return ingestionBacklogInflight;
 }
 
+export const __refreshIngestionGaugesForTest = () => refreshIngestionBacklog();
+
 function maybeRefreshIngestionBacklog() {
   if (Date.now() - ingestionBacklogFetchedAt > INGESTION_GAUGE_TTL_MS)
     void refreshIngestionBacklog();
 }
 
-registerInstrumentationMetric(
-  PROM_PREFIX + 'image_ingestion_backlog',
-  () =>
-    new client.Gauge({
-      name: PROM_PREFIX + 'image_ingestion_backlog',
-      help: 'Images in a non-terminal working ingestion state (Pending/Error/Rescan/PendingManualAssignment)',
-      labelNames: ['status'],
-      registers: [instrumentationRegistry],
-      collect() {
-        maybeRefreshIngestionBacklog();
-        this.reset();
-        for (const row of ingestionBacklogCache) this.set({ status: row.status }, row.backlog);
-      },
-    })
+function registerIngestionGauge(
+  name: string,
+  help: string,
+  labelNames: string[],
+  fill: (gauge: client.Gauge<string>) => void
+) {
+  registerInstrumentationMetric(
+    PROM_PREFIX + name,
+    () =>
+      new client.Gauge({
+        name: PROM_PREFIX + name,
+        help,
+        labelNames,
+        registers: [instrumentationRegistry],
+        collect() {
+          maybeRefreshIngestionBacklog();
+          this.reset();
+          fill(this);
+        },
+      })
+  );
+}
+
+registerIngestionGauge(
+  'image_ingestion_backlog',
+  'Images in a non-terminal working ingestion state (Pending/Error/Rescan/PendingManualAssignment)',
+  ['status'],
+  (gauge) => {
+    for (const row of ingestionBacklogCache) gauge.set({ status: row.status }, row.backlog);
+  }
 );
-registerInstrumentationMetric(
-  PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
-  () =>
-    new client.Gauge({
-      name: PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
-      help: 'Age in seconds of the oldest image (now - min(createdAt)) per non-terminal ingestion state',
-      labelNames: ['status'],
-      registers: [instrumentationRegistry],
-      collect() {
-        maybeRefreshIngestionBacklog();
-        this.reset();
-        for (const row of ingestionBacklogCache)
-          this.set({ status: row.status }, row.oldestAgeSeconds);
-      },
-    })
+registerIngestionGauge(
+  'image_ingestion_oldest_age_seconds',
+  'Age in seconds of the oldest image (now - min(createdAt)) per non-terminal ingestion state',
+  ['status'],
+  (gauge) => {
+    for (const row of ingestionBacklogCache)
+      gauge.set({ status: row.status }, row.oldestAgeSeconds);
+  }
+);
+registerIngestionGauge(
+  'image_ingestion_stuck_pending',
+  `Images created ${STUCK_PENDING_MINUTES}m-24h ago still in ingestion=Pending: scans that should have returned and did not. The stuck-scan alert signal`,
+  ['type'],
+  (gauge) => {
+    for (const [type, stuck] of Object.entries(stuckPendingCache)) gauge.set({ type }, stuck);
+  }
+);
+registerIngestionGauge(
+  'image_scan_queue_depth',
+  'Rows in the ImageScan JobQueue, uncapped',
+  [],
+  (gauge) => {
+    if (scanQueueCache) gauge.set(scanQueueCache.depth);
+  }
+);
+registerIngestionGauge(
+  'image_scan_queue_oldest_age_seconds',
+  'Age in seconds of the oldest ImageScan JobQueue row. Error rows legitimately sit here for hours across retries, so this is context, not an alert signal',
+  [],
+  (gauge) => {
+    if (scanQueueCache) gauge.set(scanQueueCache.oldestAgeSeconds);
+  }
+);
+registerIngestionGauge(
+  'image_ingestion_gauges_refreshed_timestamp_seconds',
+  'Unix time the image-ingestion gauges last refreshed. A failing refresh freezes every other ingestion gauge at its last value; alert on this going stale',
+  [],
+  (gauge) => gauge.set(ingestionBacklogFetchedAt / 1000)
 );
 
 // 🔴 WHY THE BULKHEAD GAUGES USE registerInstrumentationMetric, AND WHY A globalThis
