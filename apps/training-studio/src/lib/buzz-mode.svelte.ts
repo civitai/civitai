@@ -34,8 +34,9 @@ export const buzzMode = {
   toggle() {
     this.set(mode === 'yellow' ? 'green' : 'yellow');
   },
-  /** Accounts to charge, in priority order: the chosen primary, then blue as fallback. */
+  /** Accounts to charge, in priority order: Blue (the free sub-currency) always spends first —
+   *  that's why it isn't offered in the picker — then the chosen yellow/green. */
   get currencies(): string[] {
-    return [mode, 'blue'];
+    return ['blue', mode];
   },
 };

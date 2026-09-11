@@ -425,8 +425,8 @@
     </div>
 
     <p class="mt-3 font-mono text-[10px] text-dark-2">
-      Paid with your <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz, then
-      <span class="text-blue-400">Blue</span> — switch in the top bar.
+      Paid with <span class="text-blue-400">Blue</span> first, then your
+      <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz — switch in the top bar.
     </p>
 
     {#if needsAttestation}

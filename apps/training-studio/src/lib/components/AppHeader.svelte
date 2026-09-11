@@ -96,7 +96,8 @@
           {/each}
           <p class="px-3 pb-1.5 pt-1 text-[11px] leading-snug text-dark-2">
             <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train NSFW
-            content. <span class="text-blue-400">Blue</span> covers any shortfall either way.
+            content. <span class="text-blue-400">Blue</span> (free) always spends first; your pick
+            covers the rest.
           </p>
         </div>
       </details>

@@ -72,7 +72,7 @@ export interface SubmitOptions {
 
 // Real-spend wallets (Buzz), same set the whatif quotes against. Also the default when the client sends
 // nothing valid.
-const CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
 // The Buzz accounts a training run may draw from — the caller's `currencies` is filtered to this set so a
 // tampered/garbage body can't send an arbitrary account to the orchestrator.
 const ALLOWED_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue', 'green'];
