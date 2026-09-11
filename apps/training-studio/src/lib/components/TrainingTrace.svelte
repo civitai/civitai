@@ -203,14 +203,14 @@
           <span class="text-dark-1">step {step.toLocaleString()} / {maxSteps.toLocaleString()} overall</span>
         {/if}
         {#if etaSeconds !== null}
-          <span class="font-mono text-[11px] text-dark-2">{fmtEta(etaSeconds)} left in this epoch</span>
+          <span class="font-mono text-xs text-dark-2">{fmtEta(etaSeconds)} left in this epoch</span>
         {/if}
       </div>
       <div class="h-1.5 overflow-hidden rounded-full bg-dark-5">
         <div class="h-full rounded-full bg-primary transition-[width]" style:width="{stepPct}%"></div>
       </div>
       {#if secondsPerStep !== null}
-        <div class="mt-1 font-mono text-[10px] text-dark-2">{secondsPerStep.toFixed(2)}s / step</div>
+        <div class="mt-1 font-mono text-xs text-dark-2">{secondsPerStep.toFixed(2)}s / step</div>
       {/if}
     {:else}
       <div class="flex items-center gap-2 text-sm text-dark-1">
@@ -221,7 +221,7 @@
 
     <details class="mt-3">
       <summary
-        class="cursor-pointer select-none font-mono text-[10px] uppercase tracking-wider text-dark-2 hover:text-dark-1"
+        class="cursor-pointer select-none font-mono text-xs uppercase tracking-wider text-dark-2 hover:text-dark-1"
       >
         Raw log ({raw.length})
       </summary>
@@ -229,7 +229,7 @@
         bind:this={logEl}
         role="log"
         aria-live="off"
-        class="mt-2 max-h-64 overflow-y-auto rounded border border-dark-5 bg-dark-8 px-3 py-2 font-mono text-[11px] leading-relaxed"
+        class="mt-2 max-h-64 overflow-y-auto rounded border border-dark-5 bg-dark-8 px-3 py-2 font-mono text-xs leading-relaxed"
       >
         {#each rawLines as line (line.id)}
           <div class="whitespace-pre-wrap break-all text-dark-2">{line.text}</div>

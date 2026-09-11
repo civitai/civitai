@@ -202,7 +202,7 @@
   <div class="mt-2.5">
     <label
       for={`custom-air-${run.id}`}
-      class="font-mono text-[10px] uppercase tracking-wider text-dark-2"
+      class="font-mono text-xs uppercase tracking-wider text-dark-2"
     >
       Civitai model AIR
     </label>
@@ -213,7 +213,7 @@
       placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
       class="mt-1 font-mono text-xs"
     />
-    <p class="mt-1 text-[10px] leading-snug text-dark-2">
+    <p class="mt-1 text-xs leading-snug text-dark-2">
       {#if run.customAir && !isValidAir(run.customAir)}
         <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
       {:else}
@@ -304,7 +304,7 @@
     <div>
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
-        <div class="font-mono text-[11px] text-dark-2">
+        <div class="font-mono text-xs text-dark-2">
           {labelMode === 'tag' ? 'auto-labeled with tags' : 'auto-labeled with captions'}
         </div>
       </div>
@@ -356,7 +356,7 @@
                 <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
               </div>
               {#if isRecommended}
-                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-primary-foreground">
+                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
                   <IconStarFilled size={8} />Recommended
                 </span>
               {/if}
@@ -366,24 +366,24 @@
                 </span>
               {/if}
             </div>
-            <div class="mt-1 line-clamp-1 text-[11px] leading-snug text-dark-2">
+            <div class="mt-1 line-clamp-1 text-xs leading-snug text-dark-2">
               {card.description}
             </div>
             <div class="mt-2 flex items-center gap-2">
               {#if cardPrice != null}
                 <span
-                  class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
+                  class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
                 >
                   from <IconBoltFilled size={11} stroke={2} class="mx-px inline" />{cardPrice.toLocaleString()}
                 </span>
               {:else}
-                <span class="font-mono text-[10px] text-dark-2">—</span>
+                <span class="font-mono text-xs text-dark-2">—</span>
               {/if}
               {#if card.versions.length > 1}
                 <span
                   aria-hidden="true"
                   title={`${card.versions.length} versions`}
-                  class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-[9px] leading-none text-dark-2"
+                  class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-xs leading-none text-dark-2"
                 >
                   <IconStack2 size={10} stroke={2} />
                   {card.versions.length}
@@ -398,7 +398,7 @@
         <button
           type="button"
           onclick={() => (showAllModels = !showAllModels)}
-          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 py-2 font-mono text-[11px] text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
+          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 py-2 font-mono text-xs text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
         >
           {#if modelsExpanded}
             <IconMinus size={12} stroke={2} />Show fewer models
@@ -423,7 +423,7 @@
                 {card.name}
                 {runVersionLabel(primary)}
               </div>
-              <div class="font-mono text-[11px] text-dark-2">
+              <div class="font-mono text-xs text-dark-2">
                 {labelNoun(card)}{#if isCustom(primary)} · custom (+<IconBoltFilled
                     size={10}
                     stroke={2}
@@ -434,7 +434,7 @@
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
           {#if versionsFor(card).length > 1}
-            <div class="mt-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">Version</div>
+            <div class="mt-1 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
               role="radiogroup"
@@ -455,13 +455,13 @@
                   <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
                   {#if v.surcharge}
                     <div
-                      class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
+                      class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
                     >
                       +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
                     </div>
                   {/if}
                   {#if v.note}
-                    <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
+                    <div class="font-mono text-xs text-dark-2">{v.note}</div>
                   {/if}
                 </button>
               {/each}
@@ -485,7 +485,7 @@
           <span class="inline-flex items-center gap-1 text-sm font-semibold text-dark-1">
             <IconPlus size={14} stroke={2} />Train an additional model
           </span>
-          <span class="font-mono text-[11px] text-dark-2">same dataset · another model or settings</span>
+          <span class="font-mono text-xs text-dark-2">same dataset · another model or settings</span>
         </button>
       {:else}
         <div class="flex flex-col gap-2.5 p-3.5">
@@ -513,7 +513,7 @@
                       Run {ri + 1} · {card.name}
                       {runVersionLabel(r)}
                     </div>
-                    <div class="font-mono text-[11px] text-dark-2">
+                    <div class="font-mono text-xs text-dark-2">
                       {labelNoun(card)}{#if isCustom(r)} · custom (+<IconBoltFilled
                           size={10}
                           stroke={2}
@@ -550,13 +550,13 @@
                     <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
                     {#if v.surcharge}
                       <div
-                        class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
+                        class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
                       >
                         +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
                       </div>
                     {/if}
                     {#if v.note}
-                      <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
+                      <div class="font-mono text-xs text-dark-2">{v.note}</div>
                     {/if}
                   </button>
                 {/each}
@@ -605,7 +605,7 @@
         <span class="font-mono text-2xl font-bold text-dark-2">—</span>
       {/if}
     </div>
-    <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
+    <div class="mt-1 text-right font-mono text-xs text-dark-2">
       final price after your data &amp; settings
     </div>
     <Button
@@ -616,12 +616,12 @@
       Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
     </Button>
     {#if customIncomplete}
-      <p class="mt-1.5 text-center font-mono text-[11px] text-buzz">
+      <p class="mt-1.5 text-center font-mono text-xs text-buzz">
         Paste a Civitai model AIR for the custom base to continue.
       </p>
     {/if}
     <p
-      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-[11px] text-dark-2"
+      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
     >
       <svg
         viewBox="0 0 24 24"
