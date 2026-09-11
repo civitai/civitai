@@ -55,6 +55,7 @@ const EXPECTED: [string, string, string][] = [
   ['comicProject', 'ComicProjectReport', 'comicProjectId'],
   ['model3d', 'Model3DReport', 'model3dId'],
   ['model3dReview', 'Model3DReviewReport', 'model3dReviewId'],
+  ['announcement', 'AnnouncementReport', 'announcementId'],
   ['chat', 'ChatReport', 'chatId'],
   ['reportedUser', 'UserReport', 'userId'],
 ];
@@ -120,7 +121,7 @@ describe('getReportHistory', () => {
 });
 
 describe('the queries that fan out over every entity at once', () => {
-  it('getReportCounts names all fifteen report tables', async () => {
+  it('getReportCounts names every report table', async () => {
     await service.getReportCounts();
 
     const [sql] = emitted();
@@ -163,7 +164,7 @@ describe('getMostReportedPage', () => {
   it('pages inside the CTE, where the LIMIT already is', async () => {
     await service.getMostReportedPage({ page: 3, limit: 25, days: 7 });
 
-    // OFFSET applied outside it would walk the discarded rows through all seventeen subplans — the
+    // OFFSET applied outside it would walk the discarded rows through every subplan — the
     // reason the LIMIT is in there in the first place.
     const list = emitted()
       .map((sql) => sql.toLowerCase())
@@ -187,6 +188,7 @@ describe('report rows link to what was reported', () => {
       'context:bountyEntry',
       'context:model3dReview',
       'context:reportedUser',
+      'context:announcement',
     ])
       expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
   });

@@ -80,6 +80,15 @@ export function useAppContext() {
 }
 
 /**
+ * 🔴 Non-throwing on purpose, and only for consumers with a correct answer without the
+ * provider: component tests mount no `AppProvider`, and a throw during render empties the tree
+ * into unexplained timeouts.
+ */
+export function useMaybeAppContext() {
+  return useContext(Context);
+}
+
+/**
  * Returns the canonical (primary) host for each color. Use this for outbound
  * URL construction — never link to an alias host.
  */

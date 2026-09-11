@@ -1500,6 +1500,7 @@ model Report {
   automated      ReportAutomated?
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
+  announcement   AnnouncementReport?
 }
 
 model ResourceReviewReport {
@@ -4152,6 +4153,7 @@ model Announcement {
   profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
   spends      AnnouncementSpend[]
+  reports     AnnouncementReport[]
 
   @@index([userId, startsAt])
 }
@@ -6176,6 +6178,16 @@ model ChallengeReport {
 
   @@id([reportId, challengeId])
   @@index([challengeId], type: Hash)
+}
+
+model AnnouncementReport {
+  announcementId Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  reportId       Int          @unique
+  report         Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, announcementId])
+  @@index([announcementId], type: Hash)
 }
 
 model ChallengeJudge {
