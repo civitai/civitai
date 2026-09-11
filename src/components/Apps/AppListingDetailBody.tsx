@@ -804,14 +804,15 @@ export interface AppListingDetailBodyProps {
    * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
    * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
    *
-   *   - the PERMISSION DISCLOSURE is KEPT in code but renders NOTHING here in
-   *     practice, and that is a ledger entry rather than a claim to the contrary.
-   *     Every `preview` detail reaching this component has `scopes: []` (both
-   *     publish-request writers create `kind: 'offsite'`, `appBlockId: null` rows;
-   *     `buildListingDetailPreview` hardcodes `[]`), so the `length > 0` guard
-   *     suppresses the section. It carries a distinct heading for the day that
-   *     changes — see the section's own comment, which states plainly that the branch
-   *     is unreachable today rather than claiming it fixes a live hazard,
+   *   - the PERMISSION DISCLOSURE is KEPT, not omitted — a decision on this ledger
+   *     rather than an omission that was missed. It renders under a DIFFERENT HEADING
+   *     here ("Currently granted permissions", not "This app can…") because the review
+   *     modal shows it beside the pending version's REQUESTED scopes, and mislabelling
+   *     the currently-approved set is how a moderator under-reads an escalation.
+   *     🔴 It DOES render here: the owner-republish re-review produces a
+   *     `kind: 'onsite'` request against a LIVE listing with a non-null `appBlockId`.
+   *     An intermediate revision of this ledger claimed it rendered nothing — that was
+   *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
@@ -1218,25 +1219,34 @@ export function AppListingDetailBody({
                 the absence of a permissions section than by a sentence nobody reads.
                 Ported from the disclosure on the retired `/apps/<appBlockId>` route,
                 which `blocks.getAppDetail` still serves.
-                🔴 THE `preview` HEADING BRANCH IS UNREACHABLE TODAY — it is an
-                INVARIANT GUARD, not regression coverage, and saying so is the point.
-                The only `preview` render is `OffsiteReviewQueue`'s
-                `ListingPreviewSection`, whose detail is either
-                `buildListingDetailPreview` (hardcodes `scopes: []`) or
-                `getListingPreviewForReview` on a publish-request listing — and BOTH
-                writers of `AppListingPublishRequest.appListingId` create rows with
-                `kind: 'offsite'` and `appBlockId: null`. Either way `scopes` is `[]`,
-                so the `length > 0` guard above means NO permission section renders in
-                preview at all, under either heading.
-                ⚠ An earlier version of this comment asserted that a moderator could
-                "under-read a scope ESCALATION" here. They cannot — the UI cannot
-                produce that mis-reading, because it shows nothing. The heading is kept
-                because it costs three lines and is correct the moment the branch
-                becomes reachable; it is NOT kept because it fixes a live hazard.
-                To make it reachable, `getListingPreviewForReview` would have to read
-                `appBlock`/`approvedScopes` from the PARENT listing for a shadow
-                revision — which it already does for `beta`. That is a moderator-facing
-                feature, deliberately not in this PR's scope. */}
+                🔴 THE `preview` HEADING IS A CORRECTNESS FIX ON A REACHABLE PATH, NOT
+                COPY AND NOT AN INVARIANT GUARD. `detail.scopes` is what is CURRENTLY
+                approved; the review modal shows it beside `ManifestScopes`, the scopes
+                the pending version is REQUESTING. Those differ exactly when a version
+                escalates, and the confident natural-language heading was on the wrong
+                one — so a moderator could read "This app can…" as the set they are
+                approving and under-read the escalation, on the one surface where that
+                call is made.
+                🔴 REACHED VIA THE OWNER-REPUBLISH RE-REVIEW, which is why a
+                "preview means an off-site shadow" reading is wrong. There are FOUR
+                writers of `AppListingPublishRequest.appListingId`, and two copy the
+                kind from the target rather than hardcoding `'offsite'`:
+                `offsite-moderation.service.ts`'s `routeRepublishToReviewInTx` writes
+                `kind: listing.kind` against the LIVE listing id — so an approved
+                ON-SITE app that is self-unpublished and republished with a changed
+                asset produces a `kind: 'onsite'`, non-shadow request whose
+                `appListingId` is a live on-site listing WITH a non-null `appBlockId`.
+                `getListingPreviewForReview` is deliberately not status-filtered and
+                runs `projectListingDetail` verbatim, so `scopes` is non-empty and this
+                section renders. `OffsiteReviewQueue` renders `ListingPreviewSection`
+                with no kind gate, and already carries its own 🔴 comment that
+                "`kind === 'onsite'` NO LONGER IMPLIES 'a media revision'" for exactly
+                this producer; its `ONSITE_REPUBLISH_ROW` fixture is that shape.
+                ⚠ An intermediate version of this comment claimed the branch was
+                UNREACHABLE and that the heading was therefore an invariant guard. That
+                was wrong, and wrong in the dangerous direction — it licensed deleting a
+                heading and a test that both guard a live moderator-facing path. It
+                counted two of the four writers. */}
             {detail.scopes.length > 0 && (
               <Stack gap="xs" data-testid="apps-listing-permissions">
                 <Group gap="xs">

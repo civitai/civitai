@@ -398,8 +398,15 @@ export type ListingDetail = {
   sourceRepoUrl: string | null;
   /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
-   * permission disclosure. `[]` for any listing whose `kind` is not `onsite`, and for
-   * an on-site app approved with no scopes.
+   * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:
+   *   1. the listing's `kind` is not `onsite`;
+   *   2. an on-site app approved with no scopes;
+   *   3. 🔴 an on-site listing with NO BACKING `appBlock` ROW — every revision SHADOW
+   *      (`beginListingRevision` writes `appBlockId: null` onto a shadow whose `kind`
+   *      is cloned from the parent). A shadow is `kind: 'onsite'` and still gets `[]`.
+   * Case 3 is why "preview implies `[]`" is a tempting and WRONG inference: the
+   * owner-republish re-review targets the LIVE listing, not a shadow, so it has a
+   * backing block and does get scopes. See `AppListingDetailBody`'s section comment.
    *
    * ⚠ `[]` for an off-site listing because of its **`kind`**, NOT because it lacks a
    * backing block — an off-site row CAN carry a non-null `appBlockId` (the

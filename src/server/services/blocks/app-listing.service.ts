@@ -635,14 +635,18 @@ export function projectListingDetail(
     // through the mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in
     // as many words to discriminate on `kind`.
     //
-    // 🔴 THIS PREDICATE IS OPEN-CODED AT FIVE OR MORE SITES AND IS A CONSOLIDATION
-    // CANDIDATE. Known siblings, all gating the same shape by hand:
-    // `app-access.service.ts`, `app-collaborator-earnings.service.ts`,
-    // `app-collaborator.service.ts` (`hasWritableRepo`),
-    // `app-ownership-transfer.service.ts`, `offsite-listing.service.ts`.
-    // ⚠ An earlier version of this comment said "the third consumer" and named two
-    // of them — an undercount that would hand anyone consolidating this 2 of 5. Count
-    // it yourself before quoting a number; this list is not asserted to be closed.
+    // 🔴 THE CONSOLIDATION VEHICLE ALREADY EXISTS — it is `CAPABILITIES_BY_KIND` /
+    // `listingKindSupports` in `src/shared/constants/app-capabilities.constants.ts`,
+    // which has already absorbed ~14 open-coded sites. If this gate is ever
+    // consolidated, ADD A CAPABILITY CELL there; do NOT build a new helper.
+    // Sibling `kind` gates for the same shape: `app-access.service.ts`,
+    // `app-collaborator-earnings.service.ts` and `app-collaborator.service.ts`
+    // (`hasWritableRepo`) — the last two ALREADY route through that table —
+    // plus `app-ownership-transfer.service.ts` and `offsite-listing.service.ts`.
+    // ⚠ Two earlier drafts of this comment were wrong: one said "the third consumer"
+    // and named two sites (an undercount), the next called all five "open-coded by
+    // hand" when two already use the shared table. Count and check before quoting;
+    // this list is not asserted to be closed.
     //
     // Without the gate, such a row renders the off-site disclosure — "This app runs
     // entirely off-platform — no Civitai install, account access, or permissions" —

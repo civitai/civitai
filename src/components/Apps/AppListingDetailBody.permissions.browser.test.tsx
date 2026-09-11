@@ -186,17 +186,20 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     expect(container.querySelector('[data-testid="apps-listing-permissions"]')).toBeNull();
   });
 
-  // 🔴 INVARIANT GUARD ON A CURRENTLY-UNREACHABLE PATH — NOT regression coverage,
-  // and counting it as such would overstate this file. No production producer emits
-  // `preview` + non-empty `scopes`: every preview detail has `scopes: []` (both
-  // writers of `AppListingPublishRequest.appListingId` create `kind: 'offsite'`,
-  // `appBlockId: null` rows, and `buildListingDetailPreview` hardcodes `[]`), so the
-  // component's `length > 0` guard means the section never renders in preview at all.
-  // The pair below is mutation-killable as a STRING guard (verified: hardcoding
-  // either heading reddens exactly one of the two), so it is not vacuous — but what
-  // it pins is a branch nothing currently reaches. It earns its place by being
-  // correct the day `getListingPreviewForReview` reads the parent's scopes for a
-  // shadow revision, which is what would make preview non-empty.
+  // 🔴 REAL REGRESSION COVERAGE ON A REACHABLE PATH. A production producer DOES emit
+  // `preview` + non-empty `scopes`: `routeRepublishToReviewInTx` writes
+  // `kind: listing.kind` against the LIVE listing, so an approved ON-SITE app that is
+  // self-unpublished and republished with a changed asset yields a `kind: 'onsite'`
+  // request whose `appListingId` is a live listing WITH a non-null `appBlockId` —
+  // `getListingPreviewForReview` then projects real scopes into a `preview` render.
+  // `OffsiteReviewQueue` has its own 🔴 comment about that producer and an
+  // `ONSITE_REPUBLISH_ROW` fixture of exactly that shape.
+  // ⚠ An intermediate revision of this header called the pair an "invariant guard on
+  // a currently-unreachable path" and said it was NOT regression coverage. That was
+  // wrong — it counted two of the four writers of that column — and it was wrong in
+  // the direction that invites deleting these tests. The pair is also
+  // mutation-killable as a string guard: hardcoding either heading reddens exactly
+  // one of the two.
   test('🔴 under `preview` the heading says CURRENTLY GRANTED, not "This app can…"', async () => {
     const { container } = await renderWithProviders(
       <AppListingDetailBody detail={base({ scopes: [PLAIN_SCOPE] })} preview />
