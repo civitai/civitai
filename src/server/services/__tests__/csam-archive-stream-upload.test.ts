@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { Writable } from 'stream';
 import JSZip from 'jszip';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -191,7 +192,7 @@ import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
-import { S3_MIN_PART_SIZE_BYTES } from '~/server/utils/archive-helpers';
+import { MAX_UPLOAD_QUEUE_SIZE, S3_MIN_PART_SIZE_BYTES } from '~/server/utils/archive-helpers';
 
 // ---------------------------------------------------------------------------------------------
 // Fixture
@@ -236,6 +237,29 @@ function entryBytes(index: number): Buffer {
  */
 const ENTRY_COUNT = 73;
 const ENTRY_BYTES = 192 * 1024;
+
+/**
+ * 🔴 Fixture size for the anti-hang probe, and the ONLY thing that makes that probe able to
+ * observe anything at all.
+ *
+ * `Upload` pulls eagerly: it absorbs roughly `queueSize * partSize` — `MAX_UPLOAD_QUEUE_SIZE x
+ * S3_MIN_PART_SIZE_BYTES` = 20 MiB at the default geometry — out of the `PassThrough` before it
+ * stops reading. An archive SMALLER than that window is fully absorbed and fully appended before
+ * the upload's first part can fail, so nothing is ever parked on the pending-entry ceiling and
+ * the report fails correctly whether or not the producer is actually stopped. Measured: at
+ * `ENTRY_COUNT` (73 x 192 KiB = 13.7 MiB) the probe settles in under a second against code with
+ * the hang fully present. It was testing nothing.
+ *
+ * 160 x 192 KiB = 30 MiB is comfortably past that window, so the archiver is still mid-archive
+ * with `append()` callers parked when the upload rejects — which is the state the defect strands
+ * forever. Asserted in the test rather than trusted from this comment, because the window moves
+ * if either geometry constant changes.
+ *
+ * Wall clock, measured on this file: the two anti-hang probes cost ~0.7 s of ~5 s of test time
+ * across 8 tests. Most of the larger fixture is free because `entryBytes` caches per index and
+ * the first three tests have already generated indices 0..72.
+ */
+const HANG_PROBE_ENTRY_COUNT = 160;
 
 function fakeBlob(index: number) {
   const buffer = entryBytes(index);
@@ -292,8 +316,8 @@ const report = {
   images: [],
 };
 
-function seedDb() {
-  const rows = Array.from({ length: ENTRY_COUNT }, (_, i) => ({
+function seedDb(entryCount: number = ENTRY_COUNT) {
+  const rows = Array.from({ length: entryCount }, (_, i) => ({
     id: i + 1,
     url: `image-uuid-${i}`,
     name: entryNameForIndex(i),
@@ -307,7 +331,7 @@ function seedDb() {
       return rows.filter((r) => r.id > after).slice(0, args.take ?? rows.length);
     }
   );
-  dbMock.dbRead.image.count.mockResolvedValue(ENTRY_COUNT);
+  dbMock.dbRead.image.count.mockResolvedValue(entryCount);
   dbMock.dbRead.user.findUnique.mockResolvedValue({
     id: report.userId,
     name: 'n',
@@ -333,6 +357,38 @@ async function runArchive(streaming: boolean) {
 
   const stored = storedObjects.get('images.zip');
   return { stored, flagsSeen };
+}
+
+/**
+ * Deadline for the two anti-hang probes, and the runner timeout that has to sit above it.
+ *
+ * Raced against a timer rather than left to the runner's own timeout, so that a hang reports as
+ * the named outcome `'HUNG'` with a message attached instead of as an anonymous "test timed out",
+ * which reads like a slow fixture rather than like the defect. These archives settle in about a
+ * second when the producer is actually stopped, so 30 s is not a timing assertion — it is the
+ * difference between settling and never settling.
+ */
+const HANG_DEADLINE_MS = 30_000;
+const HANG_TEST_TIMEOUT_MS = 90_000;
+
+/** Runs one report and reports whether it SETTLED at all, rather than waiting on it forever. */
+async function settleOrHang(reportArg: unknown) {
+  let timer: NodeJS.Timeout | undefined;
+  let thrown: unknown;
+  const outcome = await Promise.race([
+    archiveCsamDataForReport(reportArg as never).then(
+      () => 'resolved' as const,
+      (e: unknown) => {
+        thrown = e;
+        return 'rejected' as const;
+      }
+    ),
+    new Promise<'HUNG'>((resolve) => {
+      timer = setTimeout(() => resolve('HUNG'), HANG_DEADLINE_MS);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  return { outcome, thrown };
 }
 
 beforeEach(() => {
@@ -453,24 +509,194 @@ describe('csam archive streaming upload', () => {
     expect(storedObjects.get('images.zip')).toBeDefined();
   });
 
-  it('surfaces an upload failure on the streaming path instead of hanging', async () => {
-    // A failed upload stops draining the PassThrough. Without the explicit destroy in
-    // `archiveAndUpload`, `finalize()`'s wait for the sink to close never settles and the report
-    // hangs forever rather than failing — the worst of the available outcomes for a job.
-    const failure = new Error('multipart upload rejected');
-    const realSend = FakeS3Client.prototype.send;
-    vi.spyOn(FakeS3Client.prototype, 'send').mockImplementation(async function (
-      this: FakeS3Client,
-      command: Parameters<typeof realSend>[0]
-    ) {
-      if (command.constructor.name === 'UploadPartCommand') throw failure;
-      return realSend.call(this, command);
-    });
+  // -------------------------------------------------------------------------------------------
+  // "The rollback is a flag flip" — only true if the flag-OFF path behaves as it did before this
+  // change. TWO things arrived with it and both have to be gated, not just the choice of sink:
+  // the `image.count` round trip, and the derived part geometry it feeds.
+  //
+  // 🔴 DELIBERATELY TWO TESTS, NOT ONE. Written as a single test the two assertions are not
+  // independently reachable: the count gate ALONE is enough to keep an estimate away from the
+  // disk path on the images route, so the geometry assertion sits downstream of a check that
+  // already failed and can never be observed dying on its own. Measured — un-gating only the
+  // `expectedBytes` argument left a combined test GREEN. Splitting them, and routing the
+  // geometry one through `generated-images` (whose caller passes an estimate unconditionally,
+  // with no count query in front of it), makes each die to its own mutation.
+  // -------------------------------------------------------------------------------------------
 
+  it('🔴 issues no image-count round trip when the flag is OFF', async () => {
+    // The count is a new query against the main database bought solely to size upload parts. On
+    // the path that does not size parts it must not happen at all.
+    dbMock.dbRead.image.count.mockClear();
+    mockIsFlipt = async () => false;
+
+    await archiveCsamDataForReport(report as never);
+
+    expect(
+      storedObjects.get('images.zip'),
+      'the disk path stored no images.zip — probe wired to nothing'
+    ).toBeDefined();
+    expect(
+      dbMock.dbRead.image.count.mock.calls.length,
+      'the flag-off path issued the image count query that only the streaming geometry needs'
+    ).toBe(0);
+
+    // ---- Positive control, in-band. A zero is indistinguishable from a counter wired to
+    // nothing, so the SAME counter has to be shown moving on the path that does need it.
+    storedObjects.clear();
+    pendingUploads.clear();
+    dbMock.dbRead.image.count.mockClear();
     mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;
 
-    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(/images\.zip/);
-  }, 20_000);
+    await archiveCsamDataForReport(report as never);
+
+    expect(
+      dbMock.dbRead.image.count.mock.calls.length,
+      'the streaming path did not issue the count query either — the zero asserted above is a ' +
+        'fact about the spy, not about the gate'
+    ).toBe(1);
+  }, 30_000);
+
+  it('🔴 keeps the flag-OFF path on the pre-change fixed part geometry', async () => {
+    // Routed through `generated-images` because its caller derives `expectedBytes` from an array
+    // length it already has and passes it WHATEVER the flag says — so `archiveAndUpload`'s disk
+    // branch dropping it is the only thing standing between the rollback path and a derived part
+    // size. That makes this assertion reachable, which the images route does not.
+    //
+    // Made OBSERVABLE by a large estimate over a small archive: `expectedBytes` counts every URL,
+    // while only the ones that actually fetch become entries. At ~1.4 MiB/entry x 30,000 URLs the
+    // derived part size is ~17 MiB — larger than the ~14 MiB archive — so a leaked estimate
+    // collapses the upload to a single part (or a one-shot `PutObject`, `partCount === 0`).
+    // The fixed 5 MiB geometry gives several parts instead.
+    const REAL_URLS = ENTRY_COUNT;
+    const TOTAL_URLS = 30_000;
+    const urls = Array.from({ length: TOTAL_URLS }, (_, i) =>
+      i < REAL_URLS
+        ? `https://example.invalid/image-uuid-${i}`
+        : `https://example.invalid/absent-${i}`
+    );
+    mockGetConsumerStrikes = async () => [
+      { strikes: [{ job: { blobs: urls.map((previewUrl) => ({ previewUrl })) } }] },
+    ];
+    mockIsFlipt = async () => false;
+
+    await archiveCsamDataForReport({ ...report, type: 'GeneratedImage' } as never);
+
+    const stored = storedObjects.get('generated-images.zip');
+    expect(
+      stored,
+      'the disk path stored no generated-images.zip — probe wired to nothing'
+    ).toBeDefined();
+    // Positive control on the fixture: the archive has to be big enough that a leaked part size
+    // would actually change its shape. An empty archive would satisfy the assertion below by
+    // accident.
+    expect(stored!.body.length).toBeGreaterThan(S3_MIN_PART_SIZE_BYTES);
+
+    expect(
+      stored!.partCount,
+      `the flag-off path uploaded in ${stored!.partCount} part(s) — it was handed a part size ` +
+        'derived from the size estimate instead of the fixed 5 MiB it used before this change, ' +
+        'so "rollback is a flag flip" is false on the dimension that caused the eviction'
+    ).toBeGreaterThanOrEqual(2);
+    for (const size of stored!.partSizes.slice(0, -1)) expect(size).toBe(S3_MIN_PART_SIZE_BYTES);
+  }, 30_000);
+
+  it(
+    '🔴 surfaces an upload failure MID-ARCHIVE instead of hanging the report',
+    async () => {
+      // THE REGRESSION. A failed upload stops draining the `PassThrough`, so the producer has to be
+      // stopped explicitly or the archiver's parked `append()` callers are never released and the
+      // report hangs forever rather than failing — the worst of the available outcomes for a job,
+      // and the outcome (evidence archival stalled indefinitely) this whole change exists to end.
+      //
+      // 🔴 THE FIXTURE SIZE IS THE TEST. At `ENTRY_COUNT` this probe is VACUOUS: the uploader
+      // absorbs the entire archive before its first part can fail, so the producer is already done
+      // and there is nothing to strand. Asserted, not assumed — if a future geometry change widens
+      // the absorption window past the fixture, this fails loudly instead of going quietly
+      // meaningless.
+      const absorbedBeforeStalling = MAX_UPLOAD_QUEUE_SIZE * S3_MIN_PART_SIZE_BYTES;
+      expect(
+        HANG_PROBE_ENTRY_COUNT * ENTRY_BYTES,
+        `fixture (${
+          HANG_PROBE_ENTRY_COUNT * ENTRY_BYTES
+        } bytes) no longer exceeds what the uploader ` +
+          `absorbs before it stops reading (${absorbedBeforeStalling} bytes) — this probe cannot ` +
+          `observe a stalled producer and proves nothing`
+      ).toBeGreaterThan(absorbedBeforeStalling);
+
+      seedDb(HANG_PROBE_ENTRY_COUNT);
+
+      const failure = new Error('multipart upload rejected');
+      const realSend = FakeS3Client.prototype.send;
+      vi.spyOn(FakeS3Client.prototype, 'send').mockImplementation(async function (
+        this: FakeS3Client,
+        command: Parameters<typeof realSend>[0]
+      ) {
+        if (command.constructor.name === 'UploadPartCommand') throw failure;
+        return realSend.call(this, command);
+      });
+
+      mockIsFlipt = async (flag: unknown) =>
+        flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;
+
+      const { outcome, thrown } = await settleOrHang(report);
+
+      expect(
+        outcome,
+        'the report never settled — an upload that fails mid-archive leaves the archiver alive with ' +
+          'its pending-entry waiters parked forever, which is the defect this pins'
+      ).toBe('rejected');
+      expect((thrown as Error).message).toMatch(/images\.zip/);
+    },
+    HANG_TEST_TIMEOUT_MS
+  );
+
+  it(
+    '🔴 surfaces a SINK failure mid-archive on the flag-OFF path instead of hanging',
+    async () => {
+      // THE SAME DEFECT ON THE ROLLBACK TARGET, and the reason it matters: the flag-off path stages
+      // to the container's scratch volume, so its sink fails mid-archive exactly when that volume
+      // fills — which is this incident's own condition. A rollback target that hangs is not a
+      // rollback, so both sinks have to carry a producer-stopping link, not just the streaming one.
+      //
+      // Same size reasoning as the probe above: the sink accepts 1 MiB before failing, so the
+      // archiver is still mid-archive with `append()` callers parked when it does.
+      seedDb(HANG_PROBE_ENTRY_COUNT);
+      mockIsFlipt = async () => false;
+
+      const sinkFailure = new Error('simulated sink failure: no space left on device');
+      const realCreateWriteStream = fs.createWriteStream;
+      vi.spyOn(fs, 'createWriteStream').mockImplementation(((
+        target: unknown,
+        ...rest: unknown[]
+      ) => {
+        // Only the media archive's sink is replaced. `data.json` still goes through a real write
+        // stream, so the run reaches the archive step the way it normally would.
+        if (!String(target).endsWith('_images.zip'))
+          return (realCreateWriteStream as (...a: unknown[]) => unknown)(target, ...rest);
+        let accepted = 0;
+        return new Writable({
+          write(chunk: Buffer, _encoding, callback) {
+            accepted += chunk.length;
+            if (accepted > 1024 * 1024) return callback(sinkFailure);
+            callback();
+          },
+        });
+      }) as never);
+
+      const { outcome, thrown } = await settleOrHang(report);
+
+      expect(
+        outcome,
+        'the report never settled — a write stream that dies mid-archive leaves the archiver alive ' +
+          'with its pending-entry waiters parked forever, so a full scratch volume stalls the ' +
+          'report instead of failing it'
+      ).toBe('rejected');
+      // The sink's own error is what should come out: nothing downstream reinterprets it, and it is
+      // the only thing that names the real fault.
+      expect((thrown as Error).message).toBe(sinkFailure.message);
+    },
+    HANG_TEST_TIMEOUT_MS
+  );
 
   it('reports the ORIGINAL failure when the archive fails, not the upload it knocks over', async () => {
     // Tearing the sink down to fail the report also makes the in-flight upload fail, so BOTH

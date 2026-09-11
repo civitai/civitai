@@ -462,6 +462,39 @@ describe('deriveUploadPartGeometry', () => {
     }
   });
 
+  it('🔴 keeps an archive that comes out 4x larger than its estimate inside the part limit', () => {
+    // THE HEADROOM CLAIM, and it needs its own test because the obvious one cannot see it.
+    // `expect(maxObjectBytes).toBeGreaterThanOrEqual(expectedBytes)` — asserted in "grows the
+    // part size so a large archive stays inside the S3 part limit" above — holds with EQUALITY
+    // at zero headroom, so it stays green with `PART_SIZE_ESTIMATE_HEADROOM` mutated 4 -> 1.
+    // Measured before this test existed: that mutation left every test in this file and in the
+    // stream-upload file green — everything the constant buys was untested. Re-measured with
+    // this test present, the same mutation fails HERE and nowhere else (1 of 40 across the two
+    // suites), which is what makes it this guard's own assertion rather than a bystander's.
+    //
+    // 🔴 THE MULTIPLIER BELOW IS A LITERAL, DELIBERATELY, AND MUST NOT BE REPLACED BY
+    // `PART_SIZE_ESTIMATE_HEADROOM`. An assertion that names the constant on both sides moves
+    // with it and can never fail — that is precisely how the mutant survived. This pins a FLOOR:
+    // raising the headroom keeps it green, lowering it below 4 does not.
+    //
+    // Both estimates sit ABOVE the 5 MiB minimum-part clamp under the real headroom, and the
+    // second sits above it under the mutant too, so neither result is decided by a clamp the
+    // constant never reaches.
+    const TOLERATED_UNDERESTIMATE_FACTOR = 4;
+    for (const expectedBytes of [20 * 1024 * MiB, 100 * 1024 * MiB]) {
+      const geometry = deriveUploadPartGeometry({ expectedBytes });
+      expect(
+        geometry.maxObjectBytes,
+        `estimate ${expectedBytes} yields a ${geometry.partSize}-byte part, which caps the object ` +
+          `at ${geometry.maxObjectBytes} — below the ${
+            expectedBytes * TOLERATED_UNDERESTIMATE_FACTOR
+          } an archive ${TOLERATED_UNDERESTIMATE_FACTOR}x larger than the estimate would need. ` +
+          `An estimate wrong-LOW by that factor would be REJECTED by S3 for exceeding ` +
+          `${S3_MAX_UPLOAD_PARTS} parts, which fails the report outright.`
+      ).toBeGreaterThanOrEqual(expectedBytes * TOLERATED_UNDERESTIMATE_FACTOR);
+    }
+  });
+
   it('trades parallelism away rather than the budget as parts grow', () => {
     // The property that makes the sweep above hold: the two knobs move in opposite directions.
     const small = deriveUploadPartGeometry({ expectedBytes: 100 * MiB });
