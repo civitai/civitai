@@ -44,17 +44,16 @@ export default function FeedbackDrawer() {
   return (
     <Drawer
       // 🔴 KEEPS THE PANEL OUT OF ITS OWN SCREENSHOT. `captureConsentedScreenshot`
-      // draws `document.body`, and this Drawer portals into it — so without this the
-      // capture a reporter opts into is 480px of this form plus the page dimmed
-      // behind the overlay, which is the one artifact that makes a report better
-      // than a ticket. html2canvas-pro's cloner skips any element carrying this
-      // attribute and its whole subtree; it sits on the Drawer ROOT so the overlay
-      // goes with it. Pinned by FeedbackDrawer.browser.test.tsx.
+      // draws `document.body` and this Drawer portals into it, so without this the
+      // capture a reporter opts into is 480px of this form instead of the page they
+      // are reporting — the one artifact that makes a report better than a ticket.
+      // html2canvas-pro's cloner skips any element carrying this attribute and its
+      // whole subtree. ON THE ROOT, not on the body: moved inward it still ignores
+      // the form while capturing the header and the panel's background, which the
+      // test is written to catch.
       data-html2canvas-ignore
       // 🔴 NO BACKDROP, deliberately (Justin, 2026-09-11 review). A reporter is
       // describing the page behind this panel, so dimming it is dimming the subject.
-      // The capture excludes the panel either way (see above), but the reporter also
-      // has to be able to SEE what they are reporting while they type it.
       withOverlay={false}
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '100dvh' : 480}
@@ -65,6 +64,10 @@ export default function FeedbackDrawer() {
           Report a bug
         </Title>
       }
+      // Named, because without an overlay this button is the only VISIBLE way out of
+      // the panel (Mantine wires click-outside to the overlay alone) and Mantine's
+      // close button carries no accessible name of its own.
+      closeButtonProps={{ 'aria-label': 'Close bug report' }}
       {...dialog}
     >
       {sent ? (

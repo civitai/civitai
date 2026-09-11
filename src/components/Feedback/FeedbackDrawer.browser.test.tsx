@@ -220,7 +220,7 @@ describe('when the server refuses the report', () => {
  * explicitly false — exactly the kind of prop a later edit drops without noticing.
  */
 describe('🔴 the panel excludes itself from the capture, and dims nothing', () => {
-  test('an ancestor of the drawer content carries the html2canvas ignore attribute', async () => {
+  test('the WHOLE panel is ignored, header included, not just the form', async () => {
     await openDrawer();
 
     const ignored = messageBox().element().closest('[data-html2canvas-ignore]');
@@ -228,6 +228,16 @@ describe('🔴 the panel excludes itself from the capture, and dims nothing', ()
       ignored,
       'Mantine dropped the attribute — the panel would be in its own capture'
     ).not.toBeNull();
+
+    // 🔴 WHICH element carries it is the property, not THAT one does. Moving the
+    // attribute off the Drawer root onto the inner Stack still leaves an ignored
+    // ancestor above the textarea — and captures the header, the title and the
+    // panel's background. Asserting the title is inside the ignored subtree is what
+    // separates the fix from that near-miss.
+    expect(
+      ignored?.textContent,
+      'the ignore moved inside the panel — its header is still captured'
+    ).toContain('Report a bug');
   });
 
   test('no overlay is rendered over the page being reported', async () => {
@@ -236,6 +246,20 @@ describe('🔴 the panel excludes itself from the capture, and dims nothing', ()
     // The control for this one is Mantine's own default: `withOverlay` defaults to
     // true, so removing the prop puts the element back and this fails.
     expect(document.querySelector('.mantine-Drawer-overlay')).toBeNull();
+  });
+
+  /**
+   * 🔴 The overlay was ALSO the click-outside-to-close surface — Mantine wires
+   * `closeOnClickOutside` to the overlay's own `onClick` and nowhere else, so
+   * removing it removed that affordance. Escape still works and cannot be asserted
+   * meaningfully here, so the close button is the one that has to stay: without it a
+   * reporter who opened the panel by accident has no visible way out of it.
+   */
+  test('the panel can still be dismissed without one', async () => {
+    await openDrawer();
+
+    await userEvent.click(page.getByRole('button', { name: 'Close bug report' }));
+    expect(mocks.onClose).toHaveBeenCalledTimes(1);
   });
 });
 

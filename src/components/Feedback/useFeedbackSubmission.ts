@@ -90,6 +90,12 @@ export function useFeedbackSubmission({
   // nothing. Checked before any post-await state write.
   const mounted = useRef(true);
   useEffect(() => {
+    // 🔴 SET HERE, NOT ONLY IN THE INITIALISER. `reactStrictMode` is on, so in
+    // development React runs mount -> cleanup -> mount against the SAME refs; without
+    // this line the cleanup's `false` is permanent and every consented capture is
+    // silently dropped for the life of the component. Pinned by the StrictMode test in
+    // FeedbackPrompt.browser.test.tsx, which fails without it.
+    mounted.current = true;
     const urls = liveObjectUrls.current;
     return () => {
       mounted.current = false;

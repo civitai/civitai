@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as CaptureModule from '~/components/Feedback/captureScreenshot';
@@ -388,6 +389,44 @@ describe('🔴 Send is blocked while a capture is in flight', () => {
     await expect.element(sendButton()).toBeEnabled();
     await send();
     expect(submittedContext()).not.toHaveProperty('screenshotId');
+  });
+});
+
+/**
+ * 🔴 THE HARNESS DOES NOT USE STRICTMODE AND THE APP DOES.
+ *
+ * `next.config.mjs` sets `reactStrictMode: true`, so in development React mounts an
+ * effect, runs its cleanup, and mounts it again on the SAME component instance — refs
+ * survive that. Every other test in this file renders without StrictMode, which is why
+ * all of them passed over a guard that a cleanup had already switched off for good.
+ *
+ * The failure it catches is silent and worse than the leak the guard exists to stop: a
+ * reporter ticks the box, the checkbox shows checked, the capture runs, and the result
+ * is dropped with no preview and no error. They then send a report they believe has a
+ * screenshot attached.
+ *
+ * Keep this rendering under StrictMode. Without it the test still passes and stops
+ * being about anything.
+ */
+describe('🔴 under StrictMode, as the app runs it', () => {
+  test('a consented capture still attaches after the double-invoked effect', async () => {
+    renderWithProviders(
+      <StrictMode>
+        <FeedbackPrompt
+          area="bitdex-image-feed"
+          notice="We're testing a new system behind this feed."
+          context={{ path: '/images', reportedSource: 'bitdex' }}
+        />
+      </StrictMode>
+    );
+    await userEvent.click(page.getByRole('button', { name: 'Give feedback' }));
+    await expect.element(page.getByPlaceholder('What looked wrong?')).toBeInTheDocument();
+
+    await userEvent.click(consentCheckbox());
+
+    await expect
+      .element(page.getByAltText('Preview of the page screenshot that will be sent'))
+      .toBeInTheDocument();
   });
 });
 
