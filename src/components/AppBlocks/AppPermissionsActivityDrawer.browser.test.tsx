@@ -193,7 +193,10 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     await expect
       .element(
         page.getByText(
-          'No permissions recorded from an install of this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below.'
+          // Widened from "from an install of this app" with the data source: a consented
+          // full-page app now resolves a row instead of reaching this label, so the label's
+          // remaining population is "neither an install NOR a consent".
+          'No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below.'
         )
       )
       .toBeInTheDocument();

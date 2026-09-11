@@ -623,12 +623,17 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * above and confirm your new wording is still TRUE before updating the literal.
  */
 describe('🔴 the revoke instruction is retracted, not reworded', () => {
+  // 🔴 WIDENED WITH THE DATA SOURCE, NOT REWORDED FOR STYLE. `listMyScopeGrants` now also
+  // enumerates live `app_user_scope_grants` rows, so "installed or subscribed to" described a
+  // population narrower than the one the panel below it lists — the same overstatement this
+  // block exists to catch, pointing the other way. The whole-string pin is doing exactly its
+  // job here: this literal had to move because the claim moved.
   const PERMISSIONS_TAB_COPY =
-    "The apps you've installed or subscribed to, the permissions each one declares it may " +
-    'use, and where you have it. Removing an install on the Installs tab takes the app off ' +
-    'that surface, but it does not withdraw a permission you have already granted — ' +
-    'withdrawing one is not possible yet. Recent activity is the full record of what apps ' +
-    'have actually done on your account.';
+    "The apps you've installed, subscribed to, or granted permissions to, what each one " +
+    'declares it may use, and where you have it. Removing an install on the Installs tab ' +
+    'takes the app off that surface, but it does not withdraw a permission you have already ' +
+    'granted — withdrawing one is not possible yet. Recent activity is the full record of ' +
+    'what apps have actually done on your account.';
 
   test('the panel states plainly that withdrawing a permission is not possible', async () => {
     // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the

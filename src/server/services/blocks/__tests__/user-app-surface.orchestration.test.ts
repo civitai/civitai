@@ -245,10 +245,17 @@ describe('listMyScopeGrants', () => {
   });
 
   /**
-   * A grant row whose AppBlock join does not resolve (a `Restrict`-deleted app, or the
-   * FK pointing at a row the select could not read) must be SKIPPED, not rendered as a
-   * card with no name. Mirrors the `if (!row.appBlock) continue` the subscription leg
-   * already applies.
+   * ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — and an earlier draft of this docblock got
+   * the mechanism wrong, so the correction is recorded rather than quietly swapped. It said
+   * "a `Restrict`-deleted app". The relation is `onDelete: Cascade` and REQUIRED
+   * (`packages/civitai-db-schema/prisma/schema.full.prisma`), with no `relationMode`
+   * override, so Postgres deletes the grant row along with its AppBlock instead of orphaning
+   * it: this state is not reachable in production. The subscription leg's
+   * `if (!row.appBlock) continue` is unreachable for the same reason — precedent for the
+   * shape, not evidence that the state occurs.
+   *
+   * What it pins is the intent that an unresolvable row is SKIPPED rather than rendered as a
+   * card with no name, which is what the manifest-or-blockId fallback would otherwise produce.
    */
   it('skips a grant-only row whose AppBlock does not resolve', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');

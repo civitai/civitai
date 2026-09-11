@@ -255,6 +255,17 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // `revoked_at` today, so this is an invariant guard, not a reachable branch —
       // labelled as such rather than counted as coverage.)
       //
+      // ⚠️ `g.appBlock` IS A SECOND INVARIANT GUARD, NOT A REACHABLE BRANCH — stated because
+      // an earlier revision of this comment implied otherwise. `AppUserScopeGrant.appBlock`
+      // is a REQUIRED relation with `onDelete: Cascade`
+      // (`packages/civitai-db-schema/prisma/schema.full.prisma`), and the datasource sets no
+      // `relationMode`, so Postgres enforces the FK: deleting an AppBlock deletes the grant
+      // row rather than orphaning it. The subscription leg's own `if (!row.appBlock) continue`
+      // is unreachable for exactly the same reason — it is precedent for the shape, NOT
+      // evidence that the state occurs. (Migrations here are applied by hand per environment,
+      // so "the constraint exists in prod" is not verifiable from the schema alone; the guard
+      // costs nothing and is kept for that residual.)
+      //
       // The `has` check keeps the subscription leg authoritative for apps that have
       // BOTH: that entry already carries real `modelInstallCount`/`subscriptionScopes`,
       // and overwriting it here would zero them.
