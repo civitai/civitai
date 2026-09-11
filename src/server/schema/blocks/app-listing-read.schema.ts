@@ -397,6 +397,28 @@ export type ListingDetail = {
    */
   sourceRepoUrl: string | null;
   /**
+   * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
+   * permission disclosure. `[]` for an off-site listing (no backing block) and for
+   * an on-site app that was approved with no scopes.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. These are plain scope identifier strings
+   * (`ai:write:budgeted`, `models:read:self`) describing what the app is permitted
+   * to do — which is the entire point of disclosing them, and they are already
+   * shipped to anonymous callers by `BlockRegistry.getAppDetail` under the same
+   * reasoning. They are NOT the manifest's raw self-declared `scopes`: only the
+   * approve paths write `approvedScopes`, so this is the moderator-granted set, and
+   * a newer manifest declaring more cannot inflate it. No user is identified and no
+   * manifest internals (`trustTier`, `iframe.src`, `renderMode`, settings) ride along.
+   *
+   * 🔴 DETAIL-ONLY, like `sourceRepoUrl` — a store card is a low-attention grid tile
+   * with no room for the context that makes a capability list meaningful. The
+   * exact-key-set assertions in `app-listing.service.test.ts` pin both halves.
+   *
+   * An array of STRINGS: this DTO also crosses the transformer-less public REST
+   * `GET /api/v1/apps/{slug}` boundary, so it must be a JSON-safe scalar shape.
+   */
+  scopes: string[];
+  /**
    * AUTHOR-DECLARED "this app is in beta" flag. Same allowlist justification as
    * `ListingCard.isBeta` — a label the author publishes about their own app.
    *

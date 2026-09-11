@@ -109,6 +109,14 @@ function hydratedRow(over: Record<string, unknown> = {}) {
       // read returns its projection. The dedicated deploy-gate suite covers the
       // never-deployed (NULL → unavailable) onsite case.
       currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+      // 🔴 DELIBERATELY DISJOINT FROM `manifest.scopes` BELOW, and that is the whole
+      // point of the value. The detail DTO's `scopes` must come from the
+      // moderator-granted `approvedScopes` column, never the app's self-declared
+      // manifest — so the two fixtures share no element. An implementation that read
+      // `manifest.scopes` instead would return `['ai:write:budgeted']` and fail the
+      // projection assertions loudly. Were both set to the same array, that defect
+      // would pass every test in this file.
+      approvedScopes: ['models:read:self'],
       manifest: {
         name: 'Cool App',
         page: { path: '/run' },
@@ -461,6 +469,11 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'name',
         'recommend',
         'reviewCount',
+        // 🔴 DETAIL-ONLY BY DECISION, like `sourceRepoUrl` — the card allowlist above
+        // asserts its ABSENCE. The pre-launch permission disclosure: the app's APPROVED
+        // scope ids, so a viewer can see what an app is permitted to do BEFORE opening
+        // it. A store grid tile has no room for a capability list.
+        'scopes',
         'screenshots',
         'serialId',
         'slug',
@@ -546,6 +559,71 @@ describe('projectListingDetail — public allowlist + gallery', () => {
       externalUrl: 'https://grandfathered.example/app',
       connectClientId: null,
     });
+  });
+
+  /**
+   * PRE-LAUNCH PERMISSION DISCLOSURE (`ListingDetail.scopes`).
+   *
+   * 🔴 THE GATING HALF of this change. The sibling browser test renders the section,
+   * but the `component` project is report-only in CI and cannot block a merge; these
+   * assertions run in the blocking node project and are what actually hold the
+   * source-of-truth decision in place.
+   *
+   * 🔴 The claim is about WHICH COLUMN feeds the disclosure, not merely that a
+   * `scopes` key exists. `hydratedRow`'s `approvedScopes` and `manifest.scopes` are
+   * deliberately disjoint, so reading the wrong one is a different array rather than
+   * an identical-looking one.
+   */
+  it('🔴 detail.scopes comes from approvedScopes — NOT the self-declared manifest.scopes', () => {
+    const detail = projectListingDetail(hydratedRow() as never);
+    // The moderator-granted column…
+    expect(detail.scopes).toEqual(['models:read:self']);
+    // …and emphatically NOT the manifest's own declaration, which is an internal
+    // field the public DTO must never echo. An app could otherwise declare any scope
+    // it liked and have the store advertise it as granted.
+    expect(detail.scopes).not.toContain('ai:write:budgeted');
+  });
+
+  it('detail.scopes is [] when approvedScopes is NULL (never-approved / pre-migration row)', () => {
+    const detail = projectListingDetail(
+      hydratedRow({
+        appBlock: {
+          currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+          approvedScopes: null,
+          manifest: { name: 'Cool App', scopes: ['ai:write:budgeted'] },
+        },
+      }) as never
+    );
+    // `[]`, never `undefined` and never the manifest's declaration — a consumer must
+    // not have to write `?? []`, and a NULL column must not fall through to the
+    // app's own claim about itself.
+    expect(detail.scopes).toEqual([]);
+  });
+
+  it('detail.scopes is [] for an OFF-SITE listing (no backing block at all)', () => {
+    const detail = projectListingDetail(
+      hydratedRow({ kind: 'offsite', externalUrl: 'https://example.com', appBlock: null }) as never
+    );
+    expect(detail.scopes).toEqual([]);
+  });
+
+  it('detail.scopes drops non-string entries rather than shipping them', () => {
+    const detail = projectListingDetail(
+      hydratedRow({
+        appBlock: {
+          currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+          // jsonb: nothing at the DB layer guarantees these are strings.
+          approvedScopes: ['models:read:self', 42, null, { evil: true }, 'ai:write:budgeted'],
+          manifest: { name: 'Cool App' },
+        },
+      }) as never
+    );
+    expect(detail.scopes).toEqual(['models:read:self', 'ai:write:budgeted']);
+  });
+
+  it('🔴 the CARD does not carry scopes — detail-only, like sourceRepoUrl', () => {
+    const card = projectListingCard(hydratedRow() as never);
+    expect(card).not.toHaveProperty('scopes');
   });
 
   it('🔴 the offsite detail kindData key set is exactly kind/externalUrl/connectClientId', () => {

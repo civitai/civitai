@@ -13,6 +13,7 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   UnstyledButton,
 } from '@mantine/core';
@@ -23,6 +24,7 @@ import {
   IconFlask,
   IconInfoCircle,
   IconPlugConnected,
+  IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -35,6 +37,7 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
@@ -1187,6 +1190,36 @@ export function AppListingDetailBody({
                 This app runs off-platform, but can connect to your Civitai account — you&apos;ll be
                 asked to sign in and approve access.
               </Alert>
+            )}
+
+            {/* PRE-LAUNCH PERMISSION DISCLOSURE — what this app is permitted to do,
+                shown BEFORE the viewer opens it.
+                🔴 This is the third permission surface on this page and it does NOT
+                belong to the mutually-exclusive off-site pair above. Those two answer
+                "does this leave the platform, and can it reach my account at all?" for
+                an OFF-SITE listing; this one enumerates the granted capabilities of an
+                ON-SITE app, which the pair is silent about by construction. Do not fold
+                it into either predicate — `shouldShowOffsiteDisclosure` and
+                `shouldShowConnectCapability` are exact complements over one domain and a
+                third condition there would break the invariant pinned in
+                `__tests__/appListingDetailView.test.ts`.
+                🔴 Rendered ONLY when there is something to disclose: an app approved with
+                no scopes gets no section at all, rather than a reassuring empty box. That
+                is why the guard is `length > 0` and not `BlockScopeList`'s own
+                `emptyLabel` path — on a store listing, "no permissions" is better said by
+                the absence of a permissions section than by a sentence nobody reads.
+                Ported from the disclosure on the retired `/apps/<appBlockId>` route,
+                which `blocks.getAppDetail` still serves. */}
+            {detail.scopes.length > 0 && (
+              <Stack gap="xs" data-testid="apps-listing-permissions">
+                <Group gap="xs">
+                  <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                    <IconShieldCheck size={14} />
+                  </ThemeIcon>
+                  <Title order={4}>This app can…</Title>
+                </Group>
+                <BlockScopeList scopes={detail.scopes} />
+              </Stack>
             )}
           </Stack>
         </ContainerGrid2.Col>

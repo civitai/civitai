@@ -256,7 +256,12 @@ export const listingHydrateSelect = {
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
   // available while a new version re-builds).
-  appBlock: { select: { manifest: true, currentVersionDeployedAt: true } },
+  // `approvedScopes` feeds the DETAIL DTO's pre-launch permission disclosure.
+  // Projected onto the DETAIL only (see `scopes` in `projectListingDetail`); the
+  // card deliberately does not carry it, for the same reason `sourceRepoUrl` is
+  // detail-only — a grid tile has no room for the context that makes a
+  // capability list readable.
+  appBlock: { select: { manifest: true, currentVersionDeployedAt: true, approvedScopes: true } },
   screenshots: {
     where: { imageId: { not: null } },
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
@@ -600,6 +605,19 @@ export function projectListingDetail(
     sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
+    // Pre-launch permission disclosure. IDENTICAL projection to the one
+    // `BlockRegistry.getAppDetail` already ships for the same purpose — the
+    // approved scope ids, string-filtered, `[]` when the column is NULL.
+    //
+    // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`. The approve
+    // paths in `publish-request.service.ts` are the ONLY writers of
+    // `approvedScopes`, so it is what a moderator actually granted; a newer
+    // manifest version can declare more than was approved, and disclosing THAT
+    // would overstate what the app can do. Off-site listings have no backing
+    // block and therefore no scopes.
+    scopes: Array.isArray(row.appBlock?.approvedScopes)
+      ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
+      : [],
   };
 }
 
