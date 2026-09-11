@@ -20,6 +20,10 @@ import {
   hydrateBlockSubject,
   toCoverFields,
 } from '~/server/services/blocks/block-collections.service';
+import {
+  getWindowedCollectionRanking,
+  isWindowedPeriod,
+} from '~/server/services/blocks/block-collection-popularity.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -28,10 +32,11 @@ import {
   CollectionItemStatus,
   CollectionReadConfiguration,
   CollectionType,
+  MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
 
 /**
- * GET /api/v1/blocks/collections?mode=public|mine&query&sort&cursor&limit
+ * GET /api/v1/blocks/collections?mode=public|mine&query&sort&period&cursor&limit
  *
  * Block-token collection DISCOVERY for App Blocks. Scope `collections:read:self`.
  *
@@ -40,6 +45,48 @@ import {
  *   - mode=mine   → the SUBJECT's OWN collections (public + private) via the
  *     existing `getUserCollectionsWithPermissions` service, keyed on the verified
  *     token subject (never a client-supplied userId).
+ *
+ * PERIOD — "popular this day / week / month / year / all time".
+ *
+ * 🔴 AN ABSENT `period` IS NOT `AllTime` WITH EXTRA STEPS — IT TAKES LITERALLY THE
+ * SAME CODE PATH AS BEFORE THIS PARAMETER EXISTED, AND EMITS THE SAME BODY. There
+ * is no default value: `windowedPeriod` below is `null` for an absent period, for
+ * `AllTime`, for `mode=mine` and for any sort other than the popularity one, and
+ * every one of those falls into the untouched Postgres walk. The `period` /
+ * `source` / `sourceReason` response fields are emitted ONLY when a `period` was
+ * supplied, so an existing caller's response is byte-identical to what it was.
+ * That is the whole compatibility contract and it is pinned by a test that diffs
+ * the two bodies key-for-key.
+ *
+ * 🔴 `period` MODIFIES POPULARITY, SO IT IS HONOURED ONLY FOR THE POPULARITY SORT
+ * (`sort=popular` / `Most Followers`). `sort=newest&period=week` does NOT silently
+ * become a popularity feed — "newest" would stop meaning newest. A period sent
+ * with any other sort is accepted and ignored, and the response says which source
+ * actually served it, so the no-op is visible from the outside rather than being a
+ * parameter that mysteriously does nothing.
+ *
+ * 🔴 DAY/WEEK/MONTH/YEAR COME FROM CLICKHOUSE, ALL-TIME FROM POSTGRES, AND THAT
+ * SPLIT IS FORCED BY THE DATA. `entityMetricDailyAgg_history_v2` begins 2025-11-06,
+ * so a ClickHouse "all time" would silently mean "since November". All-time keeps
+ * the pre-existing `getAllCollections` ordering. See
+ * `~/server/services/blocks/block-collection-popularity.service` for the window
+ * arithmetic and why the table choice matters.
+ *
+ * 🔴 CLICKHOUSE RANKS IDS WITH NO NOTION OF PRIVACY OR TYPE. Every id it returns is
+ * re-read through `getAllCollections` with `privacy: [Public]` + `types: [Image]`
+ * — the SAME predicates the untouched path uses — so a private or Model/Article
+ * collection that ranks first is simply absent from the hydrate and is walked past
+ * like a maturity-clamped row. Nothing from ClickHouse is rendered directly.
+ *
+ * 🔴 THE CURSOR MEANS DIFFERENT THINGS ON THE TWO PATHS, DELIBERATELY. The Postgres
+ * path keeps its inclusive KEYSET cursor on collection id (both its orderings are
+ * id/createdAt-monotonic, so a keyset works and is cheap). A ClickHouse ranking is
+ * ordered by summed followers, which is neither monotonic in id nor stable enough
+ * to keyset on, so that path uses an OFFSET into the bounded top-N leaderboard
+ * instead. A client round-trips whatever `nextCursor` it was handed, and a feed
+ * does not change its `period` mid-scroll, so the two never mix in practice — but
+ * do not "unify" them: an offset fed to the keyset path silently returns the wrong
+ * page rather than an error.
  *
  * Maturity: collections whose own `nsfwLevel` exceeds the token's clamped ceiling
  * (`claims.maxBrowsingLevel`, region-narrowed) are dropped — a SFW-domain block
@@ -58,7 +105,10 @@ import {
  * CEILING, sampled — see `MIN_PLAYABLE_FRACTION` and `PLAYABLE_SAMPLE_SIZE`.
  *
  * Response: `{ items: [{ id, name, description, coverImageUrl, coverNsfwLevel?,
- *   itemCount, curator:{ userId, username }, isPublic, followed }], nextCursor }`.
+ *   itemCount, curator:{ userId, username }, isPublic, followed }], nextCursor }`
+ *   — plus `period`, `source` (`'clickhouse' | 'postgres'`) and, when the request
+ *   did not get the source it asked for, `sourceReason`. Those three appear ONLY
+ *   when the request supplied a `period`; see the compatibility note above.
  *
  * 🔴 `coverNsfwLevel` IS THE LEVEL OF THE COVER BEING SERVED — NOT THE
  * COLLECTION'S `nsfwLevel`, AND THE NAME IS DELIBERATE. The collection-level value
@@ -148,10 +198,52 @@ const querySchema = z.object({
     (v) => (typeof v === 'string' ? SORT_ALIAS[v.toLowerCase()] ?? v : v),
     z.enum(CollectionSort).default(CollectionSort.Newest)
   ),
-  // Keyset cursor on the collection id (both modes order by id DESC).
+  // 🔴 NO `.default()`, ON PURPOSE. An absent `period` has to stay distinguishable
+  // from an explicit `AllTime` at runtime — not because they order differently
+  // (they do not), but because the `source`/`period` response fields are emitted
+  // only for an explicit request, which is what keeps an existing caller's body
+  // byte-identical. A `.default(AllTime)` here would erase that distinction and
+  // change every legacy response.
+  period: z.enum(MetricTimeframe).optional(),
+  // Cursor. Postgres path: an inclusive KEYSET cursor on the collection id (both
+  // modes order id DESC). ClickHouse path: an OFFSET into the bounded windowed
+  // leaderboard. See the header note — same field, two meanings, one per path.
   cursor: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(24),
 });
+
+/** The pre-existing Postgres over-fetch. Unchanged; extracted only to be named. */
+const overfetchWidth = (limit: number) => limit * 4 + 1;
+
+/** Hard ceiling on how many ranked ids one request may hydrate. See below. */
+const CH_HYDRATE_MAX = 1000;
+
+/**
+ * How many RANKED IDS the ClickHouse path hydrates per request.
+ *
+ * 🔴 SIX TIMES THE POSTGRES OVER-FETCH, BECAUSE THE TWO PATHS DISCARD ROWS AT
+ * WILDLY DIFFERENT RATES AND SHARING A MULTIPLIER WOULD HAVE SHIPPED A 4-ITEM
+ * PAGE. The Postgres walk over-fetches `limit * 4 + 1` because it loses only the
+ * maturity clamp and the playable floor — its source query already applied
+ * `privacy` and `types` as SQL predicates, so nothing it fetches is a type reject.
+ * A ClickHouse ranking has not applied them at all: measured on the production
+ * replica 2026-09-11, the Month window's top 1,000 ids are 100% `Public` but only
+ * **81** are `CollectionType.Image` — 914 are Model collections. A `limit * 4 + 1`
+ * window (97 ids) hydrates **21** showable rows against a default `limit` of 24,
+ * i.e. every page short, forever.
+ *
+ * At `limit * 24 + 1` a default page hydrates 577 ids for 53 showable rows and
+ * fills. Cost of the widening, measured on the replica over the same window (the
+ * hydrate is an `id IN (…)` primary-key scan, so it barely notices): 97 ids →
+ * 5.3-5.9 ms, 577 ids → 22.3-23.1 ms, 1,000 ids → 14.3-14.5 ms. All of them are
+ * two orders of magnitude under the 3,123-4,375 ms the pre-existing popularity
+ * page-1 query costs.
+ *
+ * The cap keeps a caller-supplied `limit=100` from turning into a 2,401-id `IN`
+ * list. That page comes back short (~81 rows) and says so by advancing its cursor;
+ * a short page is a contract this endpoint already has.
+ */
+const chHydrateWidth = (limit: number) => Math.min(limit * 24 + 1, CH_HYDRATE_MAX);
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -182,7 +274,23 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     return;
   }
-  const { mode, query, sort, cursor, limit } = parsed.data;
+  const { mode, query, sort, period, cursor, limit } = parsed.data;
+
+  // Does the requested period actually change anything? Four ways it does not, and
+  // all four land on the untouched Postgres path:
+  //   - absent               → the pre-existing behaviour, bit for bit
+  //   - AllTime              → ClickHouse history starts 2025-11-06; PG owns all-time
+  //   - mode=mine            → a period ranks DISCOVERY; "mine" is the viewer's own list
+  //   - a non-popularity sort→ a period modifies popularity, not recency
+  //
+  // Written as a NARROWING ternary rather than a boolean so `windowedPeriod` carries
+  // the `WindowedPeriod` type into the ranking call — a `boolean` here would force a
+  // second, independently-written check at the call site, which is how the two
+  // spellings of "windowed" drift apart.
+  const windowedPeriod =
+    mode === 'public' && sort === CollectionSort.MostContributors && isWindowedPeriod(period)
+      ? period
+      : null;
 
   // Per-instance rate limit (shared blocks catalog limiter) — bounds a block
   // hammering this private,no-store route onto the origin.
@@ -203,6 +311,56 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
+    // ── PERIOD RESOLUTION ────────────────────────────────────────────────────
+    // Resolved for BOTH modes in one place so `mode=mine` can report the same
+    // "your period was ignored, here is what served you" answer as a non-popularity
+    // sort, instead of silently dropping the parameter.
+    //
+    // `rankedIds === null` after this block means the request is served by the
+    // PRE-EXISTING Postgres ordering — whether because no period was asked for, or
+    // because ClickHouse could not answer. There is exactly one way to get a
+    // ClickHouse-ordered page and it is `rankedIds` being non-null.
+    let rankedIds: number[] | null = null;
+    let source: 'clickhouse' | 'postgres' = 'postgres';
+    let sourceReason: string | undefined;
+    if (period) {
+      if (windowedPeriod) {
+        const ranking = await getWindowedCollectionRanking({ period: windowedPeriod });
+        if (ranking.ids === null) {
+          // 🔴 DEGRADE TO A STATED ORDERING, NEVER TO AN EMPTY GRID. `clickhouse` is
+          // `undefined` in any deployment without CLICKHOUSE_HOST/USERNAME (and during
+          // a Next build), and a live query can fail. Either way the viewer still gets
+          // collections — ordered all-time — and the response carries the reason, so
+          // "the popular-this-week tab looks like the all-time tab" is answerable from
+          // the response body rather than only from a server log.
+          sourceReason = ranking.reason;
+        } else if (ranking.ids.length === 0) {
+          // A window with no rows at all. Possible in principle; in practice far more
+          // often the daily aggregate has not sealed yet than a real zero. Same
+          // degrade, DIFFERENT reason, so the two stay separable.
+          sourceReason = 'empty-window';
+        } else {
+          rankedIds = ranking.ids;
+          source = 'clickhouse';
+        }
+      } else if (period === MetricTimeframe.AllTime) {
+        sourceReason = 'all-time-served-from-postgres';
+      } else if (mode !== 'public') {
+        sourceReason = 'period-ignored-outside-public-discovery';
+      } else {
+        sourceReason = 'period-ignored-for-non-popularity-sort';
+      }
+    }
+
+    // 🔴 EMITTED ONLY WHEN A `period` WAS SUPPLIED. This empty-object-spread is the
+    // whole backward-compatibility mechanism: a caller that never sends `period`
+    // gets a response with no `period`, `source` or `sourceReason` key — the same
+    // body shape it got before this parameter existed. Giving `period` a default,
+    // or emitting `source` unconditionally, would change every legacy response.
+    const periodFields = period
+      ? { period, source, ...(sourceReason ? { sourceReason } : {}) }
+      : {};
+
     if (mode === 'public') {
       // Over-fetch so the maturity clamp can't under-fill the page and terminate
       // pagination early (which would make later public collections unreachable).
@@ -212,13 +370,43 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // cursor at that first-unconsumed row resumes exactly there — no gap (the
       // clamped-out rows before it were already walked past) and no duplicate (it
       // was not shown on this page).
-      const OVERFETCH = limit * 4 + 1;
+      const OVERFETCH = overfetchWidth(limit);
+
+      // On the ClickHouse path Postgres is no longer choosing the order — it is
+      // HYDRATING AND FILTERING a slice of the ranked ids. One query either way,
+      // the SAME privacy/type predicates either way; only the selection differs
+      // (`ids` + no cursor, instead of a keyset walk).
+      const chSlice = rankedIds
+        ? rankedIds.slice(cursor ?? 0, (cursor ?? 0) + chHydrateWidth(limit))
+        : null;
+
+      // 🔴 AN EMPTY SLICE MUST NOT REACH `getAllCollections`. Its id clause is
+      // `ids && ids.length > 0 ? { in: ids } : undefined` — so an empty array means
+      // "no id filter at all", i.e. the entire public catalogue in createdAt order,
+      // returned under a popularity feed's banner. Walking past the end of the
+      // bounded leaderboard is an ordinary end-of-feed, so answer it as one.
+      if (chSlice && chSlice.length === 0) {
+        res.status(200).json({ items: [], ...periodFields });
+        return;
+      }
+
       const rows = await getAllCollections({
         input: {
-          limit: OVERFETCH,
-          cursor,
+          limit: chSlice ? chSlice.length : OVERFETCH,
+          cursor: chSlice ? undefined : cursor,
+          ids: chSlice ?? undefined,
           query,
-          sort,
+          // 🔴 THE HYDRATE DELIBERATELY DOES NOT ASK FOR THE POPULARITY SORT ON
+          // THE CLICKHOUSE PATH, AND THAT IS A COST DECISION, NOT A BEHAVIOUR ONE.
+          // `CollectionSort.MostContributors` makes `getAllCollections` order by
+          // `contributors._count`, i.e. a LEFT JOIN + GROUP BY over
+          // `CollectionContributor` — the table with no index on `collectionId`,
+          // and the exact join shape whose cost is the ~31x regression recorded on
+          // `PLAYABLE_SAMPLE_SIZE`. Here that work would be pure waste: the rows
+          // come back and are IMMEDIATELY re-projected onto the ClickHouse rank
+          // order below, so whatever order Postgres chose is discarded. Asking for
+          // the cheap `Newest` ordering buys the identical result set.
+          sort: chSlice ? CollectionSort.Newest : sort,
           privacy: [CollectionReadConfiguration.Public],
           // MEDIA collections only — a Model/Article/Post collection renders an
           // empty player (the detail endpoint drops non-image items), so restrict
@@ -261,43 +449,82 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       const playableSample = await getCollectionPlayableSample(candidateIds, browsingLevel);
 
       const items: typeof rows = [];
-      let firstUnconsumedId: number | undefined;
-      for (let i = 0; i < rows.length; i++) {
-        if (items.length >= limit) {
-          firstUnconsumedId = rows[i].id;
-          break;
-        }
-        if (!ceilingOk(rows[i])) continue;
-        // 🔴 THE DROP, AND WHY IT IS INSIDE THIS WALK RATHER THAN AFTER IT. The
-        // sample map is absent-means-nothing-sampled (the lateral emits no row for
-        // a collection with no accepted items), which `meetsPlayableFloor` reads as
-        // "nothing to judge, keep". Filtering here means a dropped row is walked
-        // PAST like a clamped-out one, so the page still fills to `limit` and
-        // `firstUnconsumedId` still advances — filtering the sliced page afterwards
-        // would return short pages and, on a page that filtered to empty, emit no
-        // cursor at all and TERMINATE the feed while qualifying collections
-        // remained.
-        const sample = playableSample.get(rows[i].id);
-        if (!meetsPlayableFloor(sample?.sampled ?? 0, sample?.playable ?? 0)) continue;
-        items.push(rows[i]);
-      }
-
       let nextCursor: number | undefined;
-      if (firstUnconsumedId !== undefined) {
-        // Page filled AND at least one fetched row remains → clean inclusive resume.
-        nextCursor = firstUnconsumedId;
-      } else if (rows.length === OVERFETCH) {
-        // Consumed the ENTIRE over-fetch without filling `limit` (a very heavy
-        // clamp) yet the source returned a full batch → more may remain. Resume
-        // from the last fetched row (inclusive → re-fetched next page; the client
-        // dedups by id). No longer rare: the playable floor drops far more rows
-        // than the ceiling alone did, so a page CAN come back short — but it comes
-        // back with a cursor that advanced by OVERFETCH-1 rows, which is what
-        // keeps the rest of the feed reachable. Short page, live feed.
-        nextCursor = rows[rows.length - 1]?.id;
+
+      if (chSlice) {
+        // ── ClickHouse-ranked page ───────────────────────────────────────────
+        // 🔴 WALK THE RANKED ID LIST, NOT THE HYDRATED ROWS. `rows` came back in
+        // Postgres' own order and is MISSING every id the privacy/type predicates
+        // rejected. Iterating `rows` would therefore serve a "popular this week"
+        // feed sorted by createdAt, and would advance the offset by the number of
+        // SURVIVING rows rather than the number of ranked ids consumed — so a
+        // heavily-filtered page would re-serve the same ids forever.
+        const byId = new Map(rows.map((c) => [c.id, c] as const));
+        const offset = cursor ?? 0;
+        let walked = 0;
+        for (let i = 0; i < chSlice.length; i++) {
+          if (items.length >= limit) break;
+          walked = i + 1;
+          const c = byId.get(chSlice[i]);
+          // 🔴 THIS IS THE PRIVACY AND TYPE GATE, AND IT IS AN ABSENCE RATHER THAN
+          // A TEST. ClickHouse ranks ids with no idea what they are; the hydrate
+          // above asked for `privacy: [Public]` + `types: [Image]` over exactly
+          // these ids, so a private collection or a Model/Article/Post collection
+          // simply has no row and arrives here as `undefined`. Do not "improve"
+          // this into reading `c.read` / `c.type` — the check that matters already
+          // happened in the database, and a missing row is the only correct
+          // interpretation of a rejected id. A deleted collection lands here too.
+          if (!c) continue;
+          if (!ceilingOk(c)) continue;
+          const sample = playableSample.get(c.id);
+          if (!meetsPlayableFloor(sample?.sampled ?? 0, sample?.playable ?? 0)) continue;
+          items.push(c);
+        }
+        // FILTERING SHRINKS THE SET, so this page can come back short — the same
+        // trade the Postgres walk makes below. What keeps the feed alive is that
+        // the cursor advances by every ranked id WALKED (rejects included), not by
+        // the rows shown, so the next page starts past them. Exhausting the bounded
+        // leaderboard emits no cursor, which ends the windowed feed by design.
+        const consumedTo = offset + walked;
+        if (consumedTo < (rankedIds?.length ?? 0)) nextCursor = consumedTo;
+      } else {
+        let firstUnconsumedId: number | undefined;
+        for (let i = 0; i < rows.length; i++) {
+          if (items.length >= limit) {
+            firstUnconsumedId = rows[i].id;
+            break;
+          }
+          if (!ceilingOk(rows[i])) continue;
+          // 🔴 THE DROP, AND WHY IT IS INSIDE THIS WALK RATHER THAN AFTER IT. The
+          // sample map is absent-means-nothing-sampled (the lateral emits no row for
+          // a collection with no accepted items), which `meetsPlayableFloor` reads as
+          // "nothing to judge, keep". Filtering here means a dropped row is walked
+          // PAST like a clamped-out one, so the page still fills to `limit` and
+          // `firstUnconsumedId` still advances — filtering the sliced page afterwards
+          // would return short pages and, on a page that filtered to empty, emit no
+          // cursor at all and TERMINATE the feed while qualifying collections
+          // remained.
+          const sample = playableSample.get(rows[i].id);
+          if (!meetsPlayableFloor(sample?.sampled ?? 0, sample?.playable ?? 0)) continue;
+          items.push(rows[i]);
+        }
+
+        if (firstUnconsumedId !== undefined) {
+          // Page filled AND at least one fetched row remains → clean inclusive resume.
+          nextCursor = firstUnconsumedId;
+        } else if (rows.length === OVERFETCH) {
+          // Consumed the ENTIRE over-fetch without filling `limit` (a very heavy
+          // clamp) yet the source returned a full batch → more may remain. Resume
+          // from the last fetched row (inclusive → re-fetched next page; the client
+          // dedups by id). No longer rare: the playable floor drops far more rows
+          // than the ceiling alone did, so a page CAN come back short — but it comes
+          // back with a cursor that advanced by OVERFETCH-1 rows, which is what
+          // keeps the rest of the feed reachable. Short page, live feed.
+          nextCursor = rows[rows.length - 1]?.id;
+        }
+        // else: rows.length < OVERFETCH and the page wasn't over-consumed → the
+        // source is exhausted → no nextCursor.
       }
-      // else: rows.length < OVERFETCH and the page wasn't over-consumed → the
-      // source is exhausted → no nextCursor.
 
       const ids = items.map((c) => c.id);
       // Cover fallback + MATURITY CLAMP: a cover is usable only when it exists AND
@@ -339,6 +566,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           followed: followed.has(c.id),
         })),
         nextCursor,
+        ...periodFields,
       });
       return;
     }
@@ -420,6 +648,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         followed: followed.has(c.id),
       })),
       nextCursor,
+      ...periodFields,
     });
     return;
   } catch (error) {
