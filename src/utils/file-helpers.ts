@@ -85,6 +85,100 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
 }
 
 /**
+ * The precisions a safetensors dtype can state on its own. Every other value a mod adds to
+ * `modelFileOptions` is a packaging scheme layered over a dtype — NVFP4 and NF4 pack their
+ * weights into U8, GPTQ int8 into I32, and MXFP8's shared-exponent scales are usually written
+ * as U8 rather than F8_E8M0 — all of which the mapper deliberately leaves unmapped, so the
+ * quantized bulk contributes no bytes and the vote is won by whatever housekeeping tensors
+ * are left. Measured on two production files: an MXFP8 checkpoint reads as fp8, and an NVFP4
+ * one as fp32.
+ */
+const DTYPE_STATEABLE_FP = new Set(['fp32', 'fp16', 'bf16', 'fp8']);
+
+const isAlphanumeric = (char: string) => /[A-Za-z0-9]/.test(char);
+
+/**
+ * Whether `name[index]` starts a word. A separator counts, and so does a camelCase hump
+ * (`RawGirlKreaNVFP4`), but a letter running straight into the token does not — the trained-file
+ * job ids are 26-char base32 (`PW2MQDNF4ZXWSGYEHXWCGH8B60`) and 50 of them contain `nf4` by
+ * chance. Inventing a precision for those is the failure worth avoiding; missing an all-lowercase
+ * glued name like `ltx23devnvfp4` is not.
+ */
+function startsWord(name: string, index: number) {
+  if (index === 0) return true;
+  const prev = name[index - 1];
+  if (!isAlphanumeric(prev)) return true;
+  return /[a-z0-9]/.test(prev) && /[A-Z]/.test(name[index]);
+}
+
+/** A trailing digit means the token was part of a longer number (`_int40_`), not the token. */
+function endsWord(name: string, index: number) {
+  return index >= name.length || !/[0-9]/.test(name[index]);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * `fp8_scaled` is written `fp8-scaled` or `fp8 scaled` about as often, so each run of
+ * separators in the option becomes an optional one.
+ */
+function tokenPattern(precision: string) {
+  return precision
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map(escapeRegExp)
+    .join('[-_. ]?');
+}
+
+/**
+ * Find a packaging scheme named in a file's name. Only values `precisions` offers and a dtype
+ * cannot state are considered, so this can never contradict a header that was able to answer.
+ * Longest option first, so `fp8_scaled` is not read as `fp8` and `nvfp4` not as `fp4`.
+ */
+export function inferPrecisionFromFileName(
+  fileName: string,
+  precisions: readonly string[]
+): ModelFileFp | null {
+  const candidates = precisions
+    .filter((precision) => precision && !DTYPE_STATEABLE_FP.has(precision))
+    .sort((a, b) => b.length - a.length);
+
+  for (const precision of candidates) {
+    const pattern = tokenPattern(precision);
+    if (!pattern) continue;
+    const matcher = new RegExp(pattern, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = matcher.exec(fileName)) !== null) {
+      if (startsWord(fileName, match.index) && endsWord(fileName, match.index + match[0].length))
+        return precision as ModelFileFp;
+      matcher.lastIndex = match.index + 1;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Combine the two signals for an upload. The header wins wherever it can speak: it only loses to
+ * a name that claims a scheme no dtype can express, and it keeps a scheme it observed directly
+ * (F8_E8M0 scales are MXFP8 whatever the name says).
+ */
+export function resolveUploadPrecision({
+  fileName,
+  headerFp,
+  precisions,
+}: {
+  fileName: string;
+  headerFp: ModelFileFp | null;
+  precisions: readonly string[];
+}): ModelFileFp | null {
+  if (headerFp && !DTYPE_STATEABLE_FP.has(headerFp)) return headerFp;
+  return inferPrecisionFromFileName(fileName, precisions) ?? headerFp;
+}
+
+/**
  * Maps llama.cpp's LLAMA_FTYPE enum (stored in GGUF `general.file_type`) to the
  * quant-type strings the upload form offers. Unquantized ftypes (F32/F16/BF16)
  * and quant schemes not in the form are intentionally omitted -> no auto-fill.
