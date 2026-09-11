@@ -454,13 +454,16 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     //
     // ⚠️ KNOWN COST, recorded rather than discovered later: 0.70 is less sensitive to a
     // PARTIAL, late-file desync than 0.65 was — a blanking confined to the tail can now
-    // pass. ⚠️ NO PERCENTAGE IS QUOTED ON PURPOSE: the naive model (`L + p(1−L) = 0.70`)
-    // overstates the sensitivity badly, because the tail of this file is comment- and
-    // JSX-dense and so is ALREADY mostly spaces after masking, and two revisions of this
-    // clause have now put a wrong figure here. Measure it against the masked text if it
-    // ever matters. Accepted regardless: 0.65 was unusable at the headroom above, and the
-    // functional check in this test is the `features.appBlocks` occurrence count, not the
-    // ratio.
+    // pass. Measured at `775abdfe34` by two independent re-implementations of the masker:
+    // a trailing desync must cover ≈19.6% of the file before it trips 0.70. POINT-IN-TIME
+    // — it moves with `L` and with the tail's own density, exactly like the ratios above,
+    // so re-measure rather than trusting it.
+    // ⚠️ Do NOT re-derive it from `L + p(1−L) = 0.70`; that model gives ≈11.8% because it
+    // assumes the blanked tail becomes ALL spaces, whereas this file's tail is comment- and
+    // JSX-dense and already ≈0.77 spaces after masking. One earlier revision of this clause
+    // carried the naive figure (`≲13%`) for that reason.
+    // Accepted regardless: 0.65 was unusable at the headroom above, and the functional
+    // check in this test is the `features.appBlocks` occurrence count, not the ratio.
     const spaceRatio = (text: string) =>
       text.split('').filter((c) => c === ' ').length / text.length;
     expect(spaceRatio(masked)).toBeLessThan(0.7);
