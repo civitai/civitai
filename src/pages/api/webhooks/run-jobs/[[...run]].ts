@@ -6,6 +6,7 @@ import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-chec
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -194,6 +195,7 @@ export const jobs: Job[] = [
   updateCreatorResourceCompensation,
   confirmMutes,
   botAccountDetection,
+  reactionWithdrawalDetection,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,

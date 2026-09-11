@@ -1388,3 +1388,189 @@ describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
     helloSpy.mockRestore();
   });
 });
+
+// ===========================================================================
+// THE MISSING-PERMISSIONS BACKSTOP (clawgate 545)
+//
+// 🔴 REGRESSION, NOT AN INVARIANT GUARD. Before this existed, `needsConsent`
+// reached exactly one thing — the `data-needs-consent` attribute — and nothing
+// read it. The consent modal opened ONLY when a block PULLED it via
+// REQUEST_CONSENT, so an app that never asked left the viewer with a
+// working-looking control that could not succeed and no way to learn why.
+// The first test below FAILS on pre-change code: no notice ever rendered.
+//
+// Every case here drives to READY and posts NOTHING from the block. That is the
+// whole point: the host must act on its own.
+// ===========================================================================
+
+describe('PageBlockHost missing-permissions notice (the host-side backstop)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    showNotificationSpy.mockClear();
+  });
+
+  const noticeQuery = () => page.getByTestId('block-consent-notice').query();
+
+  test('🔴 renders after BLOCK_READY with NO message from the block', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    // No dialog yet — the notice offers, it does not interrupt.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('Review opens the dialog with the SERVER-KNOWN missing set, same props as the block path', async () => {
+    const onConsentGranted = vi.fn();
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={onConsentGranted} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+
+    await page.getByTestId('block-consent-notice-review').click();
+
+    expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    const dialogProps = useDialogStore.getState().dialogs[0].props as {
+      appBlockId: string;
+      blockName?: string;
+      missingScopes: string[];
+      onGranted: () => void;
+    };
+    // Identical to what REQUEST_CONSENT builds — one opener, two callers.
+    expect(dialogProps.missingScopes).toEqual(['ai:write:budgeted']);
+    expect(dialogProps.appBlockId).toBe('apb_test');
+    expect(dialogProps.blockName).toBe('Budgeted Generator');
+    expect(onConsentGranted).not.toHaveBeenCalled();
+    dialogProps.onGranted();
+    expect(onConsentGranted).toHaveBeenCalledTimes(1);
+  });
+
+  test('Dismiss removes it, and it does not come back on its own', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+
+    await page.getByTestId('block-consent-notice-dismiss').click();
+
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+    // Nothing re-renders it: give the host a beat to prove it stays gone.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+    // Dismissing is not consenting.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  // 🔴 ONE VARIABLE EACH. The first version of this varied `missingScopes` AND
+  // `needsConsent` together, so it could not attribute the absence to either —
+  // and it left `needsConsent &&` in the render condition with no killing
+  // mutation at all. Audit finding; split.
+  // ⚠️ BOTH halves pin a state the mint never produces — it sets
+  // `needsConsent = missing.length > 0`, so the two always agree in production.
+  // That is the price of attributing each term separately, and it is said on BOTH
+  // so a reader does not take the unflagged one for a reachable case.
+  test('NEGATIVE CONTROL — nothing missing (needsConsent still true), no notice', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} missingScopes={[]} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    // The positive cases above prove the notice CAN render after driveToReady,
+    // so this zero is a reading rather than a silence.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
+  test('NEGATIVE CONTROL — needsConsent false alone suppresses it, even with a missing set', async () => {
+    // ⚠️ NOT A STATE THE MINT PRODUCES — it sets `needsConsent = missing.length > 0`,
+    // so the two always agree in production. This pins the PROP CONTRACT: the
+    // component branches on the server's own verdict rather than re-deriving it
+    // from the array, and without this case that term is unkillable.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={['ai:write:budgeted']}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
+  test('🔴 REVIEW MODE never shows it — a mod must not be able to grant scopes from the sandbox', async () => {
+    // The block-initiated path calls this guard absolute at the REQUEST_CONSENT
+    // handler ("never let untrusted review code pop a permission modal at the
+    // mod"). The notice had no such gate; it was unreachable in production ONLY
+    // because ReviewBlockPreviewHost hardcodes `missingScopes={[]}`. That is a
+    // caller-side accident, not a guard. Audit finding.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        reviewMode
+        surface="review-preview"
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 Review is IDEMPOTENT — two clicks open ONE modal, not two', async () => {
+    // `dialogStore.trigger` dedupes on `id` and nothing else; with none passed it
+    // falls back to `Date.now()`, so two clicks in different milliseconds stacked
+    // two consent modals. Latent while the only caller was a message handler —
+    // this notice is the first HUMAN-clickable trigger. Audit finding.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+
+    await page.getByTestId('block-consent-notice-review').click();
+    await page.getByTestId('block-consent-notice-review').click();
+
+    expect(useDialogStore.getState().dialogs).toHaveLength(1);
+  });
+
+  test('🔴 dismissal is PER APP — dismissing one app does not suppress the next', async () => {
+    // This component is NOT remounted when the viewer moves between two
+    // /apps/run/<slug> pages, and the chrome it renders is itself that one-click
+    // path. A bare boolean therefore suppressed the notice for apps the viewer
+    // had never seen it for — the exact hole this feature exists to close.
+    // Audit finding; reproduced with the control below.
+    //
+    // Prop-swap on the SAME element position, which is what the SPA does: no
+    // `key`, so React reuses the instance and its state survives — the defect.
+    // `rerender` is the repo's convention for exactly this (see
+    // `useBlockToken.browser.test.tsx`, same app-A→app-B soft-nav shape).
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+
+    // CONTROL that the swap itself is what brings it back: before the fix this
+    // stayed null, because the latch was a bare boolean.
+    await rerender(
+      <PageBlockHost
+        {...baseProps}
+        appBlockId="apb_second"
+        appName="Second App"
+        missingScopes={['buzz:read:self']}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+  });
+
+  test('not before BLOCK_READY — no notice over a still-loading block', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    // Deliberately NOT driving to ready.
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+});

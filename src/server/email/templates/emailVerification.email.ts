@@ -5,15 +5,18 @@ type EmailVerificationData = {
   to: string;
   username: string;
   verificationUrl: string;
+  isEmailChange: boolean;
 };
 
 export const emailVerificationEmail = createEmail({
-  header: ({ to }: EmailVerificationData) => ({
-    subject: 'Verify your new email address - Civitai',
+  header: ({ to, isEmailChange }: EmailVerificationData) => ({
+    subject: isEmailChange
+      ? 'Verify your new email address - Civitai'
+      : 'Verify your email address - Civitai',
     to,
   }),
 
-  html({ username, verificationUrl }: EmailVerificationData) {
+  html({ username, verificationUrl, isEmailChange }: EmailVerificationData) {
     const brandColor = '#346df1';
 
     const color = {
@@ -33,7 +36,12 @@ export const emailVerificationEmail = createEmail({
         <tr><td>
           <table width="100%" border="0" cellspacing="20" cellpadding="0" style="background: ${color.mainBackground}; border-radius: 10px;">
             <tr>
-              <td align="center" style="padding: 20px 0px; font-size: 24px; font-family: Helvetica, Arial, sans-serif; color: ${color.text};">
+              <td align="center" style="padding: 10px 0px;">
+                <img src="${`${getBaseUrl()}/images/logo_light_mode.png`}" alt="Civitai" width="142" style="display: block; border: 0;" />
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 10px 0px 20px 0px; font-size: 24px; font-family: Helvetica, Arial, sans-serif; color: ${color.text};">
                 <strong>Email Address Verification</strong>
               </td>
             </tr>
@@ -44,7 +52,11 @@ export const emailVerificationEmail = createEmail({
             </tr>
             <tr>
               <td style="padding: 0px 20px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${color.text};">
-                You requested to change your email address on Civitai. Please click the button below to verify your new email address:
+                ${
+                  isEmailChange
+                    ? 'You requested to change your email address on Civitai. Please click the button below to verify your new email address:'
+                    : 'Please click the button below to verify your email address on Civitai:'
+                }
               </td>
             </tr>
             <tr>
@@ -73,7 +85,7 @@ export const emailVerificationEmail = createEmail({
             </tr>
             <tr>
               <td style="padding: 20px 20px 10px 20px; font-size: 14px; line-height: 20px; font-family: Helvetica, Arial, sans-serif; color: ${color.muted};">
-                This verification link will expire in 15 minutes. If you didn't request this change, please ignore this email.
+                This verification link will expire in 15 minutes. If you didn't request this, please ignore this email.
               </td>
             </tr>
           </table>
@@ -89,14 +101,18 @@ export const emailVerificationEmail = createEmail({
     `;
   },
 
-  text({ username, verificationUrl }: EmailVerificationData) {
+  text({ username, verificationUrl, isEmailChange }: EmailVerificationData) {
     return `Hi ${username},
 
-You requested to change your email address on Civitai. Please visit the following link to verify your new email address:
+${
+  isEmailChange
+    ? 'You requested to change your email address on Civitai. Please visit the following link to verify your new email address:'
+    : 'Please visit the following link to verify your email address on Civitai:'
+}
 
 ${verificationUrl}
 
-This verification link will expire in 15 minutes. If you didn't request this change, please ignore this email.
+This verification link will expire in 15 minutes. If you didn't request this, please ignore this email.
 
 ---
 Civitai Team
@@ -107,5 +123,6 @@ Civitai Team
     to: 'test@example.com',
     username: 'TestUser',
     verificationUrl: `${getBaseUrl()}/verify-email?token=test-token`,
+    isEmailChange: false,
   }),
 });

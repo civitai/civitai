@@ -134,12 +134,7 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     ];
 
     renderWithProviders(
-      <AppPermissionsActivityDrawer
-        appBlockId="ab-1"
-        appName="My App"
-        opened
-        onClose={() => {}}
-      />
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
 
     // Granted scope for ab-1 shows (via BlockScopeList); ab-2's scope must NOT leak.
@@ -149,18 +144,14 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     // Activity timeline: the scope-invocation row (workflow submit) humanises to
     // "Generated an image" and the Buzz row to "Spent Buzz on a per-model install".
     await expect.element(page.getByText('Generated an image')).toBeInTheDocument();
-    await expect
-      .element(page.getByText('Spent Buzz on a per-model install'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Spent Buzz on a per-model install')).toBeInTheDocument();
   });
 
   test('BOTH activity queries (Buzz + scope-invocations) are server-filtered by the current appBlockId', async () => {
     renderWithProviders(
       <AppPermissionsActivityDrawer appBlockId="ab-42" appName="Scoped" opened onClose={() => {}} />
     );
-    await expect
-      .element(page.getByTestId('app-permissions-activity-drawer'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('app-permissions-activity-drawer')).toBeInTheDocument();
     // Scope-invocation audit — server-filtered.
     expect(m.scopeSpy).toHaveBeenCalledWith(
       expect.objectContaining({ appBlockId: 'ab-42' }),
@@ -194,8 +185,17 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     renderWithProviders(
       <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
+    // 🔴 PINNED AS THE WHOLE NORMALISED STRING, NOT A KEYWORD. The claim under test is
+    // that this label does NOT assert "you granted this app nothing" — a defect a
+    // `/permissions/` substring match would walk straight past, since the false wording
+    // contained that word too. The two load-bearing halves are the qualifier
+    // ("from an install") and the pointer to Recent activity.
     await expect
-      .element(page.getByText("You haven't granted this app any permissions yet."))
+      .element(
+        page.getByText(
+          'No permissions recorded from an install of this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below.'
+        )
+      )
       .toBeInTheDocument();
     await expect.element(page.getByText(/No activity yet\./)).toBeInTheDocument();
   });

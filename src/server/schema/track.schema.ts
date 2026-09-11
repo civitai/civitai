@@ -36,6 +36,72 @@ export const VIEW_ENTITY_TYPES = [
   'Model3D',
 ] as const;
 
+/**
+ * Accepts a real number OR a numeric string, and falls back to 0 for everything
+ * else (a boolean, an object, `null`, a non-numeric string, or an absent key).
+ *
+ * Why a fallback rather than a rejection: these fields feed analytics columns
+ * whose row must still be written. Rejecting an unparseable dimension would turn
+ * a slightly-wrong row into NO row, which silently reduces the very volume this
+ * schema exists to protect.
+ *
+ * Why not `z.coerce.number()`: it runs `Number()` over ANY input, so `true`
+ * becomes 1 and `null`/`''` become 0 while reporting success — the same
+ * silent-wrong-value class as the banned `z.coerce.boolean()` (see
+ * src/server/services/__tests__/no-coerce-boolean-in-api.test.ts). The union
+ * below only ever coerces something that was genuinely a number or a string,
+ * and `Number.isFinite` rejects the NaN/Infinity results.
+ */
+const numberOrNumericString = z
+  .union([z.number(), z.string()])
+  .transform((value) => (typeof value === 'number' ? value : Number(value)))
+  .refine((value) => Number.isFinite(value))
+  .catch(0);
+
+/**
+ * Body schema for the POST /api/internal/ping page-view beacon (client:
+ * src/components/TrackView/TrackPageView.tsx).
+ *
+ * The handler used to TYPE-assert `JSON.parse`'s `any` and pass the fields
+ * straight through, so nothing was checked at runtime. Three consequences, all
+ * of which this schema closes:
+ *
+ *  1. `ads` reached a BOOLEAN analytics column with whatever the caller sent.
+ *     A string/number/object there is rejected by the analytics client, which
+ *     drops the row without the app ever seeing an error — the beacon response
+ *     is fire-and-forget, so an invalid `ads` destroyed the page view silently.
+ *  2. A missing or non-string `path` threw inside `getMatchingPathname` (its
+ *     first operation is `url.replace(...)`), escaping as a raw 500 on a public
+ *     endpoint. Same class as the two throws this route already hardened into
+ *     400s. `path` is the one field that is genuinely REQUIRED, so it is the one
+ *     field that rejects.
+ *  3. A numeric STRING dimension (`windowWidth: '1920'`) became 0, because the
+ *     downstream column clamp opens with `Number.isFinite(value)` and that is
+ *     `false` for a string — no coercion, no error, just a wrong value.
+ *
+ * COERCE-AND-DEFAULT, DO NOT REJECT. A body that omits `duration` or the window
+ * dimensions already wrote a row before this schema existed — an absent
+ * dimension hit a `?? 0`, and an absent `duration` reached the insert as NaN and
+ * was mapped to 0 by the column clamp — so turning either into a 400 would
+ * quietly cut page-view volume. Only `path` — which cannot be defaulted to
+ * anything meaningful, and which throws downstream when absent — is required.
+ *
+ * A non-boolean `ads` becomes `false` rather than a 400, matching the spirit of
+ * the previous `ads ?? false` and keeping the row.
+ *
+ * The object is non-strict, so unknown keys are stripped rather than forwarded
+ * into the analytics insert.
+ */
+export const pageViewBeaconSchema = z.object({
+  ads: z.boolean().catch(false),
+  duration: numberOrNumericString,
+  path: z.string(),
+  windowWidth: numberOrNumericString,
+  windowHeight: numberOrNumericString,
+});
+
+export type PageViewBeaconSchema = z.infer<typeof pageViewBeaconSchema>;
+
 export const addViewSchema = z.object({
   type: z.enum(VIEW_TYPES),
   entityType: z.enum(VIEW_ENTITY_TYPES),

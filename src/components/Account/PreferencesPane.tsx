@@ -2,6 +2,7 @@ import React from 'react';
 
 import {
   AssistantPersonalitySelect,
+  assistantToggleableFeatures,
   AutoplayGifsToggle,
   EarlyAdopterToggle,
   HideBlueBuzzToggle,
@@ -70,19 +71,29 @@ export function PreferencesPane() {
         )}
       </SettingsSection>
 
+      {assistantToggleableFeatures.length > 0 && (
+        <SettingsSection title="CivBot Assistant">
+          {assistantToggleableFeatures.map((feature) => (
+            <SettingRow block key={feature.key}>
+              <ToggleableFeatures data={[feature]} />
+            </SettingRow>
+          ))}
+          {flags.assistant && (
+            <SettingRow
+              label="Personality"
+              description="Available to subscribers."
+              control={<AssistantPersonalitySelect />}
+            />
+          )}
+        </SettingsSection>
+      )}
+
       <SettingsSection title="Features">
         {otherToggleableFeatures.map((feature) => (
           <SettingRow block key={feature.key}>
             <ToggleableFeatures data={[feature]} />
           </SettingRow>
         ))}
-        {flags.assistant && (
-          <SettingRow
-            label="Assistant personality"
-            description="Available to subscribers."
-            control={<AssistantPersonalitySelect />}
-          />
-        )}
         {flags.buzz && (
           <SettingRow block>
             <HideBlueBuzzToggle />

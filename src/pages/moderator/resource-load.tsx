@@ -19,10 +19,14 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useResourceLoadProgress } from '~/components/ResourceLoad/resource-load.utils';
+import { UNLOADABLE_MESSAGES } from '~/server/schema/resource-load.schema';
+import type {
+  ResourceLoadAvailability,
+  UnloadableReason,
+} from '~/server/schema/resource-load.schema';
 import { useResourceLoadStore } from '~/store/resource-load.store';
 import type { TrackedResourceLoad } from '~/store/resource-load.store';
 import type { ResourceLoadProgress } from '~/components/ResourceLoad/resource-load.utils';
-import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -58,11 +62,12 @@ function AvailabilityBadge({ availability }: { availability: ResourceLoadAvailab
 function loadBlockedReason(state: {
   eligible: boolean;
   loadable: boolean;
+  unloadableReason?: UnloadableReason;
   availability: ResourceLoadAvailability;
 }) {
   if (!state.eligible)
     return 'Not generatable on the site — coverage or the ecosystem does not support this model type.';
-  if (!state.loadable) return 'No weight file — this runs through an external provider.';
+  if (!state.loadable) return UNLOADABLE_MESSAGES[state.unloadableReason ?? 'no-weights'];
   if (state.availability.status === 'unsupported') return 'The cluster cannot host this resource.';
   if (state.availability.status === 'unknown')
     return 'Could not read status from the orchestrator.';
@@ -199,7 +204,11 @@ function SubmitCard({
                   {state.eligible ? 'generatable' : 'not generatable'}
                 </Badge>
                 <Badge color={state.loadable ? 'green' : 'red'} variant="light">
-                  {state.loadable ? 'has weights' : 'no weight file'}
+                  {state.loadable
+                    ? 'has weights'
+                    : state.unloadableReason === 'unsupported-format'
+                    ? 'unsupported format'
+                    : 'no weight file'}
                 </Badge>
               </Group>
 

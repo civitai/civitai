@@ -8,7 +8,11 @@ import type {
   GetResourceLoadQueueInput,
   ResourceLoadAvailability,
 } from '~/server/schema/resource-load.schema';
-import { resourceAvailabilitySchema } from '~/server/schema/resource-load.schema';
+import {
+  resourceAvailabilitySchema,
+  UNLOADABLE_MESSAGES,
+} from '~/server/schema/resource-load.schema';
+import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -22,20 +26,26 @@ import { BuzzTypes } from '~/shared/constants/buzz.constants';
 const PREPARE_STEP_NAME = 'prepare-resource';
 
 /**
- * A file the cluster can serve as weights. Mirrors the coverage view's accepted types minus its
- * `trainingResults` disjunct — a training archive is not a weight. Core ML and ONNX are
- * inference-runtime formats.
+ * A file the cluster can serve as weights. Types mirror the coverage view minus its
+ * `trainingResults` disjunct — a training archive is not a weight.
+ *
+ * Format is an allow-list because `format` is free text and frequently unset; a deny-list cannot
+ * promise the loader only ever sees SafeTensor.
  */
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
-const UNLOADABLE_FORMATS = ['Core ML', 'ONNX'];
+const LOADABLE_FORMAT = 'SafeTensor';
 
-function hasLoadableFile(files: VersionForAir['files']) {
-  return files.some(
-    (f) =>
-      !!f.scannedAt &&
-      LOADABLE_FILE_TYPES.includes(f.type) &&
-      !UNLOADABLE_FORMATS.includes(String(f.metadata?.format ?? ''))
-  );
+function checkLoadable(
+  files: VersionForAir['files'],
+  modelType: ModelType
+): { loadable: true } | { loadable: false; unloadableReason: UnloadableReason } {
+  const weights = files.filter((f) => !!f.scannedAt && LOADABLE_FILE_TYPES.includes(f.type));
+  if (!weights.length) return { loadable: false, unloadableReason: 'no-weights' };
+  // Scoped to checkpoints to match the coverage view's checkpoint disjunct. Applying it to every
+  // type would refuse the PickleTensor embeddings and LoRAs the view deliberately keeps covered.
+  if (modelType === 'Checkpoint' && !weights.some((f) => f.metadata?.format === LOADABLE_FORMAT))
+    return { loadable: false, unloadableReason: 'unsupported-format' };
+  return { loadable: true };
 }
 
 /** Each state fetch is an orchestrator grain call, so keep the fan-out bounded. */
@@ -52,8 +62,10 @@ export type ResourceLoadState = {
   availability: ResourceLoadAvailability;
   /** Coverage alone over-reports; see docs/features/paid-model-loading-coverage.md. */
   eligible: boolean;
-  /** Whether there is a weight file to download. False for external/API models. */
+  /** Whether the cluster can serve this version's weights. */
   loadable: boolean;
+  /** Why not, when `loadable` is false — so a CTA can say so without re-deriving it. */
+  unloadableReason?: UnloadableReason;
 };
 
 type VersionForAir = {
@@ -128,7 +140,7 @@ export async function getResourceLoadState(
         modelType: version.model.type,
         flags: version.flags,
       }),
-      loadable: hasLoadableFile(version.files),
+      ...checkLoadable(version.files, version.model.type),
     };
 
     const response = await getModelClient({ token: env.ORCHESTRATOR_ACCESS_TOKEN, air });
@@ -199,9 +211,7 @@ async function resolveLoadable(modelVersionId: number) {
       'This resource cannot be generated with on the site, so loading it would buy nothing.'
     );
   if (!state.loadable)
-    throw throwBadRequestError(
-      'This resource has no model file to load — it runs through an external provider.'
-    );
+    throw throwBadRequestError(UNLOADABLE_MESSAGES[state.unloadableReason ?? 'no-weights']);
 
   const { status } = state.availability;
   if (status === 'unsupported')

@@ -261,6 +261,7 @@ const ECOSYSTEMS = [
   'MuseImage',
   'MAI',
   'Ernie',
+  'Ideogram',
   'Seedream',
   'Anima',
   'MageFlow',

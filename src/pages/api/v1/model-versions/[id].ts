@@ -252,7 +252,7 @@ export async function prepareModelVersionResponse(
             metadata: reduceToBasicFileMetadata(metadata),
             hashes: hashesAsObject(hashes),
             name: safeDecodeURIComponent(
-              getDownloadFilename({ model, modelVersion: version, file })
+              getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
             ),
             primary: primaryFile.id === file.id,
             // Pin the URL to THIS file — see the matching note in

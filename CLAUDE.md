@@ -211,11 +211,11 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 31 live in
+Several repo conventions are enforced by tests, not by eslint. 32 live in
 `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
 `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
 `no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and the pair is composed only in `isGenerationEligible`),
-`no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
+`no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-job-kind-on-remix-mint` (the remix provenance mint must sign `kind: 'mint'` — a `job`
 token there is spendable on the upload path, which is the free remix-gallery submission),
@@ -248,7 +248,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 36 files today.
+`test:lint-rules` names 37 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
@@ -656,9 +656,15 @@ node .claude/skills/dev-server/cli.mjs wt stale        # what's finished, and wh
 node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlinks links, deletes, prunes
 ```
 
-`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), and a tree with a
-running dev server (`--stop-server`). It deletes the branch only when `gh` reports a **merged** PR, keeps
-it when commits exist on no remote, and prints the SHA when it does delete. Left alone, worktrees
+`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), a tree with a
+running dev server (`--stop-server`), and a tree the dev-server daemon itself is running from. It
+deletes the branch only when `gh` reports a **merged** PR, keeps
+it when commits exist on no remote, and prints the SHA when it does delete. `wt stale` applies that
+daemon check too. **A running daemon that will not say where it runs from blocks both** — it predates
+PR #4641, and a daemon that could not be asked has not been ruled out, so `wt stale` clears no tree and
+`wt rm` refuses (`--force` overrides that one, but never a named holder). A daemon that is *not
+running* blocks nothing: it holds no directory open. That turns on the transport, not on a good
+response — a live daemon that errors on `/` is still running, and still blocks. Left alone, worktrees
 accumulate: 22 stale ones were removed in one sweep on 2026-08-12, 15 with already-merged PRs.
 
 **Two checks that fail *clean* if you verify merge state yourself.** Both return success-shaped output

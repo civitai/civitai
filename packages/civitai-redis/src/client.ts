@@ -1965,6 +1965,27 @@ export const REDIS_SYS_KEYS = {
      * `sysRedis`.
      */
     REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
+    /**
+     * CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) Buzz ceiling the VIEWER
+     * themselves set at consent time (`app_user_scope_grants.buzz_budget_per_day`).
+     * Keyed `${CONSENT_BUDGET}:<userId>:<appBlockId>:<UTC-day>`.
+     *
+     * DISTINCT FROM EVERY SIBLING CAP, and the distinction is the whole point:
+     *   - BUZZ_CAP is PER-USER across ALL apps (a platform abuse ceiling the user
+     *     never chose, 50k/day). It deliberately OMITS appBlockId so N installed
+     *     apps share one ceiling.
+     *   - APP_SPEND_CAP is PER-APP across ALL users (anti-Sybil).
+     *   - This one is PER-(user, app): "I consent to THIS app spending at most N of
+     *     my Buzz per day". It is the user's OWN grant, not a platform ceiling.
+     * Both this and BUZZ_CAP apply to every non-dev, non-run-for-real submit; the
+     * TIGHTER one binds. A NULL `buzz_budget_per_day` means no consent budget was
+     * set and this key is never written — behaviour identical to before the column
+     * existed.
+     *
+     * Same atomic INCRBY reserve-and-refund + first-write-EX (~25h, with a ttl<0
+     * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
+     */
+    CONSENT_BUDGET: 'system:blocks:consent-budget',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

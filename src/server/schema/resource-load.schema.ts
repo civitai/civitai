@@ -31,6 +31,20 @@ export type ResourceAvailability = z.infer<typeof resourceAvailabilitySchema>;
  */
 export type ResourceLoadAvailability = ResourceAvailability | { status: 'unknown' };
 
+/**
+ * Why a version cannot be loaded. The two are different things to tell a user: an API model has
+ * nothing to load and never will, while a GGUF checkpoint has weights the cluster cannot serve.
+ * Collapsing them is what made the old copy claim every unloadable resource was external.
+ */
+export type UnloadableReason = 'no-weights' | 'unsupported-format';
+
+/** Lives here, not in the service, so client pages can state the reason in the mutation's words. */
+export const UNLOADABLE_MESSAGES: Record<UnloadableReason, string> = {
+  'no-weights': 'This resource has no model file to load — it runs through an external provider.',
+  'unsupported-format':
+    'The generator can only load SafeTensor files, and this version does not have one.',
+};
+
 export const getResourceLoadStateSchema = z.object({
   modelVersionIds: z.array(z.number()).min(1).max(100),
 });

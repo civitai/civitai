@@ -14,6 +14,7 @@ import {
   getSelfStatusHandler,
   getUserBookmarkCollectionsHandler,
   getUserByIdHandler,
+  getUserSearchHydrationHandler,
   getUserCosmeticsHandler,
   getUserCreatorHandler,
   getUserEngagedModelsByIdsHandler,
@@ -75,6 +76,7 @@ import {
   requestEmailChangeSchema,
   verifyEmailChangeSchema,
   validateEmailTokenSchema,
+  getUserSearchHydrationSchema,
 } from '~/server/schema/user.schema';
 import {
   cosmeticStatus,
@@ -145,6 +147,9 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(getUserByIdHandler),
+  getSearchHydration: publicProcedure
+    .input(getUserSearchHydrationSchema)
+    .query(getUserSearchHydrationHandler),
   getSelfStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getSelfStatusHandler),

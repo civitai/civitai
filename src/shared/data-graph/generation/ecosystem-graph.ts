@@ -69,6 +69,7 @@ import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 import { ernieGraph } from './ernie-graph';
+import { ideogramGraph } from './ideogram-graph';
 import { lensGraph } from './lens-graph';
 import { krea2Graph } from './krea2-graph';
 import { maiGraph } from './mai-graph';
@@ -98,10 +99,8 @@ function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boo
 }
 
 /**
- * Whether the given ecosystem/model pair runs through sdcpp and qualifies for
- * the 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility` —
- * includes ecosystems without the `enhancedCompatibility` toggle, minus
- * specific model versions excluded via SDCPP_EXCLUDED_MODEL_IDS.
+ * Whether the given ecosystem/model pair qualifies for the 2-for-1 quantity bonus. Not an engine
+ * test — see SDCPP_SUPPORTED_ECOSYSTEMS.
  */
 function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
   if (!SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return false;
@@ -395,6 +394,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
     { values: ['Ernie'] as const, graph: ernieGraph },
+    { values: ['Ideogram'] as const, graph: ideogramGraph },
     { values: ['Lens'] as const, graph: lensGraph },
     { values: ['Krea2'] as const, graph: krea2Graph },
     { values: ['MAI'] as const, graph: maiGraph },

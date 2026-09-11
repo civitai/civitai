@@ -1220,8 +1220,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   const { userId } = data;
   if (!userId) {
     // An internal report (userId === -1 is stored as NULL) has no user-scoped content to
-    // archive, and archiveBaseReportData bails on it too. Returning silently left report 236
-    // re-selected by getCsamsToArchive every hour since 2024. Stamp a terminal state, but
+    // archive, and archiveBaseReportData bails on it too. Returning silently left such a
+    // report re-selected by getCsamsToArchive every hour since 2024. Stamp a terminal state, but
     // record that nothing was stored — archivedAt alone would read as evidence-complete.
     await dbWrite.csamReport.update({
       where: { id: data.id },

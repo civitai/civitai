@@ -1,7 +1,7 @@
+import { MY_COLLECTIONS_LIST_INPUT } from '~/components/Collections/collection-review-counts';
 import { CollectionsLanding } from '~/components/Collections/CollectionsLanding';
 import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEffect } from 'react';
 import { Center, Loader } from '@mantine/core';
@@ -15,9 +15,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, session = null, features }) => {
     if (ssg) {
       if (session) {
-        await ssg.collection.getAllUser.prefetch({
-          permission: CollectionContributorPermission.VIEW,
-        });
+        await ssg.collection.getAllUser.prefetch(MY_COLLECTIONS_LIST_INPUT);
       }
       // TODO - prefetch top user collections and popular collections
     }
@@ -29,7 +27,7 @@ export const getServerSideProps = createServerSideProps({
 const CollectionsHome = () => {
   const currentUser = useCurrentUser();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
-    { permission: CollectionContributorPermission.VIEW },
+    MY_COLLECTIONS_LIST_INPUT,
     { enabled: !!currentUser }
   );
   const router = useRouter();

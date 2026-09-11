@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Button,
   Card,
@@ -10,9 +11,18 @@ import {
   TextInput,
   Popover,
   Modal,
+  Tooltip,
 } from '@mantine/core';
-import { IconPencilMinus, IconInfoSquareRounded, IconMail } from '@tabler/icons-react';
+import {
+  IconPencilMinus,
+  IconInfoSquareRounded,
+  IconMail,
+  IconMailCheck,
+  IconEye,
+  IconEyeOff,
+} from '@tabler/icons-react';
 import { useDisclosure } from '@mantine/hooks';
+import React from 'react';
 import * as z from 'zod';
 
 import { useSession } from '~/providers/SessionProvider';
@@ -23,6 +33,8 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { SettingsSection } from '~/components/Account/SettingsLayout';
+import { showErrorNotification } from '~/utils/notifications';
+import { maskEmail } from '~/utils/string-helpers';
 
 const schema = z.object({
   id: z.number(),
@@ -38,6 +50,17 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
   const session = useCurrentUser();
   const { data } = useSession();
   const [emailModalOpened, { open: openEmailModal, close: closeEmailModal }] = useDisclosure();
+  const [emailRevealed, setEmailRevealed] = React.useState(false);
+  const [verificationSent, setVerificationSent] = React.useState(false);
+
+  const resendEmailVerification = trpc.user.resendEmailVerification.useMutation({
+    onSuccess: () => setVerificationSent(true),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Could not send the verification email',
+        error: new Error(error.message),
+      }),
+  });
 
   const currentUser = data?.user;
 
@@ -121,7 +144,31 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
               <InputText name="username" label="Username" required />
             </div>
             <div className="flex-1">
-              <TextInput label="Account email" value={currentUser?.email ?? ''} disabled readOnly />
+              <TextInput
+                label="Account email"
+                value={
+                  currentUser?.email
+                    ? emailRevealed
+                      ? currentUser.email
+                      : maskEmail(currentUser.email)
+                    : ''
+                }
+                disabled
+                readOnly
+                rightSection={
+                  <Tooltip label={emailRevealed ? 'Hide email' : 'Show email'} withArrow>
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="gray"
+                      aria-label={emailRevealed ? 'Hide email address' : 'Show email address'}
+                      onClick={() => setEmailRevealed((current) => !current)}
+                    >
+                      {emailRevealed ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                    </ActionIcon>
+                  </Tooltip>
+                }
+              />
             </div>
           </div>
         ) : (
@@ -145,11 +192,30 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
                   </Button>
                 </Group>
                 <TextInput
-                  value={currentUser?.email ?? ''}
+                  value={
+                    currentUser?.email
+                      ? emailRevealed
+                        ? currentUser.email
+                        : maskEmail(currentUser.email)
+                      : ''
+                  }
                   disabled
                   styles={{
                     root: { flex: 1 },
                   }}
+                  rightSection={
+                    <Tooltip label={emailRevealed ? 'Hide email' : 'Show email'} withArrow>
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color="gray"
+                        aria-label={emailRevealed ? 'Hide email address' : 'Show email address'}
+                        onClick={() => setEmailRevealed((current) => !current)}
+                      >
+                        {emailRevealed ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  }
                 />
               </Stack>
             </Grid.Col>
@@ -167,6 +233,23 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
         )}
         {flat && (
           <Group justify="flex-end" gap="sm">
+            {/* `emailVerified`, deliberately NOT `requiresEmailVerification`: the accounts that
+                cannot verify any other way are the unstamped ones the gate — and so the banner
+                that carries the only other resend button — excludes. Offering the action makes no
+                claim about what the account is allowed to do, so the two predicates differ here on
+                purpose. */}
+            {!currentUser?.emailVerified && (
+              <Button
+                variant="default"
+                size="compact-sm"
+                leftSection={<IconMailCheck size={14} />}
+                onClick={() => resendEmailVerification.mutate()}
+                loading={resendEmailVerification.isPending}
+                disabled={verificationSent}
+              >
+                {verificationSent ? 'Verification sent' : 'Verify email'}
+              </Button>
+            )}
             <Button
               variant="default"
               size="compact-sm"
@@ -193,7 +276,6 @@ export function ProfileCard({ flat }: { flat?: boolean } = {}) {
     <Card withBorder={!flat} p={flat ? 0 : undefined} bg={flat ? 'transparent' : undefined}>
       {flat ? <SettingsSection title="Account info">{formBody}</SettingsSection> : formBody}
 
-      {/* Email Change Modal */}
       <Modal
         opened={emailModalOpened}
         onClose={closeEmailModal}

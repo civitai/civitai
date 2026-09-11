@@ -1,15 +1,11 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-lifetimes';
 
-// 15 minutes. NOTE: this NO LONGER covers the worst-case token lifetime — App
-// Blocks dev:live tokens now live up to DEV_TOKEN_LIFETIME_SECONDS (4h, see
-// block-token.service.ts). This TTL is intentionally left at 15min because the
-// revocation WRITE path (revokeInstance/clearInstance) is currently UNWIRED
-// (zero callers). BEFORE wiring a revocation write path, you MUST: (1) raise
-// this TTL to cover the max token lifetime, AND (2) namespace dev instance ids
-// distinctly (dev page tokens share the `page_<appBlockId>` shape with prod page
-// mints — see the note in api/v1/blocks/dev-token.ts), or a dev revocation will
-// bleed into production page tokens for the same app.
-const REVOCATION_TTL_SECONDS = 900;
+// A marker shorter than the token it revokes lapses while that token is still
+// accepted, and the gate reads a missing key as "not revoked" — the control
+// stops refusing without failing. Same relationship key-rotation overlap states
+// in block-token.service.ts; deriving it is what stops the two drifting again.
+const REVOCATION_TTL_SECONDS = MAX_BLOCK_TOKEN_LIFETIME_SECONDS;
 
 function revokedKey(blockInstanceId: string) {
   return `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE}:${blockInstanceId}` as const;
@@ -32,9 +28,8 @@ export class BlockRevocation {
     } catch {
       // Fail open: an uninstall/toggle/ban write path must not block on a
       // Redis incident. If the marker isn't written, tokens for this
-      // instance remain valid until natural exp (15 min for most scopes,
-      // 5 min for settings). Exposure is bounded by the token lifetime
-      // rather than by Redis-recovery time. Accepted tradeoff.
+      // instance remain valid until natural exp — exposure is bounded by the
+      // token lifetime rather than by Redis-recovery time. Accepted tradeoff.
     }
   }
 
@@ -49,10 +44,11 @@ export class BlockRevocation {
   }
 
   /**
-   * Clears a revocation marker. Called by `toggleEnabled(true)` so re-enabling
-   * an install doesn't leave a stale marker that 403s every token for the
-   * next 15 minutes (audit B1). blockInstanceId is preserved across toggle,
-   * so the marker written on disable would otherwise survive re-enable.
+   * Clears a revocation marker. Every path that brings an install back — both
+   * `toggleEnabled(true)` and `installOnModel` on an existing row — must call
+   * it: blockInstanceId is preserved across disable, so the marker written
+   * then otherwise survives, and 403s the revived install's tokens for the
+   * rest of REVOCATION_TTL_SECONDS (audit B1).
    */
   static async clearInstance(blockInstanceId: string): Promise<void> {
     try {

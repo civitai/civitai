@@ -563,3 +563,14 @@ export type ValidateEmailTokenInput = z.infer<typeof validateEmailTokenSchema>;
 export const validateEmailTokenSchema = z.object({
   token: z.string().min(1),
 });
+
+/**
+ * Bounded on purpose: this is a public endpoint taking an array, and the caller is a
+ * search page. `SearchLayout` asks for 50 hits, `CollectionSelectModal` for 20, and one
+ * InstantSearch render can issue several requests — so a real page never approaches this,
+ * and anything that does is not a search.
+ */
+export const getUserSearchHydrationSchema = z.object({
+  ids: z.array(z.number()).min(1).max(200),
+});
+export type GetUserSearchHydrationInput = z.infer<typeof getUserSearchHydrationSchema>;

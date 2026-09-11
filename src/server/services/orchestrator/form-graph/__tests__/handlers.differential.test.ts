@@ -159,6 +159,17 @@ const CASES: Record<string, unknown>[] = [
     resources: [{ id: 444, baseModel: 'Ernie', model: { type: 'LORA' }, strength: 0.7 }],
   },
   { workflow: 'txt2img', ecosystem: 'Ernie', prompt: 'a cat', seed: 42, model: 2863892 },
+  // Ideogram: locked checkpoint, with and without LoRA
+  { workflow: 'txt2img', ecosystem: 'Ideogram', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ideogram',
+    prompt: 'a cat',
+    seed: 42,
+    cfgScale: 6,
+    steps: 30,
+    resources: [{ id: 555, baseModel: 'Ideogram 4.0', model: { type: 'LORA' }, strength: 0.6 }],
+  },
   { workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat', seed: 42 },
   {
     workflow: 'txt2img',
@@ -437,6 +448,34 @@ const CASES: Record<string, unknown>[] = [
     resources: [{ id: 987, baseModel: 'MiniMax', model: { type: 'LORA' }, strength: 0.5 }],
   },
   { workflow: 'img2vid', ecosystem: 'MiniMaxH3', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'MiniMaxH3',
+    prompt: 'a cat',
+    seed: 42,
+    controlVideo: {
+      preprocessor: 'canny',
+      mode: 'auto',
+      video: { url: 'https://example.test/control.mp4' },
+      strength: 0.7,
+      startPercent: 0.1,
+      endPercent: 0.9,
+    },
+  },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'MiniMaxH3',
+    prompt: 'a cat',
+    seed: 42,
+    controlVideo: {
+      preprocessor: 'dwpose',
+      mode: 'preprocessed',
+      video: { url: 'https://example.test/pose-map.mp4' },
+      strength: 1,
+      startPercent: 0,
+      endPercent: 1,
+    },
+  },
   { workflow: 'txt2vid', ecosystem: 'MiniMaxH3', prompt: 'a cat', seed: 42, model: 3183239 },
   {
     workflow: 'img2vid:ref2vid',

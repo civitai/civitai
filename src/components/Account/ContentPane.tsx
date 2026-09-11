@@ -21,15 +21,14 @@ export function ContentPane() {
 
   return (
     <SettingsStack>
-      {features.canViewNsfw && (
-        <SettingsNote icon={<IconEye size={18} />}>
-          The eye button in the header overrides this for one session. These are the defaults it
-          returns to.
-        </SettingsNote>
-      )}
+      {currentUser?.isMember && <AdContent flat />}
 
       {features.canViewNsfw && (
         <SettingsSection title="Mature content">
+          <SettingsNote icon={<IconEye size={18} />}>
+            The eye button in the header overrides this for one session. These are the defaults it
+            returns to.
+          </SettingsNote>
           <MatureContentSettings flat />
         </SettingsSection>
       )}
@@ -45,8 +44,6 @@ export function ContentPane() {
 
       <HiddenTagsSection flat />
       <HiddenUsersSection flat />
-
-      {currentUser?.isMember && <AdContent flat />}
     </SettingsStack>
   );
 }

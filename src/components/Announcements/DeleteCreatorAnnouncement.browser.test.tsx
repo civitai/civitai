@@ -34,7 +34,7 @@ const announcement = { id: 1, userId: AUTHOR } as any;
 
 async function renderDelete() {
   const { DeleteCreatorAnnouncementButton } = await import(
-    '~/components/Announcements/CreatorAnnouncementsCarousel'
+    '~/components/Announcements/DeleteCreatorAnnouncementButton'
   );
   // The marker is load-bearing. A negative read straight after render sees an empty body —
   // the commit is asynchronous — so `elements()` would return 0 for every case, including

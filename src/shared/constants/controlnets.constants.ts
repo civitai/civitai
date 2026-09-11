@@ -502,8 +502,8 @@ export function getPreprocessKindsMissingExamples(): Array<{ kind: string; label
  * (kebab-case, e.g. `canny`, `depth-anything`). Returns the single best-fitting
  * reference for the kind (see `preprocessKindPreferredInput`), or both when the
  * kind has no preference. Returns `[]` for kinds with no generated sample. Used
- * by both the standalone Control Preprocessor workflow and (via the key mapping)
- * the ControlNets input.
+ * by the standalone Control Preprocessor workflows (image and video) and, via
+ * the key mapping, by the H3 control-video input.
  */
 export function getPreprocessKindExamples(kind: string | null | undefined): ControlNetExample[] {
   if (!kind || preprocessKindsWithoutExamples.has(kind)) return [];
@@ -801,3 +801,40 @@ export const animaControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'hed',
   'softedgePidinet',
 ];
+
+/**
+ * Preprocessors the orchestrator's `preprocessVideo` step can produce. Far
+ * narrower than the image set — `PreprocessVideoInput` implements only these
+ * five kinds, so anything else has no video counterpart at all.
+ */
+export const videoControlNetPreprocessors = [
+  'canny',
+  'depthAnythingV2',
+  'hed',
+  'mlsd',
+  'dwpose',
+] as const satisfies readonly ControlNetPreprocessorKey[];
+
+export type VideoControlNetPreprocessorKey = (typeof videoControlNetPreprocessors)[number];
+
+/**
+ * UI key → `PreprocessVideoInput.kind`. Deliberately separate from
+ * `controlNetToPreprocessKind`: most image kinds have no video implementation,
+ * so reusing that map would let an unsupported kind reach the orchestrator.
+ */
+export const controlNetToPreprocessVideoKind: Record<VideoControlNetPreprocessorKey, string> = {
+  canny: 'canny',
+  depthAnythingV2: 'depth-anything-v2',
+  hed: 'hed',
+  mlsd: 'mlsd',
+  dwpose: 'dwpose',
+};
+
+/**
+ * MiniMax H3's control support, backed by the H3 Fun ControlNet Union
+ * checkpoint. The union model infers the control type from the map itself —
+ * there is no per-type field on the input — so this list only decides which
+ * `preprocessVideo` kind runs upstream.
+ */
+export const minimaxH3ControlNetPreprocessors: readonly VideoControlNetPreprocessorKey[] =
+  videoControlNetPreprocessors;

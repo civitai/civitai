@@ -45,6 +45,7 @@ import type {
   UserByReferralCodeSchema,
   UserOnboardingSchema,
   UserUpdateInput,
+  GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
 import type {
@@ -56,6 +57,7 @@ import type {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
@@ -80,6 +82,7 @@ import {
   getUserBookmarkCollections,
   getBanContentPreview,
   getUserById,
+  getProfilePicturesForUsers,
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
@@ -244,6 +247,32 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
   }
 };
 
+/**
+ * The authoritative avatar for a set of users, for search results to render.
+ *
+ * The search indexes carry a COPY of this, baked in when the document was last built, and
+ * nothing rebuilds an existing document when the user changes their avatar — so the copy
+ * is stale for as long as the document is not otherwise touched, and becomes a broken
+ * image once `remove-replaced-images` reaps the original. Measured on production: 100 of
+ * 120 sampled `collections_v3` documents, and 69 of 120 `models_v9`.
+ *
+ * Reads through `profilePictureCache`, so this is a Redis hit rather than a query.
+ *
+ * Public because search is public, and this returns nothing a search hit does not already
+ * expose. The id list is capped in the schema.
+ */
+export const getUserSearchHydrationHandler = async ({
+  input,
+}: {
+  input: GetUserSearchHydrationInput;
+}) => {
+  try {
+    return { profilePictures: await getProfilePicturesForUsers([...new Set(input.ids)]) };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const getNotificationSettingsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   const { id } = ctx.user;
 
@@ -269,12 +298,16 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
-    const [unreadCount, placementCounts] = await Promise.all([
+    const [unreadCount, placementCounts, collectionReviewCounts] = await Promise.all([
       getUserNotificationCount({ userId: id, unread: true }),
       // Degrades to zeroes rather than failing the request, matching
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
+      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
+        total: 0,
+        byCollection: {},
+      })),
     ]);
 
     const reduced = unreadCount.reduce(
@@ -307,6 +340,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       pendingPlacements: placementCounts.sticker + placementCounts.remix,
       pendingStickerPlacements: placementCounts.sticker,
       pendingRemixSubmissions: placementCounts.remix,
+      // The sum only. The per-collection breakdown rides `collection.getAllUser`
+      // instead: `applyMarkReadToCounts` is typed over a Record<string, number>,
+      // so an object here breaks that generic — and if it ever fell out of
+      // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
+      // rather than merely zero a count.
+      pendingCollectionReviews: collectionReviewCounts.total,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -236,6 +236,7 @@ vi.mock('~/server/prom/client', () => ({
   // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
   appStorageOpsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
+  appStorageUserQuotaUntrackedCounter: promMetricStub(),
   appStorageLatencyHistogram: promMetricStub(),
   // sysRedis sentinel observability counters (PR #2331 round-3).
   sysredisSentinelTopologyChangesCounter: promMetricStub(),

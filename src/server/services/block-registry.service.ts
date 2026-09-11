@@ -2248,6 +2248,10 @@ export class BlockRegistry {
         where: { id: existing.id },
         data: { ...updateData, blockInstanceId: instanceId },
       });
+      // Re-installing over a disabled row revives the SAME blockInstanceId, so
+      // a marker left by toggleEnabled(false) would 403 the revived install
+      // until it expires. Same clear toggleEnabled(true) does.
+      await BlockRevocation.clearInstance(instanceId);
       resultInstanceId = instanceId;
     } else {
       const instanceId = newBlockInstanceId();

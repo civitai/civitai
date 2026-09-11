@@ -191,6 +191,24 @@ const featureFlags = createFeatureFlags({
   // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
   // Until that flag exists, evaluation returns null and static evaluation keeps it on.
   feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
+  // Serve post-detail and model-page showcase images a `srcSet` carrying a 2x variant, and
+  // force the optimized format there whatever the user's `imageFormat` preference. Without
+  // it those surfaces request a width in CSS pixels and every DPR>=2 display upscales:
+  // measured 1.82x on post detail at DPR 2, 1.38x on an iPhone (ClickUp 868m36wyd).
+  //
+  // `['public']` and NOT `[]`: the 2x variant is also the OPTIMIZED one, so for a user on
+  // the default `imageFormat: 'metadata'` it is FEWER bytes than the unoptimized JPEG shipped
+  // today (measured 305kB vs 421kB), and the Flipt-down fallback should be the cheaper,
+  // sharper path. So DO NOT create `hi-dpi-previews` in flipt-state to ship this: while it
+  // does not exist, evaluation returns null and static evaluation keeps it on. Creating it as
+  // a boolean with `enabled: false` and no rollout IS the kill switch — Flipt's answer
+  // overrides static evaluation in both directions.
+  //
+  // Deliberately NOT applied to card feeds (`/images`, the model-page gallery). Those request
+  // 450, whose 2x doubles to 900 and then snaps to the 1200 rung — ~3.7x the bytes (60kB ->
+  // 221kB) on an infinitely scrolling surface, for a box that only renders ~318 CSS px. Wants a
+  // ~900 rung in civitai-image-cacher's `CommonSizes` before it can be turned on there.
+  hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
   // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
   // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
   // and an index-settings change, not a deploy.

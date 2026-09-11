@@ -315,7 +315,7 @@ export async function runModelSearch(
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file })
+                    getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
                   ),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrlOrigin}${createModelFileDownloadUrl({

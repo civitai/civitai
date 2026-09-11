@@ -1228,6 +1228,7 @@ export interface Report {
   automated?: ReportAutomated | null;
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
+  announcement?: AnnouncementReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -2355,6 +2356,7 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  buzzBudgetPerDay: number | null;
 }
 
 export interface AppDevForgejoIdentity {
@@ -2681,6 +2683,7 @@ export interface Announcement {
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
   spends?: AnnouncementSpend[];
+  reports?: AnnouncementReport[];
 }
 
 export interface AnnouncementSpend {
@@ -4004,6 +4007,13 @@ export interface ChallengeEntryComparison {
 export interface ChallengeReport {
   challengeId: number;
   challenge?: Challenge;
+  reportId: number;
+  report?: Report;
+}
+
+export interface AnnouncementReport {
+  announcementId: number;
+  announcement?: Announcement;
   reportId: number;
   report?: Report;
 }

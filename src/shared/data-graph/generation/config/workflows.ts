@@ -108,6 +108,7 @@ const TXT2IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.Ernie,
+  ECO.Ideogram,
   ECO.Lens,
   ECO.Krea2,
   ECO.MAI,
@@ -360,6 +361,15 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'video',
     enhancement: true,
     ecosystemIds: [],
+  },
+
+  'vid2vid:preprocess': {
+    label: 'Control Preprocessor',
+    description: 'Run a ControlNet preprocessor on a video (canny, pose, depth, etc.)',
+    category: 'video',
+    showBackButton: true,
+    ecosystemIds: [],
+    isNew: true,
   },
 
   'vid2vid:edit': {

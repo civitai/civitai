@@ -100,6 +100,7 @@ import { trpc } from '~/utils/trpc';
 import { AspectRatioInput } from './inputs/AspectRatioInput';
 import { SliderInput } from './inputs/SliderInput';
 import { ControlNetsInput, type ControlNetsInputProps } from './inputs/ControlNetsInput';
+import { ControlVideoInput, type ControlVideoInputProps } from './inputs/ControlVideoInput';
 import {
   Krea2StyleReferencesInput,
   type Krea2StyleReferencesInputProps,
@@ -2597,8 +2598,7 @@ export function GenerationForm() {
               )}
             /> */}
 
-              {/* ControlNets — disabled for now (the node is when:false in every
-                  ecosystem graph); renders only when a graph declares the node */}
+              {/* Image ControlNets — txt2img only, per ecosystem graph */}
               <Controller
                 graph={graph}
                 name="controlNets"
@@ -2607,6 +2607,20 @@ export function GenerationForm() {
                     value={value as ControlNetsInputProps['value']}
                     onChange={onChange as ControlNetsInputProps['onChange']}
                     meta={meta as ControlNetsInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
+              />
+
+              {/* Video ControlNet — MiniMax H3 comfy txt2vid declares this node */}
+              <Controller
+                graph={graph}
+                name="controlVideo"
+                render={({ value, meta, onChange, error }) => (
+                  <ControlVideoInput
+                    value={value as ControlVideoInputProps['value']}
+                    onChange={onChange as ControlVideoInputProps['onChange']}
+                    meta={meta as ControlVideoInputProps['meta']}
                     error={error?.message}
                   />
                 )}

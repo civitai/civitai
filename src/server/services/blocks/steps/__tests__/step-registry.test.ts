@@ -1111,6 +1111,35 @@ describe('block step registry — billing-mode dispatch', () => {
     }
   });
 
+  // 🔴 TRIPWIRE, NOT COVERAGE — and it exists because a mutant survived here.
+  //
+  // The router's step branch has a POST-PAID arm (`if (plan.postPaidSettle …)
+  // persistCustomComfySettle({ …, consentBudgetKey: reservation.consent?.key ?? null })`)
+  // that NO registered step can reach: `prepaidFixed` is the only implemented billing
+  // mode and it hardcodes `postPaidSettle: false`. Audit round 1 mutated that
+  // `consentBudgetKey` line to `null` and it SURVIVED the whole suite — correctly, in
+  // the sense that no input exists that could have caught it. The customComfy twin of
+  // that line IS behaviourally covered (blocks.router.workflow.test.ts → "CONSENT
+  // BUDGET"); this one cannot be, until the arm is reachable.
+  //
+  // So this asserts the UNREACHABILITY itself. The moment someone registers a
+  // post-paid step this test goes red, and the fix is not to delete it — it is to add
+  // the router-level settle-record coverage the arm has never had (the customComfy
+  // "persists that key on the settle record" test is the template).
+  it('NO registered step is post-paid — the router post-paid arm is unreachable, so it is UNTESTED', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
+        expect(
+          planStepSpend(step, params).postPaidSettle,
+          `step '${id}' is now POST-PAID. The router's post-paid settle arm — including ` +
+            `the consentBudgetKey it puts on the settle record — has no behavioural test. ` +
+            `Add one before shipping this step.`
+        ).toBe(false);
+      }
+    }
+  });
+
   // 🔴 STRUCTURAL PROOF that dispatch is on `billingMode`, not on the step id and
   // not on the wire `kind`. A fixture declaring a DIFFERENT mode is routed to
   // that mode's handler — reaching it needs no change to the router, the schema,

@@ -23,6 +23,9 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
     blockBuzzAttribution: { findMany: vi.fn() },
     appBlockPublishRequest: { groupBy: vi.fn(), findFirst: vi.fn() },
     blockScopeInvocation: { findMany: vi.fn() },
+    // The consent BUDGET lives on the grant row, which `listMyScopeGrants` now reads to
+    // surface the viewer's per-app daily Buzz limit alongside the scopes.
+    appUserScopeGrant: { findMany: vi.fn() },
   },
   mockDbWrite: {
     blockUserSubscription: { update: vi.fn() },
@@ -55,6 +58,9 @@ beforeEach(() => {
   mockDbRead.appBlockPublishRequest.groupBy.mockResolvedValue([]);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([]);
+  // Default: no grant rows ⇒ every app reports `buzzBudgetPerDay: null`, which is the
+  // pre-column behaviour and what the existing expectations below assume.
+  mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([]);
   mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
   mockDbWrite.blockScopeInvocation.create.mockResolvedValue({});
 });
@@ -113,6 +119,152 @@ describe('listMyScopeGrants', () => {
     expect(result[0].appBlockId).toBe('apb_1');
     expect(result[0].surfaces.modelInstallCount).toBe(2);
     expect(result[0].surfaces.subscriptionScopes).toEqual(['viewer_personal']);
+  });
+
+  // ── The CONSENT BUDGET the viewer set for this app. It lives on the grant row, not on
+  // the subscription rows this function aggregates, so it is a separate read — and its
+  // guards must mirror `getConsentBuzzBudget` exactly, or the permissions page would show
+  // a limit the SPEND path does not enforce (or hide one it does).
+  it('surfaces the consent budget from the grant row', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: null },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBe(750);
+    // Scoped to the apps actually in the result — never an unbounded scan.
+    expect(mockDbRead.appUserScopeGrant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 42, appBlockId: { in: ['apb_1'] } } })
+    );
+  });
+
+  it('reports null when the app has no grant row', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
+  });
+
+  it('reports null for a REVOKED grant, matching what the spend path enforces', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: new Date() },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
+  });
+
+  // A non-positive stored value would become a cap of 0 at the spend path, where
+  // `total > 0` denies everything. Both sides treat it as "no budget"; this pins that
+  // they agree rather than each guessing.
+  it('reports null for a non-positive stored budget', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 0, revokedAt: null },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
+  });
+
+  // ── `spendScopeGranted` — whether the viewer's GRANT actually carries
+  // `ai:write:budgeted`. The budget editor on /apps/activity keys off this, and it is
+  // NOT derivable from `scopes` (which is the app's MANIFEST-declared set, i.e. what it
+  // ASKED for). Offering a limit control off the manifest would render a field the
+  // server silently drops, because `grantScopes` ignores a budget for an app that does
+  // not hold the spend scope.
+  it('spendScopeGranted is TRUE when the GRANT row carries ai:write:budgeted', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_1',
+        buzzBudgetPerDay: 750,
+        revokedAt: null,
+        grantedScopes: ['user:read:self', 'ai:write:budgeted'],
+      },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].spendScopeGranted).toBe(true);
+  });
+
+  // 🔴 THE DISCRIMINATING CASE: the app DECLARES the spend scope in its manifest, and
+  // the user has NOT granted it. Reading the manifest would answer `true` here.
+  it('spendScopeGranted is FALSE when only the MANIFEST declares the spend scope', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: ['ai:write:budgeted'] },
+          approvedScopes: ['ai:write:budgeted'],
+        }),
+      }),
+    ]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_1',
+        buzzBudgetPerDay: null,
+        revokedAt: null,
+        grantedScopes: ['user:read:self'], // the user granted something else
+      },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual(['ai:write:budgeted']); // manifest says yes…
+    expect(result[0].spendScopeGranted).toBe(false); // …the grant says no
+  });
+
+  it('spendScopeGranted is FALSE for a REVOKED grant (mirrors getGrantedScopes)', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_1',
+        buzzBudgetPerDay: 750,
+        revokedAt: new Date(),
+        grantedScopes: ['ai:write:budgeted'],
+      },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].spendScopeGranted).toBe(false);
+  });
+
+  it('spendScopeGranted is FALSE when the app has no grant row at all', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].spendScopeGranted).toBe(false);
+  });
+
+  // ── PRE-MIGRATION. `buzz_budget_per_day` may not exist yet (migrations are applied by
+  // hand, per environment). The permissions page must still render: with no column, no
+  // budget can have been set, so "none" is the TRUE state and it is what the spend path
+  // enforces in that same database.
+  it('renders with NO budgets when the column does not exist yet (P2022)', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockRejectedValue(
+      Object.assign(new Error('column does not exist'), { code: 'P2022' })
+    );
+    const result = await listMyScopeGrants(42);
+    expect(result).toHaveLength(1);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
+    expect(result[0].spendScopeGranted).toBe(false);
+  });
+
+  // 🔴 And ONLY that code. A bare catch would render "no limits set" whenever the DB is
+  // unreachable — a lie about the user's own settings, on the page whose whole job is to
+  // report them.
+  it('RETHROWS any other DB error rather than reporting "no limits"', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
+    mockDbRead.appUserScopeGrant.findMany.mockRejectedValue(
+      Object.assign(new Error('connection refused'), { code: 'P1001' })
+    );
+    await expect(listMyScopeGrants(42)).rejects.toThrow(/connection refused/);
   });
 
   it('reads scopes from the joined manifest.scopes', async () => {

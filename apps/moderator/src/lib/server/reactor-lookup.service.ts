@@ -100,6 +100,7 @@ async function getReactors(
   days: number,
   { limit, minCount }: { limit: number; minCount: number }
 ): Promise<InflationReport> {
+  const floor = Math.max(1, Math.trunc(minCount));
   const rows = await getClickhouse().$query<{
     userId: string;
     count: string;
@@ -107,10 +108,11 @@ async function getReactors(
     total: string;
     owners: string;
     matched: string;
+    reactors: string;
   }>(`
-    SELECT userId, count, entities, total, owners, matched
+    SELECT userId, count, entities, total, owners, matched, reactors
     FROM (
-      SELECT *, count() OVER () AS matched
+      SELECT *, sum(count >= ${floor}) OVER () AS matched, count() OVER () AS reactors
       FROM (
         SELECT userId,
                countIf(ownerId = ${ownerId}) AS count,
@@ -122,35 +124,45 @@ async function getReactors(
           AND ${CREATES_ONLY}
           AND userId != 0
         GROUP BY userId
-        HAVING count >= ${Math.max(1, Math.trunc(minCount))}
+        HAVING count >= 1
       )
     )
-    ORDER BY count / total DESC, count DESC
+    ORDER BY count >= ${floor} DESC, count / total DESC, count DESC
     LIMIT ${limit}
   `);
+
+  // 🔴 The floor is applied HERE rather than in the query, so that a creator whose every reactor sits
+  // under it still returns a row to read `reactors` off — the case where saying how many the floor
+  // removed matters most, and the one a `WHERE` would return zero rows for. The ordering puts the
+  // surviving rows first, so this only ever trims the tail of the page.
+  const matched = Number(rows[0]?.matched ?? 0);
+  const reactors = Number(rows[0]?.reactors ?? 0);
 
   return {
     // Everything over the floor, so the page can say which slice of it is on screen. `.length` would
     // report the cap as the answer.
-    total: Number(rows[0]?.matched ?? 0),
+    total: matched,
+    belowFloor: reactors - matched,
     capped: false,
-    actors: rows.map((r) => {
-      const total = Number(r.total);
-      const count = Number(r.count);
-      return {
-        userId: Number(r.userId),
-        username: null,
-        count,
-        entities: Number(r.entities),
-        totalGiven: total || null,
-        owners: Number(r.owners) || null,
-        concentration: total > 0 ? count / total : null,
-        status: 'gone' as const,
-        strikes: 0,
-        createdAt: null,
-        instantVerify: null,
-      };
-    }),
+    actors: rows
+      .filter((r) => Number(r.count) >= floor)
+      .map((r) => {
+        const total = Number(r.total);
+        const count = Number(r.count);
+        return {
+          userId: Number(r.userId),
+          username: null,
+          count,
+          entities: Number(r.entities),
+          totalGiven: total || null,
+          owners: Number(r.owners) || null,
+          concentration: total > 0 ? count / total : null,
+          status: 'gone' as const,
+          strikes: 0,
+          createdAt: null,
+          instantVerify: null,
+        };
+      }),
   };
 }
 
@@ -166,7 +178,10 @@ async function getStickerPlacers(
   { limit, minCount }: { limit: number; minCount: number }
 ): Promise<InflationReport> {
   const since = new Date(Date.now() - days * 86_400_000);
-  const rows = await dbRead
+  const floor = Math.max(1, Math.trunc(minCount));
+  // Every placer, then the floor in JS — the whole `Placement` table is ~5.5k rows, and fetching the
+  // ones under the floor is what lets the page say how many it is hiding.
+  const all = await dbRead
     .selectFrom('Placement')
     .select((eb) => [
       'placerId',
@@ -177,11 +192,12 @@ async function getStickerPlacers(
     .where('surface', '=', 'sticker')
     .where('createdAt', '>=', since)
     .groupBy('placerId')
-    .having((eb) => eb.fn.countAll(), '>=', Math.max(1, Math.trunc(minCount)))
     .orderBy('count', 'desc')
-    .limit(limit)
     .execute();
-  if (!rows.length) return { actors: [], total: 0, capped: false };
+  const overFloor = all.filter((r) => Number(r.count) >= floor);
+  const rows = overFloor.slice(0, limit);
+  const belowFloor = all.length - overFloor.length;
+  if (!rows.length) return { actors: [], total: 0, belowFloor, capped: false };
 
   const totals = await dbRead
     .selectFrom('Placement')
@@ -223,7 +239,7 @@ async function getStickerPlacers(
   // second query. Affordable only because the whole `Placement` table is ~5.5k rows site-wide; if
   // stickers grow, this needs the reactions tab's single-pass shape instead.
   actors.sort((a, b) => (b.concentration ?? 0) - (a.concentration ?? 0) || b.count - a.count);
-  return { actors, total: actors.length, capped: false };
+  return { actors, total: overFloor.length, belowFloor, capped: false };
 }
 
 /**
@@ -292,6 +308,8 @@ async function getCollectionAdders(
   return {
     capped: images > COLLECTION_IMAGE_CAP,
     total: rows.length,
+    // This pass applies no floor, so there is nothing under one to report.
+    belowFloor: 0,
     actors: rows.map((r) => ({
       userId: r.addedById!,
       username: null,
@@ -554,6 +572,14 @@ export type InflationReport = {
   actors: Actor[];
   /** Everyone over the floor, of whom `actors` is the top slice. */
   total: number;
+  /**
+   * Accounts with at least one event on this creator that `minCount` excluded.
+   *
+   * 🔴 Reported because the default floor of 5 is not a detail: measured across the 1,940 creators
+   * receiving 500+ reactions in a week, it keeps a MEDIAN of 17% of their reactors. An empty page is
+   * far more often the floor than an absence of activity, and nothing on screen used to say so.
+   */
+  belowFloor: number;
   /** The creator has more images than the collections pass walks, so the counts are a floor. */
   capped: boolean;
 };
@@ -567,7 +593,7 @@ export async function getInflationActors(
     minCount,
   }: { category: Category; days: number; limit?: number; minCount: number }
 ): Promise<InflationReport> {
-  const empty = { actors: [], total: 0, capped: false };
+  const empty = { actors: [], total: 0, belowFloor: 0, capped: false };
   if (!isInt4Id(ownerId)) return empty;
 
   const report =

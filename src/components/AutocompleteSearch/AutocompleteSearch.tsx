@@ -27,6 +27,7 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { withUserHydration } from '~/components/Search/userHydration';
 import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
@@ -86,7 +87,8 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // `MeiliSearchCommunicationError`. On fallback it flips the autocomplete
 // availability flag so the dropdown shows its "Error" item (the swallowed error
 // never reaches `useInstantSearch().status`, so we can't key off that).
-const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient(
+const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
+  createResilientSearchClient(
   {
     ...meilisearch,
     search(requests) {
@@ -116,6 +118,7 @@ const searchClient: InstantSearchProps['searchClient'] = createResilientSearchCl
     onError: () => autocompleteAvailability.setUnavailable(true),
     onSuccess: () => autocompleteAvailability.setUnavailable(false),
   }
+)
 );
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;

@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   Loader,
+  NumberInput,
   Select,
   Stack,
   Tabs,
@@ -25,7 +26,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
@@ -53,6 +54,12 @@ import {
 import type { ActivityTab } from '~/components/Apps/appsActivityTabs';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import {
+  BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+} from '~/shared/constants/block-scope.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -331,7 +338,10 @@ function EmptyState({ label }: { label: string }) {
     <Center py="md">
       <Stack align="center" gap="xs">
         <IconPlugConnected size={28} opacity={0.5} />
-        <Text size="sm" c="dimmed">
+        {/* `ta`/`maw` so a two-sentence label wraps as a centred block rather than one
+            page-wide line — the labels here now name what the tab covers, not just what
+            is absent. Mirrors `HiddenBlocksPanel`'s own empty state. */}
+        <Text size="sm" c="dimmed" ta="center" maw={460}>
           {label}
         </Text>
         {canSeeStore && (
@@ -369,6 +379,162 @@ function buildSurfaceLine(surfaces: {
   return parts.join(' · ');
 }
 
+/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
+const SPEND_SCOPE = 'ai:write:budgeted';
+
+/**
+ * The per-app daily Buzz limit, rendered and EDITABLE.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL. Before it, the budget was write-once and invisible: the
+ * consent modal is the only writer and it only sends the field while
+ * `ai:write:budgeted` is still MISSING, which is true exactly once per app, forever.
+ * So a user could set a limit and then had no way to raise it, lower it, clear it, or
+ * even SEE it — and a low value (the floor is 1) meant every generation from that app
+ * was refused with no recoverable path through the product. The server raise/clear
+ * path already existed (`blocks.grantScopes`); nothing was wired to it.
+ *
+ * 🔴 THE `scopes` PAYLOAD IS DELIBERATELY `[SPEND_SCOPE]` AND MUST STAY THAT WAY.
+ * `grantScopes` is ADDITIVE over the scope set, so sending the app's manifest scopes
+ * here would GRANT every scope the app declares — a silent widening performed by a
+ * control that says "limit". Re-sending the one scope the user has already granted
+ * (which `spendScopeGranted` is exactly the proof of) unions with itself: the stored
+ * set cannot change. It is also the scope the server requires to be present for a
+ * budget to mean anything, so the write can never be the ignored-budget no-op.
+ *
+ * CLEARING sends an explicit `null`, which is the service's "clear it" state — a
+ * DIFFERENT thing from omitting the key (leave it alone), and the only caller of that
+ * branch.
+ *
+ * ⚠️ KNOWN LIMIT, STATED RATHER THAN PAPERED OVER: `grantScopes` requires the app to be
+ * `approved` AND the sent scope to be inside `manifest ∩ approvedScopes`. If an app is
+ * later un-approved, or a moderator narrows its approved set so it no longer includes
+ * `ai:write:budgeted`, this control surfaces the server's error instead of editing —
+ * the user's stored limit is then not editable here. It is also not ENFORCING anything
+ * in that state (no token can carry the spend scope, so no spend reaches the budget),
+ * so nothing is stuck at a ceiling; the limit is simply frozen until the app is
+ * approved again. Fixing it properly means a budget-only server path that does not go
+ * through the scope ceiling.
+ */
+function AppBudgetControl({
+  appBlockId,
+  appName,
+  budget,
+}: {
+  appBlockId: string;
+  appName: string;
+  budget: number | null;
+}) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState<number | string>(
+    budget ?? BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY
+  );
+  const mutation = trpc.blocks.grantScopes.useMutation({
+    onSuccess: async () => {
+      await utils.blocks.listMyScopeGrants.invalidate();
+      setEditing(false);
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not change the limit', error: new Error(e.message) }),
+  });
+
+  // Mantine's NumberInput hands back a string mid-edit (and '' when cleared), so
+  // narrow to a real integer in range before it can reach the mutation. The server
+  // re-validates the same bounds regardless — this only keeps the request well-formed
+  // and the Save button honest.
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value), 10);
+  const valid =
+    Number.isInteger(parsed) &&
+    parsed >= BLOCK_CONSENT_BUDGET_MIN_PER_DAY &&
+    parsed <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
+
+  const save = (next: number | null) =>
+    mutation.mutate({ appBlockId, scopes: [SPEND_SCOPE], buzzBudgetPerDay: next });
+
+  if (!editing) {
+    return (
+      <Group justify="space-between" gap="xs" wrap="nowrap" data-testid="app-budget-row">
+        <Text size="xs" c="dimmed" data-testid="app-budget-value">
+          {budget === null
+            ? 'Daily Buzz limit: none — only your account-wide daily cap applies'
+            : `Daily Buzz limit: ${budget.toLocaleString()} Buzz/day`}
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          data-testid="app-budget-edit"
+          onClick={() => {
+            setValue(budget ?? BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
+            setEditing(true);
+          }}
+        >
+          {budget === null ? 'Set limit' : 'Change'}
+        </Button>
+      </Group>
+    );
+  }
+
+  return (
+    <Stack gap={6} data-testid="app-budget-editor">
+      <NumberInput
+        size="xs"
+        label={`Daily Buzz limit for ${appName}`}
+        description={`Most this app can spend of your Buzz per day. Max ${BLOCK_CONSENT_BUDGET_MAX_PER_DAY.toLocaleString()}.`}
+        min={BLOCK_CONSENT_BUDGET_MIN_PER_DAY}
+        max={BLOCK_CONSENT_BUDGET_MAX_PER_DAY}
+        step={100}
+        allowDecimal={false}
+        allowNegative={false}
+        value={value}
+        onChange={setValue}
+        error={valid ? null : 'Enter a whole number within the allowed range'}
+        data-testid="app-budget-input"
+      />
+      {/* A very low limit is a real setting, not a mistake — but it is also the one
+          that makes an app look broken, so say what it does at the point it is set.
+          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY. */}
+      {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
+        <Text size="xs" c="orange" data-testid="app-budget-low-warning">
+          {parsed.toLocaleString()} Buzz/day is lower than most generations cost — this app will
+          refuse to generate until you raise it. You can change it here at any time.
+        </Text>
+      ) : null}
+      <Group gap="xs" justify="flex-end">
+        <Button
+          size="compact-xs"
+          variant="default"
+          disabled={mutation.isPending}
+          onClick={() => setEditing(false)}
+        >
+          Cancel
+        </Button>
+        {budget !== null ? (
+          <Button
+            size="compact-xs"
+            variant="light"
+            color="gray"
+            loading={mutation.isPending}
+            data-testid="app-budget-clear"
+            onClick={() => save(null)}
+          >
+            Remove limit
+          </Button>
+        ) : null}
+        <Button
+          size="compact-xs"
+          color="yellow"
+          disabled={!valid}
+          loading={mutation.isPending}
+          data-testid="app-budget-save"
+          onClick={() => save(parsed)}
+        >
+          Save
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
 function ScopeGrantsPanel() {
   const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
 
@@ -380,7 +546,14 @@ function ScopeGrantsPanel() {
     );
   }
   if (!grants || grants.length === 0) {
-    return <EmptyState label="No apps installed or subscribed yet." />;
+    /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
+       to make, and it was false. `listMyScopeGrants` reads `block_user_subscriptions`
+       ONLY, so an empty result means "no install or subscription of your own", which is
+       silent about full-page apps and about blocks other people installed. Naming the
+       tab's actual population and pointing at the feed is what keeps the sentence true. */
+    return (
+      <EmptyState label="No apps installed or subscribed yet. This tab covers your own installs — Recent activity is the full record of what apps have done on your account." />
+    );
   }
   return (
     <AppsCardGrid testId="apps-installed-grants-grid">
@@ -404,6 +577,20 @@ function ScopeGrantsPanel() {
             </Group>
             <Divider />
             <BlockScopeList scopes={grant.scopes} />
+            {/* Only for an app the viewer has actually GRANTED the spend scope to —
+                `spendScopeGranted` is the grant row, not the manifest. A budget on an
+                app that cannot spend bounds nothing, and the server would ignore the
+                write. */}
+            {grant.spendScopeGranted ? (
+              <>
+                <Divider />
+                <AppBudgetControl
+                  appBlockId={grant.appBlockId}
+                  appName={grant.name}
+                  budget={grant.buzzBudgetPerDay}
+                />
+              </>
+            ) : null}
           </Stack>
         </Card>
       ))}
@@ -560,7 +747,7 @@ export default function AppActivityPage() {
       <Meta title="App activity — Civitai" deIndex />
       <AppsPageLayout
         title="Your app activity"
-        subtitle="What Civitai Apps have done on your behalf, what they can access, and where they show up."
+        subtitle="What Civitai Apps have done on your account, what the apps you've installed declare they can access, and where they show up."
       >
         {/* 🔴 CONTROLLED, NOT `defaultValue` — that is what puts the selection in the
             URL. `replace` + `shallow`: no re-run of `getServerSideProps`, and no history
@@ -631,16 +818,33 @@ export default function AppActivityPage() {
 
           {/* 🔴 GATED, AND ITS OWN DATA SOURCE IS WHY. `ScopeGrantsPanel`'s only read is
               `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware returns
-              `[]` for a viewer without the `appBlocks` slot flag — so ungated this showed
-              the "No apps installed or subscribed yet." empty state to every such viewer,
-              always. Gating it displays nothing that was ever displayed. */}
+              `[]` for a viewer without the slot flag — so ungated this showed the installs
+              empty state to every such viewer, always. Gating it displays nothing that was
+              ever displayed.
+
+              🔴 THE COPY BELOW USED TO INSTRUCT AN ACTION THAT DOES NOT DO WHAT THE SENTENCE
+              SAID: "to revoke access, remove the install or subscription on the Installs
+              tab". Neither uninstall path touches the consent row.
+              `BlockRegistry.deleteSubscription` deletes the `block_user_subscriptions` row
+              and nothing else; `uninstallFromModel` additionally revokes the block INSTANCE
+              token, which kills tokens already minted but leaves the grant standing. The
+              grant lives in `app_user_scope_grants`, and the only writes to it anywhere in
+              the repo are in `~/server/services/blocks/scope-grant.service.ts`, both of
+              which set `revokedAt: null` — nothing writes a non-null `revoked_at` and
+              nothing deletes a row. So `getGrantedScopes` keeps returning the same scopes
+              afterwards and the next mint carries them with no fresh prompt. Withdrawing
+              consent is genuinely not implemented; the copy says so rather than pointing at
+              a control that does not do it. Do not soften this back into an instruction
+              until a real revoke path exists. */}
           {isActivityTabVisible('permissions', visibility) && (
             <Tabs.Panel value="permissions" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  What each app you've installed can request, and where you have it. This is a
-                  reflection of the current state — to revoke access, remove the install or
-                  subscription on the Installs tab.
+                  The apps you've installed or subscribed to, the permissions each one declares it
+                  may use, and where you have it. Removing an install on the Installs tab takes the
+                  app off that surface, but it does not withdraw a permission you have already
+                  granted — withdrawing one is not possible yet. Recent activity is the full record
+                  of what apps have actually done on your account.
                 </Text>
                 <ScopeGrantsPanel />
               </Stack>

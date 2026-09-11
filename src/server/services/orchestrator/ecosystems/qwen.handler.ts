@@ -3,20 +3,22 @@
  *
  * Handles Qwen, Qwen 2 and Qwen 3 workflows using imageGen step type.
  * Discriminates between ecosystems:
- * - Qwen: sdcpp engine, model version-based routing, LoRA support
+ * - Qwen: comfy engine, model version-based routing, LoRA support
  * - Qwen 2: fal engine, aspect ratio mapped to imageSize enum
  * - Qwen 3: qwen engine (Alibaba DashScope), explicit width/height
  */
 
 import type {
-  Qwen20bCreateImageGenInput,
-  Qwen20bEditImageGenInput,
   Qwen2CreateFalImageGenInput,
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
   ImageGenStepTemplate,
 } from '@civitai/client';
+import type {
+  ComfyQwen20bCreateImageGenInput,
+  ComfyQwen20bEditImageGenInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
@@ -68,7 +70,7 @@ const QWEN3_EDIT_MODEL: QwenApiEditImageGenInput['model'] = '3.0-pro';
 
 /**
  * Creates imageGen input for Qwen family ecosystems.
- * Routes to Qwen (sdcpp), Qwen 2 (fal) or Qwen 3 (qwen) based on ecosystem.
+ * Routes to Qwen (comfy), Qwen 2 (fal) or Qwen 3 (qwen) based on ecosystem.
  */
 export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplate]>((data, ctx) => {
   const isTxt2Img = data.workflow.startsWith('txt');
@@ -149,7 +151,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
     ];
   }
 
-  // Qwen — sdcpp engine
+  // Qwen — comfy engine
   let process: 'txt2img' | 'img2img' = 'txt2img';
   let version: Txt2ImgVersion | Img2ImgVersion = '2512';
   if (data.model) {
@@ -168,7 +170,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
   }
 
   const baseInput = {
-    engine: 'sdcpp',
+    engine: 'comfy',
     ecosystem: 'qwen',
     model: '20b' as const,
     version,
@@ -190,7 +192,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
         input: removeEmpty({
           ...baseInput,
           operation: 'createImage',
-        }) as Qwen20bCreateImageGenInput,
+        }) as ComfyQwen20bCreateImageGenInput,
       },
     ];
   }
@@ -201,7 +203,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
         ...baseInput,
         operation: 'editImage',
         images: data.images?.map((x) => x.url) ?? [],
-      }) as Qwen20bEditImageGenInput,
+      }) as ComfyQwen20bEditImageGenInput,
     },
   ];
 });
