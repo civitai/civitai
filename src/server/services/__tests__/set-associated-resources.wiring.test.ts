@@ -132,7 +132,7 @@ function givenTargetLists(rows: Array<{ fromModelId: number; toModelId: number |
 
 const save = (
   associations: Array<{ resourceId: number; resourceType: 'model' | 'article'; id?: number }>,
-  { reciprocal, user = owner }: { reciprocal?: boolean; user?: SessionUser } = {}
+  { reciprocal, user = owner }: { reciprocal?: number[]; user?: SessionUser } = {}
 ) => setAssociatedResources({ fromId: SOURCE, type: 'Suggested', associations, reciprocal }, user);
 
 const createdRows = () =>

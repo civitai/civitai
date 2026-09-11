@@ -113,6 +113,9 @@ export function AssociateModels({
   const handleRemove = (id: number) => {
     const models = [...associatedResources.filter(({ item }) => item.id !== id)];
     setAssociatedResources(models);
+    // Drop the tick too: re-adding the row in the same edit would otherwise arrive
+    // pre-ticked and write a back-link the user never asked for in this composition.
+    setLinkBack((current) => current.filter((modelId) => modelId !== id));
     setChanged(!isEqual(data, models));
   };
 
@@ -241,7 +244,7 @@ export function AssociateModels({
                                 : association.item.title}
                             </Text>
                             <Group gap={4}>
-                              <Badge size="md" radius="xl">
+                              <Badge size="md" radius="xl" variant="light">
                                 {'type' in association.item
                                   ? getDisplayName(association.item.type)
                                   : 'Article'}

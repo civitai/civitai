@@ -22,7 +22,7 @@ export default function AssociateModelsModal({
         <Stack gap={2}>
           <Title order={3}>{`Manage ${getDisplayName(type)} Resources`}</Title>
           <Text size="sm" c="dimmed">
-            Drag to reorder — visitors see them in this order
+            Drag to reorder
           </Text>
         </Stack>
       }
