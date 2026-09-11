@@ -340,3 +340,57 @@ describe('buildReports', () => {
     expect(() => abuseReportInput.parse(reports[0])).not.toThrow();
   });
 });
+
+describe('buildFinding — the cluster key', () => {
+  it('carries the key it was given', () => {
+    const finding = buildFinding(member(), score(), STARTED, 'domain:ring.test');
+    expect(finding.groupKey).toBe('domain:ring.test');
+  });
+
+  it('OMITS the key entirely when there is no cluster', () => {
+    // Absent, not null — the same choice `action` makes above. An ungrouped finding must not be
+    // representable as "in a cluster called nothing", and the three detectors that never group are
+    // meant to look exactly like this.
+    const finding = buildFinding(member(), score(), STARTED);
+    expect(finding).not.toHaveProperty('groupKey');
+  });
+
+  it('omits it for an explicit null too', () => {
+    expect(buildFinding(member(), score(), STARTED, null)).not.toHaveProperty('groupKey');
+  });
+
+  it('🔴 defaults to ungrouped, so an existing caller is unchanged by the new parameter', () => {
+    // Two other detectors post to this board through the same contract. A required fourth argument —
+    // or a default of anything but "no cluster" — would silently group their findings.
+    const before = buildFinding(member(), score(), STARTED);
+    const explicit = buildFinding(member(), score(), STARTED, null);
+    expect(before).toEqual(explicit);
+  });
+
+  it('produces a payload the real wire contract accepts, key and all', () => {
+    const report = buildReports({
+      findings: [buildFinding(member(), score(), STARTED, 'domain:ring.test')],
+      startedAt: STARTED,
+      finishedAt: FINISHED,
+      counters: {},
+      summary: 'Scanned things.',
+    })[0];
+    // 🔴 READ OFF THE PARSED PAYLOAD, NOT THE BUILT ONE. Asserting the key on the object this file
+    // constructed proves only that this file constructed it; the contract is what the receiving app
+    // actually gets, and a zod object STRIPS a key it does not declare. Deleting `groupKey` from
+    // `packages/civitai-moderation/src/schema.ts` left the whole detector suite green while the
+    // board received nothing — the key was dropped in transit, silently.
+    const parsed = abuseReportInput.parse(report);
+    expect(parsed.findings[0].groupKey).toBe('domain:ring.test');
+  });
+
+  it('changes nothing else about the finding', () => {
+    // A key must not perturb the fields a moderator reads, and above all not `actioned`.
+    const grouped = buildFinding(member(), score(), STARTED, 'domain:ring.test');
+    const lone = buildFinding(member(), score(), STARTED);
+    expect(grouped.actioned).toBe(false);
+    expect(grouped.reason).toBe(lone.reason);
+    expect(grouped.confidence).toBe(lone.confidence);
+    expect(grouped.userId).toBe(lone.userId);
+  });
+});

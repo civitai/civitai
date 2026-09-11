@@ -95,11 +95,18 @@ export function renderPostCounts(posts: BotAccountCohortMember['posts']): string
  *
  * `action` is OMITTED rather than set to null — both are accepted by the contract, and omitting it
  * makes the pair unrepresentable in the wrong combination rather than merely correct today.
+ *
+ * 🔴 `groupKey` IS SUPPLIED, NOT DERIVED HERE. It comes from the clustering heuristic, which owns the
+ * one predicate deciding whether a cluster is large enough to be named — the same predicate that
+ * decides whether the domain appears in the reason text. Re-deriving it here would be a second copy
+ * of that rule, and the two would disagree the first time either boundary moved. Defaulting to
+ * `null` keeps every existing caller (and the two other detectors on this board) unchanged.
  */
 export function buildFinding(
   member: BotAccountCohortMember,
   score: BotAccountScore,
-  observedAt: Date
+  observedAt: Date,
+  groupKey: string | null = null
 ): AbuseFinding {
   // Floored at zero: an account timestamped after the scan instant is clock skew between the app and
   // the database, not a negative age, and a negative figure in the reason reads as corrupt data.
@@ -124,6 +131,10 @@ export function buildFinding(
     confidence: score.confidence,
     reason,
     actioned: false,
+    // Spread rather than `groupKey: groupKey ?? undefined`, for the same reason `action` is omitted
+    // above: an ungrouped finding carries no key at all, so "no cluster" is unrepresentable as
+    // anything other than an absent field.
+    ...(groupKey === null ? {} : { groupKey }),
   };
 }
 

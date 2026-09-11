@@ -1,6 +1,6 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
 import { getModeratorDb } from './moderator-db';
-import type { AbuseDetectionTables } from './abuse-detection-tables';
+import type { AbuseDetectionTables, AbuseVerdict } from './abuse-detection-tables';
 
 /** The shared client, typed to include the two tables this module owns. */
 const abuseDb = () => getModeratorDb().withTables<AbuseDetectionTables>();
@@ -50,9 +50,18 @@ export type AbuseFinding = {
   userId: number;
   confidence: number;
   reason: string;
+  /** 🔴 The PRODUCER's self-report. Not a verdict — see `verdict` below and the schema's comment. */
   actioned: boolean;
   action: string | null;
   createdAt: Date;
+  /** The MODERATOR's ruling, or `null` for unruled. `null` is also what a deployment that has not
+   *  applied the DDL yet reports for every row, which is the correct read-only degradation: nothing
+   *  has been ruled there, because nothing CAN be. */
+  verdict: AbuseVerdict | null;
+  verdictBy: string | null;
+  verdictAt: Date | null;
+  /** The producer's cluster key. Findings sharing one WITHIN A RUN are one decision. */
+  groupKey: string | null;
 };
 
 /**
@@ -71,6 +80,27 @@ export type AbuseFinding = {
 const PG_NO_MATCHING_CONFLICT_TARGET = '42P10';
 
 /**
+ * Postgres `undefined_column`.
+ *
+ * 🔴 THE SIBLING OF `42P01`, AND IT EXISTS BECAUSE THE DDL IS APPLIED BY HAND. `42P01` is "the
+ * tables were never created"; this is the state that only became reachable once columns were ADDED
+ * to a table that already exists — the board is live, the runs and findings are all there, and the
+ * four verdict columns are not, because nobody has re-run `schema.sql` since the deploy. Read as an
+ * outage it sends an operator hunting a database that is working perfectly.
+ *
+ * The two sides answer it differently, on purpose. A READ degrades: `getAbuseVerdictSummary` returns
+ * `null`, the page renders every finding read-only, and no moderator is shown an error about a
+ * feature they were not using a minute ago. A WRITE cannot degrade — silently accepting a ruling
+ * that was never stored is the one outcome worse than refusing it — so `recordAbuseVerdict`
+ * translates it into a message naming the file to run, exactly as the 42P10 branch above does.
+ */
+const PG_UNDEFINED_COLUMN = '42703';
+
+/** True for the pg error raised when a column in the statement does not exist on the table. */
+export const isUndefinedColumnError = (e: unknown): boolean =>
+  (e as { code?: unknown } | null)?.code === PG_UNDEFINED_COLUMN;
+
+/**
  * Store one run and its findings.
  *
  * One transaction: a run header whose findings failed to land would render as "0 findings", which is
@@ -82,6 +112,23 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
   try {
     return await writeRun(db, input);
   } catch (e) {
+    // 🔴 THE INGEST PATH DEGRADES RATHER THAN STOPPING. `group_key` is a column this change ADDED to
+    // a table that is already live and already receiving reports from three detectors — so between
+    // this deploying and someone running the DDL, an insert naming it raises 42703 and would take
+    // down reporting for every producer, including the two that do not use the feature at all. A
+    // new column must not be able to cost the surface its existing job.
+    //
+    // Retried WITHOUT the column, exactly once. What is lost is the grouping — every finding lands
+    // ungrouped and is ruled individually, which is precisely the behaviour before this change — and
+    // the loss is announced rather than silent, because "my ring did not collapse" is otherwise an
+    // unexplainable UI bug. A second 42703 from the retry is a different fault and propagates.
+    if (isUndefinedColumnError(e)) {
+      console.warn(
+        '[abuse-detection] abuse_detection_finding has no group_key column — storing this run ' +
+          'UNGROUPED. Apply apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL.'
+      );
+      return await writeRun(db, input, { withGroupKey: false });
+    }
     if ((e as { code?: unknown }).code === PG_NO_MATCHING_CONFLICT_TARGET)
       throw new Error(
         'abuse_detection_run is missing its (detector, started_at) UNIQUE index — apply ' +
@@ -94,8 +141,10 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
 
 function writeRun(
   db: ReturnType<typeof abuseDb>,
-  input: AbuseReportInput
+  input: AbuseReportInput,
+  opts: { withGroupKey?: boolean } = {}
 ): Promise<{ runId: number }> {
+  const withGroupKey = opts.withGroupKey ?? true;
   return db.transaction().execute(async (trx) => {
     const run = await trx
       .insertInto('abuse_detection_run')
@@ -145,6 +194,16 @@ function writeRun(
             // shape is unreachable only because the CONTRACT now refuses it at the edge, which is
             // where a missing value has to be caught: this line has nothing to substitute for it.
             action: f.actioned ? f.action ?? null : null,
+            // 🔴 NORMALISED TO NULL, never left undefined. The contract accepts an ABSENT key from
+            // the three producers that do not send one, and `undefined` in a Kysely `values()` row
+            // omits the column from the INSERT — which is fine on its own, but a REPLAYED run mixes
+            // rows that have the key with rows that do not, and an insert whose rows disagree about
+            // their columns is a runtime error rather than a missing value. NULL is also exactly
+            // what "this finding is in no cluster" means in the table.
+            //
+            // Dropped entirely — not set to NULL — on the pre-DDL retry, because naming a column
+            // that does not exist is the error being retried past.
+            ...(withGroupKey ? { group_key: f.groupKey ?? null } : {}),
           }))
         )
         .execute();
@@ -305,6 +364,17 @@ export async function getAbuseDetectors(): Promise<string[]> {
   return rows.map((r) => r.detector);
 }
 
+/**
+ * 🔴 THE FOUR VERDICT FIELDS ARE OPTIONAL ON THE INPUT, AND THAT IS THE READ-SIDE DEGRADATION.
+ *
+ * Both find queries are `selectAll()`, so against a database whose DDL has not been applied the
+ * driver simply hands back rows without these keys — no error, because nothing NAMED a column that
+ * is missing. `?? null` is what turns that into "unruled", which is the truthful reading: on a
+ * deployment with no verdict columns, nothing has been ruled and nothing can be.
+ *
+ * Widening `selectAll()` into an explicit column list would convert that silent, correct degradation
+ * into a 42703 on the board's main read. Do not.
+ */
 function toFinding(r: {
   id: number;
   run_id: number;
@@ -314,6 +384,10 @@ function toFinding(r: {
   actioned: boolean;
   action: string | null;
   created_at: Date;
+  verdict?: AbuseVerdict | null;
+  verdict_by?: string | null;
+  verdict_at?: Date | null;
+  group_key?: string | null;
 }): AbuseFinding {
   return {
     id: r.id,
@@ -324,7 +398,124 @@ function toFinding(r: {
     actioned: r.actioned,
     action: r.action,
     createdAt: r.created_at,
+    verdict: r.verdict ?? null,
+    verdictBy: r.verdict_by ?? null,
+    verdictAt: r.verdict_at ?? null,
+    groupKey: r.group_key ?? null,
   };
+}
+
+/**
+ * How much of a run has been ruled on, or `null` when the verdict columns are not applied here.
+ *
+ * 🔴 A SEPARATE QUERY RATHER THAN A COLUMN ON `getAbuseRun`, and the separation is the degradation.
+ * This is the one read that NAMES `verdict`, so it is the one read that can raise 42703 — folding it
+ * into the run header's counts would put that failure on the path the whole detail page depends on,
+ * and the page would 503 on a database that is serving every row it holds.
+ *
+ * 🔴 COUNTED OVER THE WHOLE RUN, not over the page. `getAbuseFindings` caps at
+ * MAX_FINDINGS_PER_REPORT and reports `truncated`; a "12 still to review" derived from the rendered
+ * rows would be a cap presented as a total — the exact lie the per-user read was fixed for.
+ *
+ * `null` is not zero and the caller must not render it as one: zero means "everything here has been
+ * ruled on", `null` means "this deployment cannot record a ruling at all".
+ */
+export async function getAbuseVerdictSummary(
+  runId: number
+): Promise<{ ruled: number; unruled: number } | null> {
+  try {
+    const row = await abuseDb()
+      .selectFrom('abuse_detection_finding')
+      .select(({ fn, eb }) => [
+        // COUNT of a filtered expression: `count(verdict)` alone would skip NULLs and give the ruled
+        // half, but there is no matching spelling for the unruled half, and two differently-shaped
+        // counters beside each other is how one of them silently stops meaning what it says.
+        fn
+          .count<string>(eb.case().when('verdict', 'is not', null).then(eb.ref('id')).end())
+          .as('ruled'),
+        fn
+          .count<string>(eb.case().when('verdict', 'is', null).then(eb.ref('id')).end())
+          .as('unruled'),
+      ])
+      .where('run_id', '=', runId)
+      .executeTakeFirst();
+    return { ruled: Number(row?.ruled ?? 0), unruled: Number(row?.unruled ?? 0) };
+  } catch (e) {
+    // The DDL has not been applied here. Read-only is the correct state, not an error.
+    if (isUndefinedColumnError(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * Record one moderator's ruling.
+ *
+ * 🔴 SCOPED TO THE RUN, ALWAYS — `runId` is not a convenience, it is the authorisation boundary of
+ * the write. A finding id arrives in a form post and is therefore attacker-chosen; without the run
+ * predicate, a post from run 7's page could rule a finding belonging to run 9, and — worse, because
+ * it is invisible — a group ruling would reach every run that ever carried the same `group_key`. The
+ * same email-domain ring reappears in tomorrow's cohort under the identical key, so "all findings
+ * with this key" without a run bound is "every day this ring has ever been seen", ruled in one click
+ * by someone who reviewed one day's evidence.
+ *
+ * 🔴 ONE RULING, N FINDINGS, only when the producer said so. A non-NULL `group_key` is the producer's
+ * claim that these rows are one actor; the ruling then covers all of them IN THIS RUN. A NULL key is
+ * not a group — it is the absence of one — so it must never be used as a match value, or every
+ * ungrouped finding in the run would be ruled together by the first one anybody clicked.
+ *
+ * 🔴 IT DOES NOT TOUCH `actioned` OR `action`. Those are the producer's record of what IT did; this
+ * is a human's record of whether that was right. Overwriting the first with the second would destroy
+ * the only evidence of what the detector actually chose to do, which is the measurement this whole
+ * board exists to make.
+ *
+ * Re-ruling is expected and overwrites: `verdict_by`/`verdict_at` always name the CURRENT ruling, so
+ * a moderator correcting a mistake stands behind the correction rather than the mistake.
+ */
+export async function recordAbuseVerdict(input: {
+  runId: number;
+  findingId: number;
+  verdict: AbuseVerdict;
+  verdictBy: string;
+}): Promise<{ updated: number; groupKey: string | null }> {
+  const db = abuseDb();
+  try {
+    // The clicked finding, read first — it is what supplies the group key, and reading it is also
+    // how a finding that does not belong to this run is refused rather than ruled.
+    const target = await db
+      .selectFrom('abuse_detection_finding')
+      .select(['id', 'group_key'])
+      .where('id', '=', input.findingId)
+      .where('run_id', '=', input.runId)
+      .executeTakeFirst();
+    if (!target) return { updated: 0, groupKey: null };
+
+    const groupKey = target.group_key ?? null;
+    let q = db
+      .updateTable('abuse_detection_finding')
+      .set({
+        verdict: input.verdict,
+        verdict_by: input.verdictBy,
+        // The server's clock, not the browser's: this is an audit field.
+        verdict_at: new Date(),
+      })
+      .where('run_id', '=', input.runId);
+    // Grouped: every member of the cluster in THIS run. Ungrouped: this row and nothing else.
+    q =
+      groupKey === null ? q.where('id', '=', input.findingId) : q.where('group_key', '=', groupKey);
+
+    const result = await q.executeTakeFirst();
+    return { updated: Number(result?.numUpdatedRows ?? 0), groupKey };
+  } catch (e) {
+    // 🔴 A WRITE MUST NOT DEGRADE. Accepting a ruling the database never stored, and rendering it as
+    // recorded, is worse than refusing it — the moderator moves on believing the row is graded.
+    if (isUndefinedColumnError(e))
+      throw new Error(
+        'abuse_detection_finding has no verdict columns — apply ' +
+          'apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL as the application role',
+        { cause: e }
+      );
+    throw e;
+  }
 }
 
 /**

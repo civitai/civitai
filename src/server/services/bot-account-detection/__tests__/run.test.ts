@@ -1153,3 +1153,95 @@ describe('the shadow-mode invariant: nothing is muted, banned or restricted', ()
     expect(payload).not.toContain('"action"');
   });
 });
+
+describe('🔴 the cluster key reaches the board', () => {
+  /**
+   * Six accounts registered on ONE uncommon email domain, run end to end through the PRODUCTION
+   * heuristic registry.
+   *
+   * Six, not four: `DOMAIN_ZERO_AT` is 3, so six overshoots the boundary rather than sitting on it —
+   * a fixture landing exactly ON a boundary cannot see a mutant that shifts it by one.
+   */
+  const RING_DOMAIN = 'ring-provider.test';
+  const ringAccounts = (domain: string, n = 6) =>
+    Array.from({ length: n }, (_, i) => ({ ...account(i + 1), email: `u${i + 1}@${domain}` }));
+
+  /**
+   * 🔴 AN EVIDENCE READER IS REQUIRED EVEN THOUGH IT RETURNS NOTHING, and finding that out is itself
+   * the point: `membersPerDomain` is built by `collectCohortSignals`, which `run.ts` only calls when
+   * `deps.evidence` is present. Without one the domain index is EMPTY, so a real six-account ring
+   * scores 0 and carries no key — the same reason the sibling block above needs a control arm. This
+   * reader answers both remote sources with nothing, so the IP and content halves stay at 0 and
+   * anything the findings carry came from the domain half alone.
+   */
+  const domainOnlyEvidence = {
+    hasRegistrationIps: false,
+    listRegistrationIps: async () => [],
+    listContentSamples: async () => [],
+  };
+
+  const domainRun = (accounts: NewAccountRow[]) => {
+    const { reader } = recordingReader(accounts);
+    const out = sink();
+    return {
+      ...out,
+      result: runBotAccountDetection(
+        { reader, evidence: domainOnlyEvidence, sendReport: out.sendReport, now: clock() },
+        { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+      ),
+    };
+  };
+
+  it('every member of the ring is emitted with the SAME key', async () => {
+    // 🔴 THE SEAM `run.ts` OWNS, and the mutant it exists for: handing `buildFinding` an empty
+    // signals index, or forgetting the argument entirely, leaves every finding ungrouped while
+    // `heuristics.test.ts` and `report.test.ts` both stay green — each covers one side and neither
+    // ever builds the combined state. Every ring on the board would then be ruled one account at a
+    // time, with nothing anywhere reporting a fault.
+    const scenario = domainRun(ringAccounts(RING_DOMAIN));
+    await scenario.result;
+
+    const findings = scenario.reports[0].findings;
+    expect(findings).toHaveLength(6);
+    // The LITERAL key, not a re-derivation: an assertion computed from the code under test cannot
+    // see the prefix change or the wrong attribute being used.
+    expect(findings.map((f) => f.groupKey)).toEqual(Array(6).fill('domain:ring-provider.test'));
+  });
+
+  it('🔴 the key names only what the reason already says — checked on the emitted finding', () => {
+    // The disclosure rule, asserted where it matters: on the payload that reaches the board.
+    const scenario = domainRun(ringAccounts(RING_DOMAIN));
+    return scenario.result.then(() => {
+      for (const f of scenario.reports[0].findings) {
+        expect(f.groupKey).toBe('domain:ring-provider.test');
+        expect(f.reason).toContain(RING_DOMAIN);
+      }
+    });
+  });
+
+  it('a cohort with DISTINCT domains is emitted ungrouped — the control', async () => {
+    // Without this the case above attributes nothing: findings carrying a key prove the wiring only
+    // if findings carry none when there is no ring, and "always sets a key" is a real mutant.
+    const scenario = domainRun(Array.from({ length: 6 }, (_, i) => account(i + 1)));
+    await scenario.result;
+
+    const findings = scenario.reports[0].findings;
+    expect(findings).toHaveLength(6);
+    expect(findings.every((f) => f.groupKey === undefined)).toBe(true);
+  });
+
+  it('a ring on a COMMON provider is emitted ungrouped', async () => {
+    // `gmail.com` is the largest cluster in every cohort, every day. A key there would collapse the
+    // day's most ordinary accounts into one ruling.
+    const scenario = domainRun(ringAccounts('gmail.com'));
+    await scenario.result;
+    expect(scenario.reports[0].findings.every((f) => f.groupKey === undefined)).toBe(true);
+  });
+
+  it('the payloads still satisfy the real wire contract', async () => {
+    const scenario = domainRun(ringAccounts(RING_DOMAIN));
+    await scenario.result;
+    for (const report of scenario.reports)
+      expect(() => abuseReportInput.parse(report)).not.toThrow();
+  });
+});

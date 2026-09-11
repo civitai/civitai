@@ -262,6 +262,58 @@ describe('abuseReportInput — the wire contract', () => {
     expect(parsed.success).toBe(false);
   });
 
+  // 🔴 THE THREE DETECTORS ALREADY ON THIS BOARD SEND NO `groupKey`. A required key would 400 every
+  // one of their reports and take the surface down to add a feature none of them uses — so the
+  // absence of the field has to stay a first-class, accepted payload rather than merely working
+  // today. The three shapes a serialiser can produce are all pinned, in both directions.
+  it('accepts a report whose findings carry NO group key — the existing producers', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.5, reason: 'r', actioned: false }],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts a group key', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [
+        { userId: 5, confidence: 0.5, reason: 'r', actioned: false, groupKey: 'domain:ring.test' },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.findings[0].groupKey).toBe('domain:ring.test');
+  });
+
+  it('accepts an explicit null group key, like every other nullable field here', () => {
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.5, reason: 'r', actioned: false, groupKey: null }],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects an EMPTY group key', () => {
+    // An empty string is not "no cluster" — it is a cluster every ungrouped finding would join, so
+    // one click would rule them all. `null`/absent is how "no cluster" is spelled.
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [{ userId: 5, confidence: 0.5, reason: 'r', actioned: false, groupKey: '' }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects an absurdly long group key', () => {
+    // `group_key` is `text`, so nothing downstream bounds it; the column is rendered on a page.
+    const parsed = abuseReportInput.safeParse({
+      ...baseRun,
+      findings: [
+        { userId: 5, confidence: 0.5, reason: 'r', actioned: false, groupKey: 'x'.repeat(201) },
+      ],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
   it.each([
     ['reason', { userId: 5, confidence: 0.5, reason: '', actioned: false }],
     ['action', { userId: 5, confidence: 0.5, reason: 'r', actioned: true, action: '' }],
@@ -407,6 +459,36 @@ describe('recordAbuseRun', () => {
     transactionExecute.mockRejectedValueOnce(original);
 
     await expect(recordAbuseRun({ ...baseRun, findings: [] })).rejects.toBe(original);
+  });
+
+  it('writes the reported group key on the finding row', async () => {
+    await recordAbuseRun({
+      ...baseRun,
+      findings: [
+        {
+          userId: 7,
+          confidence: 0.5,
+          reason: 'r',
+          actioned: false,
+          groupKey: 'domain:ring.test',
+        },
+      ],
+    });
+    const values = valuesFor('abuse_detection_finding') as { group_key: string | null };
+    expect(values.group_key).toBe('domain:ring.test');
+  });
+
+  it('stores an ABSENT group key as NULL, not as undefined', async () => {
+    // 🔴 `undefined` in a Kysely `values()` row OMITS the column, and a replayed run mixing rows that
+    // have the key with rows that do not is an insert whose rows disagree about their columns — a
+    // runtime error rather than a missing value. NULL is also what "in no cluster" means here.
+    await recordAbuseRun({
+      ...baseRun,
+      findings: [{ userId: 7, confidence: 0.5, reason: 'r', actioned: false }],
+    });
+    const values = valuesFor('abuse_detection_finding') as Record<string, unknown>;
+    expect(values).toHaveProperty('group_key');
+    expect(values.group_key).toBeNull();
   });
 
   it('defaults absent counters to an empty object rather than null', async () => {
