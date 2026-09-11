@@ -26,9 +26,23 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * ## What is deliberately NOT asserted
  *
  * That the link scrolls. That is the browser's job for a fragment link, it needs a
- * real layout, and a test that mocked it would be testing the mock. The browser-tier
- * sibling asserts the ANCHOR EXISTS with the right href; this file asserts the target
- * exists to receive it.
+ * real layout, and a test that mocked it would be testing the mock.
+ *
+ * 🔴 AND A COVERAGE BOUNDARY THIS FILE CANNOT CROSS — stated because an earlier
+ * version of this header called the node tier "the one that matters", which was too
+ * strong. The id assertion below is a SOURCE-TEXT check: it catches the id being
+ * RENAMED or DELETED, and it does NOT catch the section being rendered under a
+ * NARROWER CONDITION than the link. Measured: adding a second conjunct to the
+ * section's render guard (`{!preview && canOpenPage && (`) while leaving the id
+ * intact leaves this file and `appListingDetailRows.test.ts` fully GREEN — 40 passed,
+ * 0 failed — and is caught only by the browser sibling's "the target it points at
+ * EXISTS in the rendered document".
+ *
+ * So the two tiers cover DIFFERENT HALVES and neither substitutes for the other: this
+ * one pins the VALUE (both ends read one constant), the browser one pins the
+ * PRESENCE (the element is really in the rendered document). The browser tier is
+ * report-only in CI, so that half is currently unblocked — a real gap, named rather
+ * than papered over. No shipped code path triggers it today.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');

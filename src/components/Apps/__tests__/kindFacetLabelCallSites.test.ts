@@ -22,16 +22,34 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  *
  * 🔴 SO THIS ASSERTS THE RELATIONSHIP, NOT THE WORD. Fixing two strings does not
  * remove the condition — the next surface to label this facet will hardcode
- * whichever word its author last saw. Every assertion below is written so that
- * changing `LISTING_FACET_LABELS.kind` to any other string keeps the suite green
- * while the two surfaces stay in agreement; only DRIFT fails it. A test spelling
- * `'Type'` would instead have to be edited on every copy change, which is how a
- * guard becomes something people bump rather than read.
+ * whichever word its author last saw. No assertion below spells `'Type'`, so an
+ * ordinary copy change edits one constant instead of this file. A test spelling the
+ * word would have to be edited on every copy change, which is how a guard becomes
+ * something people bump rather than read.
+ *
+ * ⚠ BUT "ANY new word keeps the suite green" WOULD BE TOO STRONG, so it is not
+ * claimed. The `hardcoded` rule scans a whole enrolled FILE for the current word in
+ * any quoted string, so renaming the kind facet to a word ANOTHER facet already uses
+ * — `kind: 'Category'` — flags `AppsStoreFiltersDropdown`'s correct `label="Category"`
+ * for the category facet. That is a false positive, and it is accepted: it fails
+ * LOUDLY with the offending file and word in the message, the collision only arises
+ * for a word already on the same panel, and the alternative (tracking which literal
+ * belongs to which facet) is more machinery than the defect warrants.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
-/** The two surfaces that name this facet to a viewer today. */
+/**
+ * The two PUBLIC-STORE surfaces that name this facet to a viewer.
+ *
+ * ⚠ NOT every surface in the tree that renders the word, and the omission is
+ * deliberate rather than an oversight — recorded here because the repo's convention
+ * is to write down a non-enrolment (`MyAppsBody.tsx` does it for the sibling ledger).
+ * `UnifiedReviewList.tsx` renders a `<Table.Th>Kind</Table.Th>` on the MODERATOR
+ * review queue. It is left out because that column's `kind` is the ROUTING kind of a
+ * review row, not the store facet a shopper filters on, and the two are free to
+ * diverge. If that queue ever starts showing the store facet, enrol it here.
+ */
 const FACET_LABEL_CALL_SITES = [
   'src/components/Apps/AppsStoreFiltersDropdown.tsx',
   'src/components/Apps/appListingDetailRows.ts',
@@ -60,7 +78,12 @@ function readCode(rel: string): string {
 describe('kind FACET label — enrolment ledger', () => {
   it('🔴 every enrolled call site imports the constant rather than spelling the word', () => {
     for (const rel of FACET_LABEL_CALL_SITES) {
-      const src = read(rel);
+      // 🔴 `readCode`, NOT `read` — and this line was the exception that proved the
+      // docstring above right. It used the raw file, so the claim "imports the
+      // constant rather than spelling the word" was satisfiable by a COMMENT
+      // mentioning the token. That is not hypothetical: it is what made this file's
+      // self-reported mutation count wrong by one.
+      const src = readCode(rel);
       expect(src, `${rel} must import LISTING_FACET_LABELS.kind`).toContain(
         'LISTING_FACET_LABELS.kind'
       );

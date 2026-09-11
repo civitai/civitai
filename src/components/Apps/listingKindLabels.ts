@@ -97,21 +97,25 @@ export const EMBEDDED_KIND_LABEL = LISTING_KIND_LABELS.onsite;
  * is the more common word; the detail row was the outlier. As with the labels above,
  * this is a DISPLAY name only — the stored value, the `kind` query param, the
  * `StoreListingKind` union and the public `/api/v1/apps` enum are untouched.
- */
-export const LISTING_FACET_LABELS = {
-  kind: 'Type',
-} as const satisfies Record<string, string>;
-
-/**
+ *
  * 🔴 A MAP, NOT A SCALAR, AND THE SHAPE IS LOAD-BEARING TWICE OVER.
  *
  * 1. `listingLabelCallSites.test.ts`'s `bare-option-label` rule requires that a
  *    `label:` paired with a `value:` in the same object literal be "a LOOKUP or a
  *    LITERAL, never a bare identifier". A detail ROW literal is `{key, label, value}`,
- *    which matches that shape even though it is not a Select option — so a scalar
- *    constant here trips a guard aimed at `{value: r, label: r}`. `LISTING_FACET_LABELS.kind`
- *    is a lookup and satisfies the rule as written. **Conform to the guard; do not
- *    widen it for this.** It was narrowed deliberately and its own tests say so.
+ *    which matches that shape even though it is not a Select option — so a SCALAR
+ *    constant in that position trips a guard aimed at `{value: r, label: r}`.
+ *    `LISTING_FACET_LABELS.kind` is a lookup and satisfies the rule as written.
+ *    **Conform to the guard; do not widen it for this.** It was narrowed deliberately
+ *    and its own tests say so.
+ *
+ *    🔴 SO DO NOT RE-ADD A SCALAR ALIAS. One existed (`LISTING_KIND_FACET_LABEL`) and
+ *    was deleted: nothing imported it, the repo has no unused-export gate to say so,
+ *    and it sat under the more discoverable name carrying THIS comment — i.e. it
+ *    shipped the hazard under a doc explaining the hazard. A third facet site reaching
+ *    for it would fail `listingLabelCallSites` with a message about rendering a raw
+ *    `category`/`contentRating`, naming nothing about the real cause, on a line that
+ *    reads as obviously correct.
  * 2. ⚠ A `category` key was TRIED and BACKED OUT — recorded so nobody adds it again.
  *    The reasoning was sound (category is the other facet named on both surfaces, so
  *    it is the next one that can drift), but `LISTING_FACET_LABELS.category` in a
@@ -122,7 +126,9 @@ export const LISTING_FACET_LABELS = {
  *    this was a speculative fix colliding with a real one. If category ever does
  *    drift, fix it in a way the guard can tell apart from the defect it hunts.
  */
-export const LISTING_KIND_FACET_LABEL = LISTING_FACET_LABELS.kind;
+export const LISTING_FACET_LABELS = {
+  kind: 'Type',
+} as const satisfies Record<string, string>;
 
 /**
  * 🔒 THE SINGLE SOURCE for the listing detail page's REVIEWS section anchor.
