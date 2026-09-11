@@ -489,7 +489,7 @@ type CollectionItemGridItemProps = {
   width: number;
 };
 
-function ModerationControls({
+export function ModerationControls({
   collectionItems,
   filters,
 }: {
