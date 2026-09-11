@@ -5,6 +5,7 @@ import {
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
   FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
+  FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
   feedbackAreaFlagKey,
 } from '~/shared/constants/feedback.constants';
@@ -184,11 +185,11 @@ describe('feedback schema — context bounds', () => {
  * report bounced.
  */
 describe('feedback areas', () => {
-  const areas = ['bitdex-image-feed', 'apps-marketplace'];
+  const areas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the two declared surfaces', () => {
+  it('are exactly the three declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
@@ -217,6 +218,34 @@ describe('feedback areas', () => {
   it('derive their Flipt flag keys from the slug', () => {
     expect(feedbackAreaFlagKey('bitdex-image-feed')).toBe('feedback-area-bitdex-image-feed');
     expect(feedbackAreaFlagKey('apps-marketplace')).toBe('feedback-area-apps-marketplace');
+    expect(feedbackAreaFlagKey('site-bug-report')).toBe('feedback-area-site-bug-report');
+  });
+});
+
+/**
+ * `context.path` — the route a report came from, and the one context field a caller
+ * has to clip to by hand (`FeedbackDrawer`). The bound is exported for that reason:
+ * a `max()` REJECTS rather than truncating, so a drifted copy does not produce a
+ * shortened path, it 400s the whole submission on the surface that exists to collect
+ * reports. These two assertions are the contract between the clip and the schema.
+ */
+describe('context.path', () => {
+  const parsePath = (path: string) =>
+    createFeedbackSchema.parse({
+      area: 'site-bug-report' as const,
+      message: 'something broke',
+      context: { path },
+    });
+
+  it('is a 300-character ceiling', () => {
+    expect(FEEDBACK_PATH_MAX_LENGTH).toBe(300);
+  });
+
+  it('accepts a path of exactly the bound, and rejects one character more', () => {
+    expect(parsePath('/'.padEnd(FEEDBACK_PATH_MAX_LENGTH, 'a')).context?.path).toHaveLength(
+      FEEDBACK_PATH_MAX_LENGTH
+    );
+    expect(() => parsePath('/'.padEnd(FEEDBACK_PATH_MAX_LENGTH + 1, 'a'))).toThrow();
   });
 });
 

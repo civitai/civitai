@@ -8,7 +8,14 @@
 // prompt that writes it and its area flag is off, so it cannot grow.
 // Enforced: `feedback.schema.test.ts` compares a hand-typed list against this one,
 // so removing the slug fails there with an array diff rather than silently.
-export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace'] as const;
+export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const;
+
+/**
+ * The area behind the support menu's "Report a bug", and the only one that is not
+ * tied to a single page — it is reachable from the footer on every route, so its
+ * `context.path` is the only thing that says where the report came from.
+ */
+export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
 
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
 
@@ -38,6 +45,16 @@ export const FEEDBACK_IMAGE_MAX_COUNT = 3;
 
 /** Cloudflare image ids written here are `randomUUID()` (36 chars); this is headroom, not a fit. */
 export const FEEDBACK_IMAGE_ID_MAX_LENGTH = 100;
+
+/**
+ * Length ceiling on `context.path`.
+ *
+ * Exported for the same reason as FEEDBACK_FILTER_VALUE_MAX_LENGTH below: a caller
+ * has to clip to it, and `feedbackContextSchema` REJECTS an over-long value rather
+ * than clipping, so a drifted copy fails the whole submission on the surface that
+ * exists to collect reports.
+ */
+export const FEEDBACK_PATH_MAX_LENGTH = 300;
 
 /** Faro session ids are short opaque strings; bounded because it is still client-supplied. */
 export const FEEDBACK_SESSION_ID_MAX_LENGTH = 64;
