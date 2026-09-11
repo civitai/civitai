@@ -14,7 +14,11 @@ import {
 } from '@mantine/core';
 import { CollectionInvitesButton } from '~/components/Collections/CollectionCollaborators/CollectionInvitesButton';
 import { MyCollections } from '~/components/Collections/MyCollections';
-import { useScrollAreaHeight, useSubnavBottom } from '~/hooks/useSubnavBottom';
+import {
+  SUBNAV_STICKY_GAP,
+  useScrollAreaHeight,
+  useSubnavBottom,
+} from '~/hooks/useSubnavBottom';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
@@ -118,7 +122,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 // Follows the subnav's real bottom edge rather than a fixed header offset: the
                 // subnav hides by translating, so it keeps its layout box and a static `top`
                 // strands the sidebar a subnav-height below where it should sit.
-                top: subnavBottom,
+                top: subnavBottom + SUBNAV_STICKY_GAP,
               }}
               withBorder
             >

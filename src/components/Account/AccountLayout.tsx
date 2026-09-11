@@ -18,7 +18,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useSubnavBottom } from '~/hooks/useSubnavBottom';
+import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -46,8 +46,6 @@ function useLegacyAnchorRedirect() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.isReady]);
 }
-
-const RAIL_STICKY_GAP = 16;
 
 
 function SectionLink({ section, active }: { section: AccountSection; active: boolean }) {
@@ -270,7 +268,7 @@ export function AccountLayout({
   return (
     <div className="mx-auto flex w-full max-w-[1020px] gap-10 px-4 py-6 md:px-8">
       <aside className="w-[260px] shrink-0">
-        <div className="sticky" style={{ top: subnavBottom + RAIL_STICKY_GAP }}>
+        <div className="sticky" style={{ top: subnavBottom + SUBNAV_STICKY_GAP }}>
           <AccountNav activeId={section.id} />
         </div>
       </aside>
