@@ -4122,8 +4122,17 @@ export const setAssociatedResources = async (
         fromId,
         ownerId: fromModel.userId,
         type,
+        // Only resources added during this edit, never the ones already on the list. An
+        // association the model already held is one the creator linked at some earlier point
+        // and chose not to link back then; a later save of an unrelated change must not
+        // retroactively reach into those models. Derived from the rows the database reports,
+        // not from whether the client sent an id.
         targetIds: associations
-          .filter((association) => association.resourceType === 'model')
+          .filter(
+            (association) =>
+              association.resourceType === 'model' &&
+              (association.id === undefined || !existingAssociations.includes(association.id))
+          )
           .map((association) => association.resourceId),
         actorId: user?.id,
       })
@@ -4157,9 +4166,13 @@ const addReciprocalAssociations = async ({
   const ids = [...new Set(targetIds)].filter((id) => id !== fromId);
   if (!ids.length) return { linked: 0, skipped: [] };
 
+  // Both reads go to the writer. Ownership decides whether a row may be written into a model
+  // the request never named, and a replica within its lag window can report the previous owner
+  // of a model that just changed hands. The same lag would hide a back-link committed moments
+  // earlier, which is what stops a second save duplicating it.
   const [targets, existing] = await Promise.all([
-    dbRead.model.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true } }),
-    dbRead.modelAssociations.findMany({
+    dbWrite.model.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true } }),
+    dbWrite.modelAssociations.findMany({
       where: { fromModelId: { in: ids }, type },
       select: { fromModelId: true, toModelId: true },
     }),

@@ -6,7 +6,7 @@ const STRANGER = 200;
 const SOURCE = 1;
 
 const plan = (
-  candidates: Array<{ modelId: number; ownerId: number | null }>,
+  candidates: Array<{ modelId: number; ownerId: number }>,
   {
     existingCounts = new Map<number, number>(),
     alreadyLinked = new Set<number>(),
@@ -48,13 +48,6 @@ describe('planReciprocalAssociations', () => {
     expect(skipped).toEqual([{ modelId: 3, reason: 'notOwned' }]);
   });
 
-  it('treats an unowned model as someone else, not as the owner', () => {
-    const { create, skipped } = plan([{ modelId: 3, ownerId: null }]);
-
-    expect(create).toEqual([]);
-    expect(skipped).toEqual([{ modelId: 3, reason: 'notOwned' }]);
-  });
-
   it('does not link a model to itself', () => {
     const { create, skipped } = plan([{ modelId: SOURCE, ownerId: OWNER }]);
 
@@ -82,7 +75,7 @@ describe('planReciprocalAssociations', () => {
     expect(skipped).toEqual([{ modelId: 2, reason: 'atLimit' }]);
   });
 
-  it('appends after the target list rather than colliding with index 0', () => {
+  it('indexes the back-link at the size of the target list, not at 0', () => {
     const { create } = plan([{ modelId: 2, ownerId: OWNER }], {
       existingCounts: new Map([[2, 4]]),
     });
@@ -90,13 +83,26 @@ describe('planReciprocalAssociations', () => {
     expect(create).toEqual([{ fromModelId: 2, toModelId: SOURCE, index: 4 }]);
   });
 
+  // The only control against a cap that is one too STRICT. Without it, `count >= limit - 1`
+  // ships green and silently refuses the last slot on every list.
+  it('still links a target sitting one below the limit', () => {
+    const { create, skipped } = plan([{ modelId: 2, ownerId: OWNER }], {
+      existingCounts: new Map([[2, 9]]),
+      limit: 10,
+    });
+
+    expect(create).toEqual([{ fromModelId: 2, toModelId: SOURCE, index: 9 }]);
+    expect(skipped).toEqual([]);
+  });
+
   it('writes one back-link when the same target is listed twice', () => {
-    const { create } = plan([
+    const { create, skipped } = plan([
       { modelId: 2, ownerId: OWNER },
       { modelId: 2, ownerId: OWNER },
     ]);
 
-    expect(create).toHaveLength(1);
+    expect(create).toEqual([{ fromModelId: 2, toModelId: SOURCE, index: 0 }]);
+    expect(skipped).toEqual([]);
   });
 
   it('saves the owned links even when the selection is mixed', () => {

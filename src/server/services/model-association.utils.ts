@@ -1,6 +1,6 @@
 export type ReciprocalSkipReason = 'notOwned' | 'alreadyLinked' | 'atLimit';
 
-export type ReciprocalCandidate = { modelId: number; ownerId: number | null };
+export type ReciprocalCandidate = { modelId: number; ownerId: number };
 
 export type ReciprocalPlan = {
   create: Array<{ fromModelId: number; toModelId: number; index: number }>;

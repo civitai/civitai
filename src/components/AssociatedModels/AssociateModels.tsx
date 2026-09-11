@@ -40,14 +40,15 @@ type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?
 export function AssociateModels({
   fromId,
   type,
+  ownerId,
   onSave,
-  limit = constants.modelAssociations.limit,
 }: {
   fromId: number;
   type: AssociationType;
+  ownerId: number;
   onSave?: () => void;
-  limit?: number;
 }) {
+  const limit = constants.modelAssociations.limit;
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [changed, setChanged] = useState(false);
@@ -68,7 +69,7 @@ export function AssociateModels({
       if (atLimit)
         showWarningNotification({
           title: 'Some links back were skipped',
-          message: `${atLimit} of your resources already have ${limit} suggested resources, so this model was not added to them.`,
+          message: `${atLimit} of the creator's models already have ${limit} suggested resources, so this model was not added to them.`,
         });
 
       queryUtils.model.getAssociatedResourcesSimple.setData(
@@ -77,6 +78,7 @@ export function AssociateModels({
       );
       await queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type });
       setChanged(false);
+      setReciprocal(false);
       onSave?.();
     },
   });
@@ -120,6 +122,7 @@ export function AssociateModels({
 
   const handleReset = () => {
     setChanged(false);
+    setReciprocal(false);
     setAssociatedResources(data);
   };
 
@@ -146,9 +149,13 @@ export function AssociateModels({
   }, [data]);
 
   const onlyMe = searchMode === 'me';
-  const models = associatedResources.filter(({ resourceType }) => resourceType === 'model');
-  const modelCount = models.length;
-  const ownModelCount = models.filter(({ item }) => item.user.id === currentUser?.id).length;
+  // A row with no association id has not been saved yet, so it is one added during this edit.
+  // Only those can receive a back-link — matches the server's own scoping.
+  const addedModels = associatedResources.filter(
+    ({ resourceType, id }) => resourceType === 'model' && id === undefined
+  );
+  const addedCount = addedModels.length;
+  const ownAddedCount = addedModels.filter(({ item }) => item.user.id === ownerId).length;
 
   return (
     <Stack>
@@ -239,7 +246,7 @@ export function AssociateModels({
           )}
         </Stack>
       )}
-      {modelCount > 0 && (
+      {addedCount > 0 && (
         <Checkbox
           checked={reciprocal}
           onChange={(event) => {
@@ -248,9 +255,13 @@ export function AssociateModels({
           }}
           label="Link both ways"
           description={
-            ownModelCount === modelCount
-              ? 'Also adds this model to the suggested resources of each one above.'
-              : `Also adds this model to the suggested resources of the ${ownModelCount} of ${modelCount} above that you own. The rest are left alone.`
+            ownAddedCount === addedCount
+              ? `Also adds this model to the suggested resources of ${
+                  addedCount === 1
+                    ? 'the model you just added'
+                    : `the ${addedCount} models you just added`
+                }. Links added this way stay on the other model until you remove them there.`
+              : `Also adds this model to the suggested resources of the ${ownAddedCount} of ${addedCount} models you just added that this creator owns. The rest are left alone. Links added this way stay on the other model until you remove them there.`
           }
         />
       )}

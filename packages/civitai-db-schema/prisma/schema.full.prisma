@@ -1417,7 +1417,10 @@ model ModelAssociations {
   type           AssociationType
   index          Int?
 
-  @@unique([fromModelId, toModelId, type])
+  // The unique index on (fromModelId, toModelId, type) is created by migration
+  // 20260911150000_model_associations_unique. It is NOT declared here yet: declaring a
+  // uniqueness constraint the live database does not have is `enforced` drift, which the
+  // schema-drift gate blocks on merge. Add @@unique in a follow-up once the index is applied.
   @@index([toModelId], type: Hash)
   @@index([fromModelId], type: Hash)
   @@index([toArticleId], type: Hash)
