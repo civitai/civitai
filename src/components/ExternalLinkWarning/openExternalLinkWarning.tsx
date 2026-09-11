@@ -35,14 +35,14 @@ function Destination({ href }: { href: string }) {
  */
 export function openExternalLinkWarning(href: string) {
   openConfirmModal({
+    // `md` rather than `lg` on both: the modal's own close button shares this line, and at 320px
+    // a larger title runs into it.
     title: (
-      <Group gap="sm" wrap="nowrap">
-        <ThemeIcon color="yellow" variant="light" radius="xl" size="lg">
-          <IconExternalLink size={18} />
+      <Group gap="xs" wrap="nowrap">
+        <ThemeIcon color="yellow" variant="light" radius="xl" size="md">
+          <IconExternalLink size={16} />
         </ThemeIcon>
-        <Text fw={600} size="lg">
-          You&apos;re leaving Civitai
-        </Text>
+        <Text fw={600}>You&apos;re leaving Civitai</Text>
       </Group>
     ),
     centered: true,
