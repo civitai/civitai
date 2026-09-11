@@ -21,6 +21,11 @@ import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  planReciprocalAssociations,
+  selectNewlyAddedModelIds,
+} from '~/server/services/model-association.utils';
+import type { AssociationType } from '~/shared/utils/prisma/enums';
+import {
   getDbWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
@@ -4067,7 +4072,7 @@ export const getAssociatedResourcesSimple = async ({
 };
 
 export const setAssociatedResources = async (
-  { fromId, type, associations }: SetAssociatedResourcesInput,
+  { fromId, type, associations, reciprocal }: SetAssociatedResourcesInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -4076,7 +4081,7 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true },
+        select: { id: true, toModelId: true },
         orderBy: { index: 'asc' },
       },
     },
@@ -4087,11 +4092,14 @@ export const setAssociatedResources = async (
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
   const existingAssociations = fromModel.associations.map((x) => x.id);
+  const existingModelTargets = new Set(
+    fromModel.associations.map((x) => x.toModelId).filter(isDefined)
+  );
   const associationsToRemove = existingAssociations.filter(
     (existingToId) => !associations.find((item) => item.id === existingToId)
   );
 
-  return await dbWrite.$transaction([
+  const result = await dbWrite.$transaction([
     // remove associated resources not included in payload
     dbWrite.modelAssociations.deleteMany({
       where: {
@@ -4114,6 +4122,100 @@ export const setAssociatedResources = async (
       });
     }),
   ]);
+
+  const reciprocalRequested = new Set(reciprocal ?? []);
+  const reciprocalResult = reciprocalRequested.size
+    ? await addReciprocalAssociations({
+        fromId,
+        ownerId: fromModel.userId,
+        type,
+        // Only resources added during this edit, never the ones already on the list. An
+        // association the model already held is one the creator linked at some earlier point
+        // and chose not to link back then; a later save of an unrelated change must not
+        // retroactively reach into those models.
+        //
+        // This is the whole enforcement of that rule, and it deliberately asks the database
+        // which models are already linked rather than trusting the payload's association ids.
+        // Those ids are absent for a row the client believes is new, and the client is wrong
+        // about that more often than it looks: it writes its own id-less array into the query
+        // cache after a save, so a second save in the same page session presents every row as
+        // new. Comparing model ids is immune to that, and to a caller omitting an id on purpose.
+        // The shared derivation decides what is eligible; the request only narrows it. A caller
+        // naming a model that was already on the list, or one it does not own, gets nothing.
+        targetIds: selectNewlyAddedModelIds(associations, existingModelTargets).filter((id) =>
+          reciprocalRequested.has(id)
+        ),
+        actorId: user?.id,
+      })
+    : { linked: 0, skipped: [] };
+
+  return { associations: result, reciprocal: reciprocalResult };
+};
+
+/**
+ * Writes the "link both ways" back-links: adds `fromId` to the suggested-resource list of
+ * every target that `ownerId` also owns. Targets owned by anyone else are skipped, not
+ * rejected, so a mixed selection still saves its forward links.
+ *
+ * This is the only path that writes an association whose `fromModelId` is a model the
+ * request did not name, so ownership is re-derived here from the database rather than
+ * trusted from the caller.
+ */
+const addReciprocalAssociations = async ({
+  fromId,
+  ownerId,
+  type,
+  targetIds,
+  actorId,
+}: {
+  fromId: number;
+  ownerId: number;
+  type: AssociationType;
+  targetIds: number[];
+  actorId?: number;
+}) => {
+  const ids = [...new Set(targetIds)].filter((id) => id !== fromId);
+  if (!ids.length) return { linked: 0, skipped: [] };
+
+  // Both reads go to the writer. Ownership decides whether a row may be written into a model
+  // the request never named, and a replica within its lag window can report the previous owner
+  // of a model that just changed hands. The same lag would hide a back-link committed moments
+  // earlier, which is what stops a second save duplicating it.
+  const [targets, existing] = await Promise.all([
+    dbWrite.model.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true } }),
+    dbWrite.modelAssociations.findMany({
+      where: { fromModelId: { in: ids }, type },
+      select: { fromModelId: true, toModelId: true },
+    }),
+  ]);
+
+  const existingCounts = new Map<number, number>();
+  const alreadyLinked = new Set<number>();
+  for (const association of existing) {
+    existingCounts.set(
+      association.fromModelId,
+      (existingCounts.get(association.fromModelId) ?? 0) + 1
+    );
+    if (association.toModelId === fromId) alreadyLinked.add(association.fromModelId);
+  }
+
+  const { create, skipped } = planReciprocalAssociations({
+    sourceModelId: fromId,
+    ownerId,
+    candidates: targets.map((target) => ({ modelId: target.id, ownerId: target.userId })),
+    existingCounts,
+    alreadyLinked,
+    limit: constants.modelAssociations.limit,
+  });
+
+  if (create.length) {
+    await dbWrite.modelAssociations.createMany({
+      data: create.map((row) => ({ ...row, type, associatedById: actorId })),
+      skipDuplicates: true,
+    });
+  }
+
+  return { linked: create.length, skipped };
 };
 // #endregion
 

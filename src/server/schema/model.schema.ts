@@ -411,7 +411,12 @@ export const setAssociatedResourcesSchema = z.object({
       resourceId: z.number(),
       resourceType: z.enum(['model', 'article']),
     })
-    .array(),
+    .array()
+    .max(constants.modelAssociations.maxPerSave),
+  // Model ids the caller asked to link back. A request, not an instruction: the server keeps
+  // its own answer for which of them were added in this edit and which the owner owns, and
+  // narrows this list to that. Bounded by the same cap as the array above.
+  reciprocal: z.array(z.number()).max(constants.modelAssociations.maxPerSave).optional(),
 });
 // #endregion
 
