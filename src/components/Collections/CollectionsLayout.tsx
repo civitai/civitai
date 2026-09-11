@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { CollectionInvitesButton } from '~/components/Collections/CollectionCollaborators/CollectionInvitesButton';
 import { MyCollections } from '~/components/Collections/MyCollections';
+import { useScrollAreaHeight, useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
@@ -87,6 +88,8 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const [showSidebar, setShowSidebar] = useState(true);
+  const subnavBottom = useSubnavBottom();
+  const scrollAreaHeight = useScrollAreaHeight();
 
   return (
     <Container fluid className={classes.container}>
@@ -106,7 +109,16 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                 // `overflow: visible` on .sidebar and clip it out of existence. The
                 // list scrolls in its own ScrollArea, so the Card does not need to.
                 marginLeft: showSidebar ? 0 : 'calc(-300px - var(--mantine-spacing-xs))',
-                maxHeight: 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
+                // Measured off the scroll area, not the viewport: the adhesive ad shortens the
+                // former and not the latter, so a dvh-based cap overhangs it by the ad's height.
+                // Falls back to the viewport calc until the first measurement lands.
+                maxHeight: scrollAreaHeight
+                  ? `calc(${scrollAreaHeight}px - var(--footer-height) - 68px)`
+                  : 'calc(100dvh - var(--header-height) - var(--footer-height) - 68px)',
+                // Follows the subnav's real bottom edge rather than a fixed header offset: the
+                // subnav hides by translating, so it keeps its layout box and a static `top`
+                // strands the sidebar a subnav-height below where it should sit.
+                top: subnavBottom,
               }}
               withBorder
             >

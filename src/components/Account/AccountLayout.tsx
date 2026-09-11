@@ -3,7 +3,7 @@ import { Badge, CloseButton, Text, TextInput } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { AccountSection } from '~/components/Account/account-sections';
@@ -18,7 +18,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -49,36 +49,6 @@ function useLegacyAnchorRedirect() {
 
 const RAIL_STICKY_GAP = 16;
 
-/**
- * The subnav is `sticky top-0` inside the scroll area and hides by translating itself off screen,
- * so it keeps its layout box either way. A fixed sticky offset therefore leaves a gap the height of
- * the subnav once it retracts. Track where its bottom edge actually is instead.
- */
-function useSubnavBottom() {
-  const [bottom, setBottom] = useState(0);
-  const frame = useRef<number>();
-
-  const measure = useCallback((node: HTMLElement) => {
-    if (frame.current) cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(() => {
-      const subnav = node.querySelector<HTMLElement>('[data-subnav]');
-      if (!subnav) return setBottom(0);
-      const offset = subnav.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
-      setBottom(Math.max(0, Math.round(offset)));
-    });
-  }, []);
-
-  const ref = useScrollAreaRef({ onScroll: measure });
-
-  useEffect(() => {
-    if (ref?.current) measure(ref.current);
-    return () => {
-      if (frame.current) cancelAnimationFrame(frame.current);
-    };
-  }, [ref, measure]);
-
-  return bottom;
-}
 
 function SectionLink({ section, active }: { section: AccountSection; active: boolean }) {
   const Icon = section.icon;

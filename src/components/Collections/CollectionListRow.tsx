@@ -31,9 +31,6 @@ export function CollectionListRow({
       active={isActive}
       onClick={onClick}
       className={clsx(classes.navLinkWrapper, view === 'default' && classes.rowDefault)}
-      rightSection={
-        pendingReviewCount ? <QueueCountBadge count={pendingReviewCount} max={99} /> : undefined
-      }
       leftSection={
         view === 'default' && typeData ? (
           <ThemeIcon size={18} variant="subtle" color={typeData.color} className={classes.rowIcon}>
@@ -47,6 +44,7 @@ export function CollectionListRow({
             <Text size="sm" lineClamp={1} inherit>
               {collection.name}
             </Text>
+            <QueueCountBadge count={pendingReviewCount ?? 0} max={99} />
             {typeData && (
               <Text size="sm" c="dimmed" className="shrink-0">
                 • {typeData.label}
@@ -55,9 +53,15 @@ export function CollectionListRow({
           </span>
         ) : (
           <span className="flex min-w-0 flex-col">
-            <Text size="sm" lineClamp={1} inherit>
-              {collection.name}
-            </Text>
+            {/* The badge rides the name line rather than the row's right edge: the row is a flex
+                box whose only flexible child is the name, so an edge-pinned badge is what gets
+                squeezed when a title is long. */}
+            <span className="flex min-w-0 items-center gap-1.5">
+              <Text size="sm" lineClamp={1} inherit>
+                {collection.name}
+              </Text>
+              <QueueCountBadge count={pendingReviewCount ?? 0} max={99} />
+            </span>
             {meta && (
               <Text fz={11} c="dimmed" className={classes.rowMeta}>
                 {meta}
