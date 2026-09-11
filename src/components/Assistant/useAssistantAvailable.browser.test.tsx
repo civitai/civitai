@@ -22,6 +22,7 @@ const { mocks } = vi.hoisted(() => ({
     assistant: { value: true },
     personality: { value: undefined as string | undefined },
     uuid: { value: 'uuid-1' as string | null },
+    getAssistantUUID: vi.fn(),
   },
 }));
 
@@ -39,8 +40,13 @@ vi.mock('~/components/UserSettings/hooks', () => ({
 
 vi.mock('~/components/Assistant/AssistantChat', () => ({
   // The uuid lookup is env-driven and the env is not set in the test browser, so the
-  // holder stands in for "this deployment has a uuid for that personality".
-  getAssistantUUID: () => mocks.uuid.value,
+  // holder stands in for "this deployment has a uuid for that personality". A spy
+  // rather than a bare arrow because WHAT IT IS CALLED WITH is the load-bearing part
+  // — see the arity assertion below.
+  getAssistantUUID: (...args: unknown[]) => {
+    mocks.getAssistantUUID(...args);
+    return mocks.uuid.value;
+  },
 }));
 
 const { useAssistantAvailable } = await import('~/components/Assistant/useAssistantAvailable');
@@ -60,6 +66,7 @@ const result = async () => {
 };
 
 beforeEach(() => {
+  vi.clearAllMocks();
   mocks.currentUser.value = { id: 1 };
   mocks.assistant.value = true;
   mocks.personality.value = undefined;
@@ -94,10 +101,17 @@ describe('the personality it reports', () => {
     expect(await result()).toBe('civbot');
   });
 
-  test('is the chosen one otherwise', async () => {
+  test('is the chosen one otherwise, and is what the uuid is looked up by', async () => {
     // Pinned against the default above, so a hook that ignored the setting and always
     // answered 'civbot' would pass one of these and fail the other.
     mocks.personality.value = 'civchan';
     expect(await result()).toBe('civchan');
+
+    // 🔴 EXACT ARITY, deliberately. `AssistantChat` calls the same helper with a
+    // SECOND argument (`features.isGreen`) and this hook does not — a difference that
+    // decides which env var the footer reads on the green domain. The obvious
+    // "tidy-up" that unifies them is a behaviour change, and `toHaveBeenCalledWith`
+    // is what turns it from silent into red.
+    expect(mocks.getAssistantUUID).toHaveBeenCalledWith('civchan');
   });
 });
