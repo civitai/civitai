@@ -556,7 +556,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'audio',
     label: 'caption',
     description: 'ACE-Step music / audio LoRA training.',
-    released: '2026-02',
+    released: '2026-04-30',
     flag: 'recommended',
     versions: [
       {
