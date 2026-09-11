@@ -167,7 +167,7 @@ export const useQueryNotificationsCount = () => {
         system: 0,
         buzz: 0,
         announcements: 0,
-        // Placements waiting on this user, for the user menu badge. Carried on
+        // Queues waiting on this user, for the user-menu badges. Carried on
         // this query rather than its own, and kept out of `all` — `all` is the
         // bell, and a pending placement is not an unread notification.
         pendingPlacements: 0,

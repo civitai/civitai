@@ -14,6 +14,7 @@ import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
 import * as z from 'zod';
 import {
+  MY_COLLECTIONS_LIST_INPUT,
   decrementPendingReviewForCollection,
   decrementPendingReviewTotal,
 } from '~/components/Collections/collection-review-counts';
@@ -31,7 +32,6 @@ import type {
 } from '~/server/schema/collection.schema';
 import type { CollectionItemExpanded } from '~/server/services/collection.service';
 import {
-  CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
@@ -394,22 +394,15 @@ export const useOnCollectionItemsReviewed = () => {
 
   return useCallback(
     ({ collectionId, reviewed }: { collectionId: number; reviewed: number }) => {
-      // The same input the sidebar and /collections use — a different one is a different cache
-      // entry, and writing to it would move nothing.
-      const listInput = {
-        permission: CollectionContributorPermission.VIEW,
-        withPendingReviewCounts: true,
-      };
-
       queryUtils.user.checkNotifications.setData(undefined, (old) =>
         decrementPendingReviewTotal(old, reviewed)
       );
-      queryUtils.collection.getAllUser.setData(listInput, (old) =>
+      queryUtils.collection.getAllUser.setData(MY_COLLECTIONS_LIST_INPUT, (old) =>
         decrementPendingReviewForCollection(old, collectionId, reviewed)
       );
 
       queryUtils.user.checkNotifications.invalidate();
-      queryUtils.collection.getAllUser.invalidate(listInput);
+      queryUtils.collection.getAllUser.invalidate(MY_COLLECTIONS_LIST_INPUT);
     },
     [queryUtils]
   );

@@ -1,4 +1,4 @@
-import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
+import { MY_COLLECTIONS_LIST_INPUT } from '~/components/Collections/collection-review-counts';
 import { Collection } from '~/components/Collections/Collection';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
@@ -31,10 +31,7 @@ export const getServerSideProps = createServerSideProps({
         ssg.collection.getById.fetch({ id: collectionId }).catch(() => null),
         ...(session
           ? [
-              ssg.collection.getAllUser.prefetch({
-                permission: CollectionContributorPermission.VIEW,
-                withPendingReviewCounts: true,
-              }),
+              ssg.collection.getAllUser.prefetch(MY_COLLECTIONS_LIST_INPUT),
               ssg.hiddenPreferences.getHidden.prefetch(),
             ]
           : []),

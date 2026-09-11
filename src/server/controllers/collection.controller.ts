@@ -170,22 +170,25 @@ export const getAllUserCollectionsHandler = async ({
   const { user } = ctx;
 
   try {
-    const collections = await getUserCollectionsWithPermissions({
-      input: {
-        ...input,
-        userId: user.id,
-      },
-    });
+    // Concurrent, not serial: the permission query and the pending-review
+    // aggregate hit independent backends and share only `user.id`. Both SSG
+    // prefetches run this inside getServerSideProps, so a second round trip
+    // lands straight on TTFB.
+    const [collections, counts] = await Promise.all([
+      getUserCollectionsWithPermissions({ input: { ...input, userId: user.id } }),
+      input.withPendingReviewCounts
+        ? getPendingCollectionReviewCounts({ userId: user.id }).catch(() => ({
+            total: 0,
+            byCollection: {} as Record<number, number>,
+          }))
+        : undefined,
+    ]);
 
-    if (!input.withPendingReviewCounts) return collections;
-
-    const { byCollection } = await getPendingCollectionReviewCounts({ userId: user.id }).catch(
-      () => ({ total: 0, byCollection: {} as Record<number, number> })
-    );
+    if (!counts) return collections;
 
     return collections.map((collection) => ({
       ...collection,
-      pendingReviewCount: byCollection[collection.id] ?? 0,
+      pendingReviewCount: counts.byCollection[collection.id] ?? 0,
     }));
   } catch (error) {
     throw throwDbError(error);

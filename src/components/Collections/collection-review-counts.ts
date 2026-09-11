@@ -1,14 +1,21 @@
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { CollectionContributorPermission, CollectionItemStatus } from '~/shared/utils/prisma/enums';
+
+/**
+ * The `collection.getAllUser` input shared by every reader and writer of the pending-review
+ * counts (the sidebar, `/collections`, and the cache decrement below). A React Query cache key
+ * includes the input, so a caller using a different literal here fetches — and caches — a
+ * separate, un-decremented copy of the same list.
+ */
+export const MY_COLLECTIONS_LIST_INPUT = {
+  permission: CollectionContributorPermission.VIEW,
+  withPendingReviewCounts: true,
+} as const;
 
 /**
  * Moving the pending-review badges when a reviewer decides items.
  *
- * Pure, and separate from the mutations that call them, because the counts live in a query with
- * `staleTime: Infinity` — a decrement that is wrong stays wrong until a full page load, and a
- * decrement written inline in a `useMutation` option cannot be reached by a test at all.
- *
- * Both decrements floor at zero. Negative is reachable: two tabs on the same queue, or a bulk
- * action on rows a co-manager already cleared.
+ * Pure, and separate from the mutations that call them, because a decrement written inline in a
+ * `useMutation` option cannot be reached by a test at all.
  */
 
 /**
@@ -34,6 +41,8 @@ export function decrementPendingReviewTotal<T extends { pendingCollectionReviews
 
   return {
     ...old,
+    // Floors at zero — negative is reachable: two tabs on the same queue, or a bulk action on
+    // rows a co-manager already cleared.
     pendingCollectionReviews: Math.max(0, old.pendingCollectionReviews - reviewed),
   };
 }
@@ -51,6 +60,7 @@ export function decrementPendingReviewForCollection<
 
     return {
       ...collection,
+      // Floors at zero, same reasoning as decrementPendingReviewTotal above.
       pendingReviewCount: Math.max(0, collection.pendingReviewCount - reviewed),
     };
   });

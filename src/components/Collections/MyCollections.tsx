@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import clsx from 'clsx';
-import { CollectionContributorPermission, CollectionType } from '~/shared/utils/prisma/enums';
+import { CollectionType } from '~/shared/utils/prisma/enums';
 import {
   IconChevronDown,
   IconFilter,
@@ -30,6 +30,7 @@ import {
   roleLabelFor,
   sortCollections,
 } from '~/components/Collections/collection-list.utils';
+import { MY_COLLECTIONS_LIST_INPUT } from '~/components/Collections/collection-review-counts';
 import { useCollectionListPreferences } from '~/components/Collections/useCollectionListPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CollectionGetAllUserModel } from '~/types/router';
@@ -78,10 +79,9 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { data, isLoading } = trpc.collection.getAllUser.useQuery(
-    { permission: CollectionContributorPermission.VIEW, withPendingReviewCounts: true },
-    { enabled: !!currentUser }
-  );
+  const { data, isLoading } = trpc.collection.getAllUser.useQuery(MY_COLLECTIONS_LIST_INPUT, {
+    enabled: !!currentUser,
+  });
   // withPendingReviewCounts:true guarantees pendingReviewCount here, but CollectionGetAllUserModel
   // stays a union (see Task 4) since most callers of getAllUser omit the flag.
   const collections: (CollectionGetAllUserModel & { pendingReviewCount?: number })[] = data ?? [];
