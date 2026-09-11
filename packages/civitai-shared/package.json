@@ -13,7 +13,8 @@
     "./lazy": "./src/lazy.ts",
     "./type-guards": "./src/type-guards.ts",
     "./moderator-paths": "./src/moderator-paths.ts",
-    "./missing-media": "./src/missing-media.ts"
+    "./missing-media": "./src/missing-media.ts",
+    "./image-ingestion": "./src/image-ingestion.ts"
   },
   "scripts": {
     "test": "vitest run",

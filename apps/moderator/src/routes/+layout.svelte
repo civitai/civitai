@@ -72,7 +72,12 @@
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) =>
-    item.children ? (item.children.reduce((sum, c) => sum + (countFor(c.countKey) ?? 0), 0) || null) : null;
+    item.children
+      ? item.children.reduce(
+          (sum, c) => sum + (c.informational ? 0 : (countFor(c.countKey) ?? 0)),
+          0
+        ) || null
+      : null;
 
   const isActive = (href: string, path: string) =>
     href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
