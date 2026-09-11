@@ -252,6 +252,9 @@ Labels to score: ${input.labels.join(', ')}${definitions}`;
 
 type StepShape = {
   $type?: string;
+  status?: string;
+  error?: unknown;
+  jobs?: Array<{ status?: string; error?: unknown; events?: unknown }>;
   output?: {
     choices?: Array<{
       message?: { content?: string | null };
@@ -275,6 +278,12 @@ function readStep(workflow: unknown) {
     usage: step?.output?.usage ?? null,
     parsed: step?.output?.parsed ?? null,
     hasOutput: !!step?.output,
+    // A workflow can reach `failed` without the step ever producing output, and
+    // the reason lives on the step or its jobs rather than at workflow level —
+    // without these a fast failure is indistinguishable from an empty reply.
+    stepStatus: step?.status ?? null,
+    stepError: step?.error ?? null,
+    jobErrors: (step?.jobs ?? []).map((j) => ({ status: j.status, error: j.error })),
   };
 }
 
@@ -314,6 +323,9 @@ async function runOne(input: Omit<ScanInput, 'action'> & { text: string }) {
     logprobsPresent: step.logprobs != null,
     finishReason: step.finishReason ?? null,
     usage: step.usage,
+    stepStatus: step.stepStatus,
+    stepError: step.stepError,
+    jobErrors: step.jobErrors,
     // Returned for every non-`ok` so the outcome classification above can be
     // checked rather than believed.
     rawContent: outcome === 'ok' ? undefined : step.content,
