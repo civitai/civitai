@@ -388,8 +388,13 @@ describe('zipEntryNameForUrl', () => {
 /**
  * Part sizing is the other half of the memory story, and it is the half that is easy to get
  * wrong in the direction that reintroduces the bug this module exists for: `Upload` holds
- * `queueSize * partSize` resident, so raising `partSize` to lift the object-size ceiling while
- * leaving `queueSize` alone silently multiplies the resident footprint.
+ * `queueSize * partSize` bytes of in-flight parts, so raising `partSize` to lift the object-size
+ * ceiling while leaving `queueSize` alone silently multiplies that total.
+ *
+ * ⚠️ In-flight-part bytes, NOT the upload's peak memory — the two are different quantities and
+ * this file only measures the first. `archive-helpers.ts` disclaims the second explicitly (see
+ * `UPLOAD_BUFFER_BUDGET_BYTES` and `UploadPartGeometry.worstCaseResidentBytes`); nothing here
+ * establishes it, so nothing here should be read as proving it.
  */
 describe('deriveUploadPartGeometry', () => {
   const MiB = 1024 * 1024;
@@ -433,8 +438,11 @@ describe('deriveUploadPartGeometry', () => {
     expect(geometry.maxObjectBytes).toBeGreaterThanOrEqual(expectedBytes);
   });
 
-  it('🔴 holds worst-case resident bytes inside the budget at every estimate', () => {
-    // THE MEMORY CLAIM. Swept rather than spot-checked, and across the boundaries where the
+  it('🔴 holds in-flight-part bytes inside the budget at every estimate', () => {
+    // THE BUDGET CLAIM — `queueSize * partSize` against `UPLOAD_BUFFER_BUDGET_BYTES`, which is
+    // all the property named `worstCaseResidentBytes` actually is. NOT a claim about the upload's
+    // peak memory; that is disclaimed where the constant is defined and is not tested anywhere.
+    // Swept rather than spot-checked, and across the boundaries where the
     // clamps engage — a single sample would sit on one side of them and prove nothing about the
     // other. A change that raises `partSize` without lowering `queueSize` fails here.
     const estimates = [
@@ -452,7 +460,7 @@ describe('deriveUploadPartGeometry', () => {
       const geometry = deriveUploadPartGeometry({ expectedBytes });
       expect(
         geometry.worstCaseResidentBytes,
-        `estimate ${expectedBytes} produced ${geometry.worstCaseResidentBytes} resident bytes`
+        `estimate ${expectedBytes} produced ${geometry.worstCaseResidentBytes} in-flight-part bytes`
       ).toBeLessThanOrEqual(UPLOAD_BUFFER_BUDGET_BYTES);
       expect(geometry.worstCaseResidentBytes).toBe(geometry.partSize * geometry.queueSize);
       expect(geometry.queueSize).toBeGreaterThanOrEqual(1);

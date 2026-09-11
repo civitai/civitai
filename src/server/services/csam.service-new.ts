@@ -1237,14 +1237,19 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
  *   "closes the archive and its file descriptor …" cases fail with `expected false to be true`
  *   when it is removed.
  * - `archive.abort()` is the queued source buffers, and NO test distinguishes it — removing it
- *   leaves all 74 tests across the four files green (re-derived after this round added five; the
- *   number this comment carried before was 64), and that is expected rather than a gap: the
- *   bounded appender caps the backlog at `MAX_PENDING_ARCHIVE_ENTRIES`, which drains far too
- *   fast to observe without a timing-dependent assertion. Its effect was measured separately on
- *   an UNBOUNDED queue, where it is unmissable: with the sink destroyed and no `abort()`, the
- *   archiver went on to deflate all 60 of 60 queued entries; with `abort()` it stopped dead —
- *   0 further entries on node 26, 1 on node 24 (whichever was already in flight). So it does
- *   real work; it is just bounded work here, recorded as untested rather than as covered.
+ *   leaves every test in `archive-helpers.test.ts`, `csam-archive-stream-upload.test.ts`,
+ *   `csam-archive-backpressure.test.ts` and `process-csam.test.ts` green, and that is expected
+ *   rather than a gap: the bounded appender caps the backlog at `MAX_PENDING_ARCHIVE_ENTRIES`,
+ *   which drains far too fast to observe without a timing-dependent assertion. Its effect was
+ *   measured separately on an UNBOUNDED queue, where it is unmissable: with the sink destroyed
+ *   and no `abort()`, the archiver went on to deflate all 60 of 60 queued entries; with `abort()`
+ *   it stopped dead — 0 further entries on node 26, 1 on node 24 (whichever was already in
+ *   flight). So it does real work; it is just bounded work here, recorded as untested rather
+ *   than as covered.
+ *
+ *   No test TOTAL is quoted here, deliberately. A hand-maintained count sitting next to the code
+ *   it counts has nothing asserting on it, and this one drifted twice before it was removed. Run
+ *   those four files if you need the number.
  *
  * ⚠️ `output.destroy()` takes no error argument, and it does not need one. Destroying the sink is
  * NOT what settles an in-flight upload reading from it — `stream.pipeline` in `uploadStream` is,
@@ -1279,7 +1284,8 @@ function closeArchiveOnFailure(archive: Archiver, output: stream.Writable) {
  *
  * 🔴 MEMORY: the streaming path does NOT buffer the archive. `PassThrough` applies normal stream
  * backpressure, so the archiver stalls when the uploader is behind rather than accumulating. What
- * IS resident is the uploader's in-flight parts, bounded by `deriveUploadPartGeometry`. The
+ * IS held is the uploader's in-flight parts, sized by `deriveUploadPartGeometry` (plus the SDK
+ * chunker's own accumulating buffer on top — see `UPLOAD_BUFFER_BUDGET_BYTES`). The
  * bounded appender's own guarantee is untouched — it is the same `createBoundedArchive` wrapper
  * with the same ceiling, just handed a different sink.
  */
@@ -1353,7 +1359,7 @@ async function archiveAndUpload({
     // Derived part geometry arrived with the streaming change, so it belongs behind the same
     // flag; otherwise "the rollback is a flag flip" is false. Passing an estimate here would
     // give the supposedly-unchanged path a part size derived from a row count instead of the
-    // fixed 5 MiB it has always used — up to `256 MiB x 1` resident against the previous
+    // fixed 5 MiB it has always used — up to `256 MiB x 1` of in-flight parts against the previous
     // `5 MiB x 4` = 20 MiB. Memory is the exact dimension that caused the eviction this change
     // exists to fix, so the rollback target must not move on it.
     //
@@ -1401,11 +1407,31 @@ async function archiveAndUpload({
       // `createBoundedArchive` latches it and releases every parked `append()`. `finalize()`'s
       // wait for the sink to close then settles too, so the report fails instead of hanging.
       //
-      // ⚠️ THE DESTROY ALONE DOES NOT STOP THE PRODUCER — an earlier revision of this comment
-      // asserted that it did, and that was the defect. Under `archive.pipe(passThrough)` a
+      // ⚠️ TWO CORRECTIONS TO EARLIER REVISIONS OF THIS COMMENT LIVE HERE, and the second one
+      // undoes an overreach in the first.
+      //
+      // (1) THE DESTROY ALONE DOES NOT STOP THE PRODUCER. Under `archive.pipe(passThrough)` a
       // destroyed sink only UNPIPES the archiver: it is never destroyed, never emits `'error'`,
-      // the pending-entry ceiling is never released, and the report hangs forever. These two
-      // lines are ONE mechanism; neither does the job without the other.
+      // the pending-entry ceiling is never released, and the report hangs forever. The
+      // `stream.pipeline` above is what makes a destroyed sink reach the archiver at all.
+      //
+      // (2) BUT THE DESTROY DOES NOT CARRY THE COMMON CASE EITHER — the revision that fixed (1)
+      // called these two lines one mechanism that needed both halves, and that half is false. For
+      // any failure raised inside `upload.done()` — every runtime S3 failure — the pipelines
+      // already do the whole job: `Upload.__doConcurrentUpload`'s `for await` calls
+      // `dataFeeder.return()` on an in-loop throw, destroying the `PassThrough` `uploadStream`
+      // handed to `Upload`; `uploadStream`'s own `stream.pipeline` propagates that back onto THIS
+      // `passThrough`, and the `pipeline` above propagates it on to the archiver. Measured on
+      // this file: delete this line and all 8 tests stay green, the mid-archive probe included —
+      // and that probe is not vacuous, it goes HUNG when the `pipeline` above is removed.
+      //
+      // So what IS this line for, and it is the only thing established here: a rejection raised
+      // BEFORE `uploadStream` attaches that inner `pipeline` — `new Upload()` throwing from
+      // `__validateInput` (bad `partSize`/`queueSize`/params) is the reachable case. Nothing has
+      // linked this `passThrough` to anything that can fail it yet, so without this line the
+      // archiver fills the `PassThrough`, stalls, and every parked `append()` waits forever.
+      // Measured by injecting a throw at the `new Upload()` call site: with this line the report
+      // rejects in ~0.1 s; with it removed the same run reports `HUNG` at the 30 s deadline.
       passThrough.destroy(e instanceof Error ? e : new Error(String(e)));
     }
   );

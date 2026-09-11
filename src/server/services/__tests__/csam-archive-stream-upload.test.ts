@@ -192,7 +192,11 @@ import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
-import { MAX_UPLOAD_QUEUE_SIZE, S3_MIN_PART_SIZE_BYTES } from '~/server/utils/archive-helpers';
+import {
+  deriveUploadPartGeometry,
+  ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+  S3_MIN_PART_SIZE_BYTES,
+} from '~/server/utils/archive-helpers';
 
 // ---------------------------------------------------------------------------------------------
 // Fixture
@@ -242,18 +246,20 @@ const ENTRY_BYTES = 192 * 1024;
  * 🔴 Fixture size for the anti-hang probe, and the ONLY thing that makes that probe able to
  * observe anything at all.
  *
- * `Upload` pulls eagerly: it absorbs roughly `queueSize * partSize` — `MAX_UPLOAD_QUEUE_SIZE x
- * S3_MIN_PART_SIZE_BYTES` = 20 MiB at the default geometry — out of the `PassThrough` before it
- * stops reading. An archive SMALLER than that window is fully absorbed and fully appended before
- * the upload's first part can fail, so nothing is ever parked on the pending-entry ceiling and
- * the report fails correctly whether or not the producer is actually stopped. Measured: at
+ * `Upload` pulls eagerly: it absorbs roughly `queueSize * partSize` out of the `PassThrough`
+ * before it stops reading — 20 MiB for these fixtures, whose estimate is small enough that the
+ * derived part clamps to the 5 MiB minimum and the queue stays at 4. An archive SMALLER than that
+ * window is fully absorbed and fully appended before the upload's first part can fail, so nothing
+ * is ever parked on the pending-entry ceiling and the report fails correctly whether or not the
+ * producer is actually stopped. Measured: at
  * `ENTRY_COUNT` (73 x 192 KiB = 13.7 MiB) the probe settles in under a second against code with
  * the hang fully present. It was testing nothing.
  *
  * 160 x 192 KiB = 30 MiB is comfortably past that window, so the archiver is still mid-archive
  * with `append()` callers parked when the upload rejects — which is the state the defect strands
- * forever. Asserted in the test rather than trusted from this comment, because the window moves
- * if either geometry constant changes.
+ * forever. Asserted in the test rather than trusted from this comment, and asserted against the
+ * geometry THIS RUN derives rather than the default pair, because the window moves with the
+ * size estimate as well as with the two clamps.
  *
  * Wall clock, measured on this file: the two anti-hang probes cost ~0.7 s of ~5 s of test time
  * across 8 tests. Most of the larger fixture is free because `entryBytes` caches per index and
@@ -613,14 +619,27 @@ describe('csam archive streaming upload', () => {
       // and there is nothing to strand. Asserted, not assumed — if a future geometry change widens
       // the absorption window past the fixture, this fails loudly instead of going quietly
       // meaningless.
-      const absorbedBeforeStalling = MAX_UPLOAD_QUEUE_SIZE * S3_MIN_PART_SIZE_BYTES;
+      //
+      // 🔴 DERIVED, NOT `MAX_UPLOAD_QUEUE_SIZE * S3_MIN_PART_SIZE_BYTES`. Those two constants are
+      // the DEFAULT geometry; the run under test uses the geometry the service derives from
+      // `imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE`, and the two coincide only while that
+      // estimate is small enough to clamp to the 5 MiB minimum. Asserting the default pins
+      // nothing about the run: raising `ESTIMATED_BYTES_PER_ARCHIVED_IMAGE` far enough to make the
+      // derived part 8.19 MiB widens the real window to 32.8 MiB — past this 30 MiB fixture —
+      // while the default-geometry form still reads 20 MiB and stays green with the hang fully
+      // reintroduced. Measured: that two-part mutation left all 8 tests in this file passing
+      // against the default form, and fails HERE against the derived one.
+      const absorbedBeforeStalling = deriveUploadPartGeometry({
+        expectedBytes: HANG_PROBE_ENTRY_COUNT * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+      }).worstCaseResidentBytes;
       expect(
         HANG_PROBE_ENTRY_COUNT * ENTRY_BYTES,
         `fixture (${
           HANG_PROBE_ENTRY_COUNT * ENTRY_BYTES
         } bytes) no longer exceeds what the uploader ` +
-          `absorbs before it stops reading (${absorbedBeforeStalling} bytes) — this probe cannot ` +
-          `observe a stalled producer and proves nothing`
+          `absorbs before it stops reading at THIS RUN'S derived geometry ` +
+          `(${absorbedBeforeStalling} bytes) — this probe cannot observe a stalled producer and ` +
+          `proves nothing`
       ).toBeGreaterThan(absorbedBeforeStalling);
 
       seedDb(HANG_PROBE_ENTRY_COUNT);

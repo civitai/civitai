@@ -43,7 +43,8 @@ export const MAX_PART_SIZE_BYTES = 256 * 1024 * 1024; // 256 MiB
  * whose whole memory story is the reason this module exists.
  *
  * `deriveUploadPartGeometry` derives `queueSize` FROM this budget, so the in-flight-part total is
- * this constant by construction, whatever the estimate says.
+ * held AT OR BELOW this constant by construction, whatever the estimate says. (At or below, not
+ * at: the realistic geometry here is 5 MiB x 4 = 20 MiB, well under it.)
  *
  * ⚠️ THE REAL PEAK IS LARGER THAN THIS NUMBER, and an earlier revision of this comment read as a
  * proof that it was not. Read off `@aws-sdk/lib-storage`'s `getChunkStream` (dist-cjs): the
@@ -54,9 +55,16 @@ export const MAX_PART_SIZE_BYTES = 256 * 1024 * 1024; // 256 MiB
  * flight. On top of the `queueSize` in-flight parts there is therefore the accumulating buffer
  * (up to about one more part) and, during the concat itself, a transient copy of it.
  *
- * So the peak is APPROXIMATELY `(queueSize + 1 … 2) * partSize`. As a multiple of this constant
- * that is ~1.25–1.5x at `queueSize` 4, and ~2–3x at `queueSize` 1 — i.e. at the
- * `MAX_PART_SIZE_BYTES` clamp, where the budget buys only one part.
+ * So the peak is APPROXIMATELY `(queueSize + 1 … 2) * partSize` — about one to two further parts
+ * on top of `queueSize * partSize`. ⚠️ THOSE RATIOS ARE MULTIPLES OF THAT PRODUCT, NOT OF THIS
+ * CONSTANT, and an earlier revision of this comment read them against this constant and so
+ * overstated the peak by roughly 12x at the geometry the code actually runs. As a multiple of the
+ * product it is ~1.25–1.5x at `queueSize` 4 and ~2–3x at `queueSize` 1 — which is every
+ * `partSize` above half this budget (above 128 MiB), not only at the `MAX_PART_SIZE_BYTES` clamp.
+ *
+ * Against THIS constant the same arithmetic gives: at the 5 MiB minimum part with `queueSize` 4
+ * the product is 20 MiB and the peak 25–30 MiB, i.e. ~0.10–0.12x of it; at an estimate that
+ * yields a ~130 MiB part (`queueSize` 1) the peak is ~260–390 MiB, i.e. ~1.0–1.5x of it.
  *
  * 🔴 THAT RANGE IS APPROXIMATE AND IS NOT A CEILING. It is read off the SDK's source, not
  * measured under a heap profiler, and it accounts for no GC lag, no socket-level buffering and
@@ -64,8 +72,9 @@ export const MAX_PART_SIZE_BYTES = 256 * 1024 * 1024; // 256 MiB
  * down. Do not restate it as a proven bound; if a real bound is ever needed, measure one.
  *
  * It is immaterial at the part size this actually runs at: the realistic archives here land on
- * the 5 MiB minimum part, where the whole discrepancy is single-digit MiB. It matters only if a
- * future estimate pushes `partSize` toward the clamp, which is why it is written down.
+ * the 5 MiB minimum part, where the whole discrepancy is 5–10 MiB. It matters only if a future
+ * estimate pushes `partSize` into the `queueSize` 1 band above 128 MiB, which is why it is
+ * written down.
  */
 export const UPLOAD_BUFFER_BUDGET_BYTES = 256 * 1024 * 1024; // 256 MiB
 
@@ -78,8 +87,8 @@ export const MAX_UPLOAD_QUEUE_SIZE = 4;
  * The estimate is `entryCount * bytes-per-entry` off an observed average, so it is wrong in both
  * directions on any individual archive. Wrong-LOW is the direction that fails hard: exceeding
  * `S3_MAX_UPLOAD_PARTS` aborts the upload outright. Wrong-HIGH costs nothing at all — a larger
- * `partSize` is compensated by a smaller `queueSize`, and the resident total is pinned by
- * `UPLOAD_BUFFER_BUDGET_BYTES` either way. Asymmetric consequences, so bias generously.
+ * `partSize` is compensated by a smaller `queueSize`, and the in-flight-part total is held
+ * under `UPLOAD_BUFFER_BUDGET_BYTES` either way. Asymmetric consequences, so bias generously.
  */
 export const PART_SIZE_ESTIMATE_HEADROOM = 4;
 
@@ -110,7 +119,10 @@ export type UploadPartGeometry = {
  *
  * The two knobs are NOT independent. `partSize` is set by the part-count limit (how large the
  * object may be); `queueSize` is then whatever fits the memory budget alongside it. Raising one
- * lowers the other, which is the property that makes worst-case resident bytes a constant.
+ * lowers the other, which is the property that keeps the in-flight-part total bounded by the
+ * budget instead of scaling with the archive. (That total is what `worstCaseResidentBytes`
+ * reports; the upload's peak memory is a larger and untested quantity — see
+ * `UPLOAD_BUFFER_BUDGET_BYTES`.)
  *
  * `expectedBytes` omitted (or non-finite/non-positive) yields the S3 minimum part size and full
  * parallelism — byte-for-byte the geometry this code used before, so the small uploads that pass
