@@ -20,6 +20,26 @@ import {
  * force to a write.
  *
  * The `sql.test.ts` tier still pins the compiled statement text; this one pins the effect.
+ *
+ * 🔴 THE MUTATION LEDGER, RECORDED HERE BECAUSE A COUNT THAT LIVES ONLY IN A COMMIT MESSAGE GETS
+ * CITED INSTEAD OF RE-DERIVED. Two different numbers were reported for the previous round's battery
+ * and neither was written down anywhere a reader could check. **TWELVE** mutants, each applied to
+ * `abuse-detection.service.ts` (or `report.ts`), run, and confirmed to fail the named test — with
+ * that test's own assertion, not merely "something went red". Re-derive rather than trusting the
+ * list; it is a claim like any other.
+ *
+ *  1 the capability probe back to all-four-or-none ....... 'keeps the ruling after `%s` is dropped'
+ *  2 the pre-verdict branch refuses a storable key ....... 'still stores the cluster key when only…'
+ *  3 the ungrouped warning names the wrong column ........ 'a report that DOES carry a key…'
+ *  4 survivor pass 1 degraded to a per-user count ........ 'keeps the unruled sibling’s own evidence'
+ *  5 survivor pass 2's fallback removed .................. 'a ruled row keeps the evidence…'
+ *  6 the retry gate back on "a name came back" ........... 'the run still lands, ungrouped, when…'
+ *  7 the 42703 CODE gate dropped ........................ 'translates a missing-unique-index error…'
+ *  8 `report.ts`'s measured figure back to 251 .......... 'the figure `report.ts` reports as MEASURED'
+ *  9 the backstop retry removed entirely ................ 'INVARIANT GUARD — the backstop still fires'
+ * 10 the scoped delete inverted to `is not null` ........ 'keeps the ruling, the ruler and the row…'
+ * 11 the warning's "only when something was lost" gate .. 'writes ONCE and warns not at all…'
+ * 12 the capability probe removed altogether ............ 'the detectors keep reporting — a run lands'
  */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
@@ -694,6 +714,13 @@ describe('the pre-DDL window costs the untouched detectors nothing', () => {
     });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('schema.sql'));
+    // 🔴 THE COLUMN IT NAMES, not merely that it named one. The message used to be handed a column
+    // by its caller, and the probe path had none to give — it passed the literal `group_key`
+    // whatever was actually absent. `group_key` is now the only absence that can reach this warning,
+    // so the name is checkable, and this is what checks it.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('abuse_detection_finding has no group_key column')
+    );
   });
 
   it('🔴 an UNRELATED missing column is not reported as a group_key problem', async () => {
@@ -737,9 +764,10 @@ describe('the pre-DDL window costs the untouched detectors nothing', () => {
     expect(transactions(query)).toBe(1);
   });
 
-  it('a HALF-applied DDL is treated as not applied', async () => {
-    // Three of the four columns present is not "applied". The degraded shape is the one that cannot
-    // be wrong about a column it never names, so it is what a partial application gets.
+  it('a HALF-applied DDL stores ungrouped when only `group_key` is the missing half', async () => {
+    // `verdict` back, `group_key` still absent: the run lands, without its cluster key, and says so.
+    // The verdict half of the capability is irrelevant to this report — it carries no ruling — which
+    // is exactly why the two halves are asked separately.
     await db.exec(`ALTER TABLE abuse_detection_finding
       ADD COLUMN verdict text, ADD COLUMN verdict_by text, ADD COLUMN verdict_at timestamptz;`);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -845,6 +873,273 @@ describe('missingColumnFromError', () => {
       service.missingColumnFromError(Object.assign(new Error('no idea'), { code: '42703' }))
     ).toBeNull();
   });
+});
+
+/**
+ * 🔴 THE TWO CAPABILITIES THE FOUR COLUMNS CARRY ARE INDEPENDENT, AND SO IS THE DEGRADATION.
+ *
+ * One boolean over all four columns conflated two unrelated questions — "can a ruling be preserved?"
+ * (which only `verdict` answers) and "can a cluster key be stored?" (which only `group_key` does) —
+ * so a table carrying rulings in a `verdict` column took the UNSCOPED delete the moment ANY of the
+ * other three went missing. Measured on this harness against that shape: rule one of two findings,
+ * `DROP COLUMN group_key`, replay, and `getAbuseVerdictSummary` went `{ ruled: 1, unruled: 1 }` →
+ * `{ ruled: 0, unruled: 2 }` — the same silent, irreversible loss the scoped delete was added to
+ * stop, reached through a narrower door.
+ *
+ * The live trigger is dropping one of the three non-`verdict` columns after rulings exist: rolling
+ * back the grouping half, or restoring a mid-rollout snapshot.
+ */
+describe('🔴 a ruling survives a replay whenever the `verdict` column is there', () => {
+  const STARTED = '2026-09-08T03:20:00.000Z';
+  const report = () => ({
+    detector: 'bot-account-detection',
+    startedAt: STARTED,
+    finishedAt: '2026-09-08T03:20:41.000Z',
+    findings: [
+      { userId: 81, confidence: 0.4, reason: 'ruled on this', actioned: false },
+      { userId: 82, confidence: 0.4, reason: 'left unruled', actioned: false },
+    ],
+  });
+
+  /** `verdict` deliberately absent from this list — its own absence is the case below. */
+  it.each(['verdict_by', 'verdict_at', 'group_key'])(
+    'keeps the ruling after `%s` is dropped underneath it',
+    async (column) => {
+      const { runId } = await service.recordAbuseRun(report());
+      const seeded = await allFindings(db);
+      const target = seeded.find((r) => r.user_id === 81);
+      await service.recordAbuseVerdict({
+        runId,
+        findingId: target?.id as number,
+        verdict: 'fp',
+        verdictBy: '77',
+      });
+      // The state the loss is measured FROM, pinned before the schema moves.
+      expect(await service.getAbuseVerdictSummary(runId)).toEqual({ ruled: 1, unruled: 1 });
+
+      await db.exec(`ALTER TABLE abuse_detection_finding DROP COLUMN ${column};`);
+      await service.recordAbuseRun(report());
+
+      // 🔴 The literal the all-four boolean produced here was `{ ruled: 0, unruled: 2 }`.
+      expect(await service.getAbuseVerdictSummary(runId)).toEqual({ ruled: 1, unruled: 1 });
+      const after = await db.query<{ id: number; user_id: number; verdict: string | null }>(
+        `SELECT id, user_id, verdict FROM abuse_detection_finding ORDER BY user_id`
+      );
+      expect(after.rows.map((r) => [r.user_id, r.verdict])).toEqual([
+        [81, 'fp'],
+        [82, null],
+      ]);
+      // The ROW survived rather than being re-created with a verdict copied onto a new one.
+      expect(after.rows[0].id).toBe(target?.id);
+    }
+  );
+
+  it('drops every row only when `verdict` ITSELF is gone — there is then nothing to preserve', async () => {
+    // The one state in which the unscoped delete is right, and the reason the comment above it may
+    // say so: with no `verdict` column no ruling can ever have been recorded on this deployment.
+    await service.recordAbuseRun(report());
+    const before = await allFindings(db);
+    await db.exec(`ALTER TABLE abuse_detection_finding DROP COLUMN verdict;`);
+
+    await service.recordAbuseRun(report());
+
+    const after = await db.query<{ id: number; user_id: number }>(
+      `SELECT id, user_id FROM abuse_detection_finding ORDER BY user_id`
+    );
+    expect(after.rows.map((r) => r.user_id)).toEqual([81, 82]);
+    // Re-inserted, not preserved: every id moved.
+    expect(after.rows.every((r) => !before.some((b) => b.id === r.id))).toBe(true);
+  });
+
+  it('🔴 still stores the cluster key when only `verdict` is missing, and warns about nothing', async () => {
+    // The F8 half: the probe path used to hardcode `group_key` in its warning, so this shape —
+    // `verdict` gone, `group_key` present, nothing lost — logged
+    // "abuse_detection_finding has no group_key column" about a column that was right there.
+    await db.exec(`ALTER TABLE abuse_detection_finding DROP COLUMN verdict;`);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await service.recordAbuseRun({
+      ...report(),
+      findings: [
+        { userId: 83, confidence: 0.4, reason: 'in a ring', actioned: false, groupKey: RING },
+      ],
+    });
+
+    const landed = await db.query<{ user_id: number; group_key: string | null }>(
+      `SELECT user_id, group_key FROM abuse_detection_finding ORDER BY id`
+    );
+    expect(landed.rows.map((r) => [r.user_id, r.group_key])).toEqual([[83, RING]]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE SURVIVOR MATCH IS PER-USER, AND A PAYLOAD MAY NAME A USER TWICE.
+ *
+ * Counting survivors per user made the row COUNT a fixed point, and that is what was pinned — but
+ * not the row CONTENT. Measured on this harness against the count-only match: a payload of
+ * `[user 71 "first reason", user 71 "second reason"]` with the second row ruled replayed to
+ * `[{second, tp}, {second, null}]` — the first finding permanently gone and the board showing one
+ * account twice under identical text, on every subsequent replay.
+ *
+ * No first-party producer emits two findings for one user in one run, and the wire contract does not
+ * forbid it.
+ */
+describe('🔴 a replay of a payload that repeats a user keeps both findings', () => {
+  const STARTED = '2026-09-09T03:20:00.000Z';
+  const report = () => ({
+    detector: 'bot-account-detection',
+    startedAt: STARTED,
+    finishedAt: '2026-09-09T03:20:41.000Z',
+    findings: [
+      { userId: 71, confidence: 0.4, reason: 'first reason', actioned: false },
+      { userId: 71, confidence: 0.4, reason: 'second reason', actioned: false },
+    ],
+  });
+
+  const contents = async () =>
+    (
+      await db.query<{ reason: string; verdict: string | null }>(
+        `SELECT reason, verdict FROM abuse_detection_finding ORDER BY reason`
+      )
+    ).rows;
+
+  it('keeps the unruled sibling’s own evidence, not a second copy of the ruled one', async () => {
+    const { runId } = await service.recordAbuseRun(report());
+    const seeded = await db.query<{ id: number; reason: string }>(
+      `SELECT id, reason FROM abuse_detection_finding ORDER BY id`
+    );
+    const second = seeded.rows.find((r) => r.reason === 'second reason');
+    await service.recordAbuseVerdict({
+      runId,
+      findingId: second?.id as number,
+      verdict: 'tp',
+      verdictBy: '77',
+    });
+
+    await service.recordAbuseRun(report());
+
+    // 🔴 The literal the count-only match produced here was two `second reason` rows.
+    expect(await contents()).toEqual([
+      { reason: 'first reason', verdict: null },
+      { reason: 'second reason', verdict: 'tp' },
+    ]);
+
+    // And it is a fixed point, not a state that survives exactly one replay.
+    await service.recordAbuseRun(report());
+    await service.recordAbuseRun(report());
+    expect(await contents()).toEqual([
+      { reason: 'first reason', verdict: null },
+      { reason: 'second reason', verdict: 'tp' },
+    ]);
+  });
+});
+
+/**
+ * 🔴 THE DEGRADATION GATE IS THE ERROR CODE, WHICH IS LOCALE-INDEPENDENT; THE COLUMN NAME IS A
+ * REFINEMENT THAT CAN FAIL.
+ *
+ * `missingColumnFromError` reads the name out of the message, and Postgres localises messages: a
+ * server running a non-English `lc_messages` spells `column "verdict" does not exist` in its own
+ * language, the regex misses, and a gate written as "retry only when a name came back" turns the
+ * whole backstop OFF — reporting then fails where it previously degraded.
+ */
+describe('a 42703 whose message cannot be parsed still degrades', () => {
+  it('the run still lands, ungrouped, when the column name is unreadable', async () => {
+    await db.exec(`ALTER TABLE abuse_detection_finding
+      DROP COLUMN verdict, DROP COLUMN verdict_by, DROP COLUMN verdict_at, DROP COLUMN group_key;`);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 🔴 The probe answers truthfully — the columns really are gone — so this case would not reach
+    // the backstop at all. The lying probe is what puts the write on it; `translate` then spells the
+    // server's refusal the way a non-English `lc_messages` would.
+    const probeLie = installLyingProbe({ translate: true });
+
+    await expect(
+      service.recordAbuseRun({
+        detector: 'review-bomb',
+        startedAt: '2026-09-10T03:20:00.000Z',
+        finishedAt: '2026-09-10T03:20:41.000Z',
+        findings: [
+          { userId: 91, confidence: 0.4, reason: 'in a ring', actioned: false, groupKey: RING },
+        ],
+      })
+    ).resolves.toMatchObject({ runId: expect.any(Number) });
+
+    expect(probeLie.used).toBe(true);
+    const landed = await db.query<{ user_id: number }>(
+      `SELECT user_id FROM abuse_detection_finding ORDER BY id`
+    );
+    expect(landed.rows.map((r) => r.user_id)).toEqual([91]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('schema.sql'));
+  });
+
+  it('INVARIANT GUARD — the backstop still fires when the name IS readable', async () => {
+    // Not a regression test: this passed before the gate moved to the code, and it pins that moving
+    // it did not cost the English-message path. It is also the only case that exercises the retry.
+    await db.exec(`ALTER TABLE abuse_detection_finding
+      DROP COLUMN verdict, DROP COLUMN verdict_by, DROP COLUMN verdict_at, DROP COLUMN group_key;`);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const probeLie = installLyingProbe();
+
+    await expect(
+      service.recordAbuseRun({
+        detector: 'review-bomb',
+        startedAt: '2026-09-10T03:20:00.000Z',
+        finishedAt: '2026-09-10T03:20:41.000Z',
+        findings: [
+          { userId: 92, confidence: 0.4, reason: 'in a ring', actioned: false, groupKey: RING },
+        ],
+      })
+    ).resolves.toMatchObject({ runId: expect.any(Number) });
+
+    expect(probeLie.used).toBe(true);
+    const landed = await db.query<{ user_id: number }>(
+      `SELECT user_id FROM abuse_detection_finding ORDER BY id`
+    );
+    expect(landed.rows.map((r) => r.user_id)).toEqual([92]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('schema.sql'));
+  });
+
+  /**
+   * The DDL vanishing between the capability probe and the write — the race the backstop exists for,
+   * and the only way to reach it deterministically. The table genuinely lacks the four columns; only
+   * the FIRST catalogue read claims otherwise, so the write is built in the full shape and the server
+   * refuses it.
+   *
+   * 🔴 ONE spy, both behaviours. `vi.spyOn` on an already-spied method returns the EXISTING spy, so a
+   * second `mockImplementation` would silently REPLACE this one rather than wrap it — and the `real`
+   * it captured would be the spy itself, i.e. unbounded recursion.
+   */
+  function installLyingProbe(opts: { translate?: boolean } = {}): { used: boolean } {
+    const state = { used: false };
+    const real = db.query.bind(db);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(db, 'query' as any).mockImplementation(async (...args: unknown[]) => {
+      if (!state.used && typeof args[0] === 'string' && args[0].includes('pg_attribute')) {
+        state.used = true;
+        return {
+          rows: [
+            { attname: 'verdict' },
+            { attname: 'verdict_by' },
+            { attname: 'verdict_at' },
+            { attname: 'group_key' },
+          ],
+          affectedRows: 0,
+          fields: [],
+        };
+      }
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return await (real as any)(...args);
+      } catch (e) {
+        if (!opts.translate || (e as { code?: string } | null)?.code !== '42703') throw e;
+        // The same error from a server whose `lc_messages` is not English: same code, no `column
+        // "…"` for the regex to find.
+        throw Object.assign(new Error('Spalte »verdict« existiert nicht'), { code: '42703' });
+      }
+    });
+    return state;
+  }
 });
 
 /** A findings row without the four columns — the only shape that table has before the DDL is run. */

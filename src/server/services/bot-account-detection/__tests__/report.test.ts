@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { MAX_FINDINGS_PER_REPORT, abuseReportInput } from '@civitai/moderation';
 import { describe, expect, it } from 'vitest';
 import type { BotAccountCohortMember, PostCounts, SurfaceCounts } from '../cohort';
@@ -12,6 +15,9 @@ import {
   truncateReason,
 } from '../report';
 import type { BotAccountScore } from '../scoring';
+
+/** This directory, so the doc-claim guard below can read the module it is asserting about. */
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const at = (iso: string) => new Date(iso);
 const STARTED = at('2026-09-03T03:20:00.000Z');
@@ -471,6 +477,32 @@ describe('boundGroupKey — the cluster key stays inside the wire contract', () 
   it('a hashed key cannot be confused with a domain key', () => {
     // Its own prefix, so the two namespaces cannot overlap however the digest comes out.
     expect(boundGroupKey(`domain:${longDomain(240)}`).startsWith('domain:')).toBe(false);
+  });
+
+  it('🔴 the figure `report.ts` reports as MEASURED is the one this file measures', () => {
+    // The comment on `boundGroupKey` said a 240-character domain yields a **251**-character key. The
+    // prefix is 7 characters, so it is 247 — which is what the negative control above asserts, and
+    // the two sibling figures in the same sentence (193 / 194) are right, which is exactly what made
+    // the wrong one read as measured. A number a reader is told was measured has to have been.
+    //
+    // 🔴 THE WHOLE SENTENCE IS PINNED, not the digits. A guard on "247" alone is walkable by a
+    // reword that moves the claim somewhere else; this fails on any edit to it, which is the price
+    // of a machine-checkable claim about prose.
+    // Block-comment continuation markers stripped before collapsing whitespace, or a sentence that
+    // wraps across lines carries a `*` into the middle of itself and no assertion can match it.
+    const source = readFileSync(join(HERE, '../report.ts'), 'utf8')
+      .split('\n')
+      .map((line) => line.replace(/^\s*\*\s?/, ''))
+      .join(' ')
+      .replace(/\s+/g, ' ');
+    // Derived here, from the contract's own prefix and the case the sentence describes — never read
+    // back out of the source it is checking.
+    const measured = `domain:${longDomain(240)}`.length;
+    expect(measured).toBe(247);
+    expect(source).toContain(
+      `Measured: a 240-char email domain yields a ${measured}-character key and the whole report ` +
+        'is refused (boundary: 193 characters parses, 194 fails).'
+    );
   });
 });
 

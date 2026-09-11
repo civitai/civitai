@@ -118,11 +118,28 @@ export const isUndefinedColumnError = (e: unknown): boolean =>
 
 /**
  * The four columns THIS FEATURE added to a table that was already live and already receiving
- * reports. Named once, because two different things branch on the set: the capability probe below,
- * and the `42703` backstop, which has to separate two states that share one error code and have
- * opposite remedies: a column THIS CHANGE added is missing, versus some unrelated column is.
+ * reports. The SET is what the `42703` backstop branches on, because it has to separate two states
+ * that share one error code and have opposite remedies: a column THIS CHANGE added is missing,
+ * versus some unrelated column is.
+ *
+ * 🔴 THE CAPABILITY PROBE DOES **NOT** USE THIS SET — it asks about `verdict` and `group_key`
+ * individually (see `VerdictColumnSupport`). An all-four-or-none probe is exactly the defect that
+ * sent a table holding rulings down the unscoped delete, so widening the probe back to this constant
+ * is the regression to watch for.
  */
 const VERDICT_DDL_COLUMNS = ['verdict', 'verdict_by', 'verdict_at', 'group_key'] as const;
+
+/**
+ * The one column that decides whether a ruling can EXIST, and therefore the only one the scoped
+ * delete names. Its absence, and nothing else's, means there is nothing to preserve.
+ */
+const VERDICT_COLUMN = 'verdict';
+
+/**
+ * The one column that decides whether a producer's cluster key can be STORED, and therefore the only
+ * one whose absence a report can actually lose something to.
+ */
+const GROUP_KEY_COLUMN = 'group_key';
 
 /**
  * The column a `42703` names, or `null` for anything else.
@@ -150,7 +167,30 @@ export function missingColumnFromError(e: unknown): string | null {
 }
 
 /**
- * Does the live table carry the columns this feature added?
+ * What the live table can actually do, as TWO independent capabilities.
+ *
+ * 🔴 ONE BOOLEAN OVER ALL FOUR COLUMNS CONFLATED TWO UNRELATED QUESTIONS, AND THAT COST VERDICTS.
+ * "Can a ruling be preserved?" is answered by `verdict` alone — it is the only column the scoped
+ * delete names. "Can a cluster key be stored?" is answered by `group_key` alone. An all-or-none
+ * probe sent a table that HAS `verdict`, and rulings recorded in it, down the unscoped
+ * `DELETE … WHERE run_id = …` the moment any ONE of the other three went missing — the same silent,
+ * irreversible loss the scoped delete exists to stop, reached through a narrower door. Measured on
+ * this file's PGlite harness: rule one of two findings, `DROP COLUMN group_key`, replay, and the
+ * run's ruled count went 1 → 0. The live trigger is dropping one of the three non-`verdict` columns
+ * after rulings exist — rolling back the grouping half, or restoring a mid-rollout snapshot.
+ *
+ * `verdict_by` and `verdict_at` appear in neither capability because this write path never names
+ * them; `recordAbuseVerdict` does, and it refuses rather than degrading.
+ */
+type VerdictColumnSupport = {
+  /** `verdict` exists, so the delete can be scoped to the rows no moderator has ruled on. */
+  canPreserveVerdicts: boolean;
+  /** `group_key` exists, so the producer's cluster key can be written. */
+  canStoreGroupKey: boolean;
+};
+
+/**
+ * Which of this feature's capabilities does the live table actually support?
  *
  * 🔴 ASKED, NOT DISCOVERED BY FAILING — and that is the whole point of this function. The DDL is
  * applied by hand, so there is a window in which the table exists and these columns do not. Learning
@@ -169,16 +209,19 @@ export function missingColumnFromError(e: unknown): string | null {
  * answers NULL for a table that is not there at all — in which case no rows come back, the write is
  * built in its pre-DDL shape, and the missing TABLE raises its own `42P01` exactly as before.
  *
- * ALL FOUR or none: a half-applied DDL is treated as not applied, because the degraded path is the
- * one that cannot be wrong about a column it never names.
+ * EACH COLUMN ANSWERS ONLY FOR ITSELF — see `VerdictColumnSupport` above for why an all-four-or-none
+ * answer destroyed rulings on a half-applied table.
  */
-async function verdictColumnsPresent(trx: AbuseTrx): Promise<boolean> {
+async function verdictColumnSupport(trx: AbuseTrx): Promise<VerdictColumnSupport> {
   const { rows } = await sql<{ attname: string }>`
     SELECT attname FROM pg_attribute
      WHERE attrelid = to_regclass('abuse_detection_finding')
        AND attnum > 0 AND NOT attisdropped`.execute(trx);
   const present = new Set(rows.map((r) => r.attname));
-  return VERDICT_DDL_COLUMNS.every((c) => present.has(c));
+  return {
+    canPreserveVerdicts: present.has(VERDICT_COLUMN),
+    canStoreGroupKey: present.has(GROUP_KEY_COLUMN),
+  };
 }
 
 /**
@@ -192,7 +235,7 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
   const db = abuseDb();
   try {
     const { runId, storedUngrouped } = await writeRun(db, input);
-    if (storedUngrouped) warnStoringUngrouped('group_key', input);
+    if (storedUngrouped) warnStoringUngrouped(input);
     return { runId };
   } catch (e) {
     // 🔴 THE INGEST PATH DEGRADES RATHER THAN STOPPING, AND THIS IS NOW ONLY THE BACKSTOP.
@@ -202,15 +245,30 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
     // What is left for this branch is the race: the DDL applied, or reverted, between the probe and
     // the write.
     //
-    // 🔴 GATED ON WHICH COLUMN IS MISSING. `42703` is equally what an UNRELATED dropped column
-    // raises, and the old unconditional branch answered that with `abuse_detection_finding has no
-    // group_key column - apply schema.sql`: a confident, wrong remedy for a different fault, logged
-    // just before the real error propagated. Only a column THIS change added is retried past.
-    const missing = missingColumnFromError(e);
-    if (missing !== null && (VERDICT_DDL_COLUMNS as readonly string[]).includes(missing)) {
-      const { runId } = await writeRun(db, input, { forceLegacyShape: true });
-      warnStoringUngrouped(missing, input);
-      return { runId };
+    // 🔴 THE CODE IS THE GATE; THE COLUMN NAME IS A REFINEMENT THAT MAY FAIL. `42703` is
+    // locale-independent, the message is not: `missingColumnFromError` reads the name out of an
+    // ENGLISH message, so a server running a non-English `lc_messages` yields `null` for a perfectly
+    // ordinary missing column. Gating the retry on "a name came back" therefore turned the whole
+    // backstop OFF on those servers — reporting would fail where it used to degrade. So an
+    // unreadable name degrades, and only a name we CAN read and recognise as someone else's problem
+    // stops the retry: `42703` is equally what an UNRELATED dropped column raises, and the old
+    // unconditional branch answered that with `abuse_detection_finding has no group_key column —
+    // apply schema.sql`, a confident wrong remedy for a different fault.
+    if (isUndefinedColumnError(e)) {
+      const missing = missingColumnFromError(e);
+      const ours = missing === null || (VERDICT_DDL_COLUMNS as readonly string[]).includes(missing);
+      if (ours) {
+        // 🔴 RE-PROBED, NOT FORCED INTO THE LEGACY SHAPE. This branch is the race — the DDL applied,
+        // or reverted, between the probe and the write — and the catalogue read at the top of the
+        // retry is the authoritative answer to what it is now. Forcing the pre-DDL shape instead
+        // assumed the reverted direction and, on a table that still had `verdict`, answered a
+        // missing `group_key` with the unscoped delete that erases rulings. If the shape is
+        // genuinely unchanged the retry reproduces the same failure and it propagates, which is the
+        // honest outcome for a fault nobody here can name.
+        const { runId, storedUngrouped } = await writeRun(db, input);
+        if (storedUngrouped) warnStoringUngrouped(input);
+        return { runId };
+      }
     }
     if ((e as { code?: unknown }).code === PG_NO_MATCHING_CONFLICT_TARGET)
       throw new Error(
@@ -232,23 +290,30 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
  *
  * Emitted after the write, not before: a run that did not land has lost its grouping the way it lost
  * everything else, and saying so separately would be a second explanation for one failure.
+ *
+ * 🔴 IT NAMES `group_key` BECAUSE THAT IS THE ONLY COLUMN WHOSE ABSENCE CAN REACH HERE. It used to be
+ * handed a column name by two callers, one of which did not have one: the probe path passed the
+ * literal `'group_key'` whatever the all-four probe had actually found missing, so a table with
+ * `verdict` dropped and `group_key` right there logged "abuse_detection_finding has no group_key
+ * column" — the same confident-wrong-column shape the `42703` backstop was fixed for. Now the only
+ * thing that sets `storedUngrouped` is `group_key` itself being absent, so the name is a fact rather
+ * than a guess, and no caller supplies one.
  */
-function warnStoringUngrouped(column: string, input: AbuseReportInput): void {
+function warnStoringUngrouped(input: AbuseReportInput): void {
   if (!input.findings.some((f) => f.groupKey != null)) return;
   console.warn(
-    `[abuse-detection] abuse_detection_finding has no ${column} column — storing this run ` +
+    `[abuse-detection] abuse_detection_finding has no ${GROUP_KEY_COLUMN} column — storing this run ` +
       'UNGROUPED. Apply apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL.'
   );
 }
 
 async function writeRun(
   db: AbuseDb,
-  input: AbuseReportInput,
-  opts: { forceLegacyShape?: boolean } = {}
+  input: AbuseReportInput
 ): Promise<{ runId: number; storedUngrouped: boolean }> {
   return db.transaction().execute(async (trx) => {
     // Asked once per report, inside the transaction whose statements are shaped by the answer.
-    const withVerdictColumns = opts.forceLegacyShape ? false : await verdictColumnsPresent(trx);
+    const support = await verdictColumnSupport(trx);
 
     const run = await trx
       .insertInto('abuse_detection_run')
@@ -289,8 +354,8 @@ async function writeRun(
       .returning('id')
       .executeTakeFirstOrThrow();
 
-    await replaceFindings(trx, run.id, input.findings, withVerdictColumns);
-    return { runId: run.id, storedUngrouped: !withVerdictColumns };
+    await replaceFindings(trx, run.id, input.findings, support);
+    return { runId: run.id, storedUngrouped: !support.canStoreGroupKey };
   });
 }
 
@@ -310,12 +375,30 @@ async function writeRun(
  * so replaying N times leaves the same row count as replaying once. Growth is possible only through
  * a moderator ruling something, which is the intended direction.
  *
- * 🔴 THE MATCH IS `(run_id, user_id)`, and it is a match, not a key. The table has no unique index on
- * that pair and this does not add one — adding one would be a second hand-applied DDL step, and on a
- * live table already holding whatever the detectors have written it could not be created at all
- * without a de-duplication pass first. Counting survivors per user instead makes a payload that
- * repeats a user behave sanely (its first N findings for that user are the ones already present)
- * without claiming a uniqueness the database does not enforce.
+ * 🔴 THE MATCH IS `(user_id, reason)` FIRST AND `user_id` ONLY AS A FALLBACK, and it is a match, not
+ * a key. The table has no unique index on either pair and this does not add one — that would be a
+ * second hand-applied DDL step, and on a live table already holding whatever the detectors have
+ * written it could not be created at all without a de-duplication pass first.
+ *
+ * The two passes exist because the two things a survivor match has to get right pull in opposite
+ * directions, and a per-user COUNT alone got the second one wrong:
+ *
+ *   PASS 1, exact content. A payload finding whose `(user_id, reason)` is already on the run is the
+ *   row that is already there. Counting survivors per user instead made the row COUNT a fixed point
+ *   while losing row CONTENT on a payload that names one user twice: measured here, a payload of
+ *   `[user 71 "first reason", user 71 "second reason"]` with the second ruled replayed to
+ *   `[{second, tp}, {second, null}]` on every subsequent replay — "first reason" permanently gone and
+ *   the board showing one account twice under identical text. No first-party producer emits two
+ *   findings per user per run, and the wire contract does not forbid it.
+ *
+ *   PASS 2, the same user, whatever the text. A ruled row is deliberately NOT refreshed from the
+ *   payload (see below), so a producer that rewrote its `reason` between the ruling and the replay
+ *   leaves a survivor whose text no longer matches anything. Content matching alone would insert the
+ *   payload's copy beside it and render that account twice — so a leftover payload finding consumes
+ *   any remaining survivor for its user rather than becoming a new row.
+ *
+ * Neither pass claims a uniqueness the database does not enforce; both are consuming matches over a
+ * multiset, so N survivors for a user absorb at most N payload findings.
  *
  * 🔴 A RULED ROW IS NOT REFRESHED FROM THE PAYLOAD, deliberately. The moderator ruled on the `reason`
  * and `confidence` that were on screen; overwriting them with a replay's copy would leave a verdict
@@ -336,15 +419,17 @@ async function replaceFindings(
   trx: AbuseTrx,
   runId: number,
   findings: AbuseReportInput['findings'],
-  withVerdictColumns: boolean
+  support: VerdictColumnSupport
 ): Promise<void> {
-  if (!withVerdictColumns) {
-    // Pre-DDL there is no `verdict` column to scope the delete by, and nothing to preserve either:
-    // no ruling can have been recorded on a deployment that cannot store one. The original
-    // clear-and-reinsert is exactly right there, and naming a column that does not exist is the
-    // error this whole branch exists to avoid.
+  if (!support.canPreserveVerdicts) {
+    // 🔴 GATED ON `verdict` ALONE, AND THAT IS LOAD-BEARING. Without that column there is no
+    // predicate to scope the delete BY — and, equally, nothing this branch can destroy: a ruling is
+    // stored in `verdict` and nowhere else, so a table without it has never held one. Neither clause
+    // survives widening the gate to the other three columns, which is what an all-four probe did:
+    // a table carrying rulings in a `verdict` that was right there took this delete because
+    // `group_key` had been dropped.
     await trx.deleteFrom('abuse_detection_finding').where('run_id', '=', runId).execute();
-    await insertFindings(trx, runId, findings, false);
+    await insertFindings(trx, runId, findings, support.canStoreGroupKey);
     return;
   }
 
@@ -356,22 +441,40 @@ async function replaceFindings(
 
   const survivors = await trx
     .selectFrom('abuse_detection_finding')
-    .select(['id', 'user_id'])
+    .select(['id', 'user_id', 'reason'])
     .where('run_id', '=', runId)
     .execute();
 
-  const survivorsPerUser = new Map<number, number>();
-  for (const s of survivors)
-    survivorsPerUser.set(s.user_id, (survivorsPerUser.get(s.user_id) ?? 0) + 1);
-
-  const fresh: AbuseReportInput['findings'] = [];
-  for (const f of findings) {
-    const remaining = survivorsPerUser.get(f.userId) ?? 0;
-    // Already on the run, carrying a ruling. Left exactly as it is.
-    if (remaining > 0) survivorsPerUser.set(f.userId, remaining - 1);
-    else fresh.push(f);
+  // The survivors' evidence text, per user, as a multiset both passes consume from.
+  const survivorReasons = new Map<number, string[]>();
+  for (const s of survivors) {
+    const forUser = survivorReasons.get(s.user_id);
+    if (forUser) forUser.push(s.reason);
+    else survivorReasons.set(s.user_id, [s.reason]);
   }
-  await insertFindings(trx, runId, fresh, true);
+
+  // PASS 1 — a payload finding whose exact `(user_id, reason)` is already on the run IS that row.
+  const covered = findings.map(() => false);
+  findings.forEach((f, i) => {
+    const forUser = survivorReasons.get(f.userId);
+    if (!forUser) return;
+    const at = forUser.indexOf(f.reason);
+    if (at === -1) return;
+    forUser.splice(at, 1);
+    covered[i] = true;
+  });
+
+  // PASS 2 — anything left over takes a remaining survivor for its user, whatever that row's text.
+  const fresh: AbuseReportInput['findings'] = [];
+  findings.forEach((f, i) => {
+    if (covered[i]) return;
+    const forUser = survivorReasons.get(f.userId);
+    // Already on the run, carrying a ruling. Left exactly as it is.
+    if (forUser && forUser.length > 0) forUser.shift();
+    else fresh.push(f);
+  });
+
+  await insertFindings(trx, runId, fresh, support.canStoreGroupKey);
 }
 
 /** The producer's rows, in the shape the live table can hold. */

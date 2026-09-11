@@ -55,7 +55,7 @@ export const HASHED_GROUP_KEY_PREFIX = 'hashed:';
  * CONTRACT CARRIES. A `groupKey` over the contract's 200-character cap does not lose the one
  * finding: `abuseReportInput.safeParse` fails `too_big`, `run.ts` validates BEFORE the network call,
  * and the throw aborts the run — losing that batch and every batch after it. Measured: a 240-char
- * email domain yields a 251-character key and the whole report is refused (boundary: 193 characters
+ * email domain yields a 247-character key and the whole report is refused (boundary: 193 characters
  * parses, 194 fails). Four accounts on one uncommon domain is all it takes to reach, and a
  * wildcard-MX subdomain chain under an attacker-owned apex fits inside DNS's own 253-character
  * limit — so an unbounded key is a denial-of-detection lever, not just an edge case.
