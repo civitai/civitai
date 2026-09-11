@@ -11,8 +11,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import plimit from 'p-limit';
 import {
   createBoundedArchive,
+  deriveUploadPartGeometry,
+  MAX_PART_SIZE_BYTES,
   MAX_PENDING_ARCHIVE_ENTRIES,
+  MAX_UPLOAD_QUEUE_SIZE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
+  S3_MAX_UPLOAD_PARTS,
+  S3_MIN_PART_SIZE_BYTES,
+  UPLOAD_BUFFER_BUDGET_BYTES,
   zipEntryNameForUrl,
 } from '~/server/utils/archive-helpers';
 
@@ -376,5 +382,91 @@ describe('zipEntryNameForUrl', () => {
 
     const zip = await JSZip.loadAsync(fs.readFileSync(outPath));
     expect(Object.keys(zip.files)).toEqual(['unnamed-0-blob']);
+  });
+});
+
+/**
+ * Part sizing is the other half of the memory story, and it is the half that is easy to get
+ * wrong in the direction that reintroduces the bug this module exists for: `Upload` holds
+ * `queueSize * partSize` resident, so raising `partSize` to lift the object-size ceiling while
+ * leaving `queueSize` alone silently multiplies the resident footprint.
+ */
+describe('deriveUploadPartGeometry', () => {
+  const MiB = 1024 * 1024;
+
+  it('reproduces the previous fixed geometry when given no estimate', () => {
+    // The small uploads that pass no estimate must be untouched by this change.
+    const geometry = deriveUploadPartGeometry({});
+    expect(geometry.partSize).toBe(S3_MIN_PART_SIZE_BYTES);
+    expect(geometry.queueSize).toBe(MAX_UPLOAD_QUEUE_SIZE);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('falls back to the default geometry for a %s estimate', (_label, expectedBytes) => {
+    // NaN is the realistic one: the caller multiplies a row count by a constant, and a count that
+    // fails to resolve makes the product NaN. `Math.max(MIN, NaN)` is NaN, which would reach the
+    // SDK as an invalid part size — so this is a live path, not defensive padding.
+    const geometry = deriveUploadPartGeometry({ expectedBytes });
+    expect(geometry.partSize).toBe(S3_MIN_PART_SIZE_BYTES);
+    expect(geometry.queueSize).toBe(MAX_UPLOAD_QUEUE_SIZE);
+  });
+
+  it('never returns a part below the S3 minimum, however small the estimate', () => {
+    // S3 rejects any part but the last below 5 MiB, so a tiny estimate must not scale downward.
+    for (const expectedBytes of [1, 1024, 4 * MiB, 40 * MiB]) {
+      expect(deriveUploadPartGeometry({ expectedBytes }).partSize).toBe(S3_MIN_PART_SIZE_BYTES);
+    }
+  });
+
+  it('grows the part size so a large archive stays inside the S3 part limit', () => {
+    // The regression: at a fixed 5 MiB part size this object needs > 10,000 parts and the upload
+    // is rejected outright. Chosen well above that ceiling so the assertion cannot pass by luck.
+    const expectedBytes = 400 * 1024 * MiB; // 400 GiB
+    const geometry = deriveUploadPartGeometry({ expectedBytes });
+
+    expect(geometry.partSize).toBeGreaterThan(S3_MIN_PART_SIZE_BYTES);
+    expect(Math.ceil(expectedBytes / geometry.partSize)).toBeLessThanOrEqual(S3_MAX_UPLOAD_PARTS);
+    expect(geometry.maxObjectBytes).toBeGreaterThanOrEqual(expectedBytes);
+  });
+
+  it('🔴 holds worst-case resident bytes inside the budget at every estimate', () => {
+    // THE MEMORY CLAIM. Swept rather than spot-checked, and across the boundaries where the
+    // clamps engage — a single sample would sit on one side of them and prove nothing about the
+    // other. A change that raises `partSize` without lowering `queueSize` fails here.
+    const estimates = [
+      0,
+      1,
+      100 * MiB,
+      1024 * MiB,
+      10 * 1024 * MiB,
+      100 * 1024 * MiB,
+      400 * 1024 * MiB,
+      2000 * 1024 * MiB,
+      100_000 * 1024 * MiB, // far past the part-size ceiling
+    ];
+    for (const expectedBytes of estimates) {
+      const geometry = deriveUploadPartGeometry({ expectedBytes });
+      expect(
+        geometry.worstCaseResidentBytes,
+        `estimate ${expectedBytes} produced ${geometry.worstCaseResidentBytes} resident bytes`
+      ).toBeLessThanOrEqual(UPLOAD_BUFFER_BUDGET_BYTES);
+      expect(geometry.worstCaseResidentBytes).toBe(geometry.partSize * geometry.queueSize);
+      expect(geometry.queueSize).toBeGreaterThanOrEqual(1);
+      expect(geometry.queueSize).toBeLessThanOrEqual(MAX_UPLOAD_QUEUE_SIZE);
+      expect(geometry.partSize).toBeLessThanOrEqual(MAX_PART_SIZE_BYTES);
+      expect(geometry.partSize).toBeGreaterThanOrEqual(S3_MIN_PART_SIZE_BYTES);
+    }
+  });
+
+  it('trades parallelism away rather than the budget as parts grow', () => {
+    // The property that makes the sweep above hold: the two knobs move in opposite directions.
+    const small = deriveUploadPartGeometry({ expectedBytes: 100 * MiB });
+    const huge = deriveUploadPartGeometry({ expectedBytes: 100_000 * 1024 * MiB });
+    expect(huge.partSize).toBeGreaterThan(small.partSize);
+    expect(huge.queueSize).toBeLessThan(small.queueSize);
   });
 });

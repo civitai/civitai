@@ -40,11 +40,15 @@ import {
   IPEventName,
 } from '@civitai/cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import type { BoundedArchive } from '~/server/utils/archive-helpers';
 import {
   createBoundedArchive,
+  deriveUploadPartGeometry,
+  ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
   zipEntryNameForUrl,
 } from '~/server/utils/archive-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -1059,10 +1063,22 @@ function uploadStream({
   stream: readStream,
   userId,
   filename,
+  expectedBytes,
 }: {
-  stream: fs.ReadStream;
+  /**
+   * Widened from `fs.ReadStream`. The streaming archive path pipes a `PassThrough` in here, which
+   * is a `Readable` but not an `fs.ReadStream`; nothing in this function ever used a file-specific
+   * member of the narrower type.
+   */
+  stream: Readable;
   userId: number;
   filename: string;
+  /**
+   * Rough expected size of the object, used only to size multipart parts. Omit it for small
+   * objects — see `deriveUploadPartGeometry`, which then reproduces the geometry this function
+   * used before part sizing existed.
+   */
+  expectedBytes?: number;
 }) {
   if (
     !env.CSAM_UPLOAD_KEY ||
@@ -1088,6 +1104,14 @@ function uploadStream({
   const Bucket = env.CSAM_BUCKET_NAME;
   const Key = `${userId}/${date.getTime()}_${filename}`;
 
+  // 🔴 MEMORY: `queueSize * partSize` is held resident by `Upload` while parts are in flight.
+  // The pair is derived together from a single budget rather than chosen independently, so that
+  // product is a constant (`UPLOAD_BUFFER_BUDGET_BYTES`, 256 MiB) regardless of how large the
+  // archive turns out to be. The previous fixed `partSize: 5 MiB` / `queueSize: 4` — 20 MiB
+  // resident — capped any object at 10,000 x 5 MiB = 48.8 GiB, which is the ceiling this
+  // replaces. With no estimate the derivation returns exactly that old pair.
+  const { partSize, queueSize } = deriveUploadPartGeometry({ expectedBytes });
+
   return new Promise<void>(async (resolve, reject) => {
     try {
       const parallelUploads3 = new Upload({
@@ -1097,8 +1121,8 @@ function uploadStream({
           Key,
           Body: passThroughStream,
         },
-        queueSize: 4,
-        partSize: 1024 * 1024 * 5, // 5 MB
+        queueSize,
+        partSize,
         leavePartsOnError: false,
       });
 
@@ -1207,9 +1231,125 @@ async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, vo
  *   0 further entries on node 26, 1 on node 24 (whichever was already in flight). So it does
  *   real work; it is just bounded work here, recorded as untested rather than as covered.
  */
-function closeArchiveOnFailure(archive: Archiver, output: fs.WriteStream) {
+function closeArchiveOnFailure(archive: Archiver, output: stream.Writable) {
   archive.abort();
   output.destroy();
+}
+
+/**
+ * Builds one media archive and uploads it, either by staging it on local disk first or by
+ * streaming it straight to object storage.
+ *
+ * WHY THIS EXISTS AS ONE FUNCTION: the two call sites (`images.zip`, `generated-images.zip`)
+ * previously duplicated the archiver/sink/bounded-appender/finalize/upload sequence verbatim, and
+ * this change would have duplicated a second variant of it on top. Both sites now run the SAME
+ * code, so the two paths cannot drift from each other and the equivalence proof covers both.
+ * Only the `append` callback differs between them.
+ *
+ * THE TWO PATHS, and what is identical across them:
+ *
+ * - `stream: false` (default, and what runs with the flag off) — the archive is written to
+ *   `diskPath` with `fs.createWriteStream`, then read back with `fs.createReadStream` and
+ *   uploaded. Unchanged from what shipped before, down to the ordering.
+ * - `stream: true` — the archiver is piped into a `PassThrough` that is handed directly to
+ *   `Upload`, so the bytes never touch the container's scratch volume. The archive is produced by
+ *   the same archiver, at the same compression level, through the same bounded appender, in the
+ *   same append order, so the two paths differ only in where the bytes land.
+ *
+ * 🔴 MEMORY: the streaming path does NOT buffer the archive. `PassThrough` applies normal stream
+ * backpressure, so the archiver stalls when the uploader is behind rather than accumulating. What
+ * IS resident is the uploader's in-flight parts, bounded by `deriveUploadPartGeometry`. The
+ * bounded appender's own guarantee is untouched — it is the same `createBoundedArchive` wrapper
+ * with the same ceiling, just handed a different sink.
+ */
+async function archiveAndUpload({
+  userId,
+  filename,
+  diskPath,
+  stream: streamToStorage,
+  expectedBytes,
+  append,
+}: {
+  userId: number;
+  filename: string;
+  /** Where the archive is staged when `stream` is false. Unused on the streaming path. */
+  diskPath: string;
+  stream: boolean;
+  expectedBytes?: number;
+  append: (archive: BoundedArchive) => Promise<void>;
+}) {
+  const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
+
+  if (!streamToStorage) {
+    const output = fs.createWriteStream(diskPath);
+    archive.pipe(output);
+    const boundedArchive = createBoundedArchive({ archive, output });
+
+    try {
+      await append(boundedArchive);
+      // Awaited: the read stream below opens a truncated (or absent) file otherwise.
+      await boundedArchive.finalize();
+    } catch (e) {
+      // Nothing past this point runs, and the caller's `catch` then `rmSync`s the report's scratch
+      // directory out from under a write stream that is still open on a file inside it. Release
+      // the archiver's queued sources and the sink's fd before letting the error out.
+      closeArchiveOnFailure(archive, output);
+      throw e;
+    }
+
+    const readableStream = fs.createReadStream(diskPath);
+    await uploadStream({ stream: readableStream, userId, filename, expectedBytes });
+    return;
+  }
+
+  const passThrough = new stream.PassThrough();
+  archive.pipe(passThrough);
+  const boundedArchive = createBoundedArchive({ archive, output: passThrough });
+
+  // 🔴 START THE UPLOAD BEFORE APPENDING ANYTHING. `PassThrough` has a small high-water mark, so
+  // with nothing draining it the first appends fill it and the archiver stalls forever. The
+  // consumer has to be attached first.
+  //
+  // 🔴 AND ATTACH A REJECTION HANDLER IMMEDIATELY. Between here and the `await` at the bottom,
+  // this promise is live and unobserved; an upload that fails mid-archive (credentials, network,
+  // the part limit) would otherwise be an unhandled rejection, which takes the whole job process
+  // down rather than failing this one report. Latch the error instead and re-surface it below.
+  let uploadError: unknown;
+  const uploadPromise = uploadStream({
+    stream: passThrough,
+    userId,
+    filename,
+    expectedBytes,
+  }).then(
+    () => undefined,
+    (e: unknown) => {
+      uploadError = e;
+      // Stop the producer. Without this the archiver keeps deflating into a `PassThrough` nobody
+      // is reading, and `finalize()`'s wait for the sink to close never settles — a failed upload
+      // would hang the report instead of failing it.
+      passThrough.destroy(e instanceof Error ? e : new Error(String(e)));
+    }
+  );
+
+  try {
+    await append(boundedArchive);
+    // Same contract as the disk path: resolves once the archive has ended AND the sink has
+    // closed. Here "the sink has closed" means the uploader has drained every byte.
+    await boundedArchive.finalize();
+  } catch (e) {
+    closeArchiveOnFailure(archive, passThrough);
+    // Settle the upload before rethrowing so nothing is left in flight, and prefer the upload's
+    // own error when it is the thing that failed — `e` is then just the downstream symptom.
+    await uploadPromise;
+    if (uploadError) throw uploadError;
+    throw e;
+  }
+
+  // The upload is what decides the object is complete — `finalize()` only tells us the archive
+  // ended and the sink drained. Awaiting it here is what makes this function's resolution mean
+  // "the object is in storage", matching what the disk path's `await uploadStream(...)` means.
+  await uploadPromise;
+  if (uploadError) throw uploadError;
 }
 
 /** Serialises `bigint` columns (e.g. `Image.pHash`) as strings — `JSON.stringify` throws on them. */
@@ -1244,6 +1384,25 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   for (const dir of Object.values(reportDirs)) {
     createDir(dir);
   }
+
+  /**
+   * Whether the two large media archives are streamed straight to object storage instead of being
+   * staged on the container's scratch volume first.
+   *
+   * 🔴 EVALUATED ONCE PER REPORT, DELIBERATELY. Reading the flag inside each archive function
+   * would let a mid-report flip produce a bundle whose parts were assembled two different ways,
+   * for no benefit — a report is short-lived and the two archive types are mutually exclusive
+   * anyway. One read also means one Flipt failure mode rather than two.
+   *
+   * DEFAULT-OFF: `isFlipt` returns false for an unknown flag, an unreachable Flipt, or a flag
+   * pinned disabled — all of which leave the disk-staging path, which is unchanged and stays
+   * reachable, in charge. That is the rollback: flip the flag off, no deploy.
+   *
+   * `data.json` and `training-data.zip` are NOT affected by this flag. The first is small; the
+   * second is a file this code downloads rather than builds, and the NCMEC submission path reads
+   * it back off disk, so neither has the disk ceiling this removes.
+   */
+  const streamArchivesToStorage = await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD);
 
   /**
    * A fresh keyset-paged scan of every image the reported user owns.
@@ -1423,73 +1582,62 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
   }
 
-  // writes a zip file to disk before adding user images directly to the zip file
+  /**
+   * Archives every image the reported user owns.
+   *
+   * The archive is either staged on disk and then uploaded, or streamed straight to storage —
+   * see `archiveAndUpload`. The append loop below is identical either way; that is the point.
+   */
   async function archiveImages() {
     const { userId } = report;
 
-    const outPath = `${reportDirs.images}/${userId}_images.zip`;
+    // Feeds multipart part sizing ONLY. A `count` is a separate round trip from the paged scan
+    // because `partSize` has to be fixed before the first byte is uploaded, and the scan does not
+    // know its own total until it has finished. An inaccurate — or absent — answer degrades to
+    // the default geometry rather than breaking anything; see `deriveUploadPartGeometry`.
+    const imageCount = await dbRead.image.count({ where: { userId } });
 
-    const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
-    const output = fs.createWriteStream(outPath);
+    await archiveAndUpload({
+      userId,
+      filename: 'images.zip',
+      diskPath: `${reportDirs.images}/${userId}_images.zip`,
+      stream: streamArchivesToStorage,
+      expectedBytes: imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+      append: async (boundedArchive) => {
+        // concurrency limiter
+        const maxWidth = MAX_POST_IMAGES_WIDTH;
+        const limit = plimit(10);
+        // Paged rather than `images.map(...)` over one array of every row the user owns: the row
+        // set is unbounded, and materialising it was half of the memory problem this file exists
+        // to fix. Concurrency within a page is unchanged (10); pages are processed in order.
+        for await (const page of scanUserImages()) {
+          await Promise.all(
+            page.map((image) => {
+              return limit(async () => {
+                const width = image.width ?? maxWidth;
+                const blob = await fetchBlob(
+                  getEdgeUrl(image.url, {
+                    type: image.type,
+                    width: width < maxWidth ? width : maxWidth,
+                  })
+                );
+                if (!blob) return;
+                const arrayBuffer = await blob.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
 
-    archive.pipe(output);
+                const imageName = image.name
+                  ? image.name.substring(0, image.name.lastIndexOf('.'))
+                  : image.url;
+                const name = imageName.length ? imageName : image.url;
+                const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
-    // Bounds the number of downloaded-but-not-yet-compressed images held in memory. Without it,
-    // every image a user owns is buffered at once and memory tracks total downloaded bytes.
-    const boundedArchive = createBoundedArchive({ archive, output });
-
-    // concurrency limiter
-    const maxWidth = MAX_POST_IMAGES_WIDTH;
-    const limit = plimit(10);
-    try {
-      // Paged rather than `images.map(...)` over one array of every row the user owns: the row
-      // set is unbounded, and materialising it was half of the memory problem this file exists
-      // to fix. Concurrency within a page is unchanged (10); pages are processed in order.
-      for await (const page of scanUserImages()) {
-        await Promise.all(
-          page.map((image) => {
-            return limit(async () => {
-              const width = image.width ?? maxWidth;
-              const blob = await fetchBlob(
-                getEdgeUrl(image.url, {
-                  type: image.type,
-                  width: width < maxWidth ? width : maxWidth,
-                })
-              );
-              if (!blob) return;
-              const arrayBuffer = await blob.arrayBuffer();
-              const buffer = Buffer.from(arrayBuffer);
-
-              const imageName = image.name
-                ? image.name.substring(0, image.name.lastIndexOf('.'))
-                : image.url;
-              const name = imageName.length ? imageName : image.url;
-              const filename = `${name}.${blob.type.split('/').pop() as string}`;
-
-              await boundedArchive.append(buffer, { name: filename });
-            });
-          })
-        );
-      }
-      // Awaited: the read stream below opens a truncated (or absent) file otherwise.
-      await boundedArchive.finalize();
-    } catch (e) {
-      // Nothing past this point runs, and the caller's `catch` then `rmSync`s `reportDirs.images`
-      // out from under a write stream that is still open on a file inside it. Release the
-      // archiver's queued sources and the sink's fd before letting the error out.
-      //
-      // Two things can land here. `fetchBlob`/`append` could already throw before this change.
-      // The DB read is new: paging pulls rows *inside* the archiver's lifetime, where the
-      // previous code fetched every row before any archiver existed, so a `dbRead` failure on
-      // page 2 or later is a trigger the old shape did not have. `abort()` is a documented no-op
-      // once the archive is aborted or finalized, and `destroy()` on a closed stream likewise, so
-      // this is safe whichever of them got furthest.
-      closeArchiveOnFailure(archive, output);
-      throw e;
-    }
-
-    const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
+                await boundedArchive.append(buffer, { name: filename });
+              });
+            })
+          );
+        }
+      },
+    });
   }
 
   async function archiveGeneratedImages() {
@@ -1501,49 +1649,37 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       .filter(isDefined)
       .map((x) => x.previewUrl);
 
-    const outPath = `${reportDirs.generatedImages}/${userId}_generated-images.zip`;
+    await archiveAndUpload({
+      userId,
+      filename: 'generated-images.zip',
+      diskPath: `${reportDirs.generatedImages}/${userId}_generated-images.zip`,
+      stream: streamArchivesToStorage,
+      // Known upfront here, unlike `archiveImages` — no extra round trip needed. This is an upper
+      // bound: a URL whose fetch returns nothing is skipped, so the real archive can be smaller.
+      expectedBytes: imageUrls.length * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+      append: async (boundedArchive) => {
+        // concurrency limiter
+        const limit = plimit(10);
+        await Promise.all(
+          imageUrls.map((url, index) => {
+            return limit(async () => {
+              const blob = await fetchBlob(url);
+              if (!blob) return;
+              try {
+                const arrayBuffer = await blob.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
 
-    const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
-    const output = fs.createWriteStream(outPath);
+                const imageName = zipEntryNameForUrl(url, index);
 
-    archive.pipe(output);
-
-    // Same unbounded-append hazard as archiveImages above.
-    const boundedArchive = createBoundedArchive({ archive, output });
-
-    // concurrency limiter
-    const limit = plimit(10);
-    try {
-      await Promise.all(
-        imageUrls.map((url, index) => {
-          return limit(async () => {
-            const blob = await fetchBlob(url);
-            if (!blob) return;
-            try {
-              const arrayBuffer = await blob.arrayBuffer();
-              const buffer = Buffer.from(arrayBuffer);
-
-              const imageName = zipEntryNameForUrl(url, index);
-
-              await boundedArchive.append(buffer, { name: imageName });
-            } catch (e) {
-              //
-            }
-          });
-        })
-      );
-      // Awaited: the read stream below opens a truncated (or absent) file otherwise.
-      await boundedArchive.finalize();
-    } catch (e) {
-      // Same reasoning as `archiveImages` above. Note the inner `catch (e) {}` only covers the
-      // buffer/append step, so a `fetchBlob` rejection still reaches here, as does the error
-      // `finalize()` rethrows after the archiver has latched one.
-      closeArchiveOnFailure(archive, output);
-      throw e;
-    }
-
-    const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'generated-images.zip' });
+                await boundedArchive.append(buffer, { name: imageName });
+              } catch (e) {
+                //
+              }
+            });
+          })
+        );
+      },
+    });
   }
 
   // downloads training data zip file, writes it to disk, and then uploads that zip

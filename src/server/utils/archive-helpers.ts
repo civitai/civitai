@@ -15,6 +15,121 @@ import type { Readable, Writable } from 'stream';
  */
 export const MEDIA_ARCHIVE_COMPRESSION_LEVEL = 1;
 
+/** S3 hard limit: a multipart upload may have at most this many parts. */
+export const S3_MAX_UPLOAD_PARTS = 10_000;
+
+/** S3 hard limit: every part except the final one must be at least this large. */
+export const S3_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024; // 5 MiB
+
+/**
+ * Our ceiling on a single part, far below S3's own 5 GiB maximum.
+ *
+ * The ceiling is what bounds the largest object this can produce:
+ * `S3_MAX_UPLOAD_PARTS * MAX_PART_SIZE_BYTES` = 10,000 x 256 MiB = 2.44 TiB. That is orders of
+ * magnitude above any archive this code is asked to build, so the ceiling never binds in
+ * practice — it exists so a wildly wrong size estimate cannot ask for a 5 GiB part.
+ */
+export const MAX_PART_SIZE_BYTES = 256 * 1024 * 1024; // 256 MiB
+
+/**
+ * 🔴 Hard cap on `queueSize * partSize`, which is what `@aws-sdk/lib-storage` holds RESIDENT.
+ *
+ * `Upload` buffers up to `queueSize` parts of `partSize` bytes each while they are in flight.
+ * That memory is in ADDITION to everything `createBoundedArchive` bounds, so it has to be
+ * budgeted, not left to whatever `partSize` the size estimate happens to produce. Naively
+ * keeping `queueSize: 4` next to a 100 MiB part is ~400 MiB resident — for a process whose
+ * whole memory story is the reason this module exists.
+ *
+ * `deriveUploadPartGeometry` derives `queueSize` FROM this budget, so worst-case resident bytes
+ * are this constant by construction, whatever the estimate says. 256 MiB sits comfortably inside
+ * the container's memory allowance alongside the archiver's own bounded working set.
+ */
+export const UPLOAD_BUFFER_BUDGET_BYTES = 256 * 1024 * 1024; // 256 MiB
+
+/** Upper bound on upload parallelism. Matches the value this code used before part sizing existed. */
+export const MAX_UPLOAD_QUEUE_SIZE = 4;
+
+/**
+ * Multiplier applied to the caller's size estimate before dividing it into parts.
+ *
+ * The estimate is `entryCount * bytes-per-entry` off an observed average, so it is wrong in both
+ * directions on any individual archive. Wrong-LOW is the direction that fails hard: exceeding
+ * `S3_MAX_UPLOAD_PARTS` aborts the upload outright. Wrong-HIGH costs nothing at all — a larger
+ * `partSize` is compensated by a smaller `queueSize`, and the resident total is pinned by
+ * `UPLOAD_BUFFER_BUDGET_BYTES` either way. Asymmetric consequences, so bias generously.
+ */
+export const PART_SIZE_ESTIMATE_HEADROOM = 4;
+
+export type UploadPartGeometry = {
+  /** Bytes per multipart part. */
+  partSize: number;
+  /** Parts buffered in flight. */
+  queueSize: number;
+  /** Largest object this geometry can upload before hitting the S3 part limit. */
+  maxObjectBytes: number;
+  /** `queueSize * partSize` — what the upload holds resident at peak. */
+  worstCaseResidentBytes: number;
+};
+
+/**
+ * Chooses `partSize`/`queueSize` for a multipart upload from an estimate of the object's size.
+ *
+ * WHY THIS EXISTS: a fixed 5 MiB part size caps any object at `10,000 * 5 MiB` = 48.8 GiB,
+ * because S3 refuses an upload with more than 10,000 parts. An archive larger than that fails
+ * with a part-limit error rather than a disk or memory error, which is a different failure with
+ * the same outcome — the bundle cannot be produced.
+ *
+ * The two knobs are NOT independent. `partSize` is set by the part-count limit (how large the
+ * object may be); `queueSize` is then whatever fits the memory budget alongside it. Raising one
+ * lowers the other, which is the property that makes worst-case resident bytes a constant.
+ *
+ * `expectedBytes` omitted (or non-finite/non-positive) yields the S3 minimum part size and full
+ * parallelism — byte-for-byte the geometry this code used before, so the small uploads that pass
+ * no estimate are unaffected.
+ */
+export function deriveUploadPartGeometry({
+  expectedBytes,
+}: {
+  expectedBytes?: number;
+}): UploadPartGeometry {
+  const usableEstimate =
+    typeof expectedBytes === 'number' && Number.isFinite(expectedBytes) && expectedBytes > 0
+      ? expectedBytes
+      : 0;
+
+  const requiredPartSize = Math.ceil(
+    (usableEstimate * PART_SIZE_ESTIMATE_HEADROOM) / S3_MAX_UPLOAD_PARTS
+  );
+
+  const partSize = Math.min(
+    MAX_PART_SIZE_BYTES,
+    Math.max(S3_MIN_PART_SIZE_BYTES, requiredPartSize)
+  );
+
+  // At least 1: a budget smaller than one part still has to upload, serially.
+  const queueSize = Math.max(
+    1,
+    Math.min(MAX_UPLOAD_QUEUE_SIZE, Math.floor(UPLOAD_BUFFER_BUDGET_BYTES / partSize))
+  );
+
+  return {
+    partSize,
+    queueSize,
+    maxObjectBytes: partSize * S3_MAX_UPLOAD_PARTS,
+    worstCaseResidentBytes: partSize * queueSize,
+  };
+}
+
+/**
+ * Bytes to budget per archived image when estimating an archive's size.
+ *
+ * The media is already entropy-coded and `MEDIA_ARCHIVE_COMPRESSION_LEVEL` is 1, so the zip is
+ * very close to the sum of its inputs and `entryCount * this` is a serviceable estimate. It only
+ * feeds `deriveUploadPartGeometry`, whose headroom and clamps absorb the error — see
+ * `PART_SIZE_ESTIMATE_HEADROOM` for why erring high is free.
+ */
+export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = Math.round(1.4 * 1024 * 1024);
+
 /**
  * Default ceiling on entries that have been handed to the archiver but not yet compressed and
  * written out. Each pending entry pins its whole source buffer in memory, so this is the knob
