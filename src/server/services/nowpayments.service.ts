@@ -265,20 +265,36 @@ export const processDeposit = async (
     depositStatus = webhookStatus;
   }
 
+  // Surface a rejected payment as its own Axiom alert — otherwise a `failed` event is
+  // indistinguishable from routine status traffic in the logs, and this is the signal
+  // support needs to see a stuck deposit resolve.
+  if (webhookStatus === 'failed') {
+    await log({
+      type: 'warning',
+      message: 'NowPayments reported deposit failed',
+      paymentId,
+      userId,
+      status: depositStatus,
+    });
+  }
+
   // Upsert the CryptoDeposit record on every webhook status
   if (event.payment_id) {
     try {
       // Fetch existing record for status ordering and data preservation
       const existing = await dbRead.cryptoDeposit.findUnique({
         where: { paymentId: BigInt(event.payment_id) },
-        select: { status: true, buzzCredited: true, bonusBuzz: true, multiplier: true,
-                  depositFee: true, serviceFee: true, feeCurrency: true, paidFiat: true },
+        select: { status: true, payAmount: true, outcomeAmount: true, buzzCredited: true,
+                  bonusBuzz: true, multiplier: true, depositFee: true, serviceFee: true,
+                  feeCurrency: true, paidFiat: true },
       });
 
       const depositData = {
         payCurrency: event.pay_currency ?? 'unknown',
-        payAmount: event.actually_paid ?? null,
-        outcomeAmount: event.outcome_amount ?? null,
+        // A `failed` IPN typically carries null amounts; preserve the recorded values
+        // instead of nulling them out (matches the sibling fields below).
+        payAmount: event.actually_paid ?? (existing?.payAmount ?? null),
+        outcomeAmount: event.outcome_amount ?? (existing?.outcomeAmount ?? null),
         buzzCredited: buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : (existing?.buzzCredited ?? null),
         bonusBuzz: !buzzGrantFailed ? bonusBuzz : (existing?.bonusBuzz ?? null),
         multiplier: !buzzGrantFailed ? multiplierInt : (existing?.multiplier ?? null),
@@ -289,13 +305,17 @@ export const processDeposit = async (
         chain,
       };
 
+      // `failed` outranks the in-flight statuses so a rejection advances a stuck row, but
+      // sits below buzz_failed and finished: a late `failed` must not pull an owed
+      // (buzz_failed, still swept by retryFailedDeposits) or credited (finished) deposit
+      // into a terminal state, and a `finished` arriving after `failed` must still win.
       const statusRank: Record<string, number> = {
         waiting: 0, confirming: 1, sending: 1, partially_paid: 1,
-        buzz_failed: 2, finished: 3, failed: 4,
+        failed: 2, buzz_failed: 3, finished: 4,
       };
       const existingRank = existing ? (statusRank[existing.status] ?? 0) : -1;
       const nextRank = statusRank[depositStatus] ?? 0;
-      // Only advance status forward; finished is immutable except via failed (manual)
+      // Only advance status forward; finished is immutable.
       const shouldUpdateStatus = !existing || (existing.status !== 'finished' && nextRank > existingRank)
         || (existing.status === 'buzz_failed' && depositStatus === 'finished');
 
