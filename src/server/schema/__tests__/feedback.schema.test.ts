@@ -184,11 +184,11 @@ describe('feedback schema — context bounds', () => {
  * report bounced.
  */
 describe('feedback areas', () => {
-  const areas = ['bitdex-image-feed', 'apps-marketplace'];
+  const areas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the two declared surfaces', () => {
+  it('are exactly the three declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
@@ -217,6 +217,7 @@ describe('feedback areas', () => {
   it('derive their Flipt flag keys from the slug', () => {
     expect(feedbackAreaFlagKey('bitdex-image-feed')).toBe('feedback-area-bitdex-image-feed');
     expect(feedbackAreaFlagKey('apps-marketplace')).toBe('feedback-area-apps-marketplace');
+    expect(feedbackAreaFlagKey('site-bug-report')).toBe('feedback-area-site-bug-report');
   });
 });
 

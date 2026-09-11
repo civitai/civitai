@@ -8,7 +8,14 @@
 // prompt that writes it and its area flag is off, so it cannot grow.
 // Enforced: `feedback.schema.test.ts` compares a hand-typed list against this one,
 // so removing the slug fails there with an array diff rather than silently.
-export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace'] as const;
+export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const;
+
+/**
+ * The area behind the support menu's "Report a bug", and the only one that is not
+ * tied to a single page — it is reachable from the footer on every route, so its
+ * `context.path` is the only thing that says where the report came from.
+ */
+export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
 
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
 
