@@ -584,7 +584,17 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     expect(detail.scopes).not.toContain('ai:write:budgeted');
   });
 
-  it('detail.scopes is [] when approvedScopes is NULL (never-approved / pre-migration row)', () => {
+  /**
+   * ⚠ THE DB CANNOT PRODUCE THIS ROW, and the test is kept anyway — but do not read
+   * the fixture as documentation of a real shape. `approved_scopes` is
+   * `TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]` (`20260524120000_app_blocks_initial`)
+   * and Prisma types it `String[] @default([])`, so it is never NULL in production.
+   * What this pins is the PROJECTION's defensive branch: the same shape
+   * `BlockRegistry.getAppDetail` guards, and the branch that kills the
+   * fall-back-to-manifest mutant. An earlier version of this comment claimed the
+   * NULL was a real "never-approved / pre-migration row" — it was not.
+   */
+  it('detail.scopes is [] when approvedScopes is absent (defensive branch, not a real row)', () => {
     const detail = projectListingDetail(
       hydratedRow({
         appBlock: {
@@ -612,13 +622,48 @@ describe('projectListingDetail — public allowlist + gallery', () => {
       hydratedRow({
         appBlock: {
           currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
-          // jsonb: nothing at the DB layer guarantees these are strings.
+          // ⚠ Postgres CANNOT store these: the column is `TEXT[]`, so `42` and
+          // `{evil:true}` are unrepresentable. Kept as a guard on the projection's
+          // string filter (it kills the drop-the-filter mutant), NOT as a claim that
+          // such a row exists. An earlier comment here said "jsonb: nothing at the DB
+          // layer guarantees these are strings" — that was wrong about the schema.
           approvedScopes: ['models:read:self', 42, null, { evil: true }, 'ai:write:budgeted'],
           manifest: { name: 'Cool App' },
         },
       }) as never
     );
     expect(detail.scopes).toEqual(['models:read:self', 'ai:write:budgeted']);
+  });
+
+  /**
+   * 🔴 THE GATE IS `kind`, NOT `appBlockId` NULLNESS — and this fixture is the shape
+   * that makes them different predicates. `mapAppBlockToListing` mints
+   * `kind: 'offsite'` WITH a non-null `appBlockId` when the source AppBlock carries
+   * an `externalUrl` (reachable via the mod proc `blocks.backfillAppListings`), and
+   * `schema.full.prisma` says in as many words to discriminate on `kind`.
+   *
+   * Without the gate this row renders the off-site disclosure — "no Civitai install,
+   * account access, or permissions" — directly above a list of granted scopes. Two
+   * contradictory SECURITY claims on one public page. 0 such rows in production
+   * (measured 2026-08-11), so this is prevention; `app-access.service.ts` and
+   * `app-collaborator-earnings.service.ts` both carry the same gate for the same
+   * shape, and this projection was the third consumer of that join.
+   */
+  it('🔴 an OFF-SITE row WITH a backing block still yields [] — gated on kind, not appBlockId', () => {
+    const detail = projectListingDetail(
+      hydratedRow({
+        kind: 'offsite',
+        externalUrl: 'https://example.com',
+        // Non-null: the backfill shape. Nullness would NOT discriminate here.
+        appBlockId: 'ab_1',
+        appBlock: {
+          currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+          approvedScopes: ['ai:write:budgeted', 'models:read:self'],
+          manifest: { name: 'Backfilled Offsite' },
+        },
+      }) as never
+    );
+    expect(detail.scopes).toEqual([]);
   });
 
   it('🔴 the CARD does not carry scopes — detail-only, like sourceRepoUrl', () => {

@@ -804,6 +804,14 @@ export interface AppListingDetailBodyProps {
    * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
    * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
    *
+   *   - the PERMISSION DISCLOSURE is KEPT, not omitted — a decision on this ledger
+   *     rather than an omission that was missed. A moderator reviewing a listing has
+   *     more use for the app's granted capabilities than any other viewer, so hiding
+   *     it here would be the wrong direction. 🔴 But it renders under a DIFFERENT
+   *     HEADING in this posture ("Currently granted permissions" rather than "This
+   *     app can…"), because this modal also shows the pending version's REQUESTED
+   *     scopes and the two differ exactly when a version is escalating. See the
+   *     section's own comment for why that is a correctness fix and not copy,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
@@ -1209,14 +1217,25 @@ export function AppListingDetailBody({
                 `emptyLabel` path — on a store listing, "no permissions" is better said by
                 the absence of a permissions section than by a sentence nobody reads.
                 Ported from the disclosure on the retired `/apps/<appBlockId>` route,
-                which `blocks.getAppDetail` still serves. */}
+                which `blocks.getAppDetail` still serves.
+                🔴 THE HEADING CHANGES UNDER `preview`, AND IT IS A CORRECTNESS FIX, NOT
+                COPY. `CombinedReviewModal` renders this body BESIDE `ManifestScopes`,
+                which lists the scopes the pending version is REQUESTING, while
+                `detail.scopes` is what is CURRENTLY approved. For a version requesting
+                new scopes those two lists differ — and the confident natural-language one
+                was this one. A moderator reading "This app can…" as the set they are
+                approving would under-read a scope ESCALATION, on the single surface where
+                that judgement is made. KEPT rather than omitted in preview (so the
+                before/after is visible at all), but named for what it is. */}
             {detail.scopes.length > 0 && (
               <Stack gap="xs" data-testid="apps-listing-permissions">
                 <Group gap="xs">
                   <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
                     <IconShieldCheck size={14} />
                   </ThemeIcon>
-                  <Title order={4}>This app can…</Title>
+                  <Title order={4}>
+                    {preview ? 'Currently granted permissions' : 'This app can…'}
+                  </Title>
                 </Group>
                 <BlockScopeList scopes={detail.scopes} />
               </Stack>

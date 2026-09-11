@@ -611,13 +611,29 @@ export function projectListingDetail(
     //
     // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`. The approve
     // paths in `publish-request.service.ts` are the ONLY writers of
-    // `approvedScopes`, so it is what a moderator actually granted; a newer
-    // manifest version can declare more than was approved, and disclosing THAT
-    // would overstate what the app can do. Off-site listings have no backing
-    // block and therefore no scopes.
-    scopes: Array.isArray(row.appBlock?.approvedScopes)
-      ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
-      : [],
+    // `approvedScopes`, and each writes it in the SAME `update` as `manifest` and
+    // `version`, so the two can never disagree. A newer manifest version cannot
+    // declare more than was approved and have that reach this DTO.
+    //
+    // 🔴 GATED ON `kind`, NEVER ON `appBlockId` NULLNESS — they are not the same
+    // predicate, and this is the third consumer of that join to need saying so.
+    // `mapAppBlockToListing` mints `kind: 'offsite'` WITH a non-null `appBlockId`
+    // whenever the source AppBlock carries an `externalUrl`, reachable through the
+    // mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in as many
+    // words to discriminate on `kind`. `app-access.service.ts` and
+    // `app-collaborator-earnings.service.ts` both carry an explicit gate for this
+    // exact shape.
+    //
+    // Without the gate, such a row renders the off-site disclosure — "This app runs
+    // entirely off-platform — no Civitai install, account access, or permissions" —
+    // directly above "This app can… ai:write:budgeted". Two contradictory SECURITY
+    // claims on a public store page. The population is 0 in production (measured
+    // 2026-08-11: offsite 5 rows, 0 with a block), so this is PREVENTION, not a
+    // live bug — and prevention is cheap here because it is one clause.
+    scopes:
+      row.kind === 'onsite' && Array.isArray(row.appBlock?.approvedScopes)
+        ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
+        : [],
   };
 }
 

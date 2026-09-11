@@ -186,6 +186,31 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     expect(container.querySelector('[data-testid="apps-listing-permissions"]')).toBeNull();
   });
 
+  test('🔴 under `preview` the heading says CURRENTLY GRANTED, not "This app can…"', async () => {
+    // `CombinedReviewModal` renders this body in preview mode BESIDE the pending
+    // version's REQUESTED scopes (`ManifestScopes`). `detail.scopes` is what is
+    // currently APPROVED, so for an escalating version the two lists differ — and a
+    // moderator reading the confident "This app can…" as the set they are approving
+    // would under-read the escalation, on the one surface where that call is made.
+    const { container } = await renderWithProviders(
+      <AppListingDetailBody detail={base({ scopes: [PLAIN_SCOPE] })} preview />
+    );
+    const within = page.elementLocator(container);
+
+    await expect.element(within.getByText('Currently granted permissions')).toBeInTheDocument();
+    // And NOT the public heading — asserting only the presence of the new string
+    // would pass if both rendered.
+    expect(container.textContent).not.toContain('This app can');
+  });
+
+  test('the public (non-preview) heading is still "This app can…"', async () => {
+    const { container } = await renderBody(base({ scopes: [PLAIN_SCOPE] }));
+    // The other half of the pair: a mutant hardcoding the preview string would pass
+    // the test above and fail here.
+    expect(container.textContent).toContain('This app can');
+    expect(container.textContent).not.toContain('Currently granted permissions');
+  });
+
   test('a sensitive scope is distinguished from a plain one', async () => {
     const { within, container } = await renderBody(
       base({ scopes: [PLAIN_SCOPE, SENSITIVE_SCOPE] })

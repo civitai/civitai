@@ -401,14 +401,28 @@ export type ListingDetail = {
    * permission disclosure. `[]` for an off-site listing (no backing block) and for
    * an on-site app that was approved with no scopes.
    *
-   * 🔴 ALLOWLIST JUSTIFICATION. These are plain scope identifier strings
-   * (`ai:write:budgeted`, `models:read:self`) describing what the app is permitted
-   * to do — which is the entire point of disclosing them, and they are already
-   * shipped to anonymous callers by `BlockRegistry.getAppDetail` under the same
-   * reasoning. They are NOT the manifest's raw self-declared `scopes`: only the
-   * approve paths write `approvedScopes`, so this is the moderator-granted set, and
-   * a newer manifest declaring more cannot inflate it. No user is identified and no
-   * manifest internals (`trustTier`, `iframe.src`, `renderMode`, settings) ride along.
+   * 🔴 ALLOWLIST JUSTIFICATION — AND THIS FIELD IS A NEW PUBLIC EXPOSURE, NOT A
+   * RESTATEMENT OF AN EXISTING ONE. Say so plainly, because an earlier draft of this
+   * docstring claimed the ids were "already shipped to anonymous callers by
+   * `BlockRegistry.getAppDetail`", and that was FALSE: `blocks.getAppDetail` runs
+   * `enforceAppBlocksFlag` and is mod-segmented — dark to a genuine anonymous caller
+   * — whereas this DTO is returned verbatim by `GET /api/v1/apps/{slug}`, which has
+   * no flag gate and serves unauthenticated callers at `PUBLIC_APPS_CATALOG_SCOPE =
+   * 'full'`. So this change MOVES approved scope ids from a flag-dark surface to a
+   * genuinely public one. That is the decision being taken here; it is not a no-op.
+   *
+   * Why it is the right call anyway: these are coarse capability labels
+   * (`ai:write:budgeted`, `models:read:self`) describing what an APPROVED, PUBLICLY
+   * LISTED app is permitted to do. Publishing them is the entire point — a viewer
+   * cannot weigh a permission they cannot see, and the store page is the only place
+   * they can see it BEFORE launching the app. They identify no user, carry no
+   * per-user grant state, and no manifest internals (`trustTier`, `iframe.src`,
+   * `renderMode`, settings) ride along.
+   *
+   * They are NOT the manifest's raw self-declared `scopes`: only the approve paths
+   * write `approvedScopes`. ⚠ "Moderator-granted" is accurate about the WRITER, not
+   * about granularity — a moderator approves or rejects a whole manifest; there is
+   * no per-scope narrowing mechanism.
    *
    * 🔴 DETAIL-ONLY, like `sourceRepoUrl` — a store card is a low-attention grid tile
    * with no room for the context that makes a capability list meaningful. The
