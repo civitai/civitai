@@ -614,7 +614,7 @@
       {/if}
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      price changes depending on data and settings
+      price depends on data and settings
     </div>
     <Button
       class="mt-4 h-11 w-full"
