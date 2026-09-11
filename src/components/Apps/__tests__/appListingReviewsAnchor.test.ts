@@ -92,7 +92,9 @@ describe('reviews anchor — the link and its target', () => {
   it('🔴 the section id is NOT hardcoded — both ends must read the constant', () => {
     // The whole point of the constant. A literal on either side re-opens the drift
     // this file exists to close.
-    const src = componentSource().replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const src = componentSource()
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
     expect(src).not.toMatch(new RegExp(`id=(["'\`])${LISTING_REVIEWS_ANCHOR_ID}\\1`));
   });
 
