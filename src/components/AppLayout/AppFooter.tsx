@@ -66,13 +66,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     features: (features) => features.bugsPage,
   },
   {
-    key: 'education',
-    href: '/education',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
-    children: 'Education',
-  },
-  {
     key: 'creator-program',
     href: '/creator-program',
     color: 'blue',

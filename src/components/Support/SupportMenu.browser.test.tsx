@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
+import { useAssistantPanelStore } from '~/store/assistant-panel.store';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
@@ -22,7 +23,12 @@ const { mocks } = vi.hoisted(() => ({
     getAreaOptions: vi.fn(),
     currentUser: { value: null as { id: number } | null },
     areaEnabled: { value: true },
+    assistant: { value: null as { personality: string; uuid: string } | null },
   },
+}));
+
+vi.mock('~/components/Assistant/useAssistantAvailable', () => ({
+  useAssistantAvailable: () => mocks.assistant.value,
 }));
 
 vi.mock('~/components/Dialog/dialogStore', () => ({
@@ -68,6 +74,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.currentUser.value = { id: 1 };
   mocks.areaEnabled.value = true;
+  mocks.assistant.value = { personality: 'civbot', uuid: 'uuid-1' };
+  useAssistantPanelStore.setState({ opened: false });
 });
 
 describe('the destinations that used to live in the support modal', () => {
@@ -76,14 +84,41 @@ describe('the destinations that used to live in the support modal', () => {
   // "Known Issues" is deliberately NOT in the FAQ label — the footer already renders a
   // "Known Issues" link to the onsite /issues two elements away, and the same words in
   // the same row pointing at two places is worse than a longer label.
+  // Every one of these leaves the app, so every one opens in a new tab — a reporter
+  // sent to the FAQ mid-report should still have the page they were reporting on.
   test.each([
     ['Education Hub', '/education'],
     ['FAQ', 'https://education.civitai.com/civitai-faq'],
     ['Discord Community', '/discord'],
     ['Support Portal', '/support-portal'],
-  ])('%s links to %s', async (name, href) => {
+  ])('%s opens %s in a new tab', async (name, href) => {
     await openMenu();
-    await expect.element(page.getByRole('menuitem', { name })).toHaveAttribute('href', href);
+    const item = page.getByRole('menuitem', { name });
+    await expect.element(item).toHaveAttribute('href', href);
+    await expect.element(item).toHaveAttribute('target', '_blank');
+  });
+});
+
+/**
+ * The chat was the right-hand column of the support modal. The modal is gone, so the
+ * menu is how it is reached from here — and it must be ABSENT rather than dead when
+ * the chat is unavailable, because `AssistantButton` renders nothing in that case and
+ * a menu item that opens an invisible panel is worse than no item.
+ */
+describe('the CivBot chat the support modal used to hold', () => {
+  test('the item opens the chat panel', async () => {
+    await openMenu();
+    expect(useAssistantPanelStore.getState().opened).toBe(false);
+
+    await userEvent.click(page.getByRole('menuitem', { name: 'Get help fast' }));
+    expect(useAssistantPanelStore.getState().opened).toBe(true);
+  });
+
+  test('and is not offered at all when the chat is unavailable', async () => {
+    mocks.assistant.value = null;
+    await openMenu();
+
+    expect(page.getByRole('menuitem', { name: 'Get help fast' }).elements()).toHaveLength(0);
   });
 });
 

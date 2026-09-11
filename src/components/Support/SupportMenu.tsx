@@ -4,15 +4,17 @@ import {
   IconBrandDiscord,
   IconBug,
   IconLifebuoy,
+  IconMessageChatbot,
   IconQuestionMark,
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
+import { useAssistantAvailable } from '~/components/Assistant/useAssistantAvailable';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SITE_BUG_REPORT_AREA } from '~/shared/constants/feedback.constants';
+import { useAssistantPanelStore } from '~/store/assistant-panel.store';
 import { trpc } from '~/utils/trpc';
 
 const FeedbackDrawer = dynamic(() => import('~/components/Feedback/FeedbackDrawer'), {
@@ -42,6 +44,9 @@ export function SupportMenu() {
     { enabled: opened && !!currentUser }
   );
   const canReportInProduct = !!currentUser && !!bugReportArea?.enabled;
+  // The chat used to be the right-hand column of the support modal. It has its own
+  // launcher beside this button, but the modal is gone, so the menu keeps a way in.
+  const assistant = useAssistantAvailable();
 
   return (
     <Menu
@@ -83,8 +88,10 @@ export function SupportMenu() {
           </Menu.Item>
         )}
         <Menu.Item
-          component={Link}
+          component="a"
           href={SUPPORT_LINKS.educationHub}
+          target="_blank"
+          rel="nofollow noreferrer"
           leftSection={<IconBook size={ICON_SIZE} />}
         >
           Education Hub
@@ -107,6 +114,14 @@ export function SupportMenu() {
         >
           Discord Community
         </Menu.Item>
+        {assistant && (
+          <Menu.Item
+            leftSection={<IconMessageChatbot size={ICON_SIZE} />}
+            onClick={() => useAssistantPanelStore.setState({ opened: true })}
+          >
+            Get help fast
+          </Menu.Item>
+        )}
         <Menu.Divider />
         <Menu.Item
           component="a"

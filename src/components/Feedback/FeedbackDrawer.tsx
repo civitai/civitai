@@ -51,6 +51,11 @@ export default function FeedbackDrawer() {
       // attribute and its whole subtree; it sits on the Drawer ROOT so the overlay
       // goes with it. Pinned by FeedbackDrawer.browser.test.tsx.
       data-html2canvas-ignore
+      // 🔴 NO BACKDROP, deliberately (Justin, 2026-09-11 review). A reporter is
+      // describing the page behind this panel, so dimming it is dimming the subject.
+      // The capture excludes the panel either way (see above), but the reporter also
+      // has to be able to SEE what they are reporting while they type it.
+      withOverlay={false}
       position={mobile ? 'bottom' : 'right'}
       size={mobile ? '100dvh' : 480}
       shadow="lg"

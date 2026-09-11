@@ -204,15 +204,22 @@ describe('when the server refuses the report', () => {
 });
 
 /**
- * 🔴 The drawer must not appear in the screenshot the drawer collects.
- * `captureConsentedScreenshot` draws `document.body`, and this Drawer portals into
- * it, so without the ignore attribute the capture is this form plus the page dimmed
- * behind the overlay. The assertion goes through `closest()` from the rendered
- * content rather than reading the prop, because the question is whether Mantine
- * actually puts the attribute on an ancestor of BOTH the panel and the overlay — a
- * prop Mantine dropped would be invisible and silently restore the bug.
+ * 🔴 TWO DECISIONS ABOUT WHAT THE REPORTER CAN SEE AND SEND, both easy to undo by
+ * accident, and neither visible in a passing suite without these.
+ *
+ * The panel must not appear in its own screenshot. `captureConsentedScreenshot` draws
+ * `document.body` and this Drawer portals into it, so without the ignore attribute the
+ * capture is 480px of the report form over the page. The assertion goes through
+ * `closest()` from the rendered content rather than reading the prop, because the
+ * question is whether Mantine actually puts the attribute on the DOM — a prop Mantine
+ * dropped would be invisible and would silently restore the bug.
+ *
+ * And there must be no backdrop (Justin, 2026-09-11 review): the reporter is
+ * describing the page behind this panel, so dimming it dims the subject. Mantine
+ * renders the overlay by DEFAULT, so this stays correct only while `withOverlay` is
+ * explicitly false — exactly the kind of prop a later edit drops without noticing.
  */
-describe('🔴 the panel excludes itself from the page capture', () => {
+describe('🔴 the panel excludes itself from the capture, and dims nothing', () => {
   test('an ancestor of the drawer content carries the html2canvas ignore attribute', async () => {
     await openDrawer();
 
@@ -221,12 +228,14 @@ describe('🔴 the panel excludes itself from the page capture', () => {
       ignored,
       'Mantine dropped the attribute — the panel would be in its own capture'
     ).not.toBeNull();
+  });
 
-    // The overlay is the other half: it is a sibling of the panel, so an attribute
-    // that landed on the panel alone would dim the page in every capture.
-    const overlay = document.querySelector('.mantine-Drawer-overlay');
-    expect(overlay, 'no overlay rendered — this assertion would prove nothing').not.toBeNull();
-    expect(ignored?.contains(overlay!)).toBe(true);
+  test('no overlay is rendered over the page being reported', async () => {
+    await openDrawer();
+
+    // The control for this one is Mantine's own default: `withOverlay` defaults to
+    // true, so removing the prop puts the element back and this fails.
+    expect(document.querySelector('.mantine-Drawer-overlay')).toBeNull();
   });
 });
 
