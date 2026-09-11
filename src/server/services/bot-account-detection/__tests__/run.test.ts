@@ -1244,4 +1244,53 @@ describe('🔴 the cluster key reaches the board', () => {
     for (const report of scenario.reports)
       expect(() => abuseReportInput.parse(report)).not.toThrow();
   });
+
+  /**
+   * 🔴 A PATHOLOGICAL DOMAIN MUST NOT BE ABLE TO STOP THE DETECTOR.
+   *
+   * `normalizeEmailDomain` bounds the domain at nothing, so `domain:${domain}` was producer-supplied
+   * and unbounded against a contract that caps `groupKey` at 200 characters. Over the cap the report
+   * is REFUSED — and because this run validates before the network call, the throw takes the run
+   * down, losing that batch and every batch after it. Four accounts on one uncommon domain is all
+   * that is needed, and a wildcard-MX subdomain chain under an attacker-owned apex fits inside DNS's
+   * own 253-character limit: a denial-of-detection lever, not an edge case.
+   */
+  const ABSURD_DOMAIN = `${'a'.repeat(236)}.test`;
+
+  it('🔴 a ring on an absurdly long domain still produces a report the contract accepts', async () => {
+    expect(ABSURD_DOMAIN).toHaveLength(241);
+    const scenario = domainRun(ringAccounts(ABSURD_DOMAIN));
+    await scenario.result;
+
+    expect(scenario.reports).toHaveLength(1);
+    for (const report of scenario.reports)
+      expect(() => abuseReportInput.parse(report)).not.toThrow();
+  });
+
+  it('and every member of THAT ring still shares one key', async () => {
+    // Bounding is only useful if it keeps the grouping: a per-member key would give a forty-account
+    // ring forty separate decisions, which is the state this feature exists to remove.
+    const scenario = domainRun(ringAccounts(ABSURD_DOMAIN));
+    await scenario.result;
+
+    const keys = scenario.reports[0].findings.map((f) => f.groupKey);
+    expect(keys).toHaveLength(6);
+    expect(new Set(keys).size, 'the ring must still be ONE cluster').toBe(1);
+    // Inside the contract's cap, and not the raw key.
+    expect((keys[0] as string).length).toBeLessThanOrEqual(200);
+    expect(keys[0]).not.toBe(`domain:${ABSURD_DOMAIN}`);
+  });
+
+  it('a SECOND absurd domain gets a different key — the clusters do not merge', async () => {
+    // Truncation would give both the same 200-character string, and a moderator ruling one ring
+    // would rule the other. Two domains sharing a long prefix, which is the shape a subdomain chain
+    // under one apex actually has.
+    const other = `${'a'.repeat(230)}zzzzzz.test`;
+    expect(other).toHaveLength(241);
+    const a = domainRun(ringAccounts(ABSURD_DOMAIN));
+    await a.result;
+    const b = domainRun(ringAccounts(other));
+    await b.result;
+    expect(a.reports[0].findings[0].groupKey).not.toBe(b.reports[0].findings[0].groupKey);
+  });
 });

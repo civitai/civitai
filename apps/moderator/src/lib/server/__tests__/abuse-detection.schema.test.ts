@@ -204,3 +204,109 @@ describe('🔴 a verdict is not an action — the conflation regression', () => 
     ).rejects.toMatchObject({ code: '23514' });
   });
 });
+
+/**
+ * 🔴 THE HEADER'S RECOVERY, EXECUTED — because it is an instruction to a human holding a psql
+ * prompt against a live table, and a wrong one costs them a session they cannot undo by re-reading
+ * the file.
+ *
+ * The recovery it used to give was `GRANT SELECT, INSERT, UPDATE, DELETE … TO internal_tools`, and
+ * that was correct only while this file did nothing but `CREATE TABLE IF NOT EXISTS`. It now runs
+ * `ALTER TABLE`, which Postgres permits ONLY to a table's owner — no table privilege grants it. The
+ * cases below are the two arms: the grant arm must fail, the ownership arm must succeed, and the
+ * statements the header prints must be the ones that are run.
+ */
+describe('the header’s recovery for "you ran it as the wrong role"', () => {
+  /**
+   * The recovery statements the header actually prints, lifted out of it rather than retyped.
+   *
+   * 🔴 THIS IS WHAT MAKES THE TEST A CLAIM ABOUT THE FILE. Retyping them here would assert that a
+   * correct recipe works, which nobody doubted; reading them means a header that prints something
+   * unrunnable — `ALTER TABLE a, b OWNER TO x`, which is a SYNTAX ERROR in Postgres and was in this
+   * file's first draft of the fix — turns this suite red instead of shipping.
+   */
+  const headerRecoveryStatements = (): string[] =>
+    readSchemaSql()
+      .split('\n')
+      // The header only: stop at the first line that is not a comment.
+      .slice(
+        0,
+        readSchemaSql()
+          .split('\n')
+          .findIndex((l) => l.trim() !== '' && !l.trimStart().startsWith('--'))
+      )
+      .map((l) => l.replace(/^\s*--\s?/, '').trim())
+      .filter((l) => /^ALTER (TABLE|SEQUENCE)\b/i.test(l));
+
+  const asRole = async (d: PGlite, role: string, fn: () => Promise<void>) => {
+    await d.exec(`SET ROLE ${role};`);
+    try {
+      await fn();
+    } finally {
+      await d.exec(`RESET ROLE;`);
+    }
+  };
+
+  it('prints four single-object statements, and they PARSE — negative control on the extractor', () => {
+    const stmts = headerRecoveryStatements();
+    // If the extractor returned nothing, every executable assertion below would be vacuously true.
+    expect(stmts.length, 'the header prints no ALTER recovery at all').toBe(4);
+    // One object per statement. `OWNER TO` takes a single name; the comma form parses as nothing.
+    for (const s of stmts) expect(s, `${s} names more than one object`).not.toMatch(/,/);
+    expect(stmts.filter((s) => /^ALTER TABLE/i.test(s))).toHaveLength(2);
+    expect(stmts.filter((s) => /^ALTER SEQUENCE/i.test(s))).toHaveLength(2);
+  });
+
+  /**
+   * A role holding everything the header's GRANT lines give, plus the schema privileges the file's
+   * FIRST instruction already assumes — it says to run this file as this role, and `CREATE TABLE IF
+   * NOT EXISTS` needs `CREATE` on the schema regardless of whether the table is there. Arranging it
+   * identically in BOTH arms is what makes them a control pair: the only thing that differs between
+   * the arm that fails and the arm that succeeds is OWNERSHIP.
+   */
+  const createGrantedRole = async (d: PGlite) => {
+    await d.exec(`CREATE ROLE internal_tools LOGIN;`);
+    await d.exec(`GRANT USAGE, CREATE ON SCHEMA public TO internal_tools;`);
+    await d.exec(`GRANT SELECT, INSERT, UPDATE, DELETE
+                    ON abuse_detection_run, abuse_detection_finding TO internal_tools;`);
+    await d.exec(`GRANT USAGE, SELECT
+                    ON SEQUENCE abuse_detection_run_id_seq, abuse_detection_finding_id_seq
+                    TO internal_tools;`);
+  };
+
+  it('🔴 the OLD recovery cannot work — a granted, non-owning role may not ALTER', async () => {
+    const d = await db();
+    await createGrantedRole(d);
+
+    await asRole(d, 'internal_tools', async () => {
+      // The grants DO cover the reads and writes — so this arm is not failing for want of any
+      // privilege at all, which is the control that makes the rejection below attributable.
+      await expect(d.query(`SELECT count(*) FROM abuse_detection_finding`)).resolves.toBeDefined();
+      // …and do NOT cover the statement this file now runs.
+      await expect(
+        d.exec(`ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS probe text;`)
+      ).rejects.toMatchObject({
+        code: '42501',
+        message: expect.stringContaining('must be owner of table abuse_detection_finding'),
+      });
+    });
+  });
+
+  it('🔴 the NEW recovery does work — after it, the whole file re-applies as that role', async () => {
+    const d = await db();
+    await createGrantedRole(d);
+    // The ONLY difference from the arm above: the header's ownership transfer, run verbatim.
+    for (const stmt of headerRecoveryStatements()) await d.exec(`${stmt};`);
+
+    await asRole(d, 'internal_tools', async () => {
+      // The real file, verbatim, as the application role — the state the header is walking someone
+      // back to. Re-runnability is asserted elsewhere; what this adds is "by THIS role".
+      await applySchema(d);
+    });
+
+    // And the columns the ALTERs add are actually there afterwards, so the apply was not a no-op.
+    const columns = await columnNames(d, 'abuse_detection_finding');
+    for (const c of ['verdict', 'verdict_by', 'verdict_at', 'group_key'])
+      expect(columns, `${c} is missing after the recovery`).toContain(c);
+  });
+});

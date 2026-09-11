@@ -203,8 +203,11 @@
                      🔴 WITHHELD ON A MIXED CLUSTER. This reads the LEAD's ruler, and on a cluster
                      whose members disagree that is one person's name printed beside a verdict the
                      others did not give — the board attributing a ruling nobody made. -->
+                <!-- Labelled, because the stored value is the moderator's ID and not their name:
+                     `+page.server.ts` stores the one identifier a rename cannot move. An unlabelled
+                     bare number beside a verdict reads as a count of something. -->
                 <div class="text-dark-2 text-xs">
-                  {ruledBy(d)}{#if ruledAt(d)} · {dateTime(ruledAt(d) as Date)}{/if}
+                  moderator #{ruledBy(d)}{#if ruledAt(d)} · {dateTime(ruledAt(d) as Date)}{/if}
                 </div>
               {/if}
             {/if}

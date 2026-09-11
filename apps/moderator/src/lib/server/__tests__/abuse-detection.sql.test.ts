@@ -48,12 +48,41 @@ const params: readonly unknown[][] = [];
 const CANNED_RUN_ID = 4242;
 let cannedRows: unknown[] = [{ id: CANNED_RUN_ID }];
 
+/**
+ * The ONE query this driver does read the SQL of: the service's capability probe, which asks
+ * `pg_attribute` which columns `abuse_detection_finding` actually has and shapes the INSERT from the
+ * answer. Everything else is still answered with `cannedRows` regardless of what it asked.
+ *
+ * 🔴 It has to be answered specifically, because it is the only query here whose RESULT changes the
+ * SQL of a later statement. Fed the generic canned row it sees no `attname`, concludes the verdict
+ * columns are absent, and compiles the pre-DDL INSERT — so the assertion that the findings insert
+ * names `group_key` failed against a service that was working correctly. Defaults to the applied
+ * schema; `pgAttributeRows` is what a case shrinks to compile the degraded shape.
+ */
+const APPLIED_COLUMNS = [
+  'id',
+  'run_id',
+  'user_id',
+  'confidence',
+  'reason',
+  'actioned',
+  'action',
+  'created_at',
+  'verdict',
+  'verdict_by',
+  'verdict_at',
+  'group_key',
+];
+let pgAttributeRows: unknown[] = APPLIED_COLUMNS.map((attname) => ({ attname }));
+
 class CannedRowDriver extends DummyDriver {
   async acquireConnection(): Promise<DatabaseConnection> {
     return {
       // Generic in `R`, matching `DatabaseConnection` — a concrete row type here does not satisfy it
       // and svelte-check rejects the whole dialect.
-      executeQuery: async <R>() => ({ rows: cannedRows as R[] }),
+      executeQuery: async <R>(compiled: { sql: string }) => ({
+        rows: (compiled.sql.includes('pg_attribute') ? pgAttributeRows : cannedRows) as R[],
+      }),
       streamQuery: async function* () {
         yield { rows: [] };
       },
@@ -93,6 +122,7 @@ beforeEach(() => {
   sql.length = 0;
   (params as unknown[][]).length = 0;
   cannedRows = [{ id: CANNED_RUN_ID }];
+  pgAttributeRows = APPLIED_COLUMNS.map((attname) => ({ attname }));
 });
 
 /** Whitespace-normalised, so a prettier reflow of the builder chain cannot fail these. */

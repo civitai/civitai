@@ -311,6 +311,14 @@ export const domainClusterIsNamedInReason = (size: number): boolean => size > DO
  *
  * Prefixed, so a second kind of key could never collide with a domain that happened to look like
  * one. No second kind is added here — see the IP paragraph above for why that is not a gap.
+ *
+ * 🔴 UNBOUNDED ON PURPOSE, AND BOUNDED DOWNSTREAM. `normalizeEmailDomain` caps nothing, so a
+ * pathological domain produces a key longer than the wire contract's 200 characters — which would
+ * refuse the whole REPORT, not the one finding. `report.ts`'s `boundGroupKey` is where that is
+ * handled, next to `truncateReason`, because a finding is constructed in exactly one place and the
+ * contract's caps belong at that choke point. Capping the domain HERE instead would be worse: two
+ * different long domains would truncate to one string and silently merge two unrelated clusters
+ * into a single ruling.
  */
 export function registrationClusterGroupKey(
   member: { emailDomain: string | null },

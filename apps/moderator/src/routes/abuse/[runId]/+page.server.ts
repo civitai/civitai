@@ -88,10 +88,18 @@ export const actions: Actions = {
     if (!Number.isSafeInteger(findingId) || findingId <= 0)
       return fail(400, { error: 'Missing finding id.' });
 
-    // The moderator's own name where there is one, their id where there is not. Never a display
-    // string assembled here: this is an audit field, and it has to still identify someone after a
-    // rename.
-    const verdictBy = locals.user.username ?? String(locals.user.id);
+    // 🔴 THE ID, NOT THE USERNAME — and the comment that used to sit here claimed the opposite of
+    // what the code did. It said the audit field "has to still identify someone after a rename" and
+    // then stored `locals.user.username`, which is precisely the value a rename changes: the record
+    // would go on naming a handle that now belongs to nobody, or to somebody else. `id` is the one
+    // identifier this app cannot reassign.
+    //
+    // The cost is that the board renders an id rather than a name; the page labels it as one. That
+    // is the right trade for a field whose entire job is to say, months later, who stands behind a
+    // ruling — a name that resolves to the wrong person is worse than a number that resolves to the
+    // right one. Resolving the id back to a display name at render time is a further improvement and
+    // is not made here: it needs a user lookup this board does not currently do.
+    const verdictBy = String(locals.user.id);
 
     try {
       const { updated, groupKey } = await recordAbuseVerdict({

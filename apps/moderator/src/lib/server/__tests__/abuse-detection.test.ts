@@ -29,12 +29,38 @@ function insertChain(calls: Call[], resolveWith: unknown) {
   return builder;
 }
 
-const { calls, insertInto, transactionExecute } = vi.hoisted(() => {
+const { calls, insertInto, transactionExecute, catalog } = vi.hoisted(() => {
   const calls: [string, unknown[]][] = [];
   return {
     calls,
     insertInto: vi.fn(),
     transactionExecute: vi.fn(),
+    /**
+     * What the service's capability probe sees on `abuse_detection_finding`.
+     *
+     * 🔴 The probe is a RAW `sql` query, so it does not go through `insertInto`/`deleteFrom` — it
+     * asks the transaction for a Kysely executor. A fake that omitted one made every
+     * `recordAbuseRun` case throw `executorProvider.getExecutor is not a function`, which is a fact
+     * about the fake and not about the service. Defaulting to the post-DDL column set keeps every
+     * existing case asserting the shape it was written for; a case can shrink it to reproduce the
+     * pre-DDL table.
+     */
+    catalog: {
+      columns: [
+        'id',
+        'run_id',
+        'user_id',
+        'confidence',
+        'reason',
+        'actioned',
+        'action',
+        'created_at',
+        'verdict',
+        'verdict_by',
+        'verdict_at',
+        'group_key',
+      ] as string[],
+    },
   };
 });
 
@@ -52,6 +78,21 @@ beforeEach(() => {
   insertInto.mockReset();
   transactionExecute.mockReset();
 
+  catalog.columns = [
+    'id',
+    'run_id',
+    'user_id',
+    'confidence',
+    'reason',
+    'actioned',
+    'action',
+    'created_at',
+    'verdict',
+    'verdict_by',
+    'verdict_at',
+    'group_key',
+  ];
+
   // The trx handed to the callback. `insertInto` records the table so a test can assert BOTH inserts
   // happened (or that the second did not).
   const trx = {
@@ -63,6 +104,28 @@ beforeEach(() => {
       calls.push(['deleteFrom', [table]]);
       return insertChain(calls, undefined);
     },
+    // The surviving-ruled-rows read. Resolves empty by default: this tier answers "what query was
+    // built", and "which rows came back" is what the PGlite tier is for.
+    selectFrom: (table: string) => {
+      calls.push(['selectFrom', [table]]);
+      const builder: Record<string, unknown> = {};
+      for (const method of ['select', 'where', 'orderBy']) {
+        builder[method] = (...args: unknown[]) => {
+          calls.push([method, args]);
+          return builder;
+        };
+      }
+      builder.execute = async () => [];
+      builder.executeTakeFirst = async () => undefined;
+      return builder;
+    },
+    // The three methods Kysely's `RawBuilderImpl.execute` reaches for, and nothing more: it
+    // transforms the node, compiles it, then executes the compiled query.
+    getExecutor: () => ({
+      transformQuery: (node: unknown) => node,
+      compileQuery: () => ({ sql: '', parameters: [] }),
+      executeQuery: async () => ({ rows: catalog.columns.map((attname) => ({ attname })) }),
+    }),
   };
   transactionExecute.mockImplementation(async (cb: (t: unknown) => unknown) => cb(trx));
 });

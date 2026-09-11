@@ -1,9 +1,13 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { getModeratorDb } from './moderator-db';
 import type { AbuseDetectionTables, AbuseVerdict } from './abuse-detection-tables';
 
 /** The shared client, typed to include the two tables this module owns. */
 const abuseDb = () => getModeratorDb().withTables<AbuseDetectionTables>();
+
+type AbuseDb = ReturnType<typeof abuseDb>;
+type AbuseTrx = Transaction<AbuseDb extends Kysely<infer DB> ? DB : never>;
 
 /**
  * One client, shared with the rest of the app's moderation data — `withTables` adds these two tables
@@ -96,9 +100,86 @@ const PG_NO_MATCHING_CONFLICT_TARGET = '42P10';
  */
 const PG_UNDEFINED_COLUMN = '42703';
 
+/**
+ * Postgres `insufficient_privilege`.
+ *
+ * The read paths already discriminate it: `schema.sql` says to apply it AS THE APPLICATION ROLE, and
+ * running it as `postgres` instead — the natural `psql -U postgres` shortcut — leaves tables the app
+ * cannot touch. The write path has to say it too, for the same reason it translates 42703: a bare
+ * "the database refused the write" sends an operator hunting an outage on a database that is
+ * healthy, and the remedy (ownership, not a grant — `ALTER TABLE` needs to be run BY the owner) is
+ * not something the moderator on the other end of the click could guess.
+ */
+const PG_INSUFFICIENT_PRIVILEGE = '42501';
+
 /** True for the pg error raised when a column in the statement does not exist on the table. */
 export const isUndefinedColumnError = (e: unknown): boolean =>
   (e as { code?: unknown } | null)?.code === PG_UNDEFINED_COLUMN;
+
+/**
+ * The four columns THIS FEATURE added to a table that was already live and already receiving
+ * reports. Named once, because two different things branch on the set: the capability probe below,
+ * and the `42703` backstop, which has to separate two states that share one error code and have
+ * opposite remedies: a column THIS CHANGE added is missing, versus some unrelated column is.
+ */
+const VERDICT_DDL_COLUMNS = ['verdict', 'verdict_by', 'verdict_at', 'group_key'] as const;
+
+/**
+ * The column a `42703` names, or `null` for anything else.
+ *
+ * 🔴 PARSED FROM THE MESSAGE, BECAUSE THERE IS NO `error.column` TO READ. Measured against a real
+ * server (PGlite 0.4.6, the harness in `__tests__/abuse-detection-pglite.harness.ts`): Postgres
+ * populates the `column_name` error field for CONSTRAINT violations, not for a PARSE-time
+ * `undefined_column`. A dropped-column INSERT comes back `routine: 'checkInsertTargets'` and a
+ * dropped-column WHERE comes back `routine: 'errorMissingColumn'`, and NEITHER carries `column` —
+ * the name exists only in the message, in one of two spellings:
+ *
+ *   column "group_key" of relation "abuse_detection_finding" does not exist   (INSERT/UPDATE target)
+ *   column "verdict" does not exist                                           (everywhere else)
+ *
+ * The leading `column "…"` is common to both, which is what this reads. An unrecognised message
+ * yields `null` and the error propagates unchanged — the safe direction, because the alternative is
+ * retrying a write whose failure nobody understood.
+ */
+export function missingColumnFromError(e: unknown): string | null {
+  const err = e as { code?: unknown; message?: unknown } | null;
+  if (err?.code !== PG_UNDEFINED_COLUMN) return null;
+  if (typeof err.message !== 'string') return null;
+  const m = /column "([^"]+)"/.exec(err.message);
+  return m ? m[1] : null;
+}
+
+/**
+ * Does the live table carry the columns this feature added?
+ *
+ * 🔴 ASKED, NOT DISCOVERED BY FAILING — and that is the whole point of this function. The DDL is
+ * applied by hand, so there is a window in which the table exists and these columns do not. Learning
+ * that from a `42703` costs a ROLLED-BACK TRANSACTION plus a full redo on every report from every
+ * detector, including the two that never send a group key and therefore lose nothing; and it cannot
+ * separate a missing column of THIS change's from an unrelated missing column, so it reports the
+ * second as the first and points the operator at the wrong file. One catalogue read answers it
+ * outright, on a path that runs a handful of times a day.
+ *
+ * 🔴 NOT MEMOISED. A per-process cache would answer from a measurement taken before the operator ran
+ * the file, so the first pod to report in the pre-DDL window would keep storing runs ungrouped until
+ * it was restarted — and the same staleness in a test process, where each case builds its own
+ * database, would answer about the previous case's table. A round trip is cheaper than either.
+ *
+ * `to_regclass` resolves the name through the SAME `search_path` the statements below use, and
+ * answers NULL for a table that is not there at all — in which case no rows come back, the write is
+ * built in its pre-DDL shape, and the missing TABLE raises its own `42P01` exactly as before.
+ *
+ * ALL FOUR or none: a half-applied DDL is treated as not applied, because the degraded path is the
+ * one that cannot be wrong about a column it never names.
+ */
+async function verdictColumnsPresent(trx: AbuseTrx): Promise<boolean> {
+  const { rows } = await sql<{ attname: string }>`
+    SELECT attname FROM pg_attribute
+     WHERE attrelid = to_regclass('abuse_detection_finding')
+       AND attnum > 0 AND NOT attisdropped`.execute(trx);
+  const present = new Set(rows.map((r) => r.attname));
+  return VERDICT_DDL_COLUMNS.every((c) => present.has(c));
+}
 
 /**
  * Store one run and its findings.
@@ -110,24 +191,26 @@ export const isUndefinedColumnError = (e: unknown): boolean =>
 export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: number }> {
   const db = abuseDb();
   try {
-    return await writeRun(db, input);
+    const { runId, storedUngrouped } = await writeRun(db, input);
+    if (storedUngrouped) warnStoringUngrouped('group_key', input);
+    return { runId };
   } catch (e) {
-    // 🔴 THE INGEST PATH DEGRADES RATHER THAN STOPPING. `group_key` is a column this change ADDED to
-    // a table that is already live and already receiving reports from three detectors — so between
-    // this deploying and someone running the DDL, an insert naming it raises 42703 and would take
-    // down reporting for every producer, including the two that do not use the feature at all. A
-    // new column must not be able to cost the surface its existing job.
+    // 🔴 THE INGEST PATH DEGRADES RATHER THAN STOPPING, AND THIS IS NOW ONLY THE BACKSTOP.
+    // `verdictColumnsPresent` asks the catalogue before building the statements, so an ordinary
+    // pre-DDL report never reaches here at all — no rolled-back transaction and no redo, which is
+    // what every report from every detector used to pay for a feature two of the three do not use.
+    // What is left for this branch is the race: the DDL applied, or reverted, between the probe and
+    // the write.
     //
-    // Retried WITHOUT the column, exactly once. What is lost is the grouping — every finding lands
-    // ungrouped and is ruled individually, which is precisely the behaviour before this change — and
-    // the loss is announced rather than silent, because "my ring did not collapse" is otherwise an
-    // unexplainable UI bug. A second 42703 from the retry is a different fault and propagates.
-    if (isUndefinedColumnError(e)) {
-      console.warn(
-        '[abuse-detection] abuse_detection_finding has no group_key column — storing this run ' +
-          'UNGROUPED. Apply apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL.'
-      );
-      return await writeRun(db, input, { withGroupKey: false });
+    // 🔴 GATED ON WHICH COLUMN IS MISSING. `42703` is equally what an UNRELATED dropped column
+    // raises, and the old unconditional branch answered that with `abuse_detection_finding has no
+    // group_key column - apply schema.sql`: a confident, wrong remedy for a different fault, logged
+    // just before the real error propagated. Only a column THIS change added is retried past.
+    const missing = missingColumnFromError(e);
+    if (missing !== null && (VERDICT_DDL_COLUMNS as readonly string[]).includes(missing)) {
+      const { runId } = await writeRun(db, input, { forceLegacyShape: true });
+      warnStoringUngrouped(missing, input);
+      return { runId };
     }
     if ((e as { code?: unknown }).code === PG_NO_MATCHING_CONFLICT_TARGET)
       throw new Error(
@@ -139,13 +222,34 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
   }
 }
 
-function writeRun(
-  db: ReturnType<typeof abuseDb>,
+/**
+ * 🔴 WARNED ONLY WHEN SOMETHING WAS ACTUALLY LOST — i.e. when this report carried a key the table
+ * cannot hold. Three detectors post to this board and two of them send no key at all; warning on
+ * their reports too, on every report, until a human runs a file, is a log line that carries no
+ * information and trains its reader past the one that does. "My ring did not collapse into one row"
+ * is the otherwise-unexplainable UI bug this message exists to explain, and a report with no ring in
+ * it cannot have that bug.
+ *
+ * Emitted after the write, not before: a run that did not land has lost its grouping the way it lost
+ * everything else, and saying so separately would be a second explanation for one failure.
+ */
+function warnStoringUngrouped(column: string, input: AbuseReportInput): void {
+  if (!input.findings.some((f) => f.groupKey != null)) return;
+  console.warn(
+    `[abuse-detection] abuse_detection_finding has no ${column} column — storing this run ` +
+      'UNGROUPED. Apply apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL.'
+  );
+}
+
+async function writeRun(
+  db: AbuseDb,
   input: AbuseReportInput,
-  opts: { withGroupKey?: boolean } = {}
-): Promise<{ runId: number }> {
-  const withGroupKey = opts.withGroupKey ?? true;
+  opts: { forceLegacyShape?: boolean } = {}
+): Promise<{ runId: number; storedUngrouped: boolean }> {
   return db.transaction().execute(async (trx) => {
+    // Asked once per report, inside the transaction whose statements are shaped by the answer.
+    const withVerdictColumns = opts.forceLegacyShape ? false : await verdictColumnsPresent(trx);
+
     const run = await trx
       .insertInto('abuse_detection_run')
       .values({
@@ -159,7 +263,18 @@ function writeRun(
       // 🔴 IDEMPOTENT on (detector, started_at). The producers retry: a POST that commits but whose
       // response is lost to a timeout gets sent again, and without this the board grows a duplicate
       // run every time — two rows claiming to be the same run, which is worse than none because a
-      // reader cannot tell which is current. Re-reporting the same run REPLACES it.
+      // reader cannot tell which is current.
+      //
+      // 🔴 RE-REPORTING REPLACES THE PRODUCER'S DATA AND KEEPS THE MODERATOR'S. It used to replace
+      // everything: the run row survived the upsert with the same id, and the next statement deleted
+      // every finding on it and re-inserted them from a payload that carries no verdict fields. That
+      // was lossless while these rows held only producer-generated data; it stopped being lossless
+      // the moment a human judgement went into the same row. Measured against this file's own PGlite
+      // harness: rule three findings, re-POST the identical (detector, startedAt), and the run's
+      // "still to review" count went from `{ ruled: 3, unruled: 0 }` back to `{ ruled: 0, unruled: 3 }`
+      // — silently, with new row ids, reading exactly like a fresh run. The replay that does it is
+      // the ordinary "committed, response lost to a timeout" retry this upsert exists for. See
+      // `replaceFindings` below for what survives now.
       .onConflict((oc) =>
         oc.columns(['detector', 'started_at']).doUpdateSet({
           finished_at: new Date(input.finishedAt),
@@ -174,43 +289,126 @@ function writeRun(
       .returning('id')
       .executeTakeFirstOrThrow();
 
-    // Clear before re-inserting, so a replayed run does not accumulate its findings twice. A no-op on
-    // the first write; the ON DELETE CASCADE does not help here because the run row survives.
-    await trx.deleteFrom('abuse_detection_finding').where('run_id', '=', run.id).execute();
-
-    if (input.findings.length > 0) {
-      await trx
-        .insertInto('abuse_detection_finding')
-        .values(
-          input.findings.map((f) => ({
-            run_id: run.id,
-            user_id: f.userId,
-            confidence: f.confidence,
-            reason: f.reason,
-            actioned: f.actioned,
-            // Mirrors the table's CHECK for the `actioned: false` direction. It CANNOT repair the
-            // other one — an `actioned: true` carrying no action still normalises to NULL here, and
-            // the CHECK would reject it, aborting the transaction and losing the whole run. That
-            // shape is unreachable only because the CONTRACT now refuses it at the edge, which is
-            // where a missing value has to be caught: this line has nothing to substitute for it.
-            action: f.actioned ? f.action ?? null : null,
-            // 🔴 NORMALISED TO NULL, never left undefined. The contract accepts an ABSENT key from
-            // the three producers that do not send one, and `undefined` in a Kysely `values()` row
-            // omits the column from the INSERT — which is fine on its own, but a REPLAYED run mixes
-            // rows that have the key with rows that do not, and an insert whose rows disagree about
-            // their columns is a runtime error rather than a missing value. NULL is also exactly
-            // what "this finding is in no cluster" means in the table.
-            //
-            // Dropped entirely — not set to NULL — on the pre-DDL retry, because naming a column
-            // that does not exist is the error being retried past.
-            ...(withGroupKey ? { group_key: f.groupKey ?? null } : {}),
-          }))
-        )
-        .execute();
-    }
-
-    return { runId: run.id };
+    await replaceFindings(trx, run.id, input.findings, withVerdictColumns);
+    return { runId: run.id, storedUngrouped: !withVerdictColumns };
   });
+}
+
+/**
+ * Bring one run's findings in line with the payload, WITHOUT destroying a ruling.
+ *
+ * 🔴 THE DELETE IS SCOPED TO THE UNRULED ROWS, AND THAT IS THE WHOLE FIX. A clear-and-reinsert is the
+ * right shape for rows a producer owns outright — it is what stops a replayed run accumulating its
+ * findings twice, which is a real bug and is still prevented here. It is the wrong shape for a row a
+ * human has written to. A verdict is not the producer's to delete by re-POSTing, and it is the one
+ * thing in this table that cannot be recomputed: re-running the detector reproduces every producer
+ * column exactly and reproduces no verdict at all.
+ *
+ * 🔴 NO ACCUMULATION. After this runs, the findings on the run are: every ruled row that was already
+ * there, plus one row for each payload finding no ruled row already covers. Both halves are fixed
+ * points — a second replay of the same payload deletes the unruled half and re-inserts exactly it —
+ * so replaying N times leaves the same row count as replaying once. Growth is possible only through
+ * a moderator ruling something, which is the intended direction.
+ *
+ * 🔴 THE MATCH IS `(run_id, user_id)`, and it is a match, not a key. The table has no unique index on
+ * that pair and this does not add one — adding one would be a second hand-applied DDL step, and on a
+ * live table already holding whatever the detectors have written it could not be created at all
+ * without a de-duplication pass first. Counting survivors per user instead makes a payload that
+ * repeats a user behave sanely (its first N findings for that user are the ones already present)
+ * without claiming a uniqueness the database does not enforce.
+ *
+ * 🔴 A RULED ROW IS NOT REFRESHED FROM THE PAYLOAD, deliberately. The moderator ruled on the `reason`
+ * and `confidence` that were on screen; overwriting them with a replay's copy would leave a verdict
+ * attached to evidence nobody ruled on. For a genuine replay the two are identical anyway — the
+ * payload is keyed by `(detector, started_at)`, so a second POST under that pair is the same run.
+ *
+ * 🔴 THE AWKWARD CASE — A RULED FINDING THE REPLAY NO LONGER REPORTS — IS KEPT, NOT DROPPED, and this
+ * is a decision rather than a fallout. Either way makes a claim: keeping it leaves a row on the run
+ * that this payload did not assert, and dropping it destroys a judgement a human made. Kept, because
+ * the two failures are not symmetric. A retained row is visible — it is on the board, ruled, with its
+ * ruler and its timestamp — and a moderator or an operator can act on it. A dropped verdict is
+ * invisible, unrecoverable, and it silently deflates the denominator of the false-positive rate this
+ * whole board exists to measure; a detector that stopped flagging an account it was told was a false
+ * positive would be erasing precisely the evidence of its own error. `abuse-detection.verdict.test.ts`
+ * pins this direction.
+ */
+async function replaceFindings(
+  trx: AbuseTrx,
+  runId: number,
+  findings: AbuseReportInput['findings'],
+  withVerdictColumns: boolean
+): Promise<void> {
+  if (!withVerdictColumns) {
+    // Pre-DDL there is no `verdict` column to scope the delete by, and nothing to preserve either:
+    // no ruling can have been recorded on a deployment that cannot store one. The original
+    // clear-and-reinsert is exactly right there, and naming a column that does not exist is the
+    // error this whole branch exists to avoid.
+    await trx.deleteFrom('abuse_detection_finding').where('run_id', '=', runId).execute();
+    await insertFindings(trx, runId, findings, false);
+    return;
+  }
+
+  await trx
+    .deleteFrom('abuse_detection_finding')
+    .where('run_id', '=', runId)
+    .where('verdict', 'is', null)
+    .execute();
+
+  const survivors = await trx
+    .selectFrom('abuse_detection_finding')
+    .select(['id', 'user_id'])
+    .where('run_id', '=', runId)
+    .execute();
+
+  const survivorsPerUser = new Map<number, number>();
+  for (const s of survivors)
+    survivorsPerUser.set(s.user_id, (survivorsPerUser.get(s.user_id) ?? 0) + 1);
+
+  const fresh: AbuseReportInput['findings'] = [];
+  for (const f of findings) {
+    const remaining = survivorsPerUser.get(f.userId) ?? 0;
+    // Already on the run, carrying a ruling. Left exactly as it is.
+    if (remaining > 0) survivorsPerUser.set(f.userId, remaining - 1);
+    else fresh.push(f);
+  }
+  await insertFindings(trx, runId, fresh, true);
+}
+
+/** The producer's rows, in the shape the live table can hold. */
+async function insertFindings(
+  trx: AbuseTrx,
+  runId: number,
+  findings: AbuseReportInput['findings'],
+  withGroupKey: boolean
+): Promise<void> {
+  if (findings.length === 0) return;
+  await trx
+    .insertInto('abuse_detection_finding')
+    .values(
+      findings.map((f) => ({
+        run_id: runId,
+        user_id: f.userId,
+        confidence: f.confidence,
+        reason: f.reason,
+        actioned: f.actioned,
+        // Mirrors the table's CHECK for the `actioned: false` direction. It CANNOT repair the
+        // other one — an `actioned: true` carrying no action still normalises to NULL here, and
+        // the CHECK would reject it, aborting the transaction and losing the whole run. That
+        // shape is unreachable only because the CONTRACT now refuses it at the edge, which is
+        // where a missing value has to be caught: this line has nothing to substitute for it.
+        action: f.actioned ? f.action ?? null : null,
+        // 🔴 NORMALISED TO NULL, never left undefined. The contract accepts an ABSENT key from
+        // the three producers that do not send one, and `undefined` in a Kysely `values()` row
+        // omits the column from the INSERT — which is fine on its own, but one statement whose
+        // rows disagree about their columns is a runtime error rather than a missing value. NULL
+        // is also exactly what "this finding is in no cluster" means in the table.
+        //
+        // Dropped entirely — not set to NULL — in the pre-DDL shape, because naming a column that
+        // does not exist is the error that shape exists to avoid.
+        ...(withGroupKey ? { group_key: f.groupKey ?? null } : {}),
+      }))
+    )
+    .execute();
 }
 
 /**
@@ -512,6 +710,19 @@ export async function recordAbuseVerdict(input: {
       throw new Error(
         'abuse_detection_finding has no verdict columns — apply ' +
           'apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL as the application role',
+        { cause: e }
+      );
+    // 🔴 THE SAME DISCRIMINATION THE TWO READ PATHS ALREADY MAKE. Both `+page.server.ts` loads
+    // branch on 42501 and say "re-run schema.sql as the application role"; without this the write
+    // answered the identical cause with "the database refused the write", which reads as an outage.
+    // It is a LIKELY state, not a hypothetical: the file's own header exists because `psql -U
+    // postgres` is the natural shortcut, and it leaves tables the app can be granted rights on but
+    // still does not own — enough to SELECT, not enough for the `ALTER TABLE`s this file now runs.
+    if ((e as { code?: unknown }).code === PG_INSUFFICIENT_PRIVILEGE)
+      throw new Error(
+        'this role cannot write abuse_detection_finding — re-run ' +
+          'apps/moderator/abuse-detection/schema.sql as the application role, or transfer ownership ' +
+          'of the tables to it (see the file header)',
         { cause: e }
       );
     throw e;

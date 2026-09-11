@@ -12,10 +12,26 @@
 --   psql "$MODERATOR_DATABASE_URL" -f apps/moderator/abuse-detection/schema.sql
 --
 -- 🔴 AS THE APPLICATION ROLE (`internal_tools`), which is what that URL connects as. Running this
--- as `postgres` — the natural `kubectl exec … psql -U postgres` shortcut — creates postgres-owned
--- tables the app cannot read, and the page then reports a permission error it cannot distinguish
--- from an outage without the 42501 branch it now carries. If you already did that, either re-run as
--- the app role or:
+-- as `postgres` — the natural `psql -U postgres` shortcut — creates postgres-owned tables the app
+-- cannot read, and the page then reports a permission error it cannot distinguish from an outage
+-- without the 42501 branch it now carries.
+--
+-- 🔴 IF YOU ALREADY RAN IT AS THE WRONG ROLE, THE FIX IS OWNERSHIP, NOT A GRANT. This used to say
+-- "either re-run as the app role or GRANT SELECT, INSERT, UPDATE, DELETE …", and that remedy was
+-- correct only while this file did nothing but `CREATE TABLE IF NOT EXISTS`. It now runs
+-- `ALTER TABLE`, which Postgres permits ONLY to a table's owner (or a member of its owning role) —
+-- no combination of table privileges grants it. Measured: as a granted-but-not-owner role the first
+-- `ALTER TABLE` fails `42501 must be owner of table abuse_detection_finding`, and the stop-on-error
+-- directive below then halts the file — so it fails closed, adding no verdict columns rather than a
+-- subset, but a re-run as that role can never succeed. Transfer ownership first, as a superuser or
+-- as the current owner. One statement per object — `OWNER TO` takes a single object name, and the
+-- comma-separated form is a SYNTAX ERROR, which halts the recovery the same way:
+--   ALTER TABLE    abuse_detection_run               OWNER TO internal_tools;
+--   ALTER TABLE    abuse_detection_finding           OWNER TO internal_tools;
+--   ALTER SEQUENCE abuse_detection_run_id_seq        OWNER TO internal_tools;
+--   ALTER SEQUENCE abuse_detection_finding_id_seq    OWNER TO internal_tools;
+-- …then re-run this file as `internal_tools`. The GRANTs below are still what a read-only or
+-- reporting role needs, and are NOT a substitute for the four statements above:
 --   GRANT SELECT, INSERT, UPDATE, DELETE ON abuse_detection_run, abuse_detection_finding TO internal_tools;
 --   GRANT USAGE, SELECT ON SEQUENCE abuse_detection_run_id_seq, abuse_detection_finding_id_seq TO internal_tools;
 --
@@ -117,6 +133,11 @@ CREATE INDEX IF NOT EXISTS abuse_detection_finding_user_idx
 ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS verdict text;
 -- Who ruled, and when. Overwritten on a re-ruling — a moderator correcting a mistake must leave the
 -- record showing the CURRENT ruling and who stands behind it, not the first one.
+--
+-- 🔴 `verdict_by` HOLDS THE MODERATOR'S ID, AS TEXT — not their username. A username is reassignable:
+-- months later the record would name a handle that belongs to somebody else, which is the one thing
+-- an audit field must not do. `text` rather than an integer because this column identifies whoever
+-- made the ruling and nothing joins on it, so a future non-user actor does not need a migration.
 ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS verdict_by text;
 ALTER TABLE abuse_detection_finding ADD COLUMN IF NOT EXISTS verdict_at timestamptz;
 -- 🔴 The producer's cluster key: findings the detector believes are ONE actor, ruled once instead of

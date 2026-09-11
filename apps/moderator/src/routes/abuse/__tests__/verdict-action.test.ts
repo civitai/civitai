@@ -79,7 +79,10 @@ describe('the verdict action records a ruling', () => {
       runId: 4,
       findingId: 91,
       verdict: 'tp',
-      verdictBy: 'mod-a',
+      // 🔴 THE ID, NOT `mod-a`. The default fixture user is `{ id: 77, username: 'mod-a' }`, so
+      // this assertion is what separates the two: an audit field storing a renameable handle
+      // would read `mod-a` here.
+      verdictBy: '77',
     });
     expect(out).toMatchObject({ success: true, findingId: 91, verdict: 'tp' });
   });
@@ -102,8 +105,19 @@ describe('the verdict action records a ruling', () => {
     expect(recordAbuseVerdict).toHaveBeenCalledWith(expect.objectContaining({ verdict: expected }));
   });
 
-  it('records the moderator’s id when they have no username', async () => {
-    // An audit field has to identify someone even when the display name is absent.
+  it('🔴 records the moderator’s ID, never their username — a username is renameable', async () => {
+    // The comment at this line used to say the audit field "has to still identify someone after a
+    // rename" while the code stored `locals.user.username`, which is exactly the value a rename
+    // moves: the record would go on naming a handle that now belongs to nobody, or to someone else.
+    //
+    // 🔴 THE FIXTURE'S TWO VALUES ARE DELIBERATELY DISTINGUISHABLE, and pairwise distinct from the
+    // other ids in this file. A user whose username happened to equal their id could not see this
+    // regression at all.
+    await post({ findingId: '91', verdict: 'fp' }, { user: { id: 77, username: 'renamed-later' } });
+    expect(recordAbuseVerdict).toHaveBeenCalledWith(expect.objectContaining({ verdictBy: '77' }));
+  });
+
+  it('still identifies the moderator when they have no username at all', async () => {
     await post({ findingId: '91', verdict: 'fp' }, { user: { id: 77 } });
     expect(recordAbuseVerdict).toHaveBeenCalledWith(expect.objectContaining({ verdictBy: '77' }));
   });
@@ -320,6 +334,13 @@ describe('the board executes nothing', () => {
       './moderator-db',
       '@civitai/moderation',
       '@sveltejs/kit',
+      // The query builder itself, for the raw `pg_attribute` capability probe in
+      // `recordAbuseRun` and for the two transaction types it is written against. A SQL compiler
+      // reaches no account surface: it has no client, no session and no knowledge of this app's
+      // services — the connection it runs on is still the one `./moderator-db` hands out, which is
+      // already in this ledger and is scoped to the moderator database. Added deliberately, which is
+      // what a ledger that fails on GROWTH is for.
+      'kysely',
       'zod',
     ]);
   });
