@@ -629,6 +629,14 @@ describe('csam archive streaming upload', () => {
       // while the default-geometry form still reads 20 MiB and stays green with the hang fully
       // reintroduced. Measured: that two-part mutation left all 8 tests in this file passing
       // against the default form, and fails HERE against the derived one.
+      //
+      // ⚠️ It is still a SECOND COPY of the service's estimate expression (`archiveImages` passes
+      // `imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE`), not an observation of the geometry the
+      // run used — the check has to hold before the run starts, and the derived pair goes straight
+      // into the real SDK `Upload` inside the service, where the fake client never sees
+      // `queueSize`. The imported constants keep the two copies in step, so a constant change is
+      // covered; a change to the EXPRESSION is not, and would leave this guard bounding a run that
+      // no longer happens.
       const absorbedBeforeStalling = deriveUploadPartGeometry({
         expectedBytes: HANG_PROBE_ENTRY_COUNT * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
       }).worstCaseResidentBytes;

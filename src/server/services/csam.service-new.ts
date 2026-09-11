@@ -1105,9 +1105,10 @@ function uploadStream({
   const Key = `${userId}/${date.getTime()}_${filename}`;
 
   // 🔴 MEMORY: `Upload` holds up to `queueSize` parts of `partSize` bytes in flight. The pair is
-  // derived together from a single budget rather than chosen independently, so that PRODUCT is a
-  // constant (`UPLOAD_BUFFER_BUDGET_BYTES`, 256 MiB) regardless of how large the archive turns
-  // out to be. The actual peak is somewhat above the product — see `UPLOAD_BUFFER_BUDGET_BYTES`
+  // derived together from a single budget rather than chosen independently, so that PRODUCT is
+  // held AT OR BELOW `UPLOAD_BUFFER_BUDGET_BYTES` (256 MiB) however large the archive turns out
+  // to be. (At or below, not at: the realistic geometry here is 5 MiB x 4 = 20 MiB, well under
+  // it.) The actual peak is somewhat above the product — see `UPLOAD_BUFFER_BUDGET_BYTES`
   // for what is and is not established about it. The previous fixed `partSize: 5 MiB` /
   // `queueSize: 4` capped any object at 10,000 x 5 MiB = 48.8 GiB, which is the ceiling this
   // replaces. With no estimate the derivation returns exactly that old pair.
@@ -1427,11 +1428,18 @@ async function archiveAndUpload({
       //
       // So what IS this line for, and it is the only thing established here: a rejection raised
       // BEFORE `uploadStream` attaches that inner `pipeline` — `new Upload()` throwing from
-      // `__validateInput` (bad `partSize`/`queueSize`/params) is the reachable case. Nothing has
-      // linked this `passThrough` to anything that can fail it yet, so without this line the
-      // archiver fills the `PassThrough`, stalls, and every parked `append()` waits forever.
-      // Measured by injecting a throw at the `new Upload()` call site: with this line the report
-      // rejects in ~0.1 s; with it removed the same run reports `HUNG` at the 30 s deadline.
+      // `__validateInput` (bad `partSize`/`queueSize`/params). Nothing has linked this
+      // `passThrough` to anything that can fail it yet, so without this line the archiver fills
+      // the `PassThrough`, stalls, and every parked `append()` waits forever.
+      //
+      // ⚠️ THAT CASE IS NOT REACHABLE AT HEAD — this is a future-geometry guard, not a live path.
+      // `deriveUploadPartGeometry` floors `partSize` at exactly `Upload.MIN_PART_SIZE` (5 MiB), so
+      // `__validateInput`'s `partSize < MIN_PART_SIZE` is false; it floors `queueSize` at 1; and
+      // `params`/`client` are always supplied at the sole call site above. It becomes reachable
+      // only if the part-size floor is dropped below the SDK's minimum or the queue floor below 1
+      // — which is what not to break here. Measured by INJECTING a throw at the `new Upload()`
+      // call site, since no input produces one today: with this line the report rejects in ~0.1 s;
+      // with it removed the same run reports `HUNG` at the 30 s deadline.
       passThrough.destroy(e instanceof Error ? e : new Error(String(e)));
     }
   );
