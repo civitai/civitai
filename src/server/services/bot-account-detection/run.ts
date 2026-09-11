@@ -13,7 +13,11 @@ import {
   emptyCohortSignals,
   type EvidenceReader,
 } from './evidence';
-import { BOT_ACCOUNT_HEURISTICS, isCommonEmailDomain } from './heuristics';
+import {
+  BOT_ACCOUNT_HEURISTICS,
+  isCommonEmailDomain,
+  registrationClusterGroupKey,
+} from './heuristics';
 import { BOT_ACCOUNT_DETECTOR, buildFinding, buildReports } from './report';
 import {
   MIN_REPORTED_CONFIDENCE,
@@ -214,11 +218,15 @@ export async function runBotAccountDetection(
   // below — a member nobody can see is a member nobody can grade, and grading is the entire purpose
   // of the shadow phase.
   const { reported, suppressed } = partitionByConfidence(scores, minConfidence);
-  const findings = reported.map((score) =>
+  const findings = reported.map((score) => {
     // Every score was built from a member, so the lookup cannot miss; the non-null assertion would
     // be the only place in this module where a missing key is silent, so it throws instead.
-    buildFinding(mustGet(memberById, score.userId), score, startedAt)
-  );
+    const member = mustGet(memberById, score.userId);
+    // 🔴 THE SAME `signals` THE SCORING SAW. A key derived from a different index — an empty one, or
+    // one rebuilt here — would group findings by something the reason text does not describe, which
+    // is the disclosure rule broken by accident rather than by design.
+    return buildFinding(member, score, startedAt, registrationClusterGroupKey(member, signals));
+  });
 
   const finishedAt = deps.now();
 

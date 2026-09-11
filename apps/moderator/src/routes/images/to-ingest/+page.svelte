@@ -1,7 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
-  import { SvelteSet } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -9,13 +8,14 @@
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { LINK_CLASS, num, shortAge } from '$lib/format';
   import { clearPaging } from '$lib/paging';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import IngestionHealthPanel from './IngestionHealthPanel.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   type Item = PageData['images'][number];
 
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
   $effect(() => {
     data.images;
     selected.clear();

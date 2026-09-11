@@ -146,6 +146,37 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               buzzBudgetPerDay: 750,
               spendScopeGranted: true,
             },
+            // 🔴 THE GRANT-ONLY SHAPE — `0` installs AND `0` subscription scopes. This is the
+            // row `listMyScopeGrants` only began emitting when it started enumerating
+            // `app_user_scope_grants`, and by the production counts it is the DOMINANT
+            // population, not an edge case. Without it no fixture at this tier renders the
+            // card the change exists to create, so a regression in how it renders — the
+            // surface line, the budget control, an empty scope list — ships green.
+            // Distinct from `apb_spend` in exactly the field under test: that row also has
+            // `modelInstallCount: 0` but carries a subscription scope, so it cannot
+            // exercise the `0 / 0` branch of `buildSurfaceLine`.
+            //
+            // 🔴 `spendScopeGranted: false` DELIBERATELY, and this is a REAL COVERAGE GAP,
+            // not a tidy choice — recorded rather than glossed. With it `true` the card
+            // renders an `AppBudgetControl` (a null budget still emits `app-budget-row` AND
+            // `app-budget-value`, showing the "none" copy), which would flip the two
+            // `toHaveLength(1)` assertions below to 2 and make `app-budget-edit` ambiguous
+            // for the Save test's `.click()`. Those counts are the discriminating half of
+            // the budget tests, so quietly relaxing them to 2 would weaken a real guard to
+            // admit a fixture. RESIDUAL: no component-tier case renders a budget control on
+            // a GRANT-ONLY card. That combination is covered at the service tier
+            // (`user-app-surface.orchestration.test.ts` asserts `spendScopeGranted: true`
+            // plus a budget for a grant-only row), and the service tier cannot see the card.
+            {
+              appBlockId: 'apb_grant_only',
+              blockId: 'consented',
+              name: 'Consented Only',
+              slug: 'consented-only',
+              scopes: ['ai:write:budgeted'],
+              surfaces: { modelInstallCount: 0, subscriptionScopes: [] },
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
           ]
         : [],
     'blocks.listMyAppActivity': () => ({ pages: [{ items: [], nextCursor: null }] }),
@@ -525,20 +556,38 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       .toHaveTextContent('Daily Buzz limit: 750 Buzz/day');
   });
 
-  // 🔴 THE DISCRIMINATING HALF. The fixture holds TWO apps and only one has the spend
+  // 🔴 THE DISCRIMINATING HALF. The fixture holds THREE apps and only one has the spend
   // scope GRANTED, so exactly one control may render. Without this, a control rendered
   // unconditionally would pass the test above.
+  // (⚠️ Said TWO until the grant-only fixture was added below and this count was left
+  // behind — a claim staled by the same commit that added the third card.)
   test('renders NO limit control for an app without the granted spend scope', async () => {
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
-    // Positive control: BOTH apps really rendered, so "one control" is a fact about the
-    // grant and not about a panel that only drew one card.
+    // Positive control: ALL THREE apps really rendered, so "one control" is a fact about
+    // the grant and not about a panel that only drew one card.
     expect(page.getByTestId('app-budget-value').elements()).toHaveLength(1);
     const names = Array.from(
       document.querySelectorAll('[data-testid="apps-installed-grants-grid"] .truncate')
     ).map((el) => el.textContent?.trim());
     expect(names).toContain('Demo App');
     expect(names).toContain('Spender');
+    // 🔴 THE GRANT-ONLY CARD RENDERS AT ALL. Before `listMyScopeGrants` enumerated
+    // `app_user_scope_grants`, a row with no install and no subscription could not exist,
+    // so nothing at this tier ever drew this card — and by the production counts it is the
+    // dominant population. Asserting it here is what makes the two length checks below
+    // "one control across THREE cards" rather than "one control across the two that
+    // happened to render".
+    expect(names).toContain('Consented Only');
+    // Its surface line names the provenance it actually came from. Pinned as the whole
+    // string: a keyword match would pass on the previous text ("Subscriptions: none"),
+    // which on a consent surface reads as a claim that the app has no access.
+    expect(
+      Array.from(document.querySelectorAll('[data-testid="apps-installed-grants-grid"]')).some(
+        (el) => el.textContent?.includes('Granted at consent · no install or subscription')
+      ),
+      'the grant-only card must name its provenance, not report "Subscriptions: none"'
+    ).toBe(true);
     expect(page.getByTestId('app-budget-row').elements()).toHaveLength(1);
   });
 
@@ -623,12 +672,17 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * above and confirm your new wording is still TRUE before updating the literal.
  */
 describe('🔴 the revoke instruction is retracted, not reworded', () => {
+  // 🔴 WIDENED WITH THE DATA SOURCE, NOT REWORDED FOR STYLE. `listMyScopeGrants` now also
+  // enumerates live `app_user_scope_grants` rows, so "installed or subscribed to" described a
+  // population narrower than the one the panel below it lists — the same overstatement this
+  // block exists to catch, pointing the other way. The whole-string pin is doing exactly its
+  // job here: this literal had to move because the claim moved.
   const PERMISSIONS_TAB_COPY =
-    "The apps you've installed or subscribed to, the permissions each one declares it may " +
-    'use, and where you have it. Removing an install on the Installs tab takes the app off ' +
-    'that surface, but it does not withdraw a permission you have already granted — ' +
-    'withdrawing one is not possible yet. Recent activity is the full record of what apps ' +
-    'have actually done on your account.';
+    "The apps you've installed, subscribed to, or granted permissions to, what each one " +
+    'declares it may use, and where you have it. Removing an install on the Installs tab ' +
+    'takes the app off that surface, but it does not withdraw a permission you have already ' +
+    'granted — withdrawing one is not possible yet. Recent activity is the full record of ' +
+    'what apps have actually done on your account.';
 
   test('the panel states plainly that withdrawing a permission is not possible', async () => {
     // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the

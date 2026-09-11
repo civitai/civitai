@@ -374,7 +374,13 @@ function buildSurfaceLine(surfaces: {
         .join(' / ')}`
     );
   } else if (surfaces.modelInstallCount === 0) {
-    parts.push('Subscriptions: none');
+    /* 🔴 THE GRANT-ONLY ROW — a consented full-page app, which THIS PR makes reachable for
+       the first time: every earlier row came from a subscription, seeded with either
+       `modelInstallCount > 0` or one scope, so `0 / 0` could not occur and the previous text
+       ("Subscriptions: none") was unreachable. Replaced because on a consent surface it
+       reads as "this app has no access", under copy promising "…and where you have it".
+       This is the one copy site a literal sweep cannot find — it is computed. */
+    parts.push('Granted at consent · no install or subscription');
   }
   return parts.join(' · ');
 }
@@ -547,12 +553,24 @@ function ScopeGrantsPanel() {
   }
   if (!grants || grants.length === 0) {
     /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
-       to make, and it was false. `listMyScopeGrants` reads `block_user_subscriptions`
-       ONLY, so an empty result means "no install or subscription of your own", which is
-       silent about full-page apps and about blocks other people installed. Naming the
-       tab's actual population and pointing at the feed is what keeps the sentence true. */
+       to make, and it was false.
+       ⚠️ THE REASON HAS NARROWED, SO THE SENTENCE HAS WIDENED. #4722 wrote "reads
+       `block_user_subscriptions` ONLY … silent about full-page apps", which was true then;
+       `listMyScopeGrants` now also enumerates live `app_user_scope_grants`, so a consented
+       full-page app DOES appear and is no longer part of the silence. ⚠️ TWO populations
+       remain, not one: (a) blocks OTHER people installed, which carry no row of the
+       viewer's; and (b) an app the viewer NEVER installed or subscribed to whose scopes are
+       ALL in `CONSENT_EXEMPT_SCOPES` (`scope-grant.service.ts`) — `partitionByConsent`
+       returns `missing: []`, so no consent modal fires and nothing writes a grant row, yet
+       exempt scopes like `collections:write:self` still write to the account.
+       ⚠️ The "never installed" half is load-bearing and an earlier draft omitted it: install
+       and subscribe call `recordInstallConsent` UNCONDITIONALLY (`block-registry.service.ts`
+       :2285, :2921 — not on the modal path), and `recordScopeGrant` has no empty-scopes early
+       return, so an INSTALLED all-exempt app does get a row, with `grantedScopes: []`.
+       The string stays true — they granted nothing — but the silence is wider than
+       "other people's installs". */
     return (
-      <EmptyState label="No apps installed or subscribed yet. This tab covers your own installs — Recent activity is the full record of what apps have done on your account." />
+      <EmptyState label="No apps installed, subscribed to, or granted permissions yet. This tab covers your own installs and consents — Recent activity is the full record of what apps have done on your account." />
     );
   }
   return (
@@ -840,11 +858,11 @@ export default function AppActivityPage() {
             <Tabs.Panel value="permissions" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  The apps you've installed or subscribed to, the permissions each one declares it
-                  may use, and where you have it. Removing an install on the Installs tab takes the
-                  app off that surface, but it does not withdraw a permission you have already
-                  granted — withdrawing one is not possible yet. Recent activity is the full record
-                  of what apps have actually done on your account.
+                  The apps you've installed, subscribed to, or granted permissions to, what each one
+                  declares it may use, and where you have it. Removing an install on the Installs
+                  tab takes the app off that surface, but it does not withdraw a permission you have
+                  already granted — withdrawing one is not possible yet. Recent activity is the full
+                  record of what apps have actually done on your account.
                 </Text>
                 <ScopeGrantsPanel />
               </Stack>

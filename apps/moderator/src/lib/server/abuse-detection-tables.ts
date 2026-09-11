@@ -1,4 +1,5 @@
 import type { Generated, Timestamp } from './moderator-db/types';
+import type { AbuseVerdict } from '../abuse-verdicts';
 
 /**
  * The abuse-detection tables, in the same database as the rest of this app's moderation data.
@@ -13,6 +14,14 @@ import type { Generated, Timestamp } from './moderator-db/types';
  *
  * snake_case, unlike the inherited Retool tables: these are new, written to Postgres convention.
  */
+/**
+ * 🔴 The verdict set lives in `$lib/abuse-verdicts` — client-safe, because the buttons that render
+ * it are client code and SvelteKit will not bundle `$lib/server` into those. It is the SAME tuple
+ * the table's CHECK constraint admits, and `abuse-detection.schema.test.ts` applies the real DDL to
+ * an in-process Postgres and asserts the two agree, in both directions.
+ */
+export type { AbuseVerdict } from '../abuse-verdicts';
+
 export type AbuseDetectionTables = {
   abuse_detection_run: {
     id: Generated<number>;
@@ -31,9 +40,29 @@ export type AbuseDetectionTables = {
     user_id: number;
     confidence: number;
     reason: string;
-    /** `false` is the common case: detected, scored, deliberately NOT acted on. */
+    /**
+     * 🔴 THE PRODUCER's self-report of what IT did — NOT a moderator's judgement. `verdict` below is
+     * the judgement, and the two are independent: `actioned: false` + `verdict: 'tp'` (left alone,
+     * and rightly flagged) is the commonest combination of them. Nothing may read one to infer the
+     * other, and recording a verdict must leave these two untouched.
+     */
     actioned: boolean;
     action: string | null;
     created_at: Generated<Timestamp>;
+    /**
+     * The MODERATOR's ruling — `tp` / `fp` / `skip`, or NULL for unruled. Constrained by a CHECK in
+     * `apps/moderator/abuse-detection/schema.sql`; typed as the union here so a call site cannot
+     * write a fourth value the database would then reject at runtime.
+     *
+     * 🔴 These four are added by the DDL and the DDL is applied BY HAND, so a deployment exists in
+     * which the tables are present and these columns are not. Every read of them goes through a
+     * branch that treats `42703` as "not applied yet" rather than as an outage.
+     */
+    verdict: AbuseVerdict | null;
+    verdict_by: string | null;
+    verdict_at: Timestamp | null;
+    /** The producer's cluster key — one ruling covers every finding sharing it WITHIN ONE RUN. NULL
+     *  for an ungrouped finding, which is most of them. */
+    group_key: string | null;
   };
 };

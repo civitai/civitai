@@ -788,6 +788,12 @@ describe('the detector has no write surface', () => {
       // with, shared rather than copied; a second hand-written copy is how two readers of one table
       // silently stop agreeing about what an address means.
       '@civitai/shared/clickhouse-ip-filters',
+      // Node's `crypto`, for `boundGroupKey`'s digest in `report.ts` — a cluster key over the wire
+      // contract's 200-character cap is hashed rather than truncated, because truncating an IDENTITY
+      // merges two unrelated clusters into one ruling. `createHash` is the only binding taken, it
+      // reaches no data system, and it cannot act on an account. The header's "which BINDING" caveat
+      // is why that is spelled out here rather than left to the specifier.
+      'crypto',
       '~/server/clickhouse/client',
       '~/server/db/client',
       '~/server/logging/client',

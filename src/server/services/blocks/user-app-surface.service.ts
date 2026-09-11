@@ -83,15 +83,32 @@ export type ScopeGrantSurface = {
 };
 
 /**
- * Aggregates one row per AppBlock the user has either installed on a
- * model or subscribed to. Same app counted across multiple installs +
- * subscriptions collapses to a single row with denormalised counts.
+ * Aggregates one row per AppBlock the user has installed on a model,
+ * subscribed to, OR granted scopes to at a consent prompt. Same app counted
+ * across multiple installs + subscriptions collapses to a single row with
+ * denormalised counts.
  *
  * `enabled=false` model installs are excluded — a user-facing surface
  * for "what an app can do today" shouldn't surface installs the user
  * has explicitly toggled off. Subscriptions are included regardless of
  * the enabled flag because the row IS the user's claim of intent (the
  * toggle on `/apps/activity` already lets them turn it off).
+ *
+ * 🔴 THE GRANT LEG IS NOT A NICETY — WITHOUT IT THE BUDGET EDITOR IS UNREACHABLE FOR
+ * ESSENTIALLY EVERYONE, AND THAT SHIPPED. This aggregated installs ONLY, while the
+ * per-app daily Buzz budget lives on `app_user_scope_grants`. A full-page app
+ * (`/apps/run/<slug>`) is consented to, never installed, so it produced NO row here —
+ * and `ScopeGrantsPanel`, whose only read is this function, renders `AppBudgetControl`
+ * exclusively from these rows. Measured in production 2026-09-11: the whole platform
+ * held **4** `block_user_subscriptions` rows against **29** `app_user_scope_grants`,
+ * and the account that had just spent 28 Buzz through a consented app saw
+ * "No apps installed or subscribed yet." So the user could consent, generate and
+ * spend, and had no surface on which to bound it — the exact "a budget nobody can set
+ * is inert" failure the consent-budget work was meant to avoid.
+ *
+ * A grant-only app is therefore a first-class row with `modelInstallCount: 0` and no
+ * subscription scopes. It is NOT synthesised from the manifest: it exists only when the
+ * viewer has a live (non-revoked) grant row, which is their own recorded consent.
  */
 export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurface[]> {
   // Post kill_per_model_installs: every install — blanket OR per-model-
@@ -159,27 +176,46 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   }
 
   // The consent BUDGET lives on the grant row, not on the subscription rows this
-  // function aggregates — one indexed read for every app in the result, rather than
-  // an N+1 per row. Apps with no grant row simply do not appear in the map and
-  // report `null`, which is the same thing "no budget set" means everywhere else.
+  // function aggregates — ONE indexed read for the viewer's whole grant set, rather
+  // than an N+1 per row.
+  //
+  // 🔴 THIS READ IS NO LONGER BOUNDED BY `byAppBlock` AND THAT IS THE FIX. It used to
+  // filter `appBlockId: { in: Array.from(byAppBlock.keys()) }` and to run at all only
+  // when `byAppBlock.size > 0`, so a grant for an app the viewer had NOT installed was
+  // never even queried — which is every full-page app. Both bounds are gone: the query
+  // is keyed on `userId` alone (covered by the `(user_id, app_block_id)` unique index,
+  // so this is the same index and a cheaper predicate), and grant-only apps are folded
+  // into `byAppBlock` below.
   const budgetByAppBlock = new Map<string, number | null>();
   const spendGrantedByAppBlock = new Set<string>();
-  if (byAppBlock.size > 0) {
+  {
     type GrantRow = {
       appBlockId: string;
       buzzBudgetPerDay: number | null;
       revokedAt: Date | null;
       grantedScopes: string[];
+      appBlock: AppBlockRow | null;
     };
     let grants: GrantRow[] = [];
     try {
       grants = (await dbRead.appUserScopeGrant.findMany({
-        where: { userId, appBlockId: { in: Array.from(byAppBlock.keys()) } },
+        where: { userId },
         select: {
           appBlockId: true,
           buzzBudgetPerDay: true,
           revokedAt: true,
           grantedScopes: true,
+          // Needed only for the grant-only apps below — a subscription-backed app
+          // already carries its AppBlock from the `subs` read. Selected here rather
+          // than fetched per-app so the grant leg stays a single query.
+          appBlock: {
+            select: {
+              id: true,
+              blockId: true,
+              manifest: true,
+              approvedScopes: true,
+            },
+          },
         },
       })) as GrantRow[];
     } catch (err) {
@@ -208,6 +244,37 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // Mirror `getGrantedScopes`: a revoked row grants nothing.
       if (!g.revokedAt && (g.grantedScopes ?? []).includes('ai:write:budgeted')) {
         spendGrantedByAppBlock.add(g.appBlockId);
+      }
+
+      // A live grant for an app with no install/subscription is still a thing the
+      // viewer consented to and can spend through, so it gets its own row.
+      //
+      // 🔴 REVOKED ROWS ARE SKIPPED, matching `getGrantedScopes`/`getConsentBuzzBudget`:
+      // a revoked grant conveys nothing, so surfacing it would offer a budget control
+      // for an app that cannot spend. (Nothing in the repo writes a non-null
+      // `revoked_at` today, so this is an invariant guard, not a reachable branch —
+      // labelled as such rather than counted as coverage.)
+      //
+      // ⚠️ `g.appBlock` IS A SECOND INVARIANT GUARD, NOT A REACHABLE BRANCH — stated because
+      // an earlier revision of this comment implied otherwise. `AppUserScopeGrant.appBlock`
+      // is a REQUIRED relation with `onDelete: Cascade`
+      // (`packages/civitai-db-schema/prisma/schema.full.prisma`), and the datasource sets no
+      // `relationMode`, so Postgres enforces the FK: deleting an AppBlock deletes the grant
+      // row rather than orphaning it. The subscription leg's own `if (!row.appBlock) continue`
+      // is unreachable for exactly the same reason — it is precedent for the shape, NOT
+      // evidence that the state occurs. (Migrations here are applied by hand per environment,
+      // so "the constraint exists in prod" is not verifiable from the schema alone; the guard
+      // costs nothing and is kept for that residual.)
+      //
+      // The `has` check keeps the subscription leg authoritative for apps that have
+      // BOTH: that entry already carries real `modelInstallCount`/`subscriptionScopes`,
+      // and overwriting it here would zero them.
+      if (!g.revokedAt && g.appBlock && !byAppBlock.has(g.appBlockId)) {
+        byAppBlock.set(g.appBlockId, {
+          appBlock: g.appBlock,
+          modelInstallCount: 0,
+          subscriptionScopes: new Set(),
+        });
       }
     }
   }

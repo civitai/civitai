@@ -133,10 +133,144 @@ describe('listMyScopeGrants', () => {
     ]);
     const result = await listMyScopeGrants(42);
     expect(result[0].buzzBudgetPerDay).toBe(750);
-    // Scoped to the apps actually in the result — never an unbounded scan.
+    // 🔴 THIS ASSERTION USED TO REQUIRE `appBlockId: { in: [...] }`, AND THAT BOUND WAS
+    // THE DEFECT — it is deliberately inverted, not deleted. Filtering the grant read by
+    // the INSTALL set meant a grant for a never-installed app was never queried, so the
+    // budget editor could not render for it (see the service docblock). The read is now
+    // keyed on `userId` alone, which is the same `(user_id, app_block_id)` index with a
+    // cheaper predicate and is bounded by the viewer's own grant count.
     expect(mockDbRead.appUserScopeGrant.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 42, appBlockId: { in: ['apb_1'] } } })
+      expect.objectContaining({ where: { userId: 42 } })
     );
+  });
+
+  /**
+   * 🔴 THE GRANT-ONLY APP. This is the regression the whole change exists for, and the
+   * shape that shipped broken: a full-page app at `/apps/run/<slug>` is CONSENTED to,
+   * never installed, so it has a live `app_user_scope_grants` row and NO
+   * `block_user_subscriptions` row. Aggregating installs alone returned `[]`, the
+   * permissions panel rendered "No apps installed or subscribed yet.", and
+   * `AppBudgetControl` — which renders only from these rows — never appeared. The user
+   * could consent, generate and SPEND with no surface on which to bound it.
+   *
+   * Measured in production 2026-09-11: 4 subscription rows platform-wide against 29
+   * grants, so this was very nearly every consenting user rather than an edge case.
+   *
+   * RED AT BASE: on the pre-change service every assertion below fails at the first —
+   * `result` is `[]`, because `byAppBlock` is built from subscriptions and the grant
+   * read is filtered to its keys.
+   */
+  it('🔴 surfaces an app the viewer GRANTED but never installed, with its budget control data', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    // No installs, no subscriptions — the full-page-app shape.
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_9',
+        buzzBudgetPerDay: 1200,
+        revokedAt: null,
+        grantedScopes: ['ai:write:budgeted', 'buzz:read:self'],
+        appBlock: appBlock({
+          id: 'apb_9',
+          blockId: 'sensei',
+          manifest: { name: 'Sensei', scopes: ['ai:write:budgeted'] },
+          approvedScopes: ['ai:write:budgeted'],
+        }),
+      },
+    ]);
+
+    const result = await listMyScopeGrants(42);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].appBlockId).toBe('apb_9');
+    expect(result[0].slug).toBe('sensei');
+    expect(result[0].name).toBe('Sensei');
+    // The two fields the budget editor keys off. Without BOTH, the control does not
+    // render even when the row exists.
+    expect(result[0].spendScopeGranted).toBe(true);
+    expect(result[0].buzzBudgetPerDay).toBe(1200);
+    // Honest surface counts — it really is installed nowhere.
+    expect(result[0].surfaces.modelInstallCount).toBe(0);
+    expect(result[0].surfaces.subscriptionScopes).toEqual([]);
+  });
+
+  /**
+   * The grant leg must not CLOBBER the subscription leg for an app that has both —
+   * a plain `set()` would zero the install counts. Distinct non-zero fixture values
+   * (2 pinned models, a blanket scope) so a mutant that resets either one is visible.
+   */
+  it('keeps install/subscription counts for an app that has BOTH a grant and installs', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({ targetModelIds: [100, 101] }),
+      blanketSub(),
+    ]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_1',
+        buzzBudgetPerDay: 300,
+        revokedAt: null,
+        grantedScopes: ['ai:write:budgeted'],
+        appBlock: appBlock(),
+      },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result).toHaveLength(1);
+    expect(result[0].surfaces.modelInstallCount).toBe(2);
+    expect(result[0].surfaces.subscriptionScopes).toEqual(['viewer_personal']);
+    expect(result[0].buzzBudgetPerDay).toBe(300);
+  });
+
+  /**
+   * ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled so nobody counts it as the
+   * latter. Nothing in this repo writes a non-null `revoked_at`, so this state is not
+   * currently reachable in production. It pins the intent that a revoked grant conveys
+   * nothing: it must not mint a row whose only reason to exist is a consent that was
+   * withdrawn, which would offer a budget control for an app that cannot spend.
+   */
+  it('does NOT surface a grant-only app whose grant is revoked (invariant guard)', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_9',
+        buzzBudgetPerDay: 1200,
+        revokedAt: new Date('2026-01-01T00:00:00Z'),
+        grantedScopes: ['ai:write:budgeted'],
+        appBlock: appBlock({ id: 'apb_9', blockId: 'sensei' }),
+      },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result).toEqual([]);
+  });
+
+  /**
+   * ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — and an earlier draft of this docblock got
+   * the mechanism wrong, so the correction is recorded rather than quietly swapped. It said
+   * "a `Restrict`-deleted app". The relation is `onDelete: Cascade` and REQUIRED
+   * (`packages/civitai-db-schema/prisma/schema.full.prisma`), with no `relationMode`
+   * override, so Postgres deletes the grant row along with its AppBlock instead of orphaning
+   * it: this state is not reachable in production. The subscription leg's
+   * `if (!row.appBlock) continue` is unreachable for the same reason — precedent for the
+   * shape, not evidence that the state occurs.
+   *
+   * What it pins is the intent that an unresolvable row is SKIPPED rather than rendered as a
+   * card with no name, which is what the manifest-or-blockId fallback would otherwise produce.
+   */
+  it('skips a grant-only row whose AppBlock does not resolve', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
+    mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
+      {
+        appBlockId: 'apb_gone',
+        buzzBudgetPerDay: 500,
+        revokedAt: null,
+        grantedScopes: ['ai:write:budgeted'],
+        appBlock: null,
+      },
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result).toEqual([]);
   });
 
   it('reports null when the app has no grant row', async () => {

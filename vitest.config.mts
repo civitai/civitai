@@ -439,7 +439,7 @@ export default defineConfig({
   test: {
     maxWorkers,
     projects: [
-      // The nine `packages/*` suites, referenced by their OWN config files rather than
+      // The `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`
       // project's `include` is root-relative (`src/**`, `scripts/**`), and CI runs
       // `vitest run --project unit`, so ~330 tests across nine workspace packages ran only
@@ -447,7 +447,7 @@ export default defineConfig({
       // schema-drift detector (#3591) shipped with 81 tests CI never executed.
       //
       // Globbed on the CONFIG FILE, not the directory. A bare `packages/*` glob would also
-      // adopt the six packages that have no vitest config, and Vitest would give each a
+      // adopt the packages that have no vitest config, and Vitest would give each a
       // default config whose `include` (`**/*.{test,spec}.?(c|m)[jt]s?(x)`) is not the
       // include those packages were written against.
       //

@@ -256,7 +256,12 @@ export const listingHydrateSelect = {
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
   // available while a new version re-builds).
-  appBlock: { select: { manifest: true, currentVersionDeployedAt: true } },
+  // `approvedScopes` feeds the DETAIL DTO's pre-launch permission disclosure.
+  // Projected onto the DETAIL only (see `scopes` in `projectListingDetail`); the
+  // card deliberately does not carry it, for the same reason `sourceRepoUrl` is
+  // detail-only — a grid tile has no room for the context that makes a
+  // capability list readable.
+  appBlock: { select: { manifest: true, currentVersionDeployedAt: true, approvedScopes: true } },
   screenshots: {
     where: { imageId: { not: null } },
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
@@ -600,6 +605,64 @@ export function projectListingDetail(
     sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
+    // Pre-launch permission disclosure. IDENTICAL projection to the one
+    // `BlockRegistry.getAppDetail` already ships for the same purpose — the
+    // approved scope ids, string-filtered, `[]` when the column is NULL.
+    //
+    // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`, AND THE REASON
+    // IS THAT THE TWO GENUINELY DIVERGE — do not "simplify" this to `manifest.scopes`.
+    //
+    // ⚠ An earlier version of this comment claimed they "can never disagree because
+    // the approve paths write them in the same update". That is FALSE, and it deleted
+    // the only reason this line reads the column it does.
+    // `src/pages/api/v1/developer/block-manifests.ts` updates `manifest` + `version`
+    // on an existing AppBlock WITHOUT touching `approvedScopes`, and sets
+    // `status: 'pending'` — deliberately, so a publisher cannot swap `iframe.src` or
+    // sandbox tokens post-approval without re-entering moderation. So a row can hold
+    // a v2 manifest declaring `['models:read:self','ai:write:budgeted']` alongside a
+    // v1 `approvedScopes` of `['models:read:self']`.
+    //
+    // Reading the manifest there would publish a scope NOBODY APPROVED on a public
+    // store page — the app's own claim about itself, rendered as if granted.
+    // `approvedScopes` is written only by the three approve paths
+    // (`publish-request.service.ts`), which take `manifest.scopes` verbatim at approve
+    // time; there is no per-scope narrowing mechanism, so the only skew is
+    // approve→deploy, where this over-discloses. That is the safe direction.
+    //
+    // 🔴 GATED ON `kind`, NEVER ON `appBlockId` NULLNESS — they are not the same
+    // predicate. `mapAppBlockToListing` mints `kind: 'offsite'` WITH a non-null
+    // `appBlockId` whenever the source AppBlock carries an `externalUrl`, reachable
+    // through the mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in
+    // as many words to discriminate on `kind`.
+    //
+    // 🔴 THE CONSOLIDATION VEHICLE ALREADY EXISTS — `CAPABILITIES_BY_KIND` /
+    // `listingKindSupports` in `src/shared/constants/app-capabilities.constants.ts`.
+    // If this gate is ever consolidated, ADD A CAPABILITY CELL there; do NOT build a
+    // new helper.
+    //
+    // 🔴 DELIBERATELY NO COUNTS AND NO SITE LIST HERE — read
+    // `KIND_CAPABILITY_LEDGER` in
+    // `src/server/services/blocks/__tests__/app-access.call-site-ledger.test.ts`,
+    // which is growth-and-shrink gated and therefore cannot go stale the way a
+    // sentence can. THREE successive drafts of this comment quoted a number or a
+    // site list and all three were WRONG: "the third consumer" (undercount), then
+    // "five, open-coded by hand" (two already used the table), then "~14 absorbed"
+    // (that figure belongs to `app-access.service.ts`'s separate OWNERSHIP-gate
+    // consolidation, not to the capability table) alongside "two of five already
+    // route through it" (it is four of five). Each wrong draft was written while
+    // fixing the previous one. The form is the defect, not the arithmetic — so the
+    // number now lives only where a test asserts it.
+    //
+    // Without the gate, such a row renders the off-site disclosure — "This app runs
+    // entirely off-platform — no Civitai install, account access, or permissions" —
+    // directly above "This app can… ai:write:budgeted". Two contradictory SECURITY
+    // claims on a public store page. The population is 0 in production (measured
+    // 2026-08-11: offsite 5 rows, 0 with a block), so this is PREVENTION, not a
+    // live bug — and prevention is cheap here because it is one clause.
+    scopes:
+      row.kind === 'onsite' && Array.isArray(row.appBlock?.approvedScopes)
+        ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
+        : [],
   };
 }
 

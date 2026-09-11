@@ -109,6 +109,14 @@ function hydratedRow(over: Record<string, unknown> = {}) {
       // read returns its projection. The dedicated deploy-gate suite covers the
       // never-deployed (NULL → unavailable) onsite case.
       currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+      // 🔴 DELIBERATELY DISJOINT FROM `manifest.scopes` BELOW, and that is the whole
+      // point of the value. The detail DTO's `scopes` must come from the
+      // moderator-granted `approvedScopes` column, never the app's self-declared
+      // manifest — so the two fixtures share no element. An implementation that read
+      // `manifest.scopes` instead would return `['ai:write:budgeted']` and fail the
+      // projection assertions loudly. Were both set to the same array, that defect
+      // would pass every test in this file.
+      approvedScopes: ['models:read:self'],
       manifest: {
         name: 'Cool App',
         page: { path: '/run' },
@@ -461,6 +469,11 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'name',
         'recommend',
         'reviewCount',
+        // 🔴 DETAIL-ONLY BY DECISION, like `sourceRepoUrl` — the card allowlist above
+        // asserts its ABSENCE. The pre-launch permission disclosure: the app's APPROVED
+        // scope ids, so a viewer can see what an app is permitted to do BEFORE opening
+        // it. A store grid tile has no room for a capability list.
+        'scopes',
         'screenshots',
         'serialId',
         'slug',
@@ -546,6 +559,116 @@ describe('projectListingDetail — public allowlist + gallery', () => {
       externalUrl: 'https://grandfathered.example/app',
       connectClientId: null,
     });
+  });
+
+  /**
+   * PRE-LAUNCH PERMISSION DISCLOSURE (`ListingDetail.scopes`).
+   *
+   * 🔴 THE GATING HALF of this change. The sibling browser test renders the section,
+   * but the `component` project is report-only in CI and cannot block a merge; these
+   * assertions run in the blocking node project and are what actually hold the
+   * source-of-truth decision in place.
+   *
+   * 🔴 The claim is about WHICH COLUMN feeds the disclosure, not merely that a
+   * `scopes` key exists. `hydratedRow`'s `approvedScopes` and `manifest.scopes` are
+   * deliberately disjoint, so reading the wrong one is a different array rather than
+   * an identical-looking one.
+   */
+  it('🔴 detail.scopes comes from approvedScopes — NOT the self-declared manifest.scopes', () => {
+    const detail = projectListingDetail(hydratedRow() as never);
+    // The moderator-granted column…
+    expect(detail.scopes).toEqual(['models:read:self']);
+    // …and emphatically NOT the manifest's own declaration, which is an internal
+    // field the public DTO must never echo. An app could otherwise declare any scope
+    // it liked and have the store advertise it as granted.
+    expect(detail.scopes).not.toContain('ai:write:budgeted');
+  });
+
+  /**
+   * ⚠ THE DB CANNOT PRODUCE THIS ROW, and the test is kept anyway — but do not read
+   * the fixture as documentation of a real shape. `approved_scopes` is
+   * `TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]` (`20260524120000_app_blocks_initial`)
+   * and Prisma types it `String[] @default([])`, so it is never NULL in production.
+   * What this pins is the PROJECTION's defensive branch: the same shape
+   * `BlockRegistry.getAppDetail` guards, and the branch that kills the
+   * fall-back-to-manifest mutant. An earlier version of this comment claimed the
+   * NULL was a real "never-approved / pre-migration row" — it was not.
+   */
+  it('detail.scopes is [] when approvedScopes is absent (defensive branch, not a real row)', () => {
+    const detail = projectListingDetail(
+      hydratedRow({
+        appBlock: {
+          currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+          approvedScopes: null,
+          manifest: { name: 'Cool App', scopes: ['ai:write:budgeted'] },
+        },
+      }) as never
+    );
+    // `[]`, never `undefined` and never the manifest's declaration — a consumer must
+    // not have to write `?? []`, and a NULL column must not fall through to the
+    // app's own claim about itself.
+    expect(detail.scopes).toEqual([]);
+  });
+
+  it('detail.scopes is [] for an OFF-SITE listing (no backing block at all)', () => {
+    const detail = projectListingDetail(
+      hydratedRow({ kind: 'offsite', externalUrl: 'https://example.com', appBlock: null }) as never
+    );
+    expect(detail.scopes).toEqual([]);
+  });
+
+  it('detail.scopes drops non-string entries rather than shipping them', () => {
+    const detail = projectListingDetail(
+      hydratedRow({
+        appBlock: {
+          currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+          // ⚠ Postgres CANNOT store these: the column is `TEXT[]`, so `42` and
+          // `{evil:true}` are unrepresentable. Kept as a guard on the projection's
+          // string filter (it kills the drop-the-filter mutant), NOT as a claim that
+          // such a row exists. An earlier comment here said "jsonb: nothing at the DB
+          // layer guarantees these are strings" — that was wrong about the schema.
+          approvedScopes: ['models:read:self', 42, null, { evil: true }, 'ai:write:budgeted'],
+          manifest: { name: 'Cool App' },
+        },
+      }) as never
+    );
+    expect(detail.scopes).toEqual(['models:read:self', 'ai:write:budgeted']);
+  });
+
+  /**
+   * 🔴 THE GATE IS `kind`, NOT `appBlockId` NULLNESS — and this fixture is the shape
+   * that makes them different predicates. `mapAppBlockToListing` mints
+   * `kind: 'offsite'` WITH a non-null `appBlockId` when the source AppBlock carries
+   * an `externalUrl` (reachable via the mod proc `blocks.backfillAppListings`), and
+   * `schema.full.prisma` says in as many words to discriminate on `kind`.
+   *
+   * Without the gate this row renders the off-site disclosure — "no Civitai install,
+   * account access, or permissions" — directly above a list of granted scopes. Two
+   * contradictory SECURITY claims on one public page. 0 such rows in production
+   * (measured 2026-08-11), so this is prevention; `app-access.service.ts` and
+   * `app-collaborator-earnings.service.ts` both carry the same gate for the same
+   * shape, and this projection was the third consumer of that join.
+   */
+  it('🔴 an OFF-SITE row WITH a backing block still yields [] — gated on kind, not appBlockId', () => {
+    const detail = projectListingDetail(
+      hydratedRow({
+        kind: 'offsite',
+        externalUrl: 'https://example.com',
+        // Non-null: the backfill shape. Nullness would NOT discriminate here.
+        appBlockId: 'ab_1',
+        appBlock: {
+          currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
+          approvedScopes: ['ai:write:budgeted', 'models:read:self'],
+          manifest: { name: 'Backfilled Offsite' },
+        },
+      }) as never
+    );
+    expect(detail.scopes).toEqual([]);
+  });
+
+  it('🔴 the CARD does not carry scopes — detail-only, like sourceRepoUrl', () => {
+    const card = projectListingCard(hydratedRow() as never);
+    expect(card).not.toHaveProperty('scopes');
   });
 
   it('🔴 the offsite detail kindData key set is exactly kind/externalUrl/connectClientId', () => {

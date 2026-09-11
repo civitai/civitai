@@ -8,9 +8,11 @@ import {
   DOMAIN_ZERO_AT,
   IP_ONE_AT,
   IP_ZERO_AT,
+  domainClusterIsNamedInReason,
   domainClusterSize,
   isCommonEmailDomain,
   largestIpCluster,
+  registrationClusterGroupKey,
   registrationClusterHeuristic,
 } from '../heuristics/clustering';
 import { rampScore } from '../heuristics/ramp';
@@ -561,5 +563,113 @@ describe('the three heuristics together', () => {
       ['content-templating', 1],
     ]);
     expect(result.confidence).toBeCloseTo(2 / 3, 12);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The cluster key the board rules on
+// ---------------------------------------------------------------------------------------------
+
+describe('registrationClusterGroupKey', () => {
+  const key = (m: BotAccountCohortMember, s: CohortSignals) => registrationClusterGroupKey(m, s);
+  const explain = (m: BotAccountCohortMember, s: CohortSignals) =>
+    registrationClusterHeuristic.explain?.(
+      evidence(m, s),
+      registrationClusterHeuristic.score(evidence(m, s))
+    ) ?? null;
+
+  it('names the shared domain once the cluster is big enough to be reported', () => {
+    // LITERAL size, so this is a statement about behaviour at four rather than about whatever
+    // `DOMAIN_ZERO_AT` happens to say — the constant is pinned separately above.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 4 } });
+    expect(key(member({ emailDomain: 'ring.test' }), s)).toBe('domain:ring.test');
+  });
+
+  it('returns nothing AT the boundary — a cluster of three is not reported, so it is not a key', () => {
+    // 🔴 THE OFF-BY-ONE. `DOMAIN_ZERO_AT` is the largest cluster still worth nothing, so three is
+    // silent and four speaks. A `>` → `>=` mutant groups every three-account coincidence into one
+    // ruling, and publishes a domain the reason never mentions.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 3 } });
+    expect(key(member({ emailDomain: 'ring.test' }), s)).toBeNull();
+  });
+
+  it.each([
+    ['an account whose domain nobody else shares', { 'ring.test': 1 }],
+    ['a domain absent from the index entirely', {}],
+  ])('returns nothing for %s', (_label, membersPerDomain) => {
+    expect(key(member({ emailDomain: 'ring.test' }), signalsWith({ membersPerDomain }))).toBeNull();
+  });
+
+  it('returns nothing for an account with no email domain at all', () => {
+    expect(key(member({ emailDomain: null }), signalsWith({ membersPerDomain: {} }))).toBeNull();
+  });
+
+  it('🔴 returns nothing for a COMMON provider, however large the cluster', () => {
+    // `gmail.com` is the largest cluster in every cohort, every day. Keying on it would collapse the
+    // day's most ordinary accounts into ONE ruling — a single click recording a verdict about
+    // hundreds of unrelated people.
+    const s = signalsWith({ membersPerDomain: { 'gmail.com': 250 } });
+    expect(key(member({ emailDomain: 'gmail.com' }), s)).toBeNull();
+  });
+
+  it('is IDENTICAL for every member of one cluster, and different across clusters', () => {
+    // Stability within a run is what makes one ruling cover the ring: two members deriving two
+    // strings would be two decisions wearing one name.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 9, 'other.test': 9 } });
+    const a = key(member({ userId: 1, emailDomain: 'ring.test' }), s);
+    const b = key(member({ userId: 2, emailDomain: 'ring.test' }), s);
+    const c = key(member({ userId: 3, emailDomain: 'other.test' }), s);
+    expect(a).toBe('domain:ring.test');
+    expect(b).toBe(a);
+    expect(c).not.toBe(a);
+  });
+
+  it('🔴 NEVER carries a domain the reason text does not already name — swept, both directions', () => {
+    // THE DISCLOSURE RULE. The board has a wider audience than the investigative tools, and a key is
+    // rendered. A key naming a domain the finding's own reason never mentions would be a disclosure
+    // the finding does not otherwise make — so the two must move together at EVERY size, not just at
+    // the one a single case happens to pick.
+    for (const size of [0, 1, 2, 3, 4, 5, 9, 15, 40]) {
+      const s = signalsWith({ membersPerDomain: { 'ring.test': size } });
+      const m = member({ emailDomain: 'ring.test' });
+      const named = (explain(m, s) ?? '').includes('ring.test');
+      expect(key(m, s) === null, `size ${size}: key present but domain unnamed in the reason`).toBe(
+        !named
+      );
+    }
+  });
+
+  it('the sweep above is not vacuous — the reason DOES name the domain at a reportable size', () => {
+    // 🔴 POSITIVE CONTROL. An `explain` that returned null at every size would satisfy the iff above
+    // by making both halves false forever, and it would read as coverage.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 9 } });
+    const m = member({ emailDomain: 'ring.test' });
+    expect(explain(m, s)).toContain('ring.test');
+    expect(key(m, s)).toBe('domain:ring.test');
+  });
+
+  it('🔴 never carries a registration IP, which the reason deliberately withholds', () => {
+    // The IP is the STRONGER signal and is left out of the reason on purpose — `explain` says so and
+    // points a moderator at the tool built for that lookup. Keying on it would publish, on the
+    // board, the one fact this heuristic goes out of its way not to publish.
+    const s = signalsWith({
+      ips: { 42: ['203.0.113.9'] },
+      membersPerIp: { '203.0.113.9': 40 },
+      membersPerDomain: {},
+      sources: { registrationIps: true },
+    });
+    const m = member({ emailDomain: null });
+    expect(registrationClusterHeuristic.score(evidence(m, s))).toBeGreaterThan(0);
+    expect(key(m, s)).toBeNull();
+  });
+});
+
+describe('domainClusterIsNamedInReason', () => {
+  it('is the one predicate both the reason clause and the key read', () => {
+    // Literal boundary, pinned here so a mutation to it fails with its own name attached rather than
+    // only as a knock-on somewhere else.
+    expect(domainClusterIsNamedInReason(3)).toBe(false);
+    expect(domainClusterIsNamedInReason(4)).toBe(true);
+    expect(domainClusterIsNamedInReason(0)).toBe(false);
   });
 });

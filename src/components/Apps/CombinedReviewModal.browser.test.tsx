@@ -129,6 +129,13 @@ const LISTING_PREVIEW = {
     installCount: 0,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
+    // 🔴 REQUIRED, and `[]` is not cosmetic here. `AppListingDetailBody` reads
+    // `detail.scopes.length` to decide whether to render the pre-launch permission
+    // disclosure, so omitting it makes this modal THROW on render rather than merely
+    // skip a section. This fixture is not annotated as a `ListingDetail`, so
+    // TypeScript does not catch the omission — the mod review modal's runtime is the
+    // only guard, which is exactly how this surfaced.
+    scopes: [],
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
   },
 };

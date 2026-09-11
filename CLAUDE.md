@@ -871,6 +871,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
 | Civitai Link | [docs/features/civitai-link.md](docs/features/civitai-link.md) |
+| Generator model onboarding (new ecosystem / model / version) | [docs/features/generator-model-onboarding.md](docs/features/generator-model-onboarding.md) |
 
 ## Troubleshooting
 

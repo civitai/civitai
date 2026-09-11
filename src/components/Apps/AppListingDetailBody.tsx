@@ -13,6 +13,7 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   UnstyledButton,
 } from '@mantine/core';
@@ -23,6 +24,7 @@ import {
   IconFlask,
   IconInfoCircle,
   IconPlugConnected,
+  IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -35,6 +37,7 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
@@ -801,6 +804,15 @@ export interface AppListingDetailBodyProps {
    * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
    * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
    *
+   *   - the PERMISSION DISCLOSURE is KEPT, not omitted — a decision on this ledger
+   *     rather than an omission that was missed. It renders under a DIFFERENT HEADING
+   *     here ("Currently granted permissions", not "This app can…") because the review
+   *     modal shows it beside the pending version's REQUESTED scopes, and mislabelling
+   *     the currently-approved set is how a moderator under-reads an escalation.
+   *     🔴 It DOES render here: the owner-republish re-review produces a
+   *     `kind: 'onsite'` request against a LIVE listing with a non-null `appBlockId`.
+   *     An intermediate revision of this ledger claimed it rendered nothing — that was
+   *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
@@ -1187,6 +1199,77 @@ export function AppListingDetailBody({
                 This app runs off-platform, but can connect to your Civitai account — you&apos;ll be
                 asked to sign in and approve access.
               </Alert>
+            )}
+
+            {/* PRE-LAUNCH PERMISSION DISCLOSURE — what this app is permitted to do,
+                shown BEFORE the viewer opens it.
+                🔴 This is the third permission surface on this page and it does NOT
+                belong to the mutually-exclusive off-site pair above. Those two answer
+                "does this leave the platform, and can it reach my account at all?" for
+                an OFF-SITE listing; this one enumerates the granted capabilities of an
+                ON-SITE app, which the pair is silent about by construction. Do not fold
+                it into either predicate — `shouldShowOffsiteDisclosure` and
+                `shouldShowConnectCapability` are exact complements over one domain and a
+                third condition there would break the invariant pinned in
+                `__tests__/appListingDetailView.test.ts`.
+                🔴 Rendered ONLY when there is something to disclose: an app approved with
+                no scopes gets no section at all, rather than a reassuring empty box. That
+                is why the guard is `length > 0` and not `BlockScopeList`'s own
+                `emptyLabel` path — on a store listing, "no permissions" is better said by
+                the absence of a permissions section than by a sentence nobody reads.
+                Ported from the disclosure on the retired `/apps/<appBlockId>` route,
+                which `blocks.getAppDetail` still serves.
+                🔴 THE `preview` HEADING IS A CORRECTNESS FIX ON A REACHABLE PATH, NOT
+                COPY AND NOT AN INVARIANT GUARD. `detail.scopes` is what is CURRENTLY
+                approved; the review modal shows it beside `ManifestScopes`, the scopes
+                the pending version is REQUESTING. Those differ exactly when a version
+                escalates, and the confident natural-language heading was on the wrong
+                one — so a moderator could read "This app can…" as the set they are
+                approving and under-read the escalation, on the one surface where that
+                call is made.
+                🔴 REACHED VIA THE OWNER-REPUBLISH RE-REVIEW, which is why a
+                "preview means an off-site shadow" reading is wrong. There are FOUR
+                writers of `AppListingPublishRequest.appListingId`, and two copy the
+                kind from the target rather than hardcoding `'offsite'`:
+                `offsite-moderation.service.ts`'s `routeRepublishToReviewInTx` writes
+                `kind: listing.kind` against the LIVE listing id — so an approved
+                ON-SITE app that is self-unpublished and republished with a changed
+                asset produces a `kind: 'onsite'`, non-shadow request whose
+                `appListingId` is a live on-site listing WITH a non-null `appBlockId`.
+                `getListingPreviewForReview` is deliberately not status-filtered and
+                runs `projectListingDetail` verbatim, so `scopes` is non-empty and this
+                section renders. `OffsiteReviewQueue` renders `ListingPreviewSection`
+                with no kind gate, and already carries its own 🔴 comment that
+                "`kind === 'onsite'` NO LONGER IMPLIES 'a media revision'" for exactly
+                this producer; its `ONSITE_REPUBLISH_ROW` fixture is that shape.
+                ⚠ An intermediate version of this comment claimed the branch was
+                UNREACHABLE and that the heading was therefore an invariant guard. That
+                was wrong, and wrong in the dangerous direction — it licensed deleting a
+                heading and a test that both guard a live moderator-facing path. It
+                counted two of the four writers.
+                🔴 "FOUR" IS A POINT-IN-TIME COUNT, RE-DERIVE IT — nothing asserts it.
+                What matters is not the number but that AT LEAST ONE writer copies the
+                kind from a LIVE listing; that is what makes this branch reachable, and
+                it stays true however many writers exist.
+                🔴 AND `app-listing-history.service.ts` CONTRADICTS THIS, IN PROSE THAT
+                IS STALE ON `main` — it asserts "exactly THREE create sites", that
+                `submitListingRevision` is "the ONLY writer that can emit `onsite`", and
+                that "every on-site row in this table is a shadow-revision request".
+                All three were falsified by `routeRepublishToReviewInTx` (#4440). Do not
+                reconcile the two by trusting that one: verify against the create sites
+                themselves. */}
+            {detail.scopes.length > 0 && (
+              <Stack gap="xs" data-testid="apps-listing-permissions">
+                <Group gap="xs">
+                  <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                    <IconShieldCheck size={14} />
+                  </ThemeIcon>
+                  <Title order={4}>
+                    {preview ? 'Currently granted permissions' : 'This app can…'}
+                  </Title>
+                </Group>
+                <BlockScopeList scopes={detail.scopes} />
+              </Stack>
             )}
           </Stack>
         </ContainerGrid2.Col>
