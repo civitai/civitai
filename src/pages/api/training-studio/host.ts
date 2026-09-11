@@ -2,7 +2,11 @@ import { env } from '~/env/server';
 import { OnboardingSteps } from '~/server/common/enums';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import {
+  computeUserFeatureFlagsOverlay,
+  getFeatureFlagsLazy,
+} from '~/server/services/feature-flags.service';
+import { getUserSettings } from '~/server/services/user.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Flags } from '~/shared/utils/flags';
 
@@ -31,7 +35,12 @@ export default AuthedEndpoint(async (req, res, user) => {
       .json({ error: 'You cannot perform this action because your account has been restricted' });
   if (requiresEmailVerification(user))
     return res.status(403).json({ error: 'Verify your email address to do this' });
-  if (!getFeatureFlagsLazy({ user, req }).trainingStudioUi)
+  // Flipt decides eligibility, the user's settings toggle decides opt-in — same merge the client
+  // provider performs (overlay over host flags; the overlay withholds the key when Flipt denies).
+  const hostFlags = getFeatureFlagsLazy({ user, req });
+  const { features: userFeatures } = await getUserSettings(user.id);
+  const overlay = computeUserFeatureFlagsOverlay(userFeatures, hostFlags);
+  if (!{ ...hostFlags, ...overlay }.trainingStudioUi)
     return res.status(403).json({ error: 'Training Studio is not available on this account' });
 
   const token = await getOrchestratorToken(user.id, { req, res });

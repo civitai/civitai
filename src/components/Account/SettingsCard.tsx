@@ -19,7 +19,11 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
-import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
+import {
+  type FeatureAccess,
+  fliptGatedToggleableKeys,
+  toggleableFeatures,
+} from '~/server/services/feature-flags.service';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -322,6 +326,16 @@ export function EarlyAdopterToggle() {
 export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
   const flags = useFeatureFlags();
   const queryUtils = trpc.useUtils();
+  // Flipt-gated toggles only exist for granted users: the overlay withholds the key for everyone
+  // else, so its absence distinguishes "not granted" (hide the row) from "toggled off" (show it).
+  const { data: userFeatures } = trpc.user.getFeatureFlags.useQuery(undefined, {
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
+  const visible = data.filter(
+    (feature) =>
+      !fliptGatedToggleableKeys.has(feature.key) || (userFeatures && feature.key in userFeatures)
+  );
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
     async onMutate(payload) {
       await queryUtils.user.getFeatureFlags.cancel();
@@ -355,7 +369,7 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
 
   return (
     <>
-      {data.map((feature) => (
+      {visible.map((feature) => (
         <Switch
           name={feature.key}
           key={feature.key}

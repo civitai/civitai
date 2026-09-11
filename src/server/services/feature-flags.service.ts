@@ -232,9 +232,18 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
-  // The embedded Training Studio (/training-studio). Flipt segments own the rollout; the mod
-  // static fallback keeps a missing flag from opening it to everyone.
-  trainingStudioUi: { availability: ['mod'], fliptKey: 'training-studio-ui' },
+  // The embedded Training Studio (/training-studio). Flipt segments own WHO can use it; within
+  // that population it's an opt-in settings toggle (default off). The overlay withholds the key
+  // from users Flipt hasn't granted (see fliptGatedToggleableKeys), so a toggle can't override
+  // the gate; the mod static fallback keeps a missing Flipt flag from opening it to everyone.
+  trainingStudioUi: {
+    toggleable: true,
+    default: false,
+    displayName: 'Training Studio (new)',
+    description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
+    availability: ['mod'],
+    fliptKey: 'training-studio-ui',
+  },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -1080,6 +1089,15 @@ export const domainRestrictedToggleableKeys = new Set(
     .map(([key]) => key as FeatureFlagKey)
 );
 
+/** Toggleable flags whose ELIGIBILITY is decided by Flipt: the toggle only exists for users the
+ *  Flipt flag grants. The overlay withholds these keys when the host-resolved flag is off, so a
+ *  written toggle can't override the gate (the client merges overlay over host flags). */
+export const fliptGatedToggleableKeys = new Set(
+  Object.entries(featureFlags)
+    .filter(([, value]) => value.toggleable && 'fliptKey' in value && value.fliptKey)
+    .map(([key]) => key as FeatureFlagKey)
+);
+
 export const defaultToggleableFeatures = toggleableFeatures.reduce(
   (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
   {} as FeatureAccess
@@ -1113,8 +1131,13 @@ export function computeUserFeatureFlagsOverlay(
     ...filteredUserFeatures,
   } as FeatureAccess;
 
-  // Don't let toggleable defaults override domain restrictions
+  // Don't let toggleable defaults override domain restrictions or Flipt eligibility gates
   for (const key of domainRestrictedToggleableKeys) {
+    if (key in result && !hostFeatures[key]) {
+      delete result[key];
+    }
+  }
+  for (const key of fliptGatedToggleableKeys) {
     if (key in result && !hostFeatures[key]) {
       delete result[key];
     }
