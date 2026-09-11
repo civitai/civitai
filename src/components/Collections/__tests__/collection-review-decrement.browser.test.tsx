@@ -163,7 +163,10 @@ function Harness() {
   );
 
   useEffect(() => {
-    shared.log.push({ kind: 'render', pending: countPendingReviewItems(collectionItems, ITEM_IDS) });
+    shared.log.push({
+      kind: 'render',
+      pending: countPendingReviewItems(collectionItems, ITEM_IDS),
+    });
   }, [collectionItems]);
 
   return <ModerationControls collectionItems={collectionItems} filters={filters} />;
