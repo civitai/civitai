@@ -20,7 +20,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   try {
     workflowIds = await submitTrainingBatch(token, runs, locals.user.id);
   } catch (err) {
-    if (err instanceof TrainingBatchValidationError) error(400, 'Bad training request.');
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
     error(502, 'Could not start training. Try again.');
   }
 

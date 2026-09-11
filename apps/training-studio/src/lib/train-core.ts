@@ -4,6 +4,7 @@
 // its host config and no callbacks.
 import {
   Air,
+  getResource,
   getWorkflow,
   submitWorkflow,
   updateWorkflow,
@@ -12,6 +13,10 @@ import {
   type WorkflowStepTemplate,
   type WorkflowTemplate,
 } from '@civitai/client';
+import {
+  isSafeTensorFormat,
+  NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
+} from '@civitai/shared/training-custom-model';
 import { describeSubmitError, isFlux2, type OrchestratorClient } from './orchestrator-core';
 import {
   CIVITAI_TAG,
@@ -183,6 +188,101 @@ export async function submitTraining(
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
 export class TrainingBatchValidationError extends Error {}
 
+function fail(field: string, why: string): never {
+  throw new TrainingBatchValidationError(`${field} ${why}`);
+}
+
+// The paste field's gate (trainingFlow.ts isValidAir) OR'd with Air's grammar — each accepts strings
+// the other rejects, and the wire check must never refuse a value the UI accepted.
+function isPlausibleAir(value: string): boolean {
+  const trimmed = value.trim();
+  return /^urn:air:[^\s]+$/.test(trimmed) || Air.isAir(trimmed);
+}
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+const isNonEmptyString = (v: unknown): v is string => isString(v) && v.trim().length > 0;
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+// textEncoderLr is the one hyperparameter where 0 is meaningful (it turns trainTextEncoder off).
+const POSITIVE_NUMBER_FIELDS = [
+  'steps',
+  'epochs',
+  'batchSize',
+  'unetLr',
+  'networkDim',
+  'networkAlpha',
+  'resolution',
+] as const;
+const OPTIONAL_STRING_FIELDS = ['modelVariant', 'version', 'engine', 'model'] as const;
+const AIR_FIELDS = ['customModel', 'continueFrom'] as const;
+
+/** Refuse a malformed run before it costs an orchestrator round-trip. The wire types are a cast, so
+ *  every field is treated as unknown; failures name the offending field. */
+function validateRun(run: TrainingRunInput | undefined, field: string): void {
+  if (!run || typeof run !== 'object') fail(field, 'must be an object.');
+  if (!isNonEmptyString(run.ecosystem)) fail(`${field}.ecosystem`, 'must be a non-empty string.');
+  for (const key of POSITIVE_NUMBER_FIELDS) {
+    if (!isFiniteNumber(run[key]) || run[key] <= 0)
+      fail(`${field}.${key}`, 'must be a positive number.');
+  }
+  if (!isFiniteNumber(run.textEncoderLr) || run.textEncoderLr < 0)
+    fail(`${field}.textEncoderLr`, 'must be a non-negative number.');
+  if (!isNonEmptyString(run.lrScheduler))
+    fail(`${field}.lrScheduler`, 'must be a non-empty string.');
+  if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
+  if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
+  if (!Array.isArray(run.items) || run.items.length === 0)
+    fail(`${field}.items`, 'must be a non-empty array.');
+  run.items.forEach((item, i) => {
+    if (!item || typeof item !== 'object') fail(`${field}.items[${i}]`, 'must be an object.');
+    if (!isNonEmptyString(item.air))
+      fail(`${field}.items[${i}].air`, 'must be a non-empty string.');
+    if (!isString(item.caption)) fail(`${field}.items[${i}].caption`, 'must be a string.');
+  });
+  if (!Array.isArray(run.prompts) || run.prompts.some((p) => !isString(p)))
+    fail(`${field}.prompts`, 'must be an array of strings.');
+  for (const key of OPTIONAL_STRING_FIELDS) {
+    if (run[key] !== undefined && !isString(run[key])) fail(`${field}.${key}`, 'must be a string.');
+  }
+  for (const key of AIR_FIELDS) {
+    const value = run[key];
+    if (value !== undefined && !(isNonEmptyString(value) && isPlausibleAir(value)))
+      fail(`${field}.${key}`, 'must be an AIR (urn:air:…).');
+  }
+  if (
+    run.currencies !== undefined &&
+    (!Array.isArray(run.currencies) || run.currencies.some((c) => !isString(c)))
+  )
+    fail(`${field}.currencies`, 'must be an array of strings.');
+  if (!run.meta || typeof run.meta !== 'object') fail(`${field}.meta`, 'must be an object.');
+  if (run.meta.name !== undefined && !isString(run.meta.name))
+    fail(`${field}.meta.name`, 'must be a string.');
+  if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
+    fail(`${field}.model`, 'is required for this engine.');
+}
+
+/** Refuse a custom base model whose weights aren't SafeTensor — the rule the main app's
+ *  checkCustomModel enforces (single home: @civitai/shared/training-custom-model), read here off
+ *  the orchestrator's resolved format instead of a ModelFile row. A 404 refuses too (the AIR names
+ *  nothing trainable); any other lookup failure is no validation verdict, so it propagates as the
+ *  callers' retryable arm. */
+async function assertCustomModelTrainable(
+  client: OrchestratorClient,
+  air: string,
+  field: string
+): Promise<void> {
+  const { data, response } = await getResource({ client, path: { air } });
+  if (!data) {
+    if (response?.status === 404)
+      throw new TrainingBatchValidationError(`${field}.customModel: model could not be found.`);
+    throw new Error(`custom model lookup failed (${response?.status ?? 'no response'})`);
+  }
+  if (!isSafeTensorFormat(data.fileFormat))
+    throw new TrainingBatchValidationError(
+      `${field}.customModel: ${NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE}`
+    );
+}
+
 /** Submit a batch of runs, one workflow each, in series, stopping at the first failure. If nothing
  *  landed the failure is rethrown (the whole batch is safe to retry); if some runs already landed
  *  their ids are returned instead, so the already-charged runs are never re-submitted. */
@@ -191,8 +291,17 @@ export async function submitTrainingBatch(
   runs: TrainingRunInput[] | undefined,
   opts: SubmitOptions & { onRunError?: (err: unknown) => void } = {}
 ): Promise<string[]> {
-  if (!runs?.length || runs.some((r) => !r?.items?.length || !r.ecosystem))
-    throw new TrainingBatchValidationError('Bad training request.');
+  if (!Array.isArray(runs) || runs.length === 0)
+    throw new TrainingBatchValidationError('runs must be a non-empty array.');
+  runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+
+  // All custom-model checks happen before ANY submit, so a refused batch never part-charges.
+  const customModels = new Map<string, string>();
+  runs.forEach((run, i) => {
+    if (run.customModel && !customModels.has(run.customModel))
+      customModels.set(run.customModel, `runs[${i}]`);
+  });
+  for (const [air, field] of customModels) await assertCustomModelTrainable(client, air, field);
 
   const workflowIds: string[] = [];
   try {
