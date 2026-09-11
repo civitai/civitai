@@ -23,10 +23,12 @@ import {
  *
  * 🔴 THE MUTATION LEDGER, RECORDED HERE BECAUSE A COUNT THAT LIVES ONLY IN A COMMIT MESSAGE GETS
  * CITED INSTEAD OF RE-DERIVED. Two different numbers were reported for the previous round's battery
- * and neither was written down anywhere a reader could check. **TWELVE** mutants, each applied to
+ * and neither was written down anywhere a reader could check. **THIRTEEN** mutants, each applied to
  * `abuse-detection.service.ts` (or `report.ts`), run, and confirmed to fail the named test — with
  * that test's own assertion, not merely "something went red". Re-derive rather than trusting the
- * list; it is a claim like any other.
+ * list; it is a claim like any other — 1–12 were run in the round that split the capability probe
+ * and have NOT been re-run since, and 13 in the round that stopped the refusal naming a column it
+ * had not read.
  *
  *  1 the capability probe back to all-four-or-none ....... 'keeps the ruling after `%s` is dropped'
  *  2 the pre-verdict branch refuses a storable key ....... 'still stores the cluster key when only…'
@@ -40,6 +42,11 @@ import {
  * 10 the scoped delete inverted to `is not null` ........ 'keeps the ruling, the ruler and the row…'
  * 11 the warning's "only when something was lost" gate .. 'writes ONCE and warns not at all…'
  * 12 the capability probe removed altogether ............ 'the detectors keep reporting — a run lands'
+ * 13 the refusal back to "has no verdict columns" ....... 'says `group_key` when only `group_key` is
+ *                                                         gone, and does not blame the verdict
+ *                                                         columns' — read as `AssertionError:
+ *                                                         expected '…has no verdict columns…' to
+ *                                                         contain 'has no group_key column'`
  */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
@@ -436,8 +443,11 @@ describe('🔴 a replay of a run does not destroy its verdicts', () => {
       verdict: 'tp',
       verdictBy: '77',
     });
-    // A ruled row is now on the run AND in the payload. Counting survivors per user is what stops
-    // it being inserted a second time beside the row it already has.
+    // A ruled row is now on the run AND in the payload. The two-pass consuming match over the
+    // survivor multiset is what stops it being inserted a second time beside the row it already
+    // has — here pass 1, on exact `(user_id, reason)`. Counting survivors per user also held this
+    // count, which is why it survived a round; it did not hold the row CONTENT (see the
+    // repeated-user describe below).
     await service.recordAbuseRun(replayReport());
     await service.recordAbuseRun(replayReport());
     expect(await allFindings(db)).toHaveLength(3);
@@ -934,9 +944,17 @@ describe('🔴 a ruling survives a replay whenever the `verdict` column is there
     }
   );
 
-  it('drops every row only when `verdict` ITSELF is gone — there is then nothing to preserve', async () => {
-    // The one state in which the unscoped delete is right, and the reason the comment above it may
-    // say so: with no `verdict` column no ruling can ever have been recorded on this deployment.
+  it('INVARIANT GUARD — drops every row only when `verdict` ITSELF is gone', async () => {
+    // 🔴 GREEN AT `c2f18a2f5` TOO: the all-four probe took this same branch in this same state, so
+    // this pins a direction the change did not alter rather than a regression the change fixed.
+    // Kept because the sibling cases above narrow the gate, and nothing else says the narrowing
+    // stopped at `verdict` instead of removing the branch.
+    //
+    // The one state in which the unscoped delete is right: with `verdict` gone there is no ruling
+    // left for it to destroy, because the column that carried one is already gone. NOT "the table
+    // never held one" — dropping the column on a board with rulings on it destroys them, and
+    // `verdict_by`/`verdict_at` go with the rows here too, which is what the id assertion below
+    // records.
     await service.recordAbuseRun(report());
     const before = await allFindings(db);
     await db.exec(`ALTER TABLE abuse_detection_finding DROP COLUMN verdict;`);
@@ -1140,6 +1158,82 @@ describe('a 42703 whose message cannot be parsed still degrades', () => {
     });
     return state;
   }
+});
+
+/**
+ * 🔴 A REFUSED RULING MUST NAME THE COLUMN THAT IS ACTUALLY MISSING.
+ *
+ * `recordAbuseVerdict` reads `group_key` as well as writing the three verdict columns, so `42703`
+ * there is not necessarily about a verdict column at all — and the state where it is not is one this
+ * board makes reachable and comfortable. Drop `group_key` alone: the page loads, the summary reads,
+ * every verdict already recorded is on screen, and the buttons render. The first click then answered
+ * "abuse_detection_finding has no verdict columns" about three columns that were all right there,
+ * while the page displayed their contents. Behaviourally that predates this change; it is fixed here
+ * because it is the same confident-wrong-column shape the ingest path was fixed for one branch away.
+ */
+describe('🔴 a refused ruling names the column that is actually missing', () => {
+  const seedRuleable = async () => {
+    const runId = await seedRun(db, 'bot-account-detection', STARTED_TODAY);
+    const findingId = await seedFinding(db, { runId, userId: 61, groupKey: RING });
+    return { runId, findingId };
+  };
+
+  it('says `group_key` when only `group_key` is gone, and does not blame the verdict columns', async () => {
+    const { runId, findingId } = await seedRuleable();
+    // The rollback this feature's own comments name: the grouping half reverted, the verdict half
+    // left in place. Nothing here stops a moderator reaching the button.
+    await db.exec(`ALTER TABLE abuse_detection_finding DROP COLUMN group_key;`);
+    await expect(service.getAbuseVerdictSummary(runId)).resolves.toEqual({ ruled: 0, unruled: 1 });
+
+    const err = await service
+      .recordAbuseVerdict({ runId, findingId, verdict: 'tp', verdictBy: 'mod-a' })
+      .then(
+        () => null,
+        (e: unknown) => e as Error
+      );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toContain('has no group_key column');
+    // The half that was wrong: it must not claim the verdict columns are the problem.
+    expect(err?.message).not.toContain('verdict');
+    // And the remedy, which was always right, is unchanged — the route gates the 503 on this.
+    expect(err?.message).toContain('schema.sql');
+  });
+
+  it('says `verdict` when the verdict half is the missing one', async () => {
+    // The other side of the same read: a name, not a category, whichever column it is.
+    const { runId, findingId } = await seedRuleable();
+    await db.exec(`ALTER TABLE abuse_detection_finding DROP COLUMN verdict;`);
+
+    await expect(
+      service.recordAbuseVerdict({ runId, findingId, verdict: 'tp', verdictBy: 'mod-a' })
+    ).rejects.toThrow(/has no verdict column — apply/);
+  });
+
+  it('names no column at all when the server did not name one in English', async () => {
+    // 🔴 The fallback is UNNAMED, never a guess. `missingColumnFromError` parses an ENGLISH message,
+    // so a non-English `lc_messages` yields null — and the wrong-column defect being fixed here is
+    // exactly what filling that gap with a plausible name would reintroduce.
+    const { runId, findingId } = await seedRuleable();
+    const real = db.query.bind(db);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(db, 'query' as any).mockImplementation(async (...args: unknown[]) => {
+      if (typeof args[0] === 'string' && /from "?abuse_detection_finding/i.test(args[0]))
+        throw Object.assign(new Error('Spalte »group_key« existiert nicht'), { code: '42703' });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return await (real as any)(...args);
+    });
+
+    const err = await service
+      .recordAbuseVerdict({ runId, findingId, verdict: 'tp', verdictBy: 'mod-a' })
+      .then(
+        () => null,
+        (e: unknown) => e as Error
+      );
+
+    expect(err?.message).toContain('is missing a column this write needs');
+    expect(err?.message).toContain('schema.sql');
+  });
 });
 
 /** A findings row without the four columns — the only shape that table has before the DDL is run. */

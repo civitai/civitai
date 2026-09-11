@@ -178,10 +178,12 @@ describe('the verdict action never reports an unrecorded ruling as recorded', ()
 
   it('surfaces the missing-DDL message verbatim rather than as a generic outage', async () => {
     // The overwhelmingly likely cause on a fresh deploy, and otherwise indistinguishable from a
-    // database being down. The message names the file to run.
+    // database being down. The message names the file to run. It also names the missing COLUMN now,
+    // which is why this fixture is spelled the way the service spells it: the route's own gate is
+    // `message.includes('schema.sql')`, so the varying half must not be what it keys on.
     recordAbuseVerdict.mockRejectedValue(
       new Error(
-        'abuse_detection_finding has no verdict columns — apply ' +
+        'abuse_detection_finding has no verdict column — apply ' +
           'apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL as the application role'
       )
     );

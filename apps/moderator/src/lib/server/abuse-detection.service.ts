@@ -180,7 +180,9 @@ export function missingColumnFromError(e: unknown): string | null {
  * after rulings exist — rolling back the grouping half, or restoring a mid-rollout snapshot.
  *
  * `verdict_by` and `verdict_at` appear in neither capability because this write path never names
- * them; `recordAbuseVerdict` does, and it refuses rather than degrading.
+ * them. `recordAbuseVerdict` names both — and `group_key` as well, which IS a probed capability
+ * here; it does not probe for either, because a write must not degrade. Any column missing under it
+ * refuses the ruling, naming the column the server named.
  */
 type VerdictColumnSupport = {
   /** `verdict` exists, so the delete can be scoped to the rows no moderator has ruled on. */
@@ -239,7 +241,7 @@ export async function recordAbuseRun(input: AbuseReportInput): Promise<{ runId: 
     return { runId };
   } catch (e) {
     // 🔴 THE INGEST PATH DEGRADES RATHER THAN STOPPING, AND THIS IS NOW ONLY THE BACKSTOP.
-    // `verdictColumnsPresent` asks the catalogue before building the statements, so an ordinary
+    // `verdictColumnSupport` asks the catalogue before building the statements, so an ordinary
     // pre-DDL report never reaches here at all — no rolled-back transaction and no redo, which is
     // what every report from every detector used to pay for a feature two of the three do not use.
     // What is left for this branch is the race: the DDL applied, or reverted, between the probe and
@@ -423,11 +425,19 @@ async function replaceFindings(
 ): Promise<void> {
   if (!support.canPreserveVerdicts) {
     // 🔴 GATED ON `verdict` ALONE, AND THAT IS LOAD-BEARING. Without that column there is no
-    // predicate to scope the delete BY — and, equally, nothing this branch can destroy: a ruling is
-    // stored in `verdict` and nowhere else, so a table without it has never held one. Neither clause
-    // survives widening the gate to the other three columns, which is what an all-four probe did:
-    // a table carrying rulings in a `verdict` that was right there took this delete because
-    // `group_key` had been dropped.
+    // predicate to scope the delete BY — and no ruling left for this branch to destroy, because the
+    // column that carried one is already gone. Neither clause survives widening the gate to the
+    // other three columns, which is what an all-four probe did: a table carrying rulings in a
+    // `verdict` that was right there took this delete because `group_key` had been dropped.
+    //
+    // 🔴 THAT IS NOT "THE TABLE HAS NEVER HELD A RULING", which is what this comment used to claim,
+    // and the difference matters to whoever reads it after an incident. `ALTER TABLE
+    // abuse_detection_finding DROP COLUMN verdict` on a board moderators had already ruled on
+    // destroys those rulings outright — the table DID hold them, and the DROP is what took them,
+    // not this delete. Nor is `verdict` the only column a ruling writes: `verdict_by` and
+    // `verdict_at` can still be present in this state, and the rows carrying them go with
+    // everything else here. Neither of those has a justification in this branch; the gate rests on
+    // the first paragraph alone.
     await trx.deleteFrom('abuse_detection_finding').where('run_id', '=', runId).execute();
     await insertFindings(trx, runId, findings, support.canStoreGroupKey);
     return;
@@ -809,12 +819,27 @@ export async function recordAbuseVerdict(input: {
   } catch (e) {
     // 🔴 A WRITE MUST NOT DEGRADE. Accepting a ruling the database never stored, and rendering it as
     // recorded, is worse than refusing it — the moderator moves on believing the row is graded.
-    if (isUndefinedColumnError(e))
+    //
+    // 🔴 IT NAMES THE COLUMN THE SERVER NAMED, NOT "the verdict columns". This path reads
+    // `group_key` as well as writing the three verdict columns, and a board that has lost ONLY
+    // `group_key` still loads, still renders the buttons, and still shows every verdict already
+    // recorded — `getAbuseVerdictSummary` needs none of it. So the first click produced "has no
+    // verdict columns" on a page displaying verdicts, about three columns that were all right
+    // there: the same confident-wrong-column shape the ingest path was fixed for, on the branch
+    // next door. Same refinement as that fix and the same limit — the name is read out of an
+    // ENGLISH message, so a non-English `lc_messages` yields `null`, which falls back to naming no
+    // column rather than to guessing one. The remedy is unchanged either way: it is the same file.
+    if (isUndefinedColumnError(e)) {
+      const missing = missingColumnFromError(e);
       throw new Error(
-        'abuse_detection_finding has no verdict columns — apply ' +
-          'apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL as the application role',
+        (missing === null
+          ? 'abuse_detection_finding is missing a column this write needs'
+          : `abuse_detection_finding has no ${missing} column`) +
+          ' — apply apps/moderator/abuse-detection/schema.sql to MODERATOR_DATABASE_URL as the ' +
+          'application role',
         { cause: e }
       );
+    }
     // 🔴 THE SAME DISCRIMINATION THE TWO READ PATHS ALREADY MAKE. Both `+page.server.ts` loads
     // branch on 42501 and say "re-run schema.sql as the application role"; without this the write
     // answered the identical cause with "the database refused the write", which reads as an outage.
