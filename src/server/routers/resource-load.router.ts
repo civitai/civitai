@@ -1,15 +1,18 @@
 import { CacheTTL } from '~/server/common/constants';
-import { rateLimit } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   getResourceLoadQueueSchema,
   getResourceLoadStateSchema,
+  getResourceResidencySchema,
   resourceLoadVersionSchema,
 } from '~/server/schema/resource-load.schema';
 import {
   estimateResourceLoad,
+  getPublicResourceLoadQueue,
   getResourceLoadQueue,
   getResourceLoadState,
+  getResourceResidency,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
 import {
@@ -74,13 +77,22 @@ export const resourceLoadRouter = router({
   /**
    * 🔴 Flag-gated, and not for tidiness. `getState` takes up to 100 version ids and makes one
    * uncached orchestrator call per id, so ungated it is an unauthenticated amplifier: one request,
-   * a hundred grain calls, repeatable by anyone. Drop the flag guard when C5 puts load state on the
-   * model page — and give it a cache or a cap when you do.
+   * a hundred grain calls, repeatable by anyone. Everyone else reads load state through
+   * `getResidency`, which is capped and cached.
    */
   getState: publicProcedure
     .use(isFlagProtected('resourceLoad'))
     .input(getResourceLoadStateSchema)
     .query(({ input }) => getResourceLoadState(input.modelVersionIds)),
+  getResidency: protectedProcedure
+    .use(
+      rateLimit([{ limit: 120, period: 60 }], undefined, { sharedKey: 'resource-load:residency' })
+    )
+    .input(getResourceResidencySchema)
+    .query(({ input }) => getResourceResidency(input.modelVersionIds)),
+  getPublicQueue: publicProcedure
+    .use(edgeCacheIt({ ttl: 10 }))
+    .query(() => getPublicResourceLoadQueue()),
   getQueue: publicProcedure
     .use(isFlagProtected('resourceLoad'))
     .input(getResourceLoadQueueSchema)

@@ -53,10 +53,12 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
       'blocker as blocks: a chatCompletion workflow id has not been checked against the ledger.',
   },
   'src/server/services/orchestrator/orchestration-new.service.ts': {
-    unguarded: 1,
+    unguarded: 2,
     reason:
-      'whatIfFromGraph — a cost estimate. `query: { whatif: true }` produces no persisted ' +
-      'workflow and no debit, so there is no attribution to check.',
+      'Two cost estimates, both at `query: { whatif: true }`, which produces no persisted workflow ' +
+      'and no debit — so there is no attribution to check. (1) whatIfFromGraph. (2) the pre-boost ' +
+      'check in generateFromGraph, which asks whether anything is waiting to download before it ' +
+      'sends a paid `downloadPriority`. The real submit beside it IS guarded.',
   },
   'src/server/services/resource-load.service.ts': {
     unguarded: 1,

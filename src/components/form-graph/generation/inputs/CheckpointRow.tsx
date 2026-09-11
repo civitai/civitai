@@ -15,6 +15,7 @@ import {
   type PartialResourceValue,
 } from '~/components/generation_v2/inputs/resource-select.utils';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { ResourceResidencyIcon } from '~/components/ResourceLoad/ResourceResidency';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { getModelUrl } from '~/utils/string-helpers';
 
@@ -120,6 +121,7 @@ export function CheckpointRow({
   return (
     <div className={className}>
       {body}
+      {!unusable && <ResourceResidencyIcon modelVersionId={resource.id} />}
       {unusable && onRevertToDefault && (
         <Button variant="light" size="compact-xs" radius="xl" onClick={onRevertToDefault}>
           Default

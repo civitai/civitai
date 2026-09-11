@@ -195,19 +195,44 @@ function updateTextToImageRequests({
   }
 }
 
+function updateCachedWorkflow(
+  workflowId: string,
+  update: (items: InfiniteTextToImageRequests['pages'][number]['items'], index: number) => void
+) {
+  updateTextToImageRequests({
+    cb: (data) => {
+      for (const page of data.pages) {
+        const index = page.items.findIndex((x) => x.id === workflowId);
+        if (index > -1) {
+          update(page.items, index);
+          break;
+        }
+      }
+    },
+  });
+}
+
 export function useUpdateWorkflow() {
   return trpc.orchestrator.updateWorkflow.useMutation({
     onSuccess: (response, { workflowId }) => {
-      updateTextToImageRequests({
-        cb: (data) => {
-          for (const page of data.pages) {
-            const index = page.items.findIndex((x) => x.id === workflowId);
-            if (index > -1) {
-              page.items[index] = response as any;
-              break;
-            }
-          }
-        },
+      updateCachedWorkflow(workflowId, (items, index) => {
+        items[index] = response as any;
+      });
+    },
+  });
+}
+
+export function useBoostWorkflow() {
+  const queryUtils = trpc.useUtils();
+  return trpc.orchestrator.boostWorkflow.useMutation({
+    onSuccess: (result, { workflowId }) => {
+      if (!result.boosted) {
+        queryUtils.orchestrator.getBoostCost.setData({ workflowId }, { cost: result.cost });
+        return;
+      }
+      updateCachedWorkflow(workflowId, (items, index) => {
+        if (result.workflow) items[index] = result.workflow as any;
+        else items[index].downloadPriority = 'high';
       });
     },
   });

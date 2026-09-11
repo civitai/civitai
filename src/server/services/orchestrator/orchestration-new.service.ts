@@ -28,7 +28,11 @@ import type {
 } from '@civitai/client';
 // The pinned @civitai/client predates preprocessVideo; this comes from
 // orchestration-client.
-import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
+import type {
+  Priority as DownloadPriority,
+  PreprocessVideoStepTemplate,
+  WorkflowStepPreparation,
+} from '@civitai/orchestration-client';
 import { TimeSpan } from '@civitai/client';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
 import {
@@ -76,6 +80,7 @@ import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/gen
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import {
   getWorkflow,
+  setWorkflowDownloadPriority,
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
@@ -173,6 +178,7 @@ export type GenerationContext = {
 export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
+  downloadPriority?: DownloadPriority;
 } & GenerationContext;
 
 /** Options for what-if requests */
@@ -184,6 +190,7 @@ export type WhatIfOptions = {
   experimental?: boolean;
   token: string;
   currencies?: BuzzSpendType[];
+  downloadPriority?: DownloadPriority;
 };
 
 /**
@@ -1563,6 +1570,7 @@ export async function generateFromGraph({
   track,
   externalId,
   acknowledgedSoftBlock,
+  downloadPriority,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
 
@@ -1717,6 +1725,23 @@ export async function generateFromGraph({
         }
       : workflowMetadata;
 
+  // A download boost is a fixed fee, so it is only sent when a whatIf shows something waiting to
+  // download. If that check fails the generation still goes out, unboosted and unbilled for it.
+  const boostDownloads =
+    !!downloadPriority &&
+    (await submitWorkflow({
+      token,
+      body: {
+        steps,
+        experimental,
+        // @ts-ignore - BuzzSpendType is properly supported
+        currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      },
+      query: { whatif: true },
+    })
+      .then((priced) => !!priced.steps?.some((step) => readPreparation(step)))
+      .catch(() => false));
+
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
     token,
@@ -1749,6 +1774,7 @@ export async function generateFromGraph({
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
+      ...(boostDownloads ? { downloadPriority } : {}),
     },
   })) as TextToImageResponse;
 
@@ -1795,6 +1821,7 @@ export async function whatIfFromGraph({
   experimental,
   token,
   currencies,
+  downloadPriority,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
   // The client excludes content fields (prompt/negativePrompt for image/video,
@@ -1823,6 +1850,7 @@ export async function whatIfFromGraph({
       experimental,
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      ...(downloadPriority ? { downloadPriority } : {}),
     },
     query: {
       whatif: true,
@@ -1834,6 +1862,7 @@ export async function whatIfFromGraph({
     const support = workflowStep.queuePosition?.support;
     if (support && support !== 'available') ready = false;
   }
+  const preparation = workflow.steps?.map(readPreparation).find(isDefined);
 
   // Silent checkpoint substitutions from the validation above (#3520 / #3665).
   //
@@ -1853,6 +1882,7 @@ export async function whatIfFromGraph({
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
+    preparation,
     // Additive and OMITTED when empty, matching the App Blocks snapshot contract.
     // 🔴 Consequence a client must know: absence means "no substitution" OR "a
     // server that predates this field" — the two are indistinguishable. Callers
@@ -2065,6 +2095,11 @@ export type StepMetadataTransformation = {
   resources?: Record<string, unknown>[];
 };
 
+const readPreparation = (step: WorkflowStep) =>
+  (step as { preparation?: WorkflowStepPreparation | null }).preparation ?? undefined;
+const readDownloadPriority = (workflow: Workflow) =>
+  (workflow as { downloadPriority?: DownloadPriority | null }).downloadPriority ?? undefined;
+
 /** Normalized workflow step */
 export interface NormalizedStep {
   $type: string;
@@ -2073,6 +2108,7 @@ export interface NormalizedStep {
   timeout?: string | null;
   completedAt?: string | null;
   queuePosition?: WorkflowStepQueuePosition;
+  preparation?: WorkflowStepPreparation;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */
@@ -2135,6 +2171,7 @@ export interface NormalizedWorkflow {
   cost: WorkflowCost;
   tags: string[];
   allowMatureContent?: boolean | null;
+  downloadPriority?: DownloadPriority;
   duration?: number;
   /** Workflow-level metadata — the form input snapshot for replay. */
   metadata?: NormalizedWorkflowMetadata;
@@ -2736,6 +2773,7 @@ function formatStep(
     timeout: step.timeout,
     completedAt: step.completedAt,
     queuePosition: step.queuePosition,
+    preparation: readPreparation(step),
     metadata: {
       ...removeEmpty({
         params: finalParams,
@@ -2909,6 +2947,7 @@ export async function formatGenerationResponse2(
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       allowMatureContent: workflow.allowMatureContent,
+      downloadPriority: readDownloadPriority(workflow),
       duration:
         workflow.startedAt && workflow.completedAt
           ? Math.round(
@@ -3144,6 +3183,7 @@ export async function getWorkflowStatusUpdate({
     return {
       id: workflowId,
       status: result.status!,
+      downloadPriority: readDownloadPriority(result),
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
@@ -3167,6 +3207,7 @@ export async function getWorkflowStatusUpdate({
           status: step.status,
           completedAt: step.completedAt,
           queuePosition: step.queuePosition,
+          preparation: readPreparation(step),
           output,
           // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
           images: output,
@@ -3175,4 +3216,48 @@ export async function getWorkflowStatusUpdate({
       }),
     };
   }
+}
+
+// =============================================================================
+// Download boost
+// =============================================================================
+
+/** The price of boosting, or null when the orchestrator reports no download fee. */
+export async function getWorkflowBoostCost({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const priced = await setWorkflowDownloadPriority({ token, workflowId, whatif: true });
+  return { cost: priced?.cost?.fixed?.downloadPriority ?? null };
+}
+
+/**
+ * Charges only at the price the user confirmed: the orchestrator's update takes no expected price,
+ * so the boost is re-priced first and refused when the price moved — or when there is nothing left
+ * to boost, which a workflow already in the high lane reports as no download fee.
+ */
+export async function boostWorkflow({
+  token,
+  workflowId,
+  expectedCost,
+  user,
+}: {
+  token: string;
+  workflowId: string;
+  expectedCost: number;
+  user?: SessionUser;
+}) {
+  const { cost } = await getWorkflowBoostCost({ token, workflowId });
+  if (cost == null || cost !== expectedCost) return { boosted: false as const, cost };
+
+  await setWorkflowDownloadPriority({ token, workflowId });
+  // The charge has already gone through, so a failed read must not report it as a failure.
+  const workflow = await getWorkflow({ token, path: { workflowId } })
+    .then((result) => formatGenerationResponse2([result], user))
+    .then(([formatted]) => formatted)
+    .catch(() => null);
+  return { boosted: true as const, workflow };
 }

@@ -11,6 +11,7 @@
 
 import { isEqual, omit } from 'lodash-es';
 import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { usePreBoost } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { NodeError } from '~/libs/data-graph/data-graph';
 import { useGraph } from '~/libs/data-graph/react';
@@ -133,7 +134,9 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const workflowConfig = workflowConfigByKey.get(snapshot?.workflow as string);
   const isNoSubmit = workflowConfig?.noSubmit === true;
 
-  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
+  const { preBoost, setPreBoost, whatIfPayload } = usePreBoost(revision, queryPayload);
+
+  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(whatIfPayload as any, {
     enabled:
       enabled &&
       !isNoSubmit &&
@@ -148,6 +151,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       queryResult.data ?? {
         cost: defaultWorkflowCost,
         ready: false,
+        preparation: undefined,
         allowMatureContent: false,
         transactions: undefined,
       },
@@ -163,5 +167,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     isLoading: queryResult.isFetching || imagesPending,
     canEstimateCost,
     validationErrors,
+    preBoost,
+    setPreBoost,
   };
 }

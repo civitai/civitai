@@ -53,6 +53,8 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
+import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
+import { preBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
@@ -292,9 +294,14 @@ function PriorityAlertSpace({
     <>
       <QueueSnackbar right={snackbarRight} />
       <ExperimentalWarnings />
+      <DownloadWarning />
       {priorityAlert}
     </>
   );
+}
+
+function DownloadWarning() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }
 
 /** Several can show at once, so these stay out of the exclusive chain above. */
@@ -687,7 +694,13 @@ export function FormFooter({
   const { trackAction } = useTrackEvent();
   const generationContextStore = useGenerationContextStore();
 
-  const { canEstimateCost, validationErrors, data: whatIfData } = useWhatIfContext();
+  const {
+    canEstimateCost,
+    validationErrors,
+    data: whatIfData,
+    preBoost,
+    setPreBoost,
+  } = useWhatIfContext();
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -868,8 +881,10 @@ export function FormFooter({
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
         externalId,
         acknowledgedSoftBlock,
+        ...preBoostSubmitFields(preBoost, whatIfData),
       });
 
+      if (preBoost) setPreBoost(false);
       if (hasPaidAccess) invalidateWhatIf();
 
       // one-shot enhancement workflows clear their media after submit

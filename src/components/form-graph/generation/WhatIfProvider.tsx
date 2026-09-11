@@ -16,6 +16,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { usePreBoost } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
@@ -102,9 +103,11 @@ export function useWhatIfFromStore({
   const workflow = (store.getSnapshot().state as { workflow?: string }).workflow;
   const isNoSubmit = workflowConfigByKey.get(workflow ?? '')?.noSubmit === true;
 
+  const { preBoost, setPreBoost, whatIfPayload } = usePreBoost(revision, queryPayload);
+
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    queryPayload as any,
+    whatIfPayload as any,
     {
       enabled:
         enabled &&
@@ -121,6 +124,7 @@ export function useWhatIfFromStore({
       queryResult.data ?? {
         cost: defaultWorkflowCost,
         ready: false,
+        preparation: undefined,
         allowMatureContent: false,
         transactions: undefined,
       },
@@ -135,6 +139,8 @@ export function useWhatIfFromStore({
     isLoading: queryResult.isFetching || imagesPending,
     canEstimateCost,
     validationErrors,
+    preBoost,
+    setPreBoost,
   };
 }
 

@@ -49,7 +49,7 @@ export const resourceDataCache = createCachedArray({
           ) as obj
         ) as model
       FROM "ModelVersion" mv
-      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+      LEFT JOIN "GenerationCoverageNext" gc ON gc."modelVersionId" = mv.id
       WHERE mv.id IN (${Prisma.join(ids)})
     `;
 

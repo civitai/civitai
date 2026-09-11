@@ -137,7 +137,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (params.action === 'reindex' && !params.dryRun) {
     const [stale] = await dbRead.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one
-      FROM "GenerationCoverage" gc
+      FROM "GenerationCoverageNext" gc
       JOIN "Model" m ON m.id = gc."modelId"
       JOIN "ModelVersion" mv ON mv.id = gc."modelVersionId"
       WHERE gc.covered

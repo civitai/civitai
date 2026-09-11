@@ -16,6 +16,10 @@ import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { modelVersionToAir } from '~/server/utils/resource-air';
@@ -91,13 +95,7 @@ async function getVersionsForAir(modelVersionIds: number[]) {
   })) as VersionForAir[];
 }
 
-/**
- * The live view still gates checkpoints on `CoveredCheckpoint` — the weekly auction's residency
- * proxy — so it reports exactly the community checkpoints this feature exists to load as NOT
- * covered. Gating on it would refuse every load worth making. The two converge when the staged view
- * replaces the live one.
- */
-async function getNextCoveredVersionIds(modelVersionIds: number[]) {
+async function getCoveredVersionIds(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return new Set<number>();
   const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
     SELECT "modelVersionId" FROM "GenerationCoverageNext"
@@ -123,7 +121,7 @@ export async function getResourceLoadState(
   const versions = await getVersionsForAir(modelVersionIds);
   if (!versions.length) return [];
 
-  const coveredIds = await getNextCoveredVersionIds(versions.map((v) => v.id));
+  const coveredIds = await getCoveredVersionIds(versions.map((v) => v.id));
 
   const results: ResourceLoadState[] = [];
   const tasks = versions.map((version) => async () => {
@@ -200,6 +198,168 @@ export async function getResourceLoadQueue({ cursor, take }: GetResourceLoadQueu
   return { items, nextCursor: data.next ?? undefined };
 }
 
+const RESIDENCY_CACHE_SECONDS = 30;
+const PUBLIC_QUEUE_CACHE_SECONDS = 10;
+const PUBLIC_QUEUE_TAKE = 50;
+
+export type ResourceResidency = { modelVersionId: number; availability: ResourceLoadAvailability };
+
+/**
+ * Load state alone, for the model page and the generator: one Redis read for the whole set and one
+ * DB query for whatever missed. That is what lets it run for every signed-in viewer where the
+ * uncached `getResourceLoadState` cannot.
+ */
+function createResourceResidencyCache() {
+  return createCachedObject<ResourceResidency>({
+    key: REDIS_KEYS.CACHES.RESOURCE_LOAD_RESIDENCY,
+    idKey: 'modelVersionId',
+    ttl: RESIDENCY_CACHE_SECONDS,
+    async lookupFn(ids) {
+      const modelVersionIds = Array.isArray(ids) ? ids : [ids];
+      // Only what the AIR needs: `getPrimaryFile` scores on each file's type and metadata.
+      const versions = (await dbRead.modelVersion.findMany({
+        where: { id: { in: modelVersionIds } },
+        select: {
+          id: true,
+          name: true,
+          baseModel: true,
+          flags: true,
+          model: { select: { id: true, name: true, type: true } },
+          files: { select: { type: true, metadata: true } },
+        },
+      })) as VersionForAir[];
+
+      const entries: Record<number, ResourceResidency> = {};
+      const tasks = versions.map((version) => async () => {
+        const response = await getModelClient({
+          token: env.ORCHESTRATOR_ACCESS_TOKEN,
+          air: modelVersionToAir(version),
+        });
+        entries[version.id] = {
+          modelVersionId: version.id,
+          availability: parseAvailability(response?.data?.availability),
+        };
+      });
+
+      await limitConcurrency(tasks, STATE_FETCH_CONCURRENCY);
+      return entries;
+    },
+  });
+}
+
+// Built on first use, not on import: ~150 suites wholesale-mock redis or cache-helpers, and an eager
+// cache here fails every one of them at collection. See `no-module-scope-cache`.
+let residencyCacheInstance: ReturnType<typeof createResourceResidencyCache> | undefined;
+function resourceResidencyCache() {
+  return (residencyCacheInstance ??= createResourceResidencyCache());
+}
+
+export async function getResourceResidency(
+  modelVersionIds: number[]
+): Promise<ResourceResidency[]> {
+  const cached = await resourceResidencyCache().fetch([...new Set(modelVersionIds)]);
+  return Object.values(cached);
+}
+
+export type PublicResourceLoadQueueItem = {
+  size: number;
+  availability: ResourceLoadAvailability;
+  model: {
+    id: number;
+    name: string;
+    versionId: number;
+    versionName: string;
+    baseModel: string;
+  } | null;
+};
+
+async function fetchPublicResourceLoadQueue() {
+  const { data, error } = await queryResourcesClient({
+    token: env.ORCHESTRATOR_ACCESS_TOKEN,
+    query: { view: 'queue', take: PUBLIC_QUEUE_TAKE },
+  });
+  if (!data) {
+    logToAxiom({
+      type: 'error',
+      name: 'resource-load-public-queue',
+      message: error?.detail ?? 'no data',
+    }).catch(() => undefined);
+    throw throwBadRequestError('Could not read the download queue. Try again in a moment.');
+  }
+
+  const versionIds = data.items.flatMap((item) => parseAIRSafe(item.air)?.version ?? []);
+  const versions = versionIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { id: { in: versionIds } },
+        select: {
+          id: true,
+          name: true,
+          baseModel: true,
+          status: true,
+          availability: true,
+          model: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              availability: true,
+              nsfwLevel: true,
+              mode: true,
+              poi: true,
+            },
+          },
+        },
+      })
+    : [];
+  // One cached answer serves every domain, so the SFW rule applies to everyone. `nsfwLevel` 0 means
+  // not yet scanned, which getIsSafeBrowsingLevel also rejects.
+  const listable = new Map(
+    versions
+      .filter(
+        (v) =>
+          v.status === 'Published' &&
+          v.availability === 'Public' &&
+          v.model.status === 'Published' &&
+          v.model.availability === 'Public' &&
+          !v.model.mode &&
+          !v.model.poi &&
+          getIsSafeBrowsingLevel(v.model.nsfwLevel)
+      )
+      .map((v) => [v.id, v])
+  );
+
+  const items: PublicResourceLoadQueueItem[] = data.items.map((item) => {
+    const versionId = parseAIRSafe(item.air)?.version;
+    const version = versionId ? listable.get(versionId) : undefined;
+    return {
+      size: item.size,
+      availability: parseAvailability(item.availability),
+      model: version
+        ? {
+            id: version.model.id,
+            name: version.model.name,
+            versionId: version.id,
+            versionName: version.name,
+            baseModel: version.baseModel,
+          }
+        : null,
+    };
+  });
+
+  return { items };
+}
+
+/**
+ * The queue as anyone may see it. A row whose model is not public keeps its place — it still holds
+ * a position in line — but loses its name: a public list must not reveal which private, unpublished,
+ * taken-down or mature models are being loaded.
+ */
+export async function getPublicResourceLoadQueue() {
+  return fetchThroughCache(REDIS_KEYS.CACHES.RESOURCE_LOAD_QUEUE, fetchPublicResourceLoadQueue, {
+    ttl: PUBLIC_QUEUE_CACHE_SECONDS,
+  });
+}
+
 /** Refuses `available` too: the orchestrator accepts an already-resident prepare and completes it
  *  instantly, so the user would pay for nothing. */
 async function resolveLoadable(modelVersionId: number) {
@@ -229,7 +389,7 @@ function prepareResourceStep(air: string) {
 }
 
 /** 🔴 `CalculateCost` for a prepare step returns an empty cost, so `whatif` reports 0 until C2 —
- *  see docs/features/paid-model-loading-checklist.md. `priced` distinguishes that from a real quote. */
+ *  see docs/features/paid-model-loading.md. `priced` distinguishes that from a real quote. */
 export async function estimateResourceLoad({
   modelVersionId,
   token,

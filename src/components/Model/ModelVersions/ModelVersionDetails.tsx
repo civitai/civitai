@@ -741,6 +741,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       wildcardSetId={version.wildcardSetId}
                       data-tour="model:create"
                       data-activity="create:model"
+                      showLoadState={model.type === 'Checkpoint'}
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
                         generationRequiresPurchase && !isLoadingAccess && displayTerms

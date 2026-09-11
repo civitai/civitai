@@ -10,11 +10,15 @@
  * flask at each level a rule can target and warned about above the submit row.
  */
 
-import { Alert, List, Text } from '@mantine/core';
+import type { WorkflowStepPreparation } from '@civitai/orchestration-client';
+import { Alert, List, Stack, Switch, Text } from '@mantine/core';
+import { useRef } from 'react';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import { useWhatIfContext } from './WhatIfProvider';
 
 // =============================================================================
@@ -203,23 +207,87 @@ export function SeedanceImg2VidAlert({ ecosystem, workflow }: SeedanceImg2VidAle
 // Ready Alert
 // =============================================================================
 
-/**
- * Displays an alert when resources need to be downloaded before generation.
- * Must be used inside a WhatIfProvider.
- */
-export function ReadyAlert() {
-  const { data, isLoading } = useWhatIfContext();
+export type DownloadAlertWhatIf = {
+  data: { ready?: boolean; preparation?: WorkflowStepPreparation; cost?: unknown };
+  isLoading: boolean;
+  isSuccess: boolean;
+  canEstimateCost: boolean;
+  preBoost: boolean;
+  setPreBoost: (on: boolean) => void;
+};
 
-  if (data?.ready !== false || isLoading) {
+/** Takes the whatIf as a prop because the two generation forms each have their own provider. */
+export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) {
+  const { data, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
+
+  // Switching the pre-boost refetches the whatIf; rendering from the last settled response keeps
+  // the switch on screen while that loads.
+  const settledRef = useRef<typeof data | null>(null);
+  if (isSuccess && !isLoading) settledRef.current = data;
+  const settled = settledRef.current;
+
+  if (!canEstimateCost || !settled || (settled.ready !== false && !settled.preparation)) {
     return null;
   }
 
+  const { preparation } = settled;
+  if (!preparation) {
+    return (
+      <Alert color="yellow" title="Potentially slow generation" radius="md">
+        <Text size="xs">
+          We need to download additional resources to fulfill your request. This generation may take
+          longer than usual to complete.
+        </Text>
+      </Alert>
+    );
+  }
+
+  const boostFee = (settled.cost as { fixed?: Record<string, number> | null } | undefined)?.fixed
+    ?.downloadPriority;
+  const canPreBoost =
+    preBoost || (preparation.lane !== 'high' && preparation.boostedEtaSeconds != null);
+  const fileCount = preparation.resources.length;
+
   return (
-    <Alert color="yellow" title="Potentially slow generation" radius="md">
-      <Text size="xs">
-        We need to download additional resources to fulfill your request. This generation may take
-        longer than usual to complete.
-      </Text>
+    <Alert color="yellow" title="Resources need to download first" radius="md">
+      <Stack gap={6}>
+        <Text size="xs">
+          {fileCount > 1 ? `${fileCount} files need` : 'A model needs'} to download before this can
+          start. It will wait in your queue until then.
+        </Text>
+        <Text size="xs">
+          {preparation.queuePosition === 0
+            ? 'Downloading now'
+            : `${preparation.queuePosition} ahead in the download queue`}
+          {preparation.etaSeconds != null &&
+            ` · ready in ${formatDownloadEta(preparation.etaSeconds)}`}
+        </Text>
+        {canPreBoost && (
+          <Switch
+            size="xs"
+            color="yellow"
+            checked={preBoost}
+            disabled={isLoading}
+            onChange={(e) => setPreBoost(e.currentTarget.checked)}
+            label={
+              preBoost
+                ? `Boost download${
+                    boostFee ? ` · ${numberWithCommas(boostFee)} Buzz, included in the cost` : ''
+                  }`
+                : `Boost download${
+                    preparation.boostedEtaSeconds != null
+                      ? ` · ready in ${formatDownloadEta(preparation.boostedEtaSeconds)}`
+                      : ''
+                  }`
+            }
+          />
+        )}
+      </Stack>
     </Alert>
   );
+}
+
+/** Must be used inside generation_v2's WhatIfProvider. */
+export function ReadyAlert() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }

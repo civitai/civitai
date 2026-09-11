@@ -79,6 +79,7 @@ import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
+import { preBoostSubmitFields } from './hooks/usePreBoost';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
@@ -1109,7 +1110,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   );
 
   // Get whatIf data for buzz transaction checking
-  const { data: whatIfData } = useWhatIfContext();
+  const { data: whatIfData, preBoost, setPreBoost } = useWhatIfContext();
 
   // Resolved buzz type shown in the UI — defaults to the site's primary type
   // (e.g. green on .com) when the user hasn't explicitly picked one. Sent with
@@ -1349,7 +1350,10 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
+        ...preBoostSubmitFields(preBoost, whatIfData),
       });
+
+      if (preBoost) setPreBoost(false);
 
       if (hasPaidAccess) {
         invalidateWhatIf();

@@ -267,7 +267,7 @@ async function selectResourceForDate(
       SELECT DISTINCT(ci."modelId") as id
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
-      JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
+      JOIN "GenerationCoverageNext" gc ON gc."modelId" = m.id
       WHERE "collectionId" = ${ctx.sourceCollectionId}
       AND ci."status" = 'ACCEPTED'
       AND m."userId" = ${randomUser.userId}
