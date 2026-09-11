@@ -609,20 +609,40 @@ export function projectListingDetail(
     // `BlockRegistry.getAppDetail` already ships for the same purpose — the
     // approved scope ids, string-filtered, `[]` when the column is NULL.
     //
-    // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`. The approve
-    // paths in `publish-request.service.ts` are the ONLY writers of
-    // `approvedScopes`, and each writes it in the SAME `update` as `manifest` and
-    // `version`, so the two can never disagree. A newer manifest version cannot
-    // declare more than was approved and have that reach this DTO.
+    // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`, AND THE REASON
+    // IS THAT THE TWO GENUINELY DIVERGE — do not "simplify" this to `manifest.scopes`.
+    //
+    // ⚠ An earlier version of this comment claimed they "can never disagree because
+    // the approve paths write them in the same update". That is FALSE, and it deleted
+    // the only reason this line reads the column it does.
+    // `src/pages/api/v1/developer/block-manifests.ts` updates `manifest` + `version`
+    // on an existing AppBlock WITHOUT touching `approvedScopes`, and sets
+    // `status: 'pending'` — deliberately, so a publisher cannot swap `iframe.src` or
+    // sandbox tokens post-approval without re-entering moderation. So a row can hold
+    // a v2 manifest declaring `['models:read:self','ai:write:budgeted']` alongside a
+    // v1 `approvedScopes` of `['models:read:self']`.
+    //
+    // Reading the manifest there would publish a scope NOBODY APPROVED on a public
+    // store page — the app's own claim about itself, rendered as if granted.
+    // `approvedScopes` is written only by the three approve paths
+    // (`publish-request.service.ts`), which take `manifest.scopes` verbatim at approve
+    // time; there is no per-scope narrowing mechanism, so the only skew is
+    // approve→deploy, where this over-discloses. That is the safe direction.
     //
     // 🔴 GATED ON `kind`, NEVER ON `appBlockId` NULLNESS — they are not the same
-    // predicate, and this is the third consumer of that join to need saying so.
-    // `mapAppBlockToListing` mints `kind: 'offsite'` WITH a non-null `appBlockId`
-    // whenever the source AppBlock carries an `externalUrl`, reachable through the
-    // mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in as many
-    // words to discriminate on `kind`. `app-access.service.ts` and
-    // `app-collaborator-earnings.service.ts` both carry an explicit gate for this
-    // exact shape.
+    // predicate. `mapAppBlockToListing` mints `kind: 'offsite'` WITH a non-null
+    // `appBlockId` whenever the source AppBlock carries an `externalUrl`, reachable
+    // through the mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in
+    // as many words to discriminate on `kind`.
+    //
+    // 🔴 THIS PREDICATE IS OPEN-CODED AT FIVE OR MORE SITES AND IS A CONSOLIDATION
+    // CANDIDATE. Known siblings, all gating the same shape by hand:
+    // `app-access.service.ts`, `app-collaborator-earnings.service.ts`,
+    // `app-collaborator.service.ts` (`hasWritableRepo`),
+    // `app-ownership-transfer.service.ts`, `offsite-listing.service.ts`.
+    // ⚠ An earlier version of this comment said "the third consumer" and named two
+    // of them — an undercount that would hand anyone consolidating this 2 of 5. Count
+    // it yourself before quoting a number; this list is not asserted to be closed.
     //
     // Without the gate, such a row renders the off-site disclosure — "This app runs
     // entirely off-platform — no Civitai install, account access, or permissions" —

@@ -804,14 +804,14 @@ export interface AppListingDetailBodyProps {
    * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
    * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
    *
-   *   - the PERMISSION DISCLOSURE is KEPT, not omitted — a decision on this ledger
-   *     rather than an omission that was missed. A moderator reviewing a listing has
-   *     more use for the app's granted capabilities than any other viewer, so hiding
-   *     it here would be the wrong direction. 🔴 But it renders under a DIFFERENT
-   *     HEADING in this posture ("Currently granted permissions" rather than "This
-   *     app can…"), because this modal also shows the pending version's REQUESTED
-   *     scopes and the two differ exactly when a version is escalating. See the
-   *     section's own comment for why that is a correctness fix and not copy,
+   *   - the PERMISSION DISCLOSURE is KEPT in code but renders NOTHING here in
+   *     practice, and that is a ledger entry rather than a claim to the contrary.
+   *     Every `preview` detail reaching this component has `scopes: []` (both
+   *     publish-request writers create `kind: 'offsite'`, `appBlockId: null` rows;
+   *     `buildListingDetailPreview` hardcodes `[]`), so the `length > 0` guard
+   *     suppresses the section. It carries a distinct heading for the day that
+   *     changes — see the section's own comment, which states plainly that the branch
+   *     is unreachable today rather than claiming it fixes a live hazard,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
@@ -1218,15 +1218,25 @@ export function AppListingDetailBody({
                 the absence of a permissions section than by a sentence nobody reads.
                 Ported from the disclosure on the retired `/apps/<appBlockId>` route,
                 which `blocks.getAppDetail` still serves.
-                🔴 THE HEADING CHANGES UNDER `preview`, AND IT IS A CORRECTNESS FIX, NOT
-                COPY. `CombinedReviewModal` renders this body BESIDE `ManifestScopes`,
-                which lists the scopes the pending version is REQUESTING, while
-                `detail.scopes` is what is CURRENTLY approved. For a version requesting
-                new scopes those two lists differ — and the confident natural-language one
-                was this one. A moderator reading "This app can…" as the set they are
-                approving would under-read a scope ESCALATION, on the single surface where
-                that judgement is made. KEPT rather than omitted in preview (so the
-                before/after is visible at all), but named for what it is. */}
+                🔴 THE `preview` HEADING BRANCH IS UNREACHABLE TODAY — it is an
+                INVARIANT GUARD, not regression coverage, and saying so is the point.
+                The only `preview` render is `OffsiteReviewQueue`'s
+                `ListingPreviewSection`, whose detail is either
+                `buildListingDetailPreview` (hardcodes `scopes: []`) or
+                `getListingPreviewForReview` on a publish-request listing — and BOTH
+                writers of `AppListingPublishRequest.appListingId` create rows with
+                `kind: 'offsite'` and `appBlockId: null`. Either way `scopes` is `[]`,
+                so the `length > 0` guard above means NO permission section renders in
+                preview at all, under either heading.
+                ⚠ An earlier version of this comment asserted that a moderator could
+                "under-read a scope ESCALATION" here. They cannot — the UI cannot
+                produce that mis-reading, because it shows nothing. The heading is kept
+                because it costs three lines and is correct the moment the branch
+                becomes reachable; it is NOT kept because it fixes a live hazard.
+                To make it reachable, `getListingPreviewForReview` would have to read
+                `appBlock`/`approvedScopes` from the PARENT listing for a shadow
+                revision — which it already does for `beta`. That is a moderator-facing
+                feature, deliberately not in this PR's scope. */}
             {detail.scopes.length > 0 && (
               <Stack gap="xs" data-testid="apps-listing-permissions">
                 <Group gap="xs">

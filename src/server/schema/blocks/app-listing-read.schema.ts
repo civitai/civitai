@@ -398,8 +398,13 @@ export type ListingDetail = {
   sourceRepoUrl: string | null;
   /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
-   * permission disclosure. `[]` for an off-site listing (no backing block) and for
-   * an on-site app that was approved with no scopes.
+   * permission disclosure. `[]` for any listing whose `kind` is not `onsite`, and for
+   * an on-site app approved with no scopes.
+   *
+   * ⚠ `[]` for an off-site listing because of its **`kind`**, NOT because it lacks a
+   * backing block — an off-site row CAN carry a non-null `appBlockId` (the
+   * `blocks.backfillAppListings` shape), and an earlier draft of this line used that
+   * retired nullness predicate. See the gate in `projectListingDetail`.
    *
    * 🔴 ALLOWLIST JUSTIFICATION — AND THIS FIELD IS A NEW PUBLIC EXPOSURE, NOT A
    * RESTATEMENT OF AN EXISTING ONE. Say so plainly, because an earlier draft of this
@@ -407,9 +412,14 @@ export type ListingDetail = {
    * `BlockRegistry.getAppDetail`", and that was FALSE: `blocks.getAppDetail` runs
    * `enforceAppBlocksFlag` and is mod-segmented — dark to a genuine anonymous caller
    * — whereas this DTO is returned verbatim by `GET /api/v1/apps/{slug}`, which has
-   * no flag gate and serves unauthenticated callers at `PUBLIC_APPS_CATALOG_SCOPE =
+   * no ENABLE gate and serves unauthenticated callers at `PUBLIC_APPS_CATALOG_SCOPE =
    * 'full'`. So this change MOVES approved scope ids from a flag-dark surface to a
    * genuinely public one. That is the decision being taken here; it is not a no-op.
+   *
+   * ⚠ "No enable gate" is not "no lever": there IS an operator kill switch,
+   * `PUBLIC_APPS_CATALOG_DISABLED_FLAG = 'apps-public-catalog-disabled'`
+   * (`public-apps-catalog.ts`), absent in Flipt today so public access is on. It is
+   * blunt — it withholds the whole catalog, not this field.
    *
    * Why it is the right call anyway: these are coarse capability labels
    * (`ai:write:budgeted`, `models:read:self`) describing what an APPROVED, PUBLICLY
