@@ -1,12 +1,12 @@
 /**
- * Shared library for mod-actions skill scripts.
+ * Shared library for skill scripts that call the Civitai API.
  *
- * Exports: loadEnv, trpcCall, lookupUser, getModUserId, parseArgs
+ * Exports: loadEnv, trpcCall, lookupUser, getModUserId, parseArgs, createCli, isMain, whoami
  */
 
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 // Resolve paths relative to the caller's location
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -65,9 +65,13 @@ export function requireApiKey() {
  */
 export async function trpcCall(procedure, input, method = 'POST') {
   const wrappedInput = { json: input };
-  const url = method === 'GET'
-    ? `${API_URL}/api/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify(wrappedInput))}`
-    : `${API_URL}/api/trpc/${procedure}`;
+  // An input-less query must omit the param: `input={}` (what `{ json: undefined }` serialises to)
+  // is rejected with a 400.
+  const query =
+    method === 'GET' && input !== undefined
+      ? `?input=${encodeURIComponent(JSON.stringify(wrappedInput))}`
+      : '';
+  const url = `${API_URL}/api/trpc/${procedure}${query}`;
 
   const options = {
     method,
@@ -227,4 +231,77 @@ export function run(fn) {
     console.error('Error:', err.message);
     process.exit(1);
   });
+}
+
+/**
+ * Flag parsing, validation and dispatch for a skill CLI. Unlike parseArgs, the caller names its
+ * own boolean flags; every other `--flag` takes the next argument as its value.
+ */
+export function createCli(booleanFlags = []) {
+  const booleans = new Set(booleanFlags);
+  const positional = [];
+  const flags = {};
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
+      continue;
+    }
+    const key = arg.slice(2);
+    flags[key] = booleans.has(key) ? true : argv[++i];
+  }
+
+  const fail = (message) => {
+    console.error(`Error: ${message}`);
+    process.exit(1);
+  };
+  const required = (name) => {
+    const value = flags[name];
+    if (value === undefined || value === true || value === '') fail(`--${name} is required`);
+    return value;
+  };
+  const requiredInt = (name) => {
+    const value = Number(required(name));
+    if (!Number.isInteger(value) || value <= 0) fail(`--${name} must be a positive integer`);
+    return value;
+  };
+  const oneOf = (name, value, allowed) => {
+    if (!allowed.includes(value)) fail(`--${name} must be one of: ${allowed.join(', ')}`);
+    return value;
+  };
+  const dryRun = (label, payload) => {
+    console.log(`[dry run] ${label} → ${API_URL}`);
+    console.log(JSON.stringify(payload, null, 2));
+    console.log('Re-run with --writable to apply.');
+  };
+  const dispatch = (commands, help) => {
+    const command = commands[positional.slice(0, 2).join(' ')] ?? commands[positional[0]];
+    if (!command) {
+      console.log(help);
+      process.exit(positional.length ? 1 : 0);
+    }
+    requireApiKey();
+    command().catch((err) => fail(err.message));
+  };
+
+  return { positional, flags, writable: !!flags.writable, fail, required, requiredInt, oneOf, dryRun, dispatch };
+}
+
+/** Whether the module at `moduleUrl` is the script node was started with, rather than an import. */
+export function isMain(moduleUrl) {
+  return !!process.argv[1] && moduleUrl === pathToFileURL(process.argv[1]).href;
+}
+
+/** Print the API target, the key's user, and whether that user is a moderator. */
+export async function whoami() {
+  const { token } = await trpcCall('user.getToken', undefined, 'GET');
+  const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+  const moderator = await trpcCall('generation.getGateRules', undefined, 'GET').then(
+    () => true,
+    () => false
+  );
+  console.log(`Target:    ${API_URL}`);
+  console.log(`User id:   ${payload.userId ?? payload.id ?? 'unknown'}`);
+  console.log(`Moderator: ${moderator ? 'yes' : 'NO — moderator-only commands will fail'}`);
 }
