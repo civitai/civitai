@@ -160,7 +160,8 @@ form action reloads `load`, and the expanded state survives a link being shared.
 │ │  path      /apps                                                  │ │
 │ │  kind      onsite      category  (none)                           │ │
 │ │  sort      newest      query     —                                │ │
-│ │  session   9f3c…a12   ⧉                                           │ │
+│ │  session   v913JNcgDs ⧉                                           │ │
+│ │            Faro data expired (72h Loki retention)                 │ │
 │ │                                                                   │ │
 │ │ ATTACHMENTS  (none)                                               │ │
 │ │                                                                   │ │
@@ -209,10 +210,89 @@ one base per app beats a second decision per page.
 | --- | --- |
 | `path` | Monospace, plus the reconstructed link above it |
 | `filters.*` | A four-cell grid: kind / category / sort / query. `query` empty → `—` |
-| `sessionId` | Monospace, with a copy control. This is a Faro session id; **absence is ordinary**, not an error — Faro does not run in dev, test, preview, or an ad-blocked session. It is not a link: turning it into one needs a Grafana base URL the moderator app does not carry today (see Open questions) |
+| `sessionId` | Monospace, with a copy control, **plus an age-aware Grafana Explore link** — its own subsection below. **Absence is ordinary**, not an error: Faro does not run in dev, test, preview, or an ad-blocked session |
 | `images` | Inline thumbnails — see below |
 | `screenshotId` | Inline thumbnail, labelled as the reporter's viewport capture |
 | anything else | 🔴 **Dumped verbatim as pretty-printed JSON under "Other context".** `feedbackContextSchema` already accepts `reportedSource`, `reportedPageSources` and `pagesLoaded`, which the `/apps` builder does not emit and a future area will. A panel that renders only the five keys it knows about silently discards the payload of every area added after it |
+
+### The Faro session deep link — built, and deliberately age-aware
+
+**Decision: build it.** The `sessionId` becomes a link into Grafana Explore against Loki, so a moderator
+goes from a one-line complaint to the reporter's actual browser telemetry in one click.
+
+**Datasource — confirmed, not assumed.** Loki is provisioned with a **pinned** `uid: loki` (name `Loki`,
+`orgId: 1`), read out of `/etc/grafana/provisioning/datasources/datasources.yaml` in the running Grafana
+pod rather than from a manifest, so this is what Grafana actually loaded. It is not a generated hash and
+will not change under a redeploy — it is declared in the GitOps values. Grafana is **13.1.1**, so the
+`panes` Explore state is the current form and the legacy `?left=` parameter is not something to build on.
+
+**Base URL: `https://grafana-new.civitai.com`.** New config for this app — it carries no Grafana variable
+today. A public var (`PUBLIC_GRAFANA_URL`), because the link is built for the browser; **the link must
+not render at all when it is unset**, rather than pointing at `undefined/explore`.
+
+```
+https://grafana-new.civitai.com/explore
+  ?schemaVersion=1
+  &orgId=1
+  &panes=<encodeURIComponent(JSON.stringify(pane))>
+```
+
+```jsonc
+{
+  "faro": {                                   // pane key: any short string
+    "datasource": "loki",
+    "queries": [{
+      "refId": "A",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "editorMode": "code",
+      "queryType": "range",
+      "expr": "{source=\"faro-rum\"} |= \"v913JNcgDs\""
+    }],
+    "range": { "from": "1755691320000", "to": "1755698520000" }  // epoch-ms strings
+  }
+}
+```
+
+`range` is derived from `Feedback.createdAt` — **±1 h around the report**, not `now-72h`. The moderator
+wants the session that produced the complaint, and a window centred on it is the only thing that
+survives being clicked two days later.
+
+🔴 **Use the raw substring filter `|= "<id>"`, NOT `| logfmt | session_id="<id>"`.** The id appears under
+**two different keys** in the same stream: `kind=event event_name=session_start` lines spell it
+`session_id=<id>`, while `faro.tracing.fetch` lines spell it `event_data_session.id=<id>`. A `logfmt`
+filter on `session_id` matches the first and silently drops the second — which are exactly the rows
+carrying `traceID`/`spanID`, i.e. the most useful ones. A filter that returns *some* rows is the worst
+possible failure here, because it looks like it worked.
+
+The honest caveat: session ids are short opaque strings (~10 chars, e.g. `v913JNcgDs`), so a substring
+match over the stream is **not provably collision-free**. At this volume a collision is unlikely and a
+stray extra line is visible to the reader; a dropped tracing event is not. That is the trade, stated
+rather than hidden.
+
+🔴 **The link expires after 72 hours, and the UI must say so instead of showing an empty Explore.**
+Loki's global `retention_period` is **72h**, and `{source="faro-rum"}` has no `retention_stream` override,
+so it sits on that global. (The separate `{signal="resource_timing"}` sub-stream is cut to 24h; that is a
+different stream and only matters to a query that names it.)
+
+Past 72 h the Explore view returns **no rows** — and "no logs found" is indistinguishable from *"this
+session produced no telemetry"* and from *"the link is broken"*. Three different facts, one observable.
+So:
+
+| `now - createdAt` | Rendering |
+| --- | --- |
+| **< 72 h** | A live Explore link |
+| **≥ 72 h** | **Not a link.** The copyable id, plus: *"Faro session data for this report expired (72 h Loki retention)."* |
+
+Derive the cutoff from `createdAt`, and put the figure in **one named constant** —
+`FARO_LOKI_RETENTION_HOURS = 72` in `$lib/feedback.ts`, with a comment naming Loki's `limits_config`
+as its source — so it cannot drift away from the cluster silently.
+
+**What this bounds.** The link's value is a function of **triage latency**: it pays off only if the queue
+is read within three days of a report landing. This queue has gone unread for a **month**, and all three
+live `apps-marketplace` rows (2026-08-20 → 2026-09-02) are already far past the window — every one of
+them renders as expired on day one. That is not an argument against the link. It is the argument **for**
+the sidebar count and for reading the queue at all: the telemetry is there for three days and then it is
+not, and nothing today tells anyone to look.
 
 ### Inline thumbnails — decided, with the risk recorded
 
@@ -302,6 +382,20 @@ permission id is a stored value: minting one is cheap today and permanent afterw
 `feedback.bug.promote` follows `csam.report.file`. 🔴 Both are **stored values** — every grant row is
 keyed `grant:<id>` — so renaming either after the first `/admin` save orphans its grants silently.
 
+### Who holds them at launch — settled
+
+**Both permissions are granted to the same set of roles.** Promoting is not held back from anyone who can
+triage, because a promoted `Bug` lands with `publishedAt` **NULL** and is therefore invisible to everyone
+without the `bugsEdit` flag; publishing it to the Known Issues board is a separate, deliberate act taken
+on `/issues` by someone who holds that flag. The thing that would justify a narrower grant — a triager
+being able to put text on a public page — is exactly what the null `publishedAt` prevents.
+
+🔴 **The two ids stay separate even though the grant is identical, and that is the whole point.** The
+split is the cheap half: both checkboxes already exist on `/admin`, so narrowing `feedback.bug.promote`
+later is one tick and no code change, no migration and no rename. Collapsing them into one id now would
+make that same decision a permission rename — which orphans stored grant rows — so the identical launch
+grant is a *configuration* choice and the separate ids are the thing that keeps it reversible.
+
 ### Handover — the page ships invisible
 
 🔴 **A new page has no `AppPageAccess` row, so on the day it merges only `moderator:admin` can see it,
@@ -309,7 +403,7 @@ and the two new permissions are held by nobody.** Three separate ticks are neede
 
 1. the `/feedback` **page** box, for each role that should reach the queue;
 2. **Set feedback status and triage notes**;
-3. **Promote feedback to a Known Issue**.
+3. **Promote feedback to a Known Issue** — the *same* roles as tick 2, per the decision above.
 
 This is the same handover note the Audit section's five-agent review left for `audit.ban.execute` and
 `csam.report.file`, and it is still open there — which is the argument for putting it in the merge
@@ -547,6 +641,7 @@ real `FormData`, mocked service module, assert the **translation** of the servic
 | `triage` action: status → `new` | Must clear `handledById`/`handledAt`. Assert the values passed to the service, not the return |
 | `promote` action: outcome translation | Service `{ ok: false, reason: 'already-linked' }` → a 409 the page renders; assert no Bug insert was attempted |
 | `splitContext(context)` | The known-keys / unknown-keys split. Feed it a key none of the five named ones cover and assert it lands in the "other" bucket — this is what stops a future area's payload vanishing |
+| `faroSessionLink({ sessionId, createdAt, now })` | 🔴 The highest-value test on this page, because both of its wrong answers are silent. Take `now` as an **argument**, never `Date.now()` inside — a function that reads the clock cannot be tested at the boundary at all. Four cases: **inside** 72 h → a URL; **outside** → `null` (the caller renders the expired note); **exactly 72 h** → pin which side the boundary falls on and assert it, rather than leaving it to whichever comparison operator got typed; `sessionId` absent → `null`, not a URL with `undefined` in it. Then assert the built URL **contains `|= "<id>"` and does not contain `logfmt`** — that is the whole two-spellings hazard, expressed as something a machine can check |
 
 Worth adding, in the `explain-harness` style already in this app: an `EXPLAIN` (never `ANALYZE`) over the
 list query and the count, gated on `describe.skipIf(!hasDb)`, to prove the two new reads compile against
@@ -559,13 +654,31 @@ this app's standard requires anyway.
 
 ---
 
-## 8. Risks and open questions
+## 8. Risks and decisions
 
 ### Risks
 
 🔴 **Inline attachments render unverified, client-supplied Cloudflare ids.** Section 3 carries the full
 statement. Accepted by the operator; the one-line mitigation (`blur={40}` + click to clear) is recorded
 and not adopted. Revisit if anyone who is not a moderator ever gets the page grant.
+
+🔴 **Faro session data expires at 72 h, and the failure mode is an empty screen that lies.** Loki's global
+`retention_period` is 72h and `{source="faro-rum"}` has no stream override. Past that window the Explore
+view returns no rows — and *"the data expired"*, *"this session produced no telemetry"* and *"the link is
+broken"* are three different facts with **one observable**. A reader who is not told which one they are
+looking at will pick whichever they already suspected. The age-aware rendering in §3 is the whole
+mitigation: inside 72 h a link, outside it no link and an explicit expiry note, cutoff derived from
+`createdAt` and held in one named constant (`FARO_LOKI_RETENTION_HOURS`) whose comment names Loki's
+`limits_config` as its source. 🔴 **That constant is a copy of a number owned by another repo.** Nothing
+makes the two agree — if Loki's retention is ever shortened, this page starts offering links that land on
+nothing, and the mismatch is invisible from inside this codebase. Re-read it when the link stops paying
+off, and treat a live link that returns nothing as evidence the constant is stale, not that Faro is
+broken.
+
+🟡 **The deep link is only worth having if the queue is read within three days.** Stated in §3 and worth
+repeating as a risk, because it is the one that has already happened: the queue has gone unread for a
+month, so every row in it today renders as expired. The link does not fix triage latency — it *rewards*
+it, which is a different thing and is why it ships alongside the sidebar count rather than instead of it.
 
 🔴 **`Bug.status` is a free-form string with no enum and no CHECK constraint.**
 `BUG_STATUS_SUGGESTIONS = ['Open', 'In Progress', 'In Review', 'Complete']` is an autocomplete list fed
@@ -604,20 +717,29 @@ they cost nothing to display. The concrete recommendation:
 
 That leaves the queue at 3 rows on day two, which is the honest number.
 
-### Open questions for the operator
+### Decisions
 
-1. **Should `sessionId` become a link?** It is a Faro session id and the interesting thing to do with it
-   is open that session's RUM trace in Grafana. The moderator app carries no Grafana base URL today, so
-   this is a new public env var (`PUBLIC_GRAFANA_URL` or similar) plus the deep-link path format. Worth
-   it, or is a copyable string enough for 3 rows?
-2. **Who holds `feedback.bug.promote`?** Creating a draft Bug is low-risk while `publishedAt` stays
-   null, but the row lands in the table the public board reads and the only thing keeping it invisible is
-   one nullable column. Same set of roles as `feedback.status.set`, or narrower?
-3. **Should the reporter ever hear back?** Nothing in this scope tells a user their feedback was read,
-   and the Bug they were promoted onto has a public page. A "your report is tracked as #1234"
-   notification is a real feature with a real design, and it is the thing most likely to be asked for
-   the week after this ships. Worth knowing now whether the answer is "yes, later" or "no" — it changes
-   whether `Feedback.bugId` is an internal link or a user-facing one.
+The three questions this proposal opened have been answered. They are settled, not deferred.
+
+**1. No reporter feedback loop. `Feedback.bugId` is an internal link only.** Nothing notifies the
+reporter that their feedback was read, promoted, or fixed — not now, and not as a planned later phase.
+If a promoted report is eventually published to Known Issues the reporter may come across it like anyone
+else; that is **incidental, not a designed path**, and no part of this page should be built as if it were
+the first step toward one. What this settles concretely: `bugId` needs no user-facing rendering, no
+notification hook and no "reporter was told" state, and the sibling-reports panel in §5 can show
+`userId`s freely because it is a moderator-only view with no outward edge.
+
+**2. `feedback.bug.promote` launches with the same roles as `feedback.status.set`.** Reasoning and the
+"separate ids, identical grant, cheap to narrow later" argument are in §4 — that is where an implementer
+will look for it.
+
+**3. Build the Grafana Explore deep link.** This overrode the recommendation to leave `sessionId` as a
+copyable string, and the design is in §3. The reversal was right for a reason worth recording: the
+objection was "a new env var and an unknown URL format for 3 rows", and both halves dissolved on contact
+with the facts — the Loki datasource has a **pinned** uid (`loki`, confirmed in the running Grafana pod,
+not inferred from a manifest), so there was no format to guess at. What the investigation *did* surface
+was the thing nobody had asked about: **72 h retention**, which changes the feature's shape far more than
+the link itself does. The question was worth asking; the answer it produced was not the one it was about.
 
 ---
 
@@ -628,13 +750,21 @@ That leaves the queue at 3 rows on day two, which is the honest number.
 | `schema.full.prisma` edit + `db:generate` + commit the generated files | 0.5 h |
 | Apply the migration by hand (prod nvme0 + dev clone) | 0.25 h, human |
 | `$lib/feedback.ts` — area/status labels, `reconstructFeedbackUrl`, `splitContext`, `feedbackAreaOptions` | 2 h |
+| `faroSessionLink` + `FARO_LOKI_RETENTION_HOURS` + `PUBLIC_GRAFANA_URL` wiring (env var, `.env.example`, the absent-var and expired branches) | 1 h |
 | `$lib/server/feedback.service.ts` — list (keyset), count, `triage`, `promote`, `linkToBug`, siblings-by-bug | 3 h |
 | `NAVIGATION` entry + two `PERMISSIONS` + the `feedbackNew` count in `sidebar-counts.service.ts` | 1 h |
 | `/feedback` route — `+page.server.ts` (load + 2 actions) | 2 h |
 | `/feedback` UI — list, filter bar, expanded row, context panel, thumbnails, promote form | 5 h |
-| Tests (§7) | 2.5 h |
+| Tests (§7) | 3 h |
 | `svelte-correctness-review` / `svelte-idiom-review` / `svelte-abstraction-review` + fixes + looking at the page | 3 h |
-| **Total** | **~19 h**, one implementation pass |
+| **Total** | **~20.5 h**, one implementation pass |
+
+🔴 **One thing in the deep link cannot be desk-checked and is not in any of the numbers above: click it
+once.** The datasource uid and the Grafana version are confirmed live, and the `panes` state is Grafana's
+documented Explore format for 13.x — but a URL built from documentation is a claim about the
+documentation. Build one against a report **less than 72 h old** (a fresh one, or a row you have just
+written into the dev clone) and confirm it lands on rows rather than an empty pane; a link tested against
+an expired session proves only that expiry works.
 
 ### Not in scope
 
@@ -646,6 +776,9 @@ That leaves the queue at 3 rows on day two, which is the honest number.
   (`feedback.constants.ts`:19-36), so a failed re-send still spends upload budget; and nothing verifies
   that an uploaded image id belongs to the reporter. Both are real and both are the producer's problem,
   not the queue's.
-- **Notifying reporters.** Open question 3.
+- **Notifying reporters.** A **settled no**, not a deferral — see §8 Decisions. `Feedback.bugId` is an
+  internal link; nothing on this page tells a user their report was read, promoted or fixed.
 - **A cluster-side consumer** (Discord notifier, weekly digest). If the queue is worth watching, that is
   the next lever, and it should read the same service this page does rather than the table directly.
+  🔴 Note what §3 implies about its urgency: Faro telemetry is gone after 72 h, so a notifier is the only
+  thing that could reliably get a moderator to the queue while the deep link still resolves.
