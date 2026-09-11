@@ -556,14 +556,16 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       .toHaveTextContent('Daily Buzz limit: 750 Buzz/day');
   });
 
-  // 🔴 THE DISCRIMINATING HALF. The fixture holds TWO apps and only one has the spend
+  // 🔴 THE DISCRIMINATING HALF. The fixture holds THREE apps and only one has the spend
   // scope GRANTED, so exactly one control may render. Without this, a control rendered
   // unconditionally would pass the test above.
+  // (⚠️ Said TWO until the grant-only fixture was added below and this count was left
+  // behind — a claim staled by the same commit that added the third card.)
   test('renders NO limit control for an app without the granted spend scope', async () => {
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
-    // Positive control: BOTH apps really rendered, so "one control" is a fact about the
-    // grant and not about a panel that only drew one card.
+    // Positive control: ALL THREE apps really rendered, so "one control" is a fact about
+    // the grant and not about a panel that only drew one card.
     expect(page.getByTestId('app-budget-value').elements()).toHaveLength(1);
     const names = Array.from(
       document.querySelectorAll('[data-testid="apps-installed-grants-grid"] .truncate')

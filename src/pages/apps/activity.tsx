@@ -559,11 +559,16 @@ function ScopeGrantsPanel() {
        `listMyScopeGrants` now also enumerates live `app_user_scope_grants`, so a consented
        full-page app DOES appear and is no longer part of the silence. ⚠️ TWO populations
        remain, not one: (a) blocks OTHER people installed, which carry no row of the
-       viewer's; and (b) an app whose scopes are ALL in `CONSENT_EXEMPT_SCOPES`
-       (`scope-grant.service.ts`), for which `partitionByConsent` returns `missing: []`, so no
-       modal fires, `recordInstallConsent` is never reached, and it writes to the account with
-       NO grant row. The string stays true — they granted nothing — but the silence is wider
-       than "other people's installs". */
+       viewer's; and (b) an app the viewer NEVER installed or subscribed to whose scopes are
+       ALL in `CONSENT_EXEMPT_SCOPES` (`scope-grant.service.ts`) — `partitionByConsent`
+       returns `missing: []`, so no consent modal fires and nothing writes a grant row, yet
+       exempt scopes like `collections:write:self` still write to the account.
+       ⚠️ The "never installed" half is load-bearing and an earlier draft omitted it: install
+       and subscribe call `recordInstallConsent` UNCONDITIONALLY (`block-registry.service.ts`
+       :2285, :2921 — not on the modal path), and `recordScopeGrant` has no empty-scopes early
+       return, so an INSTALLED all-exempt app does get a row, with `grantedScopes: []`.
+       The string stays true — they granted nothing — but the silence is wider than
+       "other people's installs". */
     return (
       <EmptyState label="No apps installed, subscribed to, or granted permissions yet. This tab covers your own installs and consents — Recent activity is the full record of what apps have done on your account." />
     );

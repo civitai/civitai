@@ -414,17 +414,37 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     // is a fact about comment density and nothing to do with the masker. Measured here
     // after the `/apps/activity` rename: 0.5648.
     //
-    // 🔴 AND IT MOVED AGAIN, 0.65 → 0.70, FOR THE CAUSE THE PARAGRAPH ABOVE PREDICTS.
-    // Widening the permissions copy (three longer user-facing strings, which mask as
-    // blanks) plus the comments recording why took the live ratio to 0.6558 — measured,
-    // after trimming that prose to its load-bearing claims, from 0.6624 before the trim.
-    // The alternative was deleting documentation an audit round had just required, which
-    // would be relaxing the file to fit the gate rather than the gate to fit the file.
+    // 🔴 AND IT MOVED AGAIN, 0.65 → 0.70, FOR THE CAUSE THE PARAGRAPH ABOVE PREDICTS —
+    // BUT NOT MOSTLY BECAUSE OF THE CHANGE THAT TRIPPED IT. ⚠️ The `0.5648` above is STALE
+    // (it dates from #4699). Measured with this file's own masker at the moment of the
+    // re-cut: `origin/main` ALREADY read ≈0.645 — under 0.005 of headroom on the old 0.65
+    // bound — and the permissions-copy widening moved it by ≈0.01, not by the ≈0.09 an
+    // earlier revision of this paragraph claimed by differencing against the stale figure.
+    // So the bound was going to trip for whoever added the next comment either way, which
+    // is exactly the failure the paragraph above describes. (Point-in-time, and rounded on
+    // purpose — see the next paragraph on why exact ratios do not survive in prose here.)
     //
-    // 🔴 RE-CUT AGAINST THE CONTROL, NOT AGAINST THE NEW VALUE. The negative control below
-    // measures 0.8510 on this same file, so 0.70 keeps ~0.15 of real separation from the
-    // defect state and ~0.04 from the live one. A bound set just above whatever the file
-    // currently reads would be the 0.0014-headroom mistake again.
+    // 🔴 RE-CUT AGAINST THE CONTROL, NOT AGAINST THE NEW VALUE — the control sits far above
+    // the bound while the live value sits below it, which is the property that matters.
+    //
+    // ⚠️ DELIBERATELY NOT QUOTING THE TWO MEASUREMENTS AS PINNED NUMBERS, because they DRIFT
+    // WITH THIS FILE AND KEEP FALSIFYING THE COMMENT. Three successive revisions quoted a
+    // control figure and each was stale within one edit (0.8510 — an uncommitted
+    // intermediate — then 0.8482, then 0.8499 after one more paragraph landed here); every
+    // line added to `activity.tsx`, code or comment, moves both. The BOUNDS are asserted in
+    // code below and cannot go stale; the ratios are outputs. Re-derive rather than trusting
+    // a number in prose:
+    //   node -e 'const f=require("fs").readFileSync("src/pages/apps/activity.tsx","utf8"),
+    //     r=t=>t.split("").filter(c=>c===" ").length/t.length, i=f.indexOf("app's");
+    //     console.log(r(f.slice(0,i)+f.slice(i).replace(/[^\n]/g," ")))'
+    // That prints the CONTROL; the live masked ratio is whatever this test reports when the
+    // bound below fails. A bound set just above whatever the file currently reads would be
+    // the 0.0018-headroom mistake again.
+    //
+    // ⚠️ KNOWN COST, recorded rather than discovered later: 0.70 is less sensitive to a
+    // PARTIAL, late-file desync — one blanking ≲13% of the tail now passes. Accepted
+    // because 0.65 was unusable at 0.0018 headroom, and because the functional check in
+    // this test is the `features.appBlocks` occurrence count above, not the ratio.
     const spaceRatio = (text: string) =>
       text.split('').filter((c) => c === ' ').length / text.length;
     expect(spaceRatio(masked)).toBeLessThan(0.7);
@@ -437,8 +457,9 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     const desynced = raw.slice(0, apostrophe) + raw.slice(apostrophe).replace(/[^\n]/g, ' ');
     // 🔴 THE SAME NUMBER AS THE LIVE BOUND, DELIBERATELY. If this stayed at 0.65 while the
     // bound above moved to 0.70, the control would no longer prove separation — a desync
-    // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Measured here:
-    // 0.8510. Move the two together or the control stops being one.
+    // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Move the two
+    // together or the control stops being one. (No measured ratio quoted here either — see
+    // the paragraph above on why those figures drift.)
     expect(spaceRatio(desynced)).toBeGreaterThan(0.7);
   });
 
