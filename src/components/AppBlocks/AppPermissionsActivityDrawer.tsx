@@ -80,17 +80,20 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
     <Stack gap="lg">
       {appName && (
         <Text size="sm" c="dimmed">
-          The permissions <strong>{appName}</strong> carries through your own installs, and what it
-          has done recently. Only you can see this.
+          The permissions <strong>{appName}</strong> carries through your own installs and consents,
+          and what it has done recently. Only you can see this.
         </Text>
       )}
 
       <Stack gap="xs">
-        {/* "…from your installs", not "Granted permissions" — the section's only source is
-            install-backed, so the wider heading was the same overstatement as the empty
-            label it sits above. */}
+        {/* "…from your installs and consents". #4722 narrowed this to "from your installs"
+            because the section's only source WAS install-backed; `listMyScopeGrants` now also
+            enumerates live `app_user_scope_grants` rows, so install-only is the narrow
+            overstatement in the other direction. Still not the bare "Granted permissions"
+            #4722 rejected: the list below is the app's MANIFEST set, not the user's granted
+            set — see the comment on `BlockScopeList` below. */}
         <Text fw={600} size="sm">
-          Permissions from your installs
+          Permissions from your installs and consents
         </Text>
         {!isAuthed ? (
           <Text size="xs" c="dimmed" fs="italic">
@@ -103,17 +106,45 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
         ) : (
           /* 🔴 THE EMPTY LABEL IS NOT "no permissions granted", AND THE PANEL BELOW IS WHY.
              `grant` is `grants.find(g => g.appBlockId === appBlockId)` over
-             `listMyScopeGrants`, whose only source is the viewer's OWN
-             `block_user_subscriptions` rows. A full-page app has no install, so that lookup
-             is `undefined` for every such app — and the drawer then claimed the viewer had
-             granted it nothing WHILE `AppActivityPanel` a few lines down listed the
-             scope-gated calls that same app had just made, possibly minutes after they
-             accepted its consent modal. Two halves of one drawer contradicting each other.
-             Absence of an install-backed row is not absence of granted permission; the label
-             says which of the two it is and sends the reader to the half that knows. */
+             `listMyScopeGrants`.
+             ⚠️ THE PREVIOUS SENTENCE HERE — "whose only source is the viewer's OWN
+             `block_user_subscriptions` rows" — WAS TRUE WHEN #4722 WROTE IT AND IS NOW FALSE.
+             That function also enumerates live (non-revoked) `app_user_scope_grants` rows, so
+             a full-page app the viewer CONSENTED to now resolves here instead of falling
+             through to the empty label. The contradiction #4722 described — this half claiming
+             the viewer granted nothing while `AppActivityPanel` below listed that same app's
+             scope-gated calls — is fixed at the source rather than described.
+             The label still matters for what remains: an app with NEITHER an install NOR a
+             consent grant, where absence of a row is still not absence of access.
+
+             🔴 `grant.scopes` IS THE APP'S MANIFEST-DECLARED SET, NOT THE VIEWER'S GRANTED SET.
+             ⚠️ AN EARLIER REVISION OF THIS COMMENT SAID "granted ⊆ manifest BY CONSTRUCTION".
+             THAT IS FALSE and the containment holds only AT GRANT TIME. Two writes break it
+             afterwards, and they compose: `recordScopeGrant` UNIONS on re-consent
+             (`grantedScopes = existing ∪ incoming`, `scope-grant.service.ts:232` and `:263`)
+             and nothing ever writes a non-null `revoked_at`, so the granted set only GROWS;
+             meanwhile a subsequent approved version REPLACES `manifest` + `approvedScopes`
+             IN PLACE on the same `AppBlock` row (`publish-request.service.ts`, "Subsequent
+             version: refresh manifest + version + approvedScopes"), while the grant is unique
+             on `(userId, appBlockId)` and survives. So a publisher who DROPS a scope in v2
+             leaves the viewer holding a granted scope that is no longer in the manifest.
+
+             Consequence for this list, in BOTH directions: it OVERSTATES when the manifest
+             declares more than the viewer granted (the ordinary case), and UNDERSTATES when a
+             version removed a scope the viewer still holds — the second being the one a
+             "permissions you granted" surface most needs to show, since nothing else reveals
+             it and a later version re-declaring that scope is signed through by
+             `partitionByConsent` with NO fresh prompt.
+
+             Pre-existing, and deliberately NOT changed here: `grantedScopes` is not on
+             `ScopeGrantSurface` at all, and it is EMPTY for an install-backed row carrying no
+             consent grant, so this is a new field plus a per-row choice of which set to show —
+             not a swap. Widening the population makes it the common case rather than a
+             ~4-row edge, so it is recorded as an open decision rather than silently
+             expanded — see the PR discussion. */
           <BlockScopeList
             scopes={grant?.scopes ?? []}
-            emptyLabel="No permissions recorded from an install of this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."
+            emptyLabel="No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."
           />
         )}
       </Stack>
