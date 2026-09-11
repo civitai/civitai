@@ -72,11 +72,17 @@ export function AssociateModels({
           message: `${atLimit} of the creator's models already have ${limit} suggested resources, so this model was not added to them.`,
         });
 
-      queryUtils.model.getAssociatedResourcesSimple.setData(
-        { fromId, type, browsingLevel: allBrowsingLevelsFlag },
-        () => associatedResources as ModelGetAssociatedResourcesSimple
-      );
-      await queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type });
+      // Refetch rather than seeding the cache with the local rows: they carry no association
+      // ids, and `staleTime` is Infinity, so writing them back makes every row look newly
+      // added the next time this modal opens on the same page.
+      await Promise.all([
+        queryUtils.model.getAssociatedResourcesSimple.invalidate({
+          fromId,
+          type,
+          browsingLevel: allBrowsingLevelsFlag,
+        }),
+        queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type }),
+      ]);
       setChanged(false);
       setReciprocal(false);
       onSave?.();
@@ -135,7 +141,9 @@ export function AssociateModels({
         resourceType,
         resourceId: item.id,
       })),
-      reciprocal,
+      // The checkbox unmounts when the last new row is removed, but its state does not reset
+      // with it; send what the user can currently see, not what they ticked earlier.
+      reciprocal: reciprocal && addedCount > 0,
     });
   };
 
@@ -213,6 +221,11 @@ export function AssociateModels({
                                 <Badge size="xs">
                                   {'type' in association.item ? association.item.type : 'Article'}
                                 </Badge>
+                                {association.id === undefined && (
+                                  <Badge size="xs" color="blue">
+                                    New
+                                  </Badge>
+                                )}
                                 <Badge size="xs" pl={4}>
                                   <Group gap={2}>
                                     <IconUser size={12} strokeWidth={2.5} />
@@ -254,15 +267,15 @@ export function AssociateModels({
             setChanged(true);
           }}
           label="Link both ways"
-          description={
+          description={`${
             ownAddedCount === addedCount
               ? `Also adds this model to the suggested resources of ${
-                  addedCount === 1
-                    ? 'the model you just added'
-                    : `the ${addedCount} models you just added`
-                }. Links added this way stay on the other model until you remove them there.`
-              : `Also adds this model to the suggested resources of the ${ownAddedCount} of ${addedCount} models you just added that this creator owns. The rest are left alone. Links added this way stay on the other model until you remove them there.`
-          }
+                  addedCount === 1 ? 'the model' : `the ${addedCount} models`
+                } marked New above.`
+              : `Also adds this model to the suggested resources of the ${ownAddedCount} of ${addedCount} models marked New above that ${
+                  currentUser?.id === ownerId ? 'you own' : 'this creator owns'
+                }. The rest are left alone.`
+          } Resources already on the list are untouched, and a link added this way stays on the other model until it is removed there.`}
         />
       )}
 

@@ -4078,7 +4078,7 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true },
+        select: { id: true, toModelId: true },
         orderBy: { index: 'asc' },
       },
     },
@@ -4089,6 +4089,9 @@ export const setAssociatedResources = async (
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
   const existingAssociations = fromModel.associations.map((x) => x.id);
+  const existingModelTargets = new Set(
+    fromModel.associations.map((x) => x.toModelId).filter(isDefined)
+  );
   const associationsToRemove = existingAssociations.filter(
     (existingToId) => !associations.find((item) => item.id === existingToId)
   );
@@ -4125,13 +4128,19 @@ export const setAssociatedResources = async (
         // Only resources added during this edit, never the ones already on the list. An
         // association the model already held is one the creator linked at some earlier point
         // and chose not to link back then; a later save of an unrelated change must not
-        // retroactively reach into those models. Derived from the rows the database reports,
-        // not from whether the client sent an id.
+        // retroactively reach into those models.
+        //
+        // This is the whole enforcement of that rule, and it deliberately asks the database
+        // which models are already linked rather than trusting the payload's association ids.
+        // Those ids are absent for a row the client believes is new, and the client is wrong
+        // about that more often than it looks: it writes its own id-less array into the query
+        // cache after a save, so a second save in the same page session presents every row as
+        // new. Comparing model ids is immune to that, and to a caller omitting an id on purpose.
         targetIds: associations
           .filter(
             (association) =>
               association.resourceType === 'model' &&
-              (association.id === undefined || !existingAssociations.includes(association.id))
+              !existingModelTargets.has(association.resourceId)
           )
           .map((association) => association.resourceId),
         actorId: user?.id,

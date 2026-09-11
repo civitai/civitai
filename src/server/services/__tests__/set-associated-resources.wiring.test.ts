@@ -94,11 +94,14 @@ const MODERATOR = 900;
 const owner = { id: OWNER, isModerator: false } as SessionUser;
 const moderator = { id: MODERATOR, isModerator: true } as SessionUser;
 
-/** The model being edited, and what it currently points at. */
-function givenSourceModel(associations: number[] = []) {
+/**
+ * The model being edited, and what it currently points at: `[associationRowId, toModelId]`
+ * pairs, matching the shape the service selects.
+ */
+function givenSourceModel(associations: Array<[number, number | null]> = []) {
   dbMock.dbWrite.model.findUnique.mockResolvedValue({
     userId: OWNER,
-    associations: associations.map((id) => ({ id })),
+    associations: associations.map(([id, toModelId]) => ({ id, toModelId })),
   });
 }
 
@@ -112,9 +115,19 @@ function givenSourceModel(associations: number[] = []) {
 function givenTargets(targets: Array<{ id: number; userId: number }>) {
   dbMock.dbWrite.model.findMany.mockImplementation(async (args: unknown) => {
     const ids = (args as { where?: { id?: { in?: number[] } } })?.where?.id?.in;
-    return ids ? targets.filter((target) => ids.includes(target.id)) : targets;
+    if (!ids) throw new Error('model.findMany called without where.id.in');
+    return targets.filter((target) => ids.includes(target.id));
   });
   dbMock.dbWrite.modelAssociations.findMany.mockResolvedValue([]);
+}
+
+/** Rows the targets' own suggested-resource lists already hold. */
+function givenTargetLists(rows: Array<{ fromModelId: number; toModelId: number | null }>) {
+  dbMock.dbWrite.modelAssociations.findMany.mockImplementation(async (args: unknown) => {
+    const ids = (args as { where?: { fromModelId?: { in?: number[] } } })?.where?.fromModelId?.in;
+    if (!ids) throw new Error('modelAssociations.findMany called without where.fromModelId.in');
+    return rows.filter((row) => ids.includes(row.fromModelId));
+  });
 }
 
 const save = (
@@ -174,10 +187,12 @@ describe('setAssociatedResources — reciprocal wiring', () => {
       { reciprocal: true, user: moderator }
     );
 
-    expect(createdRows().map((row) => row.fromModelId)).toEqual([2]);
+    expect(createdRows()).toEqual([
+      { fromModelId: 2, toModelId: SOURCE, index: 0, type: 'Suggested', associatedById: MODERATOR },
+    ]);
   });
 
-  it('derives ownership from the database, not from the request', async () => {
+  it('asks the database for each target owner', async () => {
     givenTargets([{ id: 2, userId: 555 }]);
 
     await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
@@ -200,13 +215,42 @@ describe('setAssociatedResources — reciprocal wiring', () => {
     expect(dbMock.dbRead.modelAssociations.findMany).not.toHaveBeenCalled();
   });
 
+  // The target's OWN list is what decides both of these, and both were previously derived
+  // from a read the suite never populated — every test ran with it empty, so a mutation that
+  // counted the wrong column, or inverted the already-linked check, shipped green and wrote a
+  // second back-link into someone else's model on every repeat save.
+  it('does not write a back-link the target already holds', async () => {
+    givenTargets([{ id: 2, userId: OWNER }]);
+    givenTargetLists([{ fromModelId: 2, toModelId: SOURCE }]);
+
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+
+    expect(dbMock.dbWrite.modelAssociations.createMany).not.toHaveBeenCalled();
+  });
+
+  it('appends after the rows the target already holds', async () => {
+    givenTargets([{ id: 2, userId: OWNER }]);
+    givenTargetLists([
+      { fromModelId: 2, toModelId: 71 },
+      { fromModelId: 2, toModelId: 72 },
+      { fromModelId: 2, toModelId: null },
+      { fromModelId: 99, toModelId: 73 },
+    ]);
+
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+
+    expect(createdRows()).toEqual([
+      { fromModelId: 2, toModelId: SOURCE, index: 3, type: 'Suggested', associatedById: OWNER },
+    ]);
+  });
+
   // Scope decided by Justin on 2026-09-11: the checkbox acts on what you just added, not on
   // the whole saved list. Our modal saves the entire list, so without this a user who ticks
   // the box while changing something unrelated retroactively back-links resources they linked
   // months ago and never touched this session. If you widen this to every association, that is
   // the behaviour you are bringing back.
   it('back-links only resources added in this edit, never ones already on the list', async () => {
-    givenSourceModel([11]);
+    givenSourceModel([[11, 2]]);
     givenTargets([
       { id: 2, userId: OWNER },
       { id: 3, userId: OWNER },
@@ -221,6 +265,20 @@ describe('setAssociatedResources — reciprocal wiring', () => {
     );
 
     expect(createdRows().map((row) => row.fromModelId)).toEqual([3]);
+  });
+
+  // The reachable version of the same bug, and the reason the rule is derived from model ids
+  // rather than from association ids. The component used to write its own id-less rows into a
+  // query cache with staleTime Infinity, so on a second open every saved row presented itself
+  // as new. The client is fixed, but the server must not depend on the client being right:
+  // an association id is a claim, and the model ids the database holds are not.
+  it('ignores a claim of newness when the model is already on the list', async () => {
+    givenSourceModel([[11, 2]]);
+    givenTargets([{ id: 2, userId: OWNER }]);
+
+    await save([{ resourceId: 2, resourceType: 'model' }], { reciprocal: true });
+
+    expect(dbMock.dbWrite.modelAssociations.createMany).not.toHaveBeenCalled();
   });
 
   it('ignores articles when choosing reciprocal targets', async () => {
@@ -246,7 +304,10 @@ describe('setAssociatedResources — reciprocal wiring', () => {
   // If you are here to add symmetric removal, that is the tradeoff you are re-opening, and it
   // needs a marker column to tell which rows were safe to delete.
   it('deletes only from the edited model, never from a model it links to', async () => {
-    givenSourceModel([11, 12]);
+    givenSourceModel([
+      [11, 2],
+      [12, 5],
+    ]);
     givenTargets([{ id: 2, userId: OWNER }]);
 
     await save([{ resourceId: 2, resourceType: 'model', id: 11 }], { reciprocal: true });

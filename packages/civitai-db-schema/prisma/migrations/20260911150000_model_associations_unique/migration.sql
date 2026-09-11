@@ -24,9 +24,19 @@ WHERE a."toModelId" IS NOT NULL
 
 -- The 5 is a point-in-time count, not a gate: re-check it rather than treating it as pass/fail.
 --
--- Statement 2 — the name Prisma derives from @@unique, so the follow-up that declares
--- @@unique in schema.full.prisma introspects clean. A cancelled or interrupted
--- CREATE INDEX CONCURRENTLY leaves an INVALID index behind that must be dropped before retrying:
---   DROP INDEX CONCURRENTLY IF EXISTS "ModelAssociations_fromModelId_toModelId_type_key";
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "ModelAssociations_fromModelId_toModelId_type_key"
+-- Statement 2 — RUN THIS FIRST ON ANY RETRY, AND ONLY ON A RETRY.
+-- A cancelled or interrupted CREATE INDEX CONCURRENTLY leaves an INVALID index behind under
+-- the same name. It is not dropped for you, it enforces nothing, and the planner never uses
+-- it. Note that `IF NOT EXISTS` is deliberately absent from statement 3 for this reason:
+-- Postgres matches it on NAME, not on validity, so a bare re-run would report success over
+-- the broken index and everything downstream would believe duplicate suppression is live.
+DROP INDEX CONCURRENTLY IF EXISTS "ModelAssociations_fromModelId_toModelId_type_key";
+
+-- Statement 3 — the name Prisma derives from @@unique, so the follow-up that declares
+-- @@unique in schema.full.prisma introspects clean.
+CREATE UNIQUE INDEX CONCURRENTLY "ModelAssociations_fromModelId_toModelId_type_key"
   ON "ModelAssociations" ("fromModelId", "toModelId", "type");
+
+-- Confirm it is usable before trusting it. `indisvalid` false means the build did not finish:
+--   SELECT indisvalid FROM pg_index
+--    WHERE indexrelid = '"ModelAssociations_fromModelId_toModelId_type_key"'::regclass;
