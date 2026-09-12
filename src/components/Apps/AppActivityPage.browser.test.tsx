@@ -4,7 +4,10 @@ import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import { BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY } from '~/shared/constants/block-scope.constants';
+import {
+  BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+} from '~/shared/constants/block-scope.constants';
 
 /**
  * `/apps/activity` — the PAGE, mounted for real.
@@ -656,10 +659,12 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       const el = page.getByTestId('app-budget-low-warning');
       const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
       expect(text).toBe(
-        '5 Buzz/day will not cover one image generation — the cheapest engine costs ' +
-          `${BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run and others cost more, so ` +
-          'image generation will refuse until you raise it. Step-based actions, which ' +
-          'start at 1 Buzz, still run. You can change it here at any time.'
+        '5 Buzz/day may be too low. An image generation reserves its worst case up front — ' +
+          `up to ${BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz on the cheapest recipe engine ` +
+          `and up to ${BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY} on the priciest — and is ` +
+          'refused if that reservation exceeds your limit, even when the run would have ' +
+          'settled for less. Step-based actions, from 1 Buzz, still run. You can change it ' +
+          'here at any time.'
       );
     }
   });

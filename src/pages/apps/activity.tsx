@@ -56,6 +56,7 @@ import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPage
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
+  BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
@@ -499,19 +500,25 @@ function AppBudgetControl({
       {/* A very low limit is a real setting, not a mistake — but it is also the one
           that makes an app look broken, so say what it does at the point it is set.
           This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
-          🔴 THE THRESHOLD IS A FLOOR, NOT A CEILING — say "at least", never "up to".
-          BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY is the LOWEST per-engine maxBuzz
-          (zimage-turbo 90); flux2-klein is 150 and qwen-image 180. Copy reading "can cost
-          up to 90" is false in the other direction: at 100/day no warning fires, yet a
-          qwen-image run needs 180 and refuses. Say the ENGINE refuses, not "this app" —
-          registry steps cost from 1 Buzz, so a step-priced app keeps running under this
-          threshold, which is exactly the user MIN=1 exists to protect. */}
+          🔴 THREE RULES, EACH FROM A SENTENCE THAT SHIPPED HERE AND WAS FALSE.
+          (1) RESERVES, never COSTS — maxBuzz is the worst case reserved up front and
+              settled back to actual, so a run's real price is far lower (zimage-turbo
+              estimates 20 against a 90 ceiling; a warm starter run measured 4).
+          (2) HEDGE — the consent budget is path-agnostic, but these bounds describe the
+              RECIPE path only. `textToImage` reserves its live whatIf quote and is NOT
+              bounded below by LOW (the platform's own per-gen default is 10), so a
+              categorical "will not cover" is false there.
+          (3) Subject is the RUN, not "this app" — registry steps cost from 1 Buzz, so a
+              step-priced app keeps working under this threshold, and that user is exactly
+              who MIN=1 exists to protect.
+          Both bounds are pinned to the registry by recipes/__tests__/budget-bounds-parity. */}
       {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
         <Text size="xs" c="orange" data-testid="app-budget-low-warning">
-          {parsed.toLocaleString()} Buzz/day will not cover one image generation — the cheapest
-          engine costs {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run and others cost more, so
-          image generation will refuse until you raise it. Step-based actions, which start at 1
-          Buzz, still run. You can change it here at any time.
+          {parsed.toLocaleString()} Buzz/day may be too low. An image generation reserves its worst
+          case up front — up to {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz on the cheapest recipe
+          engine and up to {BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY} on the priciest — and is
+          refused if that reservation exceeds your limit, even when the run would have settled for
+          less. Step-based actions, from 1 Buzz, still run. You can change it here at any time.
         </Text>
       ) : null}
       <Group gap="xs" justify="flex-end">
