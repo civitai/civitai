@@ -116,6 +116,18 @@ describe('the apps pill gate', () => {
     expect(bar.some((e) => e.key === 'apps')).toBe(true);
   });
 
+  it('shows the pill for a signed-OUT store-flag holder — the gate is flags, not auth', () => {
+    // Every OTHER vector passes isAuthed: true, so the mutant
+    // `hasAppsStoreAccess(features) && ctx.isAuthed` survives the rest of the battery.
+    // /apps itself is anon-capable behind the flag (`resolveAppsPageAccess` F-E E1),
+    // so a signed-OUT holder must keep the pill the day a segment widens to anon.
+    const { bar } = resolveNavItems(navRegistry, {
+      features: onlyFlags('appListings'),
+      isAuthed: false,
+    });
+    expect(bar.some((e) => e.key === 'apps')).toBe(true);
+  });
+
   it('drops a PINNED pill once the viewer loses store access — gates run last over the config', () => {
     const { bar } = resolveNavItems(
       navRegistry,

@@ -57,10 +57,10 @@ import { describe, it, expect } from 'vitest';
  *
  * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI six of the seven sites are pinned STRUCTURALLY ONLY, by this file
+ * does. So in CI six of the eight sites are pinned STRUCTURALLY ONLY, by this file
  * — which is precisely why a hole in its masker (see below) is worth more than it
- * looks. (`appsNavVisibility` is the exception: its behavioural test is a unit
- * test, so it blocks too.)
+ * looks. (`appsNavVisibility` and `nav-registry` are the exceptions: their
+ * behavioural tests are unit tests, so they block too.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
