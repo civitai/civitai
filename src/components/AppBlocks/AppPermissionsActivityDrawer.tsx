@@ -3,6 +3,7 @@ import { IconShieldLock } from '@tabler/icons-react';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -98,7 +99,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
         </Text>
         {!isAuthed ? (
           <Text size="xs" c="dimmed" fs="italic">
-            Sign in to see the permissions you've granted this app.
+            Sign in to see the permissions you&apos;ve granted this app.
           </Text>
         ) : grantsQuery.isLoading ? (
           <Center py="md">
@@ -182,9 +183,24 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              is a new field plus a per-row choice of which set to show — not a swap. Widening the
              population makes it the common case rather than a ~4-row edge, so it remains an open
              decision rather than something silently expanded — see the PR discussion. */
+          /* 🔴 THE `emptyLabel` IS NOW ORIGIN-DERIVED, AND THE HARD-CODED STRING IT REPLACES WAS
+             WRONG FOR TWO OF THE THREE ROW CLASSES. It read "No permissions recorded from an
+             install or consent for this app", which is right when there is no row at all and
+             right for an activity-only row, but FALSE for an `install`/`consent` row whose
+             effective set happens to be empty — the viewer did install or consent, and the
+             sentence denies it. `scopeGrantEmptyScopeLabel` is the single owner of both
+             sentences, shared with `src/pages/apps/activity.tsx`, so this sibling cannot drift
+             from it again: the identical sentence on that page was corrected once while this one
+             was missed, and then this one was corrected while that one was missed.
+
+             NO ROW AT ALL still falls back to `'activity'`. That is the honest reading of the
+             absence on THIS surface: the drawer is mounted over an app the viewer is currently
+             running, so it unambiguously has access — "you granted it nothing, here is what it
+             did" is true, while the install/consent sentence would imply a relationship that
+             is not there. */
           <BlockScopeList
             scopes={grant?.scopes ?? []}
-            emptyLabel="No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."
+            emptyLabel={scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')}
           />
         )}
       </Stack>
@@ -197,7 +213,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
         </Text>
         {!isAuthed ? (
           <Text size="xs" c="dimmed" fs="italic">
-            Sign in to see this app's recent activity on your account.
+            Sign in to see this app&apos;s recent activity on your account.
           </Text>
         ) : (
           // Only rendered in the authed branch, so enabled defaults to true.

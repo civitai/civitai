@@ -22,6 +22,7 @@ import {
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
+import type { ScopeGrantOrigin } from '~/shared/constants/app-surface-provenance';
 
 /**
  * The SYNTHETIC (non-FK-resolving) `appBlockId` claim namespaces a PRE-APPROVAL
@@ -62,6 +63,13 @@ export type ScopeGrantSurface = {
    * 🔴 NOT "what the mint will issue a token for" — that claim was here and it was false in
    * two ways; see the assignment site in `listMyScopeGrants`. These are the scopes the app may
    * be granted and exercised with.
+   *
+   * 🔴 ALWAYS `[]` WHEN `origin === 'activity'`, and that is not the intersection coming out
+   * empty — it is a refusal to compute one. Such a row records that an app acted on the viewer
+   * with no install and no consent, so there is no granted set, and publishing the app-side
+   * ceiling on a page about what the viewer agreed to would reintroduce the over-report #4790
+   * removed. The empty array is read by `scopeGrantEmptyScopeLabel`, which supplies the only
+   * honest content that row has.
    */
   scopes: string[];
   /**
@@ -90,6 +98,24 @@ export type ScopeGrantSurface = {
    * control off an app-side set would render a field whose value the server silently drops.
    */
   spendScopeGranted: boolean;
+  /**
+   * WHY this row exists — `'install'` | `'consent'` | `'activity'`, in precedence order.
+   *
+   * 🔴 THIS IS A SERVER-SIDE DISCRIMINATOR BECAUSE THE CLIENT CANNOT DERIVE IT, AND THE
+   * CLIENT WAS GETTING IT WRONG THE MOMENT THE `'activity'` CLASS EXISTED.
+   * `buildScopeGrantSurfaceLine`'s predecessor read the provenance off `surfaces`: a row with
+   * `subscriptionScopes.length === 0 && modelInstallCount === 0` was labelled "Granted at
+   * consent · no install or subscription". An ACTIVITY-ONLY row is `0 / 0` too — that is what
+   * makes it activity-only — so the counts are not a discriminator between the two classes and
+   * the page would have asserted a consent that never happened. See
+   * `src/shared/constants/app-surface-provenance.ts`.
+   *
+   * It also selects the EMPTY-SCOPE LABEL, which is the other copy site the counts cannot
+   * reach: an activity-only row carries `scopes: []` by construction, and the default label
+   * ("this app doesn't request any permissions") is false for an app that made scope-gated
+   * API calls against this account.
+   */
+  origin: ScopeGrantOrigin;
   surfaces: {
     modelInstallCount: number;
     subscriptionScopes: string[];
@@ -97,10 +123,171 @@ export type ScopeGrantSurface = {
 };
 
 /**
- * Aggregates one row per AppBlock the user has installed on a model,
- * subscribed to, OR granted scopes to at a consent prompt. Same app counted
- * across multiple installs + subscriptions collapses to a single row with
+ * Rows per page of the all-time activity sweep below.
+ *
+ * Sized against the live shape rather than guessed. Measured on production 2026-09-12:
+ * `block_scope_invocations` holds 1,034,384 rows of which only **2,773** carry a non-null
+ * `app_block_id` (1,031,554 are `source = 'external-oauth'`, which have none), and the
+ * heaviest single viewer has 1,919 — so one page covers every real account today and the
+ * loop exists for the growth case, not the current one.
+ */
+const ACTIVITY_SWEEP_PAGE_SIZE = 2000;
+
+/**
+ * Pages the sweep will walk before giving up and SAYING SO.
+ *
+ * 🔴 A CEILING, NOT A LOOKBACK BOUND, AND IT IS DELIBERATELY NOT SILENT. The sweep is
+ * ALL-TIME — there is no `invoked_at > now() - Nd` filter anywhere below, which supersedes
+ * clawgate #532's own bounded-lookback acceptance criterion (the operator chose unbounded +
+ * paging; that is flagged on the card). A lookback bound would make an app that last acted on
+ * you outside the window silently invisible again, which is the precise defect this change
+ * exists to remove. But an unbounded loop is a DoS on a future account with millions of
+ * block-token rows, so there is a ceiling — and hitting it logs, because a truncated sweep
+ * under-reports and an under-report nobody can see is the same defect wearing a different hat.
+ *
+ * 20 pages × 2,000 = 40,000 rows, ~14× the ENTIRE non-null `app_block_id` population measured
+ * above, so nothing today is within an order of magnitude of it.
+ */
+const ACTIVITY_SWEEP_MAX_PAGES = 20;
+
+/**
+ * Walks one activity table in pages, collecting the DISTINCT `app_block_id`s it holds for the
+ * viewer. Returns a Set, so a page boundary cutting through an app's rows cannot double-count.
+ *
+ * 🔴 THE CALLER SUPPLIES `fetchPage`; THIS OWNS THE LOOP. Two tables feed the activity leg
+ * (`block_scope_invocations` and `block_buzz_attribution`) with different id types, different
+ * timestamp columns and different filters, but ONE paging rule — page size, the
+ * fewer-than-a-full-page exhaustion test, and the ceiling-with-a-log. Open-coding that rule
+ * twice is how the two legs come to disagree about whether a truncated sweep is reportable.
+ *
+ * `fetchPage` is handed the previous page's last cursor (`null` on the first call) and must
+ * return AT MOST `ACTIVITY_SWEEP_PAGE_SIZE` rows in a stable total order.
+ */
+async function sweepDistinctAppBlockIds<C>(opts: {
+  /** Names the table in the truncation log — the whole point of which is attributability. */
+  label: string;
+  userId: number;
+  fetchPage: (cursor: C | null) => Promise<Array<{ appBlockId: string | null; cursor: C }>>;
+}): Promise<Set<string>> {
+  const found = new Set<string>();
+  let cursor: C | null = null;
+  for (let page = 0; page < ACTIVITY_SWEEP_MAX_PAGES; page++) {
+    const rows = await opts.fetchPage(cursor);
+    for (const row of rows) {
+      // Defensive: the queries below already exclude null `app_block_id`, but this loop is the
+      // only thing standing between a widened `where` and a `null` reaching a Map key.
+      if (row.appBlockId != null) found.add(row.appBlockId);
+    }
+    // A short page means the table is exhausted for this viewer — the ONLY clean stop.
+    if (rows.length < ACTIVITY_SWEEP_PAGE_SIZE) return found;
+    cursor = rows[rows.length - 1]!.cursor;
+  }
+  // 🔴 CEILING REACHED ⇒ THE SWEEP IS INCOMPLETE AND AN APP MAY STILL BE INVISIBLE. Logged
+  // rather than thrown: a permissions page that 500s is worse than one that is missing a row,
+  // and the rows we DID find are all true. But it must never be silent — see
+  // `ACTIVITY_SWEEP_MAX_PAGES`.
+  logToAxiom(
+    {
+      name: 'app-surface-activity-sweep-truncated',
+      type: 'warn',
+      table: opts.label,
+      userId: opts.userId,
+      pages: ACTIVITY_SWEEP_MAX_PAGES,
+      pageSize: ACTIVITY_SWEEP_PAGE_SIZE,
+      distinctAppsFound: found.size,
+    },
+    'civitai-prod'
+  ).catch(() => {
+    /* axiom unreachable — the sweep result still stands */
+  });
+  return found;
+}
+
+/**
+ * Every AppBlock that has ACTED on this viewer, all-time — the third source behind a
+ * permissions row.
+ *
+ * 🔴 TWO TABLES, AND THE SECOND ONE CONTRIBUTES NOTHING TODAY. `block_scope_invocations` is
+ * the populated leg. `block_buzz_attribution` is EMPTY in production (measured 2026-09-12:
+ * `count(*) = 0`), so its leg is UNTESTABLE against live data and is covered by a fixture
+ * only — stated rather than implied. It is included because an un-consented BUZZ SPEND is a
+ * strictly more serious thing to be invisible than an un-consented read, so the leg that
+ * matters most is the one with no live data to prove it works.
+ *
+ * ⚠️ NO `source` FILTER, DELIBERATELY, AND IT IS NOT AN OVERSIGHT. An `external-oauth`
+ * invocation has `app_block_id IS NULL` by construction (there is no App Block — the acting
+ * app is captured in `oauth_client_id`), so `appBlockId: { not: null }` already excludes that
+ * whole population. Filtering on `source` instead would break the pre-migration safety the
+ * rest of this file maintains, for no additional exclusion. Same reasoning as
+ * `GLOBAL_SCOPE_ACTIVITY_OR`'s docblock.
+ */
+async function listAppBlocksThatActedOnUser(userId: number): Promise<Set<string>> {
+  const fromInvocations = await sweepDistinctAppBlockIds<bigint>({
+    label: 'block_scope_invocations',
+    userId,
+    fetchPage: async (cursor) => {
+      const rows = (await dbRead.blockScopeInvocation.findMany({
+        where: {
+          userId,
+          // A row with no resolvable App Block cannot mint a named card, and this also
+          // excludes the external-OAuth population (see the docblock above).
+          appBlockId: { not: null },
+          // 🔴 (d) SYNTHETIC DEV-TUNNEL ROWS ARE EXCLUDED. A pre-approval App-Dev-Tunnel call
+          // writes `synthetic_app_id` — the developer testing their OWN unpublished app
+          // against their OWN account. That is not a third party acting on you, it is you
+          // driving your own build, and surfacing it as "an app you never consented to" would
+          // put a permanent scary card on every App Blocks developer's permissions tab. 59
+          // such rows exist in production (measured 2026-09-12), none of them among the 13
+          // invisible pairs — so this guard has a real data shape behind it rather than a
+          // hypothetical one. NB a synthetic row ALSO has `app_block_id IS NULL`, so it is
+          // doubly excluded; the explicit clause is what makes the INTENT checkable, and it
+          // stays correct if the retry path ever learns to set both columns.
+          syntheticAppId: null,
+        } as unknown as Prisma.BlockScopeInvocationWhereInput,
+        // Matches `bsi_user_invoked_idx` (user_id, invoked_at DESC, id DESC) — the same access
+        // pattern `listMyScopeInvocations` already uses, so this adds no new index need.
+        orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
+        take: ACTIVITY_SWEEP_PAGE_SIZE,
+        ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
+        select: { id: true, appBlockId: true },
+      })) as Array<{ id: bigint; appBlockId: string | null }>;
+      return rows.map((r) => ({ appBlockId: r.appBlockId, cursor: r.id }));
+    },
+  });
+
+  const fromAttribution = await sweepDistinctAppBlockIds<string>({
+    label: 'block_buzz_attribution',
+    userId,
+    fetchPage: async (cursor) => {
+      // `appBlockId` is NON-nullable on this table (a required `Restrict` FK), so there is no
+      // null filter to apply and no synthetic population to exclude — a pre-approval spend
+      // cannot write an attribution row at all, which is precisely why the synthetic audit
+      // trail lives on `block_scope_invocations`.
+      const rows = await dbRead.blockBuzzAttribution.findMany({
+        where: { userId },
+        orderBy: [{ attributedAt: 'desc' }, { id: 'desc' }],
+        take: ACTIVITY_SWEEP_PAGE_SIZE,
+        ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
+        select: { id: true, appBlockId: true },
+      });
+      return rows.map((r) => ({ appBlockId: r.appBlockId, cursor: r.id }));
+    },
+  });
+
+  for (const id of fromAttribution) fromInvocations.add(id);
+  return fromInvocations;
+}
+
+/**
+ * Aggregates one row per AppBlock the user has installed on a model, subscribed to, granted
+ * scopes to at a consent prompt, OR that has ACTED on their account with none of the above.
+ * Same app counted across multiple installs + subscriptions collapses to a single row with
  * denormalised counts.
+ *
+ * 🔴 THREE SOURCES, IN STRICT PRECEDENCE: subscription (`'install'`) > live consent grant
+ * (`'consent'`) > activity alone (`'activity'`). Each later leg guards on
+ * `!byAppBlock.has(...)`, so an app that satisfies several keeps the RICHEST row — the one
+ * carrying its real install counts, subscription scopes and budget. `origin` reports which.
  *
  * `enabled=false` model installs are excluded — a user-facing surface
  * for "what an app can do today" shouldn't surface installs the user
@@ -169,6 +356,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     appBlock: AppBlockRow;
     modelInstallCount: number;
     subscriptionScopes: Set<string>;
+    origin: ScopeGrantOrigin;
   };
   const byAppBlock = new Map<string, Aggregate>();
 
@@ -185,6 +373,10 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
         appBlock: row.appBlock,
         modelInstallCount: isPinned ? row.targetModelIds.length : 0,
         subscriptionScopes: isPinned ? new Set() : new Set([row.scope]),
+        // 🔴 THE SUBSCRIPTION LEG RUNS FIRST AND CLAIMS `'install'`, WHICH IS HOW PRECEDENCE IS
+        // IMPLEMENTED: subscription > consent grant > activity-only. The two later legs both
+        // guard on `!byAppBlock.has(...)`, so neither can overwrite this entry or its counts.
+        origin: 'install',
       });
     }
   }
@@ -288,6 +480,60 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
           appBlock: g.appBlock,
           modelInstallCount: 0,
           subscriptionScopes: new Set(),
+          origin: 'consent',
+        });
+      }
+    }
+  }
+
+  // ── THE ACTIVITY LEG — apps that ACTED on the viewer with NEITHER an install nor a consent.
+  //
+  // 🔴 THIS IS THE POPULATION THE PAGE WAS SILENT ABOUT, AND THE SILENCE WAS STRUCTURAL RATHER
+  // THAN AN EDGE CASE. The dominant mechanism is `CONSENT_EXEMPT_SCOPES`
+  // (`scope-grant.service.ts`): `partitionByConsent` returns `missing: []` for an app whose
+  // scopes are ALL exempt, so no consent modal fires and `recordScopeGrant` is never reached —
+  // the app can read and write the account and own no row on either of the two legs above.
+  // Measured on production 2026-09-12: 13 `(user, app)` pairs across 10 users and 6 apps were
+  // invisible, every one of them invocation-only (`block_buzz_attribution` is empty), and 84 of
+  // 111 such calls were `collections:read:self`.
+  //
+  // 🔴 THE `has()` GUARD IS THE PRECEDENCE RULE, NOT A MICRO-OPTIMISATION. An installed or
+  // consented app that has ALSO acted is the NORMAL shape, not a corner: overwriting its entry
+  // here would replace real `modelInstallCount` / `subscriptionScopes` with zeros and downgrade
+  // its `origin`, i.e. tell a user who installed an app that they never did. Same pattern, and
+  // same reason, as the grant leg immediately above.
+  //
+  // The sweep runs UNCONDITIONALLY rather than only when the two legs above came back empty: an
+  // acted-on-you app is orthogonal to whether the viewer installed anything else.
+  {
+    const actedOn = await listAppBlocksThatActedOnUser(userId);
+    const needed = Array.from(actedOn).filter((id) => !byAppBlock.has(id));
+    if (needed.length > 0) {
+      // One batched read for the presentation columns. These ids came out of an FK column, so
+      // they resolve — except where the AppBlock has since been deleted, which `findMany`
+      // simply omits, giving the same "skip an unresolvable row" outcome as the legs above.
+      const apps = (await dbRead.appBlock.findMany({
+        where: { id: { in: needed } },
+        select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+      })) as AppBlockRow[];
+      for (const app of apps) {
+        // 🔴 NO SECOND `has()` CHECK HERE, AND ITS REMOVAL WAS A MUTATION-TESTING FINDING RATHER
+        // THAN A TIDY-UP. This loop carried one, "re-checked rather than assumed". With the
+        // `needed` filter above it that made the precedence rule REDUNDANTLY guarded — and a
+        // redundantly-guarded rule is an UNTESTABLE one: deleting either guard alone left all 37
+        // tests green, because each mutant died to the other guard, so neither was ever
+        // exercised. (Defeating BOTH at once failed 5 tests, which is how the redundancy was
+        // found rather than assumed.) One guard, in one place, is what makes the rule pinnable —
+        // measured after the removal, deleting the `needed` filter above fails exactly the three
+        // precedence tests, each reporting `expected 'activity' to be 'consent'/'install'`, which
+        // is the downgrade stated in the failure itself. It is sufficient
+        // on its own: `needed` is computed immediately before the single `await` that produced
+        // `apps`, and nothing in between writes to the map.
+        byAppBlock.set(app.id, {
+          appBlock: app,
+          modelInstallCount: 0,
+          subscriptionScopes: new Set(),
+          origin: 'activity',
         });
       }
     }
@@ -340,10 +586,23 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     //
     // NOT `granted_scopes`: that is only the consent-gated subset, so it UNDER-reports by
     // omitting every `CONSENT_EXEMPT_SCOPES` entry a token really carries.
-    const displayedScopes = effectiveBlockScopes(
-      entry.appBlock.manifest as { scopes?: unknown } | null,
-      entry.appBlock.approvedScopes
-    );
+    //
+    // 🔴 AN ACTIVITY-ONLY ROW IS THE ONE EXCEPTION AND IT EMITS `[]` — NO SYNTHESISED CEILING.
+    // The viewer granted this app nothing, so there is no grant to report, and the app-side
+    // effective set would be a CEILING presented on a page whose subject is what the viewer
+    // agreed to. Measured on production 2026-09-12 over the 6 apps behind the invisible pairs:
+    // four of them declare 3–6 scopes and invoked exactly one (a 3–6× over-report, the defect
+    // class #4790 removed), while `w6-ui-dogfood` declares one and invoked two — so the
+    // declared set is not even reliably the wider of the two. The row's honest content is the
+    // relationship, carried by `origin` and rendered as prose; see
+    // `scopeGrantEmptyScopeLabel` in `src/shared/constants/app-surface-provenance.ts`.
+    const displayedScopes =
+      entry.origin === 'activity'
+        ? []
+        : effectiveBlockScopes(
+            entry.appBlock.manifest as { scopes?: unknown } | null,
+            entry.appBlock.approvedScopes
+          );
 
     result.push({
       appBlockId,
@@ -351,6 +610,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       name: manifestName,
       iconUrl,
       scopes: displayedScopes,
+      origin: entry.origin,
       buzzBudgetPerDay: budgetByAppBlock.get(appBlockId) ?? null,
       spendScopeGranted: spendGrantedByAppBlock.has(appBlockId),
       surfaces: {

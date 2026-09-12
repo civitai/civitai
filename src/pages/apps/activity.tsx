@@ -52,6 +52,10 @@ import {
   visibleActivityTabs,
 } from '~/components/Apps/appsActivityTabs';
 import type { ActivityTab } from '~/components/Apps/appsActivityTabs';
+import {
+  buildScopeGrantSurfaceLine,
+  scopeGrantEmptyScopeLabel,
+} from '~/shared/constants/app-surface-provenance';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import {
@@ -145,7 +149,7 @@ function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
           <Text size="sm">
             This removes the install row entirely. The app will stop appearing on{' '}
             <strong>{targetName}</strong>. Any platform default for the same slot will become
-            eligible again. The app's data and any other installs of it are untouched.
+            eligible again. The app&apos;s data and any other installs of it are untouched.
           </Text>
         </Stack>
       ),
@@ -355,36 +359,18 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-/**
- * Surface where the user has the app installed in one short string.
- */
-function buildSurfaceLine(surfaces: {
-  modelInstallCount: number;
-  subscriptionScopes: string[];
-}): string {
-  const parts: string[] = [];
-  if (surfaces.modelInstallCount > 0) {
-    parts.push(
-      `${surfaces.modelInstallCount} model install${surfaces.modelInstallCount === 1 ? '' : 's'}`
-    );
-  }
-  if (surfaces.subscriptionScopes.length > 0) {
-    parts.push(
-      `Subscriptions: ${surfaces.subscriptionScopes
-        .map((s) => (s === 'publisher_all_my_models' ? 'publisher' : 'viewer'))
-        .join(' / ')}`
-    );
-  } else if (surfaces.modelInstallCount === 0) {
-    /* 🔴 THE GRANT-ONLY ROW — a consented full-page app, which THIS PR makes reachable for
-       the first time: every earlier row came from a subscription, seeded with either
-       `modelInstallCount > 0` or one scope, so `0 / 0` could not occur and the previous text
-       ("Subscriptions: none") was unreachable. Replaced because on a consent surface it
-       reads as "this app has no access", under copy promising "…and where you have it".
-       This is the one copy site a literal sweep cannot find — it is computed. */
-    parts.push('Granted at consent · no install or subscription');
-  }
-  return parts.join(' · ');
-}
+/* 🔴 `buildSurfaceLine` LIVED HERE AND HAS MOVED TO
+   `src/shared/constants/app-surface-provenance.ts` — it is now `buildScopeGrantSurfaceLine`,
+   and it takes `origin` rather than inferring provenance from the counts.
+
+   WHY IT MOVED RATHER THAN GAINING A BRANCH IN PLACE. Its own comment recorded that this is
+   "the one copy site a literal sweep cannot find — it is computed", and the copy was wrong for
+   the new row class in a way no grep could see: the `0 / 0` fallback claimed "Granted at
+   consent", which an ACTIVITY-ONLY row also satisfies and for which it is FALSE. A computed
+   copy site needs a behavioural test, and this file is a Next page — its only coverage tier is
+   `*.browser.test.tsx`, which is report-only and cannot run without a Playwright binary. The
+   leaf module is React-free, so the rule is pinned in the node-env `unit` project instead. Same
+   precedent, and the same reason, as `appsActivityTabs.ts`. */
 
 /** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
 const SPEND_SCOPE = 'ai:write:budgeted';
@@ -558,6 +544,9 @@ function AppBudgetControl({
 
 function ScopeGrantsPanel() {
   const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
+  // Only to build the Recent-activity pointer below through `activityTabQuery`, which needs the
+  // route's current query so it can preserve keys it does not own.
+  const router = useRouter();
 
   if (isLoading) {
     return (
@@ -569,23 +558,19 @@ function ScopeGrantsPanel() {
   if (!grants || grants.length === 0) {
     /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
        to make, and it was false.
-       ⚠️ THE REASON HAS NARROWED, SO THE SENTENCE HAS WIDENED. #4722 wrote "reads
-       `block_user_subscriptions` ONLY … silent about full-page apps", which was true then;
-       `listMyScopeGrants` now also enumerates live `app_user_scope_grants`, so a consented
-       full-page app DOES appear and is no longer part of the silence. ⚠️ TWO populations
-       remain, not one: (a) blocks OTHER people installed, which carry no row of the
-       viewer's; and (b) an app the viewer NEVER installed or subscribed to whose scopes are
-       ALL in `CONSENT_EXEMPT_SCOPES` (`scope-grant.service.ts`) — `partitionByConsent`
-       returns `missing: []`, so no consent modal fires and nothing writes a grant row, yet
-       exempt scopes like `collections:write:self` still write to the account.
-       ⚠️ The "never installed" half is load-bearing and an earlier draft omitted it: install
-       and subscribe call `recordInstallConsent` UNCONDITIONALLY (`block-registry.service.ts`
-       :2285, :2921 — not on the modal path), and `recordScopeGrant` has no empty-scopes early
-       return, so an INSTALLED all-exempt app does get a row, with `grantedScopes: []`.
-       The string stays true — they granted nothing — but the silence is wider than
-       "other people's installs". */
+
+       ⚠️ THE ENUMERATED CAVEAT THAT USED TO LIVE HERE IS DELETED, NOT REWORDED, BECAUSE THIS
+       CHANGE REMOVED ITS SUBJECT. It named two surviving silent populations: (a) blocks OTHER
+       people installed, and (b) an app the viewer never installed whose scopes are all in
+       `CONSENT_EXEMPT_SCOPES`, which therefore never gets a grant row. Both were silent only
+       for as long as a row required an install or a consent. The ACTIVITY leg now mints a row
+       from `block_scope_invocations` / `block_buzz_attribution` alone, so an app in EITHER
+       population appears here the moment it actually touches the account — which is what (a)
+       and (b) were both descriptions of. Carrying a narrowed version of the list would be a
+       third rewording of a caveat whose reason has gone; the residual is stated in one clause
+       instead, and it is a different shape: an app that COULD act and simply has not. */
     return (
-      <EmptyState label="No apps installed, subscribed to, or granted permissions yet. This tab covers your own installs and consents — Recent activity is the full record of what apps have done on your account." />
+      <EmptyState label="Nothing has touched your account yet, and you have no installs, subscriptions or consents. An app that holds access but has never used it does not appear here — Recent activity is the record of what was actually done." />
     );
   }
   return (
@@ -603,13 +588,45 @@ function ScopeGrantsPanel() {
                     {grant.slug}
                   </Badge>
                 </Group>
-                <Text size="xs" c="dimmed">
-                  {buildSurfaceLine(grant.surfaces)}
+                <Text size="xs" c="dimmed" data-testid="apps-grant-surface-line">
+                  {buildScopeGrantSurfaceLine({ origin: grant.origin, ...grant.surfaces })}
                 </Text>
               </Stack>
             </Group>
             <Divider />
-            <BlockScopeList scopes={grant.scopes} />
+            {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was a bare
+                `<BlockScopeList scopes={grant.scopes} />`, which fell through to the component's
+                own default — "This app doesn't request any permissions — it only consumes data
+                from the host-bridge postMessage protocol." That was filed as an UNREACHABLE nit
+                while every row came from an install or a consent; the activity-only row makes it
+                REACHABLE AND WRONG BY CONSTRUCTION, since such a row carries `scopes: []` and
+                exists precisely because the app made scope-gated API calls. Telling that viewer
+                the app has no access is the one direction a permissions page must never be wrong
+                in. `scopeGrantEmptyScopeLabel` owns both labels so the two consumers of this
+                component cannot drift. */}
+            <BlockScopeList
+              scopes={grant.scopes}
+              emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)}
+            />
+            {grant.origin === 'activity' && (
+              /* The pointer out to the full record. 🔴 BUILT FROM THE SHARED TAB MECHANISM, NOT
+                 A HAND-WRITTEN URL: `activityTabQuery('activity', …)` is the same helper the tab
+                 bar's `onChange` uses, and it deliberately DROPS the `tab` key for the default
+                 tab rather than writing `?tab=activity`, so this link produces the page's own
+                 canonical URL and preserves any other query key. Spelling the href by hand is
+                 how a link and a tab resolver come to disagree. */
+              <Anchor
+                component={Link}
+                href={{
+                  pathname: router.pathname,
+                  query: activityTabQuery('activity', router.query),
+                }}
+                size="xs"
+                data-testid="apps-grant-activity-pointer"
+              >
+                See what it did under Recent activity
+              </Anchor>
+            )}
             {/* Only for an app the viewer has actually GRANTED the spend scope to —
                 `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
                 `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
@@ -652,8 +669,8 @@ function HiddenBlocksPanel() {
         <Stack align="center" gap="xs">
           <IconEyeOff size={28} opacity={0.5} />
           <Text size="sm" c="dimmed" ta="center" maw={420}>
-            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this device — it
-            only affects what you see, never the publisher or other viewers.
+            You haven&apos;t hidden any apps. Use the ⋯ menu on an app to hide it on this device —
+            it only affects what you see, never the publisher or other viewers.
           </Text>
         </Stack>
       </Center>
@@ -876,12 +893,21 @@ export default function AppActivityPage() {
           {isActivityTabVisible('permissions', visibility) && (
             <Tabs.Panel value="permissions" pt="md">
               <Stack gap="sm">
+                {/* 🔴 "…OR THAT HAS ACTED ON YOUR ACCOUNT" IS THE NEW CLAUSE AND IT IS THE POINT
+                    OF THE TAB NOW. The sentence listed three relationships the viewer had CHOSEN
+                    (install / subscribe / consent), which was an exact description of the three
+                    things the panel could render and is why the gap was invisible: an app that
+                    acted on you with none of them was outside what the heading even claimed to
+                    cover. Apostrophes are `&apos;` here because this file's 5 pre-existing
+                    `react/no-unescaped-entities` errors are fixed in this PR — they sit on files
+                    it touches, and ESLint shares one CI check with Prettier. */}
                 <Text size="sm" c="dimmed">
-                  The apps you've installed, subscribed to, or granted permissions to, what each one
-                  declares it may use, and where you have it. Removing an install on the Installs
-                  tab takes the app off that surface, but it does not withdraw a permission you have
-                  already granted — withdrawing one is not possible yet. Recent activity is the full
-                  record of what apps have actually done on your account.
+                  The apps you&apos;ve installed, subscribed to or granted permissions to, plus any
+                  app that has acted on your account without either — what each one may use, and
+                  where you have it. Removing an install on the Installs tab takes the app off that
+                  surface, but it does not withdraw a permission you have already granted —
+                  withdrawing one is not possible yet. Recent activity is the full record of what
+                  apps have actually done on your account.
                 </Text>
                 <ScopeGrantsPanel />
               </Stack>
@@ -894,9 +920,9 @@ export default function AppActivityPage() {
             <Tabs.Panel value="hidden" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  Apps you've hidden on this device. Hiding is local to your browser — it never
-                  affects the publisher's install or other viewers. Restore one to have it show on
-                  its model page again.
+                  Apps you&apos;ve hidden on this device. Hiding is local to your browser — it never
+                  affects the publisher&apos;s install or other viewers. Restore one to have it show
+                  on its model page again.
                 </Text>
                 <HiddenBlocksPanel />
               </Stack>
