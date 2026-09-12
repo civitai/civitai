@@ -62,7 +62,7 @@ import { describe, it, expect } from 'vitest';
  * looks. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the
  * exceptions: their behavioural tests are unit tests, so they block too — the
  * resolver's cover is the two `resolveAppsPageAccess` describe blocks inside
- * `hasAppsStoreAccess.test.ts`. Three more are browser-covered (`AppsSubNav`,
+ * `hasAppsStoreAccess.test.ts`. Two more are browser-covered (`AppsSubNav`,
  * `AppListingsMarketplaceBody`) and therefore blocking-covered NOWHERE: enumerated,
  * 3 + 2 + 3 = 8.)
  *
