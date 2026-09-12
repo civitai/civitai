@@ -90,8 +90,8 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
             because the section's only source WAS install-backed; `listMyScopeGrants` now also
             enumerates live `app_user_scope_grants` rows, so install-only is the narrow
             overstatement in the other direction. Still not the bare "Granted permissions"
-            #4722 rejected: the list below is the app's MANIFEST set, not the user's granted
-            set — see the comment on `BlockScopeList` below. */}
+            #4722 rejected: the list below is the app's APPROVED set (what the mint honours),
+            not the user's granted set — see the comment on `BlockScopeList` below. */}
         <Text fw={600} size="sm">
           Permissions from your installs and consents
         </Text>
@@ -117,31 +117,44 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              The label still matters for what remains: an app with NEITHER an install NOR a
              consent grant, where absence of a row is still not absence of access.
 
-             🔴 `grant.scopes` IS THE APP'S MANIFEST-DECLARED SET, NOT THE VIEWER'S GRANTED SET.
+             🔴 `grant.scopes` IS THE APP'S APPROVED SET (`AppBlock.approved_scopes`), NOT THE
+             VIEWER'S GRANTED SET. ⚠️ THIS COMMENT PREVIOUSLY SAID "MANIFEST-DECLARED SET" —
+             true until the operator decision to display the set the MINT honours: the service
+             now reads `approvedScopes` with NO manifest fallback
+             (`user-app-surface.service.ts`; the mint contract is stated in
+             `block-registry.service.ts` — "The mint sources scopes from `approvedScopes` (the
+             pinned, mod-reviewed set — NEVER the raw manifest)").
              ⚠️ AN EARLIER REVISION OF THIS COMMENT SAID "granted ⊆ manifest BY CONSTRUCTION".
-             THAT IS FALSE and the containment holds only AT GRANT TIME. Two writes break it
-             afterwards, and they compose: `recordScopeGrant` UNIONS on re-consent
-             (`grantedScopes = existing ∪ incoming`, `scope-grant.service.ts:232` and `:263`)
-             and nothing ever writes a non-null `revoked_at`, so the granted set only GROWS;
-             meanwhile a subsequent approved version REPLACES `manifest` + `approvedScopes`
-             IN PLACE on the same `AppBlock` row (`publish-request.service.ts`, "Subsequent
-             version: refresh manifest + version + approvedScopes"), while the grant is unique
-             on `(userId, appBlockId)` and survives. So a publisher who DROPS a scope in v2
-             leaves the viewer holding a granted scope that is no longer in the manifest.
+             THAT IS FALSE and the containment holds only AT GRANT TIME — and it is equally
+             false for the approved set, because BOTH columns are replaced by the same write.
+             Two writes break it afterwards, and they compose: `recordScopeGrant` UNIONS on
+             re-consent (`grantedScopes = existing ∪ incoming`, `scope-grant.service.ts:232`
+             and `:263`) and nothing ever writes a non-null `revoked_at`, so the granted set
+             only GROWS; meanwhile a subsequent approved version REPLACES `manifest` +
+             `approvedScopes` IN PLACE on the same `AppBlock` row
+             (`publish-request.service.ts`, "Subsequent version: refresh manifest + version +
+             approvedScopes"), while the grant is unique on `(userId, appBlockId)` and
+             survives. So a publisher who DROPS a scope in v2 leaves the viewer holding a
+             granted scope that is in neither the manifest nor `approvedScopes`.
 
-             Consequence for this list, in BOTH directions: it OVERSTATES when the manifest
-             declares more than the viewer granted (the ordinary case), and UNDERSTATES when a
-             version removed a scope the viewer still holds — the second being the one a
-             "permissions you granted" surface most needs to show, since nothing else reveals
-             it and a later version re-declaring that scope is signed through by
-             `partitionByConsent` with NO fresh prompt.
+             Consequence for this list, in BOTH directions, and 🔴 THE SWAP TO `approvedScopes`
+             MOVED ONLY ONE OF THEM: it OVERSTATES when the displayed set is wider than what
+             the viewer granted (the ordinary case) — improved, since `approvedScopes ⊆
+             manifest.scopes` wherever a moderator narrowed an approval — and it UNDERSTATES
+             when a version removed a scope the viewer still holds, which the swap does NOT
+             fix and if anything makes marginally WORSE, precisely because the displayed set is
+             now the narrower of the two. The understatement is the direction a "permissions you
+             granted" surface most needs to show, since nothing else reveals it and a later
+             version re-declaring that scope is signed through by `partitionByConsent` with NO
+             fresh prompt.
 
-             Pre-existing, and deliberately NOT changed here: `grantedScopes` is not on
-             `ScopeGrantSurface` at all, and it is EMPTY for an install-backed row carrying no
-             consent grant, so this is a new field plus a per-row choice of which set to show —
-             not a swap. Widening the population makes it the common case rather than a
-             ~4-row edge, so it is recorded as an open decision rather than silently
-             expanded — see the PR discussion. */
+             Pre-existing, and STILL NOT changed here — the operator decision above was taken on
+             a different axis (which of manifest-vs-approved to display) and does not settle the
+             granted-vs-declared question: `grantedScopes` is not on `ScopeGrantSurface` at all,
+             and it is EMPTY for an install-backed row carrying no consent grant, so showing it
+             is a new field plus a per-row choice of which set to show — not a swap. Widening the
+             population makes it the common case rather than a ~4-row edge, so it remains an open
+             decision rather than something silently expanded — see the PR discussion. */
           <BlockScopeList
             scopes={grant?.scopes ?? []}
             emptyLabel="No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."

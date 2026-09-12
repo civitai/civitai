@@ -49,6 +49,13 @@ export type ScopeGrantSurface = {
   slug: string;
   name: string;
   iconUrl?: string;
+  /**
+   * The app's APPROVED scopes (`AppBlock.approved_scopes`) — the pinned, mod-reviewed set
+   * the mint issues tokens for. NOT the raw manifest (the dev's wishlist, which may be
+   * wider) and NOT `granted_scopes` (the consent-gated subset, which is narrower because it
+   * omits every `CONSENT_EXEMPT_SCOPES` entry the token still carries). See the comment at
+   * the assignment site in `listMyScopeGrants` for why there is no manifest fallback.
+   */
   scopes: string[];
   /**
    * The per-UTC-day Buzz ceiling the VIEWER set for this app at consent time, or
@@ -69,11 +76,12 @@ export type ScopeGrantSurface = {
    * `ai:write:budgeted` — the one scope in the vocabulary that can spend their Buzz.
    *
    * 🔴 THIS IS NOT DERIVABLE FROM `scopes` ABOVE, and that is why it exists. `scopes`
-   * is the app's MANIFEST-declared set (what it asks for); this is the USER'S GRANT
-   * (what they agreed to). The budget editor on /apps/activity keys off this one: a
-   * budget only bounds something when the spend scope is granted, and `grantScopes`
-   * IGNORES a budget sent for an app that does not hold it — so offering the control
-   * off the manifest set would render a field whose value the server silently drops.
+   * is the app's APPROVED set (`AppBlock.approved_scopes` — what the mint will issue a
+   * token for); this is the USER'S GRANT (what they agreed to). The budget editor on
+   * /apps/activity keys off this one: a budget only bounds something when the spend scope
+   * is granted, and `grantScopes` IGNORES a budget sent for an app that does not hold it —
+   * so offering the control off the approved set would render a field whose value the
+   * server silently drops.
    */
   spendScopeGranted: boolean;
   surfaces: {
@@ -281,30 +289,46 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
 
   const result: ScopeGrantSurface[] = [];
   for (const [appBlockId, entry] of byAppBlock.entries()) {
+    // Only PRESENTATION fields are read off the manifest here. `scopes` is deliberately not
+    // in this cast — see the assignment below — so that reaching for it is a visible change.
     const manifest = (entry.appBlock.manifest ?? {}) as {
       name?: unknown;
       iconUrl?: unknown;
-      scopes?: unknown;
     };
     const manifestName = typeof manifest.name === 'string' ? manifest.name : entry.appBlock.blockId;
     const iconUrl =
       typeof manifest.iconUrl === 'string' && manifest.iconUrl.length > 0
         ? manifest.iconUrl
         : undefined;
-    // Prefer the manifest-declared scopes (the dev's stated intent). The
-    // approved_scopes column is the moderator-narrowed set used at JWT
-    // issuance; surfacing both would be confusing for v0. Fall back to
-    // approved_scopes when manifest.scopes is missing or malformed.
-    const manifestScopes = Array.isArray(manifest.scopes)
-      ? (manifest.scopes.filter((s) => typeof s === 'string') as string[])
-      : entry.appBlock.approvedScopes ?? [];
+    // 🔴 DISPLAY `approved_scopes` — THE SET THE MINT ACTUALLY HONOURS — AND NEVER THE
+    // RAW MANIFEST. `src/server/services/block-registry.service.ts` states the contract
+    // for token issuance: "The mint sources scopes from `approvedScopes` (the pinned,
+    // mod-reviewed set — NEVER the raw manifest)". A manifest `scopes` array is only the
+    // dev's stated WISHLIST; a moderator may approve a narrower set, and the token then
+    // carries only that narrower set. Showing the manifest would over-report what the app
+    // can do on the one page whose whole job is to tell the viewer what it can do.
+    //
+    // 🔴 NO FALLBACK TO `manifest.scopes`. An app approved for nothing must display
+    // nothing — a fallback would restore the exact over-report this guards against, in
+    // precisely the case that matters (an app whose approval was narrowed to empty while
+    // its manifest still asks for everything).
+    //
+    // NOT `granted_scopes`: that is only the consent-gated subset, so it UNDER-reports by
+    // omitting every `CONSENT_EXEMPT_SCOPES` entry the token really carries.
+    //
+    // The `Array.isArray` guard (defaulting to `[]`) and the `typeof s === 'string'` filter
+    // stay defensive: this value comes off a JSON/DB boundary, so neither its presence, its
+    // shape, nor its element types are runtime guarantees whatever the Prisma type says.
+    const displayedScopes = Array.isArray(entry.appBlock.approvedScopes)
+      ? entry.appBlock.approvedScopes.filter((s) => typeof s === 'string')
+      : [];
 
     result.push({
       appBlockId,
       slug: entry.appBlock.blockId,
       name: manifestName,
       iconUrl,
-      scopes: manifestScopes,
+      scopes: displayedScopes,
       buzzBudgetPerDay: budgetByAppBlock.get(appBlockId) ?? null,
       spendScopeGranted: spendGrantedByAppBlock.has(appBlockId),
       surfaces: {

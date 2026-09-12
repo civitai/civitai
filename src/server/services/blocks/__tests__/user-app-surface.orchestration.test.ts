@@ -306,9 +306,9 @@ describe('listMyScopeGrants', () => {
 
   // ── `spendScopeGranted` — whether the viewer's GRANT actually carries
   // `ai:write:budgeted`. The budget editor on /apps/activity keys off this, and it is
-  // NOT derivable from `scopes` (which is the app's MANIFEST-declared set, i.e. what it
-  // ASKED for). Offering a limit control off the manifest would render a field the
-  // server silently drops, because `grantScopes` ignores a budget for an app that does
+  // NOT derivable from `scopes` (which is the app's APPROVED set, i.e. what the mint will
+  // issue a token for). Offering a limit control off the approved set would render a field
+  // the server silently drops, because `grantScopes` ignores a budget for an app that does
   // not hold the spend scope.
   it('spendScopeGranted is TRUE when the GRANT row carries ai:write:budgeted', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
@@ -325,9 +325,10 @@ describe('listMyScopeGrants', () => {
     expect(result[0].spendScopeGranted).toBe(true);
   });
 
-  // 🔴 THE DISCRIMINATING CASE: the app DECLARES the spend scope in its manifest, and
-  // the user has NOT granted it. Reading the manifest would answer `true` here.
-  it('spendScopeGranted is FALSE when only the MANIFEST declares the spend scope', async () => {
+  // 🔴 THE DISCRIMINATING CASE: the app is APPROVED for the spend scope (and declares it in
+  // its manifest), and the user has NOT granted it. Deriving `spendScopeGranted` from either
+  // of those app-side sets would answer `true` here.
+  it('spendScopeGranted is FALSE when only the APP (manifest + approval) carries the spend scope', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
       pinnedSub({
@@ -346,7 +347,7 @@ describe('listMyScopeGrants', () => {
       },
     ]);
     const result = await listMyScopeGrants(42);
-    expect(result[0].scopes).toEqual(['ai:write:budgeted']); // manifest says yes…
+    expect(result[0].scopes).toEqual(['ai:write:budgeted']); // the app is approved for it…
     expect(result[0].spendScopeGranted).toBe(false); // …the grant says no
   });
 
@@ -401,31 +402,64 @@ describe('listMyScopeGrants', () => {
     await expect(listMyScopeGrants(42)).rejects.toThrow(/connection refused/);
   });
 
-  it('reads scopes from the joined manifest.scopes', async () => {
+  // ── WHICH SET IS DISPLAYED. `scopes` is `AppBlock.approved_scopes` — the pinned,
+  // mod-reviewed set the MINT issues tokens for ("The mint sources scopes from
+  // `approvedScopes` (the pinned, mod-reviewed set — NEVER the raw manifest)",
+  // `block-registry.service.ts`) — and NEVER `manifest.scopes`, which is only the dev's
+  // stated wishlist. The four tests below pin that, including both directions of the
+  // divergence the swap exists for.
+
+  it('reads scopes from approvedScopes, NOT the joined manifest.scopes', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
       pinnedSub({
         appBlock: appBlock({
           manifest: { name: 'Hello', scopes: ['ai:write:budgeted', 'buzz:read:self'] },
-        }),
-      }),
-    ]);
-    const result = await listMyScopeGrants(42);
-    expect(result[0].scopes).toEqual(['ai:write:budgeted', 'buzz:read:self']);
-  });
-
-  it('falls back to approvedScopes when manifest.scopes is missing', async () => {
-    const { listMyScopeGrants } = await import('../user-app-surface.service');
-    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
-      pinnedSub({
-        appBlock: appBlock({
-          manifest: { name: 'Hello' }, // no scopes
           approvedScopes: ['models:read:self'],
         }),
       }),
     ]);
     const result = await listMyScopeGrants(42);
     expect(result[0].scopes).toEqual(['models:read:self']);
+  });
+
+  // 🔴 THE DISCRIMINATING CASE for this change: the manifest is a STRICT SUPERSET of the
+  // approval, i.e. a moderator narrowed what the app may actually do. The displayed set must
+  // be the narrow one, because that is the only one the mint will honour. Every value here is
+  // pairwise distinct and distinct from the constant the assertion names, so a mutant that
+  // hardcodes a literal cannot survive.
+  it('shows ONLY the approved set when the manifest declares a strict superset', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: {
+            name: 'Hello',
+            scopes: ['ai:write:budgeted', 'buzz:read:self', 'collections:read:private'],
+          },
+          approvedScopes: ['buzz:read:self'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual(['buzz:read:self']);
+  });
+
+  // 🔴 NO FALLBACK. An app approved for NOTHING displays nothing, even though its manifest
+  // still asks for things — a fallback here would restore the whole over-report, in exactly
+  // the case that matters most.
+  it('emits an empty scopes array for an EMPTY approval, never falling back to the manifest', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: ['models:read:self', 'images:write:self'] },
+          approvedScopes: [],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual([]);
   });
 
   it('emits an empty scopes array when neither manifest nor approvedScopes carry scopes', async () => {
