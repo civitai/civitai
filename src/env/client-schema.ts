@@ -25,6 +25,14 @@ export const clientSchema = z.object({
   // Studio did until this existed. The web component calls the orchestrator DIRECTLY from the
   // browser (docs/training-studio-web-component.md), so it needs the public origin. Keep the two
   // separate: server code keeps using `ORCHESTRATOR_ENDPOINT`, browser code uses this.
+  //
+  // This default's HOST also appears in `CIVITAI_IMAGE_HOSTS`
+  // (src/components/AppBlocks/saveImageDownload.ts) — same hostname, different job: that one is the
+  // allowlist of hosts the App Blocks download bridge may FETCH from, this one is the base URL the
+  // browser CALLS. They are not interchangeable and must not be merged, but they are coupled: a
+  // blob URL minted by this origin has to be fetchable by that bridge, so changing the public
+  // orchestrator host means changing both. The coupling is asserted, not just described, in
+  // src/__tests__/pages/training-studio-embed-orchestrator-origin.test.ts.
   NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: z.url().default('https://orchestration.civitai.com'),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID_ALT: z.string().optional(),
