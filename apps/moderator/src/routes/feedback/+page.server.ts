@@ -4,6 +4,7 @@ import { env } from '$env/dynamic/public';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
+import { MAX_INT4, isInt4Id } from '$lib/server/users.service';
 import {
   DEFAULT_FEEDBACK_STATUSES,
   FEEDBACK_STATUSES,
@@ -12,7 +13,6 @@ import {
 } from '$lib/feedback';
 import {
   FEEDBACK_PAGE_SIZE,
-  decodeFeedbackCursor,
   getFeedbackAreas,
   getFeedbackList,
   getSiblingFeedback,
@@ -21,34 +21,41 @@ import {
   triageFeedback,
 } from '$lib/server/feedback.service';
 
-const MAX_INT4 = 2_147_483_647;
-
 // Give every field a `.catch()`: query params are user-controllable, so a bad value degrades to the
-// default rather than 500ing a queue nobody can then open.
+// default rather than 500ing a queue nobody can then open. The int4 bound matters — a larger value
+// ERRORS the comparison in Postgres rather than missing.
 const querySchema = z.object({
   status: z.array(z.string()).catch([]),
   area: z.string().trim().catch(''),
-  cursor: z.string().trim().catch(''),
+  cursor: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   open: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
-  // Canonicalise a bare landing so the active default is explicit and shareable. Only an ABSENT
-  // `status` gets the default — a present-but-empty `?status=` is a deliberate "all", left alone.
-  if (!url.searchParams.has('status')) {
+export const load: PageServerLoad = async ({ url, request }) => {
+  const { status, area, cursor, open } = parseQuery(url, querySchema, ['status']);
+  // A present-but-empty `?status=` is a deliberate "all"; an ABSENT one is the default view.
+  const statuses = url.searchParams.has('status')
+    ? status.filter(isFeedbackStatus)
+    : DEFAULT_FEEDBACK_STATUSES;
+
+  // Canonicalise a bare landing so the active default is explicit and shareable.
+  //
+  // 🔴 GET only. A form action posts to `?/triage`, which replaces the whole query string, so on a
+  // POST this condition is true — and a 307 PRESERVES THE METHOD, so a no-JS client would re-POST
+  // and run the action a second time, tripping its own concurrency guard and reporting a spurious
+  // conflict over a save that worked. Enhanced submits never reach `load`, so the JS path never saw
+  // it. The defaults above apply either way, so skipping the redirect changes nothing on screen.
+  if (request.method === 'GET' && !url.searchParams.has('status')) {
     const canonical = new URL(url);
     DEFAULT_FEEDBACK_STATUSES.forEach((s) => canonical.searchParams.append('status', s));
     redirect(307, canonical.pathname + canonical.search);
   }
 
-  const { status, area, cursor, open } = parseQuery(url, querySchema, ['status']);
-  const statuses = status.filter(isFeedbackStatus);
-
   const [list, areas] = await Promise.all([
     getFeedbackList({
       statuses,
       area: area || null,
-      cursor: decodeFeedbackCursor(cursor),
+      cursor: cursor ?? null,
       limit: FEEDBACK_PAGE_SIZE,
     }),
     getFeedbackAreas(),
@@ -95,7 +102,10 @@ const triageSchema = z.object({
 
 const promoteSchema = z.object({
   id: z.coerce.number().int().positive().max(MAX_INT4),
-  // `''` for the new-bug path; a numeric string attaches to an existing Bug instead.
+  // 🔴 POSTED EXPLICITLY, never inferred from whether `bugId` is blank. Inferring it sends an empty
+  // issue-number box down the create-a-new-issue branch, which then refuses with "Give the issue a
+  // title" over a form showing no title field.
+  mode: z.enum(['create', 'attach']),
   bugId: z.string().trim().optional(),
   title: z.string().trim().max(300).optional(),
   summary: z.string().trim().max(5000).optional(),
@@ -117,8 +127,7 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
 
-    if (!result.ok)
-      return fail(410, { error: 'That feedback no longer exists.', gone: true });
+    if (!result.ok) return fail(410, { error: 'That feedback no longer exists.', gone: true });
     // 🔴 Zero affected rows is a REFUSAL. The UPDATE is scoped on the status the operator was
     // looking at, so nothing moving means someone else's verdict is already on the row.
     if (!result.changed)
@@ -133,9 +142,12 @@ export const actions: Actions = {
     const input = parseForm(promoteSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
 
-    const existingBugId = input.bugId ? Number(input.bugId) : null;
-    if (existingBugId !== null) {
-      if (!Number.isInteger(existingBugId) || existingBugId <= 0 || existingBugId > MAX_INT4)
+    if (input.mode === 'attach') {
+      // Blank and malformed are different mistakes: telling someone who typed `abc` to "enter an
+      // issue number" is an instruction they already followed.
+      if (!input.bugId) return fail(400, { error: 'Enter an issue number.' });
+      const existingBugId = Number(input.bugId);
+      if (!isInt4Id(existingBugId))
         return fail(400, { error: 'That is not a valid issue number.' });
 
       const linked = await linkFeedbackToBug({
@@ -151,7 +163,8 @@ export const actions: Actions = {
     const title = input.title ?? '';
     const summary = input.summary ?? '';
     if (!title) return fail(400, { error: 'Give the issue a title.' });
-    if (!summary) return fail(400, { error: 'Write a summary — it is what the issue board shows.' });
+    if (!summary)
+      return fail(400, { error: 'Write a summary — it is what the issue board shows.' });
 
     const promoted = await promoteFeedbackToBug({
       id: input.id,
@@ -163,9 +176,8 @@ export const actions: Actions = {
   }),
 };
 
-const promoteFailure = (reason: 'already-linked' | 'no-such-bug') =>
-  reason === 'no-such-bug'
-    ? fail(404, { error: 'No issue with that number.' })
-    : fail(409, {
-        error: 'That feedback is already linked to an issue. Reload to see which.',
-      });
+const promoteFailure = (reason: 'already-linked' | 'no-such-bug' | 'gone') => {
+  if (reason === 'no-such-bug') return fail(404, { error: 'No issue with that number.' });
+  if (reason === 'gone') return fail(410, { error: 'That feedback no longer exists.', gone: true });
+  return fail(409, { error: 'That feedback is already linked to an issue. Reload to see which.' });
+};

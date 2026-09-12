@@ -34,33 +34,12 @@ export type FeedbackRow = {
   bugStatus: string | null;
 };
 
-/**
- * The keyset cursor is the row id, and the order is `id DESC` — NOT `createdAt DESC`.
- *
- * 🔴 The two are the same order here and the id is the better key for both of the reasons that
- * matter. `Feedback` is insert-only with `createdAt DEFAULT now()` and no path that backdates or
- * rewrites it, so id order IS arrival order; the id is also UNIQUE, where `createdAt` is not, so a
- * page boundary cannot repeat or skip rows that share a millisecond.
- *
- * It also keeps the boundary out of the driver's timestamp handling. `createdAt` is `timestamp
- * WITHOUT time zone`: node-postgres serialises a `Date` parameter as LOCAL time with an explicit
- * offset and parses the column back as local, which round-trips — but that symmetry is the
- * driver's, not Postgres', and it does not hold everywhere (PGlite, which this app's own test tier
- * runs on, serialises the same `Date` as UTC and shifts the comparison by the local offset). An
- * integer comparison has no such question attached to it.
- */
-export function decodeFeedbackCursor(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const id = Number(value);
-  return Number.isInteger(id) && id > 0 && id <= 2_147_483_647 ? id : null;
-}
-
 export async function getFeedbackList(input: {
   statuses: readonly FeedbackStatus[];
   area?: string | null;
   cursor?: number | null;
   limit?: number;
-}): Promise<{ items: FeedbackRow[]; nextCursor: string | null }> {
+}): Promise<{ items: FeedbackRow[]; nextCursor: number | null }> {
   const limit = input.limit ?? FEEDBACK_PAGE_SIZE;
 
   let query = dbRead
@@ -85,7 +64,21 @@ export async function getFeedbackList(input: {
       'b.title as bugTitle',
       'b.status as bugStatus',
     ])
-    // See `decodeFeedbackCursor`: this IS newest-first, and it is total.
+    /**
+     * 🔴 `id DESC`, not `createdAt DESC`, and the keyset below compares the same column.
+     *
+     * The two are the same order here and the id is the better key twice over. `Feedback` is
+     * insert-only with `createdAt DEFAULT now()` and nothing backdates or rewrites it, so id order
+     * IS arrival order; and the id is UNIQUE where the timestamp is not, so a page boundary cannot
+     * repeat or skip rows sharing a millisecond.
+     *
+     * It also keeps the boundary out of the DRIVER's timestamp handling. `createdAt` is `timestamp
+     * WITHOUT time zone`: node-postgres serialises a `Date` parameter as local time with an
+     * explicit offset and parses the column back as local, which round-trips — but that symmetry is
+     * the driver's, not Postgres', and it does not hold everywhere (PGlite, which this app's own
+     * test tier runs on, serialises the same `Date` as UTC and shifts the comparison by the local
+     * offset). An integer comparison carries no such question.
+     */
     .orderBy('f.id', 'desc')
     .limit(limit + 1);
 
@@ -106,7 +99,7 @@ export async function getFeedbackList(input: {
 
   return {
     items,
-    nextCursor: hasMore && items.length ? String(items[items.length - 1].id) : null,
+    nextCursor: hasMore && items.length ? items[items.length - 1].id : null,
   };
 }
 
@@ -142,11 +135,19 @@ export async function getFeedbackAreas(): Promise<string[]> {
   return rows.map((r) => r.area);
 }
 
+export type FeedbackSibling = {
+  id: number;
+  area: string;
+  message: string;
+  createdAt: Date;
+  status: string;
+};
+
 /** Other reports already attached to the same Bug — what turns duplicated complaints into one issue. */
 export async function getSiblingFeedback(input: {
   bugId: number;
   excludeId: number;
-}): Promise<{ id: number; area: string; message: string; createdAt: Date; status: string }[]> {
+}): Promise<FeedbackSibling[]> {
   const rows = await dbRead
     .selectFrom('Feedback')
     .select(['id', 'area', 'message', 'createdAt', 'status'])
@@ -205,17 +206,29 @@ export async function triageFeedback(input: {
 
   // Zero rows has two causes and they need different words on screen. One extra read, only on the
   // path that already failed.
-  return (await feedbackExists(input.id)) ? { ok: true, changed: false } : { ok: false, reason: 'gone' };
+  return (await feedbackExists(dbWrite, input.id))
+    ? { ok: true, changed: false }
+    : { ok: false, reason: 'gone' };
 }
 
-async function feedbackExists(id: number): Promise<boolean> {
-  const row = await dbRead.selectFrom('Feedback').select('id').where('id', '=', id).executeTakeFirst();
+/**
+ * 🔴 Takes the client rather than closing over `dbRead`. This decides WHICH REFUSAL the operator
+ * reads, so it has to see the same snapshot as the write that just failed: on the replica a row
+ * deleted a moment ago is still present, and the answer flips from "that report is gone" to
+ * "someone else already triaged it" — the exact confusion the split exists to remove. Callers pass
+ * the primary, or the open transaction.
+ */
+async function feedbackExists(
+  db: Pick<typeof dbWrite, 'selectFrom'>,
+  id: number
+): Promise<boolean> {
+  const row = await db.selectFrom('Feedback').select('id').where('id', '=', id).executeTakeFirst();
   return !!row;
 }
 
 export type PromoteResult =
   | { ok: true; bugId: number; created: boolean }
-  | { ok: false; reason: 'already-linked' | 'no-such-bug' };
+  | { ok: false; reason: 'already-linked' | 'no-such-bug' | 'gone' };
 
 /**
  * Mint a `Bug` from a report and link it, in one transaction.
@@ -266,12 +279,12 @@ export async function promoteFeedbackToBug(input: {
       });
       // Rolls the Bug insert back with it — a row nobody linked is litter on a table the public
       // board reads.
-      if (!linked) throw new AlreadyLinked();
+      if (!linked) throw new NotLinked(await linkRefusalReason(trx, input.id));
 
       return { ok: true as const, bugId: bug.id, created: true };
     });
   } catch (e) {
-    if (e instanceof AlreadyLinked) return { ok: false, reason: 'already-linked' };
+    if (e instanceof NotLinked) return { ok: false, reason: e.reason };
     throw e;
   }
 }
@@ -282,7 +295,11 @@ export async function linkFeedbackToBug(input: {
   bugId: number;
   moderatorId: number;
 }): Promise<PromoteResult> {
-  const bug = await dbRead
+  // 🔴 `dbWrite`, NOT `dbRead`. The replica is a separate pool, and attaching is BY DESIGN the
+  // thing a moderator does seconds after promoting — read the issue number off the screen, paste it
+  // into the next report. Any replica lag turns that into "No issue with that number", which is
+  // indistinguishable from a typo. A single primary-key read on a path that is about to write.
+  const bug = await dbWrite
     .selectFrom('Bug')
     .select('id')
     .where('id', '=', input.bugId)
@@ -292,10 +309,26 @@ export async function linkFeedbackToBug(input: {
   const linked = await linkInTransaction(dbWrite, input);
   return linked
     ? { ok: true, bugId: input.bugId, created: false }
-    : { ok: false, reason: 'already-linked' };
+    : { ok: false, reason: await linkRefusalReason(dbWrite, input.id) };
 }
 
-class AlreadyLinked extends Error {}
+/**
+ * Zero rows has two causes and they need different words on screen — the same split the triage path
+ * makes. Telling a moderator to "reload to see which issue it is linked to" when the row was
+ * deleted sends them looking for something that does not exist.
+ */
+async function linkRefusalReason(
+  db: Pick<typeof dbWrite, 'selectFrom'>,
+  id: number
+): Promise<'already-linked' | 'gone'> {
+  return (await feedbackExists(db, id)) ? 'already-linked' : 'gone';
+}
+
+class NotLinked extends Error {
+  constructor(readonly reason: 'already-linked' | 'gone') {
+    super(reason);
+  }
+}
 
 /**
  * 🔴 `AND "bugId" IS NULL` makes double-promotion impossible. Zero rows means someone beat you to

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
     Table,
@@ -10,45 +9,37 @@
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import { MultiCombobox } from '@civitai/ui/components/ui/multi-combobox/index.js';
-  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import CursorPager from '$lib/components/CursorPager.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { LINK_CLASS, dateTime, num, shortAge } from '$lib/format';
-  import { userLookupUrl } from '$lib/entity-url';
-  import { urlWith, urlWithMulti } from '$lib/url';
+  import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
+  import { issuesUrl, userLookupUrl } from '$lib/entity-url';
+  import { urlWith } from '$lib/url';
   import {
-    FEEDBACK_STATUSES,
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
     splitContext,
   } from '$lib/feedback';
+  import FeedbackFilters from './FeedbackFilters.svelte';
   import FeedbackDetail from './FeedbackDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  const statusOptions = FEEDBACK_STATUSES.map((s) => ({ value: s, label: s }));
-  const areaLabel = $derived(data.area || 'Area — any');
+  const rowHref = (id: number) => urlWith(page.url, { open: data.open === id ? null : id });
 
-  // `emptyMeansAll`: an ABSENT `status` falls back to the default view, so a cleared filter has to
-  // survive as `?status=` or clearing it silently reapplies `new`.
-  const applyStatus = (values: string[]) =>
-    goto(urlWithMulti(clearedUrl(), 'status', values, { emptyMeansAll: true }));
-  const applyArea = (value: string) => goto(urlWith(clearedUrl(), { area: value || null }));
-
-  // Any filter change invalidates the keyset, and it closes the open row: the cursor points into a
-  // result set that no longer exists, and `?open=` would name a row the new filters may exclude.
-  function clearedUrl() {
-    const next = new URL(page.url);
-    next.searchParams.delete('cursor');
-    next.searchParams.delete('open');
-    return next;
-  }
-
-  const rowHref = (id: number) =>
-    urlWith(page.url, { open: data.open === id ? null : id });
+  /**
+   * 🔴 THE ONLY SURFACE A REFUSAL HAS WHEN THE PANEL IS NOT MOUNTED, which is exactly when the
+   * important ones happen. `FormState` awaits `update({ invalidateAll })` BEFORE assigning its own
+   * `error`, so a 410 (the row was deleted) or a 409 that moves the row out of the active status
+   * filter has already dropped the row from `data.items` — the panel is unmounted and its message
+   * is written to a dead instance. A no-JS submit has no panel at all, because posting to
+   * `?/triage` replaces the query string and takes `?open=` with it.
+   *
+   * Gated on `openVisible` so a refusal the panel CAN still show is not rendered twice.
+   */
+  const pageError = $derived(
+    !data.openVisible && form && 'error' in form && form.error ? String(form.error) : null
+  );
 </script>
 
 <header class="page-header">
@@ -59,40 +50,24 @@
   </p>
 </header>
 
-<div class="mb-4 flex flex-wrap items-end gap-x-4 gap-y-3">
-  <div class="flex flex-col gap-1">
-    <Label for="feedback-status" class="text-xs text-dark-2">Status</Label>
-    <MultiCombobox
-      options={statusOptions}
-      value={data.statuses}
-      onValueChange={applyStatus}
-      placeholder="Search statuses…"
-    />
-  </div>
+<FeedbackFilters
+  statuses={data.statuses}
+  area={data.area}
+  areaOptions={data.areaOptions}
+  shown={data.items.length}
+/>
 
-  <div class="flex flex-col gap-1">
-    <Label for="feedback-area" class="text-xs text-dark-2">Area</Label>
-    <Select.Root type="single" value={data.area} onValueChange={applyArea}>
-      <Select.Trigger id="feedback-area" class="w-56">{areaLabel}</Select.Trigger>
-      <Select.Content>
-        <Select.Item value="">Area — any</Select.Item>
-        {#each data.areaOptions as option (option)}
-          <Select.Item value={option}>{option}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </div>
-
-  <span class="pb-1.5 text-xs text-dark-2">{num(data.items.length)} shown</span>
-</div>
-
-{#if data.open !== null && !data.openVisible}
+{#if pageError}
+  <ErrorAlert message={pageError} class="mb-4" />
+{:else if data.open !== null && !data.openVisible}
+  <!-- Only when there is no refusal to show: "clear the filters" is the wrong advice for a row that
+       was just deleted, and that is the case where both would otherwise render. -->
   <p class="mb-4 text-sm text-dark-2">
     Report #{data.open} is not in this view — clear the filters to open it.
   </p>
 {/if}
 
-<div class="rounded-xl border border-dark-4">
+<div class="rounded-xl border border-dark-4 bg-dark-6">
   <Table>
     <TableHeader>
       <TableRow>
@@ -136,7 +111,12 @@
           </TableCell>
           <TableCell class="whitespace-nowrap tabular-nums">
             {#if row.bugId}
-              <a href={`${data.civitaiUrl}/issues`} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+              <a
+                href={issuesUrl(data.civitaiUrl)}
+                target="_blank"
+                rel="noreferrer"
+                class={LINK_CLASS}
+              >
                 #{row.bugId}
               </a>
             {:else}
@@ -175,10 +155,6 @@
   </Table>
 </div>
 
-<!-- The page-level `form` object carries a refusal raised on a row that a reload may have closed.
-     Rendered here as well as in the panel so a denial is never invisible. -->
-{#if form && 'error' in form && form.error}
-  <ErrorAlert message={String(form.error)} class="mt-4" />
-{/if}
-
-<CursorPager href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor, open: null }) : null} />
+<CursorPager
+  href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor, open: null }) : null}
+/>

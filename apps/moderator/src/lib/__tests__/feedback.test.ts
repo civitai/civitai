@@ -67,9 +67,12 @@ describe('reconstructFeedbackUrl', () => {
     expect(reconstructFeedbackUrl(null)).toBeNull();
   });
 
-  it('refuses a `path` that is not a path — it is client-supplied', () => {
+  it('refuses a `path` that is not a same-origin path — it is client-supplied', () => {
     expect(reconstructFeedbackUrl('https://evil.example/x')).toBeNull();
     expect(reconstructFeedbackUrl('apps')).toBeNull();
+    // 🔴 `//host` passes a naive `startsWith('/')` and becomes a HOST SWAP once concatenated onto
+    // the civitai base.
+    expect(reconstructFeedbackUrl('//evil.example/x')).toBeNull();
   });
 });
 
@@ -99,19 +102,24 @@ describe('feedbackAreaOptions', () => {
 
 describe('splitContext', () => {
   it('names the five keys the panel renders', () => {
+    // Realistic ids: the producer writes `randomUUID()`, and `splitContext` refuses anything that
+    // is not shaped like a Cloudflare key — a short stand-in would be rejected here for a reason
+    // that has nothing to do with what this case is about.
+    const images = ['2f0b6a1e-0f7a-4f2e-9c3e-1a2b3c4d5e6f', '7c9a1d2b-3e4f-4a5b-8c9d-0e1f2a3b4c5d'];
+    const screenshotId = 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e';
     const ctx = splitContext({
       path: '/apps',
       filters: { kind: 'onsite' },
-      images: ['img-1', 'img-2'],
-      screenshotId: 'shot-1',
+      images,
+      screenshotId,
       sessionId: 'v913JNcgDs',
     });
 
     expect(ctx).toEqual({
       path: '/apps',
       filters: { kind: 'onsite' },
-      images: ['img-1', 'img-2'],
-      screenshotId: 'shot-1',
+      images,
+      screenshotId,
       sessionId: 'v913JNcgDs',
       other: null,
     });
@@ -145,8 +153,50 @@ describe('splitContext', () => {
     }
   });
 
+  /**
+   * 🔴 A SECURITY GUARD, not tidiness. `getEdgeUrl` returns its argument VERBATIM when it starts
+   * with `http` or `blob`, and the producer bounds these ids by LENGTH ONLY — so an unfiltered
+   * value renders `<img src="https://attacker.example/…">` in a moderator's browser and hands the
+   * reporter a read receipt naming who opened their report and when.
+   */
+  it('refuses an attachment id that is a URL, and still shows it as text', () => {
+    const ctx = splitContext({ images: ['https://attacker.example/x.png', 'real-image-key-1'] });
+
+    expect(ctx.images).toEqual(['real-image-key-1']);
+    expect(ctx.other).toEqual({ images: ['https://attacker.example/x.png', 'real-image-key-1'] });
+  });
+
+  /**
+   * `getEdgeUrl` takes its verbatim branch on ANY value starting with `http`/`blob`, so an id
+   * spelled like one renders as a broken same-origin relative src instead of a CDN URL.
+   */
+  it('refuses an id spelled like a URL scheme even though it cannot BE a URL', () => {
+    expect(splitContext({ images: ['httpabcdefgh', 'blobabcdefgh'] }).images).toEqual([]);
+  });
+
+  it('refuses a screenshot id that is a URL', () => {
+    const ctx = splitContext({ screenshotId: 'https://attacker.example/x.png' });
+
+    expect(ctx.screenshotId).toBeNull();
+    expect(ctx.other).toEqual({ screenshotId: 'https://attacker.example/x.png' });
+  });
+
+  /**
+   * 🔴 `{#each … (id)}` THROWS on a duplicate key in production as well as dev, so one repeated id
+   * in a client-supplied array makes that report permanently unopenable.
+   */
+  it('deduplicates attachment ids', () => {
+    expect(splitContext({ images: ['same-image-key', 'same-image-key'] }).images).toEqual([
+      'same-image-key',
+    ]);
+  });
+
   it('counts the opt-in capture as an attachment alongside the reporter’s own files', () => {
-    expect(feedbackAttachmentCount(splitContext({ images: ['a', 'b'], screenshotId: 's' }))).toBe(3);
+    expect(
+      feedbackAttachmentCount(
+        splitContext({ images: ['image-key-a', 'image-key-b'], screenshotId: 'shot-key-1' })
+      )
+    ).toBe(3);
     expect(feedbackAttachmentCount(splitContext({}))).toBe(0);
   });
 });
@@ -217,9 +267,7 @@ describe('faroSessionLink', () => {
   });
 
   it('is null past the retention window — the caller renders the expiry note instead', () => {
-    expect(
-      link({ now: CREATED.getTime() + (FARO_LOKI_RETENTION_HOURS + 1) * HOUR })
-    ).toBeNull();
+    expect(link({ now: CREATED.getTime() + (FARO_LOKI_RETENTION_HOURS + 1) * HOUR })).toBeNull();
   });
 
   /**

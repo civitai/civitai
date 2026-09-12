@@ -231,6 +231,23 @@ describe('promoteFeedbackToBug', () => {
     expect(result).toEqual({ ok: false, reason: 'already-linked' });
     expect(await countRows(db, 'Bug')).toBe(1);
   });
+
+  /**
+   * The `gone` branch reached from INSIDE the promote transaction. Distinct from
+   * `linkFeedbackToBug`'s twin: this one resolves its reason against the open transaction rather
+   * than a separate client, and it must roll the Bug insert back with it.
+   */
+  it('reports a report that vanished mid-promotion as gone, and leaves no Bug behind', async () => {
+    const result = await service.promoteFeedbackToBug({
+      id: 9999,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'gone' });
+    expect(await countRows(db, 'Bug')).toBe(0);
+  });
 });
 
 describe('linkFeedbackToBug', () => {
@@ -254,6 +271,26 @@ describe('linkFeedbackToBug', () => {
     expect(result).toMatchObject({ ok: true, created: false });
     expect(await countRows(db, 'Bug')).toBe(1);
     expect((await readFeedback(db, second)).bugId).toBe(promoted.bugId);
+  });
+
+  it('reports a DELETED report as gone, not as a conflict over an issue', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    await db.query('DELETE FROM "Feedback" WHERE "id" = $1', [id]);
+
+    const result = await service.linkFeedbackToBug({
+      id,
+      bugId: promoted.bugId,
+      moderatorId: moderator,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'gone' });
   });
 
   it('refuses an issue number that does not exist, rather than writing a dangling link', async () => {
@@ -285,7 +322,7 @@ describe('reads', () => {
     const second = await service.getFeedbackList({
       statuses: ['new'],
       limit: 1,
-      cursor: service.decodeFeedbackCursor(first.nextCursor),
+      cursor: first.nextCursor,
     });
     expect(second.items.map((r) => r.id)).toEqual([older]);
     expect(second.nextCursor).toBeNull();
@@ -358,15 +395,5 @@ describe('reads', () => {
     const [row] = (await service.getFeedbackList({ statuses: [] })).items;
     expect(row.bugTitle).toBe('Sort resets');
     expect(row.bugStatus).toBe('Complete');
-  });
-});
-
-describe('decodeFeedbackCursor', () => {
-  it('refuses a hand-edited cursor rather than 500ing the queue', () => {
-    // `Feedback.id` is a Postgres integer: a larger value ERRORS the comparison rather than
-    // missing, so an unbounded cursor would 500 the page instead of finding nothing.
-    for (const bad of ['', 'abc', '0', '-4', '1.5', '2147483648', null, undefined])
-      expect(service.decodeFeedbackCursor(bad)).toBeNull();
-    expect(service.decodeFeedbackCursor('42')).toBe(42);
   });
 });

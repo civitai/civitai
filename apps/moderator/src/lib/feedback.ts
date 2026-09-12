@@ -1,8 +1,3 @@
-// Pure decision functions behind `/feedback`. Everything here is reachable from the node test
-// project, which is the reason it is not inlined into the page: a wrong answer in any of them is
-// silent — a link to the wrong page, an area whose rows nobody can reach, a Grafana link that lands
-// on an empty pane.
-
 export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
 export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 
@@ -26,18 +21,10 @@ export const feedbackStatusBadgeClass = (status: string): string =>
   isFeedbackStatus(status) ? FEEDBACK_STATUS_BADGE[status] : '';
 
 /**
- * The areas the PRODUCER knows about, mirrored from the main app's
- * `src/shared/constants/feedback.constants.ts`.
- *
- * 🔴 A MIRROR, not the source. `apps/moderator` is a separate SvelteKit app with no path to the
- * Next app's `src/`, and that constant is not exported from any workspace package, so there is no
- * import that would make these one value.
- *
- * The drift this can suffer is bounded and harmless in the direction that matters: the option list
- * is this list UNIONED with `SELECT DISTINCT area` (see `feedbackAreaOptions`), so an area added
- * upstream and missing here is still filterable the moment it has a row, and an area retired
- * upstream keeps its historical rows reachable. A stale entry here only ever adds an option that
- * matches nothing.
+ * 🔴 A MIRROR of `FEEDBACK_AREAS` in the main app's `src/shared/constants/feedback.constants.ts`,
+ * which is not exported from any workspace package — so nothing keeps the two in step. The union in
+ * `feedbackAreaOptions` is what bounds the damage. To make them ONE value, move the constant into
+ * `@civitai/shared` and leave a re-export shim, as `basemodel.constants.ts` already does.
  */
 export const FEEDBACK_KNOWN_AREAS = [
   'bitdex-image-feed',
@@ -76,25 +63,25 @@ const FILTER_DEFAULTS: Record<string, ReadonlyArray<string | number | boolean>> 
 };
 
 /**
- * The URL the reporter was actually looking at.
- *
  * 🔴 `context.path` is `window.location.pathname` and carries NO query string, while on `/apps` the
- * query string IS the view — so `path` alone links to a different page than the one the report is
- * about. Rebuilding it is what makes a one-line complaint actionable.
+ * query string IS the view — so `path` alone links to a DIFFERENT page than the one the report is
+ * about.
  *
- * Returns `null` rather than a link when `path` is absent (it is `undefined` during SSR, by its own
- * type) — a link to `/` would be a confident answer to a question nobody can answer.
+ * `null` rather than a link when `path` is absent (it is `undefined` during SSR by its own type) or
+ * is not a plain path — it is client-supplied. Rejecting `//host` is defence in depth rather than a
+ * live fix: today's only caller concatenates onto a full ORIGIN, where `//host` stays a path. A
+ * caller that ever concatenates onto a bare scheme would be handed a host swap.
  *
- * Unknown filter keys are CARRIED, not dropped: `filters` is a free record written by whichever
- * surface produced the report, and silently discarding a key a future area puts there is the same
- * defect `splitContext`'s "other" bucket exists to prevent. A spurious param on the rebuilt link is
- * visible and inert (`/apps`' own schema is `.loose()`); a missing one is neither.
+ * Unknown filter keys are CARRIED, for the reason `splitContext`'s "other" bucket exists: a
+ * spurious param on the rebuilt link is visible and inert, a missing one is neither.
+ *
+ * The empty-string-means-absent rule here is the same one `$lib/url.ts` applies to live filters.
  */
 export function reconstructFeedbackUrl(
   path: string | null | undefined,
   filters?: FeedbackFilters | null
 ): string | null {
-  if (typeof path !== 'string' || !path.startsWith('/')) return null;
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return null;
 
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters ?? {})) {
@@ -125,16 +112,30 @@ const isFilterValue = (value: unknown): value is string | number | boolean =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 
 /**
- * Split a stored `context` payload into the keys this panel renders and everything else.
+ * A Cloudflare-images key, as the delivery URL builder requires one.
  *
- * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts `reportedSource`,
- * `reportedPageSources` and `pagesLoaded`, which no current producer emits and a future area will.
- * A panel that renders only the five keys it knows about discards the payload of every area added
- * after it, and nothing says so.
+ * 🔴 THIS IS A SECURITY GUARD, NOT A TIDINESS ONE. `getEdgeUrl` returns its argument VERBATIM when
+ * it starts with `http` or `blob` (`$lib/media/edge-url.ts`), and the producer bounds these values
+ * by LENGTH ONLY — `z.string().trim().min(1).max(100)`, no format at all. So an unfiltered id
+ * renders `<img src="https://attacker.example/x.png">` in a moderator's browser: an arbitrary
+ * outbound request, giving the reporter a read receipt naming which moderator opened their report
+ * and when. That is wider than the accepted risk, which was about objects in our OWN account.
  *
- * A known key holding an unexpected TYPE also lands in "other" rather than being dropped: `context`
- * is JSONB with no schema at rest, written by a zod schema in a different app, so the shape is a
- * claim. Showing the odd value beats pretending the key was absent.
+ * What actually closes it is that `:` and `/` are excluded, so no absolute, protocol-relative or
+ * `data:` URL can match and no path can be traversed. The leading negative lookahead is separate
+ * and smaller: without it an id spelled `httpsomething` still takes `getEdgeUrl`'s verbatim branch
+ * and renders as a broken SAME-ORIGIN relative src instead of a CDN one.
+ *
+ * A rejected value is not dropped — it goes to "other" and is shown as text — so nothing is hidden
+ * from triage, it just stops being a URL the browser fetches.
+ */
+const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
+
+/**
+ * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts keys no current
+ * producer emits, so a panel rendering only the five it knows about discards the payload of every
+ * area added after it, silently. A known key holding an unexpected TYPE or an unusable VALUE lands
+ * there too — `context` is JSONB with no schema at rest, so its shape is a claim.
  */
 export function splitContext(context: unknown): FeedbackContext {
   const out: FeedbackContext = {
@@ -154,11 +155,24 @@ export function splitContext(context: unknown): FeedbackContext {
       out.path = value;
     } else if (key === 'sessionId' && typeof value === 'string') {
       out.sessionId = value;
-    } else if (key === 'screenshotId' && typeof value === 'string') {
+    } else if (key === 'screenshotId' && typeof value === 'string' && IMAGE_KEY.test(value)) {
       out.screenshotId = value;
-    } else if (key === 'images' && Array.isArray(value) && value.every((v) => typeof v === 'string')) {
-      out.images = value as string[];
-    } else if (key === 'filters' && isPlainObject(value) && Object.values(value).every(isFilterValue)) {
+    } else if (
+      key === 'images' &&
+      Array.isArray(value) &&
+      value.every((v) => typeof v === 'string')
+    ) {
+      // Deduplicated as well as filtered: `{#each … (id)}` THROWS on a duplicate key in production
+      // as well as in dev, and the array is client-supplied with no uniqueness constraint anywhere
+      // — so one repeated id makes the report permanently unopenable.
+      out.images = [...new Set((value as string[]).filter((v) => IMAGE_KEY.test(v)))];
+      // Anything dropped is still shown, as text, under "Other context".
+      if (out.images.length !== value.length) other[key] = value;
+    } else if (
+      key === 'filters' &&
+      isPlainObject(value) &&
+      Object.values(value).every(isFilterValue)
+    ) {
       out.filters = value as FeedbackFilters;
     } else {
       other[key] = value;
