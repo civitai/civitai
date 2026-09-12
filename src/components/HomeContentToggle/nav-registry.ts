@@ -98,15 +98,6 @@ export const navRegistry: NavRegistryEntry[] = [
     defaultGroup: 'bar',
     visible: (ctx) => ctx.features.challengePlatform,
   },
-  { key: 'events', url: '/events', defaultGroup: 'bar', defaultHidden: true },
-  { key: 'updates', url: '/changelog', defaultGroup: 'bar' },
-  {
-    key: 'shop',
-    url: '/shop',
-    defaultGroup: 'bar',
-    visible: (ctx) => ctx.features.cosmeticShop,
-    classes: ['tabRainbow'],
-  },
   {
     key: 'apps',
     url: '/apps',
@@ -117,6 +108,15 @@ export const navRegistry: NavRegistryEntry[] = [
     // store-gate call-site ledger (`appsStoreAccessCallSites.test.ts`).
     visible: (ctx) => hasAppsStoreAccess(ctx.features),
     new: new Date('2026-10-01'),
+  },
+  { key: 'events', url: '/events', defaultGroup: 'bar', defaultHidden: true },
+  { key: 'updates', url: '/changelog', defaultGroup: 'bar' },
+  {
+    key: 'shop',
+    url: '/shop',
+    defaultGroup: 'bar',
+    visible: (ctx) => ctx.features.cosmeticShop,
+    classes: ['tabRainbow'],
   },
 
   /**
