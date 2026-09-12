@@ -21,6 +21,7 @@ import {
   isBlockActionDetail,
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 
 /**
  * The SYNTHETIC (non-FK-resolving) `appBlockId` claim namespaces a PRE-APPROVAL
@@ -49,6 +50,19 @@ export type ScopeGrantSurface = {
   slug: string;
   name: string;
   iconUrl?: string;
+  /**
+   * The app's EFFECTIVE scope set — `manifest.scopes ∩ AppBlock.approved_scopes`, computed by
+   * the shared `effectiveBlockScopes` helper, in manifest order and de-duplicated.
+   *
+   * NEITHER column alone: the manifest is the dev's declaration and can be replaced without
+   * re-approval, the approval is a snapshot that can name a scope a newer manifest has
+   * dropped. NOT `granted_scopes` either (the consent-gated subset, narrower because it omits
+   * every `CONSENT_EXEMPT_SCOPES` entry a token still carries).
+   *
+   * 🔴 NOT "what the mint will issue a token for" — that claim was here and it was false in
+   * two ways; see the assignment site in `listMyScopeGrants`. These are the scopes the app may
+   * be granted and exercised with.
+   */
   scopes: string[];
   /**
    * The per-UTC-day Buzz ceiling the VIEWER set for this app at consent time, or
@@ -68,12 +82,12 @@ export type ScopeGrantSurface = {
    * True when the viewer's LIVE (non-revoked) grant row for this app actually carries
    * `ai:write:budgeted` — the one scope in the vocabulary that can spend their Buzz.
    *
-   * 🔴 THIS IS NOT DERIVABLE FROM `scopes` ABOVE, and that is why it exists. `scopes`
-   * is the app's MANIFEST-declared set (what it asks for); this is the USER'S GRANT
-   * (what they agreed to). The budget editor on /apps/activity keys off this one: a
-   * budget only bounds something when the spend scope is granted, and `grantScopes`
-   * IGNORES a budget sent for an app that does not hold it — so offering the control
-   * off the manifest set would render a field whose value the server silently drops.
+   * 🔴 THIS IS NOT DERIVABLE FROM `scopes` ABOVE, and that is why it exists. `scopes` is an
+   * APP-SIDE set (`manifest.scopes ∩ approved_scopes` — what the app may be granted); this is
+   * the USER'S GRANT (what they actually agreed to). The budget editor on /apps/activity keys
+   * off this one: a budget only bounds something when the spend scope is granted, and
+   * `grantScopes` IGNORES a budget sent for an app that does not hold it — so offering the
+   * control off an app-side set would render a field whose value the server silently drops.
    */
   spendScopeGranted: boolean;
   surfaces: {
@@ -281,30 +295,62 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
 
   const result: ScopeGrantSurface[] = [];
   for (const [appBlockId, entry] of byAppBlock.entries()) {
+    // Presentation fields only. `scopes` is deliberately NOT read through this cast even
+    // though the effective set now needs it — the shared helper takes the raw manifest and
+    // owns that extraction, so there is exactly one place that decides what a malformed
+    // `scopes` value means.
     const manifest = (entry.appBlock.manifest ?? {}) as {
       name?: unknown;
       iconUrl?: unknown;
-      scopes?: unknown;
     };
     const manifestName = typeof manifest.name === 'string' ? manifest.name : entry.appBlock.blockId;
     const iconUrl =
       typeof manifest.iconUrl === 'string' && manifest.iconUrl.length > 0
         ? manifest.iconUrl
         : undefined;
-    // Prefer the manifest-declared scopes (the dev's stated intent). The
-    // approved_scopes column is the moderator-narrowed set used at JWT
-    // issuance; surfacing both would be confusing for v0. Fall back to
-    // approved_scopes when manifest.scopes is missing or malformed.
-    const manifestScopes = Array.isArray(manifest.scopes)
-      ? (manifest.scopes.filter((s) => typeof s === 'string') as string[])
-      : entry.appBlock.approvedScopes ?? [];
+    // 🔴 DISPLAY `manifest.scopes ∩ approved_scopes` — NEITHER COLUMN ALONE. The shared
+    // helper owns the rule, the JSON-boundary defensiveness, and the order/de-dup contract;
+    // see `effectiveBlockScopes` for why the intersection is the only set that is correct in
+    // both divergence directions, and for the same rule's other call sites.
+    //
+    // The short version, because this is the surface the divergence is most visible on: a
+    // publisher push (`src/pages/api/v1/developer/block-manifests.ts`) replaces `manifest`
+    // and sets `status: 'pending'` without touching `approved_scopes`, and this query has NO
+    // status filter, so a pending-v2 app still renders here. A v2 that ADDS a scope leaves
+    // `manifest ⊋ approved`, where showing the manifest over-reports; a v2 that DROPS one
+    // leaves `manifest ⊊ approved`, where showing the approval over-reports a scope the
+    // current manifest no longer even requests. Only the intersection is right in both.
+    //
+    // 🔴 DO NOT DESCRIBE THIS AS "WHAT THE MINT WILL ISSUE A TOKEN FOR" — an earlier revision
+    // of this comment did, citing `block-registry.service.ts`, and the citation was being
+    // misapplied rather than misquoted. That sentence ("The mint sources scopes from
+    // `approvedScopes` … NEVER the raw manifest") is TRUE of exactly ONE of the THREE
+    // scope-sourcing sites: the OWNED-NON-APPROVED dev-tunnel mint, resolved by
+    // `resolveOwnedNonApprovedPageBlock`, whose docblock it lives in — `block-tokens/index.ts:650`
+    // really does `clampTunnelDeclaredScopes(app.approvedScopes)` there. ⚠️ "The dev-tunnel author
+    // mint" does NOT identify it: the OTHER dev-tunnel author mint
+    // (`resolveDevPageBlockForAuthor`, `:469`) sources `clampTunnelDeclaredScopes(app.scopes)` —
+    // the author's own declared manifest, not the column. The PRODUCTION run-token mint that
+    // the apps on this page actually use is the THIRD path, and it sources from the MANIFEST
+    // (`requestedScopes = knownManifestScopes`) with `approved_scopes` as an all-or-nothing 403
+    // veto. It also refuses unless `status === 'approved'`, and this query has no status filter,
+    // so this list renders apps no production token can be minted for at all. See
+    // `effectiveBlockScopes` for the full statement. The honest claim is the narrower one: these
+    // are the scopes the app may be granted and exercised with.
+    //
+    // NOT `granted_scopes`: that is only the consent-gated subset, so it UNDER-reports by
+    // omitting every `CONSENT_EXEMPT_SCOPES` entry a token really carries.
+    const displayedScopes = effectiveBlockScopes(
+      entry.appBlock.manifest as { scopes?: unknown } | null,
+      entry.appBlock.approvedScopes
+    );
 
     result.push({
       appBlockId,
       slug: entry.appBlock.blockId,
       name: manifestName,
       iconUrl,
-      scopes: manifestScopes,
+      scopes: displayedScopes,
       buzzBudgetPerDay: budgetByAppBlock.get(appBlockId) ?? null,
       spendScopeGranted: spendGrantedByAppBlock.has(appBlockId),
       surfaces: {

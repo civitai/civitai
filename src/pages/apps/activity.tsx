@@ -413,9 +413,9 @@ const SPEND_SCOPE = 'ai:write:budgeted';
  * branch.
  *
  * ⚠️ KNOWN LIMIT, STATED RATHER THAN PAPERED OVER: `grantScopes` requires the app to be
- * `approved` AND the sent scope to be inside `manifest ∩ approvedScopes`. If an app is
- * later un-approved, or a moderator narrows its approved set so it no longer includes
- * `ai:write:budgeted`, this control surfaces the server's error instead of editing —
+ * `approved` AND the sent scope to be inside `manifest ∩ approvedScopes`. If an app is later
+ * un-approved, or a new version drops `ai:write:budgeted` from its manifest so it falls out of
+ * that intersection, this control surfaces the server's error instead of editing —
  * the user's stored limit is then not editable here. It is also not ENFORCING anything
  * in that state (no token can carry the spend scope, so no spend reaches the budget),
  * so nothing is stuck at a ceiling; the limit is simply frozen until the app is
@@ -611,9 +611,13 @@ function ScopeGrantsPanel() {
             <Divider />
             <BlockScopeList scopes={grant.scopes} />
             {/* Only for an app the viewer has actually GRANTED the spend scope to —
-                `spendScopeGranted` is the grant row, not the manifest. A budget on an
-                app that cannot spend bounds nothing, and the server would ignore the
-                write. */}
+                `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
+                `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
+                the app may be granted). ⚠️ This sentence used to contrast the grant with "the
+                manifest"; that named the wrong set once the displayed list became the
+                intersection. The identical sentence in `AppPermissionsActivityDrawer` was
+                corrected and this sibling was missed. A budget on an app that cannot spend bounds
+                nothing, and the server would ignore the write. */}
             {grant.spendScopeGranted ? (
               <>
                 <Divider />
