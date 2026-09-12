@@ -2,6 +2,7 @@ import { publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import type { BotAccountCohortMember } from './cohort';
+import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from './fingerprint-keys';
 
 /**
  * The COHORT-LEVEL evidence: the things that are only visible by looking at the whole day's signups
@@ -40,6 +41,22 @@ import type { BotAccountCohortMember } from './cohort';
  */
 export const MAX_CONTENT_SAMPLES = 5_000;
 
+/**
+ * The most image rows one run will read, across every account.
+ *
+ * 🔴 A SEPARATE BUDGET FROM `MAX_CONTENT_SAMPLES`, NOT A SHARE OF IT, and that is the whole reason
+ * the filename signal exists at all. The two sources are wildly unequal on this site — a day's new
+ * accounts produce a handful of comments and thousands of images — so a single shared budget spent
+ * in source order would let whichever read ran first consume everything. Worse, the direction that
+ * failure runs in is the one that reproduces the defect being fixed: the comment read is cheap and
+ * finds almost nothing, and it would leave the budget intact while the image read, which is the one
+ * with the signal in it, would be the half that gets truncated on a wave day.
+ *
+ * Sized larger than the content budget because the population is larger, and because one image row
+ * is two small columns against a comment's truncated body.
+ */
+export const MAX_FILENAME_SAMPLES = 20_000;
+
 /** How many accounts' ids go into one `IN (…)` list. Matches the cohort's own page size so the two
  *  walks put the same width of list in front of the planner. */
 export const EVIDENCE_CHUNK_SIZE = 500;
@@ -65,6 +82,17 @@ export type RegistrationIpRow = { userId: number; ip: string };
 export type ContentSampleRow = { userId: number; content: string };
 
 /**
+ * One filename an account uploaded under.
+ *
+ * 🔴 `name` IS NULLABLE IN THE SCHEMA (`Image.name String?`) and this type says so rather than
+ * lying about it. A `null` is not a filename that failed to cluster — it is an upload that carried
+ * no name at all — and the fold below drops it before it can become a key. Typing it as `string`
+ * and letting a `null` arrive would put the string `"null"` in front of the cluster counter, where
+ * it would look exactly like a wildly popular shared filename.
+ */
+export type FilenameSampleRow = { userId: number; name: string | null };
+
+/**
  * The Postgres slice this module is allowed to use: two reads, no write method, nothing to widen.
  *
  * Written structurally rather than as `typeof dbRead` for the reason `cohort.ts` gives at length —
@@ -78,6 +106,9 @@ export type EvidenceDb = {
   };
   commentV2: {
     findMany: (args: ReturnType<typeof contentSampleArgs>) => Promise<ContentSampleRow[]>;
+  };
+  image: {
+    findMany: (args: ReturnType<typeof filenameSampleArgs>) => Promise<FilenameSampleRow[]>;
   };
 };
 
@@ -111,6 +142,15 @@ export type EvidenceReader = {
   listRegistrationIps(userIds: number[], createdAfter?: Date): Promise<RegistrationIpRow[]>;
   /** Up to `take` recent comments across both comment surfaces, for exactly these accounts. */
   listContentSamples(userIds: number[], take: number): Promise<ContentSampleRow[]>;
+  /**
+   * Up to `take` recent uploaded filenames for exactly these accounts, uploaded at or before
+   * `createdBefore`.
+   */
+  listFilenameSamples(
+    userIds: number[],
+    take: number,
+    createdBefore?: Date
+  ): Promise<FilenameSampleRow[]>;
   /** Whether a registration-IP read can happen at all. `false` means the source is missing, NOT
    *  that the accounts share no IP. */
   hasRegistrationIps: boolean;
@@ -134,6 +174,46 @@ export function contentSampleArgs(userIds: number[], take: number) {
   return {
     where: { userId: { in: userIds } },
     select: { userId: true, content: true },
+    orderBy: { id: 'desc' },
+    take,
+  } as const;
+}
+
+/**
+ * The `findMany` arguments for one chunk of accounts' uploaded filenames.
+ *
+ * 🔴 IT DOES NOT FILTER ON `ingestion` OR `needsReview`, AND THAT OMISSION IS THE SIGNAL. There is a
+ * partial index on `Image` covering `ingestion = 'Scanned' AND needsReview IS NULL`, and adding
+ * either predicate here would make this read use it — at the cost of removing exactly the rows this
+ * heuristic depends on. The images a templated ring uploads are the ones the scanner blocks or holds
+ * for review; an account that survives while its content is removed is the case the whole detector
+ * exists to surface. A filter that reads as routine hygiene would delete the population under study
+ * and leave a heuristic that still runs, still reports a number, and can no longer see anything.
+ *
+ * 🔴 `orderBy: { id: 'desc' }`, NOT `createdAt`, AND THIS IS A CORRECTION TO THE OBVIOUS CHOICE.
+ * `Image` carries no `(userId, createdAt)` index — the ones it has are `(userId, postId)` and
+ * `(userId, id)` (`image_userid_id_idx`), verified against `schema.prisma` rather than assumed — so
+ * ordering on `createdAt` would sort a user's whole image history outside any index. `id` is a
+ * monotonic surrogate on an append-only table, so descending `id` IS descending upload order for
+ * every practical purpose, and it is the order `contentSampleArgs` already reads its own surface in
+ * for the same reason: the `take` bounds a chunk, so the order decides WHICH rows a bounded read
+ * keeps, and the newest are the ones a wave is made of.
+ *
+ * `createdBefore` is an upper bound, not a lower one. A lower bound would be free of meaning — every
+ * cohort account was created inside the run's window, so none of its images can predate it — while
+ * the upper bound is what makes the read a stable snapshot at the run's own clock, so two runs over
+ * the same window sample the same rows rather than drifting with whatever was uploaded meanwhile.
+ *
+ * Only `userId` and `name` are selected. Nothing else identifies a filename cluster, and an image's
+ * url, hash and dimensions would only widen what this module holds in memory.
+ */
+export function filenameSampleArgs(userIds: number[], take: number, createdBefore?: Date) {
+  return {
+    where: {
+      userId: { in: userIds },
+      ...(createdBefore ? { createdAt: { lte: createdBefore } } : {}),
+    },
+    select: { userId: true, name: true },
     orderBy: { id: 'desc' },
     take,
   } as const;
@@ -245,6 +325,10 @@ export function createEvidenceReader(
       ]);
       return [...comments, ...commentsV2];
     },
+    listFilenameSamples: async (userIds, take, createdBefore) => {
+      if (!userIds.length || take <= 0) return [];
+      return db.image.findMany(filenameSampleArgs(userIds, take, createdBefore));
+    },
   };
 }
 
@@ -309,6 +393,61 @@ export function contentFingerprint(raw: string): string | null {
 }
 
 /**
+ * How much of one filename is kept. Filenames are short; this exists to bound a pathological one
+ * rather than because anything is expected to reach it.
+ */
+export const MAX_FILENAME_CHARS = 256;
+
+/**
+ * A filename reduced to the shape the clustering check compares.
+ *
+ * 🔴 IT DELIBERATELY DOES NOT REUSE `normalizeContent`, AND THE REASON IS NOT STYLE. Two of that
+ * function's steps are actively wrong here:
+ *
+ *  - **DIGIT MASKING WOULD DESTROY THE SIGNAL BY OVER-CLUSTERING.** Under `normalizeContent`,
+ *    `1900.jpg.jpeg` and `2749.jpg.jpeg` both become `nummask jpg jpeg` — so every `<digits>.jpg` on
+ *    the site collapses into ONE key, and the largest cluster in any cohort becomes an artefact of
+ *    camera and export naming rather than a ring. Masking is correct for prose, where the digits are
+ *    the swapped payload; in a filename the digits are most of the identity.
+ *  - **THE PROSE LENGTH FLOORS WOULD DISCARD ALMOST EVERYTHING.** Measured by executing the shipped
+ *    normaliser rather than by reading it: `1900.jpg.jpeg` normalises to `"nummask jpg jpeg"` — 16
+ *    characters, 3 tokens — and `logo.jpg` to `"logo jpg"` — 8 characters, 2 tokens. Both fail
+ *    `MIN_FINGERPRINT_CHARS` (24) and `MIN_FINGERPRINT_TOKENS` (4); so does
+ *    `IMG_20240103_112233.png` at 23 characters. Those floors exist because a SHORT PROSE STRING is
+ *    written independently by unrelated people — "thanks", "nice work" — which is a fact about
+ *    sentences and not about filenames. A filename is an identifier, and a short one is no weaker
+ *    evidence than a long one.
+ *
+ * 🔴 SO WHAT DEFENDS AGAINST AN INNOCENT COLLISION HERE, given there is no length floor and no
+ * stoplist of generic names: the cluster floor and the cohort itself. `CLUSTER_ZERO_AT` requires at
+ * least THREE DISTINCT members before anything scores, and every member is an account less than a
+ * day old. Three strangers who all signed up today and all uploaded `logo.jpg` is already the
+ * observation worth making — a stoplist of "generic" names would remove precisely the filenames the
+ * measured rings actually share, because a ring's whole method is to look unremarkable.
+ *
+ * LOWERCASING IS LOAD-BEARING rather than cosmetic: in one real cohort `Logo.jpg` and `logo.jpg`
+ * were two separate clusters of ten, which is two groups below the scoring floor's interesting range
+ * instead of one group of twenty.
+ */
+export function normalizeFilename(raw: string): string {
+  return raw.slice(0, MAX_FILENAME_CHARS).toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The cluster key for one uploaded filename, or `null` when there is nothing to key on.
+ *
+ * `null` for a missing or blank name — an upload with no filename is not a member of the
+ * empty-string cluster, and letting it become one would build the largest cluster in every cohort
+ * out of accounts that share nothing at all.
+ */
+export function filenameFingerprint(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const normalized = normalizeFilename(raw);
+  if (!normalized) return null;
+  return `${FILENAME_FINGERPRINT_PREFIX}${normalized}`;
+}
+
+/**
  * Everything the cohort-level heuristics read, indexed once per run.
  *
  * 🔴 EVERY COUNT HERE IS A COUNT OF DISTINCT ACCOUNTS, never of rows. One account pasting the same
@@ -324,9 +463,14 @@ export type CohortSignals = {
   membersPerIp: Map<string, number>;
   /** emailDomain → how many DISTINCT cohort members carry it. */
   membersPerDomain: Map<string, number>;
-  /** userId → the content fingerprints it produced. */
+  /**
+   * userId → the content fingerprints it produced, NAMESPACED.
+   *
+   * Keys carry `TEXT_FINGERPRINT_PREFIX` or `FILENAME_FINGERPRINT_PREFIX`; nothing reads a bare
+   * string out of here. See the prefix constants for why the two sources must not share a key.
+   */
   fingerprintsByUser: Map<number, string[]>;
-  /** fingerprint → how many DISTINCT cohort members produced it. */
+  /** namespaced fingerprint → how many DISTINCT cohort members produced it. */
   membersPerFingerprint: Map<string, number>;
   /**
    * 🔴 WHICH SOURCES ACTUALLY ANSWERED. A heuristic reading an empty index cannot tell "these
@@ -350,6 +494,21 @@ export type CohortSignals = {
     contentBudgetExhausted: boolean;
     /** How many members had content sampled at all. The denominator for the similarity heuristic. */
     membersSampledForContent: number;
+    /**
+     * The filename read ran to completion. `false` means it never ran, or a chunk THREW and the
+     * partial data was discarded — NOT that the cohort uploaded nothing.
+     *
+     * 🔴 ITS OWN FLAG, NOT A SHARE OF `contentSamples`, because the two reads fail independently:
+     * they hit different tables, and one can time out while the other returns. Folding them into a
+     * single flag would mean a dead filename read reported the comment half as unavailable too, or —
+     * far worse in the direction that matters — a live comment read vouching for a filename read
+     * that never happened.
+     */
+    filenameSamples: boolean;
+    /** The filename budget was spent before the whole cohort was sampled. */
+    filenameBudgetExhausted: boolean;
+    /** How many members had filenames sampled at all. */
+    membersSampledForFilenames: number;
   };
 };
 
@@ -367,6 +526,9 @@ export function emptyCohortSignals(): CohortSignals {
       contentSamples: false,
       contentBudgetExhausted: false,
       membersSampledForContent: 0,
+      filenameSamples: false,
+      filenameBudgetExhausted: false,
+      membersSampledForFilenames: 0,
     },
   };
 }
@@ -396,6 +558,9 @@ export function buildCohortSignals(args: {
   members: BotAccountCohortMember[];
   registrationIps: RegistrationIpRow[];
   contentSamples: ContentSampleRow[];
+  /** Optional so a caller indexing only text — every existing test, and any future source-by-source
+   *  grading run — does not have to pass an empty array to mean "did not read this". */
+  filenameSamples?: FilenameSampleRow[];
   sources: CohortSignals['sources'];
 }): CohortSignals {
   const signals = emptyCohortSignals();
@@ -428,19 +593,37 @@ export function buildCohortSignals(args: {
   }
   for (const [domain, members] of domainMembers) signals.membersPerDomain.set(domain, members.size);
 
+  // 🔴 BOTH SOURCES FOLD INTO ONE INDEX, THROUGH ONE FUNCTION, and that is deliberate: the
+  // distinct-account counting is the part that must not differ between them. A second hand-written
+  // loop for filenames is how one source quietly starts counting ROWS while the other counts
+  // members — which is exactly the invariant this file's header calls out, and the direction that
+  // lets a single prolific uploader manufacture a ring out of itself.
   const fingerprintMembers = new Map<string, Set<number>>();
-  for (const sample of args.contentSamples) {
-    if (!inCohort.has(sample.userId)) continue;
-    const fingerprint = contentFingerprint(sample.content);
-    if (!fingerprint) continue;
-    const owned = signals.fingerprintsByUser.get(sample.userId);
+  const addFingerprint = (userId: number, fingerprint: string | null) => {
+    if (!inCohort.has(userId) || !fingerprint) return;
+    const owned = signals.fingerprintsByUser.get(userId);
     if (owned) {
       if (!owned.includes(fingerprint)) owned.push(fingerprint);
-    } else signals.fingerprintsByUser.set(sample.userId, [fingerprint]);
+    } else signals.fingerprintsByUser.set(userId, [fingerprint]);
     let members = fingerprintMembers.get(fingerprint);
     if (!members) fingerprintMembers.set(fingerprint, (members = new Set()));
-    members.add(sample.userId);
+    members.add(userId);
+  };
+
+  for (const sample of args.contentSamples) {
+    const fingerprint = contentFingerprint(sample.content);
+    // Prefixed at the INDEX rather than inside `contentFingerprint`, so that function keeps meaning
+    // "the normalised form of this text" — which is what its own tests assert and what the reason
+    // string quotes — and the namespace stays a property of the shared map that needs it.
+    addFingerprint(
+      sample.userId,
+      fingerprint === null ? null : `${TEXT_FINGERPRINT_PREFIX}${fingerprint}`
+    );
   }
+
+  for (const sample of args.filenameSamples ?? [])
+    addFingerprint(sample.userId, filenameFingerprint(sample.name));
+
   for (const [fingerprint, members] of fingerprintMembers)
     signals.membersPerFingerprint.set(fingerprint, members.size);
 
@@ -471,14 +654,19 @@ export async function collectCohortSignals(
   opts: {
     chunkSize?: number;
     maxContentSamples?: number;
+    maxFilenameSamples?: number;
     /** The run's window opening, passed through to the ClickHouse read as its `time` bound. */
     createdAfter?: Date;
+    /** The run's own clock, passed to the filename read as its upper bound so the sample is a
+     *  snapshot rather than a moving target. */
+    createdBefore?: Date;
     checkCanceled?: () => void;
     log?: (name: string, data: Record<string, unknown>) => void;
   } = {}
 ): Promise<CohortSignals> {
   const chunkSize = opts.chunkSize ?? EVIDENCE_CHUNK_SIZE;
   const budgetTotal = opts.maxContentSamples ?? MAX_CONTENT_SAMPLES;
+  const filenameBudgetTotal = opts.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
   const checkCanceled = opts.checkCanceled ?? (() => undefined);
   const log = opts.log ?? (() => undefined);
 
@@ -558,15 +746,61 @@ export async function collectCohortSignals(
   }
   if (contentRead && budget <= 0 && membersSampled < members.length) budgetExhausted = true;
 
+  // The filename walk. Structurally the content walk above, with its own budget and its own flags —
+  // see `MAX_FILENAME_SAMPLES` for why the budgets are separate, and `sources.filenameSamples` for
+  // why the availability flags are. Partial data is DISCARDED on failure here too: a cluster count
+  // built from some of the chunks understates every ring that straddles the missing ones, and
+  // understating is the direction that produces a confident zero.
+  const filenameSamples: FilenameSampleRow[] = [];
+  let filenameBudget = filenameBudgetTotal;
+  let filenameBudgetExhausted = false;
+  let filenameMembersSampled = 0;
+  let filenameRead = true;
+  for (const ids of chunks) {
+    checkCanceled();
+    if (filenameBudget <= 0) {
+      filenameBudgetExhausted = true;
+      break;
+    }
+    let rows: FilenameSampleRow[];
+    try {
+      // One surface, so the take IS the remaining budget — no doubling, unlike the content read.
+      rows = await reader.listFilenameSamples(
+        ids,
+        Math.min(filenameBudget, chunkSize * 2),
+        opts.createdBefore
+      );
+    } catch (e) {
+      log('bot-account-detection:filename-samples-failed', {
+        chunkIds: ids.length,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      filenameSamples.length = 0;
+      filenameRead = false;
+      filenameBudgetExhausted = false;
+      filenameMembersSampled = 0;
+      break;
+    }
+    filenameMembersSampled += ids.length;
+    filenameBudget -= rows.length;
+    filenameSamples.push(...rows);
+  }
+  if (filenameRead && filenameBudget <= 0 && filenameMembersSampled < members.length)
+    filenameBudgetExhausted = true;
+
   return buildCohortSignals({
     members,
     registrationIps,
     contentSamples,
+    filenameSamples,
     sources: {
       registrationIps: ipsRead,
       contentSamples: contentRead,
       contentBudgetExhausted: budgetExhausted,
       membersSampledForContent: Math.min(membersSampled, members.length),
+      filenameSamples: filenameRead,
+      filenameBudgetExhausted,
+      membersSampledForFilenames: Math.min(filenameMembersSampled, members.length),
     },
   });
 }

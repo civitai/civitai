@@ -41,5 +41,10 @@ export {
   isCommonEmailDomain,
   COMMON_EMAIL_DOMAINS,
 } from './clustering';
-export { contentTemplatingHeuristic } from './similarity';
+export {
+  contentTemplatingHeuristic,
+  contentTemplatingSourceScore,
+  largestContentCluster,
+  CONTENT_TEMPLATING_ID,
+} from './similarity';
 export { rampScore } from './ramp';

@@ -119,9 +119,23 @@ function clampScore(raw: number): { score: number; clamped: boolean } {
 /**
  * Run every heuristic over one account.
  *
- * The blend is a weighted mean over the heuristics that RAN, so a registry of one always-zero
- * placeholder yields 0 and a registry of none yields 0 — neither of which is a claim about the
- * account.
+ * 🔴 THE BLEND DIVIDES BY EVERY REGISTERED WEIGHT, NOT BY THE HEURISTICS THAT HAD INPUT — and this
+ * docstring claimed the opposite ("a weighted mean over the heuristics that RAN") until a heuristic
+ * with no input made the difference matter. The denominator below is `subScores.reduce(…weight…)`
+ * over the whole registry; a heuristic whose source was empty contributes 0 to the numerator and
+ * its full weight to the denominator. So a permanently silent third of an equally-weighted registry
+ * of three is not neutral — it is a fixed 1/3 haircut that caps every account at 0.667, which is
+ * exactly what a `registration-cluster` score of 0.6667 blending to 0.2222 records.
+ *
+ * That is a DELIBERATE choice and not a defect to be patched here: dividing by only the heuristics
+ * that found data would make an account's confidence depend on which sources happened to be up,
+ * so the same account would score differently on a day ClickHouse was down — and `sources` exists
+ * precisely so a grading pass can exclude those runs rather than have the blend silently rescale
+ * itself. But the arithmetic has to be stated correctly, because the next person to touch the
+ * denominator will read this sentence first.
+ *
+ * A registry of one always-zero placeholder still yields 0, and a registry of none yields 0 —
+ * neither of which is a claim about the account.
  */
 export function scoreAccount(
   heuristics: readonly BotAccountHeuristic[],

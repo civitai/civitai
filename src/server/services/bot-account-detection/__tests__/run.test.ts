@@ -283,6 +283,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       ids.map((userId) => ({ userId, ip: '203.0.113.9' })),
     listContentSamples: async (ids: number[]) =>
       ids.map((userId) => ({ userId, content: RING_TEXT })),
+    listFilenameSamples: async () => [],
   };
 
   it('🔴 the cohort-level evidence REACHES the scoring, and the finding proves it', async () => {
@@ -328,6 +329,70 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(finding?.reason).toContain('6 new accounts posted the same text');
   });
 
+  it('🔴 A SHARED FILENAME ALONE REACHES THE BOARD, with no comments anywhere in the run', async () => {
+    // 🔴 THE END-TO-END CASE THE WHOLE CHANGE EXISTS FOR, and the one no component test can make.
+    // `evidence.test.ts` covers the index and `heuristics.test.ts` covers the scorer over
+    // hand-built signals; neither ever builds the combined state, which is how a heuristic that
+    // fired ZERO times across five production runs kept looking healthy. This run has NO content
+    // rows at all — the exact production shape, where three consecutive daily cohorts totalling
+    // ~25,000 accounts produced 65 comments between them — and the finding still lands.
+    const scenario = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      // Mixed case on purpose: these are ONE cluster, not two.
+      listFilenameSamples: async (ids: number[]) =>
+        ids.map((userId) => ({ userId, name: userId % 2 === 0 ? 'Logo.jpg' : 'logo.jpg' })),
+    });
+    const result = await scenario.result;
+
+    const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
+    expect(finding).toBeDefined();
+    const sub = subScoresOf(finding as { reason: string });
+    expect(Object.keys(sub).sort()).toEqual([
+      'content-templating',
+      'posting-velocity',
+      'registration-cluster',
+    ]);
+
+    // The templating heuristic fired on filenames ALONE — its text half had nothing to read.
+    expect(sub['content-templating']).toBeGreaterThan(0);
+    // And the reason names it as a FILENAME and quotes the PLAIN name, not the namespaced key.
+    expect(finding?.reason).toContain('uploaded a file with the same name');
+    expect(finding?.reason).toContain('logo.jpg');
+    expect(finding?.reason).not.toContain('file:logo.jpg');
+
+    // 🔴 THE DECOMPOSITION. Without these two counters the shadow phase cannot grade the halves
+    // apart, which is precisely how the comment-only version survived five runs looking fine.
+    expect(result.counters['heuristic:content-templating:fired_filename']).toBeGreaterThan(0);
+    expect(result.counters['heuristic:content-templating:fired_text']).toBe(0);
+
+    // 🔴 THE EXISTING SERIES KEEPS ITS MEANING. `evidence_distinct_content_fingerprints` counts
+    // TEXT fingerprints only. Had it been left as `membersPerFingerprint.size` it would now include
+    // filenames, and the day this shipped would have read as an explosion of comment templating.
+    expect(result.counters.evidence_distinct_content_fingerprints).toBe(0);
+    expect(result.counters.evidence_distinct_filename_fingerprints).toBe(1);
+    expect(result.counters.evidence_filename_samples).toBe(1);
+  });
+
+  it('🔴 the filename source is reported UNAVAILABLE when the read fails, not as a quiet zero', async () => {
+    // A zero from a source that never ran is not a zero from a source that found nothing, and the
+    // counter plus the summary sentence are the only things that tell a reader which one this is.
+    const scenario = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const result = await scenario.result;
+    expect(result.counters.evidence_filename_samples).toBe(0);
+    expect(scenario.reports[0].summary).toContain('UPLOADED-FILENAME DATA WAS UNAVAILABLE');
+    // The run still completed and still filed a report — a dead source degrades it, never kills it.
+    expect(result.reportsSent).toBeGreaterThan(0);
+  });
+
   it('the same cohort with NO evidence reader scores both ring heuristics 0 — the control', async () => {
     // The other arm. Without it the case above cannot attribute anything: a finding whose ring
     // sub-scores are non-zero proves the seam only if they are zero when the evidence is absent,
@@ -368,6 +433,7 @@ describe('the evidence sources are reported, not assumed', () => {
             { userId: 2, ip: 'x' },
           ],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -403,6 +469,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -432,6 +499,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [{ userId: 1, ip: '203.0.113.4' }],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -458,6 +526,7 @@ describe('the evidence sources are reported, not assumed', () => {
           listContentSamples: async () => {
             throw new Error('replica timeout');
           },
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -488,6 +557,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: false,
           listRegistrationIps: async () => [],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -515,6 +585,7 @@ describe('the evidence sources are reported, not assumed', () => {
           // Two rows per chunk against a budget of 2: the first chunk spends it and the walk stops.
           listContentSamples: async (ids) =>
             ids.map((userId) => ({ userId, content: 'x'.repeat(30) })),
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -1178,6 +1249,7 @@ describe('🔴 the cluster key reaches the board', () => {
     hasRegistrationIps: false,
     listRegistrationIps: async () => [],
     listContentSamples: async () => [],
+    listFilenameSamples: async () => [],
   };
 
   const domainRun = (accounts: NewAccountRow[]) => {

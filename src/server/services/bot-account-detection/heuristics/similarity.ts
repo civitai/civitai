@@ -1,3 +1,4 @@
+import { FILENAME_FINGERPRINT_PREFIX, unprefixFingerprint } from '../fingerprint-keys';
 import type { BotAccountHeuristic } from '../scoring';
 import { rampScore } from './ramp';
 
@@ -29,16 +30,37 @@ import { rampScore } from './ramp';
  * collide. `MIN_FINGERPRINT_CHARS`/`MIN_FINGERPRINT_TOKENS` are the only defence, they are set by
  * judgement, and measuring their false-positive rate is precisely what the shadow phase is for.
  *
- * 🔴 IT SEES COMMENTS ONLY. Model names, model descriptions and image prompts are all text a ring
- * could template, and none of them is read: comments are the surface shill text actually lands on,
- * they are the two tables with a `userId` index that makes the read cheap, and adding a third source
- * is a widening of `evidence.ts` rather than a change here. An account that templated only its model
- * descriptions scores 0 from this heuristic and is a KNOWN false negative, not an accident.
+ * 🔴 IT SEES TWO SOURCES: COMMENT TEXT AND UPLOADED FILENAMES. It used to see comments only, and
+ * that limitation is what this heuristic's own production record refuted. Across five runs the
+ * comment half fired ZERO times — not because rings do not template, but because new accounts on
+ * this site do not comment: three consecutive daily cohorts totalling roughly 25,000 new accounts
+ * produced 65 comments between them, and one entire run's content input was 4 rows from 3 accounts.
+ * A heuristic with no input is not a heuristic that found nothing, and because the blend divides by
+ * every REGISTERED weight rather than by the ones that ran, a permanently silent third of the
+ * registry also capped every account's confidence at 0.667.
  *
- * 🔴 IT SEES A SAMPLE, NOT A CENSUS. The content read is budgeted (`MAX_CONTENT_SAMPLES`), so on a
- * wave day the oldest end of the cohort may not be sampled at all. An unsampled account scores 0
- * here for want of data, which — again — is not the same as scoring 0 for want of a signal. The
- * budget state rides out on `sources.contentBudgetExhausted` and as a run counter.
+ * `Image.name` is the second fingerprint source, folded in HERE rather than added as a fourth
+ * heuristic. That is a deliberate constraint, not a convenience: `MIN_REPORTED_CONFIDENCE` is
+ * derived from the registry's size in `scoring.ts`, as is `SOLE_SIGNAL_DOMINANCE`, so a fourth
+ * entry would silently move the reporting threshold for every other signal. Keeping the registry at
+ * three is what makes this a widening of one heuristic's evidence rather than a recalibration of
+ * the whole detector.
+ *
+ * 🔴 FILENAMES ARE FINGERPRINTED ON THEIR OWN TERMS — see `evidence.ts#normalizeFilename`. Reusing
+ * `contentFingerprint` was measured and rejected: its digit masking collapses every `<digits>.jpg`
+ * into one key, and its length floors reject `1900.jpg.jpeg` and `logo.jpg` outright, which between
+ * them account for most of the filenames the measured rings actually share.
+ *
+ * 🔴 WHAT IT STILL DOES NOT SEE: model names, model descriptions and image prompts. All are text a
+ * ring could template; none is read. An account that templated only its model descriptions scores 0
+ * from this heuristic and is a KNOWN false negative, not an accident.
+ *
+ * 🔴 IT SEES A SAMPLE, NOT A CENSUS. Both reads are budgeted (`MAX_CONTENT_SAMPLES`,
+ * `MAX_FILENAME_SAMPLES`), so on a wave day the oldest end of the cohort may not be sampled at all.
+ * An unsampled account scores 0 here for want of data, which — again — is not the same as scoring 0
+ * for want of a signal. The budget state rides out on `sources.contentBudgetExhausted` /
+ * `sources.filenameBudgetExhausted` and as run counters, and the two sources carry SEPARATE flags
+ * because they fail separately.
  *
  * 🔴 THE KNOWN FALSE POSITIVE, NAMED, MEASURED AND DELIBERATELY NOT PATCHED: A GENERATION-PARAMETER
  * PASTE. `Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 1234567890, Size: 512x768` and the same
@@ -90,39 +112,90 @@ export const CLUSTER_ONE_AT = 10;
  *  that budget — an over-long quote here truncates the whole finding, not just itself. */
 export const QUOTE_CHARS = 60;
 
-/** The largest group of cohort members this account's text belongs to, with the text itself. */
+/**
+ * The largest group of cohort members this account shares a fingerprint with, and the fingerprint.
+ *
+ * The returned `fingerprint` is the NAMESPACED key (`text:…` / `file:…`), not a bare value — the
+ * caller decides whether it wants the source or the display form, and `unprefixFingerprint` is what
+ * strips it. Returning a bare string here would throw away the only thing that says which source
+ * produced the cluster.
+ *
+ * `prefix` restricts the search to one source. Omitted, it searches both, which is what the score
+ * itself uses: an account is as suspicious as the largest ring it belongs to, whichever surface
+ * that ring shows up on.
+ */
 export function largestContentCluster(
   userId: number,
-  signals: { fingerprintsByUser: Map<number, string[]>; membersPerFingerprint: Map<string, number> }
+  signals: {
+    fingerprintsByUser: Map<number, string[]>;
+    membersPerFingerprint: Map<string, number>;
+  },
+  prefix?: string
 ): { size: number; fingerprint: string | null } {
   let best = { size: 0, fingerprint: null as string | null };
   for (const fingerprint of signals.fingerprintsByUser.get(userId) ?? []) {
+    if (prefix !== undefined && !fingerprint.startsWith(prefix)) continue;
     const size = signals.membersPerFingerprint.get(fingerprint) ?? 0;
     if (size > best.size) best = { size, fingerprint };
   }
   return best;
 }
 
+/**
+ * This account's score from ONE source alone.
+ *
+ * 🔴 THE DECOMPOSITION IS THE POINT, AND `fired` CANNOT PROVIDE IT. With two sources behind one
+ * heuristic id, `heuristic:content-templating:fired` no longer says WHICH source fired — and the
+ * shadow phase's entire philosophy, stated in `scoring.ts`'s header, is that a signal is graded on
+ * its own or not at all. Without this the filename half and the comment half would be permanently
+ * indistinguishable in the counters, which is how the zero-firing comment half survived five runs.
+ *
+ * 🔴 THE PER-SOURCE COUNTERS MAY SUM TO MORE THAN `fired`, DELIBERATELY. An account whose text AND
+ * whose filenames both cluster counts in both, because the alternative — attributing it to
+ * whichever source happened to win a `>` comparison — invents a tie-break the data does not
+ * support and would report a real double signal as a single one. They are two independent questions
+ * ("did the filename half fire on this account") rather than a partition of one.
+ */
+export function contentTemplatingSourceScore(
+  userId: number,
+  signals: {
+    fingerprintsByUser: Map<number, string[]>;
+    membersPerFingerprint: Map<string, number>;
+  },
+  prefix: string
+): number {
+  return rampScore(
+    largestContentCluster(userId, signals, prefix).size,
+    CLUSTER_ZERO_AT,
+    CLUSTER_ONE_AT
+  );
+}
+
 export const contentTemplatingHeuristic: BotAccountHeuristic = {
   id: CONTENT_TEMPLATING_ID,
   description:
-    'How many OTHER new accounts posted the same comment text, compared after masking links and ' +
-    'numbers so one template with a swapped payload still matches. Comments only, and over a ' +
-    'budgeted sample of them.',
+    'How many OTHER new accounts shared the same comment text — compared after masking links and ' +
+    'numbers so one template with a swapped payload still matches — or uploaded a file under the ' +
+    'same name, compared case-insensitively. Over a budgeted sample of each.',
   weight: 1,
   score: ({ member, signals }) =>
     rampScore(largestContentCluster(member.userId, signals).size, CLUSTER_ZERO_AT, CLUSTER_ONE_AT),
   explain: ({ member, signals }, score) => {
     if (score <= 0) return null;
     const { size, fingerprint } = largestContentCluster(member.userId, signals);
-    // The QUOTED text is the normalised form, not the raw comment: it is what was actually compared,
-    // so quoting anything else would show a moderator a different string from the one the score was
-    // computed on. The masks (`linkmask`, `nummask`) are visible on purpose — they are the reason
-    // two superficially different comments matched.
-    const quote = (fingerprint ?? '').slice(0, QUOTE_CHARS);
-    return (
-      `${size} new accounts posted the same text after masking links/numbers — ` +
-      `“${quote}${(fingerprint ?? '').length > QUOTE_CHARS ? '…' : ''}”`
-    );
+    const isFilename = (fingerprint ?? '').startsWith(FILENAME_FINGERPRINT_PREFIX);
+    // 🔴 THE PREFIX IS STRIPPED BEFORE A HUMAN SEES IT. The namespace exists so two sources can
+    // share one map; it is an implementation detail of the index, and a moderator reading
+    // “file:logo.jpg” would reasonably conclude the account uploaded a file called `file:logo.jpg`.
+    // The QUOTED value is otherwise exactly what was compared — for text that is the normalised
+    // form, masks (`linkmask`, `nummask`) visible on purpose, because they are the reason two
+    // superficially different comments matched.
+    const value = unprefixFingerprint(fingerprint ?? '');
+    const quote = value.slice(0, QUOTE_CHARS);
+    const ellipsis = value.length > QUOTE_CHARS ? '…' : '';
+    return isFilename
+      ? `${size} new accounts uploaded a file with the same name — “${quote}${ellipsis}”`
+      : `${size} new accounts posted the same text after masking links/numbers — ` +
+          `“${quote}${ellipsis}”`;
   },
 };
