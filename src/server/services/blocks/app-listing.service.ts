@@ -8,6 +8,7 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
@@ -233,6 +234,14 @@ export const listingHydrateSelect = {
   contentRating: true,
   externalUrl: true,
   connectClientId: true,
+  // The TokenScope BITMASK an off-site connect listing requests. Feeds the DETAIL
+  // DTO's `connectScopes` (decoded to enum-keys there) — the off-site analog of
+  // `appBlock.approvedScopes` below, and detail-only for the same reason.
+  // Selected unguarded, beside `connectClientId` which it shipped alongside in the
+  // same W13 block: the column is applied in production (verified directly against
+  // `public.app_listings`), so this is not one of the manual-apply reads that has
+  // to degrade rather than 500.
+  connectRequestedScopes: true,
   appBlockId: true,
   icon: { select: { url: true } },
   cover: { select: { url: true } },
@@ -662,6 +671,35 @@ export function projectListingDetail(
     scopes:
       row.kind === 'onsite' && Array.isArray(row.appBlock?.approvedScopes)
         ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
+        : [],
+    // The OFF-SITE analog of `scopes` above: the account permissions an
+    // OAuth-connect listing will ASK the viewer to approve, decoded from the
+    // `connectRequestedScopes` bitmask into TokenScope enum-keys.
+    //
+    // 🔴 GATED ON `kind`, LIKE `scopes` AND FOR THE SAME REASON — never on
+    // `connectClientId` nullness. `mapAppBlockToListing` can mint `kind: 'offsite'`
+    // with a non-null `appBlockId`, and `schema.full.prisma` says in as many words
+    // to discriminate on `kind`. An on-site row can hold no requested-scope mask
+    // today, but gating on the column rather than the kind is the shape that goes
+    // wrong later.
+    //
+    // 🔴 DECODED HERE, SERVER-SIDE, THROUGH THE SHARED TABLE. `tokenScopeMaskToList`
+    // is the same expansion the hub's OAuth consent screen uses; its own module
+    // says forking the bitmask/labels would be a latent security bug. Sending the
+    // raw Int instead would push that decode onto every consumer of a PUBLIC REST
+    // endpoint and couple them to bit positions.
+    //
+    // 🔴 NO STATUS CLAUSE, DELIBERATELY. `getListingDetail` already returns null
+    // for `status !== 'approved'` before reaching this projection, so a draft's
+    // intended scopes cannot ride the public read; adding the clause here would be
+    // unreachable on that path. On the OTHER caller it would be actively wrong —
+    // `getListingPreviewForReview` is deliberately not status-filtered so a
+    // moderator can preview a draft, and a status gate here would blank the
+    // enumeration they are reviewing. `appListingConnectScopes.test.ts` pins both
+    // halves so this reliance cannot rot into a sentence nobody rechecks.
+    connectScopes:
+      row.kind === 'offsite' && typeof row.connectRequestedScopes === 'number'
+        ? tokenScopeMaskToList(row.connectRequestedScopes).map((s) => s.key)
         : [],
   };
 }

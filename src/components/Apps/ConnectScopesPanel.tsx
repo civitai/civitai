@@ -1,6 +1,6 @@
 import { Card, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle, IconKey } from '@tabler/icons-react';
-import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import { ConnectScopeRow } from '~/components/Apps/ConnectScopeRow';
 import {
   isSensitiveTokenScope,
   tokenScopeMaskToList,
@@ -84,13 +84,9 @@ export function ConnectScopesPanel({
                   </Tooltip>
                 </Group>
                 {sensitiveScopes.map((s) => (
-                  <ConnectScopeRow
-                    key={s.bit}
-                    scopeKey={s.key}
-                    label={s.label}
-                    sensitive
-                    justifications={justifications}
-                  />
+                  <ConnectScopeRow key={s.bit} scopeKey={s.key} label={s.label} sensitive>
+                    <ConnectScopeJustification scopeKey={s.key} justifications={justifications} />
+                  </ConnectScopeRow>
                 ))}
               </Stack>
             )}
@@ -108,12 +104,9 @@ export function ConnectScopesPanel({
             ) : (
               <Stack gap={8} data-testid="connect-scopes-normal-group">
                 {normalScopes.map((s) => (
-                  <ConnectScopeRow
-                    key={s.bit}
-                    scopeKey={s.key}
-                    label={s.label}
-                    justifications={justifications}
-                  />
+                  <ConnectScopeRow key={s.bit} scopeKey={s.key} label={s.label}>
+                    <ConnectScopeJustification scopeKey={s.key} justifications={justifications} />
+                  </ConnectScopeRow>
                 ))}
               </Stack>
             )}
@@ -124,35 +117,23 @@ export function ConnectScopesPanel({
   );
 }
 
-function ConnectScopeRow({
+/**
+ * The MODERATOR-ONLY half of a scope row: the developer's stated rationale, under
+ * the shared identity line. It stays here rather than moving into
+ * `ConnectScopeRow` because publishing this text is a separate exposure decision
+ * that has not been made — see that component's docblock.
+ */
+function ConnectScopeJustification({
   scopeKey,
-  label,
-  sensitive = false,
   justifications,
 }: {
   scopeKey: string;
-  label: string;
-  sensitive?: boolean;
   justifications?: Record<string, string> | null;
 }) {
   const raw = justifications?.[scopeKey];
   const justification = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
   return (
-    <Stack gap={2} data-testid={`connect-scope-row-${scopeKey}`}>
-      <Group gap={8} align="flex-start" wrap="nowrap">
-        <ThemeIcon size="xs" variant="subtle" color={sensitive ? 'orange' : 'blue'}>
-          <IconKey size={12} />
-        </ThemeIcon>
-        <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
-          {scopeKey}
-        </Text>
-        {sensitive && <SensitiveScopeBadge />}
-        {label && (
-          <Text size="xs" c="dimmed">
-            {label}
-          </Text>
-        )}
-      </Group>
+    <>
       {justification ? (
         <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
           <Text span fw={600} c="dimmed">
@@ -165,6 +146,6 @@ function ConnectScopeRow({
           No justification provided
         </Text>
       )}
-    </Stack>
+    </>
   );
 }

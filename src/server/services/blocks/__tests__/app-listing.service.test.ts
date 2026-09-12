@@ -446,6 +446,13 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         // Empty here — this row has no seats — but the KEY must be present, so a
         // consumer never has to write `?? []`.
         'collaborators',
+        // 🔴 DETAIL-ONLY BY DECISION, and a NEW PUBLIC EXPOSURE — the off-site analog
+        // of `scopes` below. The account permissions an OAuth-connect listing will ASK
+        // the viewer to approve, so the ask is visible BEFORE the connect flow starts
+        // rather than only on the consent screen. Previously moderator-only. Present
+        // as `[]` on this on-site row: the key is always there, so no consumer writes
+        // `?? []`. See its docstring on `ListingDetail` for the exposure decision.
+        'connectScopes',
         'contentRating',
         'coverUrl',
         'creator',

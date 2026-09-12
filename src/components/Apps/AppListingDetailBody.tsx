@@ -62,6 +62,7 @@ import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaborator
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
+import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -1228,6 +1229,32 @@ export function AppListingDetailBody({
                 This app runs off-platform, but can connect to your Civitai account — you&apos;ll be
                 asked to sign in and approve access.
               </Alert>
+            )}
+
+            {/* WHAT that connect will actually ASK FOR — the enumeration behind the
+                sentence immediately above.
+                🔴 A FOURTH permission surface, and like the on-site `scopes` section
+                below it does NOT belong to the mutually-exclusive off-site pair. Those
+                two answer "does this leave the platform, and can it reach my account at
+                all?"; this one enumerates the ask. Do not fold it into either predicate
+                — they are exact complements over one domain and a third condition there
+                breaks the invariant pinned in `__tests__/appListingDetailView.test.ts`.
+                🔴 IT IS GATED ON THE DATA, NOT ON `shouldShowConnectCapability`, AND
+                THAT IS NOT AN OVERSIGHT. Reusing the predicate would couple the
+                enumeration to the sentence and reintroduce exactly the third-condition
+                pressure the pair's docstring warns about. `connectScopes` is `[]` for
+                every listing that is not an off-site connect listing, so the data gate
+                is already narrower than the predicate — and it additionally withholds
+                the section from a connect listing that requests NOTHING, where a
+                permissions box would be a reassuring empty container. Same
+                `length > 0` reasoning as the on-site section: on a store page, "no
+                permissions" is better said by the absence of the section.
+                🔴 It renders the SHARED `ConnectScopeRow`, so the sensitive-risk
+                emphasis reads identically here and on the moderator review surface. It
+                cannot render `connectScopeJustifications` — see its docblock; that is
+                structural, not a convention. */}
+            {detail.connectScopes.length > 0 && (
+              <ConnectScopesDisclosure scopes={detail.connectScopes} />
             )}
 
             {/* PRE-LAUNCH PERMISSION DISCLOSURE — what this app is permitted to do,
