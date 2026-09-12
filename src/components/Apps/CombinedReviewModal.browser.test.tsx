@@ -4,6 +4,10 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcModule from '~/utils/trpc';
+// 🔴 `import type`, not a value import. A top-level VALUE import in a browser-mode
+// test resolves a SECOND copy of React and fails the whole file with "Invalid hook
+// call", reported as `Tests no tests`. A type import is erased at compile time.
+import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
@@ -37,7 +41,12 @@ const CODE_REQUEST = {
     scopes: ['user:read'],
     targets: [{ slotId: 'model.sidebar_top', priority: 10 }],
   },
-  fileSummary: { files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }], added: ['index.js'], removed: [], changed: [] },
+  fileSummary: {
+    files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }],
+    added: ['index.js'],
+    removed: [],
+    changed: [],
+  },
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
@@ -70,7 +79,9 @@ const SELECTION = {
 
 const AGENT_REPORT = {
   status: 'complete',
-  codeReview: { findings: [{ severity: 'medium', title: 'A code finding', detail: 'code detail' }] },
+  codeReview: {
+    findings: [{ severity: 'medium', title: 'A code finding', detail: 'code detail' }],
+  },
   securityAudit: { findings: [] },
   scopeVerdicts: { scopes: [] },
 };
@@ -84,7 +95,9 @@ const ASSETS = {
   coverNsfwLevel: 1,
   iconScanStatus: 'scanned',
   coverScanStatus: 'scanned',
-  screenshots: [{ id: 's1', imageId: 3, order: 0, caption: null, nsfwLevel: 1, scanStatus: 'scanned' }],
+  screenshots: [
+    { id: 's1', imageId: 3, order: 0, caption: null, nsfwLevel: 1, scanStatus: 'scanned' },
+  ],
   completeness: { complete: true, missing: [] },
   hasBlockedAsset: false,
   hasPendingScan: false,
@@ -132,12 +145,20 @@ const LISTING_PREVIEW = {
     // 🔴 REQUIRED, and `[]` is not cosmetic here. `AppListingDetailBody` reads
     // `detail.scopes.length` to decide whether to render the pre-launch permission
     // disclosure, so omitting it makes this modal THROW on render rather than merely
-    // skip a section. This fixture is not annotated as a `ListingDetail`, so
-    // TypeScript does not catch the omission — the mod review modal's runtime is the
-    // only guard, which is exactly how this surfaced.
+    // skip a section.
     scopes: [],
+    // 🔴 REQUIRED FOR THE SAME REASON — the body reads `detail.connectScopes.length`
+    // for the off-site connect disclosure. `[]` is also the honest value: this is an
+    // ON-SITE fixture, and an on-site listing requests no OAuth-connect scopes.
+    connectScopes: [],
+    // The remaining fields the real projection always supplies. They are here to make
+    // the `satisfies` below reachable, not because this modal reads them.
+    collaborators: [],
+    sourceRepoUrl: null,
+    isBeta: false,
+    betaMessage: null,
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
-  },
+  } satisfies ListingDetail,
 };
 
 const mocks = vi.hoisted(() => ({
@@ -220,7 +241,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         getPublishRequestScreenshots: {
           useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
         },
-        getPublishRequestDiff: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },
+        getPublishRequestDiff: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+        },
         getAgentReview: {
           useQuery: () => ({
             data: AGENT_REPORT,
