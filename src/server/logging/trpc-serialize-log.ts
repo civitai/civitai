@@ -85,7 +85,8 @@
  *    ~6000ms. This is the AUTHORITATIVE loop-blocking trigger.
  *  - TRPC_SERIALIZE_OVERSIZED_BYTES (default 1048576 = 1 MiB) — serialized output at
  *    or above this size is logged even if it happened to serialize under SLOW_MS,
- *    as an early/proactive signal (the request body limit is 17mb; a 1MiB RESPONSE
+ *    as an early/proactive signal (the request body limit is whatever that route declares;
+ *    a 1MiB RESPONSE
  *    is already the danger zone that pegs the loop under concurrency).
  *  - TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS (default 50) — the cheap gate: below this
  *    serialize duration we do NOT compute the byte size or log. Anything that blocks

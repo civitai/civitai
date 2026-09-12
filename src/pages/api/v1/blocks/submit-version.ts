@@ -56,23 +56,96 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * is therefore intentionally OMITTED (it would also break the headless CLI, which
  * sends no Origin).
  *
- * Body `{ bundleBase64: "<base64 zip>" }`, same ~72 MiB body ceiling +
- * MAX_BUNDLE_SIZE_BYTES schema cap as the session route. Returns
+ * Body `{ bundleBase64: "<base64 zip>" }`. ⚠ The body ceiling here is **~10 MiB, not the
+ * session route's ~72 MiB** — this path is proxy-matched and Next truncates it there. An
+ * oversize submit therefore fails as `400 Invalid JSON`, NOT as a size error; that is
+ * civitai/cli #423 and this route does not fix it (see the `sizeLimit` comment below for
+ * why no declared value can). That admits a ~7.5 MiB ZIP once base64 expansion is
+ * counted. The
+ * MAX_BUNDLE_SIZE_BYTES schema cap still applies to the decoded buffer. Returns
  * `{ publishRequestId, slug, version, status }`.
  */
 export const config = {
   api: {
     bodyParser: {
-      // Match the session route: a 50 MiB ZIP base64-encodes to ~67 MiB JSON.
-      // The schema-level cap (MAX_BUNDLE_SIZE_BYTES) is enforced below and the
-      // service re-checks the decoded buffer size.
-      sizeLimit: '72mb',
+      // 🔴 10mb, NOT the session route's 72mb — and the difference is NOT a policy
+      // choice, it is what this path can physically receive.
+      //
+      // This route sits under `/api/v1/`, which `src/proxy.ts`'s `matcher` covers.
+      // Next caps the body of a proxy-matched request at
+      // `experimental.proxyClientMaxBodySize` (default 10485760) and then ENDS THE
+      // STREAM without telling the route — so a larger declaration here is not
+      // honoured, it is silently truncated, and `JSON.parse` then fails on a
+      // half-body with a message that has nothing to do with size.
+      //
+      // 🔴 NO `sizeLimit` VALUE CAN PRODUCE A 413 ON THIS PATH. Two drafts of this
+      // change claimed otherwise; both were wrong, and the second was wrong after the
+      // first had already been caught. Recorded in full so nobody tries a third.
+      //
+      // `parseBody` 413s only when the bytes it RECEIVES exceed the declared limit. The
+      // proxy truncates first, and it truncates at a CHUNK BOUNDARY — it drops the chunk
+      // that would cross the cap rather than slicing it — so what arrives is a ragged
+      // value strictly BELOW 10485760, not equal to it. Measured on this route:
+      // 12,000,000 in gave 10,438,916 / 10,479,830 / 10,483,999 on three runs. Any limit
+      // at or above those is unreachable, and any limit below them would reject
+      // legitimate traffic. There is no value that separates the two.
+      //
+      // EXECUTED against a deployed preview, which is what settled it:
+      //     10,485,759 in -> 401  (parses; the route's own auth answers)
+      //     10,485,760 in -> 413  (the ONE size that lands exactly on the cap)
+      //     12,000,000 in -> 400 Invalid JSON   <- the real case, still a parse error
+      //
+      // So an oversize body here surfaces as `400 Invalid JSON` — an error about the
+      // PARSE, downstream of the real cause. That is civitai/cli issue #423, and it is
+      // NOT fixed by this file. The fix that would work is `relay.ts`'s shape:
+      // `bodyParser: false` plus an explicit `Content-Length` check before reading, which
+      // is the only place a size refusal can still run. A handler-level check here is
+      // unreachable dead code — `parseBody` runs BEFORE the handler.
+      //
+      // What this declaration IS worth: it stops claiming a ceiling the framework will
+      // not honour, so the next reader is not misled into raising it.
+      //
+      // 🔴 `src/pages/api/blocks/submit-version.ts` — the SESSION route — keeps 72mb
+      // and is CORRECT to: `/api/blocks/*` is NOT matched (the matcher's catch-all
+      // explicitly excludes `api`), so it genuinely receives the whole body. The two
+      // routes differ because their PATHS differ. Do not "fix" the other one to match.
+      //
+      // Measured on a deployed preview, one 12,000,000-byte POST per path, reading
+      // the server's own `Request body exceeded 10MB for <path>` line: `/api/v1/*`
+      // and `/api/trpc/*` warned, `/api/blocks/*` and `/api/mod/*` did not.
+      //
+      // 🔴 THIS HAS BITTEN A REAL USER: civitai/cli issue #423 — an over-limit bundle
+      // produced `400: Invalid JSON`, an error about the PARSE rather than the size, and
+      // the CLI had to start reporting what it SENT because the response carries nothing
+      // useful (`<cli>/internal/cmd/app_submit.go`). 🔴 THIS CHANGE DOES NOT FIX #423 —
+      // the error stays `400 Invalid JSON`. It only stops the declaration lying about a
+      // ceiling that was never honoured. Closing #423 needs the `relay.ts` shape above.
+      //
+      // ⚠ AND THE OBVIOUS COUNTER-EVIDENCE IS SURVIVORSHIP-BIASED — stated because an
+      // earlier draft of this comment leaned on it. `app_block_publish_requests` has 245
+      // rows, largest bundle 2.41 MiB, p95 2.21 MiB — but a truncated body dies in
+      // `parseJson` BEFORE any insert, so every oversize attempt is definitionally ABSENT
+      // from that table. It measures what got through, never what was tried. The 7-day
+      // zero-truncation-warning read is the instrument that CAN see failures, and at this
+      // route's volume that window is only ~19 submissions.
+      //
+      // 🔴 If 50 MiB CLI bundles are ever genuinely wanted, BOTH numbers must move:
+      // `experimental.proxyClientMaxBodySize` in next.config.mjs AND this limit, in the
+      // SAME change. Raising only the proxy cap leaves this route pinned here, which
+      // then becomes a REAL cap and 413s at ~7.5 MiB of ZIP — the reader follows the
+      // instruction and the upload is still broken. The proxy half is repo-wide (it
+      // widens the body EVERY route may receive), so it is a deliberate call.
+      //
+      // MAX_BUNDLE_SIZE_BYTES (50 MiB) still bounds the DECODED buffer below, and the
+      // service re-checks it; it is a product cap, not a transport one.
+      sizeLimit: '10mb',
     },
   },
 };
 
-// Bundle submit is heavy (decode + ZIP extract + deep manifest validation up to
-// ~72 MiB). Keep the per-key window tight. The retool endpoint defaults to
+// Bundle submit is heavy (decode + ZIP extract + deep manifest validation up to the
+// route's body ceiling — see the `sizeLimit` comment; it is 10 MiB on THIS path, not the
+// session route's 72). Keep the per-key window tight. The retool endpoint defaults to
 // 60/min for cheap mod actions; a bundle upload warrants far less.
 const RATE_LIMIT = { max: 10, windowSeconds: 60 } as const;
 

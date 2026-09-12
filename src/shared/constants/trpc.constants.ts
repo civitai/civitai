@@ -35,7 +35,7 @@
  *
  * ⚠️ Rejection is cheap, not free, and it is method-dependent. On a GET the request costs URL
  * parsing and nothing else. On a POST (legitimate here — `allowMethodOverride: true` lets a
- * query carry its input in the body) Next parses the body up to the route's 17mb limit BEFORE
+ * query carry its input in the body) Next parses the body up to the route's declared `sizeLimit` BEFORE
  * the handler runs, and the adapter re-stringifies it before `resolveResponse`, so an over-cap
  * POST pays that regardless of the cap. Measured: an 8MB over-cap POST batch cost ~27.5ms of
  * body parsing plus an 8MB re-stringify, and still resolved 0 procedures and created 0

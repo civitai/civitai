@@ -3,8 +3,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
  * Handler-level coverage for POST /api/blocks/submit-version — the dedicated
- * 72mb upload route that replaced the `blocks.submitVersion` tRPC mutation (so
- * the shared tRPC route could revert to 17mb). The route is a thin auth/flag/
+ * 72mb upload route that replaced the `blocks.submitVersion` tRPC mutation (so the
+ * shared tRPC route could revert to a small cap; it is 10mb today, which is also the
+ * most the framework will deliver to it). The route is a thin auth/flag/
  * validation shell over the well-tested `submitVersion` service
  * (publish-request.orchestration.test.ts), so this exercises only the shell.
  *
