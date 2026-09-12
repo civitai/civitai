@@ -22,7 +22,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/server/services/csam.service-new', () => mocks);
 
-import { csamJobs } from '~/server/jobs/process-csam';
+import { CSAM_ARCHIVE_JOB_LOCK_SECONDS, csamJobs } from '~/server/jobs/process-csam';
+import { createJob } from '~/server/jobs/job';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const archiveJob = csamJobs.find((job) => job.name === 'archive-csam-reports');
@@ -104,6 +105,39 @@ describe('archive-csam-reports batch isolation', () => {
       .map(([arg]) => arg as { subType?: string; message?: unknown })
       .filter((arg) => arg?.subType === 'archive-data');
     expect(logged[0].message).toBe('synthetic archive failure');
+  });
+});
+
+describe('the archive job asks for a lock that can hold a real archival pass', () => {
+  // The hazard this pins: the run-jobs route hard-caps the hold at `lockExpiration` and then
+  // releases the lock while the run continues, so a value shorter than a pass lets the next
+  // hourly tick start a second, concurrent archive of the same report. Reverting the override
+  // must fail here, not be discovered in production.
+
+  it('is the named constant, not createJob’s inherited default', () => {
+    const inherited = createJob('probe', '20 */1 * * *', async () => undefined);
+
+    expect(archiveJob!.options.lockExpiration).toBe(CSAM_ARCHIVE_JOB_LOCK_SECONDS);
+    // The non-vacuous half: an "override" that is not actually longer than the inherited default
+    // leaves the duplicate-run hazard exactly where it was.
+    expect(CSAM_ARCHIVE_JOB_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
+  });
+
+  it('outlives the cron period it is scheduled on', () => {
+    // Asserting the schedule as well as the number is what makes this a RELATIONSHIP rather than
+    // two independent literals: if the cron is ever made faster or slower, this fails instead of
+    // silently comparing the lock against a period the job no longer runs at.
+    expect(archiveJob!.cron).toBe('20 */1 * * *'); // hourly
+    const cronPeriodSeconds = 60 * 60;
+
+    // Below this the job can overlap ITSELF regardless of how long any single report takes.
+    expect(CSAM_ARCHIVE_JOB_LOCK_SECONDS).toBeGreaterThan(cronPeriodSeconds);
+  });
+
+  it('keeps the single-pod restriction, which the lock does not replace', () => {
+    // `dedicated` bounds WHERE the job runs; the lock bounds WHETHER a second run may start.
+    // Adding the lock must not cost the other half.
+    expect(archiveJob!.options.dedicated).toBe(true);
   });
 });
 
