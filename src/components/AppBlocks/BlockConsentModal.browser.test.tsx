@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY } from '~/shared/constants/block-scope.constants';
 
 /**
  * BlockConsentModal — the lazy-consent surface a logged-in viewer sees when a
@@ -211,22 +212,20 @@ describe('BlockConsentModal — per-app spend limit', () => {
     await input.clear();
     await input.fill('5');
     await expect.element(page.getByTestId('block-consent-budget-low-warning')).toBeInTheDocument();
-    // 🔴 PINNED AS A WHOLE NORMALISED STRING, same reason as the OFF-state copy above.
-    // The retracted sentence — "this app will refuse to generate until you raise it" —
-    // passed every keyword check while being categorically FALSE for a step-priced app:
-    // registry steps cost 1 Buzz (`convert-image`), so 5 Buzz/day funds five runs and
-    // refuses nothing. Worse, it contradicted the BLOCK_CONSENT_BUDGET_MIN_PER_DAY
-    // rationale written in the same commit, which keeps the floor at 1 precisely so that
-    // a tiny allowance for a step-priced app stays possible. The subject must be IMAGE
-    // GENERATION, never "this app" — a word-level guard would walk past a relapse.
+    // 🔴 PINNED AS A WHOLE NORMALISED STRING, same reason as the OFF-state copy above:
+    // both retracted sentences passed every keyword check while being false. The threshold
+    // is a FLOOR (the lowest per-engine maxBuzz), so copy must say "at least", never
+    // "up to" — the rationale lives once, at BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY.
+    // The number is INTERPOLATED, not literal: that constant's own docblock says it is
+    // free to drop, and a literal would red this test on a legitimate change.
     {
       const el = page.getByTestId('block-consent-budget-low-warning');
       const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
       expect(text).toBe(
-        '5 Buzz/day will not cover a single image generation, which can cost up to 90 ' +
-          'Buzz per run — an app that generates images will refuse until you raise it. ' +
-          'Apps that only run cheaper steps are unaffected. You can change it later under ' +
-          'Apps → Permissions.'
+        '5 Buzz/day will not cover one image generation — the cheapest engine costs ' +
+          `${BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run and others cost more, so ` +
+          'image generation will refuse until you raise it. Step-based actions, which ' +
+          'start at 1 Buzz, still run. You can change it later under Apps → Permissions.'
       );
     }
     // …and it goes away again above the threshold, so the warning tracks the VALUE and

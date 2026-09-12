@@ -171,16 +171,15 @@ export default function BlockConsentModal({
               </Text>
             )}
             {/* A very low limit is storable (the floor is 1) and enforced exactly as
-                given, so say what it does at the moment it is chosen.
-                🔴 Keep this wording in step with the editor's copy in pages/apps/activity.tsx —
-                the subject is IMAGE GENERATION, never "this app". See the note there for why
-                "this app will refuse" is false for a step-priced app. */}
+                given, so say what it does at the moment it is chosen. The threshold is a
+                FLOOR, not a ceiling — see the note in pages/apps/activity.tsx. */}
             {limitEnabled && budgetValid && parsedBudget < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
               <Text size="xs" c="orange" data-testid="block-consent-budget-low-warning">
-                {parsedBudget.toLocaleString()} Buzz/day will not cover a single image generation,
-                which can cost up to {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run — an app
-                that generates images will refuse until you raise it. Apps that only run cheaper
-                steps are unaffected. You can change it later under Apps → Permissions.
+                {parsedBudget.toLocaleString()} Buzz/day will not cover one image generation — the
+                cheapest engine costs {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run and
+                others cost more, so image generation will refuse until you raise it. Step-based
+                actions, which start at 1 Buzz, still run. You can change it later under Apps →
+                Permissions.
               </Text>
             ) : null}
           </Stack>

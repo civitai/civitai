@@ -499,19 +499,19 @@ function AppBudgetControl({
       {/* A very low limit is a real setting, not a mistake — but it is also the one
           that makes an app look broken, so say what it does at the point it is set.
           This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
-          🔴 SAY "IMAGE GENERATION", NOT "THIS APP". The threshold is the lowest per-engine
-          customComfy ceiling (90); registry steps cost as little as 1 Buzz
-          (`convert-image`), so a step-priced app funds dozens of runs under it and refuses
-          NOTHING. The retracted copy read "this app will refuse to generate until you raise
-          it" — categorically false for exactly the step-priced user the MIN=1 rationale in
-          BLOCK_CONSENT_BUDGET_MIN_PER_DAY exists to protect, i.e. this sentence contradicted
-          the decision it was written to justify. Keep the subject the ENGINE, not the app. */}
+          🔴 THE THRESHOLD IS A FLOOR, NOT A CEILING — say "at least", never "up to".
+          BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY is the LOWEST per-engine maxBuzz
+          (zimage-turbo 90); flux2-klein is 150 and qwen-image 180. Copy reading "can cost
+          up to 90" is false in the other direction: at 100/day no warning fires, yet a
+          qwen-image run needs 180 and refuses. Say the ENGINE refuses, not "this app" —
+          registry steps cost from 1 Buzz, so a step-priced app keeps running under this
+          threshold, which is exactly the user MIN=1 exists to protect. */}
       {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
         <Text size="xs" c="orange" data-testid="app-budget-low-warning">
-          {parsed.toLocaleString()} Buzz/day will not cover a single image generation, which can
-          cost up to {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run — an app that generates
-          images will refuse until you raise it. Apps that only run cheaper steps are unaffected.
-          You can change it here at any time.
+          {parsed.toLocaleString()} Buzz/day will not cover one image generation — the cheapest
+          engine costs {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run and others cost more, so
+          image generation will refuse until you raise it. Step-based actions, which start at 1
+          Buzz, still run. You can change it here at any time.
         </Text>
       ) : null}
       <Group gap="xs" justify="flex-end">
