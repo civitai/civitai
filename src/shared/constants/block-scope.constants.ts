@@ -198,6 +198,64 @@ export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
 export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
 
 /**
+ * The HIGHEST per-engine post-paid ceiling any registered recipe declares
+ * (`seamless-pano`'s `qwen-image` = 180). Pinned to the registry alongside LOW
+ * by `recipes/__tests__/budget-bounds-parity.test.ts`; read by no enforcement
+ * path.
+ *
+ * 🔴 NOT RENDERED, AND NEITHER IS ITS LOW SIBLING. See
+ * `BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY` below for why the warning quotes no
+ * figure at all. This constant exists solely so the parity test notices a
+ * widening of the RECIPE range.
+ */
+export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
+
+/**
+ * The body of the low-budget warning, shared by the consent modal and the editor
+ * on /apps/activity so the two cannot drift. The caller supplies the amount
+ * before it and its own "you can change it" tail after it.
+ *
+ * 🔴 FIVE SUCCESSIVE WORDINGS OF THIS SENTENCE SHIPPED FALSE, EACH INTRODUCED BY
+ * THE FIX FOR THE PREVIOUS ONE. In order: "this app will refuse to generate"
+ * (false for step-priced apps) → "can cost up to 90 per run" (inverted the bound
+ * over the engine set) → "the cheapest engine costs 90 per run" (quoted a
+ * RESERVATION as a PRICE, 4.5–22.5× over) → "up to 180 on the priciest" (a CLOSED
+ * bound the inline arm exceeds) → "and more on the other engines … step-based
+ * actions still run" (two engines tie at 90, and steps do NOT always run).
+ *
+ * 🔴 SO THE RULE IS NOW STRUCTURAL, NOT A BETTER FORM OF WORDS: **this sentence
+ * asserts no figure, and no claim about which actions still run.** Every such
+ * claim was falsifiable because the reservation space has no short true
+ * description —
+ *   · recipe ceilings are 90, 90, 150, 180 (note the TIE — it falsified
+ *     "more on the other engines", and the parity test cannot see it because
+ *     `LOW === min(...)` holds for any number of ties);
+ *   · the INLINE customComfy arm reserves an app-declared ceiling up to
+ *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
+ *   · `textToImage` reserves its live whatIf quote, which can be far LOWER (the
+ *     platform's own default per-generation budget is 10);
+ *   · a STEP reserves `max(declaredBuzz, quotedBuzz)`, and `chat-completion`'s
+ *     declared 1 is documented in `blocks.router.ts` as "that floor, not a
+ *     price" — measured several times the constant, rising with `maxTokens`.
+ *
+ * ⚠️ A closed upper bound DOES exist, contrary to what an earlier revision of
+ * this docblock asserted: every path gates the reservation against the token's
+ * per-call budget, which `resolveBuzzBudget` clamps at `BUZZ_BUDGET_CAP` = 1000.
+ * It is simply not renderable — it is per-app, ~4× the largest reservation any
+ * path can actually take (INLINE_MAX_BUZZ = 250; 180 for recipes), and alarming
+ * rather than informative. Do not "correct" the copy by naming it.
+ *
+ * What IS true on every consent-bearing path, and all this sentence claims:
+ * the reservation is taken up front, before the run, and the request is refused
+ * when the running per-UTC-day total exceeds the user's cap
+ * (`consentBudgetExceeded`: `consent.total > consent.cap`).
+ */
+export const BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY =
+  'Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that ' +
+  'reservation exceeds your remaining limit for the day — so a low limit can make an app look ' +
+  'broken.';
+
+/**
  * Membership test against the authoritative scope vocabulary.
  *
  * 🔴 OWN-PROPERTY ONLY — deliberately `hasOwnProperty`, never `in`. `in` walks

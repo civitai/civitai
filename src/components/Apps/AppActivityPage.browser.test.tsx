@@ -647,6 +647,19 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     await input.clear();
     await input.fill('5');
     await expect.element(page.getByTestId('app-budget-low-warning')).toBeInTheDocument();
+    // 🔴 PINNED AS A WHOLE NORMALISED STRING, and DELIBERATELY AS A LITERAL — it must NOT
+    // read BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY. The components share that constant so they
+    // cannot drift from each other; if this expectation read it too, the assertion would be
+    // tautological and a reworded relapse would pass silently. FIVE wordings of this sentence
+    // shipped false, every one keyword-clean, which is what a whole-string literal catches.
+    // The rules the wording must satisfy are in that constant's docblock.
+    {
+      const el = page.getByTestId('app-budget-low-warning');
+      const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
+      expect(text).toBe(
+        '5 Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that reservation exceeds your remaining limit for the day — so a low limit can make an app look broken. You can change it here at any time.'
+      );
+    }
   });
 });
 

@@ -57,6 +57,7 @@ import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-bl
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
 } from '~/shared/constants/block-scope.constants';
@@ -498,11 +499,25 @@ function AppBudgetControl({
       />
       {/* A very low limit is a real setting, not a mistake — but it is also the one
           that makes an app look broken, so say what it does at the point it is set.
-          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY. */}
+          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
+
+          🔴 THE SENTENCE ITSELF NOW LIVES IN ONE PLACE —
+          BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY — shared with the consent modal so the two
+          cannot drift, and the rules governing its wording live in that constant's
+          docblock. READ THEM BEFORE EDITING: five successive wordings shipped false, each
+          introduced by the fix for the previous one, and the rule that replaced them is
+          structural — the sentence asserts NO figure and NO claim about which actions
+          still run, because every such claim proved falsifiable.
+
+          🔴 STILL OPEN, and this note is its only record — do not delete it again. The
+          warning renders only below LOW (90), so a user at 100/day is told nothing while
+          a qwen-image run (reserves 180) or an inline app (up to 250) is still refused.
+          Thresholding on HIGH, or on INLINE_MAX_BUZZ, would close it at the cost of
+          warning step-only apps that are fine. Deliberately not decided here. */}
       {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
         <Text size="xs" c="orange" data-testid="app-budget-low-warning">
-          {parsed.toLocaleString()} Buzz/day is lower than most generations cost — this app will
-          refuse to generate until you raise it. You can change it here at any time.
+          {parsed.toLocaleString()} {BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY} You can change it here
+          at any time.
         </Text>
       ) : null}
       <Group gap="xs" justify="flex-end">
