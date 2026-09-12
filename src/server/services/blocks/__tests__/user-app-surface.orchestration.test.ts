@@ -304,12 +304,11 @@ describe('listMyScopeGrants', () => {
     expect(result[0].buzzBudgetPerDay).toBeNull();
   });
 
-  // ── `spendScopeGranted` — whether the viewer's GRANT actually carries
-  // `ai:write:budgeted`. The budget editor on /apps/activity keys off this, and it is
-  // NOT derivable from `scopes` (which is the app's APPROVED set, i.e. what the mint will
-  // issue a token for). Offering a limit control off the approved set would render a field
-  // the server silently drops, because `grantScopes` ignores a budget for an app that does
-  // not hold the spend scope.
+  // ── `spendScopeGranted` — whether the viewer's GRANT actually carries `ai:write:budgeted`. The
+  // budget editor on /apps/activity keys off this, and it is NOT derivable from `scopes` (which is
+  // an APP-SIDE set — `manifest.scopes ∩ approved_scopes`, what the app may be granted). Offering
+  // a limit control off an app-side set would render a field the server silently drops, because
+  // `grantScopes` ignores a budget for an app that does not hold the spend scope.
   it('spendScopeGranted is TRUE when the GRANT row carries ai:write:budgeted', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
@@ -347,7 +346,7 @@ describe('listMyScopeGrants', () => {
       },
     ]);
     const result = await listMyScopeGrants(42);
-    expect(result[0].scopes).toEqual(['ai:write:budgeted']); // the app is approved for it…
+    expect(result[0].scopes).toEqual(['ai:write:budgeted']); // the app may be granted it…
     expect(result[0].spendScopeGranted).toBe(false); // …the grant says no
   });
 
@@ -402,33 +401,31 @@ describe('listMyScopeGrants', () => {
     await expect(listMyScopeGrants(42)).rejects.toThrow(/connection refused/);
   });
 
-  // ── WHICH SET IS DISPLAYED. `scopes` is `AppBlock.approved_scopes` — the pinned,
-  // mod-reviewed set the MINT issues tokens for ("The mint sources scopes from
-  // `approvedScopes` (the pinned, mod-reviewed set — NEVER the raw manifest)",
-  // `block-registry.service.ts`) — and NEVER `manifest.scopes`, which is only the dev's
-  // stated wishlist. The four tests below pin that, including both directions of the
-  // divergence the swap exists for.
+  // ── WHICH SET IS DISPLAYED. `scopes` is the app's EFFECTIVE set —
+  // `manifest.scopes ∩ AppBlock.approved_scopes` — computed by the shared `effectiveBlockScopes`
+  // helper (`src/shared/constants/block-effective-scopes.ts`), which is also the consent ceiling
+  // `grantScopes` enforces, the set `getInstallConfig` discloses at install time, and the set
+  // `BlockRegistry.recordInstallConsent` grants from.
+  //
+  // ⚠️ AN EARLIER REVISION OF THIS BLOCK SAID `scopes` IS `approved_scopes`, "the set the MINT
+  // issues tokens for", citing `block-registry.service.ts`. The citation was MISAPPLIED: that
+  // sentence describes the DEV-TUNNEL author mint (`clampTunnelDeclaredScopes(app.approvedScopes)`),
+  // not the PRODUCTION run-token mint, which sources from the MANIFEST
+  // (`requestedScopes = knownManifestScopes`) with `approved_scopes` as an all-or-nothing 403 veto
+  // and refuses entirely unless `status === 'approved'` — something this query does not filter on.
+  // So nothing here is "what the mint will issue a token for"; these are the scopes the app may be
+  // GRANTED and exercised with.
+  //
+  // Why the intersection and not either column: `src/pages/api/v1/developer/block-manifests.ts`
+  // replaces `manifest` + `version` and sets `status: 'pending'` WITHOUT touching
+  // `approved_scopes`, so the two diverge in BOTH directions. There is no per-scope moderator
+  // narrowing (the approve paths write `approvedScopes = manifestScopes` verbatim), so a
+  // divergence is always a stale-approval-vs-new-manifest skew. Both directions are pinned below.
 
-  it('reads scopes from approvedScopes, NOT the joined manifest.scopes', async () => {
-    const { listMyScopeGrants } = await import('../user-app-surface.service');
-    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
-      pinnedSub({
-        appBlock: appBlock({
-          manifest: { name: 'Hello', scopes: ['ai:write:budgeted', 'buzz:read:self'] },
-          approvedScopes: ['models:read:self'],
-        }),
-      }),
-    ]);
-    const result = await listMyScopeGrants(42);
-    expect(result[0].scopes).toEqual(['models:read:self']);
-  });
-
-  // 🔴 THE DISCRIMINATING CASE for this change: the manifest is a STRICT SUPERSET of the
-  // approval, i.e. a moderator narrowed what the app may actually do. The displayed set must
-  // be the narrow one, because that is the only one the mint will honour. Every value here is
-  // pairwise distinct and distinct from the constant the assertion names, so a mutant that
-  // hardcodes a literal cannot survive.
-  it('shows ONLY the approved set when the manifest declares a strict superset', async () => {
+  // 🔴 DIRECTION 1 — `manifest ⊋ approved` (a v2 manifest ADDED a scope, so the approval snapshot
+  // is narrower). The displayed set must be the narrow one; showing the manifest would disclose a
+  // scope outside the approved snapshot.
+  it('manifest ⊋ approved: shows the intersection, not the wider manifest', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
       pinnedSub({
@@ -445,9 +442,148 @@ describe('listMyScopeGrants', () => {
     expect(result[0].scopes).toEqual(['buzz:read:self']);
   });
 
-  // 🔴 NO FALLBACK. An app approved for NOTHING displays nothing, even though its manifest
-  // still asks for things — a fallback here would restore the whole over-report, in exactly
-  // the case that matters most.
+  // 🔴 DIRECTION 2 — `manifest ⊊ approved` (a v2 manifest DROPPED a scope, so the approval
+  // snapshot is WIDER and names something the current manifest no longer requests). THIS IS THE
+  // REGRESSION TEST FOR THE DEFECT THIS CHANGE FIXES: displaying `approved_scopes` here reports
+  // `ai:write:budgeted` — a spend scope the app does not ask for and cannot be granted — which is
+  // a NEW over-report in exactly the direction the change exists to remove. Red against the
+  // display-approvedScopes implementation, green against the intersection.
+  it('manifest ⊊ approved: shows the intersection, NOT the stale wider approval', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: ['buzz:read:self'] },
+          approvedScopes: ['buzz:read:self', 'ai:write:budgeted'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual(['buzz:read:self']);
+    expect(result[0].scopes).not.toContain('ai:write:budgeted');
+  });
+
+  // Neither side contains the other — distinguishes a real intersection from "whichever column is
+  // shorter", which both single-direction tests above would accept.
+  it('partial overlap: shows only the scopes present in BOTH sets', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: ['models:read:self', 'buzz:read:self'] },
+          approvedScopes: ['buzz:read:self', 'ai:write:budgeted'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual(['buzz:read:self']);
+  });
+
+  // 🔴 FIXES 🟡-3 — A MEASURED-FALSE MUTATION-RESISTANCE CLAIM, REPLACED BY ONE THAT HOLDS.
+  // The previous annotation on the superset test read: "Every value here is pairwise distinct and
+  // distinct from the constant the assertion names, so a mutant that hardcodes a literal cannot
+  // survive." That was FALSE. The asserted value of an INTERSECTION is necessarily drawn from both
+  // input sets, so `'buzz:read:self'` was unavoidably a manifest element too, and the mutant
+  // `const displayedScopes = ['buzz:read:self']` PASSED that test. The claim is not achievable for
+  // any single-row equality assertion, so it is not softened — it is replaced by a structural
+  // property that is actually true:
+  //
+  // TWO ROWS WITH DISJOINT EXPECTED INTERSECTIONS. `listMyScopeGrants` computes the set once per
+  // row inside a loop, so NO single hardcoded literal array can satisfy both rows at once — any
+  // `displayedScopes = [<fixed literal>]` mutant fails at least one of the two assertions below,
+  // and a mutant returning either raw column fails too (each row's manifest and approval differ
+  // from its intersection).
+  //
+  // MEASURED, not asserted — mutants run against this suite (61 tests), each confirmed to have
+  // actually executed rather than failing to import:
+  //   `['buzz:read:self']`         → 8 failed, THIS test among them (it survived the old fixture)
+  //   `['models:read:self']`       → 11 failed, THIS test among them
+  //   `['collections:read:private']` → 11 failed, THIS test among them
+  //   raw `approved_scopes`        → 5 failed, THIS test among them
+  //   raw `manifest.scopes`        → 7 failed, THIS test among them
+  //   positive control `[]`        → 8 failed (proves the suite can go red at all)
+  // ⚠️ NOTE WHAT IS *NOT* CLAIMED: `['buzz:read:self']` still PASSES the `manifest ⊋ approved`
+  // test above, because that test's expected value IS `['buzz:read:self']`. A single-row equality
+  // assertion can never kill a mutant that hardcodes its own expectation — which is precisely why
+  // the claim was moved here instead of being restated there.
+  it('two apps in one read get their OWN intersections (no single literal can satisfy both)', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      blanketSub({
+        appBlockId: 'apb_a',
+        appBlock: appBlock({
+          id: 'apb_a',
+          blockId: 'alpha',
+          manifest: { name: 'Alpha', scopes: ['models:read:self', 'buzz:read:self'] },
+          approvedScopes: ['models:read:self', 'ai:write:budgeted'],
+        }),
+      }),
+      blanketSub({
+        appBlockId: 'apb_b',
+        appBlock: appBlock({
+          id: 'apb_b',
+          blockId: 'beta',
+          manifest: { name: 'Beta', scopes: ['collections:read:private', 'images:write:self'] },
+          approvedScopes: ['user:read:self', 'collections:read:private'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result.map((r) => r.name)).toEqual(['Alpha', 'Beta']);
+    expect(result[0].scopes).toEqual(['models:read:self']);
+    expect(result[1].scopes).toEqual(['collections:read:private']);
+  });
+
+  // 🔴 ORDER IS OBSERVABLE — this array is rendered as a badge list. MANIFEST order, which is what
+  // the pre-existing open-coded sites produced and what the mint uses; the fixture distinguishes
+  // it from approval order and from sorted, which coincide with each other here.
+  it('preserves MANIFEST order, not approval order and not sorted', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: {
+            name: 'Hello',
+            scopes: ['collections:read:private', 'ai:write:budgeted', 'buzz:read:self'],
+          },
+          approvedScopes: ['ai:write:budgeted', 'buzz:read:self', 'collections:read:private'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual([
+      'collections:read:private',
+      'ai:write:budgeted',
+      'buzz:read:self',
+    ]);
+  });
+
+  // 🔴 IDENTITY PIN FOR THE CONSOLIDATION. The expectation is DERIVED BY CALLING the shared helper
+  // rather than hand-copied as a literal, because a "mirrors X" guard asserted against a copy on
+  // each side pins nothing — tighten one side and its own literal and both stay green while the two
+  // diverge. The helper's own expectations are literals (`block-effective-scopes.test.ts`); this
+  // asserts the SERVICE agrees with the helper on a value neither column alone would produce.
+  it('agrees with effectiveBlockScopes on the same inputs (derived, not copied)', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    const { effectiveBlockScopes } = await import('~/shared/constants/block-effective-scopes');
+    const manifest = {
+      name: 'Hello',
+      scopes: ['collections:read:private', 'models:read:self', 'buzz:read:self'],
+    };
+    const approvedScopes = ['buzz:read:self', 'collections:read:private', 'ai:write:budgeted'];
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({ appBlock: appBlock({ manifest, approvedScopes }) }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    const expected = effectiveBlockScopes(manifest, approvedScopes);
+    // Guard the guard: a helper that returned [] would make the comparison vacuous.
+    expect(expected.length).toBeGreaterThan(1);
+    expect(result[0].scopes).toEqual(expected);
+  });
+
+  // 🔴 NO FALLBACK TO THE MANIFEST. An app approved for NOTHING displays nothing, even though its
+  // manifest still asks for things — a fallback here would restore the whole over-report, in
+  // exactly the case that matters most.
   it('emits an empty scopes array for an EMPTY approval, never falling back to the manifest', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
@@ -462,17 +598,25 @@ describe('listMyScopeGrants', () => {
     expect(result[0].scopes).toEqual([]);
   });
 
-  // ⚠️ THE NEXT TWO ARE INVARIANT GUARDS, NOT REGRESSION COVERAGE — labelled as such rather
-  // than counted. Prisma types `approvedScopes` as `string[]`, so nothing in this codebase
-  // can produce either shape; they pin the JSON/DB-boundary defensiveness at the read site
-  // so a later "the type says string[], drop the guard" edit fails instead of shipping a
-  // non-string into a `<Badge>` key and a scope-description lookup.
+  // ⚠️ THE NEXT TWO ARE INVARIANT GUARDS, NOT REGRESSION COVERAGE — labelled as such rather than
+  // counted. Prisma types `approvedScopes` as `string[]`, so nothing in this codebase produces
+  // either shape at this read site; they pin the JSON/DB-boundary defensiveness so a later "the
+  // type says string[], drop the guard" edit fails instead of shipping a non-string into a
+  // `<Badge>` key and a scope-description lookup. (The non-string ELEMENT case is the less
+  // hypothetical of the two: the approve paths write `manifest.scopes as string[]`, a bare cast
+  // with no per-element check — see `publish-request.service.ts`.)
+  //
+  // Both fixtures make the MANIFEST a superset of the well-formed approved values, so the result
+  // is attributable to the approved-side handling rather than to an empty intersection.
   it('drops non-string elements from a malformed approvedScopes array', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
       pinnedSub({
         appBlock: appBlock({
-          manifest: { name: 'Hello', scopes: ['models:read:self'] },
+          manifest: {
+            name: 'Hello',
+            scopes: ['buzz:read:self', 'collections:read:private', 'models:read:self'],
+          },
           approvedScopes: [null, 'buzz:read:self', 42, undefined, 'collections:read:private'],
         }),
       }),
@@ -482,16 +626,17 @@ describe('listMyScopeGrants', () => {
   });
 
   // The fixture is a non-null SCALAR on purpose: `null` alone cannot distinguish the
-  // `Array.isArray` guard from a weaker `(x ?? []).filter(…)`, because `null ?? []` also
-  // yields `[]`. A bare string is the realistic JSON-column mishap AND it makes the weaker
-  // shape throw `.filter is not a function`, so this case pins the guard rather than the
-  // nullishness.
+  // `Array.isArray` guard from a weaker `(x ?? []).filter(…)`, because `null ?? []` also yields
+  // `[]`. A bare string is the realistic JSON-column mishap AND it makes the weaker shape throw
+  // `.filter is not a function`, so this case pins the guard rather than the nullishness. The
+  // manifest deliberately CONTAINS that same scope id, so a correct `[]` cannot be mistaken for an
+  // empty intersection.
   it('emits an empty scopes array when approvedScopes is not an array at all', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
       pinnedSub({
         appBlock: appBlock({
-          manifest: { name: 'Hello', scopes: ['models:read:self'] },
+          manifest: { name: 'Hello', scopes: ['buzz:read:self', 'models:read:self'] },
           approvedScopes: 'buzz:read:self',
         }),
       }),

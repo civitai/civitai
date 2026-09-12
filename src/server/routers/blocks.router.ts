@@ -200,6 +200,7 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import {
   getBlockAllowedAccountTypes,
   isPayoutEligibleBuzz,
@@ -2777,15 +2778,15 @@ export const blocksRouter = router({
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
-      // Ceiling = manifest.scopes ∩ approvedScopes. The user may only consent
-      // to scopes inside that ceiling; anything else is dropped.
-      const manifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
-        ? (block.manifest as { scopes: unknown[] }).scopes.filter(
-            (s): s is string => typeof s === 'string'
-          )
-        : [];
-      const approved = new Set(block.approvedScopes ?? []);
-      const ceiling = new Set(manifestScopes.filter((s) => approved.has(s)));
+      // Ceiling = manifest.scopes ∩ approvedScopes, via the SHARED `effectiveBlockScopes`
+      // helper — the same rule, from the same module, as `getInstallConfig`'s install-time
+      // disclosure, `BlockRegistry.recordInstallConsent`'s grant set, and the permissions tab
+      // (`listMyScopeGrants`). The user may only consent to scopes inside that ceiling;
+      // anything else is dropped. Membership is all this site needs, so the helper's order and
+      // de-duplication are not observable here.
+      const ceiling = new Set(
+        effectiveBlockScopes(block.manifest as { scopes?: unknown }, block.approvedScopes)
+      );
       const toGrant = input.scopes.filter((s) => ceiling.has(s));
       if (toGrant.length === 0) {
         throw new TRPCError({
@@ -3334,18 +3335,23 @@ export const blocksRouter = router({
       // manifestSettingsSchema so a malformed/absent declaration yields {} (the
       // form renders no fields rather than throwing).
       const parsedSettings = manifestSettingsSchema.safeParse(manifest.settings ?? {});
-      // `scopes` = manifest.scopes ∩ approvedScopes — the SAME mod-narrowed
-      // ceiling grantScopes (above) enforces at mint and getAppDetail/
-      // scopesSummary expose on the public surfaces. The disclosure must match
-      // what the app can actually be granted: surfacing raw `manifest.scopes`
-      // would over-state (list scopes the mod did NOT approve, so the app will
-      // never be minted them) and could leak an unapproved/internal scope id
-      // the manifest declares but approval dropped.
-      const manifestScopes = Array.isArray(manifest.scopes)
-        ? manifest.scopes.filter((s): s is string => typeof s === 'string')
-        : [];
-      const approved = new Set(block.approvedScopes ?? []);
-      const scopes = manifestScopes.filter((s) => approved.has(s));
+      // `scopes` = manifest.scopes ∩ approvedScopes, via the SHARED `effectiveBlockScopes`
+      // helper — the same rule `grantScopes` (above) enforces as its consent ceiling,
+      // `BlockRegistry.recordInstallConsent` uses to pick a grant set, and the permissions tab
+      // (`listMyScopeGrants`) displays. The disclosure must match what the app can actually be
+      // granted: surfacing raw `manifest.scopes` would over-state (list scopes outside the
+      // approved snapshot, which `grantScopes` would refuse) and could leak an
+      // unapproved/internal scope id the manifest declares but the approval does not carry.
+      //
+      // ⚠️ AN EARLIER REVISION OF THIS COMMENT CALLED THE CEILING "mod-narrowed" AND CLAIMED
+      // `getAppDetail`/`scopesSummary` EXPOSE THE SAME SET. BOTH HALVES WERE FALSE. There is no
+      // per-scope narrowing mechanism — the approve paths write `approvedScopes =
+      // manifestScopes` verbatim (`publish-request.service.ts`), so the skew comes from the
+      // publisher-push path instead. And `getAppDetail`/`scopesSummary`/the app-listing detail
+      // DTO all project RAW `approved_scopes` with NO intersection; that is deliberate for a
+      // public pre-launch disclosure and is reasoned about at
+      // `src/server/services/blocks/app-listing.service.ts`. Do not "align" them here.
+      const scopes = effectiveBlockScopes(manifest, block.approvedScopes);
       return {
         settings: parsedSettings.success ? parsedSettings.data : {},
         scopes,
