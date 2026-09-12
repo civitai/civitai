@@ -18,6 +18,14 @@ import {
  * second moderator is mid-verdict, which is exactly when it matters.
  */
 
+/**
+ * ⚠️ ONE DIMENSION THIS TIER CANNOT SEE, recorded so nobody reads a green run as covering it.
+ * Both getters below resolve to the SAME PGlite client, because PGlite is a single in-process
+ * database with no replica. So every `dbRead` vs `dbWrite` choice in the service is unpinned here:
+ * a mutant swapping either direction survives, including `feedbackExists(dbWrite, …)`, which is
+ * what decides whether a refusal says "that report is gone" or "someone else already triaged it".
+ * Those call sites are verified by reading them, not by this suite.
+ */
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
 vi.mock('../db', () => ({
@@ -128,6 +136,62 @@ describe('triageFeedback', () => {
     expect(row.status).toBe('new');
     expect(row.handledById).toBeNull();
     expect(row.handledAt).toBeNull();
+  });
+
+  /**
+   * 🔴 A row reopened to `new` while still carrying a `bugId` is a DEAD END: the panel shows the
+   * linked-issue view instead of the promote form, and `linkInTransaction` refuses any row whose
+   * `bugId` is set — so it can be neither re-promoted nor attached elsewhere, and there is no
+   * unlink control anywhere in the app.
+   */
+  it('clears the issue link when a row goes back to `new`, so it can be triaged again', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    expect((await readFeedback(db, id)).bugId).toBe(promoted.bugId);
+
+    await service.triageFeedback({
+      id,
+      status: 'new',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, id)).bugId).toBeNull();
+    // And it is re-attachable, which is the whole point.
+    const relinked = await service.linkFeedbackToBug({
+      id,
+      bugId: promoted.bugId,
+      moderatorId: moderator,
+    });
+    expect(relinked).toMatchObject({ ok: true });
+  });
+
+  it('keeps the issue link on any status that is not `new`', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+
+    await service.triageFeedback({
+      id,
+      status: 'dismissed',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, id)).bugId).toBe(promoted.bugId);
   });
 
   it('touches only the row it names', async () => {
@@ -303,28 +367,62 @@ describe('linkFeedbackToBug', () => {
   });
 });
 
+/**
+ * The predicate the page's degraded empty state turns on. Tested HERE rather than through `load`,
+ * because the route suite drives that branch with its own stub — so the branch and the
+ * discrimination are pinned separately, and neither can go stale behind the other.
+ */
+describe('isMissingTriageColumns', () => {
+  it('accepts exactly the undefined-column code', () => {
+    expect(service.isMissingTriageColumns({ code: '42703' })).toBe(true);
+  });
+
+  it('rejects every other database error, so an outage cannot render as an empty queue', () => {
+    // 57P01 admin shutdown, 08006 connection failure, 42P01 undefined TABLE, 23505 unique violation.
+    for (const code of ['57P01', '08006', '42P01', '23505', '', '4270'])
+      expect(service.isMissingTriageColumns({ code })).toBe(false);
+  });
+
+  it('rejects a value that is not an error object at all', () => {
+    for (const bad of [null, undefined, '42703', 42703, {}])
+      expect(service.isMissingTriageColumns(bad)).toBe(false);
+  });
+});
+
 describe('reads', () => {
+  /**
+   * 🔴 THREE rows at `limit: 2`, never two at `limit: 1`. The cursor is the LAST item's id, and at
+   * a page size of one the first and last elements of a page are the same object — so a fixture
+   * built that way cannot distinguish `items[items.length - 1].id` from `items[0].id`, and the
+   * mutant that swaps them SURVIVES a green run. In production `FEEDBACK_PAGE_SIZE` is 50, where
+   * that swap repeats 49 rows on page 2 and makes 49 unreachable.
+   */
   it('lists newest first, joins the reporter and pages on a keyset', async () => {
-    const older = await seedFeedback(db, {
+    const oldest = await seedFeedback(db, {
+      userId: reporter,
+      createdAt: '2026-07-01T00:00:00.000Z',
+    });
+    const middle = await seedFeedback(db, {
       userId: reporter,
       createdAt: '2026-08-01T00:00:00.000Z',
     });
-    const newer = await seedFeedback(db, {
+    const newest = await seedFeedback(db, {
       userId: reporter,
       createdAt: '2026-09-01T00:00:00.000Z',
     });
 
-    const first = await service.getFeedbackList({ statuses: ['new'], limit: 1 });
-    expect(first.items.map((r) => r.id)).toEqual([newer]);
+    const first = await service.getFeedbackList({ statuses: ['new'], limit: 2 });
+    expect(first.items.map((r) => r.id)).toEqual([newest, middle]);
     expect(first.items[0].username).toBe('kaeru');
-    expect(first.nextCursor).not.toBeNull();
+    // The LAST row of the page, not the first — the page boundary, not its start.
+    expect(first.nextCursor).toBe(middle);
 
     const second = await service.getFeedbackList({
       statuses: ['new'],
-      limit: 1,
+      limit: 2,
       cursor: first.nextCursor,
     });
-    expect(second.items.map((r) => r.id)).toEqual([older]);
+    expect(second.items.map((r) => r.id)).toEqual([oldest]);
     expect(second.nextCursor).toBeNull();
   });
 

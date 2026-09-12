@@ -16,6 +16,7 @@ import {
   getFeedbackAreas,
   getFeedbackList,
   getSiblingFeedback,
+  isMissingTriageColumns,
   linkFeedbackToBug,
   promoteFeedbackToBug,
   triageFeedback,
@@ -51,15 +52,43 @@ export const load: PageServerLoad = async ({ url, request }) => {
     redirect(307, canonical.pathname + canonical.search);
   }
 
-  const [list, areas] = await Promise.all([
-    getFeedbackList({
+  /**
+   * 🔴 The migration is applied BY HAND, per environment, and this page reaches production before
+   * anyone runs it. `moderator:admin` short-circuits every page grant, so the sidebar entry and its
+   * badge are live on the day this deploys — and the badge counts on `status` alone, so it renders
+   * a real number against an unmigrated database. The click is what breaks: the list selects four
+   * columns that do not exist yet.
+   *
+   * Degraded rather than thrown. An uncaught 42703 out of `load` is the error boundary plus an
+   * Axiom entry per click, and it tells the operator nothing about what to do.
+   */
+  let list: Awaited<ReturnType<typeof getFeedbackList>>;
+  let areas: string[];
+  try {
+    [list, areas] = await Promise.all([
+      getFeedbackList({
+        statuses,
+        area: area || null,
+        cursor: cursor ?? null,
+        limit: FEEDBACK_PAGE_SIZE,
+      }),
+      getFeedbackAreas(),
+    ]);
+  } catch (e) {
+    if (!isMissingTriageColumns(e)) throw e;
+    return {
+      items: [],
+      nextCursor: null,
       statuses,
-      area: area || null,
-      cursor: cursor ?? null,
-      limit: FEEDBACK_PAGE_SIZE,
-    }),
-    getFeedbackAreas(),
-  ]);
+      area,
+      open: null,
+      openVisible: false,
+      siblings: [],
+      areaOptions: [],
+      grafanaUrl: null,
+      migrationPending: true as const,
+    };
+  }
 
   // Only for the row that is actually open — this is the one read on the page that is not needed to
   // render the list.
@@ -70,6 +99,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
       : [];
 
   return {
+    migrationPending: false as const,
     items: list.items,
     nextCursor: list.nextCursor,
     statuses,

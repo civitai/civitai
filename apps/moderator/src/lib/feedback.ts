@@ -183,6 +183,26 @@ export function splitContext(context: unknown): FeedbackContext {
   return out;
 }
 
+/**
+ * Who handled a row, for both the list column and the detail line.
+ *
+ * 🔴 ONE definition because the two views had drifted into being wrong in opposite directions, and
+ * each was right about exactly the case the other got wrong. There are two independent nullables:
+ * `handledById` is `ON DELETE SET NULL`, and `User.username` is itself nullable — so a deleted
+ * handler and a live handler with no username are DIFFERENT states, and neither may be rendered as
+ * the other. A bare `username ?? '#' + id` prints "#null" for the first; a bare
+ * `username ?? 'deleted account'` libels a live account for the second.
+ */
+export function handledByLabel(row: {
+  handledByUsername: string | null;
+  handledById: number | null;
+  handledAt: Date | string | null;
+}): string {
+  if (!row.handledAt) return '—';
+  if (row.handledByUsername) return row.handledByUsername;
+  return row.handledById != null ? `#${row.handledById}` : 'deleted account';
+}
+
 /** Attachments on a row, for the list's 📎 column. Counts the opt-in page capture as one. */
 export const feedbackAttachmentCount = (context: FeedbackContext): number =>
   context.images.length + (context.screenshotId ? 1 : 0);

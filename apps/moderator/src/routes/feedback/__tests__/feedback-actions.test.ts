@@ -23,6 +23,11 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 vi.mock('$lib/server/feedback.service', () => ({
   FEEDBACK_PAGE_SIZE: 50,
+  // A stand-in that mirrors the real predicate. It pins the BRANCH only — that `load` degrades when
+  // this says yes and rethrows when it says no. Which errors it says yes TO is pinned separately,
+  // against the real function, in `lib/server/__tests__/feedback.service.test.ts`.
+  isMissingTriageColumns: (e: unknown) =>
+    typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703',
   getFeedbackList,
   getFeedbackAreas,
   getSiblingFeedback,
@@ -117,6 +122,32 @@ describe('load', () => {
     const result = await loaded('?status=');
 
     expect(result.statuses).toEqual([]);
+  });
+
+  /**
+   * 🔴 Every migration here is applied BY HAND, and `moderator:admin` reaches this page through
+   * `SUPER_ROLE` before anyone ticks a box on `/admin` — so the window where the page is live
+   * against an unmigrated database is real, not theoretical.
+   */
+  it('degrades to an explanatory empty state when the triage columns do not exist yet', async () => {
+    getFeedbackList.mockRejectedValueOnce(
+      Object.assign(new Error('column f.triageNote does not exist'), { code: '42703' })
+    );
+
+    const result = await loaded('?status=new');
+
+    expect(result.migrationPending).toBe(true);
+    expect(result.items).toEqual([]);
+  });
+
+  it('still THROWS any other database error, rather than rendering an outage as an empty queue', async () => {
+    getFeedbackList.mockRejectedValueOnce(
+      Object.assign(new Error('connection terminated'), { code: '57P01' })
+    );
+
+    await expect(Promise.resolve(load(loadEvent('?status=new')))).rejects.toThrow(
+      'connection terminated'
+    );
   });
 
   it('degrades a cursor Postgres would ERROR on, rather than passing it to the query', async () => {

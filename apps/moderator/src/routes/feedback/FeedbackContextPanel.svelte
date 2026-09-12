@@ -32,8 +32,17 @@
   );
 
   let copyState = $state<'idle' | 'copied' | 'failed'>('idle');
+  let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // The label is transient, so the timer is the one thing here that lives outside Svelte: cleared
+  // on a re-click and on unmount, or it fires against a destroyed component.
+  $effect(() => () => {
+    if (copyTimer) clearTimeout(copyTimer);
+  });
+
   async function copySession() {
     if (!context.sessionId) return;
+    if (copyTimer) clearTimeout(copyTimer);
     // `writeText` rejects outside a secure context and when the permission is refused. An
     // unhandled rejection here would leave the button looking like it did nothing.
     try {
@@ -42,6 +51,7 @@
     } catch {
       copyState = 'failed';
     }
+    copyTimer = setTimeout(() => (copyState = 'idle'), 2000);
   }
 </script>
 

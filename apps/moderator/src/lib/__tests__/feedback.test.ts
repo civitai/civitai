@@ -4,6 +4,7 @@ import {
   faroSessionLink,
   feedbackAreaOptions,
   feedbackAttachmentCount,
+  handledByLabel,
   reconstructFeedbackUrl,
   splitContext,
 } from '$lib/feedback';
@@ -198,6 +199,37 @@ describe('splitContext', () => {
       )
     ).toBe(3);
     expect(feedbackAttachmentCount(splitContext({}))).toBe(0);
+  });
+});
+
+/**
+ * 🔴 Two INDEPENDENT nullables, and the two views of this row had drifted into being wrong in
+ * opposite directions — each correct for exactly the case the other got wrong. `handledById` is
+ * `ON DELETE SET NULL`; `User.username` is itself nullable.
+ */
+describe('handledByLabel', () => {
+  const at = new Date('2026-09-01T00:00:00.000Z');
+
+  it('names the handler when there is one', () => {
+    expect(handledByLabel({ handledByUsername: 'mod', handledById: 42, handledAt: at })).toBe(
+      'mod'
+    );
+  });
+
+  it('falls back to the id for a LIVE account with no username — not "deleted account"', () => {
+    expect(handledByLabel({ handledByUsername: null, handledById: 42, handledAt: at })).toBe('#42');
+  });
+
+  it('says the account is gone when the FK was nulled — not "#null"', () => {
+    expect(handledByLabel({ handledByUsername: null, handledById: null, handledAt: at })).toBe(
+      'deleted account'
+    );
+  });
+
+  it('is a dash for an unhandled row, whatever the other columns say', () => {
+    expect(handledByLabel({ handledByUsername: 'mod', handledById: 42, handledAt: null })).toBe(
+      '—'
+    );
   });
 });
 

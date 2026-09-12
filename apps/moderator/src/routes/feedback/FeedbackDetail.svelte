@@ -6,7 +6,7 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
-  import { FEEDBACK_STATUSES, type FeedbackContext } from '$lib/feedback';
+  import { FEEDBACK_STATUSES, handledByLabel, type FeedbackContext } from '$lib/feedback';
   import FeedbackContextPanel from './FeedbackContextPanel.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
   import type { FeedbackRow, FeedbackSibling } from '$lib/server/feedback.service';
@@ -83,16 +83,17 @@
       </p>
     {/if}
 
-    <!-- 🔴 OUTSIDE the `canTriage` arm, for the same reason as `FeedbackPromote`'s: `reload: true`
-         re-runs `load` BEFORE the message is assigned, so a 403 raised by a grant revoked mid-session
-         flips this to the permission paragraph and unmounts an alert nested in the form's arm. -->
+    <!-- 🔴 The JS-path surface for a refusal on this form, and the only one: `+page.svelte`'s
+         `pageError` is gated on `openVisible`, which stays true whenever this panel is mounted.
+         Its position outside the `canTriage` arm carries no guarantee — nothing re-renders this
+         section while a refusal is pending, because `update()` re-runs `load` on success only. -->
     {#if triageForm.error}
       <ErrorAlert message={triageForm.error} />
     {/if}
 
     {#if row.handledAt}
       <p class="text-xs text-dark-2">
-        Handled by {row.handledByUsername ?? `#${row.handledById}`} on {dateTime(row.handledAt)}
+        Handled by {handledByLabel(row)} on {dateTime(row.handledAt)}
       </p>
     {/if}
   </section>

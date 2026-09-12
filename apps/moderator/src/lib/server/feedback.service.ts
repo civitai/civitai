@@ -16,6 +16,19 @@ import type { FeedbackStatus } from '$lib/feedback';
 
 export const FEEDBACK_PAGE_SIZE = 50;
 
+/**
+ * Postgres `undefined_column`, i.e. this database has not had
+ * `20260911120000_feedback_triage` applied yet.
+ *
+ * 🔴 Narrow ON PURPOSE — it matches ONE code and nothing else. Every migration here is applied by
+ * hand per environment, so the window between this page deploying and someone running the SQL is
+ * real, and `moderator:admin` reaches the page through `SUPER_ROLE` on day one without any
+ * `/admin` tick. Widening this to "any database error" would render a genuine outage as an empty
+ * queue, which is the failure the page exists to avoid.
+ */
+export const isMissingTriageColumns = (e: unknown): boolean =>
+  typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703';
+
 export type FeedbackRow = {
   id: number;
   area: string;
@@ -42,6 +55,21 @@ export async function getFeedbackList(input: {
 }): Promise<{ items: FeedbackRow[]; nextCursor: number | null }> {
   const limit = input.limit ?? FEEDBACK_PAGE_SIZE;
 
+  /**
+   * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write
+   * here reloads the page, so under replica lag an operator can see their own triage come back
+   * unapplied, and their next click then posts the STALE `expectedStatus` and is refused with
+   * "someone else already triaged this" over their own write.
+   *
+   * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
+   * convention every other queue in this app follows, and a triage queue read by a handful of
+   * people is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup
+   * goes to the primary instead, and that is not an inconsistency — there the stale answer is a
+   * flat "no issue with that number" for an issue the operator is looking at, which reads as a
+   * defect rather than as a conflict.
+   *
+   * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
+   */
   let query = dbRead
     .selectFrom('Feedback as f')
     .leftJoin('User as u', 'u.id', 'f.userId')
@@ -189,6 +217,13 @@ export async function triageFeedback(input: {
       triageNote: input.note,
       handledById: handled ? input.moderatorId : null,
       handledAt: handled ? new Date() : null,
+      // 🔴 The issue link is cleared alongside the handler, for the same reason: `new` means
+      // UNTRIAGED, and a Bug link is a triage outcome. Leaving it set puts a row in the unhandled
+      // queue showing the linked-issue panel instead of the promote form, and `linkInTransaction`
+      // refuses any row whose `bugId` is already set — so the moderator who reopened it can
+      // neither re-promote it nor attach it anywhere else, and this app has no unlink control.
+      // The `Bug` row itself is untouched; re-attaching is the issue number they just saw.
+      ...(handled ? {} : { bugId: null }),
     })
     .where('id', '=', input.id)
     .where('status', '=', input.expectedStatus)
@@ -217,6 +252,9 @@ export async function triageFeedback(input: {
  * deleted a moment ago is still present, and the answer flips from "that report is gone" to
  * "someone else already triaged it" — the exact confusion the split exists to remove. Callers pass
  * the primary, or the open transaction.
+ *
+ * ⚠️ NOT COVERED BY A TEST. The PGlite tier binds `dbRead` and `dbWrite` to one client, so a change
+ * passing the replica here is invisible to it. Verified by reading the call sites only.
  */
 async function feedbackExists(
   db: Pick<typeof dbWrite, 'selectFrom'>,

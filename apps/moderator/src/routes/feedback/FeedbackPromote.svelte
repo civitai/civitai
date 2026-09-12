@@ -9,7 +9,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { issuesUrl } from '$lib/entity-url';
-  import { urlWith } from '$lib/url';
+  import { clearPaging } from '$lib/paging';
   import type { FeedbackRow, FeedbackSibling } from '$lib/server/feedback.service';
 
   let {
@@ -24,7 +24,25 @@
     canPromote: boolean;
   } = $props();
 
-  const promoteForm = new FormState({ onSuccess: null, reload: true });
+  /**
+   * 🔴 `reset: false`, matching the triage form. This form carries hidden `id` and `mode` inputs,
+   * and Svelte writes their `value` property rather than `defaultValue` — so `reset()` blanks both
+   * and leaves a form that would post neither. Nothing depends on that today, because the only
+   * path that resets is a success and a success replaces this form with the linked-issue view. The
+   * asymmetry is the hazard: the next person to add a field here inherits a live trap.
+   */
+  const promoteForm = new FormState({ onSuccess: null, reload: true, reset: false });
+
+  /**
+   * A sibling can sit on an earlier keyset page, where carrying this page's `?cursor=` lands the
+   * operator on "not in this view" for a row that plainly exists.
+   */
+  function siblingHref(id: number) {
+    const next = new URL(page.url);
+    clearPaging(next.searchParams);
+    next.searchParams.set('open', String(id));
+    return next.pathname + next.search;
+  }
 
   let attachMode = $state(false);
 </script>
@@ -49,7 +67,7 @@
         <ul class="flex flex-col gap-1 text-sm">
           {#each siblings as sibling (sibling.id)}
             <li>
-              <a href={urlWith(page.url, { open: sibling.id })} class={LINK_CLASS}>
+              <a href={siblingHref(sibling.id)} class={LINK_CLASS}>
                 {shortAge(sibling.createdAt)} · {sibling.area}
               </a>
               <span class="text-dark-2"> — {sibling.message.split('\n')[0]}</span>
@@ -113,10 +131,10 @@
     </p>
   {/if}
 
-  <!-- 🔴 OUTSIDE the branch chain above, not inside the form's arm. A 409 "already linked" means the
-       row gained a `bugId`, and the reload that precedes the message being assigned flips this
-       section to the linked view — so an alert nested in the form's arm is unmounted before it can
-       render, and the operator sees the panel silently swap with their typed title gone. -->
+  <!-- 🔴 The JS-path surface for a refusal on this form, and the only one: `+page.svelte`'s
+       `pageError` is gated on `openVisible`, which stays true whenever this panel is mounted.
+       Its position outside the branch chain carries no guarantee — nothing re-renders this section
+       while a refusal is pending, because `update()` re-runs `load` on success only. -->
   {#if promoteForm.error}
     <ErrorAlert message={promoteForm.error} />
   {/if}
