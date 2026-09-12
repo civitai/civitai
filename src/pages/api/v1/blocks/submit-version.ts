@@ -56,23 +56,57 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * is therefore intentionally OMITTED (it would also break the headless CLI, which
  * sends no Origin).
  *
- * Body `{ bundleBase64: "<base64 zip>" }`, same ~72 MiB body ceiling +
- * MAX_BUNDLE_SIZE_BYTES schema cap as the session route. Returns
+ * Body `{ bundleBase64: "<base64 zip>" }`. ⚠ The body ceiling here is **10 MiB, not the
+ * session route's ~72 MiB** — this path is proxy-matched and Next truncates it there;
+ * see the `sizeLimit` comment below for the measurement. That admits a ~7.5 MiB ZIP once
+ * base64 expansion is counted, against a largest-ever submitted bundle of 2.41 MiB. The
+ * MAX_BUNDLE_SIZE_BYTES schema cap still applies to the decoded buffer. Returns
  * `{ publishRequestId, slug, version, status }`.
  */
 export const config = {
   api: {
     bodyParser: {
-      // Match the session route: a 50 MiB ZIP base64-encodes to ~67 MiB JSON.
-      // The schema-level cap (MAX_BUNDLE_SIZE_BYTES) is enforced below and the
-      // service re-checks the decoded buffer size.
-      sizeLimit: '72mb',
+      // 🔴 10mb, NOT the session route's 72mb — and the difference is NOT a policy
+      // choice, it is what this path can physically receive.
+      //
+      // This route sits under `/api/v1/`, which `src/proxy.ts`'s `matcher` covers.
+      // Next caps the body of a proxy-matched request at
+      // `experimental.proxyClientMaxBodySize` (default 10485760) and then ENDS THE
+      // STREAM without telling the route — so a larger declaration here is not
+      // honoured, it is silently truncated, and `JSON.parse` then fails on a
+      // half-body with a message that has nothing to do with size. Declaring the
+      // real ceiling turns that into a clean 413.
+      //
+      // 🔴 `src/pages/api/blocks/submit-version.ts` — the SESSION route — keeps 72mb
+      // and is CORRECT to: `/api/blocks/*` is NOT matched (the matcher's catch-all
+      // explicitly excludes `api`), so it genuinely receives the whole body. The two
+      // routes differ because their PATHS differ. Do not "fix" the other one to match.
+      //
+      // Measured on a deployed preview, one 12,000,000-byte POST per path, reading
+      // the server's own `Request body exceeded 10MB for <path>` line: `/api/v1/*`
+      // and `/api/trpc/*` warned, `/api/blocks/*` and `/api/mod/*` did not.
+      //
+      // Nothing is narrowed in practice: over the COMPLETE population of 245 publish
+      // requests (`app_block_publish_requests.bundle_size_bytes`, 0 null), the largest
+      // bundle ever submitted is 2.41 MiB and p95 is 2.21 MiB — ~3x under the ~7.5 MiB
+      // ZIP this admits once base64 expansion is counted. Production has logged zero
+      // truncation warnings in 7d.
+      //
+      // If 50 MiB CLI bundles are ever genuinely wanted, the fix is raising
+      // `experimental.proxyClientMaxBodySize` in next.config.mjs — a repo-wide change
+      // that widens the body EVERY route may receive, so it is a deliberate call and
+      // not something to slip in by re-raising this number.
+      //
+      // MAX_BUNDLE_SIZE_BYTES (50 MiB) still bounds the DECODED buffer below, and the
+      // service re-checks it; it is a product cap, not a transport one.
+      sizeLimit: '10mb',
     },
   },
 };
 
-// Bundle submit is heavy (decode + ZIP extract + deep manifest validation up to
-// ~72 MiB). Keep the per-key window tight. The retool endpoint defaults to
+// Bundle submit is heavy (decode + ZIP extract + deep manifest validation up to the
+// route's body ceiling — see the `sizeLimit` comment; it is 10 MiB on THIS path, not the
+// session route's 72). Keep the per-key window tight. The retool endpoint defaults to
 // 60/min for cheap mod actions; a bundle upload warrants far less.
 const RATE_LIMIT = { max: 10, windowSeconds: 60 } as const;
 

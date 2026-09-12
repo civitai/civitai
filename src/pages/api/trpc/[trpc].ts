@@ -19,7 +19,24 @@ import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '17mb',
+      // 🔴 10mb, and it is the real ceiling rather than a chosen one. `/api/trpc/*` is
+      // covered by `src/proxy.ts`'s `matcher`, and Next caps a proxy-matched request
+      // body at `experimental.proxyClientMaxBodySize` (default 10485760), then ENDS THE
+      // STREAM without telling the route. This declared 17mb, which meant a 10–17 MiB
+      // body was truncated mid-JSON and surfaced as a parse error naming nothing about
+      // size. 10mb makes the refusal a clean 413 instead.
+      //
+      // Measured on a deployed preview, one 12,000,000-byte POST per path, reading the
+      // server's own `Request body exceeded 10MB for <path>` line: `/api/trpc/*` and
+      // `/api/v1/*` warned; `/api/blocks/*` and `/api/mod/*` did not. Production has
+      // logged zero truncation warnings in 7d against a live ~33M-line stream, so
+      // nothing is known to have been losing bodies here — this closes a latent trap,
+      // it does not fix an active outage.
+      //
+      // Raising it back requires raising `experimental.proxyClientMaxBodySize` in
+      // next.config.mjs IN THE SAME CHANGE, which widens the body every route may
+      // receive. Without that, a bigger number here buys nothing and hides the failure.
+      sizeLimit: '10mb',
     },
   },
 };
@@ -40,7 +57,8 @@ const trpcHandler = createNextApiHandler({
   //
   // ⚠️ On a GET that means it costs URL parsing and nothing else. On a POST — legitimate here,
   // `allowMethodOverride: true` lets a query carry its input in the body — Next has already
-  // parsed the body (up to the 17mb `sizeLimit` above) before this handler runs, and the adapter
+  // parsed the body (up to the `sizeLimit` declared above — deliberately not restated here, so
+  // this line cannot go stale when that value changes) before this handler runs, and the adapter
   // re-stringifies it before `resolveResponse`; the cap cannot avoid that. What it does avoid is
   // the N-procedure amplification, on both methods.
   //

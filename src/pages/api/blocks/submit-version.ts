@@ -15,7 +15,10 @@ import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
  * exceeds the shared tRPC body limit. Rather than raise the limit on the
  * single `/api/trpc/[trpc]` route — which would lift the cap for EVERY tRPC
  * call app-wide — the upload lives here so the 72 MiB body limit is isolated
- * to the one endpoint that needs it. The shared tRPC route stays at 17 MiB.
+ * to the one endpoint that needs it. The shared tRPC route stays at its own small cap.
+ * ⚠ This route's 72 MiB is REAL — `/api/blocks/*` is not covered by `src/proxy.ts`'s
+ * matcher, so Next delivers the whole body here. Its `/api/v1/` sibling IS matched and
+ * is capped at 10 MiB by the framework regardless of what it declares.
  *
  * Auth/behaviour parity with the former `blocks.submitVersion` tRPC mutation:
  *   - moderator-only (ModEndpoint enforces session + isModerator + not banned),
