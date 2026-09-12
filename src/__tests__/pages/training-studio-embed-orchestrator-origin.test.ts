@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
+import { CIVITAI_IMAGE_HOSTS } from '~/components/AppBlocks/saveImageDownload';
 import { clientSchema } from '~/env/client-schema';
 
 /**
@@ -83,5 +84,28 @@ describe('training-studio embed: browser gets the public orchestrator origin', (
     expect(value).not.toContain('localhost');
     // An explicit port is the tell of an in-cluster service address; a public origin needs none.
     expect(value.replace('https://', '')).not.toContain(':');
+  });
+
+  /**
+   * 🔴 INVARIANT GUARD, not regression coverage — this relationship has never been broken; the guard
+   * exists so it cannot break silently. Labelled explicitly so nobody counts it as a test for a bug
+   * that happened.
+   *
+   * The coupling: the App Blocks download bridge will only fetch from `CIVITAI_IMAGE_HOSTS`, and the
+   * blob URLs it is handed are minted by the orchestrator origin below. So the origin's host must be
+   * an allowed fetch host, or saving a block-generated image breaks — in the bridge, far from either
+   * of these two files, which is why prose cross-references on both sides are not enough.
+   *
+   * Deliberately one-directional: the allowlist may hold MORE hosts than this origin (the image CDN;
+   * a previous host kept fetchable across a migration). It may not hold fewer.
+   */
+  it('the public orchestrator host is a host the download bridge may fetch from', () => {
+    const host = new URL(clientSchema.shape[PUBLIC_KEY].parse(undefined)).host;
+
+    // Control: the assertion can fail. Without this, a bad `host` (or an accidentally permissive
+    // allowlist) would let the check pass while proving nothing.
+    expect(CIVITAI_IMAGE_HOSTS).not.toContain('not-a-civitai-host.example.com');
+
+    expect(CIVITAI_IMAGE_HOSTS).toContain(host);
   });
 });
