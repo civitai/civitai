@@ -65,9 +65,11 @@ describe('BlockManifestValidator', () => {
 
     it('accepts a 40-char blockId (boundary) and a 3-char one', () => {
       const max = 'a' + 'b'.repeat(38) + 'c'; // 40 chars
-      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual({
-        valid: true,
-      });
+      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual(
+        {
+          valid: true,
+        }
+      );
       expect(
         BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: 'abc' }, APP_CTX)
       ).toEqual({ valid: true });
@@ -130,9 +132,7 @@ describe('BlockManifestValidator', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(
-        result.errors.some(
-          (e) => e.includes('allow-top-navigation') || e.includes('not allowed')
-        )
+        result.errors.some((e) => e.includes('allow-top-navigation') || e.includes('not allowed'))
       ).toBe(true);
     }
   });
@@ -157,9 +157,7 @@ describe('BlockManifestValidator', () => {
       ...VALID_MANIFEST,
       iframe: { ...VALID_MANIFEST.iframe, sandbox: 'allow-scripts allow-modals' },
     };
-    expect(
-      BlockManifestValidator.validate(unverified, APP_CTX).valid
-    ).toBe(false);
+    expect(BlockManifestValidator.validate(unverified, APP_CTX).valid).toBe(false);
 
     const verified = { ...unverified, trustTier: 'verified' };
     expect(BlockManifestValidator.validate(verified, APP_CTX).valid).toBe(true);
@@ -178,9 +176,7 @@ describe('BlockManifestValidator', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(
-        result.errors.some(
-          (e) => e.includes('allow-popups') || e.includes('not allowed')
-        )
+        result.errors.some((e) => e.includes('allow-popups') || e.includes('not allowed'))
       ).toBe(true);
     }
   });
@@ -201,7 +197,9 @@ describe('BlockManifestValidator', () => {
     ).toBe(true);
   });
 
-  it('rejects iframe heights outside the [40, 4000] envelope', () => {
+  // The envelope is no longer one range: `minHeight` is [40, 800] and `maxHeight`
+  // is [40, 4000]. The asymmetry has its own describe block below.
+  it('rejects iframe heights outside their envelopes', () => {
     const tiny = {
       ...VALID_MANIFEST,
       iframe: { ...VALID_MANIFEST.iframe, minHeight: 10 },
@@ -223,6 +221,68 @@ describe('BlockManifestValidator', () => {
     if (!result.valid) {
       expect(result.errors.some((e) => e.includes('iframe.maxHeight must be ≥'))).toBe(true);
     }
+  });
+
+  /**
+   * `minHeight` gets a TIGHTER ceiling than `maxHeight`, and the asymmetry is the
+   * whole guard — a test that only checked "some big number is rejected" would
+   * pass just as happily with both ceilings moved, which is the change that
+   * would break every live block.
+   *
+   * WHY THE CAP EXISTS. `maxHeight` is a ceiling the publisher volunteers, and
+   * the host binds below it anyway. `minHeight` is a FLOOR the host must honour —
+   * the host's viewport clamp (#4589) computes `Math.max(min, viewportBudget)` —
+   * so a large enough `minHeight` overrides the viewport clamp outright. At the
+   * old shared ceiling of 4000 a single schema-legal field reproduced exactly the
+   * defect that clamp exists to prevent: a 4000px slot on a 640px screen.
+   *
+   * WHY 800. Measured against the complete approved population (11 of 11 blocks,
+   * not a sample): the largest declared `minHeight` is 700. 800 rejects nothing
+   * that exists and leaves headroom above it.
+   */
+  describe('iframe.minHeight has its own, tighter ceiling', () => {
+    const withIframe = (over: Record<string, unknown>) => ({
+      ...VALID_MANIFEST,
+      iframe: { ...VALID_MANIFEST.iframe, ...over },
+    });
+
+    it('accepts 800 — the boundary is inclusive, and 800 is above every live block (max 700)', () => {
+      expect(
+        BlockManifestValidator.validate(withIframe({ minHeight: 800 }), APP_CTX),
+        'a minHeight of exactly 800 must be accepted: the largest live declaration is 700, so an ' +
+          'exclusive boundary here would be a needless contract break'
+      ).toEqual({ valid: true });
+      expect(
+        BlockManifestValidator.validate(withIframe({ minHeight: 700 }), APP_CTX),
+        'the largest minHeight in the live approved population (700) must still validate — this ' +
+          'cap is supposed to reject nothing that exists today'
+      ).toEqual({ valid: true });
+    });
+
+    it('rejects 801 and 4000, naming the tighter bound', () => {
+      for (const minHeight of [801, 4000]) {
+        const result = BlockManifestValidator.validate(withIframe({ minHeight }), APP_CTX);
+        expect(result.valid, `minHeight ${minHeight} should be rejected`).toBe(false);
+        if (!result.valid) {
+          expect(
+            result.errors.some((e) => e.includes('iframe.minHeight must be a number in [40, 800]')),
+            `minHeight ${minHeight} was rejected, but not by the minHeight envelope — errors were ` +
+              `${JSON.stringify(result.errors)}. A pass on the wrong error is not coverage.`
+          ).toBe(true);
+        }
+      }
+    });
+
+    it('does NOT tighten maxHeight — 4000 must still validate', () => {
+      // 🔴 THE REGRESSION THIS PAIR EXISTS FOR. Both bounds used to share one
+      // constant. Lowering that shared constant to 800 would reject EVERY block
+      // in the live population at once: all 11 declare `maxHeight: 4000`.
+      expect(
+        BlockManifestValidator.validate(withIframe({ minHeight: 600, maxHeight: 4000 }), APP_CTX),
+        'maxHeight 4000 must still be accepted — all 11 live approved blocks declare exactly ' +
+          'that, so tightening it would reject the entire population'
+      ).toEqual({ valid: true });
+    });
   });
 
   it('rejects scopes the OAuth client does not allow', () => {
@@ -260,9 +320,7 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some(
-            (e) => e.includes('not a known block scope') && e.includes(removed)
-          )
+          result.errors.some((e) => e.includes('not a known block scope') && e.includes(removed))
         ).toBe(true);
       }
     }
@@ -738,9 +796,9 @@ describe('BlockManifestValidator', () => {
       const result = BlockManifestValidator.validate(manifest, APP_CTX);
       expect(result.valid).toBe(false);
       if (!result.valid) {
-        expect(
-          result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')
-        ).toBe(true);
+        expect(result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')).toBe(
+          true
+        );
       }
     });
 
@@ -766,7 +824,9 @@ describe('BlockManifestValidator', () => {
     it('accepts a justification keyed by a declared scope', () => {
       const manifest = {
         ...VALID_MANIFEST,
-        scopeJustifications: { 'models:read:self': 'We render the page model in a comparison widget.' },
+        scopeJustifications: {
+          'models:read:self': 'We render the page model in a comparison widget.',
+        },
       };
       expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
     });
@@ -794,7 +854,9 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+          result.errors.some(
+            (e) => e.includes('user:read:self') && e.includes('not in the manifest')
+          )
         ).toBe(true);
       }
     });
@@ -864,7 +926,9 @@ describe('BlockManifestValidator', () => {
       if (!result.valid) {
         expect(
           result.errors.some(
-            (e) => e.includes('sensitive scopes require a justification') && e.includes('ai:write:budgeted')
+            (e) =>
+              e.includes('sensitive scopes require a justification') &&
+              e.includes('ai:write:budgeted')
           )
         ).toBe(true);
       }
@@ -945,7 +1009,9 @@ describe('BlockManifestValidator', () => {
       const manifest = {
         ...VALID_MANIFEST,
         scopes: ['collections:read:private', 'apps:storage:shared:write'],
-        scopeJustifications: { 'collections:read:private': 'We read the viewer’s private collections.' },
+        scopeJustifications: {
+          'collections:read:private': 'We read the viewer’s private collections.',
+        },
       };
       const result = BlockManifestValidator.validate(manifest, APP_CTX);
       expect(result.valid).toBe(false);
@@ -973,7 +1039,9 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+          result.errors.some(
+            (e) => e.includes('user:read:self') && e.includes('not in the manifest')
+          )
         ).toBe(true);
       }
     });
