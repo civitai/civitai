@@ -43,9 +43,9 @@ describe('sub-nav default layout', () => {
       'articles',
       'comics',
       'challenges',
+      'apps',
       'updates',
       'shop',
-      'apps',
     ]);
     expect(more.map((e) => e.key)).toEqual(['bounties']);
   });
@@ -102,8 +102,8 @@ describe('the apps pill gate', () => {
       'models',
       'images',
       'videos',
-      'updates',
       'apps',
+      'updates',
     ]);
     expect(more).toEqual([]);
   });
@@ -136,6 +136,21 @@ describe('the apps pill gate', () => {
     );
     // `images`, `videos` and `updates` carry no gate, so they render on this vector too;
     // `apps` is the one that disappears.
-    expect(bar.map((e) => e.key)).toEqual(['home', 'models', 'images', 'videos', 'updates']);
+    //
+    // `updates` SURFACES at index 1 — where the dropped `apps` was pinned — and that is the
+    // anchoring rule doing its job, not a stray: an unplaced key anchors beside its REGISTRY
+    // neighbour, so moving `apps` earlier in the registry drags the keys that follow it into
+    // that slot too.
+    //
+    // 🔴 `updates` is NOT the key that anchors there — `events` is, because it is `apps`'s
+    // actual registry successor. `events` is `defaultHidden`, so it is filtered out of the
+    // rendered bar and `updates` is simply the first key behind it that survives. Do not read
+    // this vector as "`apps`'s neighbour takes its place": a `defaultHidden` entry can be the
+    // direct anchor and silently pass the slot along to ITS follower, which is the non-obvious
+    // part and the only reason this array moved the way it did.
+    //
+    // The durable point: a registry REORDER changes the surviving ORDER here, not just which
+    // key vanishes — which is exactly what this vector exists to pin.
+    expect(bar.map((e) => e.key)).toEqual(['home', 'updates', 'models', 'images', 'videos']);
   });
 });
