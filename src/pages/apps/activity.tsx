@@ -57,6 +57,7 @@ import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-bl
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
 } from '~/shared/constants/block-scope.constants';
@@ -500,23 +501,13 @@ function AppBudgetControl({
           that makes an app look broken, so say what it does at the point it is set.
           This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
 
-          🔴 FOUR RULES, ONE PER WORDING THAT SHIPPED HERE AND WAS FALSE. Each was
-          introduced by the fix for the previous one, so read all four before editing.
-          (1) RESERVES, never COSTS — a recipe's `maxBuzz` is the worst case reserved up
-              front and settled back to actual, so the real price is far lower
-              (zimage-turbo estimates 20 against a 90 ceiling; a warm starter run
-              measured 4). "costs 90 per run" overstated by up to ~22×.
-          (2) HEDGE — the consent budget is path-agnostic while these bounds are not.
-              `textToImage` reserves its live whatIf quote, is not bounded below by LOW
-              (the platform's per-gen default is 10), and has NO settle-back, so neither
-              "will not cover" nor an unqualified "settles back" is true there.
-          (3) NO CLOSED UPPER BOUND EXISTS — do not name one. "up to 180 on the priciest"
-              was false because the inline customComfy arm reserves an app-declared
-              ceiling up to INLINE_MAX_BUZZ = 250, un-dev-gated, and textToImage is
-              bounded by neither figure. Say "and more on others" and stop.
-          (4) Subject is the RUN, not "this app" — registry steps cost from 1 Buzz, so a
-              step-priced app keeps working under this threshold, and that user is exactly
-              who MIN=1 exists to protect.
+          🔴 THE SENTENCE ITSELF NOW LIVES IN ONE PLACE —
+          BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY — shared with the consent modal so the two
+          cannot drift, and the rules governing its wording live in that constant's
+          docblock. READ THEM BEFORE EDITING: five successive wordings shipped false, each
+          introduced by the fix for the previous one, and the rule that replaced them is
+          structural — the sentence asserts NO figure and NO claim about which actions
+          still run, because every such claim proved falsifiable.
 
           🔴 STILL OPEN, and this note is its only record — do not delete it again. The
           warning renders only below LOW (90), so a user at 100/day is told nothing while
@@ -525,11 +516,8 @@ function AppBudgetControl({
           warning step-only apps that are fine. Deliberately not decided here. */}
       {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
         <Text size="xs" c="orange" data-testid="app-budget-low-warning">
-          {parsed.toLocaleString()} Buzz/day may be too low. A single image generation reserves Buzz
-          up front before it runs — {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz on the cheapest
-          recipe engine, and more on the other engines — and is refused if that reservation exceeds
-          your limit, even in cases where the run itself would have cost less. Step-based actions,
-          from 1 Buzz, still run. You can change it here at any time.
+          {parsed.toLocaleString()} {BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY} You can change it here
+          at any time.
         </Text>
       ) : null}
       <Group gap="xs" justify="flex-end">

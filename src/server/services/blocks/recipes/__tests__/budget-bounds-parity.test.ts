@@ -16,9 +16,12 @@ import {
  * here is to UPDATE THE CONSTANTS and re-read the two warning strings — not to change
  * the recipe.
  *
- * 🔴 SCOPE — THREE THINGS THIS DOES NOT COVER. Stated in full because naming one gap
- * and not the others reads as an exhaustive scope statement, and the gap that actually
- * produced a false sentence is the second one:
+ * 🔴 SCOPE — FOUR THINGS THIS DOES NOT COVER. Stated in full because naming some gaps
+ * and not the others reads as an exhaustive scope statement — an earlier revision said
+ * "three" and omitted the STEP path (4), which is where the next false sentence then
+ * appeared. It also cannot see a TIE: `LOW === min(...)` holds however many engines
+ * share the minimum, and two of the four do, which falsified a "more on the others"
+ * clause while these tests stayed green.
  *   1. `textToImage` — reserves the live whatIf quote, not a declared ceiling, and is
  *      not bounded below by LOW (the platform's per-gen default is 10).
  *   2. The INLINE `customComfy` arm — the app declares its own ceiling, up to
@@ -31,6 +34,12 @@ import {
  *      (e.g. `seamless-pano.recipe.test.ts`) are what catch that, so a NEW recipe whose
  *      author skips its own suite is uncovered here. Also uncovered: a recipe
  *      registered with `engines: []` (the module-load invariant has the same hole).
+ *   4. The STEP path — a step reserves `max(declaredBuzz, quotedBuzz)`, which is not a
+ *      registry figure at all. `chat-completion`'s declared 1 is documented in
+ *      `blocks.router.ts` as "that floor, not a price": measured several times the
+ *      constant for an ordinary conversation, and rising with `maxTokens`. Nothing here
+ *      or anywhere else pins it, which is why the warning copy makes no claim about
+ *      whether step-based actions still run.
  */
 describe('consent-budget copy bounds track the recipe registry', () => {
   /** Every (recipe, engine) pair's declared post-paid ceiling. */

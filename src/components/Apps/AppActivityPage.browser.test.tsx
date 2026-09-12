@@ -4,7 +4,6 @@ import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import { BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY } from '~/shared/constants/block-scope.constants';
 
 /**
  * `/apps/activity` — the PAGE, mounted for real.
@@ -648,20 +647,17 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     await input.clear();
     await input.fill('5');
     await expect.element(page.getByTestId('app-budget-low-warning')).toBeInTheDocument();
-    // 🔴 PINNED AS A WHOLE NORMALISED STRING — a keyword guard walks past a reworded
-    // relapse, and all four retracted wordings here were keyword-clean and false. The
-    // rules the wording must satisfy live at BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY;
-    // notably the copy names NO upper bound, because none is true. The threshold number
-    // is INTERPOLATED because that constant is documented as free to drop.
+    // 🔴 PINNED AS A WHOLE NORMALISED STRING, and DELIBERATELY AS A LITERAL — it must NOT
+    // read BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY. The components share that constant so they
+    // cannot drift from each other; if this expectation read it too, the assertion would be
+    // tautological and a reworded relapse would pass silently. FIVE wordings of this sentence
+    // shipped false, every one keyword-clean, which is what a whole-string literal catches.
+    // The rules the wording must satisfy are in that constant's docblock.
     {
       const el = page.getByTestId('app-budget-low-warning');
       const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
       expect(text).toBe(
-        '5 Buzz/day may be too low. A single image generation reserves Buzz up front before ' +
-          `it runs — ${BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz on the cheapest recipe ` +
-          'engine, and more on the other engines — and is refused if that reservation exceeds ' +
-          'your limit, even in cases where the run itself would have cost less. Step-based ' +
-          'actions, from 1 Buzz, still run. You can change it here at any time.'
+        '5 Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that reservation exceeds your remaining limit for the day — so a low limit can make an app look broken. You can change it here at any time.'
       );
     }
   });

@@ -2,7 +2,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY } from '~/shared/constants/block-scope.constants';
 
 /**
  * BlockConsentModal — the lazy-consent surface a logged-in viewer sees when a
@@ -212,23 +211,17 @@ describe('BlockConsentModal — per-app spend limit', () => {
     await input.clear();
     await input.fill('5');
     await expect.element(page.getByTestId('block-consent-budget-low-warning')).toBeInTheDocument();
-    // 🔴 PINNED AS A WHOLE NORMALISED STRING, same reason as the OFF-state copy above:
-    // FOUR successive wordings of this sentence shipped false, each passing every keyword
-    // check, and each introduced by the fix for the previous one. Only a whole-string pin
-    // catches that. The rules the wording must satisfy live at
-    // BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY — read them before editing this literal;
-    // in particular the copy names NO upper bound, because none is true.
-    // The threshold number is INTERPOLATED, not literal: its docblock says it is free to
-    // drop, and a literal would red this test on a legitimate change.
+    // 🔴 PINNED AS A WHOLE NORMALISED STRING, and DELIBERATELY AS A LITERAL — it must NOT
+    // read BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY. The components share that constant so they
+    // cannot drift from each other; if this expectation read it too, the assertion would be
+    // tautological and a reworded relapse would pass silently. FIVE wordings of this sentence
+    // shipped false, every one keyword-clean, which is what a whole-string literal catches.
+    // The rules the wording must satisfy are in that constant's docblock.
     {
       const el = page.getByTestId('block-consent-budget-low-warning');
       const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
       expect(text).toBe(
-        '5 Buzz/day may be too low. A single image generation reserves Buzz up front before ' +
-          `it runs — ${BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz on the cheapest recipe ` +
-          'engine, and more on the other engines — and is refused if that reservation exceeds ' +
-          'your limit, even in cases where the run itself would have cost less. Step-based ' +
-          'actions, from 1 Buzz, still run. You can change it later under Apps → Permissions.'
+        '5 Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that reservation exceeds your remaining limit for the day — so a low limit can make an app look broken. You can change it later under Apps → Permissions.'
       );
     }
     // …and it goes away again above the threshold, so the warning tracks the VALUE and
