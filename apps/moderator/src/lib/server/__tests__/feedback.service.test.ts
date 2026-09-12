@@ -396,13 +396,12 @@ describe('linkFeedbackToBug', () => {
  */
 describe('isMissingTriageColumns', () => {
   /**
-   * 🔴 AGAINST A REAL DRIVER ERROR, not a hand-built object. Every OTHER case in this describe
-   * constructs `{ code, message }` itself, which pins the predicate's logic and says nothing about
-   * whether `pg` puts `code` where the predicate looks. This one runs the real query against the
-   * real pre-migration table and asserts on whatever comes back.
-   *
-   * (Deliberately "every other" rather than a count: a count written beside the thing it counts
-   * drifts the next time a case is added, and this one already did.)
+   * 🔴 AGAINST A REAL DRIVER ERROR, not a hand-built object. Every other case here that feeds the
+   * predicate an ERROR-SHAPED value constructs `{ code, message }` itself, which pins the
+   * predicate's logic and says nothing about whether `pg` puts `code` where the predicate looks.
+   * (The last case in this block deliberately feeds it non-error values, so the qualifier is
+   * load-bearing rather than decorative.) This one runs the real query against the real
+   * pre-migration table and asserts on whatever comes back.
    */
   it('fires on the error a genuinely unmigrated table actually raises', async () => {
     const pre = await freshPreMigrationDb();
