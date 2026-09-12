@@ -325,14 +325,20 @@ describe('blocks.getInstallConfig', () => {
  * vocabulary can spend — so a budget sent without it is IGNORED rather than rejected.
  * See the call site for why ignoring beats erroring.
  */
-describe('blocks.grantScopes — consent budget', () => {
-  /** ctx with the appBlocks feature on (the proc gates on `ctx.features.appBlocks`). */
-  function consentCtx(userId = 42) {
-    const ctx = authedCtx(userId, false) as unknown as { features: Record<string, unknown> };
-    ctx.features = { ...ctx.features, appBlocks: true };
-    return ctx;
-  }
+/**
+ * ctx with the appBlocks feature on (the proc gates on `ctx.features.appBlocks`).
+ *
+ * Module-scoped because BOTH `grantScopes` describes below need it. A `function` declared inside a
+ * `describe` callback is scoped to that callback, so the second block could not see the first one's
+ * copy and carried a byte-identical duplicate.
+ */
+function consentCtx(userId = 42) {
+  const ctx = authedCtx(userId, false) as unknown as { features: Record<string, unknown> };
+  ctx.features = { ...ctx.features, appBlocks: true };
+  return ctx;
+}
 
+describe('blocks.grantScopes — consent budget', () => {
   const grantMock = dbMock.dbWrite.appUserScopeGrant;
 
   beforeEach(() => {
@@ -452,12 +458,6 @@ describe('blocks.grantScopes — consent budget', () => {
  * widening mutant, on its own assertion.
  */
 describe('blocks.grantScopes — the approved-scope consent ceiling', () => {
-  function consentCtx(userId = 42) {
-    const ctx = authedCtx(userId, false) as unknown as { features: Record<string, unknown> };
-    ctx.features = { ...ctx.features, appBlocks: true };
-    return ctx;
-  }
-
   const grantMock = dbMock.dbWrite.appUserScopeGrant;
 
   beforeEach(() => {

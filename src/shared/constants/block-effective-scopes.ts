@@ -21,8 +21,11 @@
  * 🔴 THIS IS NOT "WHAT THE MINT WILL ISSUE A TOKEN FOR" — do not re-describe it that way, and
  * note that "THE mint" is itself the ambiguity that produced the false claim. There are THREE
  * scope-sourcing sites in `src/pages/api/v1/block-tokens/index.ts`, and none of them computes
- * this intersection. Each is named by its RESOLVER, because two of the three are author mints
- * and "the dev-tunnel mint" does not identify either one:
+ * this intersection. The two DEV-TUNNEL sites are each named by their RESOLVER, because both are
+ * author mints and "the dev-tunnel mint" does not identify either one. The production site is
+ * named by ROLE instead, because it has no single resolver: `BlockRegistry.resolvePageBlock`
+ * (`:835`, the page shape) and `BlockRegistry.resolveBlockInstance` (`:908`, the
+ * install/subscription shape) both converge on the one scope-sourcing line at `:1054`.
  *
  *   - `:1054` — the PRODUCTION run-token mint (the install/subscription/page path). Sources the
  *     MANIFEST: `requestedScopes = knownManifestScopes`, the manifest filtered to the known
@@ -49,10 +52,24 @@
  * of the column — `approvedScopes` non-empty ⟹ the app was moderator-approved at some point, so
  * `clampTunnelDeclaredScopes([])` cannot invent `ai:write:budgeted` for a never-approved app.
  * That argument is written at, and is about, `:650`. It CANNOT be carried over to `:469`, which
- * does not read the column at all. What `:469`'s own spend safety rests on is NOT established
- * here and was not measured — do not infer it from `:650`'s comment, and do not write one in.
- * Read `:455-480` (the resolver call passes `unsubmittedSpendAllowed`, and `resolveDevBuzzBudget`
- * is called on the clamp's output) if you need the answer.
+ * does not read the column at all — do not infer `:469`'s spend safety from `:650`'s comment.
+ *
+ * ⚠️ AN EARLIER REVISION ADDED "What `:469`'s own spend safety rests on is NOT established here",
+ * and a restatement of it dropped the "here" — which read as an open question and invited the next
+ * reader to answer it in. It IS established, in two places, both read rather than inferred:
+ *   - `src/pages/api/v1/block-tokens/index.ts:375-389` — the `resolveDevPageBlockForAuthor` branch's
+ *     own docblock. SPEND CONTAINMENT (`:375-382`): the token is self-bound (`sub` = the session
+ *     user), so `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
+ *     `assertViewerIsAppDeveloper(sub)` plus the per-call (`DEV_BUZZ_BUDGET_CAP`) / per-session /
+ *     per-day caps. SCOPE SOURCE (`:383-389`): real spend on a brand-new, never-reviewed app is
+ *     additionally gated by the `app-blocks-dev-tunnel-unsubmitted-spend` flag.
+ *   - `src/server/services/block-registry.service.ts:2117-2119` — where that flag gate actually
+ *     bites: `if (!opts?.unsubmittedSpendAllowed) ephemeralScopes = ephemeralScopes.filter((s) =>
+ *     s !== 'ai:write:budgeted')`. ⚠️ It sits in the `else` (BRAND-NEW) branch only. The PENDING
+ *     branch (`:2104-2114`) applies no such strip, so for an author's own pending submission the
+ *     caps-and-author-flag argument above is the whole of it.
+ * `:455-480` is the call side of the same thing (the resolver call at `:455-459` passes
+ * `unsubmittedSpendAllowed`; `resolveDevBuzzBudget` runs on the clamp's output at `:470`).
  *
  * The production signed set is narrower than this function's result in any case:
  * `manifest ∩ known-vocabulary ∩ approved ∩ per-user-grant ∩ anon/page rules`. This function
@@ -103,9 +120,9 @@ export type BlockScopeManifestInput = { scopes?: unknown } | null | undefined;
  *         → `src/components/Apps/BlockScopeList.tsx`, which renders one `<Group key={scope}>`
  *         per element — i.e. two siblings with the SAME React key.
  *     Two consumers would have absorbed the duplicate anyway — `grantScopes` puts the result in
- *     a `new Set` ceiling (`src/server/routers/blocks.router.ts:2786-2788`) and
+ *     a `new Set` ceiling (`src/server/routers/blocks.router.ts:2787-2789`) and
  *     `recordScopeGrant` de-dups its own input
- *     (`src/server/services/blocks/scope-grant.service.ts:221-223`) — but the RENDER path had no
+ *     (`src/server/services/blocks/scope-grant.service.ts:222-224`) — but the RENDER path had no
  *     such absorber, which is what makes de-duplicating here load-bearing rather than cosmetic.
  *
  * Both arguments are treated as untrusted JSON/DB values: a non-array on either side yields
@@ -132,7 +149,12 @@ export type BlockScopeManifestInput = { scopes?: unknown } | null | undefined;
  * untestable. Keeping the loop guard (it is the one standing between the column and `out.push`)
  * and dropping the filter leaves a SINGLE guard that the fixture above kills on its own — i.e. a
  * guard proven reachable, not merely breakable. Do not re-add the approved-side filter without a
- * fixture that fails when ONLY that filter is removed; there is no such input.
+ * fixture that fails when ONLY that filter is removed. ⚠️ An earlier revision said flatly "there
+ * is no such input"; that absolute is wrong. A hand-built `Proxy` whose reads differ between the
+ * `filter` pass and the `new Set` pass can make the filtered Set LACK a value the unfiltered one
+ * holds, so it distinguishes them — and it WIDENS rather than narrows. It is also unreachable from
+ * Prisma or `JSON.parse`, which only ever produce plain arrays, so the operative advice is
+ * unchanged: no plain-array input distinguishes them.
  *
  * NOT filtered to the known scope vocabulary (`isKnownBlockScope`). None of the call sites
  * did that, and adding it here would silently change what they enforce and disclose; the
@@ -143,6 +165,14 @@ export function effectiveBlockScopes(
   approvedScopes: unknown
 ): string[] {
   const declared = (manifest ?? {}).scopes;
+  // 🔴 EACH CLAUSE IS KILLED BY A DIFFERENT FIXTURE, AND NEITHER BY A STRING SCALAR. Measured:
+  // the `declared` clause fails "returns [] for a missing manifest.scopes, a null manifest, and an
+  // undefined manifest" (iterating `undefined` throws); the `approvedScopes` clause fails ONLY the
+  // NON-ITERABLE case, `effectiveBlockScopes({scopes:['buzz:read:self']}, 42)` → `TypeError: number
+  // 42 is not iterable`. A string scalar kills NEITHER — `new Set('buzz:read:self')` and
+  // `for (const s of 'buzz:read:self')` both iterate single CHARACTERS that match no scope id, so
+  // the result is `[]` with or without the clause. Both fixtures are in
+  // `src/shared/constants/__tests__/block-effective-scopes.test.ts`.
   if (!Array.isArray(declared) || !Array.isArray(approvedScopes)) return [];
   // NOT filtered to strings — see "EXACTLY ONE NON-STRING GUARD" above. A non-string in this
   // Set is unmatchable, because the only values tested against it are the strings that clear

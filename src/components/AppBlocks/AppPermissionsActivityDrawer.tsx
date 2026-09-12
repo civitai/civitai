@@ -135,7 +135,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              (`resolveDevPageBlockForAuthor`, `:469`) sources
              `clampTunnelDeclaredScopes(app.scopes)` — the author's own declared manifest, never
              the column. The PRODUCTION
-             run-token mint — the one the apps listed here use — is the OTHER path, and it builds
+             run-token mint — the one the apps listed here use — is the THIRD path, and it builds
              the signed set FROM THE MANIFEST (`requestedScopes = knownManifestScopes`) with
              `approved_scopes` as an all-or-nothing 403 veto. Nothing displayed here is "what the
              mint will issue a token for" in any case: that mint refuses unless

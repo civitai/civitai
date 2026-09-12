@@ -498,14 +498,23 @@ describe('listMyScopeGrants', () => {
   // and a mutant returning either raw column fails too (each row's manifest and approval differ
   // from its intersection).
   //
-  // MEASURED, not asserted — mutants run against this suite (61 tests), each confirmed to have
-  // actually executed rather than failing to import:
-  //   `['buzz:read:self']`         → 8 failed, THIS test among them (it survived the old fixture)
-  //   `['models:read:self']`       → 11 failed, THIS test among them
-  //   `['collections:read:private']` → 11 failed, THIS test among them
-  //   raw `approved_scopes`        → 5 failed, THIS test among them
-  //   raw `manifest.scopes`        → 7 failed, THIS test among them
-  //   positive control `[]`        → 8 failed (proves the suite can go red at all)
+  // MEASURED, not asserted — each mutant below was applied to `displayedScopes` in
+  // `user-app-surface.service.ts` and this file run warm, confirmed to have actually executed
+  // rather than failing to import. Every one of them fails THIS test:
+  //   `['buzz:read:self']`           (it survived the old single-row fixture)
+  //   `['models:read:self']`
+  //   `['collections:read:private']`
+  //   raw `approved_scopes`
+  //   raw `manifest.scopes`
+  //   positive control `[]`          (proves the suite can go red at all)
+  //
+  // ⚠️ NO AGGREGATE FAILURE COUNTS HERE, DELIBERATELY. An earlier revision listed a per-mutant
+  // "N failed" figure alongside a suite size of 61; re-measuring against the suite as it now
+  // stands (62 tests) moved four of the six — `['models:read:self']` and
+  // `['collections:read:private']` 11→12, raw `approved_scopes` 5→8, the `[]` control 8→9. The
+  // per-mutant count is a fact about the whole file's fixtures and drifts whenever any test is
+  // added; "THIS test fails under each mutant" is the claim that actually carries the coverage,
+  // and it re-verified true in all six. Re-derive a count if you need one; do not quote one here.
   // ⚠️ NOTE WHAT IS *NOT* CLAIMED: `['buzz:read:self']` still PASSES the `manifest ⊋ approved`
   // test above, because that test's expected value IS `['buzz:read:self']`. A single-row equality
   // assertion can never kill a mutant that hardcodes its own expectation — which is precisely why
@@ -638,10 +647,21 @@ describe('listMyScopeGrants', () => {
   });
 
   // 🔴 THE SAME non-string in BOTH columns — the shape that makes it an intersection MEMBER, and
-  // so the only one that can fail if the helper's non-string handling is dropped. This is the
-  // seam-level mirror of the helper's own both-columns case: it pins that `listMyScopeGrants`
-  // really routes through that handling rather than re-deriving the rule, which is what would put
-  // a `42` into a `<Badge>` label and a `SCOPE_DESCRIPTIONS` lookup on the permissions tab.
+  // so the only case in this file that can fail if the helper's non-string handling is dropped.
+  // Measured: deleting the helper's `typeof scope !== 'string'` guard fails exactly 1 of this
+  // file's 62 tests, this one — which is what would otherwise put a `42` into a `<Badge>` label
+  // and a `SCOPE_DESCRIPTIONS` lookup on the permissions tab. It is the seam-level mirror of the
+  // helper's own both-columns case: it pins that GUARD'S BEHAVIOUR as observed through
+  // `listMyScopeGrants`.
+  //
+  // ⚠️ IT DOES NOT PIN ROUTING, AND AN EARLIER REVISION OF THIS COMMENT CLAIMED IT DID ("pins
+  // that `listMyScopeGrants` really routes through that handling rather than re-deriving the
+  // rule"). Measured false: replacing the `effectiveBlockScopes(...)` call with an inline
+  // re-derivation carrying the same `typeof` guard left all 62 tests in this file PASSING.
+  // Routing is pinned elsewhere — by `block-effective-scopes.call-sites.test.ts`'s "every expected
+  // call site actually CALLS it (an import alone is not use)", which went red under that same
+  // mutant (`expected [ Array(1) ] to deeply equal []`). Nothing is unguarded; the sentence named
+  // the wrong test.
   it('🔴 drops a non-string present in BOTH the manifest and approvedScopes', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
@@ -658,10 +678,17 @@ describe('listMyScopeGrants', () => {
 
   // The fixture is a non-null SCALAR on purpose: `null` alone cannot distinguish the
   // `Array.isArray` guard from a weaker `(x ?? []).filter(…)`, because `null ?? []` also yields
-  // `[]`. A bare string is the realistic JSON-column mishap AND it makes the weaker shape throw
-  // `.filter is not a function`, so this case pins the guard rather than the nullishness. The
-  // manifest deliberately CONTAINS that same scope id, so a correct `[]` cannot be mistaken for an
-  // empty intersection.
+  // `[]`, whereas a scalar makes that weaker shape throw `.filter is not a function`. The manifest
+  // deliberately CONTAINS that same scope id, so a correct `[]` cannot be mistaken for an empty
+  // intersection.
+  //
+  // ⚠️ AN EARLIER REVISION ADDED "so this case pins the guard rather than the nullishness". That
+  // is FALSE for a STRING scalar and is withdrawn: measured, removing the helper's approved-side
+  // `Array.isArray` clause leaves this case PASSING, because `new Set('buzz:read:self')` is a Set
+  // of single characters that no scope id matches, so the result is `[]` either way. What pins the
+  // clause against deletion is the NON-ITERABLE fixture at the helper
+  // (`src/shared/constants/__tests__/block-effective-scopes.test.ts`, the number case). This case
+  // pins the output contract at the seam, nothing finer.
   it('emits an empty scopes array when approvedScopes is not an array at all', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([

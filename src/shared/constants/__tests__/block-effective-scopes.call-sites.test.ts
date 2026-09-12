@@ -10,8 +10,14 @@ import { describe, expect, it } from 'vitest';
  * `BlockRegistry.recordInstallConsent`'s grant set) and a fourth surface — the permissions tab —
  * was about to become a fourth variant. A "these two agree" guard written as a hand-copied literal
  * on each side pins NOTHING: tighten one side and its own literal and both stay green while the two
- * have silently diverged. So this asserts the RELATIONSHIP instead — that the named modules get the
- * rule from the shared symbol and no longer carry their own copy of it.
+ * have silently diverged. So this asserts the RELATIONSHIP instead — that the named modules IMPORT
+ * the shared symbol and CALL it.
+ *
+ * ⚠️ THAT IS THE WHOLE STRUCTURAL CLAIM, AND IT IS NARROWER THAN "THEY NO LONGER CARRY THEIR OWN
+ * COPY OF THE RULE" — an earlier revision of this paragraph asserted the wider one. The only check
+ * here that looks for a surviving local copy is the spelling tripwire at the bottom, and it sees
+ * exactly the two token shapes listed in `OPEN_CODED_SPELLINGS`; read that docstring before
+ * treating a green run as an absence of re-derivation.
  *
  * GROWTH-AND-SHRINK GATED, deliberately, in the shape `app-access.call-site-ledger.test.ts` already
  * established in this repo. A NEW importer must be added here consciously (is it really the same
@@ -19,10 +25,16 @@ import { describe, expect, it } from 'vitest';
  * the file.
  *
  * This is a STRUCTURAL check and it is not sufficient on its own — it type-checks past a wrong
- * argument. The behavioural half lives in `block-effective-scopes.test.ts` (literal expectations for
- * the helper), `user-app-surface.orchestration.test.ts` (helper-derived expectations at the
- * permissions-tab site) and `blocks.router.getInstallConfig.test.ts` (literal expectations at the
- * two router sites).
+ * argument. The behavioural coverage that exists lives in `block-effective-scopes.test.ts` (literal
+ * expectations for the helper), `user-app-surface.orchestration.test.ts` (both literal and
+ * helper-derived expectations at the permissions-tab site) and
+ * `blocks.router.getInstallConfig.test.ts` (literal expectations at the two router sites).
+ *
+ * ⚠️ THAT IS THREE OF THE FOUR LEDGERED CALL SITES, NOT ALL FOUR.
+ * `BlockRegistry.recordInstallConsent` has NO behavioural test anywhere: measured by grepping
+ * `recordInstallConsent` across every `*.test.ts`/`*.test.tsx` under `src/`, the only two hits are
+ * THIS file and the prose of `user-app-surface.orchestration.test.ts`. So for that site the import
+ * ledger below is the only thing asserting anything at all, and it cannot see a wrong argument.
  */
 
 const SRC = join(process.cwd(), 'src');
@@ -64,7 +76,15 @@ const OPEN_CODED_SPELLINGS: { name: string; re: RegExp }[] = [
   },
   {
     name: 'an .includes() test against the approvedScopes column',
-    re: /approvedScopes\s*(?:\?\?\s*\[\]\s*)?\)?\s*\.includes\(/i,
+    // The `)` is reachable ONLY as the close of a `(… ?? [])` wrapper, never on its own.
+    // ⚠️ An earlier revision made it independently optional (`(?:\?\?\s*\[\]\s*)?\)?`), which
+    // FALSE-POSITIVED on the CONSOLIDATED call: in
+    // `effectiveBlockScopes(block.manifest, block.approvedScopes).includes('ai:write:budgeted')`
+    // the bare `\)?` absorbed the helper call's own closing paren, so the tripwire reported a
+    // module that USES the helper as carrying an open-coded spelling. Measured through the real
+    // gate: planted in `user-app-surface.service.ts`, the offenders test went red
+    // (`expected [ Array(1) ] to deeply equal []`). The third negative control below pins it.
+    re: /approvedScopes\s*(?:\?\?\s*\[\]\s*\))?\s*\.includes\(/i,
   },
 ];
 
@@ -108,6 +128,10 @@ describe('effectiveBlockScopes consolidation ledger', () => {
 
     // POSITIVE control, PER SPELLING — each entry must be shown to match something, or a dead
     // regex sits in the list contributing a silent `false` to `hasOpenCodedSpelling`.
+    // The length assertion is what makes this test's title ("EVERY open-coded spelling") true by
+    // construction: the controls below are hand-written per entry, so adding a third spelling
+    // without a control would otherwise leave the title claiming coverage it does not have.
+    expect(OPEN_CODED_SPELLINGS).toHaveLength(2);
     const [setShape, includesShape] = OPEN_CODED_SPELLINGS;
     expect(setShape.re.test('const approved = new Set(block.approvedScopes ?? []);')).toBe(true);
     expect(setShape.re.test('const approved = new Set(opts.approvedScopes ?? []);')).toBe(true);
@@ -138,6 +162,14 @@ describe('effectiveBlockScopes consolidation ledger', () => {
     ).toBe(false);
     expect(
       hasOpenCodedSpelling('const scopes = effectiveBlockScopes(manifest, block.approvedScopes);')
+    ).toBe(false);
+    // …and the THIRD negative control: a `.includes()` applied to the HELPER'S OWN RESULT. Both
+    // controls above stop before a `.includes(`, so neither could see the false positive the
+    // `.includes()` regex used to produce on correctly consolidated code.
+    expect(
+      hasOpenCodedSpelling(
+        "const grantsSpend = effectiveBlockScopes(block.manifest, block.approvedScopes).includes('ai:write:budgeted');"
+      )
     ).toBe(false);
   });
 

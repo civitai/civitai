@@ -331,7 +331,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     // mint" does NOT identify it: the OTHER dev-tunnel author mint
     // (`resolveDevPageBlockForAuthor`, `:469`) sources `clampTunnelDeclaredScopes(app.scopes)` —
     // the author's own declared manifest, not the column. The PRODUCTION run-token mint that
-    // the apps on this page actually use is the other path, and it sources from the MANIFEST
+    // the apps on this page actually use is the THIRD path, and it sources from the MANIFEST
     // (`requestedScopes = knownManifestScopes`) with `approved_scopes` as an all-or-nothing 403
     // veto. It also refuses unless `status === 'approved'`, and this query has no status filter,
     // so this list renders apps no production token can be minted for at all. See

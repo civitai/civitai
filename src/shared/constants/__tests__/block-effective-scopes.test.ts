@@ -4,11 +4,14 @@ import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes'
 /**
  * `effectiveBlockScopes` — the single shared definition of `manifest.scopes ∩ approved_scopes`.
  *
- * This is the module whose expectations are pinned as LITERALS. The consuming sites are pinned
- * against the helper itself (see `block-effective-scopes.call-sites.test.ts` and the
- * helper-derived assertions in `user-app-surface.orchestration.test.ts`), which is the right split
- * for a consolidation: literals here, identity there. Deriving the helper's OWN expectations from
- * the helper would assert nothing.
+ * This is the module whose expectations are pinned as LITERALS — deriving the helper's OWN
+ * expectations from the helper would assert nothing.
+ *
+ * ⚠️ AN EARLIER REVISION SAID "the consuming sites are pinned against the helper itself". That is
+ * true of exactly ONE of them: `user-app-surface.orchestration.test.ts`'s "agrees with
+ * effectiveBlockScopes on the same inputs (derived, not copied)". The two router sites in
+ * `blocks.router.getInstallConfig.test.ts` are pinned with LITERALS, the same way this file is, and
+ * `block-effective-scopes.call-sites.test.ts` asserts import-and-call structure, not values.
  */
 describe('effectiveBlockScopes', () => {
   // ── THE TWO DIVERGENCE DIRECTIONS. Both are reachable through
@@ -55,9 +58,12 @@ describe('effectiveBlockScopes', () => {
 
   // ── ORDER AND DE-DUPLICATION — observable, because callers render this array as a badge list.
 
-  // 🔴 MANIFEST ORDER, NOT APPROVAL ORDER, AND NOT SORTED. The fixture makes all three answers
-  // distinguishable: manifest order is [c, a, b], approval order is [a, b, c], sorted would be
-  // [a, b, c] as well. Only the manifest-order implementation produces the expectation below.
+  // 🔴 MANIFEST ORDER, NOT APPROVAL ORDER, AND NOT SORTED. Manifest order is [c, a, b] while
+  // approval order and sorted are both [a, b, c] — so the fixture separates manifest order from
+  // the other two answers, and only the manifest-order implementation produces the expectation
+  // below. ⚠️ It does NOT separate approval order from sorted: those two coincide here, and an
+  // earlier revision of this comment claimed "all three answers distinguishable" while showing
+  // the coincidence in the same sentence.
   it('preserves MANIFEST order (distinguishable from approval order and from sorted)', () => {
     expect(
       effectiveBlockScopes(
@@ -135,10 +141,24 @@ describe('effectiveBlockScopes', () => {
     ).toEqual(['buzz:read:self']);
   });
 
-  // A non-null SCALAR on purpose: `null` alone cannot distinguish the `Array.isArray` guard from a
-  // weaker `(x ?? []).filter(…)`, because `null ?? []` also yields `[]`. A bare string is the
-  // realistic JSON-column mishap AND it makes the weaker shape throw
-  // `.filter is not a function`, so this pins the guard rather than the nullishness.
+  // ── `Array.isArray` ON BOTH SIDES. A non-null SCALAR on purpose: `null` alone cannot
+  // distinguish the guard from a weaker `(x ?? []).filter(…)`, because `null ?? []` also yields
+  // `[]`, whereas a scalar makes that weaker shape throw `.filter is not a function`.
+  //
+  // 🔴 BUT A *STRING* SCALAR DOES NOT PIN THE GUARD'S PRESENCE, AND BOTH OF THE NEXT TWO CASES
+  // USED TO CLAIM IT DID ("so this pins the guard rather than the nullishness"). Measured by
+  // removing one `Array.isArray` clause at a time and running this file plus
+  // `user-app-surface.orchestration.test.ts` (79 tests):
+  //   · approved-side clause removed → 79 passed, 0 failed. `new Set('buzz:read:self')` builds a
+  //     Set of single CHARACTERS, no multi-character scope id matches, and the result is `[]`
+  //     either way — so neither string fixture could see it. NOTHING in either suite killed it.
+  //   · manifest-side clause removed → 4 failed, and NOT this case: `for (const scope of
+  //     'buzz:read:self')` iterates characters that match nothing, again `[]`. The tests that
+  //     actually killed it were "returns [] for a missing manifest.scopes, a null manifest, and an
+  //     undefined manifest" (iterating `undefined` throws) and three rows in the seam suite.
+  // So the two string cases pin the OUTPUT CONTRACT for a realistic JSON-column mishap, and they
+  // distinguish the guard from the weaker `(x ?? []).filter(…)` shape. They do NOT pin the clause
+  // against deletion. The NUMBER case below is what does, and it is why it was added.
   it('returns [] when approvedScopes is a non-array scalar, rather than throwing', () => {
     expect(
       effectiveBlockScopes(
@@ -150,6 +170,16 @@ describe('effectiveBlockScopes', () => {
 
   it('returns [] when manifest.scopes is a non-array scalar, rather than throwing', () => {
     expect(effectiveBlockScopes({ scopes: 'buzz:read:self' }, ['buzz:read:self'])).toEqual([]);
+  });
+
+  // 🔴 THE KILLING FIXTURE FOR THE APPROVED-SIDE `Array.isArray` CLAUSE — a NON-ITERABLE scalar.
+  // A number is not iterable, so with the clause gone `new Set(42)` throws
+  // `TypeError: number 42 is not iterable` instead of returning `[]`. That is the one shape a
+  // string cannot produce, which is exactly why every string fixture left the clause alive.
+  // Asserted on the approved side alone so a failure attributes to THAT clause: the manifest-side
+  // clause is already killed by the missing/null/undefined-manifest case above.
+  it('🔴 returns [] for a NON-ITERABLE approvedScopes — the only shape that kills its isArray guard', () => {
+    expect(effectiveBlockScopes({ scopes: ['buzz:read:self'] }, 42 as unknown)).toEqual([]);
   });
 
   it('returns [] for a missing manifest.scopes, a null manifest, and an undefined manifest', () => {
