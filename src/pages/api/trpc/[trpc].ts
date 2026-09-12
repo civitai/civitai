@@ -27,13 +27,16 @@ export const config = {
       // error naming nothing about size. (An earlier version of this comment said
       // '10-17 MiB', which reads as though >17 MiB was handled correctly. It was not.)
       //
-      // ⚠ 10mb here is HONEST but still cannot 413 — it equals the truncation point, so
-      // `parseBody`'s check is unsatisfiable and an oversize body stays a 400
-      // `Invalid JSON`. MEASURED, not reasoned: 12,000,000 bytes to this route on a
-      // preview returns 400. The sibling bundle route declares one byte LOWER precisely
-      // to get a real 413; that is deliberately NOT done here, because this is the
-      // hottest route in the app and it would newly reject legitimate bodies in the
-      // 10485759..10485760 band for a failure mode nobody has reported on tRPC.
+      // ⚠ 10mb here is HONEST but still cannot 413, and the reason is NOT simply that it
+      // equals the truncation point — an earlier draft said that and it is incomplete.
+      // The proxy truncates at a CHUNK BOUNDARY, so the body that reaches `parseBody` is
+      // a ragged size strictly BELOW the cap; its check is unsatisfiable at this value
+      // AND at every lower one that would not also reject legitimate traffic. An oversize
+      // body stays a 400 `Invalid JSON`. MEASURED, not reasoned: 12,000,000 bytes to this route on a
+      // preview returns 400. 🔴 NO declared value fixes that — the proxy truncates at a
+      // CHUNK BOUNDARY, so what arrives is a ragged size strictly BELOW the cap, and any
+      // limit low enough to catch it would reject legitimate traffic. The sibling bundle
+      // route carries the full measurement and the same conclusion.
       //
       // Measured on a deployed preview, one 12,000,000-byte POST per path, reading the
       // server's own `Request body exceeded 10MB for <path>` line: `/api/trpc/*` and
