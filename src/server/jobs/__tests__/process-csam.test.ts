@@ -152,6 +152,14 @@ describe('the archive job asks for a lock that can hold a real archival pass', (
     // recorded on CSAM_ARCHIVE_MEASURED_PASS_SECONDS: the measurement is a single-REPORT time while
     // a tick archives the whole outstanding batch serially, and one observation says nothing about
     // the tail. 2× is the least headroom the sizing argument can be read as claiming.
+    //
+    // 🔴 The yardstick is pinned to its literal first, and that is what makes the ratio below a
+    // guard at all. Both operands live in `process-csam.ts`; with only the lock pinned, shrinking
+    // the measurement satisfies the ratio for any lock value, so the exact mutant this case exists
+    // to kill — a lock cut back to just over the cron period — survives a one-token edit to the
+    // constant it is supposedly measured against. Re-measuring the pass must land here and force
+    // the lock to be re-argued, not silently re-baseline the headroom it is checked with.
+    expect(CSAM_ARCHIVE_MEASURED_PASS_SECONDS).toBe(80 * 60);
     expect(CSAM_ARCHIVE_JOB_LOCK_SECONDS).toBeGreaterThanOrEqual(
       2 * CSAM_ARCHIVE_MEASURED_PASS_SECONDS
     );

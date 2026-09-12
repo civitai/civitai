@@ -39,6 +39,10 @@ describe('a client disconnect releases the job lock unless the job opted out', (
 
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledTimes(1);
+    // Counts alone leave the ORDER free: releasing before the context is canceled hands the lock
+    // back while the run is still live and not yet told to stop, which is the window the retry
+    // needs to start a competing run. Inverting the two awaits keeps both counts at 1.
+    expect(cancel.mock.invocationCallOrder[0]).toBeLessThan(release.mock.invocationCallOrder[0]);
   });
 
   it('DEFAULT (option explicitly false): still releases', async () => {
@@ -93,15 +97,24 @@ describe('a client disconnect releases the job lock unless the job opted out', (
 describe('the run-jobs route builds its close handler from this factory', () => {
   it('installs createDisconnectHandler(options, jobRunner, lock) as the close handler', () => {
     // 🔴 WHAT THIS IS: a source read, because importing that route pulls in every job in the
-    // application. WHAT IT IS WORTH: it catches the route re-inlining the two awaits — which would
-    // leave every test above green while the option did nothing in production — and nothing more.
-    // It cannot tell you the handler behaves correctly; the cases above do that.
+    // application. WHAT IT IS WORTH: it catches the route re-inlining the two awaits, and it
+    // catches the registration being moved to where it can never fire during a run — either of
+    // which would leave every test above green while the option did nothing in production. It
+    // cannot tell you the handler behaves correctly; the cases above do that, and it cannot tell
+    // you the handler is ever removed again, which nothing here checks.
     const source = readFileSync(RUN_JOBS_ROUTE, 'utf8');
 
     expect(source).toContain(
       'const cancelHandler = createDisconnectHandler(options, jobRunner, lock);'
     );
     expect(source).toContain("res.on('close', cancelHandler)");
+    // Presence is not the mechanism — POSITION is. Registered after the run is awaited, the
+    // handler is installed only once the run it was meant to protect has already finished: the
+    // opt-in becomes inert AND every other job silently loses its disconnect release, with the
+    // substring above still present.
+    expect(source.indexOf("res.on('close', cancelHandler)")).toBeLessThan(
+      source.indexOf('result = await jobRunner.result')
+    );
     // The `options` passed above must be the dispatched job's, not a literal.
     expect(source).toContain('const { name, run, options } = job;');
   });
