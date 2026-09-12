@@ -17,12 +17,18 @@
 -- image and the schema are never deployed atomically.
 --   * Migration first → a no-op. Nothing reads these columns until the moderator
 --                       page ships.
---   * Page first      → the page's own reads and writes fail. It is reachable
---                       only by a role someone has ticked on `/admin`, and no
---                       role holds it on the day it merges, so the blast radius
---                       is whoever grants it first. Nothing user-facing is
---                       affected either way: the submit path does not touch
---                       these columns.
+--   * Page first      → the page's own reads fail (42703) until this is applied.
+--                       🔴 It is reachable on day one WITHOUT any `/admin` tick:
+--                       `allows()` in apps/moderator/src/lib/server/access.ts
+--                       short-circuits true for SUPER_ROLE, so every
+--                       `moderator:admin` sees the nav entry the moment the page
+--                       deploys — and the sidebar badge counts on `status` alone,
+--                       so it renders a real number against an unmigrated
+--                       database. The page catches that one error code and says
+--                       so rather than throwing, so the cost is an unusable queue
+--                       and not an error boundary. Nothing user-facing is
+--                       affected either way: the submit path does not touch these
+--                       columns.
 --
 -- 🔴 The hazard `20260901120000_app_listing_beta` records — a Prisma call with no
 -- explicit `select` emits `RETURNING <every scalar the MODEL declares>` and raises

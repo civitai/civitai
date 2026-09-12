@@ -2327,6 +2327,13 @@ export type Feedback = {
   context: Generated<unknown>;
   status: Generated<string>;
   createdAt: Generated<Timestamp>;
+  /**
+   * Moderator-internal. Never seeded into a Bug — a Bug is public, this is not.
+   */
+  triageNote: string | null;
+  handledById: number | null;
+  handledAt: Timestamp | null;
+  bugId: number | null;
 };
 export type File = {
   id: Generated<number>;

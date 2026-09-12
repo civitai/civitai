@@ -445,6 +445,20 @@ the page can render, instead of a silent overwrite of a colleague's verdict.
 Moving a row **back to `new`** must clear `handledById`/`handledAt` rather than stamp them — otherwise
 "handled by" says a moderator handled something that is sitting in the unhandled queue.
 
+🔴 **`bugId` is NOT cleared with them, on any status.** Those two columns record *who acted*, which a
+reopen genuinely retracts; the link records that *this report is about that issue*, which a reopen does
+not make false. Clearing it was implemented during review and reverted: the number is stored nowhere
+else, so the association became unrecoverable from inside the app, `getSiblingFeedback` silently
+dropped the row from every sibling's "other reports linked to this issue" list, and the `Bug` was left
+with nothing pointing at it — the state `promote` runs a transaction rollback specifically to avoid
+creating.
+
+⚠️ **What that leaves open, stated rather than hidden:** a linked row can never be re-linked, because
+the promote path requires `bugId IS NULL`. That is a missing capability — an **unlink control** — and
+it is missing at every status, so reopening neither causes it nor is a sensible back door to it. Not
+in this scope; whoever adds it should add it as its own action rather than as a side effect of a
+status change.
+
 Records `recordModActivity({ entityType: 'feedback', entityId: id, activity: 'triage' })` for the same
 reason every other mutation in this app does.
 

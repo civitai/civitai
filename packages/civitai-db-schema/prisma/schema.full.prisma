@@ -467,6 +467,7 @@ model User {
   metrics              UserMetric[]
   reports              Report[]
   feedback             Feedback[]
+  feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -2361,8 +2362,17 @@ model Feedback {
   status    String   @default("new")
   createdAt DateTime @default(now())
 
+  /// Moderator-internal. Never seeded into a Bug — a Bug is public, this is not.
+  triageNote  String?
+  handledById Int?
+  handledBy   User?     @relation("FeedbackHandledBy", fields: [handledById], references: [id], onDelete: SetNull)
+  handledAt   DateTime?
+  bugId       Int?
+  bug         Bug?      @relation(fields: [bugId], references: [id], onDelete: SetNull)
+
   @@index([area, status, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {
@@ -5916,6 +5926,7 @@ model Bug {
   disabled    Boolean       @default(false)
   domain      DomainColor[] @default([all])
   tags        String[]      @default([])
+  feedback    Feedback[]
 
   @@index([status, publishedAt])
 }
