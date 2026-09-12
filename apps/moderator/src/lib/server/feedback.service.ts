@@ -392,6 +392,13 @@ class NotLinked extends Error {
 /**
  * 🔴 `AND "bugId" IS NULL` makes double-promotion impossible. Zero rows means someone beat you to
  * it — or the row is gone — and either way nothing should be linked to the Bug just minted.
+ *
+ * ⚠️ This clause is also what freezes a linked row: it can never be re-linked, at ANY status, and
+ * this app ships no unlink control. If you are here because you are adding one, read the note in
+ * `triageFeedback` above — it records why clearing `bugId` on a reopen was tried and reverted, and
+ * why an unlink belongs in its own action rather than as a side effect of a status change.
+ * (Deleting the `Bug` does null the column, via `ON DELETE SET NULL` on `Feedback_bugId_fkey` —
+ * that is a cascade, not a control, and it takes the issue with it.)
  */
 async function linkInTransaction(
   db: Pick<typeof dbWrite, 'updateTable'>,
