@@ -15,7 +15,6 @@ import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
-  BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
@@ -172,18 +171,18 @@ export default function BlockConsentModal({
               </Text>
             )}
             {/* A very low limit is storable (the floor is 1) and enforced exactly as
-                given, so say what it does at the moment it is chosen. RESERVES, never
-                COSTS; stays hedged; subject is the RUN — the three rules and why each
-                exists are in the note in pages/apps/activity.tsx. */}
+                given, so say what it does at the moment it is chosen. RESERVES not COSTS;
+                stay hedged; NAME NO UPPER BOUND; subject is the RUN — the four rules, and
+                the wording that broke each one, are in pages/apps/activity.tsx. Keep this
+                sentence in step with that one. */}
             {limitEnabled && budgetValid && parsedBudget < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
               <Text size="xs" c="orange" data-testid="block-consent-budget-low-warning">
-                {parsedBudget.toLocaleString()} Buzz/day may be too low. An image generation
-                reserves its worst case up front — up to {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY}{' '}
-                Buzz on the cheapest recipe engine and up to{' '}
-                {BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY} on the priciest — and is refused if that
-                reservation exceeds your limit, even when the run would have settled for less.
-                Step-based actions, from 1 Buzz, still run. You can change it later under Apps →
-                Permissions.
+                {parsedBudget.toLocaleString()} Buzz/day may be too low. A single image generation
+                reserves Buzz up front before it runs — {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} or
+                more on the cheapest recipe engine, and more on others — and is refused if that
+                reservation exceeds your limit, even in cases where the run itself would have cost
+                less. Step-based actions, from 1 Buzz, still run. You can change it later under Apps
+                → Permissions.
               </Text>
             ) : null}
           </Stack>

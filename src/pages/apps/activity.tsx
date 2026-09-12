@@ -56,7 +56,6 @@ import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPage
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
-  BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
@@ -500,25 +499,37 @@ function AppBudgetControl({
       {/* A very low limit is a real setting, not a mistake — but it is also the one
           that makes an app look broken, so say what it does at the point it is set.
           This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
-          🔴 THREE RULES, EACH FROM A SENTENCE THAT SHIPPED HERE AND WAS FALSE.
-          (1) RESERVES, never COSTS — maxBuzz is the worst case reserved up front and
-              settled back to actual, so a run's real price is far lower (zimage-turbo
-              estimates 20 against a 90 ceiling; a warm starter run measured 4).
-          (2) HEDGE — the consent budget is path-agnostic, but these bounds describe the
-              RECIPE path only. `textToImage` reserves its live whatIf quote and is NOT
-              bounded below by LOW (the platform's own per-gen default is 10), so a
-              categorical "will not cover" is false there.
-          (3) Subject is the RUN, not "this app" — registry steps cost from 1 Buzz, so a
+
+          🔴 FOUR RULES, ONE PER WORDING THAT SHIPPED HERE AND WAS FALSE. Each was
+          introduced by the fix for the previous one, so read all four before editing.
+          (1) RESERVES, never COSTS — a recipe's `maxBuzz` is the worst case reserved up
+              front and settled back to actual, so the real price is far lower
+              (zimage-turbo estimates 20 against a 90 ceiling; a warm starter run
+              measured 4). "costs 90 per run" overstated by up to ~22×.
+          (2) HEDGE — the consent budget is path-agnostic while these bounds are not.
+              `textToImage` reserves its live whatIf quote, is not bounded below by LOW
+              (the platform's per-gen default is 10), and has NO settle-back, so neither
+              "will not cover" nor an unqualified "settles back" is true there.
+          (3) NO CLOSED UPPER BOUND EXISTS — do not name one. "up to 180 on the priciest"
+              was false because the inline customComfy arm reserves an app-declared
+              ceiling up to INLINE_MAX_BUZZ = 250, un-dev-gated, and textToImage is
+              bounded by neither figure. Say "and more on others" and stop.
+          (4) Subject is the RUN, not "this app" — registry steps cost from 1 Buzz, so a
               step-priced app keeps working under this threshold, and that user is exactly
               who MIN=1 exists to protect.
-          Both bounds are pinned to the registry by recipes/__tests__/budget-bounds-parity. */}
+
+          🔴 STILL OPEN, and this note is its only record — do not delete it again. The
+          warning renders only below LOW (90), so a user at 100/day is told nothing while
+          a qwen-image run (reserves 180) or an inline app (up to 250) is still refused.
+          Thresholding on HIGH, or on INLINE_MAX_BUZZ, would close it at the cost of
+          warning step-only apps that are fine. Deliberately not decided here. */}
       {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
         <Text size="xs" c="orange" data-testid="app-budget-low-warning">
-          {parsed.toLocaleString()} Buzz/day may be too low. An image generation reserves its worst
-          case up front — up to {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz on the cheapest recipe
-          engine and up to {BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY} on the priciest — and is
-          refused if that reservation exceeds your limit, even when the run would have settled for
-          less. Step-based actions, from 1 Buzz, still run. You can change it here at any time.
+          {parsed.toLocaleString()} Buzz/day may be too low. A single image generation reserves Buzz
+          up front before it runs — {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} or more on the cheapest
+          recipe engine, and more on others — and is refused if that reservation exceeds your limit,
+          even in cases where the run itself would have cost less. Step-based actions, from 1 Buzz,
+          still run. You can change it here at any time.
         </Text>
       ) : null}
       <Group gap="xs" justify="flex-end">

@@ -16,10 +16,21 @@ import {
  * here is to UPDATE THE CONSTANTS and re-read the two warning strings — not to change
  * the recipe.
  *
- * Scope, stated honestly: this pins the bounds against the RECIPE (customComfy) path,
- * which is the only path that declares a per-engine `maxBuzz`. It says nothing about
- * `textToImage`, whose reservation is the live whatIf quote — which is why the warning
- * copy is hedged rather than categorical.
+ * 🔴 SCOPE — THREE THINGS THIS DOES NOT COVER. Stated in full because naming one gap
+ * and not the others reads as an exhaustive scope statement, and the gap that actually
+ * produced a false sentence is the second one:
+ *   1. `textToImage` — reserves the live whatIf quote, not a declared ceiling, and is
+ *      not bounded below by LOW (the platform's per-gen default is 10).
+ *   2. The INLINE `customComfy` arm — the app declares its own ceiling, up to
+ *      `INLINE_MAX_BUZZ` = 250, which the router reserves verbatim. That is ABOVE the
+ *      HIGH bound asserted here, and it is why the warning copy names no upper bound.
+ *      Nothing in this file can see it; it is schema-bounded, not registry-bounded.
+ *   3. `budgetFor(params)` — the router reserves THAT for the recipe arm, while this
+ *      file reads `budgetForEngine(engine)`. Measured: replacing `budgetFor` with a
+ *      400-Buzz stub leaves these four tests GREEN. The per-recipe suites
+ *      (e.g. `seamless-pano.recipe.test.ts`) are what catch that, so a NEW recipe whose
+ *      author skips its own suite is uncovered here. Also uncovered: a recipe
+ *      registered with `engines: []` (the module-load invariant has the same hole).
  */
 describe('consent-budget copy bounds track the recipe registry', () => {
   /** Every (recipe, engine) pair's declared post-paid ceiling. */
@@ -66,7 +77,7 @@ describe('consent-budget copy bounds track the recipe registry', () => {
     ).toBe(highest);
   });
 
-  it('no registered engine falls outside the pair the warning quotes', () => {
+  it('no registered engine falls outside the tracked [LOW, HIGH] range', () => {
     const outside = ceilings.filter(
       (c) =>
         c.maxBuzz < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ||
@@ -74,7 +85,9 @@ describe('consent-budget copy bounds track the recipe registry', () => {
     );
     expect(
       outside.map((c) => `${c.id}/${c.engine}=${c.maxBuzz}`),
-      'these engines are outside the range the user-facing warning names'
+      'these engines fall outside the tracked range; LOW is the warning THRESHOLD (so a ' +
+        'value under it silently stops the warning firing) and HIGH is tracked only to ' +
+        'notice a widening — HIGH is deliberately NOT rendered to users'
     ).toEqual([]);
   });
 });

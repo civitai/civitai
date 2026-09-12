@@ -199,30 +199,39 @@ export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
 
 /**
  * The HIGHEST per-engine post-paid ceiling any registered recipe declares
- * (`seamless-pano`'s `qwen-image` = 180). Copy-only, like its LOW sibling —
- * neither bound is read by any enforcement path.
+ * (`seamless-pano`'s `qwen-image` = 180). Pinned to the registry alongside LOW
+ * by `recipes/__tests__/budget-bounds-parity.test.ts`; read by no enforcement
+ * path.
  *
- * 🔴 A CEILING IS NOT A PRICE, AND CONFLATING THE TWO IS THE DEFECT THIS PAIR
- * EXISTS TO PREVENT. `maxBuzz` is the worst case RESERVED up front and settled
- * back to actual at terminal (`custom-comfy-settle.service.ts` decrBy's the
- * consent-budget key by ceiling − actual), so what a run COSTS is a different
- * and much smaller number: `ESTIMATE_BUZZ_BY_ENGINE` is
- * `{zimage-turbo: 20, flux2-klein: 45, qwen-image: 150}` and a warm starter run
- * was dogfood-measured at 4 Buzz against a 90 ceiling. User-facing copy that
- * says a generation "costs" one of these numbers overstates it by up to ~22×;
- * say it RESERVES up to this much. A refusal happens when the RESERVATION
- * exceeds the remaining budget, even when the run would have settled cheaper.
+ * 🔴 DELIBERATELY NOT RENDERED TO USERS, AND DO NOT "RESTORE" IT TO THE COPY.
+ * A version of the low-budget warning did quote it as "up to 180 on the
+ * priciest", and that was FALSE: the inline `customComfy` arm lets an app
+ * declare its own ceiling up to `INLINE_MAX_BUZZ` = 250 (`workflow.schema.ts`),
+ * which the router reserves verbatim, on a path the consent budget applies to
+ * and which is NOT dev-gated. `textToImage` is bounded by neither figure — it
+ * reserves its live whatIf quote. **There is no true closed upper bound to
+ * name**, so the copy says "and more on others" and stops. This constant exists
+ * only so that a widening of the RECIPE range is noticed by the parity test.
  *
- * 🔴 These two bounds also describe the RECIPE (customComfy) path only. The
- * consent budget applies path-agnostically — `textToImage` reserves its real
- * whatIf quote, which is NOT bounded below by the LOW figure (the platform's
- * own default per-generation budget is 10). Copy must stay hedged ("may be too
- * low"), never categorical.
+ * 🔴 A CEILING IS NOT A PRICE. `maxBuzz` is the worst case RESERVED up front and
+ * settled back to actual at terminal (`custom-comfy-settle.service.ts` decrBy's
+ * the consent-budget key by ceiling − actual), so what a recipe run COSTS is a
+ * different, much smaller number: `ESTIMATE_BUZZ_BY_ENGINE` is
+ * `{zimage-turbo: 20, flux2-klein: 45, qwen-image: 150}`, and a warm starter run
+ * was dogfood-measured at 4 Buzz against a 90 ceiling. Copy saying a generation
+ * "costs" one of these overstates it by up to ~22×.
  *
- * Both numbers are hand-mirrored from the recipe registry and are pinned
- * against it by `recipes/__tests__/budget-bounds-parity.test.ts`, so a newly
- * registered engine outside [LOW, HIGH] fails there rather than silently
- * making this copy false.
+ * 🔴 SETTLE-BACK IS RECIPE-ONLY. `textToImage` reserves its quote and has no
+ * settle path, so "reserves its worst case, settled back to actual" is a
+ * customComfy statement, not a statement about image generation in general.
+ *
+ * 🔴 THESE BOUNDS DESCRIBE THE RECIPE PATH ONLY, and the LOW figure is not a
+ * lower bound on anything else: the platform's own default per-generation budget
+ * is 10. Copy must stay hedged ("may be too low"), never categorical.
+ *
+ * That is four successive wordings of one sentence, each false in a new way and
+ * each introduced by the fix for the previous one. The rules above are the
+ * residue; read them before editing either warning.
  */
 export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
 
