@@ -6,7 +6,6 @@ import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import {
   INLINE_RECENT_REVIEWS_LIMIT,
   selectRecentReviews,
-  shouldRenderRecentReviews,
 } from '~/components/Apps/recent-reviews';
 import type { AppListingReviewListItem } from '~/server/schema/blocks/app-listing-review.schema';
 
@@ -104,22 +103,17 @@ describe('inline recent-reviews — the cap', () => {
   });
 });
 
-describe('inline recent-reviews — nothing to show means nothing rendered', () => {
-  it('🔴 does NOT render at zero reviews', () => {
-    // No heading, no placeholder, no empty box — the #4761 convention. The
-    // caller returns `null` on this.
-    expect(shouldRenderRecentReviews([])).toBe(false);
-    expect(shouldRenderRecentReviews(undefined)).toBe(false);
-    expect(shouldRenderRecentReviews(null)).toBe(false);
-    expect(shouldRenderRecentReviews([null, undefined])).toBe(false);
-  });
-
-  it('DOES render with at least one review — the positive control', () => {
-    // Without this, `() => false` passes every assertion above.
-    expect(shouldRenderRecentReviews(page(1))).toBe(true);
-    expect(shouldRenderRecentReviews(page(20))).toBe(true);
-  });
-});
+// 🔴 TWO TESTS WERE DELETED HERE, AND THE DELETION IS THE POINT — they were named
+// "🔴 does NOT render at zero reviews" and "DOES render … the positive control",
+// and they asserted on `shouldRenderRecentReviews`, a function NOTHING in production
+// called. In this tier they read as coverage of the render-or-not policy while
+// touching none of it: the page's actual decision is two clauses (empty AND loading)
+// in `AppListingRecentReviews.tsx`, and a node-tier test cannot observe a render.
+//
+// Do not re-add an equivalent here. A test whose name describes a rendering outcome,
+// in a tier that cannot render, is worse than no test — it stops the next reader
+// looking. That policy is covered by the COMPONENT tier; `recent-reviews.ts` records
+// why the predicate itself is gone.
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 

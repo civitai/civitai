@@ -64,19 +64,16 @@ export function selectRecentReviews(
   return picked;
 }
 
-/**
- * Does the inline block render at all?
- *
- * 🔴 NOTHING, not an empty section — no heading, no "be the first to review"
- * placeholder, no bordered empty box. A listing with no reviews shows the
- * description and then goes straight to the discovery rail. This matches the
- * convention #4761 established for this page: a section with nothing in it is
- * said better by its absence than by a sentence nobody reads (the permissions
- * section and the off-site disclosure both work this way).
- */
-export function shouldRenderRecentReviews(
-  items: (AppListingReviewListItem | null | undefined)[] | null | undefined,
-  limit: number = INLINE_RECENT_REVIEWS_LIMIT
-): boolean {
-  return selectRecentReviews(items, limit).length > 0;
-}
+// 🔴 THERE IS DELIBERATELY NO `shouldRenderRecentReviews` HERE. One existed and
+// was deleted before merge: it read `selectRecentReviews(items, limit).length > 0`,
+// which is an expression `AppListingRecentReviews` already computes — it needs the
+// array to render — so the only ways to "use" it were a redundant second pass or a
+// wrapper over `.length > 0`. It had ZERO production call sites and two tests in
+// the node tier, which together read as coverage of the render-or-not policy while
+// touching none of it: the mutant that killed them mutated unreachable code, and
+// the live guard was exercised only by the component tier.
+//
+// It also could not have covered that policy even fully wired, because the policy
+// has TWO clauses — empty AND loading — and this function could only ever see the
+// first. The render decision lives with the thing that renders; see the guard in
+// `AppListingRecentReviews.tsx` and the reasoning above it.

@@ -60,9 +60,26 @@ export function AppListingRecentReviews({ appListingId }: { appListingId: string
 
   const reviews = selectRecentReviews(data?.items);
 
-  // 🔴 Loading renders NOTHING rather than a skeleton: a placeholder here would
-  // reserve height above the discovery rail for a block that may never appear,
-  // which is the exact reflow this shape exists to avoid.
+  // 🔴 THE WHOLE RENDER-OR-NOT POLICY, both clauses, and it lives HERE — with the
+  // thing that renders — rather than in a predicate in `recent-reviews.ts`. One
+  // such predicate existed and was deleted before merge for being unreachable and
+  // for being unable to express the loading half; that file records why.
+  //
+  // EMPTY renders NOTHING, not an empty section — no heading, no "be the first to
+  // review" placeholder, no bordered empty box. A listing with no reviews shows the
+  // description and then goes straight to the discovery rail. This matches the
+  // convention #4761 established for this page: a section with nothing in it is said
+  // better by its absence than by a sentence nobody reads (the permissions section
+  // and the off-site disclosure both work this way).
+  //
+  // LOADING renders NOTHING rather than a skeleton: a placeholder here would reserve
+  // height above the discovery rail for a block that may never appear, which is the
+  // exact reflow this shape exists to avoid.
+  //
+  // ⚠ Covered by the COMPONENT tier (`preview / component-tests`), not the node
+  // tier — a source-text assertion cannot observe a render decision. Note also that
+  // this repo declares NO required status checks, so "blocking tier" is a convention
+  // here, not an enforced gate.
   if (isLoading || reviews.length === 0) return null;
 
   return (
