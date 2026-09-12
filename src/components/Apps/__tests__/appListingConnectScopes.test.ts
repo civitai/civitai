@@ -102,9 +102,12 @@ describe('ListingDetail.connectScopes', () => {
     expect(detail.connectScopes).toEqual([]);
   });
 
-  it('ignores undefined (a row selected without the column) rather than throwing', () => {
-    expect(project({ connectRequestedScopes: undefined }).connectScopes).toEqual([]);
-  });
+  // ⚠ There is deliberately NO separate `undefined` case. The guard is
+  // `typeof row.connectRequestedScopes === 'number'`, so `undefined` and `null` take
+  // the identical branch — a second test would assert the same line twice and read as
+  // coverage of a distinct path. Removed on the round-0 audit's D4. The `0` half of
+  // the NULL test above is the one that IS distinct, because `0` passes the guard and
+  // reaches the decode.
 
   /**
    * 🔴 THE APPROVED-ONLY GUARANTEE IS UPSTREAM, AND THIS IS WHAT PINS THE RELIANCE.
@@ -149,7 +152,10 @@ describe('ListingDetail.connectScopes', () => {
       connectRequestedScopes: TokenScope.UserRead,
       connectScopeJustifications: { UserRead: 'we need your email to sign you in' },
     });
-    expect(detail).not.toHaveProperty('connectScopeJustifications');
+    // ⚠ No `not.toHaveProperty('connectScopeJustifications')` here — the exact-key-set
+    // ledger in `app-listing.service.test.ts` already asserts the DTO's whole key set,
+    // which subsumes it. This assertion is NOT subsumed: it also catches the text
+    // arriving embedded inside a key the ledger permits. Narrowed on the audit's D4.
     expect(JSON.stringify(detail)).not.toContain('we need your email');
   });
 });

@@ -9,8 +9,12 @@ import {
 
 /**
  * ConnectScopesDisclosure — the PUBLIC store-page enumeration of the account
- * permissions an OAuth-connect off-site listing will ask for, shown BEFORE the
- * viewer clicks Connect.
+ * permissions an OAuth-connect off-site listing is APPROVED TO ASK FOR, shown
+ * BEFORE the viewer clicks Connect.
+ *
+ * 🔴 A CEILING, NOT A PROMISE. See the "MAY request" comment on the heading below
+ * for why every string here is deliberately hedged; the short version is that
+ * `connectRequestedScopes` is review-only and does not gate token issuance.
  *
  * 🔴 WHY THIS EXISTS: the store page already tells a viewer that an off-site app
  * "can connect to your Civitai account", and then said nothing about what it
@@ -67,15 +71,30 @@ export function ConnectScopesDisclosure({ scopes }: { scopes: string[] }) {
   return (
     <Card withBorder p="sm" data-testid="connect-scopes-disclosure">
       <Stack gap="xs">
+        {/* 🔴 "MAY request", NOT "will request", AND NOT "these permissions" — the
+            weaker wording is the CORRECT one and an earlier draft of this component
+            had it wrong in the confident direction.
+            `connectRequestedScopes` is DISCLOSURE/REVIEW-ONLY: `offsite-listing.service.ts`
+            says in as many words that it "does NOT gate OAuth token issuance (the
+            client's `allowedScopes` remains the runtime ceiling via the existing consent
+            flow)". What the consent screen actually lists is the `?scope=` the client
+            asks for at authorize time, validated against `allowedScopes` — so the real
+            ask is usually a SUBSET of this, and can even be a SUPERSET if the client's
+            ceiling is widened after moderator approval, because nothing re-publishes
+            this snapshot.
+            So this list is the MOD-REVIEWED CEILING, not a promise about any particular
+            sign-in screen. Saying "will request … approve these permissions … review
+            them again" asserted an identity that does not hold, on a surface whose whole
+            job is to be trustworthy about permissions. Do not tighten it back. */}
         <Group gap={6}>
           <IconKey size={14} />
           <Text size="sm" fw={600}>
-            Permissions this app will request ({resolved.length})
+            Permissions this app may request ({resolved.length})
           </Text>
           <Tooltip
             multiline
             w={300}
-            label="If you connect this app, it will ask you to sign in and approve these permissions. You can review them again on the Civitai sign-in screen, and you can disconnect the app at any time."
+            label="The most this app is approved to ask for. When you connect it you'll be taken to a Civitai sign-in screen listing what it is actually requesting at that moment, which may be fewer than these. You can disconnect the app at any time."
           >
             <ThemeIcon size="xs" variant="subtle" color="gray">
               <IconInfoCircle size={13} />

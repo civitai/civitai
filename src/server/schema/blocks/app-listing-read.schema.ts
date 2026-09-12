@@ -450,10 +450,20 @@ export type ListingDetail = {
    */
   scopes: string[];
   /**
-   * The OAuth account permissions an OFF-SITE connect listing will REQUEST, as
-   * TokenScope enum-keys (e.g. `['UserRead','BuzzRead']`). `[]` for every listing
-   * that has none — on-site, external-link, and any connect listing whose
+   * The OAuth account permissions an OFF-SITE connect listing is APPROVED TO ASK
+   * FOR, as TokenScope enum-keys (e.g. `['UserRead','BuzzRead']`). `[]` for every
+   * listing that has none — on-site, external-link, and any connect listing whose
    * `connectRequestedScopes` column is NULL or zero.
+   *
+   * 🔴 A CEILING, NOT A PREDICTION — do not re-describe this as what the app "will
+   * request". `offsite-listing.service.ts` states that `connectRequestedScopes` is
+   * "Disclosure/review-only" and "does NOT gate OAuth token issuance (the client's
+   * `allowedScopes` remains the runtime ceiling via the existing consent flow)". The
+   * consent screen renders the `?scope=` the client asks for at authorize time, so
+   * the actual ask is usually a SUBSET of this — and can be a SUPERSET if the OAuth
+   * client's ceiling is widened after moderator approval, since nothing re-publishes
+   * the snapshot. It IS server-derived from `allowedScopes` at submit and any change
+   * re-enters moderator review, which is what makes it worth publishing at all.
    *
    * 🔴 ALLOWLIST JUSTIFICATION — AND THIS FIELD IS A NEW PUBLIC EXPOSURE. Like
    * `scopes` above, it is returned verbatim by the unauthenticated
