@@ -50,7 +50,13 @@ export const getServerSideProps = createServerSideProps({
         // Config rides in as props so el.host can be set the moment the element upgrades — a
         // config fetch on the critical path put ~600ms of "Waiting for a host context…" on every
         // mount. Tokens still mint per-call through /api/training-studio/host.
-        orchestratorEndpoint: serverEnv.ORCHESTRATOR_ENDPOINT ?? null,
+        //
+        // 🔴 The orchestrator URL is deliberately NOT among these props. It is read from the CLIENT
+        // env below instead, because the element calls the orchestrator from the BROWSER. Passing
+        // `serverEnv.ORCHESTRATOR_ENDPOINT` here is what broke the embed: that value is the
+        // in-cluster address, so the browser got a mixed-content warning and ERR_NAME_NOT_RESOLVED.
+        // Sourcing it from the client env makes the mistake unavailable rather than merely fixed —
+        // there is no server-only value in scope to pass.
         orchestratorMode:
           serverEnv.ORCHESTRATOR_MODE === 'dev' ? ('dev' as const) : ('prod' as const),
       },
@@ -58,13 +64,9 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-function TrainingStudioEmbed({
-  orchestratorEndpoint,
-  orchestratorMode,
-}: {
-  orchestratorEndpoint: string | null;
-  orchestratorMode: 'dev' | 'prod';
-}) {
+function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | 'prod' }) {
+  // Browser-facing, so the PUBLIC origin — never the server's in-cluster `ORCHESTRATOR_ENDPOINT`.
+  const orchestratorEndpoint = env.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT;
   const ref = useRef<HTMLElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [elReady, setElReady] = useState(false);
