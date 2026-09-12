@@ -178,11 +178,11 @@ export default function BlockConsentModal({
             {limitEnabled && budgetValid && parsedBudget < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
               <Text size="xs" c="orange" data-testid="block-consent-budget-low-warning">
                 {parsedBudget.toLocaleString()} Buzz/day may be too low. A single image generation
-                reserves Buzz up front before it runs — {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} or
-                more on the cheapest recipe engine, and more on others — and is refused if that
-                reservation exceeds your limit, even in cases where the run itself would have cost
-                less. Step-based actions, from 1 Buzz, still run. You can change it later under Apps
-                → Permissions.
+                reserves Buzz up front before it runs — {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz
+                on the cheapest recipe engine, and more on the other engines — and is refused if
+                that reservation exceeds your limit, even in cases where the run itself would have
+                cost less. Step-based actions, from 1 Buzz, still run. You can change it later under
+                Apps → Permissions.
               </Text>
             ) : null}
           </Stack>
