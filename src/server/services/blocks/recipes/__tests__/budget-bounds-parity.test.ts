@@ -7,14 +7,21 @@ import {
 
 /**
  * 🔴 WHY THIS EXISTS. `BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY` / `_HIGH_CEILING_PER_DAY`
- * are hand-mirrored from the recipe registry and are rendered VERBATIM to users in the
- * low-budget warning. Nothing enforced them, so registering an engine outside the pair
- * silently makes that user-facing sentence false — which is exactly the failure this
- * whole surface has now produced three times, each time in a new direction.
+ * are hand-mirrored from the recipe registry, and NEITHER IS RENDERED TO USERS. An
+ * earlier revision of this paragraph said they were "rendered VERBATIM", which was true
+ * when written and was falsified by the commit that stopped the copy quoting any figure
+ * at all — the same shape as the five wordings this surface has already produced, which
+ * is why it is being called out here rather than quietly corrected.
  *
- * The numbers are copy-only (no enforcement path reads them), so the remedy for a red
- * here is to UPDATE THE CONSTANTS and re-read the two warning strings — not to change
- * the recipe.
+ * 🔴 SO DO NOT READ A RED HERE AS "GO AND UPDATE A NUMBER IN THE COPY". The copy names
+ * no number, and re-adding one is the relapse the rule at
+ * `BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY` forbids. What is actually at stake:
+ *   · `LOW` is the render THRESHOLD (`parsed < LOW`). If a cheaper engine is registered
+ *     and LOW is left stale, the warning stops firing across the band between the old
+ *     and new minimum — and "is a low limit" becomes wrong for values in it.
+ *   · `HIGH` is tracked ONLY so a widening of the recipe range is noticed here.
+ * The remedy for a red is to update the constants and re-read the threshold's meaning —
+ * never to change the recipe, and never to put a figure back in the sentence.
  *
  * 🔴 SCOPE — FOUR THINGS THIS DOES NOT COVER. Stated in full because naming some gaps
  * and not the others reads as an exhaustive scope statement — an earlier revision said

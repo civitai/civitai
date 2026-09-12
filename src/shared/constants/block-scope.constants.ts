@@ -219,7 +219,7 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * THE FIX FOR THE PREVIOUS ONE. In order: "this app will refuse to generate"
  * (false for step-priced apps) → "can cost up to 90 per run" (inverted the bound
  * over the engine set) → "the cheapest engine costs 90 per run" (quoted a
- * RESERVATION as a PRICE, ~4.3–22× over) → "up to 180 on the priciest" (a CLOSED
+ * RESERVATION as a PRICE, 4.5–22.5× over) → "up to 180 on the priciest" (a CLOSED
  * bound the inline arm exceeds) → "and more on the other engines … step-based
  * actions still run" (two engines tie at 90, and steps do NOT always run).
  *
@@ -241,9 +241,9 @@ export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
  * ⚠️ A closed upper bound DOES exist, contrary to what an earlier revision of
  * this docblock asserted: every path gates the reservation against the token's
  * per-call budget, which `resolveBuzzBudget` clamps at `BUZZ_BUDGET_CAP` = 1000.
- * It is simply not renderable — it is per-app, an order of magnitude above any
- * real reservation, and alarming rather than informative. Do not "correct" the
- * copy by naming it.
+ * It is simply not renderable — it is per-app, ~4× the largest reservation any
+ * path can actually take (INLINE_MAX_BUZZ = 250; 180 for recipes), and alarming
+ * rather than informative. Do not "correct" the copy by naming it.
  *
  * What IS true on every consent-bearing path, and all this sentence claims:
  * the reservation is taken up front, before the run, and the request is refused
