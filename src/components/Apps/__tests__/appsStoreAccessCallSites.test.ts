@@ -28,7 +28,7 @@ import { describe, it, expect } from 'vitest';
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
  *
- * THREE of the seven sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * THREE of the eight sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
  * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
  * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
  * selection helper and never mounts the component, so it never touches
@@ -37,7 +37,10 @@ import { describe, it, expect } from 'vitest';
  * `appsNavVisibility.ts` — has behavioural cover in the same unit project
  * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
  * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
- * checked.
+ * checked. The eighth — `nav-registry.ts` — has behavioural cover in
+ * `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`, which drives
+ * `resolveNavItems` over the per-flag cohorts (listings-only, blocks-only,
+ * external-only, none) against the REAL registry.
  *
  * ⚠️ THE SEAM THIS PARAGRAPH USED TO CALL UNTESTED IS NOW HALF-COVERED, and the
  * remaining half is named rather than implied. It said: "that `useGetMenuItems`
@@ -54,10 +57,14 @@ import { describe, it, expect } from 'vitest';
  *
  * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI six of the seven sites are pinned STRUCTURALLY ONLY, by this file
+ * does. So in CI five of the eight sites are pinned STRUCTURALLY ONLY, by this file
  * — which is precisely why a hole in its masker (see below) is worth more than it
- * looks. (`appsNavVisibility` is the exception: its behavioural test is a unit
- * test, so it blocks too.)
+ * looks. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the
+ * exceptions: their behavioural tests are unit tests, so they block too — the
+ * resolver's cover is the two `resolveAppsPageAccess` describe blocks inside
+ * `hasAppsStoreAccess.test.ts`. Two more are browser-covered (`AppsSubNav`,
+ * `AppListingsMarketplaceBody`) and therefore blocking-covered NOWHERE: enumerated,
+ * 3 + 2 + 3 = 8.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
@@ -108,8 +115,10 @@ const SRC = path.resolve(__dirname, '../../..');
  *    converted and therefore structurally invisible here; both halves are now
  *    false, and the reason it changed is worth keeping:
  *
- *    that entry is the ONLY in-product route TO `/apps` (the sub-nav's
- *    Marketplace tab only appears once you are already on `/apps/*`), and it read
+ *    that entry was the ONLY in-product route TO `/apps` when it was converted —
+ *    the top-nav pill (`components/HomeContentToggle/nav-registry.ts`, the eighth
+ *    ledger site) is the second. (The sub-nav's Marketplace tab still only appears
+ *    once you are already on `/apps/*`.) It read
  *    `!!features.appBlocks`. So `{appListings, NOT appBlocks}` — the documented
  *    shape of the store launch — and `{appListingsPublicExternal, NOT appBlocks,
  *    NOT appListings}` — the live external-only tester cohort — both passed the
@@ -119,6 +128,12 @@ const SRC = path.resolve(__dirname, '../../..');
  */
 const STORE_GATE_SITES = [
   'components/AppLayout/AppHeader/appsNavVisibility.ts',
+  // 🔴 THE TOP-NAV PILL — the `apps` entry in `navRegistry` (`/apps`, store access only).
+  // Same defect class as the user-menu entry above: a pill visible under different flags
+  // is a menu entry into the `notFound` the `/apps` SSR resolver answers for an
+  // ineligible viewer. Its behavioural cover is the per-flag cohort vectors in
+  // `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`.
+  'components/HomeContentToggle/nav-registry.ts',
   // 🔴 THE `App` COLUMN'S NAME LINK ON `/apps/activity`. It points at
   // `/apps/store-preview/<slug>`, which `getServerSideProps`-gates on
   // `resolveAppsPageAccess` and answers `notFound` for — so an UNGATED link there is a
@@ -151,8 +166,17 @@ const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
  * than allowlisting that file is deliberate: the header is where a future "show
  * the Apps entry when …" tweak would most plausibly open-code the gate, and the
  * re-inline scan below only has teeth over directories it walks.
+ * `components/HomeContentToggle` is here for ONE file — `nav-registry.ts`, the top-nav
+ * pill's `visible` gate. Same deliberate whole-directory scan as AppHeader: the toggle
+ * is where a future "show the Apps pill when …" tweak would most plausibly open-code
+ * the gate.
  */
-const SCAN_ROOTS = ['components/AppLayout/AppHeader', 'components/Apps', 'pages/apps'];
+const SCAN_ROOTS = [
+  'components/AppLayout/AppHeader',
+  'components/HomeContentToggle',
+  'components/Apps',
+  'pages/apps',
+];
 
 /**
  * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
