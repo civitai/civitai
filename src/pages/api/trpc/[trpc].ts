@@ -22,9 +22,18 @@ export const config = {
       // 🔴 10mb, and it is the real ceiling rather than a chosen one. `/api/trpc/*` is
       // covered by `src/proxy.ts`'s `matcher`, and Next caps a proxy-matched request
       // body at `experimental.proxyClientMaxBodySize` (default 10485760), then ENDS THE
-      // STREAM without telling the route. This declared 17mb, which meant a 10–17 MiB
-      // body was truncated mid-JSON and surfaced as a parse error naming nothing about
-      // size. 10mb makes the refusal a clean 413 instead.
+      // STREAM without telling the route. This declared 17mb, which never bound at ANY
+      // size: every body over ~10 MiB was truncated mid-JSON and surfaced as a parse
+      // error naming nothing about size. (An earlier version of this comment said
+      // '10-17 MiB', which reads as though >17 MiB was handled correctly. It was not.)
+      //
+      // ⚠ 10mb here is HONEST but still cannot 413 — it equals the truncation point, so
+      // `parseBody`'s check is unsatisfiable and an oversize body stays a 400
+      // `Invalid JSON`. MEASURED, not reasoned: 12,000,000 bytes to this route on a
+      // preview returns 400. The sibling bundle route declares one byte LOWER precisely
+      // to get a real 413; that is deliberately NOT done here, because this is the
+      // hottest route in the app and it would newly reject legitimate bodies in the
+      // 10485759..10485760 band for a failure mode nobody has reported on tRPC.
       //
       // Measured on a deployed preview, one 12,000,000-byte POST per path, reading the
       // server's own `Request body exceeded 10MB for <path>` line: `/api/trpc/*` and

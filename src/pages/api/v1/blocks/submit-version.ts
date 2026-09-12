@@ -56,10 +56,11 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * is therefore intentionally OMITTED (it would also break the headless CLI, which
  * sends no Origin).
  *
- * Body `{ bundleBase64: "<base64 zip>" }`. ⚠ The body ceiling here is **10 MiB, not the
- * session route's ~72 MiB** — this path is proxy-matched and Next truncates it there;
- * see the `sizeLimit` comment below for the measurement. That admits a ~7.5 MiB ZIP once
- * base64 expansion is counted, against a largest-ever submitted bundle of 2.41 MiB. The
+ * Body `{ bundleBase64: "<base64 zip>" }`. ⚠ The body ceiling here is **~10 MiB, not the
+ * session route's ~72 MiB** — this path is proxy-matched and Next truncates it there, so
+ * the declared limit sits one byte below the truncation point to make the refusal a real
+ * 413 instead of a `400 Invalid JSON` (civitai/cli #423). See the `sizeLimit` comment
+ * below. That admits a ~7.5 MiB ZIP once base64 expansion is counted. The
  * MAX_BUNDLE_SIZE_BYTES schema cap still applies to the decoded buffer. Returns
  * `{ publishRequestId, slug, version, status }`.
  */
@@ -74,8 +75,25 @@ export const config = {
       // `experimental.proxyClientMaxBodySize` (default 10485760) and then ENDS THE
       // STREAM without telling the route — so a larger declaration here is not
       // honoured, it is silently truncated, and `JSON.parse` then fails on a
-      // half-body with a message that has nothing to do with size. Declaring the
-      // real ceiling turns that into a clean 413.
+      // half-body with a message that has nothing to do with size.
+      //
+      // 🔴 ONE BYTE BELOW THE TRUNCATION POINT, AND THAT IS THE WHOLE TRICK.
+      // `10485760` — the value this route declared in the first draft of this change —
+      // CANNOT produce a 413, and an earlier version of this comment claimed it would.
+      // `parseBody` 413s only when the bytes it actually RECEIVES exceed the declared
+      // limit; the proxy has already capped those bytes at exactly 10485760, so a limit
+      // OF 10485760 is unsatisfiable by construction. Declaring 10485759 means the
+      // truncated body is one byte over and Next raises a real
+      // `Body exceeded ... limit` 413.
+      //
+      // A handler-level Content-Length check does NOT work here and is not the fix that
+      // was rejected — it is unreachable: with `bodyParser` enabled `parseBody` runs
+      // BEFORE the handler, so an oversize body 400s without this module's code ever
+      // being entered. `relay.ts` can do that check only because it sets
+      // `bodyParser: false` and reads the stream itself.
+      //
+      // Cost of the choice: exactly one byte of headroom, on a route whose largest
+      // observed payload is ~3x under the limit.
       //
       // 🔴 `src/pages/api/blocks/submit-version.ts` — the SESSION route — keeps 72mb
       // and is CORRECT to: `/api/blocks/*` is NOT matched (the matcher's catch-all
@@ -86,20 +104,32 @@ export const config = {
       // the server's own `Request body exceeded 10MB for <path>` line: `/api/v1/*`
       // and `/api/trpc/*` warned, `/api/blocks/*` and `/api/mod/*` did not.
       //
-      // Nothing is narrowed in practice: over the COMPLETE population of 245 publish
-      // requests (`app_block_publish_requests.bundle_size_bytes`, 0 null), the largest
-      // bundle ever submitted is 2.41 MiB and p95 is 2.21 MiB — ~3x under the ~7.5 MiB
-      // ZIP this admits once base64 expansion is counted. Production has logged zero
-      // truncation warnings in 7d.
+      // 🔴 THIS HAS BITTEN A REAL USER: civitai/cli issue #423 — an over-limit bundle
+      // produced `400: Invalid JSON`, an error about the PARSE rather than the size, and
+      // the CLI had to start reporting what it SENT because the response carries nothing
+      // useful (`<cli>/internal/cmd/app_submit.go`). That is the error this 413 replaces.
       //
-      // If 50 MiB CLI bundles are ever genuinely wanted, the fix is raising
-      // `experimental.proxyClientMaxBodySize` in next.config.mjs — a repo-wide change
-      // that widens the body EVERY route may receive, so it is a deliberate call and
-      // not something to slip in by re-raising this number.
+      // ⚠ AND THE OBVIOUS COUNTER-EVIDENCE IS SURVIVORSHIP-BIASED — stated because an
+      // earlier draft of this comment leaned on it. `app_block_publish_requests` has 245
+      // rows, largest bundle 2.41 MiB, p95 2.21 MiB — but a truncated body dies in
+      // `parseJson` BEFORE any insert, so every oversize attempt is definitionally ABSENT
+      // from that table. It measures what got through, never what was tried. The 7-day
+      // zero-truncation-warning read is the instrument that CAN see failures, and at this
+      // route's volume that window is only ~19 submissions.
+      //
+      // 🔴 If 50 MiB CLI bundles are ever genuinely wanted, BOTH numbers must move:
+      // `experimental.proxyClientMaxBodySize` in next.config.mjs AND this limit, in the
+      // SAME change. Raising only the proxy cap leaves this route pinned here, which
+      // then becomes a REAL cap and 413s at ~7.5 MiB of ZIP — the reader follows the
+      // instruction and the upload is still broken. The proxy half is repo-wide (it
+      // widens the body EVERY route may receive), so it is a deliberate call.
       //
       // MAX_BUNDLE_SIZE_BYTES (50 MiB) still bounds the DECODED buffer below, and the
       // service re-checks it; it is a product cap, not a transport one.
-      sizeLimit: '10mb',
+      // 10485759 = NEXT_BODY_TRUNCATION_BYTES - 1 (see relay.ts, which exports that
+      // constant). Deliberately a number, not a string: it must be EXACTLY one below
+      // the cap and '10mb' rounds to the cap itself.
+      sizeLimit: 10485759,
     },
   },
 };

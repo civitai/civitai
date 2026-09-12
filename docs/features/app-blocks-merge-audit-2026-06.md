@@ -101,8 +101,11 @@ the role list is only a Flipt-down fallback. The flag description itself documen
 - ~~Global change: tRPC body limit raised 17mb → 72mb for all requests~~ — **RESOLVED**:
   the W1 bundle upload moved to a dedicated `POST /api/blocks/submit-version` route
   (72mb, ModEndpoint mod-gated + appBlocks-flag-gated); the shared `/api/trpc/[trpc]`
-  route is back to 17mb. `submitVersion` was the only tRPC path needing >17mb (KV
-  `storage.set` is capped at 64KB).
+  route is back to a small cap. `submitVersion` was the only tRPC path needing a large
+  body (KV `storage.set` is capped at 64KB).
+  ⚠ Historical as of 2026-09-12: that route declared 17mb but `/api/trpc/*` is
+  proxy-matched, so Next never delivered more than ~10 MiB to it regardless — the
+  17mb figure was never the effective limit. It now declares the real ceiling.
 - Dead deps: `@civitai/app-sdk`, `@civitai/blocks-react` declared but never imported
   (comment references only) — no bundle impact; confirm intentional.
 - Smaller: `git-push` `sha` lacks hex-shape validation; `workflow-completed` returns 200
