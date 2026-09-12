@@ -130,6 +130,17 @@ describe('ListingDetail.connectScopes', () => {
     expect(detail.connectScopes).toEqual(['UserRead']);
   });
 
+  /**
+   * ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it is the ONE case in this file
+   * that PASSES at the pre-change commit, because the DTO carried no justification
+   * text before this change either. Labelled rather than counted: the red-at-base
+   * matrix for this file is 6 of 7, and quoting 7 would overstate what was proven.
+   *
+   * It still earns its place. This change is what makes the field reachable — it
+   * introduces a projection sourced from the same columns the justification text
+   * lives beside, so "it was never there" stops being self-evidently permanent the
+   * moment someone widens the select.
+   */
   it('never carries the owner-authored justification text', () => {
     // `connectScopeJustifications` is an explicit non-goal of #555: publishing it is
     // a separate exposure decision. Pinning its ABSENCE from the DTO is what stops it
