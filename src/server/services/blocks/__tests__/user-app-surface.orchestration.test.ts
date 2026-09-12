@@ -462,6 +462,44 @@ describe('listMyScopeGrants', () => {
     expect(result[0].scopes).toEqual([]);
   });
 
+  // ⚠️ THE NEXT TWO ARE INVARIANT GUARDS, NOT REGRESSION COVERAGE — labelled as such rather
+  // than counted. Prisma types `approvedScopes` as `string[]`, so nothing in this codebase
+  // can produce either shape; they pin the JSON/DB-boundary defensiveness at the read site
+  // so a later "the type says string[], drop the guard" edit fails instead of shipping a
+  // non-string into a `<Badge>` key and a scope-description lookup.
+  it('drops non-string elements from a malformed approvedScopes array', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: ['models:read:self'] },
+          approvedScopes: [null, 'buzz:read:self', 42, undefined, 'collections:read:private'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual(['buzz:read:self', 'collections:read:private']);
+  });
+
+  // The fixture is a non-null SCALAR on purpose: `null` alone cannot distinguish the
+  // `Array.isArray` guard from a weaker `(x ?? []).filter(…)`, because `null ?? []` also
+  // yields `[]`. A bare string is the realistic JSON-column mishap AND it makes the weaker
+  // shape throw `.filter is not a function`, so this case pins the guard rather than the
+  // nullishness.
+  it('emits an empty scopes array when approvedScopes is not an array at all', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: ['models:read:self'] },
+          approvedScopes: 'buzz:read:self',
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual([]);
+  });
+
   it('emits an empty scopes array when neither manifest nor approvedScopes carry scopes', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
