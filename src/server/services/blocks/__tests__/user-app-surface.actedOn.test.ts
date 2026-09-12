@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const mockDbRead = dbMock.dbRead;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 /**
  * THE ACTIVITY LEG of `listMyScopeGrants` — apps that ACTED on the viewer's account with
@@ -18,30 +23,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * this change introduced (no `app-surface-provenance`, no exported constant), so it is a valid
  * probe of the old implementation rather than a module-absence red.
  *
- * Mocking strategy mirrors `user-app-surface.orchestration.test.ts` — `vi.hoisted` shared mocks,
- * `vi.mock`'d db client, default `findMany` returns `[]`.
+ * 🔴 MOCKING GOES THROUGH THE CANONICAL SHARED MOCKS (`~/__tests__/mocks/*`), NOT A PER-FILE
+ * `vi.mock`, AND THAT IS ENFORCED. `no-direct-shared-module-mock.test.ts` is a ratchet over
+ * `~/server/db/client` and `~/server/logging/client`: under `isolate: false` a per-file
+ * `vi.mock` freezes that file's mock shape into every later file sharing the worker, so a file
+ * with no mock at all can fail on a missing export. The sibling
+ * `user-app-surface.orchestration.test.ts` still uses `vi.hoisted` + `vi.mock` because it is
+ * ALLOWLISTED as pre-existing; a new file is not, and copying its shape is what the ratchet
+ * exists to catch. Behaviour is declared on `dbMock`/`loggingMock` instead; the global
+ * `resetSharedMocks` in `src/__tests__/setup.ts` clears implementations AND call counts between
+ * files, so this file resets only what it overrides.
+ *
+ * ⚠️ THIS FILE WAS WRITTEN WITH `vi.mock` AND CAUGHT BY THAT GATE IN CI, NOT LOCALLY — the gate
+ * lives in `src/server/services/__tests__/`, which was outside the paths run by hand. A green
+ * local run covered only the directories it was pointed at.
  */
-
-const { mockDbRead, mockDbWrite, mockLogToAxiom } = vi.hoisted(() => ({
-  mockDbRead: {
-    blockUserSubscription: { findMany: vi.fn(), findUnique: vi.fn() },
-    blockBuzzAttribution: { findMany: vi.fn() },
-    appBlockPublishRequest: { groupBy: vi.fn(), findFirst: vi.fn() },
-    blockScopeInvocation: { findMany: vi.fn() },
-    appUserScopeGrant: { findMany: vi.fn() },
-    // NEW: the activity leg resolves the presentation columns for the app ids its sweep found,
-    // in ONE batched read rather than per app.
-    appBlock: { findMany: vi.fn() },
-  },
-  mockDbWrite: {
-    blockUserSubscription: { update: vi.fn() },
-    blockScopeInvocation: { create: vi.fn() },
-  },
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 /** The page size the sweep pages at — deliberately re-derived below, never hard-coded twice. */
 const PAGE_SIZE = 2000;
@@ -85,18 +81,36 @@ function attribution(id: string, appBlockId = 'apb_spender') {
   return { id, appBlockId };
 }
 
+/**
+ * 🔴 THE PER-TEST RESET IS THIS FILE'S JOB, AND ASSUMING OTHERWISE PRODUCED SEVEN FAILURES.
+ * `resetSharedMocks()` in `src/__tests__/setup.ts` runs per test FILE, not per test — so under
+ * the canonical mocks a spy's call history accumulates across every `it()` in this file. The
+ * symptom is unmistakable once seen and baffling before: `expected … to be called 1 times, but
+ * got 17 times`, and `expected 42 to be 7` from a `mock.calls[0]` that belonged to the first
+ * test rather than the current one. Every count- and `mock.calls[n]`-based assertion in this
+ * file depends on the resets below.
+ *
+ * ⚠️ AND NOT VIA `Object.values(mockDbRead)`, which is what the allowlisted sibling
+ * `user-app-surface.orchestration.test.ts` does. `dbMock.dbRead` is an auto-vivifying callable
+ * PROXY, not a plain object of plain objects, so that walk enumerates nothing and resets
+ * nothing — it would read as a reset while providing none. The delegates are named explicitly.
+ *
+ * `mockReset` clears the implementation as well as the history, so the defaults are re-declared
+ * after it. They match `db.mock.ts`'s own `findMany → []` default and are spelled out anyway:
+ * "nothing acted on this viewer" is the baseline every test is measured against, so a test that
+ * surfaces a row has to say why, visibly, rather than inherit it from another module.
+ */
 beforeEach(() => {
-  for (const surface of Object.values(mockDbRead)) {
-    for (const fn of Object.values(surface)) {
-      (fn as unknown as { mockReset: () => void }).mockReset();
-    }
+  for (const fn of [
+    mockDbRead.blockUserSubscription.findMany,
+    mockDbRead.blockBuzzAttribution.findMany,
+    mockDbRead.blockScopeInvocation.findMany,
+    mockDbRead.appUserScopeGrant.findMany,
+    mockDbRead.appBlock.findMany,
+    mockLogToAxiom,
+  ]) {
+    fn.mockReset();
   }
-  for (const surface of Object.values(mockDbWrite)) {
-    for (const fn of Object.values(surface)) {
-      (fn as unknown as { mockReset: () => void }).mockReset();
-    }
-  }
-  mockLogToAxiom.mockReset();
   mockLogToAxiom.mockResolvedValue(undefined);
   mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
   mockDbRead.blockBuzzAttribution.findMany.mockResolvedValue([]);

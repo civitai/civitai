@@ -1,5 +1,9 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
+// Type-only namespace import, NOT `typeof import('...')` — the latter is rejected by
+// @typescript-eslint/consistent-type-imports. Used by the `importOriginal` spread below.
+import type * as TrpcMod from '~/utils/trpc';
 
 // Part B: the per-app "Permissions & activity" drawer. It reuses
 // `BlockScopeList` for the granted scopes (filtered to THIS app's grant) and the
@@ -43,7 +47,21 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
 }));
 
-vi.mock('~/utils/trpc', () => {
+/**
+ * 🔴 SPREADS THE REAL MODULE AND OVERRIDES ONLY WHAT IT USES. This was a WHOLESALE factory —
+ * flagged by `local-rules/no-wholesale-module-mock`, which was pre-existing on this file (1 error
+ * at `origin/main`, measured) and became this PR's problem the moment the PR edited the file, since
+ * CI lints changed files. Fixed rather than suppressed: the rule names a real hazard, not a style
+ * preference. A hand-written replacement module means the day `~/utils/trpc` gains an export this
+ * factory omits, every importer in the graph gets `undefined`, the FILE fails to load, and the run
+ * reports 0 tests collected with no failing assertion — silently green.
+ *
+ * Mechanical, and not invented here: the sibling `src/components/Apps/AppActivityPage.browser.test.tsx`
+ * already spreads `importOriginal` over this exact module and passes in CI's component tier.
+ * `setTrpcBatchingEnabled` keeps its explicit spy override — the spread would otherwise hand back
+ * the real one.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => {
   const grantsSpy = vi.fn(() => ({ data: m.grants, isLoading: false }));
   const buzzSpy = vi.fn(() => ({
     data: { pages: [{ items: m.buzz, nextCursor: null }] },
@@ -63,6 +81,7 @@ vi.mock('~/utils/trpc', () => {
   m.buzzSpy = buzzSpy;
   m.scopeSpy = scopeSpy;
   return {
+    ...(await importOriginal<typeof TrpcMod>()),
     setTrpcBatchingEnabled: vi.fn(),
     trpc: {
       blocks: {
@@ -185,21 +204,26 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     renderWithProviders(
       <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
-    // 🔴 PINNED AS THE WHOLE NORMALISED STRING, NOT A KEYWORD. The claim under test is
-    // that this label does NOT assert "you granted this app nothing" — a defect a
-    // `/permissions/` substring match would walk straight past, since the false wording
-    // contained that word too. The two load-bearing halves are the qualifier
-    // ("from an install") and the pointer to Recent activity.
-    await expect
-      .element(
-        page.getByText(
-          // Widened from "from an install of this app" with the data source: a consented
-          // full-page app now resolves a row instead of reaching this label, so the label's
-          // remaining population is "neither an install NOR a consent".
-          'No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below.'
-        )
-      )
-      .toBeInTheDocument();
+    // 🔴 STILL THE WHOLE NORMALISED STRING, BUT NOW *DERIVED* FROM THE SHARED OWNER RATHER
+    // THAN COPIED. The label used to be a literal in the component and a second literal here;
+    // it now comes from `scopeGrantEmptyScopeLabel`, which both this drawer and
+    // `src/pages/apps/activity.tsx` call. A "these two agree" guard written as a hand-copied
+    // literal on each side pins NOTHING — change the component and its own copy of the literal
+    // and both stay green while the page silently diverges. Calling the exported function is
+    // what makes this a consolidation pin instead of a transcription.
+    //
+    // Still NOT a keyword match: the claim under test is that the label does not assert "you
+    // granted this app nothing", and a `/permissions/` substring would walk straight past the
+    // false wording, which contained that word too.
+    //
+    // `'activity'` is the origin the component passes when there is NO grant row at all
+    // (`grant?.origin ?? 'activity'`) — the state this test sets up with `m.grants = []`. The
+    // two load-bearing halves survive the move: it says nothing was granted, and it points at
+    // Recent activity.
+    const expectedEmptyLabel = scopeGrantEmptyScopeLabel('activity');
+    // Guard the guard: an owner that returned '' would make the locator match anything.
+    expect(expectedEmptyLabel.length).toBeGreaterThan(40);
+    await expect.element(page.getByText(expectedEmptyLabel)).toBeInTheDocument();
     await expect.element(page.getByText(/No activity yet\./)).toBeInTheDocument();
   });
 

@@ -129,6 +129,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               name: 'Demo App',
               slug: 'demo-app',
               scopes: ['read:profile'],
+              // `origin` mirrors the server's precedence rule: a subscription-backed row is
+              // 'install'. Present on EVERY row here because the server now always emits it —
+              // a fixture that omitted it would leave `buildScopeGrantSurfaceLine` taking an
+              // `undefined` origin and falling through to the counts, which is precisely the
+              // count-derived inference the field exists to replace. The card assertions below
+              // would still pass, for the wrong reason, on a state production cannot produce.
+              origin: 'install' as const,
               surfaces: { modelInstallCount: 1, subscriptionScopes: [] },
               // No spend scope granted → no budget control on this card. Keeping one
               // such row is what makes the control's presence on the OTHER row a fact
@@ -142,6 +149,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               name: 'Spender',
               slug: 'spender',
               scopes: ['ai:write:budgeted'],
+              origin: 'install' as const,
               surfaces: { modelInstallCount: 0, subscriptionScopes: ['viewer_personal'] },
               buzzBudgetPerDay: 750,
               spendScopeGranted: true,
@@ -173,6 +181,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               name: 'Consented Only',
               slug: 'consented-only',
               scopes: ['ai:write:budgeted'],
+              // 🔴 THE FIELD THAT MAKES THE SURFACE-LINE ASSERTION BELOW MEAN SOMETHING. This
+              // row and an ACTIVITY-ONLY row are both `0 / 0`, so the counts cannot tell them
+              // apart; only `origin` can. Stating it here is what makes "this card says
+              // 'Granted at consent'" a consequence of the provenance rather than of the two
+              // zeroes — the exact confusion that shipped the false line.
+              origin: 'consent' as const,
               surfaces: { modelInstallCount: 0, subscriptionScopes: [] },
               buzzBudgetPerDay: null,
               spendScopeGranted: false,
@@ -712,17 +726,25 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * fail loudly in the same run. Do not read the tripwire alone as proof the panel exists.
  */
 describe('🔴 the revoke instruction is retracted, not reworded', () => {
-  // 🔴 WIDENED WITH THE DATA SOURCE, NOT REWORDED FOR STYLE. `listMyScopeGrants` now also
-  // enumerates live `app_user_scope_grants` rows, so "installed or subscribed to" described a
-  // population narrower than the one the panel below it lists — the same overstatement this
-  // block exists to catch, pointing the other way. The whole-string pin is doing exactly its
-  // job here: this literal had to move because the claim moved.
+  // 🔴 WIDENED WITH THE DATA SOURCE AGAIN, AND FOR THE SAME REASON AS LAST TIME — NOT REWORDED
+  // FOR STYLE. The previous revision of this literal added "or granted permissions to" when
+  // `listMyScopeGrants` began enumerating live `app_user_scope_grants` rows. It now also
+  // enumerates `block_scope_invocations` / `block_buzz_attribution`, so an app that ACTED on the
+  // account with no install and no consent is a row too — and listing only the three
+  // relationships the viewer CHOSE described a population narrower than what the panel below
+  // lists. That is the same overstatement this block exists to catch, pointing the other way,
+  // for the second time.
+  //
+  // 🔴 THIS IS THE WHOLE-STRING PIN WORKING, NOT AN OBSTACLE TO ROUTE AROUND. The change to the
+  // page failed these two tests in CI's component tier, which is exactly what a pin on the whole
+  // normalised string is for: a copy change cannot land silently. The literal moves because the
+  // CLAIM moved; do not relax `exact: true` to avoid updating it.
   const PERMISSIONS_TAB_COPY =
-    "The apps you've installed, subscribed to, or granted permissions to, what each one " +
-    'declares it may use, and where you have it. Removing an install on the Installs tab ' +
-    'takes the app off that surface, but it does not withdraw a permission you have already ' +
-    'granted — withdrawing one is not possible yet. Recent activity is the full record of ' +
-    'what apps have actually done on your account.';
+    "The apps you've installed, subscribed to or granted permissions to, plus any app that " +
+    'has acted on your account without either — what each one may use, and where you have ' +
+    'it. Removing an install on the Installs tab takes the app off that surface, but it does ' +
+    'not withdraw a permission you have already granted — withdrawing one is not possible ' +
+    'yet. Recent activity is the full record of what apps have actually done on your account.';
 
   /**
    * A string from the ACTIVITY panel, deliberately not from the copy under test. Used as
