@@ -443,7 +443,7 @@
             </Button>
           </form>
           {#if renameError}
-            <p class="mt-1 font-mono text-[11px] text-red-400">{renameError}</p>
+            <p class="mt-1 font-mono text-xs text-red-400">{renameError}</p>
           {/if}
         {:else}
           <div class="flex items-center gap-2">
@@ -479,7 +479,7 @@
       <RunStateBadge state={d.state} />
     </div>
 
-    <dl class="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-dark-4 pt-4 font-mono text-[11px]">
+    <dl class="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-dark-4 pt-4 font-mono text-xs">
       <div class="flex items-center gap-1.5">
         <dt class="text-dark-2">Checkpoints</dt>
         <dd class="m-0 text-dark-0">
@@ -602,7 +602,7 @@
               .map((epoch) => ({ run, epoch }))
           )}
         {#if ancestorRuns.length && ancestorCols.length === 0}
-          <p class="mb-3 font-mono text-[11px] text-dark-2">
+          <p class="mb-3 font-mono text-xs text-dark-2">
             No checkpoints in the earlier runs — showing this run only.
           </p>
         {/if}
@@ -615,7 +615,7 @@
             <div></div>
             {#each ancestorCols as col (`${col.run.workflowId}:${col.epoch.id}`)}
               <div
-                class="flex items-center justify-center rounded border border-dashed border-dark-4 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-dark-2"
+                class="flex items-center justify-center rounded border border-dashed border-dark-4 px-1.5 py-1 text-center text-xs font-semibold leading-tight text-dark-2"
                 title="Epoch {col.epoch.number} of {col.run.name}"
               >
                 <span class="truncate">epoch {col.epoch.number} · {col.run.name}</span>
@@ -628,7 +628,7 @@
                   selectedId = epoch.id;
                   mode = 'epoch';
                 }}
-                class="flex items-center justify-center gap-1 rounded border px-1.5 py-1 text-[11px] font-semibold transition-colors {epoch ===
+                class="flex items-center justify-center gap-1 rounded border px-1.5 py-1 text-xs font-semibold transition-colors {epoch ===
                 recommended
                   ? 'border-buzz/30 text-buzz hover:bg-buzz/10'
                   : 'border-dark-4 text-dark-0 hover:border-dark-2 hover:bg-dark-5'}"
@@ -640,7 +640,7 @@
 
             {#each promptLabels as prompt, r (r)}
               <div
-                class="flex items-center pr-2 text-[11px] leading-relaxed text-dark-2"
+                class="flex items-center pr-2 text-xs leading-relaxed text-dark-2"
                 title={prompt}
               >
                 <span class="line-clamp-4">{prompt}</span>
@@ -678,7 +678,7 @@
       {/snippet}
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <div class="mb-4 flex flex-wrap items-center gap-3">
-          <p class="m-0 text-[11px] text-dark-2">
+          <p class="m-0 text-xs text-dark-2">
             Each prompt across every checkpoint — scan a row to see how a sample evolved. Click a checkpoint
             to open and download it.
           </p>
@@ -687,7 +687,7 @@
               bind:pressed={() => showLineage, (v) => (showLineage = v)}
               variant="outline"
               size="sm"
-              class="ml-auto text-[11px]"
+              class="ml-auto text-xs"
             >
               <IconRepeat size={12} stroke={2} />{showLineage ? 'Hide earlier runs' : 'Include earlier runs'}
             </Toggle>
@@ -696,12 +696,12 @@
         {#if ancestors}
           {#await ancestors}
             {@render compareGrid([])}
-            <p class="mt-3 font-mono text-[11px] text-dark-2">Loading earlier runs…</p>
+            <p class="mt-3 font-mono text-xs text-dark-2">Loading earlier runs…</p>
           {:then chain}
             {@render compareGrid(chain)}
           {:catch err}
             {@render compareGrid([])}
-            <p class="mt-3 flex items-center gap-2 font-mono text-[11px] text-red-400">
+            <p class="mt-3 flex items-center gap-2 font-mono text-xs text-red-400">
               Couldn't load earlier runs: {err instanceof Error ? err.message : String(err)}
               <Button variant="outline" size="sm" onclick={() => (lineageVersion += 1)}>Retry</Button>
             </p>
@@ -717,7 +717,7 @@
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
             {#if featured === recommended}
               <span
-                class="rounded bg-buzz/15 px-2 py-0.5 text-[10px] font-semibold text-buzz"
+                class="rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
               >
 <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
               </span>
@@ -733,7 +733,7 @@
             </a>
           {:else}
             <span
-              class="ml-auto rounded border border-dark-4 px-3 py-1.5 font-mono text-[11px] text-dark-2"
+              class="ml-auto rounded border border-dark-4 px-3 py-1.5 font-mono text-xs text-dark-2"
             >
               Weights not ready
             </span>
@@ -756,7 +756,7 @@
               {:else}
                 <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} pending={samplesPending} />
               {/if}
-              <figcaption class="text-[11px] leading-relaxed text-dark-2" title={prompt}>
+              <figcaption class="text-xs leading-relaxed text-dark-2" title={prompt}>
                 {prompt}
               </figcaption>
             </figure>
@@ -768,7 +768,7 @@
         <div>
           <h3 class="mb-3 text-sm font-semibold text-dark-0">
             Checkpoints
-            <span class="ml-1 font-mono text-[11px] font-normal text-dark-2">
+            <span class="ml-1 font-mono text-xs font-normal text-dark-2">
               pick one to preview and download
             </span>
           </h3>
@@ -789,7 +789,7 @@
                     <IconStarFilled size={12} class="text-buzz" />
 
                   {/if}
-                  <span class="ml-auto font-mono text-[10px] text-dark-2">
+                  <span class="ml-auto font-mono text-xs text-dark-2">
                     {epoch.modelUrl ? 'weights ready' : 'no weights'}
                   </span>
                 </div>
@@ -825,7 +825,7 @@
           </div>
           <div class="ml-auto flex flex-col items-end gap-1.5">
             <div class="flex items-center gap-2">
-              <label for="further-epochs" class="font-mono text-[11px] text-dark-2">+ epochs</label>
+              <label for="further-epochs" class="font-mono text-xs text-dark-2">+ epochs</label>
               <Input
                 id="further-epochs"
                 type="number"
@@ -849,7 +849,7 @@
                 <Button onclick={() => (confirming = true)}>Train further</Button>
               {/if}
             </div>
-            <div class="font-mono text-[10px] text-dark-2">
+            <div class="font-mono text-xs text-dark-2">
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
               {:else if quote?.cost != null}
@@ -863,7 +863,7 @@
           </div>
         </div>
         {#if continueError}
-          <p class="mt-2 font-mono text-[11px] text-red-400">{continueError}</p>
+          <p class="mt-2 font-mono text-xs text-red-400">{continueError}</p>
         {/if}
       </div>
     {/if}
@@ -872,12 +872,12 @@
       <div class="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled>Publish a model page</Button>
         <span
-          class="rounded-full border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-dark-2"
+          class="rounded-full border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-dark-2"
         >
           Coming soon
         </span>
       </div>
-      <p class="m-0 font-mono text-[11px] text-dark-2">
+      <p class="m-0 font-mono text-xs text-dark-2">
         Publishing a trained model to Civitai from here is coming soon. For now, download the
         weights above.
       </p>
@@ -893,7 +893,7 @@
       >
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
-        <span class="font-mono text-[11px] font-normal text-dark-2">
+        <span class="font-mono text-xs font-normal text-dark-2">
           {d.dataset.length} image{d.dataset.length === 1 ? '' : 's'}
         </span>
         <span class="ml-auto flex items-center gap-1.5">
@@ -921,7 +921,7 @@
             <IconArchive size={13} stroke={2} />{downloading ? 'Zipping…' : 'Download'}
           </button>
           {#if downloadError}
-            <span class="font-mono text-[10px] text-red-400">{downloadError}</span>
+            <span class="font-mono text-xs text-red-400">{downloadError}</span>
           {/if}
         </span>
       </summary>
@@ -940,7 +940,7 @@
             {/if}
             {#if item.caption}
               <figcaption
-                class="line-clamp-2 font-mono text-[10px] leading-snug text-dark-2"
+                class="line-clamp-2 font-mono text-xs leading-snug text-dark-2"
                 title={item.caption}
               >
                 {item.caption}

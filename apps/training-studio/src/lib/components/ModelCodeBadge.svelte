@@ -1,10 +1,10 @@
 <script module lang="ts">
   export type BadgeSize = 'xs' | 'sm' | 'md' | 'lg';
   const SIZES: Record<BadgeSize, string> = {
-    xs: 'h-6 w-6 text-[9px]',
-    sm: 'h-7 w-7 text-[9px]',
-    md: 'h-8 w-8 text-[10px]',
-    lg: 'h-9 w-9 text-[10px]',
+    xs: 'h-6 w-6 text-xs',
+    sm: 'h-7 w-7 text-xs',
+    md: 'h-8 w-8 text-xs',
+    lg: 'h-9 w-9 text-xs',
   };
 </script>
 

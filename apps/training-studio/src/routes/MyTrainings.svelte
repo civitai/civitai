@@ -4,7 +4,6 @@
   import { hrefFor } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
   import { remixFromRun } from '$lib/reuse';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
@@ -35,8 +34,8 @@
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">My trainings</h2>
       <p class="mt-1 text-sm text-dark-2">
-        Every run stays here — open one for live progress or results, train it further, or start
-        something new.
+        Runs stay here for 30 days. Publish one and the model lives on Civitai for good, though the run
+        itself still leaves this list.
       </p>
     </div>
     <Button onclick={onNew}><IconPlus size={15} stroke={2} class="mr-1.5 inline" />New training</Button>
@@ -44,7 +43,7 @@
 
   {#if remixError}
     <p
-      class="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-[11px] text-red-400"
+      class="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-xs text-red-400"
     >
       {remixError}
     </p>
@@ -74,17 +73,20 @@
           ></a>
         {/if}
 
-        <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">
-          <ModelCodeBadge code={r.code} size="lg" />
-          <div class="min-w-0">
-            <div class="truncate text-sm font-bold text-dark-0 transition-colors group-hover:text-white">
+        <!-- Badge shares the title's line so the second line gets the full card width: it carries the
+             refund notice on a failed run, which must not be lost to truncation. -->
+        <div class="border-b border-dark-4 p-3.5">
+          <div class="flex items-center gap-3">
+            <div
+              class="min-w-0 flex-1 truncate text-sm font-bold text-dark-0 transition-colors group-hover:text-white"
+            >
               {r.name}
             </div>
-            <div class="truncate font-mono text-[11px] text-dark-2">
-              {r.base}{r.sub ? ` · ${r.sub}` : ''}
-            </div>
+            <RunStateBadge state={r.state} />
           </div>
-          <RunStateBadge state={r.state} class="ml-auto" />
+          <div class="mt-0.5 truncate font-mono text-xs text-dark-2">
+            <span class="font-bold text-dark-0">{r.base}</span>{r.sub ? ` · ${r.sub}` : ''}
+          </div>
         </div>
 
         <div class="p-3.5">
@@ -103,13 +105,13 @@
                 <div class="h-full w-1/3 animate-pulse bg-buzz/60"></div>
               {/if}
             </div>
-            <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
+            <div class="mt-2 font-mono text-xs text-dark-2">{r.progress}</div>
             {#if r.sampleUrls.length > 0 && r.media !== 'audio'}
               <div class="mt-3"><SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} /></div>
             {/if}
           {:else if r.state === 'failed'}
             <div
-              class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-[11px] text-dark-2"
+              class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-xs text-dark-2"
             >
               <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
             </div>

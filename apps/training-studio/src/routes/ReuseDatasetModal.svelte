@@ -61,7 +61,7 @@
     </Dialog.Header>
 
     {#if error}
-      <p class="font-mono text-[11px] text-red-400">{error}</p>
+      <p class="font-mono text-xs text-red-400">{error}</p>
     {/if}
 
     {#if trainings}
@@ -85,11 +85,11 @@
                 <ModelCodeBadge code={row.code} size="lg" />
                 <div class="min-w-0">
                   <div class="truncate text-sm font-semibold text-dark-0">{row.name}</div>
-                  <div class="truncate font-mono text-[11px] text-dark-2">
+                  <div class="truncate font-mono text-xs text-dark-2">
                     {row.base}{row.sub ? ` · ${row.sub}` : ''}
                   </div>
                 </div>
-                <span class="ml-auto font-mono text-[11px] text-dark-2">
+                <span class="ml-auto font-mono text-xs text-dark-2">
                   {loadingId === row.workflowId ? 'Loading…' : 'Use'}
                 </span>
               </button>

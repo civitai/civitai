@@ -234,7 +234,7 @@
         placeholder="e.g. my_character — defaults to your trigger word"
         class="mt-2"
       />
-      <p class="mt-1.5 text-[11px] text-dark-2">Shown as the run's title; you can rename it later.</p>
+      <p class="mt-1.5 text-xs text-dark-2">Shown as the run's title; you can rename it later.</p>
     </div>
 
     <div class="flex items-center justify-between">
@@ -265,7 +265,7 @@
                 {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}
               </div>
               {#if noAdvancedParams(run)}
-                <div class="mt-1 font-mono text-[11px] text-dark-2">
+                <div class="mt-1 font-mono text-xs text-dark-2">
                   No advanced settings for this model
                 </div>
               {:else}
@@ -286,7 +286,7 @@
               {/if}
             </div>
             <div class="ml-auto flex flex-col">
-              <span class="font-mono text-[10px] uppercase tracking-wider text-dark-2">Steps</span>
+              <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Steps</span>
               <Input
                 value={String(params[i]!.steps)}
                 oninput={(e) => setSteps(i, e.currentTarget.value)}
@@ -311,7 +311,7 @@
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const b = boundsFor(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
-              <div class="mb-2 flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider text-primary">
+              <div class="mb-2 flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-primary">
                 <IconSettings size={12} stroke={2} />Advanced training settings
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
@@ -390,7 +390,7 @@
         {#if prompts.length < 6}
           <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
         {/if}
-        <p class="mt-2.5 font-mono text-[11px] text-dark-2">
+        <p class="mt-2.5 font-mono text-xs text-dark-2">
           Applied to every run. Extra prompts add a small per-image charge.
         </p>
       </div>
@@ -420,11 +420,11 @@
         {#if total == null}—{:else}<IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}{/if}
       </span>
     </div>
-    <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
+    <div class="mt-1 text-right font-mono text-xs text-dark-2">
       ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} image{imageCount === 1 ? '' : 's'}
     </div>
 
-    <p class="mt-3 font-mono text-[10px] text-dark-2">
+    <p class="mt-3 font-mono text-xs text-dark-2">
       Paid with <span class="text-blue-400">Blue</span> first, then your
       <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz — switch in the top bar.
     </p>
@@ -450,9 +450,9 @@
       {/if}
     </Button>
     {#if startError}
-      <p class="mt-2 text-center font-mono text-[11px] text-red-400">{startError}</p>
+      <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {/if}
-    <p class="mt-3 text-center font-mono text-[11px] text-dark-2">
+    <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
     </p>
   </aside>

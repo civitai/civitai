@@ -64,6 +64,12 @@ export interface ModelCard {
    *  defaulting to `label`. Most models are single-format. */
   bothLabels?: boolean;
   description: string;
+  /** Free-text badge on the card — 'recommended', 'anime', 'latest', anything. Absent means no badge.
+   *  Independent of `TYPES[].recommended`, which picks the default selection rather than labelling it. */
+  flag?: string;
+  /** Public release of the NEWEST selectable version, `YYYY-MM-DD` or `YYYY-MM` where only the month
+   *  could be established. Hand-researched — re-check it when a card gains a version. */
+  released?: string;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
 }
@@ -76,7 +82,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'FL',
     media: 'image',
     label: 'caption',
-    description: 'High-quality images and accurate text. Great all-rounder.',
+    description: 'High-quality images and accurate text.',
+    released: '2024-08-01',
     versions: [
       {
         key: 'flux_dev',
@@ -96,6 +103,7 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'caption',
     description: 'Next-gen Flux. Highest fidelity.',
+    released: '2025-11-25',
     versions: [
       {
         key: 'flux2_dev',
@@ -115,7 +123,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'FK',
     media: 'image',
     label: 'caption',
-    description: 'Efficient Flux.2 Klein base models.',
+    description: 'Efficient Flux.2 with faster generation.',
+    released: '2026-01-15',
     versions: [
       {
         key: 'flux2klein_9b',
@@ -143,7 +152,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'CH',
     media: 'image',
     label: 'caption',
-    description: 'Open-source, uncensored, community-built.',
+    description: 'Unfiltered, with real negative prompt control.',
+    released: '2025-08-22',
     versions: [
       {
         key: 'chroma',
@@ -160,7 +170,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'QW',
     media: 'image',
     label: 'caption',
-    description: 'High-quality generation with strong understanding.',
+    description: 'Complex text and precise edits, English or Chinese.',
+    released: '2025-08-04',
     versions: [
       {
         key: 'qwen_image',
@@ -178,7 +189,9 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ZI',
     media: 'image',
     label: 'caption',
-    description: 'High-speed image generation.',
+    description: 'Photoreal in seconds. The fastest option here.',
+    released: '2026-01-28',
+    flag: 'recommended',
     versions: [
       {
         key: 'zimageturbo',
@@ -203,7 +216,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'HD',
     media: 'image',
     label: 'caption',
-    description: "HiDream.ai's 8B unified transformer for text-to-image.",
+    description: '2K output, editing and storyboards in one model.',
+    released: '2026-05-08',
     versions: [
       {
         key: 'hidream_o1',
@@ -221,7 +235,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ER',
     media: 'image',
     label: 'caption',
-    description: "Baidu's ERNIE image generation model.",
+    description: 'Poster layouts and text in several languages.',
+    released: '2026-04-15',
     versions: [
       {
         key: 'ernie',
@@ -239,7 +254,9 @@ export const MODEL_CARDS: ModelCard[] = [
     media: 'image',
     label: 'tag',
     bothLabels: true,
-    description: "CircleStone Labs' Anima image model (Base v1.0).",
+    description: 'The anime pick. Booru tags or plain English.',
+    released: '2026-05-15',
+    flag: 'anime',
     versions: [
       {
         key: 'anima',
@@ -257,7 +274,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'BO',
     media: 'image',
     label: 'caption',
-    description: "Boogu's unified multimodal image model (Base v0.1).",
+    description: 'All-rounder: dense 2K text, editing, 4-step speed.',
+    released: '2026-06-16',
     versions: [
       {
         key: 'boogu',
@@ -275,7 +293,9 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'K2',
     media: 'image',
     label: 'caption',
-    description: "Krea AI's in-house image generation model.",
+    description: 'The realism pick — skin, hair and light from real photos.',
+    released: '2026-06-22',
+    flag: 'latest',
     versions: [
       {
         key: 'krea2',
@@ -293,7 +313,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'MF',
     media: 'image',
     label: 'caption',
-    description: "Microsoft's 4B native-resolution image model.",
+    description: 'Native 512 to 2048px at any aspect ratio, no cropping.',
+    released: '2026-07',
     versions: [
       {
         key: 'mageflow',
@@ -311,7 +332,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ID',
     media: 'image',
     label: 'caption',
-    description: "Ideogram's text-to-image model with strong typography.",
+    description: 'Design work: logos, signage, layered typography.',
+    released: '2026-06-03',
     versions: [
       {
         key: 'ideogram4',
@@ -330,7 +352,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'XL',
     media: 'image',
     label: 'tag',
-    description: 'Fast, versatile, huge community.',
+    description: 'The largest LoRA and ControlNet library.',
+    released: '2023-07-26',
     versions: [
       {
         key: 'sdxl',
@@ -350,7 +373,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'IL',
     media: 'image',
     label: 'tag',
-    description: 'SDXL-based, tuned for illustration / anime.',
+    description: 'Booru-tag anime with clean lines and a big style library.',
+    released: '2024-09',
     versions: [
       {
         key: 'illustrious',
@@ -367,7 +391,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'PN',
     media: 'image',
     label: 'tag',
-    description: 'SDXL-based, tuned for anthro / stylized.',
+    description: 'Anthro and stylised characters, deep LoRA back catalogue.',
+    released: '2024-01-07',
     versions: [
       {
         key: 'pony',
@@ -384,7 +409,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: '1.5',
     media: 'image',
     label: 'tag',
-    description: 'Cheapest and fastest. Lower fidelity.',
+    description: 'Fastest and cheapest to iterate on.',
+    released: '2022-10-20',
     versions: [
       {
         key: 'sd_1_5',
@@ -425,7 +451,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'WAN',
     media: 'video',
     label: 'caption',
-    description: 'Performant, high-quality video LoRA training.',
+    description: 'Silent video with the deepest LoRA ecosystem.',
+    released: '2025-07-28',
     versions: [
       {
         key: 'wan_2_2_t2v_a14b',
@@ -453,7 +480,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'HY',
     media: 'video',
     label: 'caption',
-    description: 'Performant video generation (720p).',
+    description: 'Cinematic video, quick to train.',
+    released: '2025-11-21',
     versions: [
       {
         key: 'hy_720_fp8',
@@ -472,7 +500,8 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'LTX',
     media: 'video',
     label: 'caption',
-    description: 'Lightricks video generation.',
+    description: 'Fast video with synced audio and multi-shot scenes.',
+    released: '2026-08-11',
     versions: [
       {
         key: 'ltx25',
@@ -505,7 +534,9 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'H3',
     media: 'video',
     label: 'caption',
-    description: 'MiniMax H3 video generation.',
+    description: 'Video with stereo sound and consistent characters.',
+    released: '2026-08-02',
+    flag: 'recommended',
     versions: [
       {
         key: 'minimaxh3',
@@ -524,7 +555,9 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'ACE',
     media: 'audio',
     label: 'caption',
-    description: 'ACE-Step music / audio LoRA training.',
+    description: "Teach it a genre or an artist's sound from a few tracks.",
+    released: '2026-04-30',
+    flag: 'recommended',
     versions: [
       {
         key: 'acestep_15',
@@ -581,7 +614,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Character',
     icon: '🧍',
     medias: ['image', 'video'],
-    recommended: { image: 'zimage', video: 'wan' },
+    recommended: { image: 'zimage', video: 'minimaxh3' },
     seen: 100,
     minImg: 10,
   },
@@ -590,7 +623,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Style',
     icon: '🎨',
     medias: ['image', 'video', 'audio'],
-    recommended: { image: 'zimage', video: 'wan', audio: 'acestep' },
+    recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
     seen: 150,
     minImg: 15,
   },
@@ -599,7 +632,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Concept',
     icon: '💡',
     medias: ['image', 'video', 'audio'],
-    recommended: { image: 'zimage', video: 'wan', audio: 'acestep' },
+    recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
     seen: 150,
     minImg: 15,
   },
@@ -608,7 +641,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Effect',
     icon: '✨',
     medias: ['video'],
-    recommended: { video: 'wan' },
+    recommended: { video: 'minimaxh3' },
     seen: 150,
     minImg: 20,
   },
@@ -626,6 +659,47 @@ export const cardByType = (type: string): ModelCard | undefined =>
 
 export const cardsForMedia = (media: Media): ModelCard[] =>
   MODEL_CARDS.filter((c) => c.media === media);
+
+/**
+ * The version label to show beside a card's name, blank when it only repeats it. A single-version card
+ * whose version carries the family name would otherwise read "Illustrious · Illustrious". Shared by the
+ * flow and the orchestrator row mapper so the rule is stated once.
+ */
+export function versionSuffix(cardName: string, versionLabel: string | undefined): string {
+  if (!versionLabel) return '';
+  return versionLabel.trim().toLowerCase() === cardName.trim().toLowerCase() ? '' : versionLabel;
+}
+
+/**
+ * How old a base model is, for the card. Relative inside six months ("3 months ago") because that is the
+ * window where recency is the point; absolute after it ("Aug 2024"), because "26 months ago" is arithmetic
+ * the reader has to do and a year is what they actually want to know. Month-only inputs (`YYYY-MM`, where
+ * the release day could not be established) anchor to the 1st, so they can read a few days young in the
+ * relative window — immaterial at this granularity, and never wrong in the absolute one.
+ */
+export function releasedLabel(released: string | undefined, now: Date = new Date()): string | null {
+  if (!released) return null;
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(released);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const then = new Date(Date.UTC(Number(y), Number(mo) - 1, d ? Number(d) : 1));
+  if (Number.isNaN(then.getTime())) return null;
+
+  const months =
+    (now.getUTCFullYear() - then.getUTCFullYear()) * 12 + (now.getUTCMonth() - then.getUTCMonth());
+  const absolute = then.toLocaleDateString('en-US', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  if (months >= 6 || months < 0) return absolute;
+
+  const days = Math.floor((now.getTime() - then.getTime()) / 86_400_000);
+  if (days < 7) return 'new this week';
+  if (days < 14) return 'last week';
+  if (days < 60) return `${Math.max(1, Math.round(days / 7))} weeks ago`;
+  return `${Math.max(2, months)} months ago`;
+}
 
 /** Resolve a training workflow's exact base model from the `air` on its training step. */
 export const findByAir = (

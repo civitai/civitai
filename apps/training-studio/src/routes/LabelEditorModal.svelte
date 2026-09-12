@@ -89,7 +89,7 @@
       class="flex flex-col items-center justify-center gap-3 rounded border border-dark-4 bg-dark-7 p-4 {cls}"
     >
       <IconMusic size={28} stroke={2} class="text-dark-2" />
-      <div class="w-full break-all text-center font-mono text-[10px] text-dark-2">{img.name}</div>
+      <div class="w-full break-all text-center font-mono text-xs text-dark-2">{img.name}</div>
       <audio src={img.previewUrl} controls preload="metadata" class="w-full"></audio>
     </div>
   {:else if img.mediaType === 'video'}
@@ -127,7 +127,7 @@
             </div>
 
             {#if triggerText && !tagsHaveTrigger(trigger, editing.tags)}
-              <div class="mb-2 flex items-center gap-2 text-[11px] text-dark-2">
+              <div class="mb-2 flex items-center gap-2 text-xs text-dark-2">
                 <span class="rounded border border-buzz/30 bg-buzz/10 px-2 py-0.5 font-mono text-buzz">
                   {triggerText}
                 </span>
@@ -137,7 +137,7 @@
 
             <div class="flex min-h-[64px] flex-wrap content-start gap-1.5 rounded border border-dark-4 bg-dark-7 p-2.5">
               {#if editing.tags.length === 0}
-                <span class="self-center font-mono text-[11px] text-dark-2">
+                <span class="self-center font-mono text-xs text-dark-2">
                   No tags yet — type below, paste comma-separated, or re-run auto-label.
                 </span>
               {/if}
@@ -181,7 +181,7 @@
 
             {#if suggestions.length > 0}
               <div class="mt-2">
-                <div class="mb-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">From this dataset</div>
+                <div class="mb-1 font-mono text-xs uppercase tracking-wider text-dark-2">From this dataset</div>
                 <div class="flex flex-wrap gap-1">
                   {#each suggestions as s (s)}
                     <button
@@ -190,7 +190,7 @@
                         newTag = s;
                         addTag();
                       }}
-                      class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-[11px] text-dark-1 hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-xs text-dark-1 hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       + {s}
                     </button>
