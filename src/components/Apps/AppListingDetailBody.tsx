@@ -62,6 +62,7 @@ import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaborator
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
+import { AppListingRecentReviews } from '~/components/Apps/AppListingRecentReviews';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -1303,6 +1304,28 @@ export function AppListingDetailBody({
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>
+
+      {/* RECENT REVIEWS — a BOUNDED taste of the reviews, full-width directly
+          below the description column and ABOVE the discovery rail.
+          🔴 THE BOUND IS THE DESIGN. A tester asked for the reviews section to be
+          MOVED up whole and for the discovery rail to move to the very bottom.
+          Neither was done: the full list below is unbounded, so hoisting it would
+          bury the rail (and the discussion) behind an arbitrary amount of
+          scrolling — the same reasoning the rail's own placement comment records,
+          which still holds. What went up instead is a block that CANNOT grow: at
+          most `INLINE_RECENT_REVIEWS_LIMIT` rows plus a "See more reviews" link
+          down to the full list, which stays where it is and keeps its anchor id.
+          A future change that lets this block grow without limit defeats the
+          entire reason this shape was chosen over the literal request.
+          🔴 The DOM order Description → this block → RelatedListings →
+          `#LISTING_REVIEWS_ANCHOR_ID` is the decision, and it is pinned by a test
+          that asserts relative document position (not source text, and not mere
+          presence — both nodes present passes in either order, which is exactly
+          the defect). See `AppListingDetailBody.recentReviews.browser.test.tsx`.
+          Renders NOTHING at zero reviews (no heading, no placeholder) and is
+          omitted in preview for the same reason as its two neighbours: a shadow
+          listing has no review rows and must not be queried. */}
+      {!preview && <AppListingRecentReviews appListingId={detail.id} />}
 
       {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
           Placed AFTER the two-column body but BEFORE the reviews/comments: those

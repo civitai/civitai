@@ -94,6 +94,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     appListings: {
       // The discovery rail sits BELOW the two-column grid, so what it returns cannot
       // move a tile. Empty anyway, to keep the suite network-free.
+      // The inline recent-reviews block's BOUNDED read. Empty here: this file is
+      // about other surfaces, and an empty page makes the block render nothing —
+      // the shape those assertions were written against. Without the key, the real
+      // `trpc.appListings.listReviews` is undefined and the component THROWS.
+      listReviews: {
+        useQuery: () => ({ data: { items: [], nextCursor: null }, isLoading: false }),
+      },
       listAvailable: { useQuery: () => ({ data: { items: [] }, isLoading: false }) },
       getMyReview: { useQuery: () => ({ data: null, isLoading: false }) },
       upsertReview: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
