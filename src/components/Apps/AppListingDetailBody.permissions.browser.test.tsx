@@ -136,6 +136,11 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     scopes: [],
+    // Same contract as `scopes`: `projectListingDetail` guarantees an array, and
+    // the body reads `.length` — a fixture omitting it would not match any real
+    // payload. `[]` keeps these ON-SITE fixtures rendering no connect-permissions
+    // section, which is what an on-site listing produces.
+    connectScopes: [],
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',

@@ -450,6 +450,52 @@ export type ListingDetail = {
    */
   scopes: string[];
   /**
+   * The OAuth account permissions an OFF-SITE connect listing will REQUEST, as
+   * TokenScope enum-keys (e.g. `['UserRead','BuzzRead']`). `[]` for every listing
+   * that has none — on-site, external-link, and any connect listing whose
+   * `connectRequestedScopes` column is NULL or zero.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — AND THIS FIELD IS A NEW PUBLIC EXPOSURE. Like
+   * `scopes` above, it is returned verbatim by the unauthenticated
+   * `GET /api/v1/apps/{slug}` at `PUBLIC_APPS_CATALOG_SCOPE = 'full'`, so this
+   * publishes something that was previously visible only to moderators (the
+   * `ConnectScopesPanel` inside `OffsiteReviewQueue`). That is the decision being
+   * taken here; it is not a no-op. The same blunt operator kill switch applies
+   * (`PUBLIC_APPS_CATALOG_DISABLED_FLAG`) — it withholds the whole catalog, not
+   * this field.
+   *
+   * Why it is the right call: the page already tells the viewer the app "can
+   * connect to your Civitai account", and then disclosed nothing about what it
+   * would ask for — while an ON-SITE app enumerates its approved scopes in full.
+   * The surface granting the WEAKER capability disclosed MORE than the one
+   * granting real account access. These are the same coarse capability keys the
+   * OAuth consent screen shows at sign-in; publishing them earlier lets a viewer
+   * weigh the ask BEFORE starting a flow, and they identify no user and carry no
+   * per-user grant state.
+   *
+   * 🔴 NOT `connectScopeJustifications` — the owner-authored free-text rationale
+   * beside this column stays moderator-only. Disclosing it is a SEPARATE exposure
+   * decision that has not been made; nothing in this DTO carries it.
+   *
+   * 🔴 APPROVED-ONLY IS ENFORCED UPSTREAM, NOT HERE, AND THAT IS DELIBERATE.
+   * `getListingDetail` returns null for any row whose `status !== 'approved'`
+   * before this projection is reached, so a draft's intended scopes can never
+   * ride the public read. A second status clause inside `projectListingDetail`
+   * would be unreachable on that path AND actively wrong on the other one:
+   * `getListingPreviewForReview` is deliberately NOT status-filtered so a
+   * moderator can preview a draft, and gating here would blank the very
+   * enumeration they are reviewing. The reliance is pinned by a test rather than
+   * by this sentence — see `appListingConnectScopes.test.ts`.
+   *
+   * An array of STRINGS, not the raw `Int` bitmask: this crosses the
+   * transformer-less public REST boundary, so it must be a JSON-safe scalar
+   * shape, and a bitmask would couple every external consumer to bit positions.
+   * The decode runs server-side through the shared `tokenScopeMaskToList`, which
+   * is the same table the hub's consent screen uses — forking it would be a
+   * latent security bug, which is why that module says so in its own docstring.
+   */
+  connectScopes: string[];
+  /**
    * AUTHOR-DECLARED "this app is in beta" flag. Same allowlist justification as
    * `ListingCard.isBeta` — a label the author publishes about their own app.
    *

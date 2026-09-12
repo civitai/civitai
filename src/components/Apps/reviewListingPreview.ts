@@ -201,6 +201,20 @@ export function buildListingDetailPreview(
     // AppBlock and therefore no approved scopes — the same answer
     // `projectListingDetail` gives an off-site row.
     scopes: [],
+    // 🔴 `[]`, NEVER omitted, for the same contract reason as `scopes` above —
+    // `AppListingDetailBody` reads `detail.connectScopes.length`, so omitting it
+    // THROWS rather than degrades.
+    //
+    // ⚠ Unlike `scopes`, `[]` here is a LIMITATION, not the honest answer. This
+    // fallback IS built from an off-site publish request, and an off-site connect
+    // listing genuinely can request scopes — but `OffsitePendingRow` does not carry
+    // `connectRequestedScopes`, so there is nothing truthful to decode. Same shape,
+    // same owned trade-off as `sourceRepoUrl` above: widening it means widening the
+    // review-row query. It costs a moderator nothing today, because the authoritative
+    // scope-review surface is `ConnectScopesPanel` in `OffsiteReviewQueue`, which
+    // reads the listing row directly and is unaffected by this builder. If this
+    // fallback ever becomes the primary review path, revisit it with `sourceRepoUrl`.
+    connectScopes: [],
     // Same limitation, same reason, same safe direction as the card builder's `isBeta`.
     isBeta: false,
     betaMessage: null,
