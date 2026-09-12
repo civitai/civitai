@@ -35,6 +35,8 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 import {
   CH_RANKING_DEPTH,
+  CH_RANKING_MAX_ATTEMPTS,
+  CH_RANKING_RETRY_BUDGET_MS,
   PERIOD_WINDOW_DAYS,
   getWindowedCollectionRanking,
   isWindowedPeriod,
@@ -162,8 +164,13 @@ describe('getWindowedCollectionRanking', () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it('reports `clickhouse-error` when the query throws, rather than propagating', async () => {
-    mockQuery.mockRejectedValueOnce(new Error('connection reset'));
+  // 🔴 `mockRejectedValue`, NOT `mockRejectedValueOnce`, in every test below that means
+  // "the query throws". A single-shot rejection no longer degrades — the retry catches
+  // it — so a `…Once` here would silently become a test of the SECOND call's default
+  // resolution. Both of these were `…Once` until the retry shipped, and one of them then
+  // passed for the wrong reason (`{ ids: [] }` is also `!==` the disabled result).
+  it('reports `clickhouse-error` when EVERY attempt throws, rather than propagating', async () => {
+    mockQuery.mockRejectedValue(new Error('connection reset'));
     const result = await getWindowedCollectionRanking({ period: MetricTimeframe.Year, now: NOW });
     expect(result).toEqual({ ids: null, source: 'unavailable', reason: 'clickhouse-error' });
   });
@@ -172,9 +179,83 @@ describe('getWindowedCollectionRanking', () => {
     clickhouseBox.client = undefined;
     const disabled = await getWindowedCollectionRanking({ period: MetricTimeframe.Day, now: NOW });
     clickhouseBox.client = { $query: mockQuery };
-    mockQuery.mockRejectedValueOnce(new Error('boom'));
+    mockQuery.mockRejectedValue(new Error('boom'));
     const errored = await getWindowedCollectionRanking({ period: MetricTimeframe.Day, now: NOW });
     expect(disabled).not.toEqual(errored);
+    expect(errored).toEqual({ ids: null, source: 'unavailable', reason: 'clickhouse-error' });
+  });
+
+  /**
+   * THE RETRY, at the level the transport actually fails.
+   *
+   * `@clickhouse/client` 0.2.10 throws `Socket hang up after 3 retries` the moment every
+   * pooled keep-alive socket it tries is past `keep_alive.socket_ttl` — ~341 times an
+   * hour against the production deployment on 2026-09-11, and once on the single live
+   * `period=Month` request in that day's ingress access log. Nothing is sent, so
+   * the failure is instantaneous; a second ask opens a fresh connection.
+   */
+  describe('the retry', () => {
+    it('re-asks once after a Socket-hang-up and serves the ranking', async () => {
+      mockQuery
+        .mockRejectedValueOnce(new Error('ClickHouse query failed: Socket hang up after 3 retries'))
+        .mockResolvedValueOnce([{ id: 5 }, { id: 8 }]);
+      const result = await getWindowedCollectionRanking({
+        period: MetricTimeframe.Month,
+        now: NOW,
+      });
+      expect(result).toEqual({ ids: [5, 8], source: 'clickhouse' });
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+    });
+
+    it('costs nothing on the happy path — one success is one ask', async () => {
+      mockQuery.mockResolvedValueOnce([{ id: 1 }]);
+      await getWindowedCollectionRanking({ period: MetricTimeframe.Month, now: NOW });
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it('is BOUNDED at CH_RANKING_MAX_ATTEMPTS — it is a retry, not a spin', async () => {
+      mockQuery.mockRejectedValue(
+        new Error('ClickHouse query failed: Socket hang up after 3 retries')
+      );
+      await getWindowedCollectionRanking({ period: MetricTimeframe.Month, now: NOW });
+      expect(mockQuery).toHaveBeenCalledTimes(CH_RANKING_MAX_ATTEMPTS);
+    });
+
+    /**
+     * 🔴 THE BUDGET IS THE HALF THAT MATTERS, because it is what stops the retry
+     * doubling the failure mode it is NOT for: a 30 s `request_timeout` against a
+     * saturated server. The clock, not an attempt counter, separates the two — so
+     * this test makes the first attempt SLOW and asserts there is no second one.
+     */
+    it('does not retry a failure that already spent the whole budget', async () => {
+      mockQuery.mockImplementation(async () => {
+        vi.advanceTimersByTime(CH_RANKING_RETRY_BUDGET_MS + 1);
+        throw new Error('ClickHouse query failed: Timeout error');
+      });
+      const result = await getWindowedCollectionRanking({
+        period: MetricTimeframe.Month,
+        now: NOW,
+      });
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ ids: null, source: 'unavailable', reason: 'clickhouse-error' });
+    });
+
+    it('still retries a failure that spent only PART of the budget', async () => {
+      // The boundary from the other side: same shape, one millisecond under. Without
+      // this, a mutant that never retries would survive the test above.
+      mockQuery
+        .mockImplementationOnce(async () => {
+          vi.advanceTimersByTime(CH_RANKING_RETRY_BUDGET_MS - 1);
+          throw new Error('ClickHouse query failed: Socket hang up after 3 retries');
+        })
+        .mockResolvedValueOnce([{ id: 42 }]);
+      const result = await getWindowedCollectionRanking({
+        period: MetricTimeframe.Month,
+        now: NOW,
+      });
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ ids: [42], source: 'clickhouse' });
+    });
   });
 
   it('an empty window is an EMPTY LIST, not an unavailability — the caller decides', async () => {

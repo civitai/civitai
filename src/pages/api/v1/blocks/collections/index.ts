@@ -24,6 +24,7 @@ import {
   getWindowedCollectionRanking,
   isWindowedPeriod,
 } from '~/server/services/blocks/block-collection-popularity.service';
+import { recordBlockCollectionRankingSource } from '~/server/prom/block-collection-ranking.metrics';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -351,6 +352,17 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         sourceReason = 'period-ignored-for-non-popularity-sort';
       }
     }
+
+    // 🔴 ONE INCREMENT PER WINDOWED REQUEST, SUCCESS INCLUDED — AND THAT IS THE POINT.
+    // Four of the five fallback reasons above emit no log line at all (only
+    // `clickhouse-error` does, inside the ranking service), so before this counter a
+    // silent log stream and a healthy feed were the same observation from outside.
+    // Counting every period-bearing request, not only the degraded ones, is what makes
+    // `source="clickhouse"` a readable positive rather than an absence. It sits here
+    // rather than in the ranking service because this is the only place where the FULL
+    // reason space exists — the service never learns about `empty-window` or either
+    // `period-ignored-*` outcome. See `~/server/prom/block-collection-ranking.metrics`.
+    if (period) recordBlockCollectionRankingSource({ period, source, reason: sourceReason });
 
     // 🔴 EMITTED ONLY WHEN A `period` WAS SUPPLIED. This empty-object-spread is the
     // whole backward-compatibility mechanism: a caller that never sends `period`
