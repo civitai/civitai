@@ -9,12 +9,16 @@ import {
 } from './cohort';
 import {
   MAX_CONTENT_SAMPLES,
+  MAX_FILENAME_SAMPLES,
   collectCohortSignals,
   emptyCohortSignals,
   type EvidenceReader,
 } from './evidence';
+import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from './fingerprint-keys';
 import {
   BOT_ACCOUNT_HEURISTICS,
+  CONTENT_TEMPLATING_ID,
+  contentTemplatingSourceScore,
   isCommonEmailDomain,
   registrationClusterGroupKey,
 } from './heuristics';
@@ -101,6 +105,9 @@ export type BotAccountDetectionOptions = {
   minConfidence?: number;
   /** Ceiling on content rows read for the templating heuristic. Defaults to `MAX_CONTENT_SAMPLES`. */
   maxContentSamples?: number;
+  /** Ceiling on image rows read for the templating heuristic's filename half. Defaults to
+   *  `MAX_FILENAME_SAMPLES`. Separate from the content budget — see that constant. */
+  maxFilenameSamples?: number;
 };
 
 export type BotAccountDetectionResult = {
@@ -162,6 +169,7 @@ export async function runBotAccountDetection(
   const maxFindingsPerReport = options.maxFindingsPerReport ?? MAX_FINDINGS_PER_REPORT;
   const minConfidence = options.minConfidence ?? MIN_REPORTED_CONFIDENCE;
   const maxContentSamples = options.maxContentSamples ?? MAX_CONTENT_SAMPLES;
+  const maxFilenameSamples = options.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
   const log = deps.log ?? (() => undefined);
   const checkCanceled = deps.checkCanceled ?? (() => undefined);
 
@@ -190,6 +198,10 @@ export async function runBotAccountDetection(
     ? await collectCohortSignals(deps.evidence, cohort.members, {
         chunkSize: pageSize,
         maxContentSamples,
+        maxFilenameSamples,
+        // The run's own clock as the filename read's upper bound, so the sample is a snapshot of
+        // the window rather than drifting with whatever was uploaded while the run walked.
+        createdBefore: startedAt,
         // The window this run already computed, handed to the ClickHouse read as its `time` bound.
         // Every cohort account was created after it, so it prunes the scan without removing a row
         // the query wants.
@@ -206,6 +218,9 @@ export async function runBotAccountDetection(
     distinctIps: signals.membersPerIp.size,
     distinctDomains: signals.membersPerDomain.size,
     distinctFingerprints: signals.membersPerFingerprint.size,
+    filenameSamples: signals.sources.filenameSamples,
+    filenameBudgetExhausted: signals.sources.filenameBudgetExhausted,
+    membersSampledForFilenames: signals.sources.membersSampledForFilenames,
   });
 
   const memberById = new Map(cohort.members.map((m) => [m.userId, m]));
@@ -252,6 +267,26 @@ export async function runBotAccountDetection(
     (m) => m.emailDomain !== null && isCommonEmailDomain(m.emailDomain)
   ).length;
 
+  /** Distinct cluster keys from ONE fingerprint source. See the counters below for why the two are
+   *  never summed into a single series. */
+  const distinctFingerprints = (prefix: string) => {
+    let n = 0;
+    for (const key of signals.membersPerFingerprint.keys()) if (key.startsWith(prefix)) n += 1;
+    return n;
+  };
+
+  // 🔴 WHICH HALF OF `content-templating` FIRED. The heuristic now has two fingerprint sources
+  // behind one id, so `heuristic:content-templating:fired` can no longer answer the only question
+  // the shadow phase asks of a signal — whether IT, specifically, is earning its place. The comment
+  // half fired zero times across five production runs while that was invisible inside a single
+  // counter; these are what make the same failure visible next time.
+  //
+  // Counted over EVERY scored member, matching `fired`'s own population so the three are directly
+  // comparable. They may sum to MORE than `fired` — see `contentTemplatingSourceScore`.
+  const firedFromSource = (prefix: string) =>
+    cohort.members.filter((m) => contentTemplatingSourceScore(m.userId, signals, prefix) > 0)
+      .length;
+
   const counters: Record<string, number> = {
     window_hours: windowHours,
     cohort_scanned: cohort.scanned,
@@ -292,10 +327,24 @@ export async function runBotAccountDetection(
     evidence_content_budget: maxContentSamples,
     evidence_distinct_registration_ips: signals.membersPerIp.size,
     evidence_distinct_email_domains: signals.membersPerDomain.size,
-    evidence_distinct_content_fingerprints: signals.membersPerFingerprint.size,
+    // 🔴 COUNTED PER NAMESPACE, NOT AS `membersPerFingerprint.size`. That map now carries both
+    // sources, so the bare size would have silently redefined an existing series: a run whose
+    // `evidence_distinct_content_fingerprints` jumped from 3 to 4,000 would read as an explosion of
+    // comment templating on the day the filename source shipped. The two are separate questions and
+    // get separate keys.
+    evidence_distinct_content_fingerprints: distinctFingerprints(TEXT_FINGERPRINT_PREFIX),
+    evidence_distinct_filename_fingerprints: distinctFingerprints(FILENAME_FINGERPRINT_PREFIX),
+    evidence_filename_samples: signals.sources.filenameSamples ? 1 : 0,
+    evidence_filename_budget_exhausted: signals.sources.filenameBudgetExhausted ? 1 : 0,
+    evidence_members_sampled_for_filenames: signals.sources.membersSampledForFilenames,
+    evidence_filename_budget: maxFilenameSamples,
     domains_suppressed_common: domainsSuppressed,
 
     ...heuristicCounters(scores),
+    [`heuristic:${CONTENT_TEMPLATING_ID}:fired_text`]: firedFromSource(TEXT_FINGERPRINT_PREFIX),
+    [`heuristic:${CONTENT_TEMPLATING_ID}:fired_filename`]: firedFromSource(
+      FILENAME_FINGERPRINT_PREFIX
+    ),
     // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
     ...confidenceBucketCounters(scores),
     // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
@@ -353,6 +402,21 @@ export async function runBotAccountDetection(
         `${signals.sources.membersSampledForContent} of ${cohort.members.length} members. Members ` +
         `are sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ` +
         `scored 0 on content templating for want of data.`
+      : '') +
+    // The filename half of `content-templating` gets its own disclosures, for the same reason the
+    // comment half has them: a zero from a source that never ran is not a zero from a source that
+    // found nothing, and only these sentences tell a reader which one they are looking at.
+    (signals.sources.filenameSamples
+      ? ''
+      : ` 🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read either did not run or ` +
+        `failed and its partial result was discarded — so the filename half of the ` +
+        `content-templating heuristic scored 0 for every member for want of data. That is not ` +
+        `evidence that no accounts uploaded files under the same name.`) +
+    (signals.sources.filenameBudgetExhausted
+      ? ` 🔴 THE FILENAME SAMPLE BUDGET (${maxFilenameSamples} rows) WAS EXHAUSTED after ` +
+        `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} members. ` +
+        `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
+        `window and scored 0 on filename clustering for want of data.`
       : '') +
     (cohort.capped
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +
