@@ -66,6 +66,18 @@ CREATE TABLE "ModActivity" (
 CREATE TYPE "DomainColor" AS ENUM ('blue', 'green', 'red', 'all');
 `;
 
+/**
+ * The table as it stands on a database that has NOT had `20260911120000_feedback_triage` applied —
+ * which is every environment until a human runs it, this page's own deploy window included.
+ */
+export async function freshPreMigrationDb(): Promise<PGlite> {
+  const db = await PGlite.create();
+  await db.exec(PRELUDE);
+  await db.exec(migration('20260521120000_add_bug_table'));
+  await db.exec(migration('20260813180000_feedback'));
+  return db;
+}
+
 export async function freshFeedbackDb(): Promise<PGlite> {
   const db = await PGlite.create();
   await db.exec(PRELUDE);

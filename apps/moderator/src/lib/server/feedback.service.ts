@@ -16,18 +16,32 @@ import type { FeedbackStatus } from '$lib/feedback';
 
 export const FEEDBACK_PAGE_SIZE = 50;
 
+/** The four columns `20260911120000_feedback_triage` adds — the only ones this page can explain. */
+const TRIAGE_COLUMNS = ['triageNote', 'handledById', 'handledAt', 'bugId'];
+
 /**
- * Postgres `undefined_column`, i.e. this database has not had
- * `20260911120000_feedback_triage` applied yet.
+ * Postgres `undefined_column` naming a column that migration adds, i.e. this database has not had
+ * it applied yet. Every migration here is applied by hand per environment, and
+ * `moderator:admin` reaches the page through `SUPER_ROLE` on day one without any `/admin` tick, so
+ * the window is real rather than theoretical.
  *
- * 🔴 Narrow ON PURPOSE — it matches ONE code and nothing else. Every migration here is applied by
- * hand per environment, so the window between this page deploying and someone running the SQL is
- * real, and `moderator:admin` reaches the page through `SUPER_ROLE` on day one without any
- * `/admin` tick. Widening this to "any database error" would render a genuine outage as an empty
- * queue, which is the failure the page exists to avoid.
+ * 🔴 THE CODE ALONE IS NOT ENOUGH, because the page answers with specific advice: apply THIS
+ * migration. `42703` is raised by any reference to any column that does not exist — a typo in a
+ * later edit, or a different unapplied migration — and matching the code alone would answer all of
+ * them with that advice, confidently and wrongly, while the `catch` suppresses the error that would
+ * otherwise have said so. Matching the column name keeps the answer as narrow as the question.
+ *
+ * Matched on the COLUMN NAME rather than on "does not exist": the name is interpolated into the
+ * message and survives `lc_messages`, the surrounding English does not. Kysely quotes identifiers,
+ * so the camel case is preserved; the real message is `column f.handledById does not exist`,
+ * measured against the pre-migration table in `feedback.service.test.ts`.
  */
-export const isMissingTriageColumns = (e: unknown): boolean =>
-  typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703';
+export const isMissingTriageColumns = (e: unknown): boolean => {
+  if (typeof e !== 'object' || e === null) return false;
+  const { code, message } = e as { code?: unknown; message?: unknown };
+  if (code !== '42703') return false;
+  return typeof message === 'string' && TRIAGE_COLUMNS.some((c) => message.includes(c));
+};
 
 export type FeedbackRow = {
   id: number;
@@ -217,13 +231,20 @@ export async function triageFeedback(input: {
       triageNote: input.note,
       handledById: handled ? input.moderatorId : null,
       handledAt: handled ? new Date() : null,
-      // 🔴 The issue link is cleared alongside the handler, for the same reason: `new` means
-      // UNTRIAGED, and a Bug link is a triage outcome. Leaving it set puts a row in the unhandled
-      // queue showing the linked-issue panel instead of the promote form, and `linkInTransaction`
-      // refuses any row whose `bugId` is already set — so the moderator who reopened it can
-      // neither re-promote it nor attach it anywhere else, and this app has no unlink control.
-      // The `Bug` row itself is untouched; re-attaching is the issue number they just saw.
-      ...(handled ? {} : { bugId: null }),
+      // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
+      //
+      // Clearing it on the way back to `new` was tried and reverted. It reads as symmetric with
+      // the two columns above, and it is not: those record WHO acted, which a reopen genuinely
+      // retracts, while the link records THAT THIS REPORT IS ABOUT THAT ISSUE, which stays true.
+      // Clearing destroyed it with no way back — nothing in this app stores the number a second
+      // time, `getSiblingFeedback` drops the row from every sibling's list, and `ModActivity` has
+      // no column to put it in — and it left a `Bug` with no feedback pointing at it, which is
+      // exactly the state `promoteFeedbackToBug` runs a transaction rollback to avoid creating.
+      //
+      // ⚠️ WHAT THIS LEAVES OPEN, so the next reader sees the whole shape: a linked row can never
+      // be re-linked, because `linkInTransaction` requires `bugId IS NULL`. That is a MISSING
+      // CAPABILITY — an unlink control — and it is missing at every status, so reopening neither
+      // causes it nor is a sensible back door to it. This PR does not add one.
     })
     .where('id', '=', input.id)
     .where('status', '=', input.expectedStatus)

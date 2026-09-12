@@ -23,9 +23,11 @@ vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 vi.mock('$lib/server/feedback.service', () => ({
   FEEDBACK_PAGE_SIZE: 50,
-  // A stand-in that mirrors the real predicate. It pins the BRANCH only — that `load` degrades when
-  // this says yes and rethrows when it says no. Which errors it says yes TO is pinned separately,
-  // against the real function, in `lib/server/__tests__/feedback.service.test.ts`.
+  // 🔴 A STAND-IN, NOT A MIRROR — deliberately cruder than the real predicate, which also requires
+  // the message to name one of the four migrated columns. It exists to pin the BRANCH only: that
+  // `load` degrades when this answers yes and rethrows when it answers no. WHICH errors earn a yes
+  // is pinned against the real function in `lib/server/__tests__/feedback.service.test.ts`,
+  // including against an error a genuinely unmigrated table raised.
   isMissingTriageColumns: (e: unknown) =>
     typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703',
   getFeedbackList,
@@ -131,7 +133,7 @@ describe('load', () => {
    */
   it('degrades to an explanatory empty state when the triage columns do not exist yet', async () => {
     getFeedbackList.mockRejectedValueOnce(
-      Object.assign(new Error('column f.triageNote does not exist'), { code: '42703' })
+      Object.assign(new Error('column f.handledById does not exist'), { code: '42703' })
     );
 
     const result = await loaded('?status=new');

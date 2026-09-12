@@ -57,7 +57,9 @@
 {#if data.migrationPending}
   <!-- 🔴 `moderator:admin` reaches this page before anyone ticks a box on `/admin`, and the sidebar
        badge counts on `status` alone — so it renders a real number against a database that has not
-       had the triage columns applied. Says what to do instead of throwing out of `load`. -->
+       had the triage columns applied. Says what to do instead of throwing out of `load`.
+       This names ONE migration, so `isMissingTriageColumns` is keyed on that migration's own column
+       names: any other absent column still throws rather than arriving here as wrong advice. -->
   <div class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <p class="text-white">This queue is not ready yet.</p>
     <p class="mt-2 text-sm text-dark-2">

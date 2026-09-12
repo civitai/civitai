@@ -4,6 +4,7 @@ import {
   countRows,
   feedbackKysely,
   freshFeedbackDb,
+  freshPreMigrationDb,
   readFeedback,
   seedFeedback,
   seedUser,
@@ -139,12 +140,13 @@ describe('triageFeedback', () => {
   });
 
   /**
-   * 🔴 A row reopened to `new` while still carrying a `bugId` is a DEAD END: the panel shows the
-   * linked-issue view instead of the promote form, and `linkInTransaction` refuses any row whose
-   * `bugId` is set — so it can be neither re-promoted nor attached elsewhere, and there is no
-   * unlink control anywhere in the app.
+   * 🔴 THE LINK SURVIVES A REOPEN. Clearing it here was tried and reverted: `handledById` and
+   * `handledAt` record who acted, which a reopen retracts, but the link records that this report
+   * is ABOUT that issue, which a reopen does not make false. Clearing it destroyed that with no
+   * way back — the number is stored nowhere else — and orphaned a `Bug` that
+   * `promoteFeedbackToBug` rolls back a transaction rather than create.
    */
-  it('clears the issue link when a row goes back to `new`, so it can be triaged again', async () => {
+  it('keeps the issue link when a row goes back to `new`, and still clears the handler', async () => {
     const id = await seedFeedback(db, { userId: reporter });
     const promoted = await service.promoteFeedbackToBug({
       id,
@@ -153,7 +155,6 @@ describe('triageFeedback', () => {
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
-    expect((await readFeedback(db, id)).bugId).toBe(promoted.bugId);
 
     await service.triageFeedback({
       id,
@@ -163,14 +164,35 @@ describe('triageFeedback', () => {
       moderatorId: moderator,
     });
 
-    expect((await readFeedback(db, id)).bugId).toBeNull();
-    // And it is re-attachable, which is the whole point.
-    const relinked = await service.linkFeedbackToBug({
-      id,
-      bugId: promoted.bugId,
+    const row = await readFeedback(db, id);
+    expect(row.bugId).toBe(promoted.bugId);
+    expect(row.handledById).toBeNull();
+    expect(row.handledAt).toBeNull();
+  });
+
+  /** The sibling panel is the only place the association is readable; a reopen must not empty it. */
+  it('leaves a reopened row visible to its siblings', async () => {
+    const first = await seedFeedback(db, { userId: reporter });
+    const second = await seedFeedback(db, { userId: reporter });
+    const promoted = await service.promoteFeedbackToBug({
+      id: first,
+      title: 'a',
+      summary: 'b',
       moderatorId: moderator,
     });
-    expect(relinked).toMatchObject({ ok: true });
+    if (!promoted.ok) throw new Error('the promotion should have succeeded');
+    await service.linkFeedbackToBug({ id: second, bugId: promoted.bugId, moderatorId: moderator });
+
+    await service.triageFeedback({
+      id: first,
+      status: 'new',
+      expectedStatus: 'actioned',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    const siblings = await service.getSiblingFeedback({ bugId: promoted.bugId, excludeId: second });
+    expect(siblings.map((r) => r.id)).toEqual([first]);
   });
 
   it('keeps the issue link on any status that is not `new`', async () => {
@@ -373,14 +395,66 @@ describe('linkFeedbackToBug', () => {
  * discrimination are pinned separately, and neither can go stale behind the other.
  */
 describe('isMissingTriageColumns', () => {
-  it('accepts exactly the undefined-column code', () => {
-    expect(service.isMissingTriageColumns({ code: '42703' })).toBe(true);
+  /**
+   * 🔴 AGAINST A REAL DRIVER ERROR, not a hand-built object. Both other cases in this describe
+   * construct `{ code, message }` themselves, which pins the predicate's logic and says nothing
+   * about whether `pg` puts `code` where the predicate looks. This one runs the real query against
+   * the real pre-migration table and asserts on whatever comes back.
+   */
+  it('fires on the error a genuinely unmigrated table actually raises', async () => {
+    const pre = await freshPreMigrationDb();
+    const previous = dbHandle.current;
+    dbHandle.current = feedbackKysely(pre);
+    try {
+      await seedUser(pre, 'someone');
+      const caught = await service.getFeedbackList({ statuses: [] }).then(
+        () => null,
+        (e: unknown) => e
+      );
+
+      expect(caught).not.toBeNull();
+      // The code is top level on `DatabaseError`; `createKyselyClients` uses a stock
+      // `PostgresDialect` over `pg.Pool`, which does not wrap it.
+      expect((caught as { code?: string }).code).toBe('42703');
+      expect(String((caught as { message?: string }).message)).toContain('does not exist');
+      expect(service.isMissingTriageColumns(caught)).toBe(true);
+    } finally {
+      dbHandle.current = previous;
+      await pre.close();
+    }
+  });
+
+  it('accepts the undefined-column code when the message names a triage column', () => {
+    for (const column of ['triageNote', 'handledById', 'handledAt', 'bugId'])
+      expect(
+        service.isMissingTriageColumns({
+          code: '42703',
+          message: `column f.${column} does not exist`,
+        })
+      ).toBe(true);
+  });
+
+  /**
+   * 🔴 THE POINT OF NARROWING IT. The page answers with one specific instruction — apply THIS
+   * migration — and `42703` is raised by any reference to any absent column. Matching the code
+   * alone would give that answer to a typo in an unrelated edit, with the `catch` suppressing the
+   * error that would otherwise have named it.
+   */
+  it('declines a 42703 about some OTHER column, so the page cannot misdirect', () => {
+    expect(
+      service.isMissingTriageColumns({
+        code: '42703',
+        message: 'column f.nsfwLevel does not exist',
+      })
+    ).toBe(false);
   });
 
   it('rejects every other database error, so an outage cannot render as an empty queue', () => {
     // 57P01 admin shutdown, 08006 connection failure, 42P01 undefined TABLE, 23505 unique violation.
     for (const code of ['57P01', '08006', '42P01', '23505', '', '4270'])
-      expect(service.isMissingTriageColumns({ code })).toBe(false);
+      expect(
+        service.isMissingTriageColumns({ code, message: 'column f.bugId does not exist' })
+      ).toBe(false);
   });
 
   it('rejects a value that is not an error object at all', () => {
@@ -394,8 +468,14 @@ describe('reads', () => {
    * 🔴 THREE rows at `limit: 2`, never two at `limit: 1`. The cursor is the LAST item's id, and at
    * a page size of one the first and last elements of a page are the same object — so a fixture
    * built that way cannot distinguish `items[items.length - 1].id` from `items[0].id`, and the
-   * mutant that swaps them SURVIVES a green run. In production `FEEDBACK_PAGE_SIZE` is 50, where
-   * that swap repeats 49 rows on page 2 and makes 49 unreachable.
+   * mutant that swaps them SURVIVES a green run.
+   *
+   * What the swap actually costs, walked against this harness rather than reasoned about: the
+   * cursor becomes the page's HIGHEST id, so page N+1 starts one id below page N's FIRST row.
+   * Seven rows at `limit: 3` paged 7-6-5 / 6-5-4 / 5-4-3 / 4-3-2 / 3-2-1 — every id still reached,
+   * each turn repeating all but one row and advancing by one. At `FEEDBACK_PAGE_SIZE` 50 that is
+   * 49 of 50 repeated per turn and a queue that drains 50× slower. NOTHING becomes unreachable;
+   * an earlier version of this comment said 49 rows did, and that was never derived.
    */
   it('lists newest first, joins the reporter and pages on a keyset', async () => {
     const oldest = await seedFeedback(db, {
