@@ -43,12 +43,25 @@ function row(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const project = (overrides: Record<string, unknown> = {}) =>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  projectListingDetail(row(overrides) as any, [], null, {
-    isBeta: false,
-    betaMessage: null,
-  } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+/**
+ * 🔴 `connectRequestedScopes` is the FIFTH ARGUMENT, not a row field — its column is
+ * manual-apply and is deliberately absent from `listingHydrateSelect` (which the public
+ * `/apps` grid shares), so each detail caller spreads it into its own select and passes
+ * it in, exactly as `sourceRepoUrl` and `beta` are. The fixture still sets it on the row
+ * so a case reads as one object, and this helper forwards it to the real parameter.
+ */
+const project = (overrides: Record<string, unknown> = {}) => {
+  const r = row(overrides);
+  return projectListingDetail(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    r as any,
+    [],
+    null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    { isBeta: false, betaMessage: null } as any,
+    r.connectRequestedScopes as number | null
+  );
+};
 
 describe('ListingDetail.connectScopes', () => {
   it('decodes an off-site connect listing’s requested bitmask into TokenScope enum-keys', () => {
@@ -88,6 +101,40 @@ describe('ListingDetail.connectScopes', () => {
     // decode — this pins that the empty result comes from the decode rather than
     // from the guard, which a NULL-only test cannot distinguish.
     expect(project({ connectRequestedScopes: 0 }).connectScopes).toEqual([]);
+  });
+
+  /**
+   * 🔴 REGRESSION, and it is about a state a listing OWNER can create unilaterally.
+   *
+   * `connectClient` is `onDelete: SetNull`, and `connectRequestedScopes` is an
+   * independent column the cascade never touches — so deleting the OAuth client leaves
+   * an approved, still-serving listing with a stranded mask and no client.
+   * `app-transfer.constants.ts` records that this route "EXISTS TODAY".
+   *
+   * The bug this pins is not "a stale field is published". It is that
+   * `shouldShowOffsiteDisclosure` is `… && !kindData.connectClientId`, so the SAME row
+   * flips that predicate ON — and the public page then renders "no Civitai install,
+   * account access, or permissions" directly above "Sensitive permissions (2)". Two
+   * contradictory security claims, the permissions half being the false one, since with
+   * no client nothing can be asked for.
+   */
+  it('🔴 is [] when the OAuth client was DELETED, even though the mask survives', () => {
+    const detail = project({
+      connectClientId: null,
+      connectRequestedScopes: TokenScope.UserRead | TokenScope.BuzzRead,
+    });
+    expect(detail.connectScopes).toEqual([]);
+  });
+
+  it('is [] at the empty-string client id, matching kindData’s own normalisation', () => {
+    // `kindData` stores `row.connectClientId || null`, so `''` reads as "no client"
+    // there. A `!= null` test here would disagree with it at exactly this value and
+    // reopen the contradiction above for a row nobody would think to check.
+    const detail = project({
+      connectClientId: '',
+      connectRequestedScopes: TokenScope.UserRead,
+    });
+    expect(detail.connectScopes).toEqual([]);
   });
 
   it('is [] for an ON-SITE row even when the column is populated', () => {
@@ -136,8 +183,12 @@ describe('ListingDetail.connectScopes', () => {
   /**
    * ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it is the ONE case in this file
    * that PASSES at the pre-change commit, because the DTO carried no justification
-   * text before this change either. Labelled rather than counted: the red-at-base
-   * matrix for this file is 6 of 7, and quoting 7 would overstate what was proven.
+   * text before this change either. Labelled rather than counted, and the count is
+   * deliberately NOT restated here: a previous draft said "6 of 7", went stale the
+   * moment a redundant case was removed, and was caught by an audit rather than by
+   * anything in the repo. Re-derive the matrix if you need it — revert
+   * `app-listing.service.ts` and `app-listing-read.schema.ts` to the merge base and
+   * run this file; every case except this one must fail.
    *
    * It still earns its place. This change is what makes the field reachable — it
    * introduces a projection sourced from the same columns the justification text

@@ -1242,19 +1242,25 @@ export function AppListingDetailBody({
                 🔴 IT IS GATED ON THE DATA, NOT ON `shouldShowConnectCapability`, AND
                 THAT IS NOT AN OVERSIGHT. Reusing the predicate would couple the
                 enumeration to the sentence and reintroduce exactly the third-condition
-                pressure the pair's docstring warns about. `connectScopes` is `[]` for
-                every listing that is not an off-site connect listing, so the data gate
-                is already narrower than the predicate — and it additionally withholds
-                the section from a connect listing that requests NOTHING, where a
-                permissions box would be a reassuring empty container. Same
-                `length > 0` reasoning as the on-site section: on a store page, "no
-                permissions" is better said by the absence of the section.
+                pressure the pair's docstring warns about. Same `length > 0` reasoning as
+                the on-site section: on a store page, "no permissions" is better said by
+                the absence of the section than by an empty box.
+                ⚠ THE DATA GATE IS NARROWER THAN THE PREDICATE ONLY BECAUSE THE
+                PROJECTION MAKES IT SO — an earlier draft of this comment asserted
+                `connectScopes` is "[] for every listing that is not an off-site connect
+                listing" as though it were free, and it was FALSE: a deleted OAuth client
+                strands the mask (`onDelete: SetNull` nulls only `connectClientId`), and
+                the projection then published scopes while the mutually-exclusive pair
+                flipped to the "no account access, or permissions" sentence — two
+                contradictory security claims stacked on one public page. The projection
+                now gates on the client's presence too; read its comment before
+                loosening either side.
                 🔴 It renders the SHARED `ConnectScopeRow`, so the sensitive-risk
                 emphasis reads identically here and on the moderator review surface. It
                 cannot render `connectScopeJustifications` — see its docblock; that is
                 structural, not a convention. */}
             {detail.connectScopes.length > 0 && (
-              <ConnectScopesDisclosure scopes={detail.connectScopes} />
+              <ConnectScopesDisclosure scopes={detail.connectScopes} preview={preview} />
             )}
 
             {/* PRE-LAUNCH PERMISSION DISCLOSURE — what this app is permitted to do,

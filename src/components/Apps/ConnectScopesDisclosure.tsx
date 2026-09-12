@@ -50,7 +50,25 @@ import {
  * `length > 0`, matching the on-site section, so a listing that requests nothing
  * gets no section rather than a reassuring empty box.
  */
-export function ConnectScopesDisclosure({ scopes }: { scopes: string[] }) {
+export function ConnectScopesDisclosure({
+  scopes,
+  preview = false,
+}: {
+  scopes: string[];
+  /**
+   * 🔴 MODERATOR PREVIEW — a CORRECTNESS FIX, NOT COPY, and the on-site sibling
+   * carries the identical one for the identical reason.
+   *
+   * `getListingPreviewForReview` is deliberately NOT status-filtered, so this card
+   * also renders for a listing UNDER REVIEW — including a shadow revision that is
+   * ESCALATING its scopes. In that posture the public wording ("a moderator
+   * reviewed these") states the reviewer's own conclusion back at them as though it
+   * were already reached, which is precisely how an escalation gets under-read on
+   * the one surface where that call is made. See the `preview` heading note on the
+   * on-site permission section for the case that established this.
+   */
+  preview?: boolean;
+}) {
   // Resolve enum-key → bit through the SHARED table so the label and the
   // sensitivity verdict can never fork from the hub's OAuth consent screen. An
   // unrecognised key is DROPPED rather than rendered bare: the wire format is a
@@ -82,19 +100,34 @@ export function ConnectScopesDisclosure({ scopes }: { scopes: string[] }) {
             ask is usually a SUBSET of this, and can even be a SUPERSET if the client's
             ceiling is widened after moderator approval, because nothing re-publishes
             this snapshot.
-            So this list is the MOD-REVIEWED CEILING, not a promise about any particular
+            So this list is WHAT A MODERATOR REVIEWED, not a promise about any particular
             sign-in screen. Saying "will request … approve these permissions … review
             them again" asserted an identity that does not hold, on a surface whose whole
-            job is to be trustworthy about permissions. Do not tighten it back. */}
+            job is to be trustworthy about permissions. Do not tighten it back.
+            🔴 AND DO NOT CALL IT A CEILING EITHER — a SECOND draft said "the most this
+            app is approved to ask for", and that is false in the other direction. The
+            stored value is the client's `allowedScopes` snapshotted at submit/edit, and
+            an owner can WIDEN `allowedScopes` afterwards via `oauth-client.router.ts`'s
+            update — unmoderated, re-snapshotting nothing. The runtime set can therefore
+            EXCEED this list, so an upper-bound claim is the same over-claim wearing the
+            opposite sign. Two drafts, two directions: the honest framings are what a
+            moderator reviewed, and "check the sign-in screen", which is the surface that
+            actually binds. */}
         <Group gap={6}>
           <IconKey size={14} />
           <Text size="sm" fw={600}>
-            Permissions this app may request ({resolved.length})
+            {preview
+              ? `Permissions requested in this submission (${resolved.length})`
+              : `Permissions this app may request (${resolved.length})`}
           </Text>
           <Tooltip
             multiline
             w={300}
-            label="The most this app is approved to ask for. When you connect it you'll be taken to a Civitai sign-in screen listing what it is actually requesting at that moment, which may be fewer than these. You can disconnect the app at any time."
+            label={
+              preview
+                ? 'The scopes THIS submission declares — the set you are being asked to approve, not one already approved. Compare it against what the listing currently discloses before approving an escalation.'
+                : "The permissions a moderator reviewed for this app. When you connect it you'll be taken to a Civitai sign-in screen listing what it is actually requesting at that moment — always check that screen, since it is what you are approving. You can disconnect the app at any time."
+            }
           >
             <ThemeIcon size="xs" variant="subtle" color="gray">
               <IconInfoCircle size={13} />
