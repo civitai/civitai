@@ -46,6 +46,9 @@ export default defineConfig({
     alias: {
       $lib: from('./src/lib'),
       '$env/dynamic/private': from('./src/test/env.mock.ts'),
+      // Same stub. Route modules that read a PUBLIC_ variable (the /feedback Grafana base) are
+      // otherwise unimportable here, so their actions could not be tested at all.
+      '$env/dynamic/public': from('./src/test/env.mock.ts'),
     },
   },
   test: {

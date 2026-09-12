@@ -539,6 +539,7 @@ export interface User {
   metrics?: UserMetric[];
   reports?: Report[];
   feedback?: Feedback[];
+  feedbackHandled?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1816,6 +1817,12 @@ export interface Feedback {
   context: JsonValue;
   status: string;
   createdAt: Date;
+  triageNote: string | null;
+  handledById: number | null;
+  handledBy?: User | null;
+  handledAt: Date | null;
+  bugId: number | null;
+  bug?: Bug | null;
 }
 
 export interface ApiKey {
@@ -3864,6 +3871,7 @@ export interface Bug {
   disabled: boolean;
   domain: DomainColor[];
   tags: string[];
+  feedback?: Feedback[];
 }
 
 export interface NewOrderPlayer {

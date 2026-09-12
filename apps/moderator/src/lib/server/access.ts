@@ -158,6 +158,9 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/comics-review', label: 'Comics Review' },
+  // Not `informational`: this is a queue somebody works through, so it belongs in the dashboard's
+  // "needs attention" total — unlike the stuck-scan counts beside it.
+  { path: '/feedback', label: 'Feedback', countKey: 'feedbackNew' },
   // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.

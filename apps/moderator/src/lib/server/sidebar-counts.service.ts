@@ -9,6 +9,7 @@ import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getArticleRatingReviewCounts } from './article-rating-reviews.service';
 import { getReportCounts } from './reports.service';
+import { countNewFeedback } from './feedback.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -30,6 +31,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reports,
     stuckIngestion,
     ingestionErrors,
+    feedbackNew,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -62,6 +64,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // Bounded: neither count is served by an index alone; see `bounded`.
     bounded(countStuckIngestion),
     bounded(countIngestionErrorImages),
+    // NOT bounded: an index-only count over a table the producer can only grow five rows per user
+    // per hour. `bounded` exists for aggregates with no index of their own — wrapping this one in a
+    // 3-second race would add a timer and a nullable to buy nothing.
+    countNewFeedback(),
   ]);
   return {
     ...modes,
@@ -72,6 +78,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reported: Number(reported?.count ?? 0),
     articles,
     articleRatings: articleRatings.Pending,
+    feedbackNew,
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };
