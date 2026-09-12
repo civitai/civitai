@@ -498,11 +498,20 @@ function AppBudgetControl({
       />
       {/* A very low limit is a real setting, not a mistake — but it is also the one
           that makes an app look broken, so say what it does at the point it is set.
-          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY. */}
+          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
+          🔴 SAY "IMAGE GENERATION", NOT "THIS APP". The threshold is the lowest per-engine
+          customComfy ceiling (90); registry steps cost as little as 1 Buzz
+          (`convert-image`), so a step-priced app funds dozens of runs under it and refuses
+          NOTHING. The retracted copy read "this app will refuse to generate until you raise
+          it" — categorically false for exactly the step-priced user the MIN=1 rationale in
+          BLOCK_CONSENT_BUDGET_MIN_PER_DAY exists to protect, i.e. this sentence contradicted
+          the decision it was written to justify. Keep the subject the ENGINE, not the app. */}
       {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
         <Text size="xs" c="orange" data-testid="app-budget-low-warning">
-          {parsed.toLocaleString()} Buzz/day is lower than most generations cost — this app will
-          refuse to generate until you raise it. You can change it here at any time.
+          {parsed.toLocaleString()} Buzz/day will not cover a single image generation, which can
+          cost up to {BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY} Buzz per run — an app that generates
+          images will refuse until you raise it. Apps that only run cheaper steps are unaffected.
+          You can change it here at any time.
         </Text>
       ) : null}
       <Group gap="xs" justify="flex-end">

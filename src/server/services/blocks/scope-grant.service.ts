@@ -158,6 +158,28 @@ export async function getConsentBuzzBudget(opts: {
 }
 
 /**
+ * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
+ * "every scalar", so a `create`/`update` with no `select` emits
+ * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
+ * re-consent throw P2022 against a database that has not had the migration applied
+ * yet, i.e. a 500 on every grant write from a deploy that lands first. MEASURED on
+ * this PR's own preview environment before this select existed.
+ *
+ * `id` is picked because it is the primary key: it predates this feature, it can
+ * never be the column a future migration is racing, and no caller uses the return
+ * value (both writers return `void`). Do NOT widen this to include a column added by
+ * a pending migration — the whole point is that these writes read nothing new.
+ *
+ * 🔴 KEEP THIS CONST ABOVE `recordScopeGrant`'s DOCBLOCK, NOT BETWEEN THEM. It was
+ * introduced between that docblock and its function, which silently orphaned it:
+ * TypeScript attaches a leading comment to the next DECLARATION, so the whole
+ * `buzzBudgetPerDay` three-state contract stopped appearing on hover at every call
+ * site. A docblock separated from its function by another declaration documents
+ * that declaration instead.
+ */
+const WRITE_RETURN_SELECT = { id: true } as const;
+
+/**
  * Records (or extends) a user's consent for an app block. ADDITIVE — scopes
  * the user already granted persist; the supplied scopes are unioned in. Writing
  * a grant also clears any prior `revoked_at` (re-granting un-revokes), and
@@ -191,21 +213,6 @@ export async function getConsentBuzzBudget(opts: {
  * permission would silently wipe a spend limit the user had deliberately set —
  * a widening, performed by a dialog that said nothing about money.
  */
-/**
- * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
- * "every scalar", so a `create`/`update` with no `select` emits
- * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
- * re-consent throw P2022 against a database that has not had the migration applied
- * yet, i.e. a 500 on every grant write from a deploy that lands first. MEASURED on
- * this PR's own preview environment before this select existed.
- *
- * `id` is picked because it is the primary key: it predates this feature, it can
- * never be the column a future migration is racing, and no caller uses the return
- * value (both writers return `void`). Do NOT widen this to include a column added by
- * a pending migration — the whole point is that these writes read nothing new.
- */
-const WRITE_RETURN_SELECT = { id: true } as const;
-
 export async function recordScopeGrant(opts: {
   userId: number;
   appBlockId: string;

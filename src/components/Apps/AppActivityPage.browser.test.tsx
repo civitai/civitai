@@ -647,6 +647,22 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     await input.clear();
     await input.fill('5');
     await expect.element(page.getByTestId('app-budget-low-warning')).toBeInTheDocument();
+    // 🔴 PINNED AS A WHOLE NORMALISED STRING. The retracted sentence — "this app will
+    // refuse to generate until you raise it" — passed every keyword check while being
+    // categorically FALSE for a step-priced app: registry steps cost 1 Buzz
+    // (`convert-image`), so 5 Buzz/day funds five runs and refuses nothing. It also
+    // contradicted the BLOCK_CONSENT_BUDGET_MIN_PER_DAY rationale written in the same
+    // commit, which keeps the floor at 1 so a tiny allowance stays possible. The subject
+    // must be IMAGE GENERATION, never "this app".
+    {
+      const el = page.getByTestId('app-budget-low-warning');
+      const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
+      expect(text).toBe(
+        '5 Buzz/day will not cover a single image generation, which can cost up to 90 ' +
+          'Buzz per run — an app that generates images will refuse until you raise it. ' +
+          'Apps that only run cheaper steps are unaffected. You can change it here at any time.'
+      );
+    }
   });
 });
 
