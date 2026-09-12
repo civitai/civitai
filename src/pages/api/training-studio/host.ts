@@ -14,9 +14,10 @@ import { Flags } from '~/shared/utils/flags';
 /**
  * Host side of the embedded Training Studio (docs/training-studio-web-component.md).
  *
- * GET → { token, orchestratorEndpoint, orchestratorMode } for the CALLER — /training-studio
- * implements the element's `getOrchestratorToken()` provider with this. No params; no side effects
- * beyond the token cache getOrchestratorToken already keeps.
+ * GET → { token, orchestratorMode } for the CALLER — /training-studio implements the element's
+ * `getOrchestratorToken()` provider with this. No params; no side effects beyond the token cache
+ * getOrchestratorToken already keeps. The orchestrator URL is NOT part of the response — see the
+ * note at the `res.json` below.
  *
  * The token spends Buzz orchestrator-side, so this mirrors `guardedProcedure`'s gates (trpc.ts:
  * banned → onboarded → muted → email-verified) plus the page's feature flag — keep them in step.
@@ -62,9 +63,13 @@ export default AuthedEndpoint(async (req, res, user) => {
     });
 
   res.setHeader('Cache-Control', 'no-store');
+  // 🔴 No `orchestratorEndpoint` here, deliberately. It used to return `env.ORCHESTRATOR_ENDPOINT`,
+  // which is the in-cluster address — a value that must never reach a browser, for the same reason
+  // the dev-token guard above exists. Nothing consumed it (the only caller, /training-studio, reads
+  // `.token` alone), so it was a leak with no purpose. The browser gets the PUBLIC origin from
+  // `NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT` instead. Do not re-add it from the server env.
   res.json({
     token,
-    orchestratorEndpoint: env.ORCHESTRATOR_ENDPOINT,
     orchestratorMode: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
   });
 });

@@ -18,6 +18,22 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
   NEXT_PUBLIC_MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
   NEXT_PUBLIC_TRAINING_STUDIO_URL: z.url().default('https://training.civitai.com'),
+  // 🔴 The BROWSER-facing orchestrator origin, and deliberately NOT the server-side
+  // `ORCHESTRATOR_ENDPOINT`. That one is an in-cluster address
+  // (`http://orchestration-api.…svc.cluster.local:8080`), so handing it to client code yields a
+  // mixed-content warning and `ERR_NAME_NOT_RESOLVED` — which is exactly what the embedded Training
+  // Studio did until this existed. The web component calls the orchestrator DIRECTLY from the
+  // browser (docs/training-studio-web-component.md), so it needs the public origin. Keep the two
+  // separate: server code keeps using `ORCHESTRATOR_ENDPOINT`, browser code uses this.
+  //
+  // This default's HOST also appears in `CIVITAI_IMAGE_HOSTS`
+  // (src/components/AppBlocks/saveImageDownload.ts) — same hostname, different job: that one is the
+  // allowlist of hosts the App Blocks download bridge may FETCH from, this one is the base URL the
+  // browser CALLS. They are not interchangeable and must not be merged, but they are coupled: a
+  // blob URL minted by this origin has to be fetchable by that bridge, so changing the public
+  // orchestrator host means changing both. The coupling is asserted, not just described, in
+  // src/__tests__/pages/training-studio-embed-orchestrator-origin.test.ts.
+  NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: z.url().default('https://orchestration.civitai.com'),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID_ALT: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID_GREEN: z.string().optional(),
@@ -89,6 +105,7 @@ export const clientEnv = {
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
   NEXT_PUBLIC_MODERATOR_APP_URL: process.env.NEXT_PUBLIC_MODERATOR_APP_URL,
   NEXT_PUBLIC_TRAINING_STUDIO_URL: process.env.NEXT_PUBLIC_TRAINING_STUDIO_URL,
+  NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: process.env.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_GPTT_UUID_ALT: process.env.NEXT_PUBLIC_GPTT_UUID_ALT,
   NEXT_PUBLIC_GPTT_UUID_GREEN: process.env.NEXT_PUBLIC_GPTT_UUID_GREEN,
