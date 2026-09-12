@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
 import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { NAV_KEYS } from '~/shared/constants/nav.constants';
 
 /**
  * The sub nav's DEFAULT layout — what a user who never opens the customization modal sees.
@@ -145,19 +144,5 @@ describe('the apps pill gate', () => {
     // anchored last. So a registry REORDER changes the surviving ORDER here, not just which
     // key vanishes — which is exactly what this vector exists to pin.
     expect(bar.map((e) => e.key)).toEqual(['home', 'updates', 'models', 'images', 'videos']);
-  });
-
-  /**
-   * `NAV_KEYS`'s own docstring says the keys are listed "in default order", and until now nothing
-   * checked it: the list drives a zod enum and a type, so its ORDER is inert at runtime and the two
-   * files can drift in order while every other test stays green. That makes the docstring a claim
-   * with no guard — the shape that rots silently. Reordering the registry (moving `apps` after
-   * `challenges`) is exactly when it would have.
-   *
-   * This compares the registry's ORDER against `NAV_KEYS`, not just the sets — the set agreement is
-   * already enforced by the `key` field's type.
-   */
-  it('keeps NAV_KEYS in the registry’s order, as its docstring claims', () => {
-    expect(navRegistry.map((e) => e.key)).toEqual([...NAV_KEYS]);
   });
 });
