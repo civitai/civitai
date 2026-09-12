@@ -22,6 +22,7 @@ export const NAV_KEYS = [
   'events',
   'updates',
   'shop',
+  'apps',
   'leaderboard',
   'auctions',
   'vault',

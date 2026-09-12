@@ -45,6 +45,7 @@ describe('sub-nav default layout', () => {
       'challenges',
       'updates',
       'shop',
+      'apps',
     ]);
     expect(more.map((e) => e.key)).toEqual(['bounties']);
   });
@@ -74,5 +75,55 @@ describe('sub-nav default layout', () => {
     const { bar, more } = resolve(allFlags(false));
     expect(bar.map((e) => e.key)).toEqual(['home', 'models', 'images', 'videos', 'updates']);
     expect(more).toEqual([]);
+  });
+});
+
+/**
+ * The `apps` pill's gate is the `/apps` page's own SSR gate (`hasAppsStoreAccess`) restated
+ * as a viewer fact. The all-on/all-off vectors above cannot tell its three disjuncts apart,
+ * so these isolate each one: a re-inline to `!!features.appBlocks` (the exact historical
+ * defect this class of gate shipped, #3907) leaves the whole default-layout suite above
+ * green while the external-only and listings-only vectors here go red.
+ */
+describe('the apps pill gate', () => {
+  /** A feature vector answering true ONLY for the named flags, false for everything else. */
+  const onlyFlags = (...names: string[]): FeatureAccess =>
+    new Proxy({} as FeatureAccess, {
+      get: (_target, key) => (names as readonly string[]).includes(key as string),
+    }) as FeatureAccess;
+
+  it('shows the pill for the EXTERNAL-ONLY cohort (appListingsPublicExternal alone)', () => {
+    const { bar, more } = resolve(onlyFlags('appListingsPublicExternal'));
+    // Every OTHER gated item is hidden on this vector (`shop`'s own `cosmeticShop` gate
+    // among them), so the pill's presence here rides on NOTHING but its own gate —
+    // exactly the discrimination the all-on vector cannot make.
+    expect(bar.map((e) => e.key)).toEqual([
+      'home',
+      'models',
+      'images',
+      'videos',
+      'updates',
+      'apps',
+    ]);
+    expect(more).toEqual([]);
+  });
+
+  it.each([
+    ['appListings'],
+    ['appBlocks'],
+  ])('shows the pill when %s alone is on', (flag) => {
+    const { bar } = resolve(onlyFlags(flag));
+    expect(bar.some((e) => e.key === 'apps')).toBe(true);
+  });
+
+  it('drops a PINNED pill once the viewer loses store access — gates run last over the config', () => {
+    const { bar } = resolveNavItems(
+      navRegistry,
+      { features: onlyFlags(), isAuthed: true },
+      { bar: ['home', 'apps', 'models'], more: [], hidden: [] }
+    );
+    // `images`, `videos` and `updates` carry no gate, so they render on this vector too;
+    // `apps` is the one that disappears.
+    expect(bar.map((e) => e.key)).toEqual(['home', 'models', 'images', 'videos', 'updates']);
   });
 });

@@ -172,16 +172,18 @@ export type AppsStoreFeatureFlags =
  * (`appListings || appBlocks || appListingsPublicExternal`).
  *
  * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store", for
- * seven surfaces: the `/apps` SSR resolver (`resolveAppsPageAccess`), the `/apps`
+ * eight surfaces: the `/apps` SSR resolver (`resolveAppsPageAccess`), the `/apps`
  * page body, the store-preview route, the marketplace grid query, the
  * related-listings rail, the `/apps/*` sub-nav — all six under `components/Apps`
- * / `pages/apps` — and, since #3907, the user-menu "Apps" → `/apps` entry
- * (`components/AppLayout/AppHeader/appsNavVisibility.ts`). All seven route
+ * / `pages/apps` — the user-menu "Apps" → `/apps` entry
+ * (`components/AppLayout/AppHeader/appsNavVisibility.ts`, since #3907), and the
+ * top-nav pill (`components/HomeContentToggle/nav-registry.ts`). All eight route
  * through THIS predicate.
  *
  * ⚠️ "Every store surface" would still be TOO STRONG, so it is not claimed —
- * only that these seven are pinned. The seventh was converted because it is the
- * ONLY in-product route to `/apps`, so while it read `appBlocks` alone a
+ * only that these eight are pinned. The seventh was converted because it was, until the
+ * top-nav pill shipped, the only in-product route to `/apps` — while it read
+ * `appBlocks` alone a
  * `{appListings, NOT appBlocks}` or external-only cohort got a store that
  * rendered but could not be found. Converting it widens DISCOVERY only: the
  * block-runtime surfaces listed below keep their own gates.
@@ -194,7 +196,7 @@ export type AppsStoreFeatureFlags =
  * sub-navigation at all.
  *
  * ENFORCED, not merely requested: `components/Apps/__tests__/appsStoreAccessCallSites.test.ts`
- * pins the exact ledger of the seven sites and fails if one is added, reverted, or
+ * pins the exact ledger of the eight sites and fails if one is added, reverted, or
  * re-inlines the boolean. Adding a store surface means adding it to that ledger.
  *
  * ## Why an OR, and which flag is which
