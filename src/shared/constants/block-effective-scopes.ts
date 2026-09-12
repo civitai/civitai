@@ -19,19 +19,40 @@
  * correct in both.
  *
  * 🔴 THIS IS NOT "WHAT THE MINT WILL ISSUE A TOKEN FOR" — do not re-describe it that way, and
- * note that "THE mint" is itself the ambiguity that produced the false claim. There are TWO
- * scope-sourcing paths in `src/pages/api/v1/block-tokens/index.ts`:
+ * note that "THE mint" is itself the ambiguity that produced the false claim. There are THREE
+ * scope-sourcing sites in `src/pages/api/v1/block-tokens/index.ts`, and none of them computes
+ * this intersection. Each is named by its RESOLVER, because two of the three are author mints
+ * and "the dev-tunnel mint" does not identify either one:
  *
- *   - The PRODUCTION run-token mint (the install/subscription/page path) derives the signed set
- *     from the MANIFEST — `requestedScopes = knownManifestScopes`, the manifest filtered to the
- *     known vocabulary — and uses `approved_scopes` as an ALL-OR-NOTHING VETO
- *     (`outsideApproved.length > 0` → 403), never as a source. It also refuses outright unless
+ *   - `:1054` — the PRODUCTION run-token mint (the install/subscription/page path). Sources the
+ *     MANIFEST: `requestedScopes = knownManifestScopes`, the manifest filtered to the known
+ *     vocabulary. `approved_scopes` is an ALL-OR-NOTHING VETO here
+ *     (`outsideApproved.length > 0` → 403), never a source, and the path refuses outright unless
  *     `status === 'approved'`.
- *   - The DEV-TUNNEL author mint (`resolveDevPageBlockForAuthor`) DOES source from the column:
- *     `clampTunnelDeclaredScopes(app.approvedScopes)`. `block-registry.service.ts`'s sentence
- *     "The mint sources scopes from `approvedScopes` … NEVER the raw manifest" is TRUE, and is
- *     about THIS path — it sits in that path's own docblock. Reading it as a statement about the
- *     production mint is the error; the sentence itself is not wrong.
+ *   - `:469` — the EPHEMERAL dev-tunnel mint, resolved by `resolveDevPageBlockForAuthor`.
+ *     Sources the AUTHOR'S OWN declared scopes: `clampTunnelDeclaredScopes(app.scopes)`. NOT
+ *     `approvedScopes` — that app was never reviewed, so there is no approval to source.
+ *   - `:650` — the OWNED-NON-APPROVED dev-tunnel mint, resolved by
+ *     `resolveOwnedNonApprovedPageBlock`. Sources the column:
+ *     `clampTunnelDeclaredScopes(app.approvedScopes)`. This is the ONLY one of the three that
+ *     reads `approvedScopes` as its scope source.
+ *
+ * `block-registry.service.ts`'s sentence "The mint sources scopes from `approvedScopes` … NEVER
+ * the raw manifest" is TRUE of `:650` ONLY. It sits at
+ * `src/server/services/block-registry.service.ts:329`, in the docblock of
+ * `OwnedNonApprovedPageBlockResolution` — that path's own type, not the ephemeral path's and not
+ * the production path's. Reading it as a statement about either of those is the error; the
+ * sentence itself is not wrong.
+ *
+ * 🔴 WHY THE ATTRIBUTION MATTERS, AND THE ONE THING NOT TO TRANSPLANT.
+ * `block-tokens/index.ts:640-650` carries a LOAD-BEARING SPEND-SAFETY INVARIANT stated in terms
+ * of the column — `approvedScopes` non-empty ⟹ the app was moderator-approved at some point, so
+ * `clampTunnelDeclaredScopes([])` cannot invent `ai:write:budgeted` for a never-approved app.
+ * That argument is written at, and is about, `:650`. It CANNOT be carried over to `:469`, which
+ * does not read the column at all. What `:469`'s own spend safety rests on is NOT established
+ * here and was not measured — do not infer it from `:650`'s comment, and do not write one in.
+ * Read `:455-480` (the resolver call passes `unsubmittedSpendAllowed`, and `resolveDevBuzzBudget`
+ * is called on the clamp's output) if you need the answer.
  *
  * The production signed set is narrower than this function's result in any case:
  * `manifest ∩ known-vocabulary ∩ approved ∩ per-user-grant ∩ anon/page rules`. This function
@@ -68,17 +89,50 @@ export type BlockScopeManifestInput = { scopes?: unknown } | null | undefined;
  *     (`getInstallConfig` and `recordInstallConsent` both `filter` the manifest array), and
  *     what the mint uses (`requestedScopes = knownManifestScopes`). Adopting it is what makes
  *     every site agree; sorting would have changed three sites to suit one.
- *   - **De-duplicated, first occurrence wins.** A repeated scope would render a duplicate
- *     React `key` on the same badge list. The pre-existing sites did NOT de-duplicate; this
- *     is the one deliberate behaviour change of the consolidation, and it is a no-op for
- *     every current consumer (a `Set` ceiling, a `recordScopeGrant` that unions, and a
- *     manifest the validator already rejects duplicates in).
+ *   - **De-duplicated, first occurrence wins.** The pre-existing sites did NOT de-duplicate, so
+ *     this is the one deliberate behaviour change of the consolidation — and it is a real FIX,
+ *     not a no-op, because a duplicate IS reachable:
+ *       · `BlockManifestValidator.validate` ACCEPTS a duplicated scope. Measured:
+ *         `scopes: ['models:read:self','models:read:self']` returns `{valid:true}`, against a
+ *         negative control (`scopes:['models:read:all']` → `{valid:false}`) proving the
+ *         validator can reject. `block-manifest-validator.service.ts:478-496` is a per-element
+ *         loop with no uniqueness check, and `public/schemas/app-block/v1.json`
+ *         `properties.scopes` declares no `uniqueItems`.
+ *       · So pre-change `getInstallConfig` could return `['x','x']`, and that array reaches
+ *         `src/components/Apps/AppSettingsModal.tsx` (`declaredScopes = installConfig?.scopes`)
+ *         → `src/components/Apps/BlockScopeList.tsx`, which renders one `<Group key={scope}>`
+ *         per element — i.e. two siblings with the SAME React key.
+ *     Two consumers would have absorbed the duplicate anyway — `grantScopes` puts the result in
+ *     a `new Set` ceiling (`src/server/routers/blocks.router.ts:2786-2788`) and
+ *     `recordScopeGrant` de-dups its own input
+ *     (`src/server/services/blocks/scope-grant.service.ts:221-223`) — but the RENDER path had no
+ *     such absorber, which is what makes de-duplicating here load-bearing rather than cosmetic.
  *
  * Both arguments are treated as untrusted JSON/DB values: a non-array on either side yields
- * `[]` rather than throwing, and non-string elements are dropped. That is deliberate even
- * though Prisma types `approvedScopes` as `string[]` — the approve paths write
+ * `[]` rather than throwing, and a non-string element never reaches the output. That is
+ * deliberate even though Prisma types `approvedScopes` as `string[]` — the approve paths write
  * `manifest.scopes as string[]`, a bare cast with no per-element check, so a malformed
  * manifest can put a non-string into the column.
+ *
+ * 🔴 THERE IS EXACTLY ONE NON-STRING GUARD, AND THAT IS A DELIBERATE REDUCTION FROM TWO.
+ * An earlier revision also filtered the APPROVED side to strings before building the Set. That
+ * filter could not change this function's output for ANY input, and the test titled "drops
+ * non-string elements on the APPROVED side" could not reach it. Measured, with the fixture
+ * `effectiveBlockScopes({scopes:[42,'buzz:read:self']}, [42,'buzz:read:self'])`:
+ *
+ *   | variant                                   | result                      |
+ *   | both guards present                       | `['buzz:read:self']`        |
+ *   | approved-side filter deleted only         | `['buzz:read:self']`        |
+ *   | manifest-side `typeof` guard deleted only | `['buzz:read:self']`        |
+ *   | BOTH deleted                              | `[42,'buzz:read:self']` ← leak |
+ *
+ * The two were MUTUALLY REDUNDANT: a non-string in the approved Set is unmatchable because the
+ * only values tested against it are strings, and a non-string manifest entry is unmatchable
+ * because the Set held only strings. So neither could be killed alone and each made the other
+ * untestable. Keeping the loop guard (it is the one standing between the column and `out.push`)
+ * and dropping the filter leaves a SINGLE guard that the fixture above kills on its own — i.e. a
+ * guard proven reachable, not merely breakable. Do not re-add the approved-side filter without a
+ * fixture that fails when ONLY that filter is removed; there is no such input.
  *
  * NOT filtered to the known scope vocabulary (`isKnownBlockScope`). None of the call sites
  * did that, and adding it here would silently change what they enforce and disclose; the
@@ -90,10 +144,16 @@ export function effectiveBlockScopes(
 ): string[] {
   const declared = (manifest ?? {}).scopes;
   if (!Array.isArray(declared) || !Array.isArray(approvedScopes)) return [];
-  const approved = new Set(approvedScopes.filter((s): s is string => typeof s === 'string'));
+  // NOT filtered to strings — see "EXACTLY ONE NON-STRING GUARD" above. A non-string in this
+  // Set is unmatchable, because the only values tested against it are the strings that clear
+  // the guard in the loop.
+  const approved = new Set<unknown>(approvedScopes);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const scope of declared) {
+    // 🔴 THE non-string guard. Removing it leaks a non-string into `out` whenever the SAME
+    // non-string also sits in the column — pinned by the both-sides fixture in
+    // `block-effective-scopes.test.ts`. Do not delete on the strength of the `string[]` type.
     if (typeof scope !== 'string') continue;
     if (!approved.has(scope) || seen.has(scope)) continue;
     seen.add(scope);

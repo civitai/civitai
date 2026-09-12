@@ -38,11 +38,40 @@ const EXPECTED_CALL_SITES: Record<string, string> = {
 };
 
 /**
- * The signature of every pre-existing open-coded copy: a `Set` built straight from the
- * `approvedScopes` column, to be `.has()`-tested against the manifest array. Matching this is how
- * the guard notices someone re-deriving the rule locally instead of calling the helper.
+ * 🔴 A SPELLING CHECK, NOT A STRUCTURAL ONE — and the docstring is deliberately no wider than
+ * that. These two token shapes are ALL it can see:
+ *   (a) a `Set` built straight from the `approvedScopes` column, to be `.has()`-tested against
+ *       the manifest array — the shape all three pre-existing open-coded copies used;
+ *   (b) an `.includes()` test against the column, the other idiomatic spelling of the same
+ *       intersection.
+ *
+ * Anything else walks straight past: a `reduce`, a `Map` keyed on the column, a local alias
+ * assigned from `approvedScopes` before the intersection, or the rule re-derived in a different
+ * module. An earlier revision of this docstring claimed the check "notices someone re-deriving
+ * the rule locally", which is a coverage claim the regex cannot honour —
+ * `manifestScopes.filter((s) => block.approvedScopes.includes(s))` was not matched by it at all.
+ * Adding (b) closes that one counter-example; it does not make the check structural.
+ *
+ * So read a green result as "neither of these two spellings is present in the ledgered modules",
+ * never as "the rule is not re-derived anywhere". The STRUCTURAL guarantee in this file is the
+ * importer ledger below (`the ledger is the complete set of production importers`) — that is the
+ * check to lean on.
  */
-const OPEN_CODED_INTERSECTION = /new Set\(\s*[A-Za-z0-9_.?[\]]*approvedScopes/i;
+const OPEN_CODED_SPELLINGS: { name: string; re: RegExp }[] = [
+  {
+    name: 'a Set built from the approvedScopes column',
+    re: /new Set\(\s*[A-Za-z0-9_.?[\]]*approvedScopes/i,
+  },
+  {
+    name: 'an .includes() test against the approvedScopes column',
+    re: /approvedScopes\s*(?:\?\?\s*\[\]\s*)?\)?\s*\.includes\(/i,
+  },
+];
+
+/** True iff ANY known open-coded spelling appears. */
+function hasOpenCodedSpelling(body: string): boolean {
+  return OPEN_CODED_SPELLINGS.some(({ re }) => re.test(body));
+}
 
 function read(relativePath: string): string {
   return readFileSync(join(SRC, relativePath), 'utf8');
@@ -72,23 +101,43 @@ describe('effectiveBlockScopes consolidation ledger', () => {
   // actually find files, and the open-coded-intersection regex must actually match the shape it
   // claims to detect. A reassuring "0 offenders" from a probe wired to nothing is indistinguishable
   // from a real pass.
-  it('the source walk finds files and the open-coded regex matches a known-bad sample', () => {
+  it('the source walk finds files and EVERY open-coded spelling matches a known-bad sample', () => {
     const files = sourceFiles(SRC);
     expect(files.length).toBeGreaterThan(500);
     expect(files).toContain('shared/constants/block-effective-scopes.ts');
-    // POSITIVE control — the exact shape the three sites used to carry.
+
+    // POSITIVE control, PER SPELLING — each entry must be shown to match something, or a dead
+    // regex sits in the list contributing a silent `false` to `hasOpenCodedSpelling`.
+    const [setShape, includesShape] = OPEN_CODED_SPELLINGS;
+    expect(setShape.re.test('const approved = new Set(block.approvedScopes ?? []);')).toBe(true);
+    expect(setShape.re.test('const approved = new Set(opts.approvedScopes ?? []);')).toBe(true);
     expect(
-      OPEN_CODED_INTERSECTION.test('const approved = new Set(block.approvedScopes ?? []);')
+      includesShape.re.test('manifestScopes.filter((s) => block.approvedScopes.includes(s))')
     ).toBe(true);
     expect(
-      OPEN_CODED_INTERSECTION.test('const approved = new Set(opts.approvedScopes ?? []);')
+      includesShape.re.test(
+        'manifestScopes.filter((s) => (block.approvedScopes ?? []).includes(s))'
+      )
     ).toBe(true);
+
+    // …and the aggregate must fire on each of them too, so a spelling cannot be matched in
+    // isolation while the function that actually gates ignores it.
+    expect(hasOpenCodedSpelling('const approved = new Set(block.approvedScopes ?? []);')).toBe(
+      true
+    );
+    expect(
+      hasOpenCodedSpelling('manifestScopes.filter((s) => block.approvedScopes.includes(s))')
+    ).toBe(true);
+
     // NEGATIVE control — the consolidated shape must NOT match, or the guard below would be
     // permanently red and therefore worthless.
     expect(
-      OPEN_CODED_INTERSECTION.test(
+      hasOpenCodedSpelling(
         'const ceiling = new Set(effectiveBlockScopes(block.manifest, block.approvedScopes));'
       )
+    ).toBe(false);
+    expect(
+      hasOpenCodedSpelling('const scopes = effectiveBlockScopes(manifest, block.approvedScopes);')
     ).toBe(false);
   });
 
@@ -117,11 +166,13 @@ describe('effectiveBlockScopes consolidation ledger', () => {
     expect(importers).toEqual(Object.keys(EXPECTED_CALL_SITES).sort());
   });
 
-  // 🔴 NO CONSOLIDATED SITE MAY RE-OPEN-CODE THE RULE — the thing that would silently regenerate
-  // the divergence the consolidation removed.
-  it('no consolidated module still builds its own approved-scope Set to intersect with', () => {
+  // 🔴 SPELLING-SCOPED, BY CONSTRUCTION — see `OPEN_CODED_SPELLINGS`. This catches the two known
+  // token shapes regenerating at a ledgered site. It is NOT a proof that the rule is computed in
+  // one place; the importer ledger above is the structural half of that claim, and this is a
+  // cheap tripwire over the spellings we have actually seen written.
+  it('no ledgered module carries either KNOWN open-coded spelling of the intersection', () => {
     const offenders = Object.keys(EXPECTED_CALL_SITES).filter((file) =>
-      OPEN_CODED_INTERSECTION.test(codeOnly(read(file)))
+      hasOpenCodedSpelling(codeOnly(read(file)))
     );
     expect(offenders).toEqual([]);
   });

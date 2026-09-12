@@ -324,9 +324,13 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     // 🔴 DO NOT DESCRIBE THIS AS "WHAT THE MINT WILL ISSUE A TOKEN FOR" — an earlier revision
     // of this comment did, citing `block-registry.service.ts`, and the citation was being
     // misapplied rather than misquoted. That sentence ("The mint sources scopes from
-    // `approvedScopes` … NEVER the raw manifest") is TRUE of the DEV-TUNNEL author mint, whose
-    // docblock it lives in — `block-tokens/index.ts` really does
-    // `clampTunnelDeclaredScopes(app.approvedScopes)` there. The PRODUCTION run-token mint that
+    // `approvedScopes` … NEVER the raw manifest") is TRUE of exactly ONE of the THREE
+    // scope-sourcing sites: the OWNED-NON-APPROVED dev-tunnel mint, resolved by
+    // `resolveOwnedNonApprovedPageBlock`, whose docblock it lives in — `block-tokens/index.ts:650`
+    // really does `clampTunnelDeclaredScopes(app.approvedScopes)` there. ⚠️ "The dev-tunnel author
+    // mint" does NOT identify it: the OTHER dev-tunnel author mint
+    // (`resolveDevPageBlockForAuthor`, `:469`) sources `clampTunnelDeclaredScopes(app.scopes)` —
+    // the author's own declared manifest, not the column. The PRODUCTION run-token mint that
     // the apps on this page actually use is the other path, and it sources from the MANIFEST
     // (`requestedScopes = knownManifestScopes`) with `approved_scopes` as an all-or-nothing 403
     // veto. It also refuses unless `status === 'approved'`, and this query has no status filter,

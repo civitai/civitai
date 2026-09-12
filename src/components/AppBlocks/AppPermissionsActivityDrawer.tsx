@@ -126,9 +126,15 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              second was wrong about WHY. It first said "MANIFEST-DECLARED SET"; it then said
              "APPROVED SET … the set the MINT honours", citing `block-registry.service.ts`'s "The
              mint sources scopes from `approvedScopes` … NEVER the raw manifest". That sentence was
-             MISAPPLIED, not misquoted: it is true of the DEV-TUNNEL author mint, in whose docblock
-             it sits, and `src/pages/api/v1/block-tokens/index.ts` really does
-             `clampTunnelDeclaredScopes(app.approvedScopes)` on that path. The PRODUCTION
+             MISAPPLIED, not misquoted: it is true of exactly ONE of the THREE scope-sourcing
+             sites — the OWNED-NON-APPROVED dev-tunnel mint, resolved by
+             `resolveOwnedNonApprovedPageBlock`, in whose docblock it sits — and
+             `src/pages/api/v1/block-tokens/index.ts:650` really does
+             `clampTunnelDeclaredScopes(app.approvedScopes)` on that path. ⚠️ "The dev-tunnel author
+             mint" does NOT identify it: the OTHER dev-tunnel author mint
+             (`resolveDevPageBlockForAuthor`, `:469`) sources
+             `clampTunnelDeclaredScopes(app.scopes)` — the author's own declared manifest, never
+             the column. The PRODUCTION
              run-token mint — the one the apps listed here use — is the OTHER path, and it builds
              the signed set FROM THE MANIFEST (`requestedScopes = knownManifestScopes`) with
              `approved_scopes` as an all-or-nothing 403 veto. Nothing displayed here is "what the

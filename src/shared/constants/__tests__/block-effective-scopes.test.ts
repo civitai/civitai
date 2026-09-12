@@ -88,8 +88,17 @@ describe('effectiveBlockScopes', () => {
   // purely hypothetical is a non-string ELEMENT: the approve paths write
   // `manifest.scopes as string[]` — a bare cast with no per-element check
   // (`publish-request.service.ts`) — so a malformed manifest can land one in the column.
+  //
+  // 🔴 WHAT THE NEXT TWO CASES DO AND DO NOT PIN. They assert the OUTPUT CONTRACT — a
+  // one-sided non-string never reaches the result — and nothing about any particular guard.
+  // Measured: with a non-string on one side only, deleting the implementation's `typeof` guard
+  // changes NOTHING, because a non-string on one side cannot match a string on the other. They
+  // were previously annotated as covering "the approved-side handling"; that was wrong, and an
+  // earlier revision's approved-side filter was certified by the first of them without being
+  // reachable from it. The guard-level pin is the BOTH-SIDES case below — that is the only
+  // fixture in this file that can fail when the implementation's non-string handling is removed.
 
-  it('drops non-string elements on the APPROVED side', () => {
+  it('a one-sided non-string on the APPROVED side never reaches the output', () => {
     expect(
       effectiveBlockScopes({ scopes: ['buzz:read:self', 'models:read:self'] }, [
         null,
@@ -101,13 +110,29 @@ describe('effectiveBlockScopes', () => {
     ).toEqual(['buzz:read:self', 'models:read:self']);
   });
 
-  it('drops non-string elements on the MANIFEST side', () => {
+  it('a one-sided non-string on the MANIFEST side never reaches the output', () => {
     expect(
       effectiveBlockScopes({ scopes: [null, 'buzz:read:self', 7, 'models:read:self'] }, [
         'buzz:read:self',
         'models:read:self',
       ])
     ).toEqual(['buzz:read:self', 'models:read:self']);
+  });
+
+  // 🔴 THE GUARD-LEVEL PIN, AND THE ONLY NON-STRING CASE HERE THAT CAN FAIL. The SAME
+  // non-string sits in BOTH columns, which is what makes it an intersection member and so
+  // defeats the "one side filters, the other cannot match" mutual redundancy that made every
+  // one-sided fixture blind. Measured against the fixture below:
+  //   both guards present / only the approved filter removed / only the loop guard removed
+  //     → ['buzz:read:self']          (identical — one-sided fixtures cannot distinguish these)
+  //   both removed                    → [42, 'buzz:read:self']   ← the leak this case catches
+  // The implementation now carries ONE guard (the loop `typeof`), so this case kills it on its
+  // own. A `42` that survived here would reach a `<Badge>` label and a `SCOPE_DESCRIPTIONS`
+  // lookup via `BlockScopeList`.
+  it('🔴 drops a non-string present in BOTH columns — the case a one-sided fixture cannot see', () => {
+    expect(
+      effectiveBlockScopes({ scopes: [42, 'buzz:read:self'] }, [42, 'buzz:read:self'])
+    ).toEqual(['buzz:read:self']);
   });
 
   // A non-null SCALAR on purpose: `null` alone cannot distinguish the `Array.isArray` guard from a

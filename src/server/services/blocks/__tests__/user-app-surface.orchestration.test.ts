@@ -409,8 +409,12 @@ describe('listMyScopeGrants', () => {
   //
   // ⚠️ AN EARLIER REVISION OF THIS BLOCK SAID `scopes` IS `approved_scopes`, "the set the MINT
   // issues tokens for", citing `block-registry.service.ts`. The citation was MISAPPLIED: that
-  // sentence describes the DEV-TUNNEL author mint (`clampTunnelDeclaredScopes(app.approvedScopes)`),
-  // not the PRODUCTION run-token mint, which sources from the MANIFEST
+  // sentence describes exactly ONE of the THREE scope-sourcing sites — the OWNED-NON-APPROVED
+  // dev-tunnel mint, `resolveOwnedNonApprovedPageBlock` at `block-tokens/index.ts:650`
+  // (`clampTunnelDeclaredScopes(app.approvedScopes)`). ⚠️ "The dev-tunnel author mint" does NOT
+  // identify it — the OTHER dev-tunnel author mint (`resolveDevPageBlockForAuthor`, `:469`) sources
+  // `clampTunnelDeclaredScopes(app.scopes)`, the author's own declared manifest. Neither is
+  // the PRODUCTION run-token mint, which sources from the MANIFEST
   // (`requestedScopes = knownManifestScopes`) with `approved_scopes` as an all-or-nothing 403 veto
   // and refuses entirely unless `status === 'approved'` — something this query does not filter on.
   // So nothing here is "what the mint will issue a token for"; these are the scopes the app may be
@@ -607,8 +611,16 @@ describe('listMyScopeGrants', () => {
   // with no per-element check — see `publish-request.service.ts`.)
   //
   // Both fixtures make the MANIFEST a superset of the well-formed approved values, so the result
-  // is attributable to the approved-side handling rather than to an empty intersection.
-  it('drops non-string elements from a malformed approvedScopes array', async () => {
+  // is not explained away by an empty intersection.
+  //
+  // 🔴 BUT THE FIRST ONE ATTRIBUTES TO NO GUARD, AND AN EARLIER REVISION OF THIS BLOCK CLAIMED IT
+  // DID ("attributable to the approved-side handling"). Its non-string elements sit on the
+  // APPROVED side only, and a non-string on one side cannot match a string on the other — so the
+  // case passes whether or not the helper does any non-string filtering. It pins the OUTPUT
+  // CONTRACT at this read site, nothing finer. The guard-level pin lives at the helper
+  // (`src/shared/constants/__tests__/block-effective-scopes.test.ts`, the BOTH-columns case); the
+  // third case below is this suite's seam-level mirror of it.
+  it('a one-sided non-string in approvedScopes never reaches the output', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
       pinnedSub({
@@ -623,6 +635,25 @@ describe('listMyScopeGrants', () => {
     ]);
     const result = await listMyScopeGrants(42);
     expect(result[0].scopes).toEqual(['buzz:read:self', 'collections:read:private']);
+  });
+
+  // 🔴 THE SAME non-string in BOTH columns — the shape that makes it an intersection MEMBER, and
+  // so the only one that can fail if the helper's non-string handling is dropped. This is the
+  // seam-level mirror of the helper's own both-columns case: it pins that `listMyScopeGrants`
+  // really routes through that handling rather than re-deriving the rule, which is what would put
+  // a `42` into a `<Badge>` label and a `SCOPE_DESCRIPTIONS` lookup on the permissions tab.
+  it('🔴 drops a non-string present in BOTH the manifest and approvedScopes', async () => {
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      pinnedSub({
+        appBlock: appBlock({
+          manifest: { name: 'Hello', scopes: [42, 'buzz:read:self'] },
+          approvedScopes: [42, 'buzz:read:self'],
+        }),
+      }),
+    ]);
+    const result = await listMyScopeGrants(42);
+    expect(result[0].scopes).toEqual(['buzz:read:self']);
   });
 
   // The fixture is a non-null SCALAR on purpose: `null` alone cannot distinguish the
