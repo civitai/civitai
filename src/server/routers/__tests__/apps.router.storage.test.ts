@@ -1846,3 +1846,71 @@ describe('apps.storage — run-for-real preview namespace', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// MOUNT SEAM — what `trpc.apps.mod.*` actually exposes.
+// ---------------------------------------------------------------------------
+
+/**
+ * 🔴 THIS EXISTS BECAUSE A MUTATION SURVIVED. `apps-mod-storage.router.ts` has its
+ * own suite, and that suite imports `appsModUserStorageRouter` DIRECTLY — so
+ * deleting the `userStorage:` line that mounts it inside `appsModRouter` left all
+ * 25 of its tests green while the whole surface was unreachable over tRPC. Every
+ * component was tested; the SEAM between them was owned by nobody.
+ *
+ * So this pins the RELATIONSHIP rather than a component: the exact set of
+ * procedure paths under `apps.mod`. It fails when the set SHRINKS (the mount is
+ * dropped, or a procedure is renamed out from under its callers) AND when it
+ * GROWS (a new moderator verb appears on this surface without anyone looking at
+ * it) — a moderator surface is exactly where an unreviewed addition matters.
+ *
+ * Structural on its own, so the behavioural half is the test after it: a
+ * structural check type-checks straight past a procedure mounted at the right
+ * path and wired to the wrong thing.
+ */
+describe('apps.mod.* mount seam', () => {
+  const modProcedurePaths = () =>
+    Object.keys(
+      (appsRouter as never as { _def: { procedures: Record<string, unknown> } })._def.procedures
+    )
+      .filter((p) => p.startsWith('mod.'))
+      .sort();
+
+  it('exposes EXACTLY the moderator procedures, no more and no fewer', () => {
+    expect(modProcedurePaths()).toEqual([
+      'mod.purgeSharedRow',
+      'mod.userStorage.preview',
+      'mod.userStorage.purgeAccount',
+      'mod.userStorage.purgeApp',
+    ]);
+  });
+
+  it('the mounted per-user preview is REACHABLE over tRPC and reaches the service', async () => {
+    // The behavioural half. A moderator session calls the procedure at its real
+    // path; it must return the preview envelope rather than 404 or throw. The
+    // pool mock answers the information_schema probe with no rows, so the
+    // service's own "nothing provisioned" branch is what comes back — which is
+    // the shape assertion below, and it cannot be produced by a wrong mount.
+    const caller = appsRouter.createCaller(
+      fakeCtx({ id: 9, isModerator: true, deletedAt: null, bannedAt: null }) as never
+    );
+    const out = await caller.mod.userStorage.preview({ userId: 42 });
+    expect(out).toEqual({
+      userId: 42,
+      apps: [],
+      totals: { appCount: 0, rowCount: 0, totalBytes: 0 },
+      unmappedSchemas: [],
+      schemasTruncated: false,
+    });
+  });
+
+  it('the mounted purge verbs refuse a non-moderator session', async () => {
+    const caller = appsRouter.createCaller(fakeCtx({ id: 1, isModerator: false }) as never);
+    await expect(
+      caller.mod.userStorage.purgeApp({ userId: 42, appBlockId: 'apb_x', reason: 'abuse' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      caller.mod.userStorage.purgeAccount({ userId: 42, reason: 'abuse' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
