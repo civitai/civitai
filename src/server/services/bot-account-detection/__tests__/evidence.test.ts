@@ -1049,8 +1049,14 @@ describe('collectCohortSignals', () => {
     const reader = fakeReader({
       filenames: Array.from({ length: 5 }, (_, i) => ({ userId: i + 1, name: `f${i}.jpg` })),
     });
+    // 🔴 `filenameBatchSize` IS PASSED, NOT INHERITED FROM `chunkSize`. The budget can only be seen
+    // to stop the walk if the walk has more than one batch in it, and this test used to get that
+    // implicitly from a default that narrowed the batch to the chunk width. That coupling is gone —
+    // see the option's docstring — so the condition the test needs is now stated. Same assertions,
+    // same conditions; nothing here is weakened.
     const s = await collectCohortSignals(reader, members, {
       chunkSize: 2,
+      filenameBatchSize: 2,
       maxFilenameSamples: 2,
     });
     expect(s.sources.filenameBudgetExhausted).toBe(true);
@@ -1140,6 +1146,31 @@ describe('collectCohortSignals', () => {
       expect(call.ids.length).toBeLessThanOrEqual(FILENAME_READ_BATCH_SIZE);
     // The content read is unaffected: it still uses the chunk width it was given.
     expect(reader.contentCalls.map((c) => c.ids.length)).toEqual([60]);
+  });
+
+  it('🔴 a NARROW chunkSize does not narrow the filename batch — they are different units', async () => {
+    // 🔴 RED BEFORE THIS CHANGE. The default was `Math.min(chunkSize, FILENAME_READ_BATCH_SIZE)`, so
+    // a caller that deliberately asked for a small page — an on-demand pass run narrow to limit
+    // blast radius — silently cut filename read concurrency with it. Two unrelated dials moving
+    // together is exactly what the option's own docstring says must not happen, and the coupling
+    // existed only to serve the tests here, which now pass the knob explicitly.
+    const many = Array.from({ length: 30 }, (_, i) => member(i + 1, 'ring.test'));
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, many, { chunkSize: 2 });
+    expect(reader.filenameCalls.map((c) => c.ids.length)).toEqual([10, 10, 10]);
+    // The point is INDEPENDENCE, not that the filename read overrides the caller: the content read
+    // still walks at the width it was given.
+    expect(reader.contentCalls.every((c) => c.ids.length <= 2)).toBe(true);
+  });
+
+  it('honours an explicit filenameBatchSize (invariant guard — the knob had no caller before)', async () => {
+    // Green at the PR head too: the option always worked, it simply had no caller anywhere in the
+    // tree, which is why its coupling to `chunkSize` was never exercised as a knob. Asserted now
+    // because removing the coupling is what makes this the only way to narrow the batch.
+    const many = Array.from({ length: 12 }, (_, i) => member(i + 1, 'ring.test'));
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, many, { chunkSize: 500, filenameBatchSize: 3 });
+    expect(reader.filenameCalls.map((c) => c.ids.length)).toEqual([3, 3, 3, 3]);
   });
 
   it('does not claim filename exhaustion when the whole cohort fit inside the budget', async () => {

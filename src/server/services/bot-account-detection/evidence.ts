@@ -803,13 +803,18 @@ export async function collectCohortSignals(
   opts: {
     chunkSize?: number;
     /**
-     * How many members' filename reads are issued together. Defaults to the NARROWER of
-     * `chunkSize` and `FILENAME_READ_BATCH_SIZE`.
+     * How many members' filename reads are issued together. Defaults to `FILENAME_READ_BATCH_SIZE`.
      *
-     * 🔴 ITS OWN KNOB BECAUSE IT IS ITS OWN UNIT. `chunkSize` is the width of an `IN (…)` list; the
-     * filename read has no `IN (…)` list any more, so reusing that number would put 500 concurrent
-     * queries in flight. Taking the narrower of the two keeps a caller that deliberately asked for
-     * a small chunk — every test here does — reading filenames at that same granularity.
+     * 🔴 ITS OWN KNOB BECAUSE IT IS ITS OWN UNIT — AND THE DEFAULT NO LONGER LOOKS AT `chunkSize`.
+     * `chunkSize` is the width of an `IN (…)` list; the filename read has no `IN (…)` list any more,
+     * so the two measure different things and reusing that number would put 500 concurrent queries
+     * in flight. The default used to be `Math.min(chunkSize, FILENAME_READ_BATCH_SIZE)`, which made
+     * a caller that narrowed the page size narrow filename concurrency along with it — two unrelated
+     * dials moving together, which is the thing this paragraph says must not happen. An operator
+     * running an on-demand pass with a small page to limit blast radius would have halved read
+     * concurrency without asking to. In production `chunkSize` is `COHORT_PAGE_SIZE` (500) so the
+     * `min` was always `FILENAME_READ_BATCH_SIZE` and nothing there changes; the coupling only ever
+     * bound small-page callers and the tests, and the tests now pass this knob explicitly.
      */
     filenameBatchSize?: number;
     maxContentSamples?: number;
@@ -826,7 +831,7 @@ export async function collectCohortSignals(
   } = {}
 ): Promise<CohortSignals> {
   const chunkSize = opts.chunkSize ?? EVIDENCE_CHUNK_SIZE;
-  const filenameBatchSize = opts.filenameBatchSize ?? Math.min(chunkSize, FILENAME_READ_BATCH_SIZE);
+  const filenameBatchSize = opts.filenameBatchSize ?? FILENAME_READ_BATCH_SIZE;
   const budgetTotal = opts.maxContentSamples ?? MAX_CONTENT_SAMPLES;
   const filenameBudgetTotal = opts.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
   const filenamesPerMember = opts.maxFilenamesPerMember ?? MAX_FILENAMES_PER_MEMBER;
