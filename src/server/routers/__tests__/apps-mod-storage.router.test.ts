@@ -170,6 +170,21 @@ const { mockPool, mockClient, fake } = vi.hoisted(() => {
       };
     }
 
+    // ── ambiguous-schema row probe (the collided targeted-preview branch) ───
+    // A count over the SCHEMA, deliberately not attributed to either colliding
+    // app. Matched before the totals block because it is also a bare count.
+    if (
+      /^SELECT count\(\*\)::text AS n FROM "app_[a-z0-9_]+"\.kv WHERE user_id = \$1$/i.test(flat)
+    ) {
+      const s = fake.schemas.get(schemaOf(flat));
+      if (!s) throw new Error(`fake: relation does not exist: ${schemaOf(flat)}.kv`);
+      const uid = params[0] as number;
+      return {
+        rows: [{ n: String(s.kv.filter((r) => r.user_id === uid).length) }],
+        rowCount: 1,
+      };
+    }
+
     // ── per-app totals + counter + shared count ─────────────────────────────
     if (flat.includes('AS row_count') && flat.includes('AS total_bytes')) {
       const name = schemaOf(flat);
@@ -554,6 +569,23 @@ describe('preview (the read surface)', () => {
     for (const k of ['a-one', 'a-two', 'a-three']) expect(serialized).not.toContain(k);
   });
 
+  it('a collided schema holding NO rows for the target is not reported as holding them', async () => {
+    // `unmappedSchemas` means "holds rows for this user AND could not be resolved
+    // to one app". The collision branch used to return the name before any count
+    // was taken, telling a moderator a schema holds their target's rows when it
+    // may hold none — falsifying the field's own docstring and costing an
+    // investigation.
+    mockDbRead.appBlock.findMany.mockImplementation(async () => [
+      { id: APP_A.id, blockId: 'my-app', appListing: { id: 'apl_a', slug: 'my-app' } },
+      { id: 'apb_ccc', blockId: 'my--app', appListing: null },
+    ]);
+
+    // A user with nothing stored anywhere.
+    const out = await caller().preview({ userId: 999, appBlockId: APP_A.id });
+    expect(out.apps).toEqual([]);
+    expect(out.unmappedSchemas).toEqual([]);
+  });
+
   it('an app that was never provisioned reads as empty, not as an error', async () => {
     fake.schemas.delete(APP_A.schema);
     const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
@@ -622,6 +654,64 @@ describe('preview attribution', () => {
     mockLogToAxiom.mockRejectedValueOnce(new Error('log store down'));
     const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
     expect(out.apps[0].rowCount).toBe(3);
+  });
+});
+
+// ── 1c. THE INPUT BOUNDARY THE ERASURE REDUCTION RESTS ON ────────────────────
+
+describe('initiator is not a remote input', () => {
+  /**
+   * 🔴 THIS PINS THE SENTENCE THAT JUSTIFIES THE ERASURE REDUCTION.
+   *
+   * The snapshot shape is chosen by `before.initiator`, and the safety argument
+   * is precisely that NEITHER tRPC PROCEDURE ACCEPTS `initiator` FROM INPUT — not
+   * that "no caller can supply it", which is false (both service functions export
+   * an optional `initiator?:`). So the guarantee lives on the input schema, and
+   * until now nothing guarded it.
+   *
+   * Every other test asserts `before.initiator` EQUALS the expected value, which
+   * keeps passing if someone adds `initiator` to `purgeApp`'s input and the test's
+   * caller merely does not send it. The failure that would ship: a "re-run as
+   * system" affordance is added, a moderator passes `'system:account-wipe'`, and
+   * gets a takedown whose permanent row records NONE of the keys they destroyed —
+   * with the suite green.
+   *
+   * Asserted against the procedure's own zod schema, which is what actually
+   * decides what a remote caller may send.
+   */
+  const inputSchemaOf = (name: 'preview' | 'purgeApp' | 'purgeAccount') => {
+    const proc = (
+      appsModUserStorageRouter as never as {
+        _def: { procedures: Record<string, { _def: { inputs: unknown[] } }> };
+      }
+    )._def.procedures[name];
+    expect(proc).toBeTruthy();
+    return proc._def.inputs[0] as { shape?: Record<string, unknown> };
+  };
+
+  it.each(['preview', 'purgeApp', 'purgeAccount'] as const)(
+    '%s does not admit `initiator` from the wire',
+    (name) => {
+      const shape = inputSchemaOf(name).shape ?? {};
+      // POSITIVE CONTROL — the reader really is looking at the field list.
+      expect(Object.keys(shape)).toContain('userId');
+      expect(Object.keys(shape)).not.toContain('initiator');
+    }
+  );
+
+  it('a client that sends `initiator` anyway cannot change the recorded shape', () => {
+    // The schemas are strict-by-omission: an unknown key is stripped, not honoured.
+    const parsed = (
+      inputSchemaOf('purgeApp') as unknown as {
+        parse: (v: unknown) => Record<string, unknown>;
+      }
+    ).parse({
+      userId: TARGET,
+      appBlockId: APP_A.id,
+      reason: 'abuse',
+      initiator: 'system:account-wipe',
+    });
+    expect(parsed).not.toHaveProperty('initiator');
   });
 });
 
@@ -793,7 +883,7 @@ describe('audit record', () => {
     // re-derive it rather than trust it.
     expect(update.data.after.connected).toBe(true);
     expect(update.data.after.commitAttempted).toBe(false);
-    expect(update.data.after.rollbackConfirmed).toBe(true);
+    expect(update.data.after.rollbackStatementOk).toBe(true);
     expect(String(update.data.after.error)).toContain('deadlock');
     // And the rows really are intact — the stamp is not merely claiming it.
     expect(fake.kv(APP_A.schema)).toHaveLength(4);
@@ -822,7 +912,18 @@ describe('audit record', () => {
     expect(update.data.after.commitAttempted).toBe(true);
   });
 
-  it('🔴 a failed ROLLBACK is also UNKNOWN — the result is read, not assumed', async () => {
+  it('🔴 a failed ROLLBACK before COMMIT is still FAILED — no COMMIT, no durability', async () => {
+    // 🔴 THE EXPECTATION COMES FROM POSTGRES, NOT FROM THE IMPLEMENTATION. Every
+    // statement here runs after a successful BEGIN, so it is inside an explicit
+    // transaction, and a transaction that never receives COMMIT cannot become
+    // durable — the server discards it whether we managed to send ROLLBACK or the
+    // connection simply died. So "the ROLLBACK statement failed" changes the
+    // EVIDENCE, not the verdict.
+    //
+    // An earlier version recorded 'unknown' here. That was an over-claim of
+    // UNCERTAINTY — "we cannot tell whether your data was destroyed" on a takedown
+    // row, about a case where we can tell — and it would send someone
+    // investigating nothing.
     fake.failNextKvDelete = 'deadlock detected';
     fake.failOnRollback = 'connection terminated unexpectedly';
     await expect(
@@ -830,8 +931,29 @@ describe('audit record', () => {
     ).rejects.toThrow(/deadlock/);
 
     const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
+    expect(update.data.after.outcome).toBe('failed');
+    expect(update.data.after.deletedRowCount).toBe(0);
+    expect(update.data.after.commitAttempted).toBe(false);
+    // Recorded as evidence, and named for what it is: the statement returned or
+    // it did not. It is NOT a claim that a rollback is confirmed.
+    expect(update.data.after.rollbackStatementOk).toBe(false);
+    expect(update.data.after).not.toHaveProperty('rollbackConfirmed');
+    // The rows are genuinely intact, which is what the verdict claims.
+    expect(fake.kv(APP_A.schema)).toHaveLength(4);
+  });
+
+  it('🔴 UNKNOWN is reserved for a COMMIT that was actually sent', async () => {
+    // The only branch where the state is genuinely unestablished: COMMIT went to
+    // the server and threw, so the server may or may not have applied it. Pins
+    // that 'unknown' did not simply become unreachable when it was narrowed.
+    fake.failOnCommit = 'connection terminated unexpectedly';
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toThrow(/connection terminated/);
+
+    const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
     expect(update.data.after.outcome).toBe('unknown');
-    expect(update.data.after.rollbackConfirmed).toBe(false);
+    expect(update.data.after.commitAttempted).toBe(true);
     expect(update.data.after).not.toHaveProperty('deletedRowCount');
   });
 

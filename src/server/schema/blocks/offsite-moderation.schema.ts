@@ -106,10 +106,26 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'message-owner',
   // App Blocks per-user STORAGE takedown. Like `message-owner` it changes no
   // listing state — the row exists to make a destructive act against a USER's
-  // stored data attributable and reviewable. `reason` carries the moderator's
-  // rationale, `before` the pre-purge row snapshot (keys / sizes / content
-  // fingerprints, never the values) plus the target user id, and `after` what
-  // was actually removed. See `user-storage-purge.service.ts`.
+  // stored data attributable and reviewable.
+  //
+  // `reason` carries the moderator's rationale and `before.targetUserId` the
+  // target. The rest of the shape is PATH-DEPENDENT, and this docstring twice
+  // described only one path:
+  //
+  //   `before` — a MODERATOR purge (`initiator: 'moderator'`) carries a per-row
+  //     snapshot: key, block instance, size, `updatedAt`, and an md5 fingerprint
+  //     of the value, never the value itself. An ACCOUNT-WIPE purge
+  //     (`initiator: 'system:account-wipe'`) carries NO per-row detail at all —
+  //     just counts and bytes, plus `rowDetailWithheld: 'erasure'`. Writing the
+  //     key names and fingerprints of an erased account into a permanent row
+  //     would be a durable derived artefact of the content being erased.
+  //   `after` — NOT simply "what was removed". `outcome` is `'purged'`,
+  //     `'failed'` or `'unknown'`; on `'unknown'` the count is deliberately
+  //     ABSENT and `observedDeleteRowCount` bounds what MAY be gone.
+  //
+  // `user-storage-purge.service.ts` is the authority on both; its header block
+  // enumerates every `after` state. Do not re-describe them here — this comment
+  // has been falsified by a later commit of the same change twice already.
   'purge-user-storage',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];

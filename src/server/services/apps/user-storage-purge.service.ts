@@ -58,15 +58,18 @@
 //
 //   after.outcome === 'purged'   — COMMIT returned. The rows are gone; the counts
 //                                  are in the same object.
-//   after.outcome === 'failed'   — observed to have destroyed NOTHING: either no
-//                                  connection was ever made, or COMMIT was never
-//                                  reached and ROLLBACK came back clean.
+//   after.outcome === 'failed'   — nothing was destroyed, because no COMMIT was
+//                                  ever sent: either no connection was made, or the
+//                                  transaction was abandoned before COMMIT. A
+//                                  transaction that never receives COMMIT cannot be
+//                                  durable, so this holds whether or not the
+//                                  ROLLBACK statement got through.
 //                                  `deletedRowCount: 0` is a measurement here.
-//   after.outcome === 'unknown'  — COMMIT threw (the server may have applied it),
-//                                  or the ROLLBACK itself failed. `deletedRowCount`
-//                                  is ABSENT, deliberately: its absence is the
-//                                  signal. `observedDeleteRowCount` says what the
-//                                  DELETE reported, which bounds what may be gone.
+//   after.outcome === 'unknown'  — COMMIT was sent and threw, so the server may or
+//                                  may not have applied it. `deletedRowCount` is
+//                                  ABSENT, deliberately: its absence is the signal.
+//                                  `observedDeleteRowCount` says what the DELETE
+//                                  reported, which bounds what may be gone.
 //   after === null               — the row was written and NO stamp reached the
 //                                  database. Nothing about the rows' fate is
 //                                  recorded.
@@ -75,9 +78,16 @@
 // TIMES — they named a state and asserted an outcome the code had not established.
 // A null `after` was called "attempted, completion unrecorded" while it also
 // covered a completed purge; then `'failed'` asserted `rolledBack: true` and
-// `deletedRowCount: 0` from a rollback result that had been discarded. If a state's
-// meaning cannot be established, this comment must say it cannot — that is why
-// `'unknown'` exists and why it omits the count rather than defaulting it.
+// `deletedRowCount: 0` from a rollback result that had been discarded. A THIRD
+// version then justified `'unknown'` on a failed ROLLBACK as "genuinely
+// unestablished" when a never-committed transaction settles it either way — an
+// over-claim of UNCERTAINTY rather than of certainty, but still false, and on a
+// takedown row it sends someone investigating nothing.
+//
+// If a state's meaning cannot be established, this comment must say it cannot —
+// that is why `'unknown'` exists and why it omits the count rather than
+// defaulting it. Where it CAN be established, it must not hide behind
+// `'unknown'` either.
 
 import type { Prisma } from '@prisma/client';
 // The pool's `connect` is OVERLOADED (callback form + promise form), so deriving
@@ -568,11 +578,33 @@ export async function previewUserAppStorage(args: {
     const targetedSchemaName = `app_${identity.storageSlug}`;
     const { collidingSchemas } = await resolveSchemaOwnership();
     if (collidingSchemas.has(targetedSchemaName)) {
+      // 🔴 ESTABLISH THE PREDICATE BEFORE REPORTING IT. `unmappedSchemas` means
+      // "holds rows for this user AND could not be resolved to one app" — the
+      // sweep only ever populates it from schemas whose row count is already
+      // known to be > 0. Returning the name here unconditionally told a moderator
+      // that a schema holds their target's rows and needs a human when it may hold
+      // nothing at all, falsifying the field's own docstring. False-positive
+      // direction, so it costs an investigation rather than a destruction — but an
+      // audit surface that cries wolf is how the real signal stops being read.
+      //
+      // The count is safe to take even though the schema is ambiguous: it is a
+      // statement about the SCHEMA, not an attribution of rows to either app,
+      // which is the thing this branch refuses to do.
+      const tablesForAmbiguous = shape.get(targetedSchemaName);
+      let ambiguousHoldsRows = false;
+      if (tablesForAmbiguous?.hasKv) {
+        const pool = requireAppsDb();
+        const counted = await pool.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM "${targetedSchemaName}".kv WHERE user_id = $1`,
+          [userId]
+        );
+        ambiguousHoldsRows = Number(counted.rows[0]?.n ?? '0') > 0;
+      }
       return {
         userId,
         apps: [],
         totals: { appCount: 0, rowCount: 0, totalBytes: 0 },
-        unmappedSchemas: [targetedSchemaName],
+        unmappedSchemas: ambiguousHoldsRows ? [targetedSchemaName] : [],
         schemasTruncated: false,
       };
     }
@@ -943,23 +975,48 @@ async function purgeOneApp(args: {
     // ran `.catch(() => undefined)` here and then asserted `rolledBack: true`
     // unconditionally — recording a conclusion it had thrown away the evidence
     // for. Same inversion this block was added to fix, on the lines that fixed it.
-    let rollbackConfirmed: boolean | null = null;
+    // 🔴 THE NAME IS `rollbackStatementOk`, NOT `rollbackConfirmed`, AND THE
+    // DIFFERENCE IS THE WHOLE POINT. All this records is that the ROLLBACK
+    // statement RETURNED WITHOUT ERROR. Postgres accepts `ROLLBACK` outside a
+    // transaction — it warns and returns OK — so `commitAttempted: true` together
+    // with a successful ROLLBACK is reachable (COMMIT throws a deferred-constraint
+    // or serialization error, the transaction is already resolved, the ROLLBACK
+    // then returns fine). Under the old name a reader re-deriving from that pair
+    // concluded "rolled back cleanly, nothing destroyed" — the exact opposite of
+    // the `outcome` stored beside it. Persisted evidence must not be readable
+    // against its own verdict.
+    let rollbackStatementOk: boolean | null = null;
     if (client) {
       try {
         await client.query('ROLLBACK');
-        rollbackConfirmed = true;
+        rollbackStatementOk = true;
       } catch {
-        rollbackConfirmed = false;
+        rollbackStatementOk = false;
       }
     }
 
-    // 🔴 WHEN CAN WE SAY "NOTHING WAS DESTROYED"? Only when we OBSERVED it:
-    //   - we never connected, so no statement ever ran; or
-    //   - we connected, never reached COMMIT, and the ROLLBACK came back clean.
-    // Anything else — a COMMIT that threw (the server may have applied it), or a
-    // ROLLBACK that itself failed — leaves the state genuinely unestablished, and
-    // the row must say so rather than pick the reassuring answer.
-    const nothingDestroyed = !client || (!commitAttempted && rollbackConfirmed === true);
+    // 🔴 WHEN CAN WE SAY "NOTHING WAS DESTROYED"? When no COMMIT was ever sent.
+    //
+    // The reasoning is about POSTGRES TRANSACTION SEMANTICS, not about what our
+    // own statements returned. Every statement in the block above runs after a
+    // successful `BEGIN`, so it is inside an explicit transaction; a transaction
+    // that never receives `COMMIT` cannot become durable, whether we managed to
+    // send `ROLLBACK` or the connection simply died — the server discards it
+    // either way. So `!commitAttempted` establishes "nothing destroyed" on its
+    // own, and the ROLLBACK's return value is EVIDENCE, not part of the verdict.
+    //
+    // 🔴 THIS DELIBERATELY NARROWS AN EARLIER, MORE CONSERVATIVE VERSION, which
+    // also required `rollbackStatementOk === true`. That was wrong in the
+    // direction that matters here: it recorded `'unknown'` — "we cannot tell
+    // whether your data was destroyed" — for a case where we can tell, on a
+    // takedown row. Over-claiming uncertainty is a smaller harm than
+    // over-claiming certainty, but it is still a false statement in a permanent
+    // record, and it would send someone investigating nothing.
+    //
+    // The one assumption: no statement in the transaction block runs outside the
+    // explicit transaction. `BEGIN` is the first statement and its failure jumps
+    // straight here, so there is no autocommit path through it.
+    const nothingDestroyed = !client || !commitAttempted;
     // 🔴 STAMP THE FAILURE BEFORE RETHROWING, or this row becomes ambiguous.
     // "Were the rows actually removed?" is the question a takedown record exists
     // to answer, and without this stamp a rolled-back delete and a successful
@@ -967,10 +1024,9 @@ async function purgeOneApp(args: {
     // null. One of those destroyed nothing and the other destroyed everything.
     //
     // Best-effort, and deliberately does NOT swallow the original error: the
-    // transaction already rolled back, so the rows are intact and the caller
-    // must still see the failure. If this stamp ALSO fails, `after` stays null —
-    // which now honestly means "outcome unknown", the rare third state, rather
-    // than being the common spelling of two opposite outcomes.
+    // caller must still see the failure. If this stamp ALSO fails, `after` stays
+    // null, which means only that no stamp reached the database — it says nothing
+    // about the rows, and the header block above is the authority on that.
     await dbWrite.appListingModerationEvent
       .update({
         where: { id: auditEventId },
@@ -992,7 +1048,9 @@ async function purgeOneApp(args: {
             // reader can re-derive it rather than trust it.
             connected: !!client,
             commitAttempted,
-            rollbackConfirmed,
+            // Records that the statement RETURNED, not that a rollback happened.
+            // See the note where it is set.
+            rollbackStatementOk,
             error: err instanceof Error ? err.message : String(err),
             failedAt: new Date().toISOString(),
           } as Prisma.InputJsonValue,

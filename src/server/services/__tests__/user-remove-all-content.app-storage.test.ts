@@ -30,9 +30,19 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
     poolDown: null as string | null,
     /**
      * Extra EMPTY app schemas, purely to push the enumeration past its candidate
-     * cap. They hold no rows for anyone, so they are filtered out of `hits` and
-     * never reach `buildAppView` — the only thing they change is the candidate
-     * COUNT, which is exactly the condition under test.
+     * cap. They hold no rows for anyone, so they never reach `buildAppView`.
+     *
+     * 🔴 BUT THEY ARE NOT COUNT-ONLY, AND AN EARLIER VERSION OF THIS COMMENT SAID
+     * THEY WERE. The candidate list is `.sort()`ed and then `.slice(0, MAX)`d, so
+     * filler NAMES decide which schemas survive. Named `app_filler_*` they sort
+     * BEFORE `app_wiped_app` and evict the app under test entirely — the sweep
+     * then purged nothing at all and the test could not tell, because it only
+     * asserted that the warning fired.
+     *
+     * They are named `app_zfiller_*` so they sort AFTER it. The truncation is then
+     * a PARTIAL sweep — the app under test is examined and purged, and the
+     * overflow is dropped — which is the state the warning is about. The test
+     * asserts which of the two it exercised.
      */
     extraSchemas: 0,
     reset() {
@@ -75,7 +85,8 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
         { table_schema: 'app_wiped_app', table_name: 'user_quota' },
       ];
       for (let i = 0; i < fake.extraSchemas; i++) {
-        rows.push({ table_schema: `app_filler_${i}`, table_name: 'kv' });
+        // `z` so they sort AFTER `app_wiped_app` — see the knob's docstring.
+        rows.push({ table_schema: `app_zfiller_${i}`, table_name: 'kv' });
       }
       return { rows, rowCount: rows.length };
     }
@@ -328,6 +339,16 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       .find((l) => l.includes('hit its candidate cap'));
     expect(truncated).toBeTruthy();
     expect(truncated).toContain(`userId=${TARGET}`);
+
+    // 🔴 SAY WHICH STATE THIS EXERCISED. The warning is about a PARTIAL sweep, so
+    // the app under test must have been examined and purged while the overflow was
+    // dropped. Without this the test passed identically over a TOTAL no-op, which
+    // is what it actually did while the fillers sorted ahead of the app.
+    expect(fake.kv.map((r) => r.key)).toEqual(['keep']);
+
+    // And the remedy the operator is given must not be the one that cannot work.
+    expect(truncated).not.toContain('Re-run via apps.mod.userStorage.purgeAccount');
+    expect(truncated).toContain('purgeApp');
     warn.mockRestore();
   });
 

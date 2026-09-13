@@ -1520,11 +1520,19 @@ export const removeAllContent = async ({
       // is 500 against ~20 schemas), but a reader of this block would reasonably
       // assume all three conditions are covered, and two of three is how the next
       // silent partial wipe happens.
+      // 🔴 DO NOT tell the operator to re-run `purgeAccount` here. That path
+      // enumerates the same `information_schema` names, `.sort()`s them and takes
+      // the same `.slice(0, MAX)` — so a re-run drops exactly the same schemas,
+      // deterministically, forever. (Re-running genuinely does help for
+      // `failures[]`, which is transient, and the `unmappedSchemas` warning
+      // correctly asks for a human; this one needed its own remedy.)
       // eslint-disable-next-line no-console
       console.warn(
         `[removeAllContent] App Blocks per-user storage: the schema sweep for userId=${id} ` +
-          `hit its candidate cap, so some schemas were NOT examined. Re-run via ` +
-          `apps.mod.userStorage.purgeAccount.`
+          `hit its candidate cap, so some schemas were NOT examined — and re-running ` +
+          `purgeAccount would skip the SAME ones (the candidate list is sorted and ` +
+          `truncated deterministically). Purge the remaining apps individually via ` +
+          `apps.mod.userStorage.purgeApp, or raise APP_USER_STORAGE_MAX_SCHEMAS.`
       );
     }
     if (result.unmappedSchemas.length > 0) {
