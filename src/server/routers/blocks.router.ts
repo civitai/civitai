@@ -321,7 +321,11 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
  * because losing THAT one falls through to a global eval returning the flag's base
  * value. Its message text differs from this one's on purpose — two different
  * conditions, and an identical string under a different code is not separable in a
- * log.
+ * log. Both are also distinct APP-WIDE, which is the level that actually matters to
+ * an operator: the kill-switch one was byte-identical to `apps.router.ts`'s
+ * structurally-identical refusal until it was renamed to `'runtime block token
+ * subject could not be resolved'`. If you add a fourth refusal of this shape, give
+ * it text no other one uses — and note that this one doubles as a watchlist anchor.
  *
  * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
  * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged — it
@@ -386,9 +390,13 @@ async function assertAppEditAccess(
  * `true` only for an in-segment subject and a non-mod outside the cohort resolves
  * `false` → blocked. An ANONYMOUS token (`sub:'anon'`) never reaches this function
  * at all — each of its 16 call sites runs `parseSubjectUserId(claims.sub)` and
- * throws UNAUTHORIZED on `null` first (17 `parseSubjectUserId` sites in this file;
- * the 17th guards `assertViewerIsAppDeveloper` the same way), so the no-subject case
- * handled below is a VANISHED user, not an anon caller.
+ * throws UNAUTHORIZED on `null` first, so the no-subject case handled below is a
+ * VANISHED user, not an anon caller. There are **16** such parse sites, not 17:
+ * the 17th gate call is `assertViewerIsAppDeveloper`, which shares the parse site
+ * of the enabled-gate call immediately above it rather than adding one, so the two
+ * sets OVERLAP and must not be added. (Do not count raw occurrences of the
+ * identifier either — there are 19: the 16 calls, the import, and two mentions in
+ * comments.)
  * `verifyBlockToken` (caller) already rejected invalid/expired/revoked
  * tokens before this runs, and every other belt (the per-scope consent checks,
  * budget cap, daily Buzz cap, the per-(user, app) consent budget,
@@ -439,12 +447,16 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
   // runtime branch, so a bundler that drops it re-opens the exposure with the source
   // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // Moving or rewording the `throw` below is fine; the gate resolves its anchor from
-  // source. DELETING it fails the Docker build at `assert-compiled-branches.mjs`.
+  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
+  // so line numbers do not matter. DELETING it fails the production Docker build at
+  // `assert-compiled-branches.mjs`. And 🔴 REWORDING THE MESSAGE BELOW IS A WATCHLIST
+  // EDIT: that exact string IS this entry's anchor, so changing it makes the gate exit 2
+  // ("no line contains this anchor") — a failure that reads like gate breakage rather
+  // than like the copy change that caused it. Update the entry in the same commit.
   if (!user) {
     throw new TRPCError({
       code: 'UNAUTHORIZED',
-      message: 'block token subject could not be resolved',
+      message: 'runtime block token subject could not be resolved',
     });
   }
   if (!(await isAppBlocksEnabled({ user }))) {

@@ -122,14 +122,41 @@ describe('a base-`enabled: true` flip, measured against the real Flipt engine', 
     expect(server.received[0].auth).toBe('Bearer test-token');
   });
 
-  it('FIXTURE CONTROL: the derived flags really carry a segment rollout (not a bare boolean)', async () => {
-    // Without this, every `true` below could come from a flag with no rollouts at
-    // all — which is a different shape and a different claim. The derivation helper
-    // also throws if the template has no rollouts; this pins the result.
+  it('FIXTURE CONTROL: the derived flags really carry a SEGMENT rollout (not a bare boolean, not a threshold)', async () => {
+    // Without this, every `true` below could come from a flag with no rollouts at all,
+    // or from a THRESHOLD rollout — both different shapes making a different claim, and
+    // a 100% threshold would also make `base-false-control` true, so the negative
+    // control would not catch the swap either. Assert the TYPE, which is what the
+    // title claims; a length check does not.
     for (const flag of baseTrueSnapshot.flags) {
-      expect(Array.isArray((flag as { rollouts?: unknown[] }).rollouts)).toBe(true);
-      expect((flag as { rollouts: unknown[] }).rollouts.length).toBeGreaterThan(0);
+      const rollouts = (flag as { rollouts?: { type?: string }[] }).rollouts;
+      expect(Array.isArray(rollouts)).toBe(true);
+      expect(rollouts?.map((r) => r.type)).toContain('SEGMENT_ROLLOUT_TYPE');
     }
+  });
+
+  it('FIXTURE-GUARD CONTROL: the derivation helper REFUSES a template without a segment rollout', async () => {
+    // Makes the guard reachable rather than merely present — the three refusal arms
+    // are otherwise exercised by nothing, which is the shape this whole PR is about.
+    const { deriveSnapshotFromFlagShape: derive } = await import('./fixtures/flipt-fixture-server');
+    const ask = [{ key: 'x', enabled: true }];
+    const shapes: Array<[string, unknown]> = [
+      ['no rollouts key', { key: 't', enabled: false }],
+      ['empty rollouts', { key: 't', enabled: false, rollouts: [] }],
+      [
+        'threshold rollout only',
+        { key: 't', enabled: false, rollouts: [{ type: 'THRESHOLD_ROLLOUT_TYPE' }] },
+      ],
+    ];
+    for (const [label, flag] of shapes) {
+      expect(() =>
+        derive({ namespace: { key: 'default' }, flags: [flag] } as never, 't', ask)
+      ).toThrow(/carries no SEGMENT_ROLLOUT_TYPE rollout/);
+      expect(label).toBeTruthy();
+    }
+    // POSITIVE CONTROL — the real template is accepted, so the three refusals above
+    // are attributable to the shape and not to the helper rejecting everything.
+    expect(() => derive(sourceSnapshot as never, 'app-blocks-enabled', ask)).not.toThrow();
   });
 
   it('🔴 THE RETRACTED PREMISE, MEASURED: a GLOBAL eval of a base-true segmented flag returns TRUE', async () => {

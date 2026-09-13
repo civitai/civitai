@@ -515,14 +515,15 @@ export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
  * `isAppBlocksReviewSandboxEnabled`. No user → a global eval, which returns the
  * flag's BASE value; that is `false` today (base OFF + segment rollout) and it is
  * the base, not the segment miss, that closes it — see GLOBAL-EVAL SEMANTICS at
- * the top of this file. The only UNCONDITIONAL closure left is an unreachable
- * Flipt. See APP_BLOCKS_DEV_TUNNEL_FLAG.
+ * the top of this file. An absent flag, and an unreachable Flipt, each evaluate
+ * `false` unconditionally — that half IS fail-closed, whatever the base value.
+ * See APP_BLOCKS_DEV_TUNNEL_FLAG.
  *
  * NOTE: unlike `isAppBlocksAuthorEnabled`, there is NO moderator static floor —
  * the flag is created as the rollout, so an absent flag resolves `false` for
  * EVERYONE (mods included). That is intentional and load-bearing: the dev tunnel
- * is a brand-new surface (no existing mod access to preserve), so fail-closed for
- * all until the flag exists is the safe posture.
+ * is a brand-new surface (no existing mod access to preserve), so denying
+ * everyone whenever the flag cannot be evaluated is the safe posture.
  */
 export async function isAppBlocksDevTunnelEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
   if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);

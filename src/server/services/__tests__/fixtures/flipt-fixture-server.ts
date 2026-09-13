@@ -112,16 +112,25 @@ export function deriveSnapshotFromFlagShape(
         `(has: ${source.flags.map((f) => f.key).join(', ')})`
     );
   }
-  const rollouts = (template as { rollouts?: unknown }).rollouts;
-  // 🔴 `length > 0`, not just `Array.isArray` — an EMPTY array passes the shape test
-  // while being exactly the case the message warns about. A base-`enabled: true` flag
-  // with no rollouts is an honest global on-switch, a different shape and a different
-  // claim; deriving from one would make every `true` in the consuming suite
-  // unattributable to the segment-rollout case it exists to measure.
-  if (!Array.isArray(rollouts) || rollouts.length === 0) {
+  const rollouts = (template as { rollouts?: { type?: unknown }[] }).rollouts;
+  // 🔴 ASSERT THE ROLLOUT *TYPE*, not merely that some rollout exists. The sentence
+  // this guard enforces is "models a SEGMENT-rolled-out flag", and three weaker tests
+  // all pass while that sentence is false:
+  //   - no `rollouts` key at all → a base-`true` flag with no rollouts is an honest
+  //     global on-switch: a different shape and a different claim;
+  //   - an EMPTY array → same, while passing `Array.isArray`;
+  //   - a THRESHOLD (percentage) rollout → the shape `APP_LISTINGS_PUBLIC_EXTERNAL_FLAG`
+  //     names as live and hazardous. If the sibling snapshot is ever re-captured with
+  //     one, a length check still passes and the base-true suite quietly stops
+  //     measuring the segment case — and a 100% threshold would sail past the
+  //     `base-false-control` backstop too, because that control would also be `true`.
+  // Every `true` in the consuming suite is attributable to the base value only if the
+  // template really carries a segment rollout, so that is what gets checked.
+  if (!Array.isArray(rollouts) || !rollouts.some((r) => r?.type === 'SEGMENT_ROLLOUT_TYPE')) {
     throw new Error(
-      `deriveSnapshotFromFlagShape: template flag '${templateKey}' has no rollouts — ` +
-        `the derived snapshot would not model a segment-rolled-out flag at all`
+      `deriveSnapshotFromFlagShape: template flag '${templateKey}' carries no ` +
+        `SEGMENT_ROLLOUT_TYPE rollout — the derived snapshot would not model a ` +
+        `segment-rolled-out flag at all`
     );
   }
   return {

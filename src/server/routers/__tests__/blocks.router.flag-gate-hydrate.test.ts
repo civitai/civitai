@@ -239,7 +239,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
-      message: 'block token subject could not be resolved',
+      message: 'runtime block token subject could not be resolved',
     });
 
     // 🔴 THIS ASSERTION IS THE POINT, and it replaces one that asserted the
@@ -266,7 +266,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
-      message: 'block token subject could not be resolved',
+      message: 'runtime block token subject could not be resolved',
     });
   });
 
