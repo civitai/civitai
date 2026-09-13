@@ -3,6 +3,7 @@ import { IconShieldLock } from '@tabler/icons-react';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -98,12 +99,53 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
         </Text>
         {!isAuthed ? (
           <Text size="xs" c="dimmed" fs="italic">
-            Sign in to see the permissions you've granted this app.
+            Sign in to see the permissions you&apos;ve granted this app.
           </Text>
         ) : grantsQuery.isLoading ? (
           <Center py="md">
             <Loader size="sm" />
           </Center>
+        ) : grantsQuery.isError && !grant ? (
+          /* 🔴 AN ERROR BRANCH, BECAUSE WITHOUT ONE A FAILED READ ASSERTED A DENIAL. On a query
+             error `data` is `undefined` and `isLoading` is `false`, so this fell straight through
+             to `<BlockScopeList>` with `scopeGrantEmptyScopeLabel('activity')` — a sentence about
+             what the viewer has and has not granted. The client cannot make a claim about the
+             viewer's record from a read that failed, and the previous hard-coded string was
+             record-shaped ("No permissions recorded …") so it survived the same state; the
+             origin-derived label is a stronger factual claim and needs the branch the old one
+             did not. Same defect, same fix, in `src/pages/apps/activity.tsx`.
+
+             🔴 NOT BARE `isError` — it is ALSO TRUE FOR A FAILED REFETCH, AND react-query RETAINS
+             `data` IN THAT STATE. Measured in the installed `@tanstack/query-core@5.101.0`
+             (`build/modern/queryObserver.js:331,334`): `isRefetchError: isError && hasData`,
+             `isLoadingError: isError && !hasData`. This arm sits BEFORE the list arm, so a bare
+             `isError` replaced a complete valid grant list with a read-failure sentence.
+
+             🔴 AND THE TEST IS `grant`, NOT `grantsQuery.data` — THE THING THIS COMPONENT ACTUALLY
+             CONSUMES. `data` retained from a prior success that did NOT contain this app, plus a
+             failed refetch, left `!grantsQuery.data` false and fell through to
+             `scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')`: a DENIAL about this app drawn
+             from a read that failed, which is verbatim what this branch exists to prevent.
+             ⚠️ AN EARLIER REVISION DEFENDED `!grantsQuery.data` AGAINST `isLoadingError` — "also
+             `false` when an error leaves `data` undefined". That INVERTED the library's definition
+             (it is TRUE in exactly that state, per the line cited above), and since `grants` is
+             array-or-undefined, `isError && !grantsQuery.data` WAS `isLoadingError` — so the
+             sentence argued against the expression it had chosen. Deleted, not reworded: the
+             predicate no longer needs defending against a flag it is not.
+
+             REACHABLE INDIRECTLY, AND THE MECHANISM IS NOT "THE ACTIVITY PAGE'S TOGGLE": the only
+             two `listMyScopeGrants.invalidate()` sites are `src/pages/apps/activity.tsx` `:111` and
+             `:414`, and this drawer is mounted from exactly ONE place —
+             `src/components/AppBlocks/IframeHost.tsx` — never from that page. It has no automatic
+             refetch either (`staleTime: Infinity`, `refetchOnWindowFocus: false` in
+             `src/utils/trpc.ts`). The path is therefore: an activity-page invalidate whose refetch
+             fails (the batch cohort retries ZERO times — `queryRetry`) leaves the query
+             error-and-stale in the shared cache, and a LATER drawer mount observes that state.
+             Same defect, different predicate, in `src/pages/apps/activity.tsx`. */
+          <Text size="xs" c="dimmed" fs="italic">
+            We couldn&apos;t load this app&apos;s permissions just now. That is a problem reading
+            them, not a statement about what you have granted.
+          </Text>
         ) : (
           /* 🔴 THE EMPTY LABEL IS NOT "no permissions granted", AND THE PANEL BELOW IS WHY.
              `grant` is `grants.find(g => g.appBlockId === appBlockId)` over
@@ -182,9 +224,24 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              is a new field plus a per-row choice of which set to show — not a swap. Widening the
              population makes it the common case rather than a ~4-row edge, so it remains an open
              decision rather than something silently expanded — see the PR discussion. */
+          /* 🔴 THE `emptyLabel` IS NOW ORIGIN-DERIVED, AND THE HARD-CODED STRING IT REPLACES WAS
+             WRONG FOR TWO OF THE THREE ROW CLASSES. It read "No permissions recorded from an
+             install or consent for this app", which is right when there is no row at all and
+             right for an activity-only row, but FALSE for an `install`/`consent` row whose
+             effective set happens to be empty — the viewer did install or consent, and the
+             sentence denies it. `scopeGrantEmptyScopeLabel` is the single owner of both
+             sentences, shared with `src/pages/apps/activity.tsx`, so this sibling cannot drift
+             from it again: the identical sentence on that page was corrected once while this one
+             was missed, and then this one was corrected while that one was missed.
+
+             NO ROW AT ALL still falls back to `'activity'`. That is the honest reading of the
+             absence on THIS surface: the drawer is mounted over an app the viewer is currently
+             running, so it unambiguously has access — "you granted it nothing, here is what it
+             did" is true, while the install/consent sentence would imply a relationship that
+             is not there. */
           <BlockScopeList
             scopes={grant?.scopes ?? []}
-            emptyLabel="No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below."
+            emptyLabel={scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')}
           />
         )}
       </Stack>
@@ -197,7 +254,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
         </Text>
         {!isAuthed ? (
           <Text size="xs" c="dimmed" fs="italic">
-            Sign in to see this app's recent activity on your account.
+            Sign in to see this app&apos;s recent activity on your account.
           </Text>
         ) : (
           // Only rendered in the authed branch, so enabled defaults to true.

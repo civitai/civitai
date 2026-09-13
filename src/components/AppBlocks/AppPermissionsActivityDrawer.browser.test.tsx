@@ -1,5 +1,9 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
+// Type-only namespace import, NOT `typeof import('...')` — the latter is rejected by
+// @typescript-eslint/consistent-type-imports. Used by the `importOriginal` spread below.
+import type * as TrpcMod from '~/utils/trpc';
 
 // Part B: the per-app "Permissions & activity" drawer. It reuses
 // `BlockScopeList` for the granted scopes (filtered to THIS app's grant) and the
@@ -23,6 +27,20 @@ const m = vi.hoisted(() => ({
   // outside a provider, which fails CLOSED — so a link test run at the default would be
   // vacuous. The seam test below sets a store-ELIGIBLE viewer deliberately.
   flags: null as null | Record<string, boolean>,
+  // 🔴 DRIVES THE QUERY-ERROR ARM. Without it there was no way to render the state the
+  // drawer's new error branch exists for, and that state is the one the component used to
+  // get WRONG: `data` undefined + `isLoading` false is indistinguishable from "no grant
+  // row", so a failed read rendered an affirmative sentence about what the viewer had
+  // granted. A flag rather than a second spy so the success arms stay byte-identical.
+  grantsError: false,
+  /**
+   * 🔴 THE SECOND ERROR SHAPE, WHICH `grantsError` ABOVE CANNOT EXPRESS. react-query sets
+   * `isError` for a failed REFETCH too, and RETAINS `data` in that state — so an error arm placed
+   * before the list arm discards a grant list the client still holds. Under `grantsError` the
+   * broken and the fixed component render identically (`data` is undefined either way), which is
+   * precisely why that flag is blind to this mutant.
+   */
+  grantsRefetchError: false,
 }));
 
 // 🔴 `AppActivityPanel`'s `When` column renders `DaysFromNow`, which reads
@@ -43,8 +61,31 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
 }));
 
-vi.mock('~/utils/trpc', () => {
-  const grantsSpy = vi.fn(() => ({ data: m.grants, isLoading: false }));
+/**
+ * 🔴 SPREADS THE REAL MODULE AND OVERRIDES ONLY WHAT IT USES. This was a WHOLESALE factory —
+ * flagged by `local-rules/no-wholesale-module-mock`, which was pre-existing on this file (1 error
+ * at `origin/main`, measured) and became this PR's problem the moment the PR edited the file, since
+ * CI lints changed files. Fixed rather than suppressed: the rule names a real hazard, not a style
+ * preference. A hand-written replacement module means the day `~/utils/trpc` gains an export this
+ * factory omits, every importer in the graph gets `undefined`, the FILE fails to load, and the run
+ * reports 0 tests collected with no failing assertion — silently green.
+ *
+ * Mechanical, and not invented here: the sibling `src/components/Apps/AppActivityPage.browser.test.tsx`
+ * already spreads `importOriginal` over this exact module and passes in CI's component tier.
+ * `setTrpcBatchingEnabled` keeps its explicit spy override — the spread would otherwise hand back
+ * the real one.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  // Three arms, mirroring react-query's three reachable states for this read. The REFETCH arm is
+  // the one that carries `data` alongside `isError` — measured on 5.101 with this repo's defaults
+  // as `status=error isError=true isRefetchError=true isLoadingError=false data=[…]`.
+  const grantsSpy = vi.fn(() =>
+    m.grantsRefetchError
+      ? { data: m.grants, isLoading: false, isError: true, isRefetchError: true }
+      : m.grantsError
+      ? { data: undefined, isLoading: false, isError: true, isLoadingError: true }
+      : { data: m.grants, isLoading: false, isError: false }
+  );
   const buzzSpy = vi.fn(() => ({
     data: { pages: [{ items: m.buzz, nextCursor: null }] },
     isLoading: false,
@@ -63,6 +104,7 @@ vi.mock('~/utils/trpc', () => {
   m.buzzSpy = buzzSpy;
   m.scopeSpy = scopeSpy;
   return {
+    ...(await importOriginal<typeof TrpcMod>()),
     setTrpcBatchingEnabled: vi.fn(),
     trpc: {
       blocks: {
@@ -89,6 +131,8 @@ beforeEach(() => {
   m.user = { id: 1, username: 'viewer', isModerator: false };
   m.flags = null;
   m.grants = [];
+  m.grantsError = false;
+  m.grantsRefetchError = false;
   m.buzz = [];
   m.scopes = [];
   m.grantsSpy?.mockClear();
@@ -185,22 +229,136 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     renderWithProviders(
       <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
     );
-    // 🔴 PINNED AS THE WHOLE NORMALISED STRING, NOT A KEYWORD. The claim under test is
-    // that this label does NOT assert "you granted this app nothing" — a defect a
-    // `/permissions/` substring match would walk straight past, since the false wording
-    // contained that word too. The two load-bearing halves are the qualifier
-    // ("from an install") and the pointer to Recent activity.
-    await expect
-      .element(
-        page.getByText(
-          // Widened from "from an install of this app" with the data source: a consented
-          // full-page app now resolves a row instead of reaching this label, so the label's
-          // remaining population is "neither an install NOR a consent".
-          'No permissions recorded from an install or consent for this app — which is not the same as no access. Anything it has actually done on your account is listed under Recent activity below.'
-        )
-      )
-      .toBeInTheDocument();
+    // 🔴 STILL THE WHOLE NORMALISED STRING, BUT NOW *DERIVED* FROM THE SHARED OWNER RATHER
+    // THAN COPIED. The label used to be a literal in the component and a second literal here;
+    // it now comes from `scopeGrantEmptyScopeLabel`, which both this drawer and
+    // `src/pages/apps/activity.tsx` call. A "these two agree" guard written as a hand-copied
+    // literal on each side pins NOTHING — change the component and its own copy of the literal
+    // and both stay green while the page silently diverges. Calling the exported function is
+    // what makes this a consolidation pin instead of a transcription.
+    //
+    // Still NOT a keyword match: the claim under test is that the label does not assert "you
+    // granted this app nothing", and a `/permissions/` substring would walk straight past the
+    // false wording, which contained that word too.
+    //
+    // `'activity'` is the origin the component passes when there is NO grant row at all
+    // (`grant?.origin ?? 'activity'`) — the state this test sets up with `m.grants = []`. The
+    // two load-bearing halves survive the move: it says nothing was granted, and it points at
+    // Recent activity.
+    const expectedEmptyLabel = scopeGrantEmptyScopeLabel('activity');
+    // Guard the guard: an owner that returned '' would make the locator match anything.
+    expect(expectedEmptyLabel.length).toBeGreaterThan(40);
+    await expect.element(page.getByText(expectedEmptyLabel)).toBeInTheDocument();
     await expect.element(page.getByText(/No activity yet\./)).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 A FAILED READ MUST NOT RENDER A CLAIM ABOUT THE VIEWER'S HISTORY. The defect: on a query
+   * error `data` is `undefined` and `isLoading` is `false`, which is byte-for-byte the state the
+   * test ABOVE sets up — so with no error branch the drawer fell through to
+   * `scopeGrantEmptyScopeLabel('activity')` and told the viewer what they had and had not granted,
+   * from a read it never received. (The hard-coded string this label replaced was record-shaped,
+   * "No permissions recorded …", so it survived the same state; the origin-derived label is a
+   * strictly stronger factual claim and needs the branch the old one did not.)
+   *
+   * 🔴 THE SECOND HALF IS THE ONE THAT CATCHES THE REGRESSION. Asserting the error text appears
+   * does not prove the denial is gone — a component rendering BOTH would pass. The
+   * `not.toBeInTheDocument` on the derived label is what pins it, and it is derived from the owner
+   * for the same reason the test above is.
+   */
+  test('🔴 a query ERROR shows a read failure, not a statement about what was granted', async () => {
+    m.grantsError = true;
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
+    );
+    await expect
+      // `&apos;` in the JSX is U+0027, not a typographic apostrophe — the class of mismatch that
+      // makes a text locator silently match nothing, so the character is spelled, not guessed.
+      .element(page.getByText(/couldn't load this app's permissions just now/))
+      .toBeInTheDocument();
+    const deniedLabel = scopeGrantEmptyScopeLabel('activity');
+    expect(deniedLabel.length).toBeGreaterThan(40);
+    await expect.element(page.getByText(deniedLabel)).not.toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF THE SAME CONTRACT, AND THE TEST ABOVE IS STRUCTURALLY BLIND TO IT.
+   * `isError` is ALSO true for a failed REFETCH, and in that state react-query RETAINS `data` —
+   * measured on this repo's `@tanstack/react-query` 5.101 with its own defaults as
+   * `status=error isError=true isRefetchError=true isLoadingError=false data=[…]`. Because the
+   * error arm sits BEFORE the list arm, a bare `isError` replaced a complete valid grant list with
+   * read-failure copy. The test above cannot see this — under a first-fetch failure `data` is
+   * undefined, so the broken and the fixed component render identically.
+   *
+   * ⚠️ REACHABLE INDIRECTLY, NOT "ON THE ACTIVITY PAGE'S TOGGLE" — an earlier revision of this
+   * docblock named a trigger that cannot fire here. Complete enumeration: the only two
+   * `listMyScopeGrants.invalidate()` sites are `src/pages/apps/activity.tsx` `:111` and `:414`, and
+   * this drawer is mounted from exactly ONE place, `src/components/AppBlocks/IframeHost.tsx` — never
+   * from that page; with `staleTime: Infinity` and `refetchOnWindowFocus: false` it has no automatic
+   * refetch either. The real path: an activity-page invalidate whose refetch fails (the batch cohort
+   * retries ZERO times — `queryRetry` in `src/utils/trpc.ts`) leaves the query error-and-stale in
+   * the shared cache, and a LATER drawer mount observes that state.
+   */
+  test('🔴 a failed REFETCH keeps the grants it already has — `isError` alone would discard them', async () => {
+    m.grants = [
+      { appBlockId: 'ab-1', slug: 'my-app', name: 'My App', scopes: ['user:read:self'] },
+      { appBlockId: 'ab-2', slug: 'other', name: 'Other', scopes: ['buzz:read:self'] },
+    ];
+    m.grantsRefetchError = true;
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
+    );
+    // The retained grant for THIS app still renders, and the other app's still does not leak.
+    await expect.element(page.getByText('user:read:self')).toBeInTheDocument();
+    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
+    // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare
+    // `isError` fails this test on the GRANT-BADGE WAIT above, with
+    // `VitestBrowserElementError: Cannot find element with locator: getByText('user:read:self')`
+    // — i.e. on the claim that the retained grant is rendered, which is the guard's own reason. The
+    // `not.toContain` below never executes on that mutant and is NOT what catches it; it is the
+    // second pin, for a component that renders BOTH the list and the read-failure sentence, which
+    // the badge assertion alone would pass.
+    expect(document.body.textContent ?? '').not.toContain(
+      "couldn't load this app's permissions just now"
+    );
+  });
+
+  /**
+   * 🔴 THE CELL BOTH ARMS ABOVE MISS, AND THE REASON THE GUARD TESTS `grant` RATHER THAN `data`.
+   * This component consumes exactly one thing — `grantsQuery.data?.find(g => g.appBlockId ===
+   * appBlockId)` — so "the client holds SOME data" is the wrong question. With `data` retained from
+   * a prior success that did NOT contain this app, plus a failed refetch, `!grantsQuery.data` was
+   * false and control fell through to `scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')`: a
+   * DENIAL about this app ("You have not installed this app, and no separate permission grant is on
+   * record for it") drawn from a read that failed. That is verbatim the defect the first arm above
+   * exists to prevent, surviving in a state that arm cannot produce.
+   *
+   * Reachable by the same indirect path as the arm above: the drawer is mounted only from
+   * `IframeHost.tsx`, so it observes an activity-page invalidate whose refetch failed — and the
+   * activity page's own list need not mention the app whose run-frame this drawer sits on.
+   *
+   * MUTATION-VERIFIED: reverting the guard to `isError && !grantsQuery.data` fails this test on the
+   * read-failure WAIT below — `VitestBrowserElementError: Cannot find element with locator:
+   * getByText(/couldn't load this app's permissions just now/)` — i.e. on this guard's own sentence.
+   * The `not.toBeInTheDocument` on the derived label is the second pin, for a component rendering
+   * BOTH.
+   */
+  test('🔴 a failed refetch whose retained list LACKS this app shows the read failure, not a denial', async () => {
+    m.grants = [{ appBlockId: 'ab-2', slug: 'other', name: 'Other', scopes: ['buzz:read:self'] }];
+    m.grantsRefetchError = true;
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
+    );
+    await expect
+      .element(page.getByText(/couldn't load this app's permissions just now/))
+      .toBeInTheDocument();
+    // 🔴 THE DENIAL MUST BE ABSENT, and it is derived from its owner rather than retyped — a copy
+    // of the sentence here would keep passing after the owner's wording changed.
+    const deniedLabel = scopeGrantEmptyScopeLabel('activity');
+    expect(deniedLabel.length).toBeGreaterThan(40);
+    await expect.element(page.getByText(deniedLabel)).not.toBeInTheDocument();
+    // …and the OTHER app's retained scope must not leak into this drawer either.
+    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
   });
 
   test('anonymous viewer gets a sign-in empty state and the activity queries do not fire', async () => {
