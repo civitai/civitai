@@ -429,13 +429,22 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * product decision, with the reasoning recorded beside the rule in
    * `globals.css`. Adding a row here is the intended maintenance path — relaxing
    * this to a `toContain`, a length check or a superset test is not, and would
-   * throw away the shrink half. A second entry must fail this test first.
+   * throw away the shrink half. `sensei` was the second entry and it DID fail this
+   * test first, which is the workflow working as designed: the rule went in, this
+   * assertion went red naming `+ "sensei"` as the set delta, and only then was the
+   * expectation updated.
    *
    * WHY EACH MEMBER IS HERE (keep this list in step with the rules):
    *   · `playable-collections` — a collection player whose three open-collection
    *     view modes are all uncapped by the app; the 960px well it does have
    *     applies only to its browse shell, behind an early return. Full reasoning
    *     and the file:line evidence live on the rule in `globals.css`.
+   *   · `sensei` — a two-pane chat shell, and one of the TWO apps the census on
+   *     `APP_PAGE_MAX_WIDTH_PX` says the cap was created for. Excused by an
+   *     explicit product decision by the repo owner, NOT because anything here
+   *     malfunctions. Notepad — the other half of that same census line — is
+   *     deliberately NOT a member. Full reasoning, including what the census is and
+   *     is not evidence for, lives on the rule in `globals.css`.
    *
    * The ids are read from the SELECTORS, not from a hand-kept list elsewhere, so
    * a rule nobody told this test about is what it notices. `code()` strips
@@ -457,7 +466,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         '(`app-listing-mapper.ts` sets `slug: ab.blockId`), which is exactly the condition under ' +
         'which the wrong one goes unnoticed. If you REMOVED one, an app that needed full bleed is ' +
         'now capped again — confirm that is intended.'
-    ).toEqual(['playable-collections']);
+    ).toEqual(['playable-collections', 'sensei']);
   });
 
   /**

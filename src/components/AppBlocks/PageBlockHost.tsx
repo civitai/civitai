@@ -417,10 +417,24 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * So an opt-out here is per-APP and would unbound all three modes, not tidy up
  * one. That may well be right — a ticker and a wall want width, and the player's
  * media is `object-fit: contain` so a centred column simply shrinks it — but it
- * is a bigger product call than "the app already governs this", and it is not
- * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
- * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
- * to be added deliberately.
+ * is a bigger product call than "the app already governs this", and it was not
+ * made in the commit that shipped the cap.
+ *
+ * ⚠️ IT HAS SINCE BEEN MADE, AND THIS PARAGRAPH USED TO DENY IT. The sentence here
+ * read "NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set in
+ * `__tests__/pageBlockHostMaxWidth.test.ts` is `[]`" — true only of the commit that
+ * introduced the mechanism, and false from the moment `playable-collections` was
+ * added. THE MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE: a count or a list in
+ * this comment is a claim that rots on the next entry, which is exactly what
+ * happened. It is ENUMERATED in that test, which fails on growth AND shrink, and
+ * each member's reasoning lives on its own rule in `globals.css`.
+ *
+ * 🔴 ONE THING THE CENSUS ABOVE NOW UNDER-READS, AND IT BELONGS NEXT TO THE CENSUS
+ * RATHER THAN IN THE LEDGER: `sensei` is a member, so ONE of the two apps this cap
+ * was created for is excused from it. That was an explicit product decision by the
+ * repo owner, not a defect being worked around. NOTEPAD — the other half of that
+ * same census line — is deliberately NOT a member; the asymmetry is intended, and
+ * if it should follow, that is its own entry with its own reasoning.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common

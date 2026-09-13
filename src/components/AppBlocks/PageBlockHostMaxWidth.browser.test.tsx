@@ -494,53 +494,85 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
   });
 
   /**
-   * 🔴 THE LEDGER'S ONE REAL MEMBER, EXERCISED AGAINST THE SHIPPED RULE.
+   * 🔴 EVERY REAL MEMBER OF THE LEDGER, EXERCISED AGAINST THE SHIPPED RULES.
    *
-   * `playable-collections` is opted out of the cap by an explicit product
-   * decision: every one of its open-collection surfaces is uncapped by the app
-   * (the 960px well it has applies only to its browse shell, behind an early
-   * return), so a centred column shrinks the player and truncates the ticker and
-   * wall grids. The reasoning, with file:line evidence, is on the rule itself in
-   * `globals.css`; the membership set is pinned in
-   * `__tests__/pageBlockHostMaxWidth.test.ts`.
+   * ⚠️ THIS USED TO READ "THE LEDGER'S ONE REAL MEMBER" AND NAME
+   * `playable-collections` IN ITS OWN TITLE, AND THAT WAS THE THIRD PLACE THE
+   * MEMBERSHIP WAS RESTATED — the other two being the ledger header in
+   * `globals.css` and the paragraph on `APP_PAGE_MAX_WIDTH_PX`. All three went stale
+   * together the moment a second app was added, and this one kept reading as
+   * authoritative while doing so. A cross-reference is a claim; the failure mode is
+   * updating two of three and leaving the third to be believed.
    *
-   * THIS IS A PAIR, and the second arm is what makes the first mean anything.
-   * Both arms render at 2560 with the SAME real ledger CSS injected and differ
-   * ONLY in `blockId`. Without the second arm, "the host is full width" is
-   * satisfied by a cap that stopped working for every app.
+   * So the green arm is now DERIVED from the rules this file already parses out of
+   * `globals.css`: EVERY member is measured, no count is stated anywhere here, and a
+   * future entry is covered the day its rule lands rather than the day somebody
+   * remembers this file. The ENUMERATION — the thing that must fail on growth and on
+   * shrink — stays where it was, in `__tests__/pageBlockHostMaxWidth.test.ts`; this
+   * tier asks only whether each rule that exists actually renders full-bleed. Those
+   * are different claims and neither tier can make the other's.
+   *
+   * THIS IS A PAIR, and the negative arm is what makes the green ones mean anything.
+   * Every arm renders at 2560 with the SAME real ledger CSS injected and differs ONLY
+   * in `blockId`. Without it, "the host is full width" is equally satisfied by a cap
+   * that stopped working for every app.
+   *
+   * 🔴 WHAT A GREEN RUN HERE IS **NOT** EVIDENCE FOR: that a ledger selector works on
+   * civitai.com. Vitest never runs with `NODE_ENV=production`, so the
+   * `reactRemoveProperties` strip in `next.config.mjs` never applies in this tier —
+   * which is exactly how the `data-testid` spelling shipped broken with this suite
+   * passing throughout. That claim is owned by
+   * `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`, which compares the two
+   * CONFIGURATIONS instead of rendering, and it cannot be moved here.
    */
-  test('LEDGER — `playable-collections` is full-bleed at 2560x1080 while another app stays capped', async () => {
+  test('LEDGER — every member is full-bleed at 2560x1080 while a non-member stays capped', async () => {
     const ledger = ledgerFromGlobals();
 
     // POSITIVE CONTROL on the extraction itself. If the parse returned nothing —
     // a renamed property, a rule moved into an at-rule this walk skips, or a
-    // `?raw` import that silently resolved to an empty string — the green arm
-    // would fail with a confusing width mismatch instead of naming the cause.
+    // `?raw` import that silently resolved to an empty string — the loop below
+    // would run ZERO times and this test would pass having measured nothing,
+    // which is the reassuring-zero shape a derived arm has to defend against.
     expect(
       ledger.ids,
       'no `[data-block-id=…]` rules were parsed out of src/styles/globals.css. Either the ' +
         'full-bleed ledger is empty (then this test should be deleted deliberately, together ' +
         'with the membership expectation in __tests__/pageBlockHostMaxWidth.test.ts), or the ' +
-        'rules moved somewhere this walk does not reach.'
-    ).toContain('playable-collections');
+        'rules moved somewhere this walk does not reach — and with an empty list the green arm ' +
+        'below iterates nothing and asserts nothing.'
+    ).not.toHaveLength(0);
+
+    // …and the negative arm must really be OUTSIDE the set it is contrasted with.
+    // If the fixture's own slug ever became a ledger member, the last assertion in
+    // this test would be asserting the opposite of the design and would read as a
+    // broken cap rather than as a fixture collision.
+    expect(
+      ledger.ids,
+      `the fixture slug '${BLOCK_ID}' is itself a full-bleed ledger member, so the negative arm ` +
+        'below cannot distinguish "the ledger works" from "the cap stopped working". Rename the ' +
+        'fixture, or point the negative arm at a slug that is not in the ledger.'
+    ).not.toContain(BLOCK_ID);
+
     injectCss(ledger.css);
 
-    // GREEN ARM — the opted-out app takes the full width of its parent.
-    const optedOut = await mountAt(2560, 1080, { blockId: 'playable-collections' });
-    expect(
-      optedOut.hostWidth,
-      'at 2560x1080 the app `playable-collections` is NOT full-bleed. Its ledger rule in ' +
-        'src/styles/globals.css is missing, mistyped, or no longer overrides ' +
-        '`--app-page-max-width` — so a collection player whose every view mode is uncapped by ' +
-        'the app is being letterboxed to the default cap again.'
-    ).toBe(optedOut.parentWidth);
+    // GREEN ARMS — each opted-out app takes the full width of its parent.
+    for (const blockId of ledger.ids) {
+      const optedOut = await mountAt(2560, 1080, { blockId });
+      expect(
+        optedOut.hostWidth,
+        `at 2560x1080 the app '${blockId}' is NOT full-bleed despite having a ledger rule in ` +
+          'src/styles/globals.css. That rule is mistyped, or no longer overrides ' +
+          '`--app-page-max-width` — so an app that was deliberately excused from the ultrawide ' +
+          'cap is being letterboxed to it again, with nothing about the page looking wrong.'
+      ).toBe(optedOut.parentWidth);
 
-    // The two arms mount separately, so the first tree has to go: two mounted
-    // `app-page-frame` nodes would fail every `getByTestId` on the strict-mode
-    // single-match rule.
-    await cleanup();
+      // Each arm mounts its own tree, so the previous one has to go: two mounted
+      // `app-page-frame` nodes would fail every `getByTestId` on the strict-mode
+      // single-match rule.
+      await cleanup();
+    }
 
-    // RED-PAIR ARM — an app NOT in the ledger, same cascade, still capped. This
+    // NEGATIVE ARM — an app NOT in the ledger, same cascade, still capped. This
     // is what distinguishes "the ledger works" from "the cap stopped working".
     const stillCapped = await mountAt(2560, 1080, { blockId: BLOCK_ID });
     expect(
