@@ -40,11 +40,27 @@ import { rampScore } from './ramp';
  * registry also capped every account's confidence at 0.667.
  *
  * `Image.name` is the second fingerprint source, folded in HERE rather than added as a fourth
- * heuristic. That is a deliberate constraint, not a convenience: `MIN_REPORTED_CONFIDENCE` is
- * derived from the registry's size in `scoring.ts`, as is `SOLE_SIGNAL_DOMINANCE`, so a fourth
- * entry would silently move the reporting threshold for every other signal. Keeping the registry at
- * three is what makes this a widening of one heuristic's evidence rather than a recalibration of
- * the whole detector.
+ * heuristic.
+ *
+ * 🔴 THE REASON THIS PARAGRAPH USED TO GIVE WAS FALSE, AND THE REAL HAZARD IS ITS INVERSE. It said
+ * `MIN_REPORTED_CONFIDENCE` "is derived from the registry's size in `scoring.ts`, as is
+ * `SOLE_SIGNAL_DOMINANCE`, so a fourth entry would silently move the reporting threshold". Neither
+ * is computed from anything: both are plain literals (`0.15` and `3`), and nothing in this module
+ * reads the registry's length to produce them. A fourth entry therefore moves NO threshold — it
+ * leaves `MIN_REPORTED_CONFIDENCE` exactly where it is while silently invalidating the argument that
+ * chose it, which is the worse direction of the two. That argument is stated in `scoring.ts` in
+ * terms of three equal weights: one heuristic alone at 0.45 blends to 0.15, the cut. At four weights
+ * the same score blends to 0.1125, so an unchanged 0.15 quietly becomes a cut that admits only a
+ * signal about 0.6 convinced — a tighter detector nobody decided on. Nor would a test say so: the
+ * guards in `scoring.test.ts` pin `1/n > cut` and `0.4/n < cut`, and both still hold at n = 4.
+ * `SOLE_SIGNAL_DOMINANCE` is the same shape and its own docstring already says to re-derive it.
+ *
+ * Folding in here is still the right call, on the ground that survives the correction: the filename
+ * source answers the SAME question as the comment source — did these accounts publish the same
+ * string — and a second registry entry asking one question twice would double that question's weight
+ * in the blend. Registering a fourth heuristic remains possible; it costs a re-derivation of both
+ * constants against the new registry size, which is work this change did not want, not a
+ * prohibition.
  *
  * 🔴 FILENAMES ARE FINGERPRINTED ON THEIR OWN TERMS — see `evidence.ts#normalizeFilename`. Reusing
  * `contentFingerprint` was measured and rejected: its digit masking collapses every `<digits>.jpg`
