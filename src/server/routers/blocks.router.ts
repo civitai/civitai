@@ -13,9 +13,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   parseSubjectUserId,
-  verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
+import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
 import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
@@ -356,9 +356,11 @@ async function assertAppEditAccess(
  * only fix the IDENTITY it's evaluated against. This does NOT widen access: the
  * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
  * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
- * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
- * tokens before this runs, and every other belt (the per-scope consent checks,
- * budget cap, daily Buzz cap, the per-(user, app) consent budget,
+ * blocked. `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
+ * tokens, revoked instances and non-approved apps before this runs — the "revoked"
+ * half of that sentence used to be false, because the caller ran a bare
+ * `verifyBlockToken`, which never checked it. Every other belt (the per-scope
+ * consent checks, budget cap, daily Buzz cap, the per-(user, app) consent budget,
  * reserveBlockBuzzSpend, getOrchestratorToken, forced-SFW) is unchanged — this
  * only swaps which identity the FLAG sees.
  *
@@ -422,9 +424,8 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
  */
 async function authorizeBlockBuzzRead(
   blockToken: string
-): Promise<{ userId: number; claims: NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>> }> {
-  const claims = await verifyBlockToken(blockToken);
-  if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+): Promise<{ userId: number; claims: BlockTokenClaims }> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
   if (!claims.scopes.includes('buzz:read:self')) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks buzz:read:self scope' });
   }
@@ -3503,8 +3504,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3627,8 +3627,7 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3677,8 +3676,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3774,8 +3772,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit: an app authorized to spend the viewer's
       // Buzz on generation can read the subqueue of gens it produced.
       if (!claims.scopes.includes('ai:write:budgeted')) {
@@ -3868,8 +3865,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3971,8 +3967,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit/query: an app authorized to spend the
       // viewer's Buzz on generation can publish the outputs it produced.
       if (!claims.scopes.includes('ai:write:budgeted')) {
@@ -4131,8 +4126,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
         throw new TRPCError({
@@ -4177,8 +4171,7 @@ export const blocksRouter = router({
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -4387,8 +4380,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -5295,8 +5287,7 @@ export const blocksRouter = router({
     // is a mutation for exactly this reason (token in the POST body). Keep it so.
     .input(z.object({ blockToken: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // CONSENT gate — the user's own grant is what authorizes this read now that
       // the author capability no longer gates the runtime. Checked BEFORE the
       // subject is resolved, matching authorizeBlockBuzzRead's order.
@@ -5433,8 +5424,7 @@ export const blocksRouter = router({
     // MUTATION for the bearer-token-in-URL reason above (see getMyBuzzBalance).
     .input(z.object({ blockToken: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // CONSENT: the least-privileged "viewer identity" scope (mirrors /blocks/me).
       if (!claims.scopes.includes('user:read:self')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks user:read:self scope' });
@@ -5613,8 +5603,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
         throw new TRPCError({
@@ -6680,7 +6669,7 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
 // deterministic per-job Buzz bound the orchestrator offers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type BlockClaims = NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>>;
+type BlockClaims = BlockTokenClaims;
 type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
 /** The INLINE arm (`mode:'inline'`) — carries the ComfyUI graph itself. */
 type CustomComfyInlineBody = Extract<CustomComfyBody, { mode: 'inline' }>;
