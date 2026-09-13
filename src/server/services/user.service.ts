@@ -1487,12 +1487,46 @@ export const removeAllContent = async ({
   // between the two leaves a record of what was about to go, never a silent
   // destruction. That ordering is the purge's own safety argument and calling it
   // from here does not weaken it.
+  //
+  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep is log-and-continue BY
+  // DESIGN: it catches each app's failure into `failures[]` and RESOLVES. So a
+  // bare try/catch here sees a clean resolve and says nothing, no matter how
+  // much failed — the outer catch only ever fires for an enumeration-stage
+  // fault. That is not hypothetical: until the `action` CHECK widen is applied,
+  // EVERY app's audit write is rejected with 23514, every app lands in
+  // `failures[]`, nothing is purged, and the operator would have seen a silent
+  // success. A warning that cannot fire for the most likely failure is worse
+  // than no warning, because it reads as coverage.
   try {
     const { purgeUserAppStorageForAccountWipe } = await import(
       '~/server/services/apps/user-storage-purge.service'
     );
-    await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
+    const result = await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
+    if (result.failures.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage purge INCOMPLETE (userId=${id}): ` +
+          `${result.failures.length} app(s) failed, ${result.totals.appCount} purged. ` +
+          `The content wipe COMPLETED and is unaffected — re-run via ` +
+          `apps.mod.userStorage.purgeAccount. Failures: ` +
+          result.failures
+            .map((f) => `${f.slug}(${f.auditEventId ?? 'no-audit-row'}): ${f.error}`)
+            .join('; ')
+      );
+    }
+    if (result.unmappedSchemas.length > 0) {
+      // Reported separately because it is a different condition with a different
+      // remedy: these schemas hold the user's rows but map to no single AppBlock,
+      // so the sweep deliberately skipped them and they need a human.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: ${result.unmappedSchemas.length} ` +
+          `schema(s) hold rows for userId=${id} but map to no single app block and were SKIPPED: ` +
+          result.unmappedSchemas.join(', ')
+      );
+    }
   } catch (err) {
+    // The enumeration-stage faults only — a dead apps DB, a bad pool checkout.
     // eslint-disable-next-line no-console
     console.warn(
       `[removeAllContent] App Blocks per-user storage purge failed (userId=${id}); ` +

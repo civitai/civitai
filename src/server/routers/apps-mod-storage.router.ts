@@ -93,6 +93,12 @@ export const appsModUserStorageRouter = router({
           reason: input.reason,
         });
       } catch (err) {
+        if (err instanceof AppUserStoragePurgeError && err.kind === 'AMBIGUOUS_SCHEMA') {
+          // Not a 404: the block exists, but its storage schema is shared with
+          // another block and purging would destroy that block's rows too. A
+          // refusal a human has to resolve, so it must not read as "not found".
+          throw new TRPCError({ code: 'CONFLICT', message: err.message, cause: err });
+        }
         if (err instanceof AppUserStoragePurgeError) {
           // `cause` is load-bearing, not decoration: without it
           // `isDriverAuthoredMessage` cannot see the original error in the cause

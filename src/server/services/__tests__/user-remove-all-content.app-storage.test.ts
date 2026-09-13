@@ -35,12 +35,32 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
     },
   };
 
+  /**
+   * Bind arity, checked the way Postgres checks it. Same guard, same reason, as
+   * the one in `apps-mod-storage.router.test.ts` — a statement assembled from
+   * fragments can lose the only reference to a `$n` while the parameter is still
+   * bound, and `pg` ships the array regardless. Duplicated deliberately: this
+   * suite drives a DIFFERENT entry point (the account wipe) and must not depend
+   * on the other file's fake to catch a statement it is the only caller of.
+   */
+  function assertBindArity(sql: string, params: unknown[]): void {
+    const stripped = String(sql).replace(/'[^']*'/g, "''");
+    const refs = [...stripped.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+    const required = refs.length ? Math.max(...refs) : 0;
+    if (params.length !== required) {
+      throw new Error(
+        `bind message supplies ${params.length} parameters, but prepared statement "" requires ${required}`
+      );
+    }
+  }
+
   async function query(sql: string, params: unknown[] = []): Promise<any> {
     if (fake.poolDown) throw new Error(fake.poolDown);
     const flat = String(sql).replace(/\s+/g, ' ').trim();
     if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(flat) || /^SET LOCAL/i.test(flat)) {
       return { rows: [], rowCount: 0 };
     }
+    assertBindArity(sql, params);
     if (flat.includes('information_schema.tables')) {
       return {
         rows: [
@@ -221,6 +241,41 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     const { data } = dbMock.dbWrite.appListingModerationEvent.create.mock.calls[0][0] as any;
     expect(data.actorUserId).toBeNull();
     expect(data.before.initiator).toBe('system:account-wipe');
+  });
+
+  it('🔴 WARNS when the sweep resolves but purged nothing (the CHECK-not-applied case)', async () => {
+    // The sweep is log-and-continue: it catches each app's failure into
+    // `failures[]` and RESOLVES. So a bare try/catch here sees a clean resolve
+    // and says nothing. That is exactly the live case until the action CHECK
+    // widen is applied — every audit write is rejected with 23514, nothing is
+    // purged, and the operator would have seen a silent success.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    dbMock.dbWrite.appListingModerationEvent.create.mockRejectedValue(
+      Object.assign(new Error('new row violates check constraint'), { code: '23514' })
+    );
+
+    await removeAllContent({ id: TARGET, actorUserId: MOD });
+
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    const incomplete = lines.find((l) => l.includes('purge INCOMPLETE'));
+    expect(incomplete).toBeTruthy();
+    expect(incomplete).toContain(`userId=${TARGET}`);
+    expect(incomplete).toContain('1 app(s) failed');
+    expect(incomplete).toContain('check constraint');
+    // And nothing was destroyed, which is the state the warning describes.
+    expect(fake.kv.map((r) => r.key).sort()).toEqual(['gone-a', 'gone-b', 'keep']);
+    warn.mockRestore();
+  });
+
+  it('stays quiet on a clean sweep', async () => {
+    // Positive control for the guard above: the warning must not fire on the
+    // happy path, or it is noise that trains an operator to ignore it.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await removeAllContent({ id: TARGET, actorUserId: MOD });
+    expect(
+      warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
+    ).toEqual([]);
+    warn.mockRestore();
   });
 
   it('writes the audit row BEFORE deleting — an audit failure destroys no rows', async () => {

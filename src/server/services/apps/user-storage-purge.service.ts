@@ -52,6 +52,22 @@
 // If the DELETE succeeds but the outcome stamp fails, the destruction is already
 // done and refusing would misreport it — the stamp is therefore best-effort and
 // its failure is surfaced as `auditCompletionRecorded: false` rather than thrown.
+//
+// 🔴 `after` ANSWERS "WERE THE ROWS ACTUALLY REMOVED?", AND IT HAS THREE STATES —
+// it used to have two spellings for three meanings, which made the row unable to
+// carry the one fact it exists for. A rolled-back delete and a successful delete
+// whose stamp failed BOTH left `before` present and `after` null, i.e. the same
+// record for opposite outcomes. Now:
+//
+//   after.outcome === 'purged'  — the rows are gone; counts are in the same object.
+//   after.outcome === 'failed'  — the delete rolled back; `deletedRowCount: 0`,
+//                                 with the error text. NOTHING was destroyed.
+//   after === null              — genuinely unknown: both the success stamp and
+//                                 the failure stamp failed to write. Rare, and it
+//                                 no longer doubles as the common case.
+//
+// Prose elsewhere that called a null `after` "attempted, completion unrecorded"
+// was describing only one of the two outcomes it actually covered.
 
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -168,7 +184,16 @@ export type AppUserStorageAppView = {
   appBlockId: string;
   /** Store slug when the block has a listing, else the raw `blockId`. */
   slug: string;
-  /** The per-app schema these rows live in, e.g. `"app_my_app"`. */
+  /**
+   * The per-app schema these rows live in, as a BARE identifier (`app_my_app`),
+   * not the quoted form `appSchemaIdent` produces for SQL.
+   *
+   * This value is persisted into the permanent audit snapshot, so the quotes are
+   * not cosmetic: a JSON-path query over the moderation trail would have to strip
+   * them, and a reader comparing against `information_schema.schemata` (which
+   * stores bare names) would silently never match. The quoted form exists solely
+   * to be interpolated into a statement and stays local to the SQL that needs it.
+   */
   schema: string;
   /** EXACT count over every matching row, independent of the snapshot cap. */
   rowCount: number;
@@ -312,6 +337,65 @@ async function readSchemaShape(): Promise<Map<string, SchemaTables>> {
   return out;
 }
 
+/**
+ * Which AppBlock owns each `app_<slug>` schema — and, crucially, which schemas
+ * are owned by MORE THAN ONE.
+ *
+ * 🔴 THE SLUG MAP IS NOT INJECTIVE. This is stated plainly because the previous
+ * two attempts to justify it were both wrong, and a third rationale composed to
+ * fill the gap is how the class regenerates. `sanitizeAppSlug` collapses every
+ * RUN of non-alphanumeric characters to a single `_`
+ * (`replace(/[^a-z0-9]+/g, '_')`), and the published manifest pattern
+ * `^[a-z][a-z0-9-]*[a-z0-9]$` admits consecutive hyphens. Measured: `my-app`,
+ * `my--app` and `my---app` are ALL manifest-legal and ALL resolve to
+ * `app_my_app`. (The earlier claim that the pattern "admits no underscore" was
+ * true and irrelevant — underscores were never the failure mode; hyphen RUNS
+ * are.)
+ *
+ * Two such blocks therefore share one `kv` table, and nothing upstream prevents
+ * it. The consequence is the worst kind: a purge aimed at one app deletes the
+ * user's rows for BOTH, decrements only the named app's `quota`, and leaves the
+ * other app's `user_quota` holding exactly the phantom balance this service
+ * warns about elsewhere — a counter for rows that no longer exist, which keeps
+ * refusing that user's writes forever.
+ *
+ * So a schema claimed by two or more blocks is DISQUALIFIED, never resolved to
+ * an arbitrary winner. Callers treat it the same as a schema claimed by none:
+ * reported, skipped, never purged.
+ *
+ * Shared by both verbs on purpose. The targeted purge originally had no
+ * equivalent check at all, so the guard existed at one of the two call sites
+ * that needed it — a predicate open-coded once is a predicate wrong everywhere
+ * else.
+ */
+async function resolveSchemaOwnership(): Promise<{
+  bySchema: Map<string, BlockIdentity & { storageSlug: string }>;
+  collidingSchemas: Set<string>;
+}> {
+  const blocks = await dbRead.appBlock.findMany({
+    select: { id: true, blockId: true, appListing: { select: { id: true, slug: true } } },
+  });
+  const bySchema = new Map<string, BlockIdentity & { storageSlug: string }>();
+  const collidingSchemas = new Set<string>();
+  for (const b of blocks) {
+    const storageSlug = sanitizeAppSlug(b.blockId);
+    if (!storageSlug) continue;
+    const schemaName = `app_${storageSlug}`;
+    if (bySchema.has(schemaName)) {
+      collidingSchemas.add(schemaName);
+      continue;
+    }
+    bySchema.set(schemaName, {
+      appBlockId: b.id,
+      slug: b.appListing?.slug ?? b.blockId,
+      appListingId: b.appListing?.id ?? null,
+      storageSlug,
+    });
+  }
+  for (const name of collidingSchemas) bySchema.delete(name);
+  return { bySchema, collidingSchemas };
+}
+
 /** Build the per-app view (the READ surface, and the purge's own snapshot). */
 async function buildAppView(args: {
   identity: BlockIdentity & { storageSlug: string };
@@ -343,7 +427,25 @@ async function buildAppView(args: {
                 AS total_bytes,
               ${counterSelect},
               ${sharedSelect}`,
-      [userId, identity.appBlockId]
+      // 🔴 THE BIND LIST FOLLOWS THE FRAGMENTS, because `$2` lives ONLY inside
+      // `counterSelect`. When a schema has no `user_quota` that fragment becomes
+      // a literal `NULL` and `$2` disappears from the statement entirely — but
+      // `pg` still ships whatever array it is handed, and Postgres rejects the
+      // mismatch outright: `bind message supplies 2 parameters, but prepared
+      // statement "" requires 1`. That is a hard 500 on the PRIMARY read path,
+      // not a degraded result.
+      //
+      // It is also not an edge case: `user_quota` arrived in a later
+      // provisioner DDL change, so every schema not re-provisioned since is
+      // exactly this branch — measured at 11 of 20 in production. Account-wide
+      // `preview` and `purgeAccount` both enumerate every schema, so ONE such
+      // schema took out the whole sweep, healthy apps included.
+      //
+      // Any future fragment that carries a `$n` must extend this the same way.
+      // The suites' fake now validates bind arity against the highest `$n` in
+      // the statement text, so a regression here fails in the suite rather than
+      // in production.
+      tables.hasUserQuota ? [userId, identity.appBlockId] : [userId]
     )
   ).rows[0];
 
@@ -383,7 +485,8 @@ async function buildAppView(args: {
   return {
     appBlockId: identity.appBlockId,
     slug: identity.slug,
-    schema,
+    // Bare name — see the field's docstring. The quoted `schema` local is for SQL.
+    schema: `app_${identity.storageSlug}`,
     rowCount,
     totalBytes,
     counter,
@@ -494,42 +597,7 @@ export async function previewUserAppStorage(args: {
     };
   }
 
-  // Map schema → AppBlock. `sanitizeAppSlug` is LOSSY (a `-` and a `_` both
-  // become `_`), so the mapping cannot be inverted from the schema name — it is
-  // built forwards from the AppBlock rows instead.
-  const blocks = await dbRead.appBlock.findMany({
-    select: { id: true, blockId: true, appListing: { select: { id: true, slug: true } } },
-  });
-  //
-  // 🔴 AND IT IS NOT GUARANTEED INJECTIVE, SO A COLLISION DISQUALIFIES THE SCHEMA
-  // RATHER THAN PICKING A WINNER. `sanitizeAppSlug` maps every non-alphanumeric
-  // character to `_`, so `my-app` and `my_app` would both resolve to
-  // `app_my_app`. Today they cannot BOTH exist — the published manifest schema
-  // pins `blockId` to `^[a-z][a-z0-9-]*[a-z0-9]$`, which admits no underscore, so
-  // the map is injective over every id that path can produce. That is a property
-  // of a JSON-schema pattern in another file, though, not of anything here, and
-  // the cost of it changing is that a purge aimed at one app silently deletes
-  // another app's rows (they would share the `kv` table too). So a schema claimed
-  // by two blocks is reported as unmapped and skipped, which is the same
-  // treatment as a schema claimed by none.
-  const bySchema = new Map<string, BlockIdentity & { storageSlug: string }>();
-  const collidingSchemas = new Set<string>();
-  for (const b of blocks) {
-    const storageSlug = sanitizeAppSlug(b.blockId);
-    if (!storageSlug) continue;
-    const schemaName = `app_${storageSlug}`;
-    if (bySchema.has(schemaName)) {
-      collidingSchemas.add(schemaName);
-      continue;
-    }
-    bySchema.set(schemaName, {
-      appBlockId: b.id,
-      slug: b.appListing?.slug ?? b.blockId,
-      appListingId: b.appListing?.id ?? null,
-      storageSlug,
-    });
-  }
-  for (const name of collidingSchemas) bySchema.delete(name);
+  const { bySchema } = await resolveSchemaOwnership();
 
   const apps: AppUserStorageAppView[] = [];
   const unmappedSchemas: string[] = [];
@@ -773,7 +841,59 @@ async function purgeOneApp(args: {
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
-    throw err;
+    // 🔴 STAMP THE FAILURE BEFORE RETHROWING, or this row becomes ambiguous.
+    // "Were the rows actually removed?" is the question a takedown record exists
+    // to answer, and without this stamp a rolled-back delete and a successful
+    // delete whose stamp failed are byte-identical: `before` present, `after`
+    // null. One of those destroyed nothing and the other destroyed everything.
+    //
+    // Best-effort, and deliberately does NOT swallow the original error: the
+    // transaction already rolled back, so the rows are intact and the caller
+    // must still see the failure. If this stamp ALSO fails, `after` stays null —
+    // which now honestly means "outcome unknown", the rare third state, rather
+    // than being the common spelling of two opposite outcomes.
+    await dbWrite.appListingModerationEvent
+      .update({
+        where: { id: auditEventId },
+        data: {
+          after: {
+            outcome: 'failed',
+            deletedRowCount: 0,
+            rolledBack: true,
+            error: err instanceof Error ? err.message : String(err),
+            failedAt: new Date().toISOString(),
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => undefined);
+
+    // 🔴 LOG HERE, NOT AT THE TWO CALL SITES. An orphaned `before`-only row with
+    // no correlate anywhere was the other half of this gap: the account-wide
+    // sweep logged a failure carrying no `auditEventId`, and the TARGETED verb
+    // logged nothing at all, so the row a reviewer found could not be tied to
+    // any operational record. Both verbs funnel through here, so one line covers
+    // both and cannot drift between them.
+    logToAxiom(
+      {
+        event: 'mod_purge_app_failed',
+        auditEventId,
+        purgeBatchId: args.batchId,
+        scope: args.scope,
+        initiator: args.initiator,
+        actorUserId: args.actorUserId,
+        targetUserId,
+        appBlockId: identity.appBlockId,
+        slug: identity.slug,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      PURGE_LOG
+    ).catch(() => undefined);
+
+    throw new AppUserStoragePurgeFailed(
+      err instanceof Error ? err.message : String(err),
+      auditEventId,
+      err
+    );
   } finally {
     client.release();
   }
@@ -786,6 +906,7 @@ async function purgeOneApp(args: {
       where: { id: auditEventId },
       data: {
         after: {
+          outcome: 'purged',
           deletedRowCount,
           deletedBytes,
           userQuotaReset,
@@ -837,8 +958,22 @@ async function purgeOneApp(args: {
   };
 }
 
+/**
+ * A purge whose DELETE failed and rolled back. Carries the `auditEventId` so the
+ * orphaned audit row — which now carries `after.outcome === 'failed'` — can be
+ * tied to the operational record and to the sweep's `failures[]` entry. The
+ * original error is preserved as `cause`; nothing about the failure is dropped
+ * in order to attach the id.
+ */
+export class AppUserStoragePurgeFailed extends Error {
+  constructor(message: string, readonly auditEventId: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = 'AppUserStoragePurgeFailed';
+  }
+}
+
 export class AppUserStoragePurgeError extends Error {
-  constructor(readonly kind: 'NOT_FOUND', message: string) {
+  constructor(readonly kind: 'NOT_FOUND' | 'AMBIGUOUS_SCHEMA', message: string) {
     super(message);
     this.name = 'AppUserStoragePurgeError';
   }
@@ -857,6 +992,23 @@ export async function purgeUserAppStorage(args: {
   if (!identity) {
     throw new AppUserStoragePurgeError('NOT_FOUND', 'app block not found');
   }
+
+  // 🔴 THE SAME COLLISION GUARD THE SWEEP APPLIES — this verb had none, which is
+  // where the hazard was actually reachable. The account-wide path disqualified a
+  // schema claimed by two blocks; the targeted path resolved one block, derived
+  // its schema, and deleted, so a purge aimed at `my-app` also destroyed
+  // `my--app`'s rows for that user, decremented only `my-app`'s `quota`, and left
+  // `my--app`'s `user_quota` as a phantom balance. See `resolveSchemaOwnership`
+  // for why the map is not injective.
+  const { collidingSchemas } = await resolveSchemaOwnership();
+  const schemaName = `app_${identity.storageSlug}`;
+  if (collidingSchemas.has(schemaName)) {
+    throw new AppUserStoragePurgeError(
+      'AMBIGUOUS_SCHEMA',
+      `storage schema ${schemaName} is claimed by more than one app block; refusing to purge`
+    );
+  }
+
   const shape = await readSchemaShape();
   const tables = shape.get(`app_${identity.storageSlug}`);
   if (!tables?.hasKv) {
@@ -923,7 +1075,14 @@ export type AppUserStorageAccountPurge = {
   results: AppUserStoragePurgeResult[];
   /** Apps whose purge threw. Log-and-continue: one bad schema must not strand
    *  the rest of the sweep half-done with no record of which half. */
-  failures: { appBlockId: string; slug: string; error: string }[];
+  failures: {
+    appBlockId: string;
+    slug: string;
+    error: string;
+    /** The audit row for this app, whose `after.outcome` is `'failed'`.
+     *  Null only when the purge never got as far as writing one. */
+    auditEventId: string | null;
+  }[];
   unmappedSchemas: string[];
   schemasTruncated: boolean;
   totals: { appCount: number; deletedRowCount: number; deletedBytes: number };
@@ -942,7 +1101,7 @@ export async function purgeUserAppStorageEverywhere(args: {
   const shape = await readSchemaShape();
 
   const results: AppUserStoragePurgeResult[] = [];
-  const failures: { appBlockId: string; slug: string; error: string }[] = [];
+  const failures: AppUserStorageAccountPurge['failures'] = [];
 
   for (const view of preview.apps) {
     const identity = await resolveBlockIdentity(view.appBlockId);
@@ -952,6 +1111,8 @@ export async function purgeUserAppStorageEverywhere(args: {
         appBlockId: view.appBlockId,
         slug: view.slug,
         error: 'app block or schema disappeared between preview and purge',
+        // No purge was attempted, so no audit row exists to point at.
+        auditEventId: null,
       });
       continue;
     }
@@ -974,17 +1135,15 @@ export async function purgeUserAppStorageEverywhere(args: {
         appBlockId: view.appBlockId,
         slug: view.slug,
         error: err instanceof Error ? err.message : String(err),
+        // `purgeOneApp` stamps the audit row `after.outcome: 'failed'` and throws
+        // an `AppUserStoragePurgeFailed` carrying its id, so the sweep's report
+        // and the orphaned row can be tied together. Anything else that threw
+        // (before the row existed) leaves this null.
+        auditEventId: err instanceof AppUserStoragePurgeFailed ? err.auditEventId : null,
       });
-      logToAxiom(
-        {
-          event: 'mod_purge_app_failed',
-          purgeBatchId: batchId,
-          appBlockId: view.appBlockId,
-          targetUserId: args.targetUserId,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        PURGE_LOG
-      ).catch(() => undefined);
+      // NOT logged here — `purgeOneApp` already emits `mod_purge_app_failed`
+      // with the audit id, for BOTH verbs. Logging again would double-count and
+      // would reintroduce the drift between the two call sites.
     }
   }
 

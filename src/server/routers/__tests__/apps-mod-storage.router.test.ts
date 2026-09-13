@@ -92,12 +92,49 @@ const { mockPool, mockClient, fake } = vi.hoisted(() => {
     return s.kv;
   }
 
+  /**
+   * 🔴 BIND ARITY, CHECKED THE WAY POSTGRES CHECKS IT.
+   *
+   * This exists because a real 500 shipped past this suite. `buildAppView`
+   * assembles its statement from fragments, and when a schema has no
+   * `user_quota` the fragment carrying `$2` is replaced by a literal `NULL`
+   * — so the statement references only `$1` while two parameters are still
+   * bound. Postgres rejects that outright:
+   *
+   *     bind message supplies 2 parameters, but prepared statement "" requires 1
+   *
+   * The old fake read `params[0]`/`params[1]` positionally and never counted
+   * them, so it answered happily and the branch's own test passed. That is
+   * fake-wrong-in-the-same-direction as the code — the failure mode this file's
+   * header warns about, walked into anyway.
+   *
+   * Validating arity here kills the whole CLASS rather than the one instance:
+   * every statement this service builds conditionally is now checked, and any
+   * future fragment that takes a `$n` with it fails loudly in the suite instead
+   * of in production. `pg` sends the array as-is, so a count mismatch in EITHER
+   * direction is an error, which is what this reproduces.
+   */
+  function assertBindArity(sql: string, params: unknown[]): void {
+    // Ignore `$n` inside string literals — none today, but the check should not
+    // become the next thing that is subtly wrong.
+    const stripped = sql.replace(/'[^']*'/g, "''");
+    const refs = [...stripped.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+    const required = refs.length ? Math.max(...refs) : 0;
+    if (params.length !== required) {
+      throw new Error(
+        `bind message supplies ${params.length} parameters, but prepared statement "" requires ${required}`
+      );
+    }
+  }
+
   async function query(sql: string, params: unknown[] = []): Promise<any> {
     fake.statements.push(sql);
     const flat = sql.replace(/\s+/g, ' ').trim();
 
     if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(flat)) return { rows: [], rowCount: 0 };
     if (/^SET LOCAL/i.test(flat)) return { rows: [], rowCount: 0 };
+
+    assertBindArity(sql, params);
 
     // ── information_schema shape probe ──────────────────────────────────────
     if (flat.includes('information_schema.tables')) {
@@ -343,7 +380,10 @@ describe('preview (the read surface)', () => {
     const app = out.apps[0];
     expect(app.appBlockId).toBe(APP_A.id);
     expect(app.slug).toBe('my-app');
-    expect(app.schema).toBe('"app_my_app"');
+    // BARE identifier, not the quoted SQL form — this value is persisted into the
+    // permanent snapshot, where quotes would break a JSON-path query and would never
+    // match `information_schema.schemata`.
+    expect(app.schema).toBe('app_my_app');
     expect(app.rowCount).toBe(3);
     expect(app.totalBytes).toBe(A_TARGET_BYTES);
     // Largest first, and ONLY the target's keys.
@@ -378,6 +418,47 @@ describe('preview (the read surface)', () => {
     const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
     expect(out.apps[0].counter).toBeNull();
     expect(out.apps[0].counterMatchesRows).toBeNull();
+    // …and the rest of the view is still correct, not a degraded fallback.
+    expect(out.apps[0].rowCount).toBe(3);
+    expect(out.apps[0].totalBytes).toBe(A_TARGET_BYTES);
+  });
+
+  it('🔴 binds ONE parameter on a no-user_quota schema — the vanished $2', async () => {
+    // The contract pinned HERE rather than only in the fake, so deleting the
+    // fake's arity check does not silently un-cover it. `$2` appears only inside
+    // the `user_quota` fragment; when that fragment is replaced by a literal
+    // NULL the statement references `$1` alone, and a two-element bind array is
+    // a hard Postgres error rather than an ignored extra.
+    fake.state(APP_A.schema).hasUserQuota = false;
+    await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
+
+    const totals = mockPool.query.mock.calls.find((c) =>
+      String(c[0]).includes('AS total_bytes')
+    ) as [string, unknown[]];
+    expect(totals[0]).not.toContain('$2');
+    expect(totals[1]).toEqual([TARGET]);
+  });
+
+  it('🔴 an account-wide sweep SURVIVES a schema that has no user_quota', async () => {
+    // The reachability that made this a live 500 rather than a latent one:
+    // `buildAppView` is awaited inside the enumeration loop, so one such schema
+    // took out the whole sweep — every healthy app with it. Measured in
+    // production at 11 of 20 schemas on this branch.
+    fake.state(APP_A.schema).hasUserQuota = false;
+    const out = await caller().preview({ userId: TARGET });
+    expect(out.apps.map((a) => a.appBlockId).sort()).toEqual([APP_A.id, APP_B.id]);
+    expect(out.totals.rowCount).toBe(4);
+  });
+
+  it('🔴 an account-wide PURGE survives it too, and still purges the healthy apps', async () => {
+    // `previewUserAppStorage` is called OUTSIDE the per-app try in the sweep, so
+    // this threw before any app was purged — including apps that were fine.
+    fake.state(APP_A.schema).hasUserQuota = false;
+    const out = await caller().purgeAccount({ userId: TARGET, reason: 'account terminated' });
+    expect(out.failures).toEqual([]);
+    expect(out.totals.deletedRowCount).toBe(4);
+    expect(fake.kv(APP_A.schema).map((r) => r.user_id)).toEqual([BYSTANDER]);
+    expect(fake.kv(APP_B.schema)).toEqual([]);
   });
 
   it('account-wide: enumerates every mapped app, reports unmapped schemas, totals exactly', async () => {
@@ -404,14 +485,15 @@ describe('preview (the read surface)', () => {
   });
 
   it('two blocks claiming ONE schema disqualifies it — no arbitrary winner', async () => {
-    // `sanitizeAppSlug` maps every non-alphanumeric char to `_`, so `my-app` and
-    // `my_app` would both resolve to `app_my_app` and share one `kv` table. The
-    // manifest schema forbids the underscore form today; if that ever changes, a
-    // purge aimed at one app must NOT delete the other's rows. The colliding
-    // schema is reported as unmapped and skipped, exactly like an orphan.
+    // 🔴 THE REACHABLE SHAPE. This fixture used `my_app`, which the manifest
+    // pattern `^[a-z][a-z0-9-]*[a-z0-9]$` FORBIDS — so it tested a collision that
+    // could not occur and left the one that can untested. `sanitizeAppSlug`
+    // collapses RUNS (`replace(/[^a-z0-9]+/g, '_')`), and the pattern admits
+    // consecutive hyphens, so `my-app` and `my--app` are BOTH legal and BOTH
+    // resolve to `app_my_app`. Measured, along with `my---app`.
     mockDbRead.appBlock.findMany.mockImplementation(async () => [
       { id: APP_A.id, blockId: 'my-app', appListing: { id: 'apl_a', slug: 'my-app' } },
-      { id: 'apb_ccc', blockId: 'my_app', appListing: null },
+      { id: 'apb_ccc', blockId: 'my--app', appListing: null },
       { id: APP_B.id, blockId: APP_B.blockId, appListing: null },
     ]);
     const out = await caller().preview({ userId: TARGET });
@@ -423,6 +505,26 @@ describe('preview (the read surface)', () => {
     expect(purge.unmappedSchemas).toContain(APP_A.schema);
     expect(fake.kv(APP_A.schema)).toHaveLength(4);
     expect(fake.kv(APP_B.schema)).toEqual([]);
+  });
+
+  it('🔴 the TARGETED purge refuses a shared schema too — it had no guard at all', async () => {
+    // This is where the hazard was actually reachable. The sweep disqualified a
+    // shared schema; the targeted verb resolved one block, derived its schema and
+    // deleted — so a purge aimed at `my-app` also destroyed `my--app`'s rows for
+    // that user, decremented only `my-app`'s quota, and left `my--app`'s
+    // user_quota as a phantom balance for rows that no longer exist.
+    mockDbRead.appBlock.findMany.mockImplementation(async () => [
+      { id: APP_A.id, blockId: 'my-app', appListing: { id: 'apl_a', slug: 'my-app' } },
+      { id: 'apb_ccc', blockId: 'my--app', appListing: null },
+    ]);
+
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    // CONFLICT, not NOT_FOUND: the block exists, the purge is refused.
+    expect(fake.kv(APP_A.schema)).toHaveLength(4);
+    expect(mockDbWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
   it('an app that was never provisioned reads as empty, not as an error', async () => {
@@ -602,7 +704,7 @@ describe('audit record', () => {
       'md5_a-two',
       'md5_a-one',
     ]);
-    expect(data.before.schema).toBe('"app_my_app"');
+    expect(data.before.schema).toBe('app_my_app');
     expect(data.before.scope).toBe('app');
 
     // 🔴 The snapshot carries no VALUES — that is the point of the fingerprint.
@@ -639,6 +741,50 @@ describe('audit record', () => {
     expect(out.deletedRowCount).toBe(3);
     expect(out.auditCompletionRecorded).toBe(false);
     expect(fake.kv(APP_A.schema)).toHaveLength(1);
+  });
+
+  it('🔴 a rolled-back delete stamps after.outcome FAILED — not an ambiguous null', async () => {
+    // "Were the rows actually removed?" is the question this row exists to
+    // answer. Before this, a rolled-back delete and a successful delete whose
+    // stamp failed were byte-identical: `before` present, `after` null. One
+    // destroyed nothing, the other destroyed everything.
+    fake.failNextKvDelete = 'deadlock detected';
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toThrow(/deadlock/);
+
+    const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
+    expect(update.data.after.outcome).toBe('failed');
+    expect(update.data.after.deletedRowCount).toBe(0);
+    expect(update.data.after.rolledBack).toBe(true);
+    expect(String(update.data.after.error)).toContain('deadlock');
+    // And the rows really are intact — the stamp is not merely claiming it.
+    expect(fake.kv(APP_A.schema)).toHaveLength(4);
+  });
+
+  it('a successful purge stamps after.outcome PURGED', async () => {
+    await caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' });
+    const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
+    expect(update.data.after.outcome).toBe('purged');
+    expect(update.data.after.deletedRowCount).toBe(3);
+  });
+
+  it('the failure is logged WITH the audit id, on the targeted verb too', async () => {
+    // The targeted verb used to log nothing at all on this path, so an orphaned
+    // audit row had no correlate anywhere. Both verbs funnel through the same
+    // emit now.
+    fake.failNextKvDelete = 'deadlock detected';
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toThrow();
+
+    const created = mockDbWrite.appListingModerationEvent.create.mock.calls[0][0] as any;
+    const line = mockLogToAxiom.mock.calls.find(
+      (c: unknown[]) => (c[0] as { event?: string })?.event === 'mod_purge_app_failed'
+    ) as [Record<string, unknown>, string];
+    expect(line).toBeTruthy();
+    expect(line[0].auditEventId).toBe(created.data.id);
+    expect(line[0].appBlockId).toBe(APP_A.id);
   });
 
   it('writes a row even for a purge that removes nothing', async () => {
@@ -709,6 +855,12 @@ describe('purgeAccount (account-wide)', () => {
     expect(out.failures).toHaveLength(1);
     expect(out.failures[0].appBlockId).toBe(APP_A.id);
     expect(out.failures[0].error).toContain('deadlock');
+    // The sweep's report points AT the orphaned audit row, so a reviewer who
+    // finds one can tie it to the run that produced it.
+    const createdA = (mockDbWrite.appListingModerationEvent.create.mock.calls as any[]).find(
+      (c) => c[0].data.before.appBlockId === APP_A.id
+    );
+    expect(out.failures[0].auditEventId).toBe(createdA[0].data.id);
     // The other app still got purged.
     expect(out.totals.deletedRowCount).toBe(1);
     expect(fake.kv(APP_B.schema)).toEqual([]);
