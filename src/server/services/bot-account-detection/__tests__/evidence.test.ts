@@ -1392,6 +1392,75 @@ describe('createEvidenceReader', () => {
     expect(got.filter((r) => r.userId === 1)).toHaveLength(5);
   });
 
+  it('🔴 ONE per-member read rejecting inside the fan-out REJECTS THE WHOLE BATCH', async () => {
+    // 🔴 THE ONLY PLACE IN THIS MODULE WHERE N INDEPENDENT I/O CALLS ARE COMBINED, AND IT HAD NO
+    // PARTIAL-FAILURE GUARD. Every existing failure case throws at the `EvidenceReader` BOUNDARY
+    // (`fakeReader({ filenameError })`), one level ABOVE this seam — nothing drove a single
+    // per-member `findMany` rejection through `createEvidenceReader`. Mutating the `Promise.all`
+    // here to a `Promise.allSettled` that keeps the fulfilled results left the suite 362/362 green.
+    //
+    // 🔴 "MAKE IT RESILIENT WITH allSettled" IS THE OBVIOUS FUTURE EDIT AND IT INVERTS THIS
+    // MODULE'S CENTRAL INVARIANT. A fingerprint count built from SOME of the members understates
+    // every ring that straddles the missing ones, and understating is the direction that produces a
+    // confident zero — while `evidence_source_read_failures` would read 0, because nothing threw
+    // out of this method. A quieter, lower, cleaner-looking number: the exact failure shape this
+    // whole PR exists to remove, arrived at from the other side.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
+        // Only ONE member's read fails, and it is not the first — so a fan-out that abandoned the
+        // rest on the first rejection, and one that kept everything else, both still have data.
+        if ((args.where.userId as unknown as number) === 2) throw new Error('replica timeout');
+        return [{ userId: args.where.userId as unknown as number, name: 'logo.jpg' }];
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+
+    // ALL OR NOTHING: the rejection propagates, so the caller never sees members 1 and 3's rows.
+    // Under `allSettled`-keep-fulfilled this resolves to two rows instead and the assertion fails
+    // with its own message rather than with someone else's.
+    await expect(reader.listFilenameSamples([1, 2, 3], 5)).rejects.toThrow('replica timeout');
+  });
+
+  it('🔴 …and `collectCohortSignals` DISCARDS the partial data and RECORDS the failure', async () => {
+    // The other half of the invariant, driven end to end through the REAL reader rather than
+    // through a fake that models the boundary. The structural claim above (it rejects) is not the
+    // claim that matters on its own — what matters is what the walk then does with it: zero rows
+    // scored, availability false, and `readFailures.filenameSamples` true so the run is legible as
+    // BROKEN rather than as quiet.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
+        if ((args.where.userId as unknown as number) === 2) throw new Error('replica timeout');
+        return [{ userId: args.where.userId as unknown as number, name: 'ring.jpg' }];
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+    const members = Array.from({ length: 3 }, (_, i) => member(i + 1, 'ring.test'));
+    const s = await collectCohortSignals(reader, members, {
+      chunkSize: 3,
+      filenameBatchSize: 3,
+    });
+
+    // Nothing from the two members whose reads SUCCEEDED reaches the index. `ring.jpg` shared by
+    // two accounts is a filename cluster; scoring it from a partial read is what the discard
+    // refuses to do.
+    expect(s.sources.filenameSamples).toBe(false);
+    expect(s.sources.readFailures.filenameSamples).toBe(true);
+    expect(s.sources.membersSampledForFilenames).toBe(0);
+    expect([...s.membersPerFingerprint.keys()]).toEqual([]);
+    // And the failure is scoped to its own source — the other two flags are untouched.
+    expect(s.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: true,
+    });
+  });
+
   it('issues no filename statement for an empty id list or a zero take', async () => {
     const reader = createEvidenceReader({ db, ch: null });
     db.image.findMany.mockClear();

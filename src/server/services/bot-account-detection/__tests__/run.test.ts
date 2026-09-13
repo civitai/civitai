@@ -563,10 +563,63 @@ describe('the evidence sources are reported, not assumed', () => {
     expect(counters.evidence_members_sampled_for_content).toBe(2);
   });
 
-  it('warns in the summary when the IP source was unavailable', async () => {
+  it('warns in the summary when the IP source DID NOT RUN, and says which of the two it was', async () => {
+    // 🔴 STRENGTHENED FROM A SUBSTRING BOTH BRANCHES SPELL. This used to assert only
+    // `'REGISTRATION-IP DATA WAS UNAVAILABLE'`, which is present in the did-not-run branch AND in
+    // the read-failed branch — so the one distinguishing clause this PR adds to the IP sentence
+    // could be deleted with this test still green (mutation: the failure condition forced to
+    // `false`; the suite stayed 362/362). The whole normalised sentence is pinned instead, because
+    // a guard on a word the other branch also spells is walkable by construction.
     const scenario = run([account(1)]);
     await scenario.result;
-    expect(scenario.reports[0].summary).toContain('REGISTRATION-IP DATA WAS UNAVAILABLE');
+    expect(scenario.reports[0].summary).toContain(
+      '🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run, so the clustering heuristic scored on ' +
+        'email domain alone — a low score from it is not evidence that accounts share no IP.'
+    );
+    // No ClickHouse client is a normal deployment, not an incident: the failure clause must be
+    // absent, and the counter with it.
+    expect(scenario.reports[0].summary).not.toContain('BECAUSE THE READ FAILED');
+    expect(scenario.reports[0].counters?.evidence_source_read_failures).toBe(0);
+  });
+
+  it('🔴 says the IP read FAILED, in the clause that separates a broken read from an absent client', async () => {
+    // 🔴 THE SOURCE ON WHICH "UNAVAILABLE" IS ALSO A NORMAL STEADY STATE. Every deployment without
+    // ClickHouse configured prints "REGISTRATION-IP DATA WAS UNAVAILABLE" on every run, forever —
+    // so on this one source the word a moderator reads carries no information at all, and the
+    // failure clause is the entire disclosure. With it deleted, a broken ClickHouse read is
+    // indistinguishable from the deployment that never had one, which is the exact ambiguity this
+    // PR exists to remove.
+    //
+    // The full sentence, not a keyword: the two branches differ only by the inserted clause.
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: true,
+          listRegistrationIps: async () => {
+            throw new Error('clickhouse down');
+          },
+          listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+
+    expect(out.reports[0].summary).toContain(
+      '🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run BECAUSE THE READ FAILED (counted in ' +
+        'evidence_source_read_failures), so the clustering heuristic scored on email domain alone ' +
+        '— a low score from it is not evidence that accounts share no IP.'
+    );
+    // And the counter it names is actually non-zero, so the sentence points somewhere real.
+    expect(out.reports[0].counters?.evidence_source_read_failures).toBe(1);
+    // The run still degraded rather than died.
+    expect(out.reports[0].counters?.cohort_size).toBe(2);
   });
 
   it('🔴 says so when the IP read RAN and matched nothing — the wrong-query signature', async () => {
@@ -690,6 +743,43 @@ describe('the evidence sources are reported, not assumed', () => {
     expect(out.reports[0].summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
   });
 
+  it('🔴 the DID-NOT-RUN half of both disclosures, pinned whole and pinned APART from the FAILED half', async () => {
+    // 🔴 THE UNTESTED HALF OF THE SENTENCE THIS PR SPLIT IN TWO. Every existing case drives the
+    // FAILED branch; nothing asserted the other one, so the two texts could be SWAPPED and the
+    // suite stayed 362/362 (mutation: the did-not-run branch made to emit the FAILED text). The
+    // damage of that swap is the PR's own motivating failure inverted — a deployment with no
+    // evidence reader at all would tell a moderator "THE UPLOADED-FILENAME READ FAILED this run …
+    // it is a broken read", sending someone to chase a healthy replica that was never asked
+    // anything.
+    //
+    // A run with NO evidence reader: `emptyCohortSignals()` sets every availability flag false and
+    // every `readFailures` flag false, which is exactly the did-not-run state.
+    const scenario = run([account(1)]);
+    await scenario.result;
+    const summary = scenario.reports[0].summary ?? '';
+
+    expect(summary).toContain(
+      '🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
+        'filename half of the content-templating heuristic scored 0 for every member for want of ' +
+        'data. That is not evidence that no accounts uploaded files under the same name.'
+    );
+    expect(summary).toContain(
+      '🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
+        'content-templating heuristic scored 0 for every member for want of data. That is not ' +
+        'evidence that no accounts posted the same text. The rest of the run was scored normally.'
+    );
+
+    // 🔴 DISTINGUISHABLE FROM, NOT MERELY PRESENT. "The sentence is there" is true of the mutant
+    // too — it is the wrong sentence being there that does the harm — so the claim has to be that
+    // the FAILED text is ABSENT, and that the counters agree with the words.
+    expect(summary).not.toContain('THE UPLOADED-FILENAME READ FAILED');
+    expect(summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
+    expect(summary).not.toContain('it is a broken read');
+    expect(scenario.reports[0].counters?.evidence_source_read_failures).toBe(0);
+    expect(scenario.reports[0].counters?.evidence_content_read_failed).toBe(0);
+    expect(scenario.reports[0].counters?.evidence_filename_read_failed).toBe(0);
+  });
+
   it('🔴 says the budget ran out, in the summary as well as the counters', async () => {
     // 🔴 The whole budget-exhausted sentence was unasserted: mutating `(signals.sources
     // .contentBudgetExhausted` to `(false` left the suite green, so half of what the PR body claims
@@ -722,6 +812,138 @@ describe('the evidence sources are reported, not assumed', () => {
         'sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ' +
         'scored 0 on content templating for want of data.'
     );
+  });
+});
+
+/**
+ * 🔴 THE LOG PAYLOAD THIS CHANGE NAMES AS THE THING THAT CLOSES THE LOOP — AND IT HAD NO COVERAGE
+ * AT ALL. Neither `readFailures` nor `bot-account-detection:signals` appeared anywhere in this file
+ * before these cases: deleting the `readFailures` key from the log call left the suite 362/362
+ * green. The irony is the finding — this PR argues the `readFailures` COUNTERS have no consumer and
+ * that the failure is closed by the log line and the report summary, and those were the two
+ * surfaces with no guards on them while the counters were asserted in both directions on all four
+ * keys.
+ *
+ * The scenario these must catch: any later edit to that payload returns the detector to its
+ * pre-PR state — a failed source whose only record was a log line that no longer records it — with
+ * CI green.
+ */
+describe('🔴 the signals log line carries the failure half, not just the availability half', () => {
+  /** Captures `log(name, data)` so a payload is a value a test can assert on. */
+  function logCapture() {
+    const calls: Array<{ name: string; data: Record<string, unknown> }> = [];
+    return {
+      calls,
+      log: (name: string, data: Record<string, unknown>) => {
+        calls.push({ name, data });
+      },
+      /** The one `bot-account-detection:signals` payload, or a failure naming what WAS logged. */
+      signals() {
+        const hit = calls.filter((c) => c.name === 'bot-account-detection:signals');
+        expect(
+          hit,
+          `expected exactly one bot-account-detection:signals log line, got names: ${calls
+            .map((c) => c.name)
+            .join(', ')}`
+        ).toHaveLength(1);
+        return hit[0].data;
+      },
+    };
+  }
+
+  const logRun = (evidence: Parameters<typeof runBotAccountDetection>[0]['evidence']) => {
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    const cap = logCapture();
+    return {
+      ...cap,
+      ...out,
+      result: runBotAccountDetection(
+        {
+          reader,
+          evidence,
+          sendReport: out.sendReport,
+          now: clock(),
+          heuristics: [],
+          log: cap.log,
+        },
+        { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+      ),
+    };
+  };
+
+  it('🔴 publishes readFailures with its real shape, one flag per source', async () => {
+    // Only the IP read throws. The payload must say WHICH source broke — a boolean sum, or the key
+    // omitted entirely, both read the same as the day nothing broke.
+    const scenario = logRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => {
+        throw new Error('clickhouse down');
+      },
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    await scenario.result;
+
+    // `toEqual` on the whole object, not a property probe: it fails when the key is DELETED, when a
+    // flag is dropped from the shape, and when the wrong source is blamed.
+    expect(scenario.signals().readFailures).toEqual({
+      registrationIps: true,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+    // The availability half is still there beside it — the failure half is an addition, not a
+    // replacement, and a reader needs both to tell a broken read from an absent client.
+    expect(scenario.signals().registrationIps).toBe(false);
+  });
+
+  it('🔴 publishes it as all-false on a clean run — the control that makes a `true` mean something', async () => {
+    // A field that appears only in the bad case cannot be alerted on, and a field only ever
+    // observed in the bad case cannot be shown to be `false` for the right reason. Both reads
+    // answer, both answer with nothing, and every flag must still be present and `false`.
+    const scenario = logRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    await scenario.result;
+    expect(scenario.signals().readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+  });
+
+  it('🔴 a FAILED filename read and a QUIET one differ IN THE LOG LINE, not only in the counters', async () => {
+    // The seam stated as a comparison rather than as a value, for the reason the counter version of
+    // this case states: a production run's filename read failed on every attempt and its counters
+    // were, number for number, the counters of a day on which nobody uploaded anything. The log
+    // line is the surface this PR nominates as the fix, so the property has to hold THERE too.
+    const failed = logRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    await failed.result;
+    const quiet = logRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    await quiet.result;
+
+    // Identical on the availability half — which is precisely why that half cannot carry the
+    // distinction.
+    expect(failed.signals().filenameSamples).toBe(false);
+    expect(quiet.signals().filenameSamples).toBe(true);
+    expect(failed.signals().readFailures).not.toEqual(quiet.signals().readFailures);
+    expect(failed.signals().readFailures).toMatchObject({ filenameSamples: true });
+    expect(quiet.signals().readFailures).toMatchObject({ filenameSamples: false });
   });
 });
 
