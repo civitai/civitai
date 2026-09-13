@@ -2,7 +2,6 @@ import * as z from 'zod';
 import {
   FEEDBACK_AREAS,
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
-  FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_MESSAGE_MAX_LENGTH,
   FEEDBACK_PATH_MAX_LENGTH,
@@ -40,17 +39,43 @@ const feedbackContextSchema = z.object({
     )
     .refine((val) => Object.keys(val).length <= 20, 'Too many filter keys')
     .optional(),
-  /** Cloudflare image ids for files the user attached by hand. */
-  images: z
-    .array(z.string().trim().min(1).max(FEEDBACK_IMAGE_ID_MAX_LENGTH))
-    .max(FEEDBACK_IMAGE_MAX_COUNT)
-    .optional(),
   /**
-   * Cloudflare image id of the opt-in page capture. Kept separate from `images`
-   * so triage can tell a rendered screenshot of the reporter's own screen from a
-   * file they chose to send — the two carry different privacy weight.
+   * Image ids for files the user attached by hand.
+   *
+   * 🔴 `uuid()` IS A SECURITY GUARD, NOT A TIDINESS ONE — see the field note above:
+   * these are ids the CLIENT says it uploaded, and nothing here proves the object
+   * exists or belongs to this user. The shape is the one thing this request CAN
+   * check, and it is checkable because both mint paths emit `randomUUID()`: the
+   * presign at `src/pages/api/v1/image-upload/index.ts` and the relay fallback's own
+   * server-side mint in `uploadImageBufferToStore` (`src/utils/s3-utils.ts`). A
+   * legitimate id is therefore always a uuid.
+   *
+   * What the previous LENGTH-ONLY bound (`z.string().trim().min(1).max(100)`) let
+   * through is the point. The moderator queue renders these as inline thumbnails and
+   * its `getEdgeUrl` returns any `http`-prefixed argument VERBATIM, so an id spelled
+   * as an absolute URL became `<img src="https://attacker.example/x.png">` in a
+   * moderator's browser — an outbound request handing the reporter a read receipt
+   * naming which moderator opened their report and when.
+   * `apps/moderator/src/lib/feedback.ts`'s `IMAGE_KEY` regex closes that on the READ
+   * side; this closes it at the source, so the guarantee stops depending on one
+   * consumer remembering to filter.
+   *
+   * 🔴 IT IS STILL NOT AN OWNERSHIP CHECK. Nothing records which user a key was
+   * issued to — the presign mints a bare `randomUUID()` and registers only
+   * `{uuid, backend, sizeBytes}` with storage-resolver — so a user who learns
+   * another user's id can still cite it. Closing that needs a persisted grant at
+   * mint time, which is a change to a shared upload route, not to this schema.
+   *
+   * No `.trim()`: trimming first would accept a whitespace-padded uuid, and no
+   * caller sends one. `z.uuid()`, not the deprecated `z.string().uuid()`.
    */
-  screenshotId: z.string().trim().min(1).max(FEEDBACK_IMAGE_ID_MAX_LENGTH).optional(),
+  images: z.array(z.uuid()).max(FEEDBACK_IMAGE_MAX_COUNT).optional(),
+  /**
+   * Image id of the opt-in page capture. Kept separate from `images` so triage can
+   * tell a rendered screenshot of the reporter's own screen from a file they chose
+   * to send — the two carry different privacy weight. Same guard as `images`.
+   */
+  screenshotId: z.uuid().optional(),
   /** Grafana Faro session id, to join a report to that session's RUM signals. */
   sessionId: z.string().trim().min(1).max(FEEDBACK_SESSION_ID_MAX_LENGTH).optional(),
 });

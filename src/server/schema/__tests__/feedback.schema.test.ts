@@ -3,7 +3,6 @@ import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/fee
 import {
   FEEDBACK_AREAS,
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
-  FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
@@ -29,48 +28,45 @@ describe('feedback schema — context bounds', () => {
   const base = { area: 'bitdex-image-feed' as const, message: 'something looked wrong' };
   const parse = (context: Record<string, unknown>) =>
     createFeedbackSchema.parse({ ...base, context });
+  /** Length-bounded fields only — image ids are bounded by SHAPE, not length. */
   const id = (length: number) => 'a'.repeat(length);
+
+  /**
+   * Synthetic v4 uuids, NOT keys copied out of the production `Feedback` table.
+   * `civitai/civitai` is public and a real id is a live object key in our store.
+   * Shape is what is under test, and these carry the same shape: version nibble 4,
+   * variant nibble 8/9/a/b, as `crypto.randomUUID()` emits.
+   */
+  const UUID_A = '11111111-2222-4333-8444-555555555555';
+  const UUID_B = 'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee';
+  const UUID_C = '00000000-0000-4000-a000-000000000000';
 
   describe('the bounds themselves', () => {
     // Pins the numbers this whole file is written against. If one of these moves,
     // the intent below has to be re-read rather than silently re-derived.
-    it('is 3 images, 100-char ids, 64-char session ids', () => {
+    it('is 3 images and 64-char session ids', () => {
       expect(FEEDBACK_IMAGE_MAX_COUNT).toBe(3);
-      expect(FEEDBACK_IMAGE_ID_MAX_LENGTH).toBe(100);
       expect(FEEDBACK_SESSION_ID_MAX_LENGTH).toBe(64);
     });
   });
 
   describe('images', () => {
     it('carries the ids through instead of stripping them', () => {
-      const parsed = parse({ images: ['cf-image-1', 'cf-image-2'] });
-      expect(parsed.context?.images).toEqual(['cf-image-1', 'cf-image-2']);
+      const parsed = parse({ images: [UUID_A, UUID_B] });
+      expect(parsed.context?.images).toEqual([UUID_A, UUID_B]);
     });
 
     it('accepts exactly 3', () => {
-      const parsed = parse({ images: ['a', 'b', 'c'] });
+      const parsed = parse({ images: [UUID_A, UUID_B, UUID_C] });
       expect(parsed.context?.images).toHaveLength(3);
     });
 
     it('rejects 4', () => {
-      expect(() => parse({ images: ['a', 'b', 'c', 'd'] })).toThrow();
-    });
-
-    it('accepts an id of exactly 100 characters', () => {
-      const parsed = parse({ images: [id(100)] });
-      expect(parsed.context?.images?.[0]).toHaveLength(100);
-    });
-
-    it('rejects an id of 101 characters', () => {
-      expect(() => parse({ images: [id(101)] })).toThrow();
+      expect(() => parse({ images: [UUID_A, UUID_B, UUID_C, UUID_A] })).toThrow();
     });
 
     it('rejects an empty id', () => {
       expect(() => parse({ images: [''] })).toThrow();
-    });
-
-    it('rejects a whitespace-only id (it trims to empty)', () => {
-      expect(() => parse({ images: ['   '] })).toThrow();
     });
 
     it('rejects a non-string id', () => {
@@ -83,19 +79,61 @@ describe('feedback schema — context bounds', () => {
     });
   });
 
+  /**
+   * 🔴 THE SHAPE IS A SECURITY GUARD, NOT TIDINESS, AND THIS IS THE REGRESSION BLOCK.
+   *
+   * Both mint paths produce `randomUUID()` — the presigned one
+   * (`src/pages/api/v1/image-upload/index.ts`) and the relay's own server-side mint
+   * (`uploadImageBufferToStore` in `src/utils/s3-utils.ts`) — so a legitimate id is
+   * ALWAYS a uuid. The field used to be bounded by LENGTH ALONE
+   * (`z.string().trim().min(1).max(100)`), which accepted any string a client cared to
+   * send and wrote it verbatim into a JSONB column.
+   *
+   * The consumer is what makes that matter: the moderator queue renders these as
+   * inline thumbnails, and its `getEdgeUrl` returns any `http`-prefixed argument
+   * VERBATIM. An id spelled as an absolute URL therefore becomes
+   * `<img src="https://attacker.example/x.png">` in a moderator's browser — an
+   * outbound request giving the reporter a read receipt naming which moderator opened
+   * their report and when.
+   *
+   * `apps/moderator/src/lib/feedback.ts`'s `IMAGE_KEY` regex already closes this on
+   * the READ side. These cases close it at the source, so the guarantee does not
+   * depend on one consumer remembering to filter. Every case below PARSED before this
+   * change — they are red at `origin/main`, not invariant guards.
+   */
+  describe('images — ids that are not uuids (regression)', () => {
+    const notUuids: Array<[string, string]> = [
+      ['an absolute https URL', 'https://attacker.example/x.png'],
+      ['an absolute http URL', 'http://attacker.example/x.png'],
+      ['a protocol-relative URL', '//attacker.example/x.png'],
+      ['a blob URL', 'blob:https://civitai.com/abcd'],
+      // No colon, so it takes `getEdgeUrl`'s verbatim branch as a SAME-ORIGIN
+      // relative src — a different, smaller hole than the ones above.
+      ['a bare string starting with http', 'httpsomething'],
+      ['a data URL', 'data:image/png;base64,AAAA'],
+      ['a traversal', '../../etc/passwd'],
+      ['a plausible-looking opaque key', 'cf-image-1'],
+      ['a uuid with its hyphens stripped', '11111111222243338444555555555555'],
+      ['a whitespace-padded uuid', ` ${UUID_A} `],
+      ['a uuid with trailing path', `${UUID_A}/../other`],
+    ];
+
+    it.each(notUuids)('rejects %s', (_label, value) => {
+      expect(() => parse({ images: [value] })).toThrow();
+      expect(() => parse({ screenshotId: value })).toThrow();
+    });
+
+    // The positive control for the block above: the guard rejects those BECAUSE they
+    // are not uuids, not because the field rejects everything.
+    it('still accepts the shape both mint paths actually emit', () => {
+      expect(parse({ images: [UUID_A], screenshotId: UUID_B }).context?.images).toEqual([UUID_A]);
+    });
+  });
+
   describe('screenshotId', () => {
     it('carries the id through instead of stripping it', () => {
-      const parsed = parse({ screenshotId: 'cf-screenshot-1' });
-      expect(parsed.context?.screenshotId).toBe('cf-screenshot-1');
-    });
-
-    it('accepts exactly 100 characters', () => {
-      const parsed = parse({ screenshotId: id(100) });
-      expect(parsed.context?.screenshotId).toHaveLength(100);
-    });
-
-    it('rejects 101 characters', () => {
-      expect(() => parse({ screenshotId: id(101) })).toThrow();
+      const parsed = parse({ screenshotId: UUID_A });
+      expect(parsed.context?.screenshotId).toBe(UUID_A);
     });
 
     it('rejects an empty id', () => {
@@ -105,9 +143,9 @@ describe('feedback schema — context bounds', () => {
     // Distinct fields, not one array: triage must be able to tell a rendered capture
     // of the reporter's own screen from a file they picked.
     it('is separate from images — both can travel on one submission', () => {
-      const parsed = parse({ images: ['attached-1'], screenshotId: 'captured-1' });
-      expect(parsed.context?.images).toEqual(['attached-1']);
-      expect(parsed.context?.screenshotId).toBe('captured-1');
+      const parsed = parse({ images: [UUID_A], screenshotId: UUID_B });
+      expect(parsed.context?.images).toEqual([UUID_A]);
+      expect(parsed.context?.screenshotId).toBe(UUID_B);
     });
   });
 
@@ -145,9 +183,9 @@ describe('feedback schema — context bounds', () => {
     // an undeclared key is DROPPED, not rejected, so "the field arrived" is only
     // ever provable by reading it back.
     it('are stripped silently rather than rejected', () => {
-      const parsed = parse({ images: ['a'], notAField: 'x' } as Record<string, unknown>);
+      const parsed = parse({ images: [UUID_A], notAField: 'x' } as Record<string, unknown>);
       expect(parsed.context).not.toHaveProperty('notAField');
-      expect(parsed.context?.images).toEqual(['a']);
+      expect(parsed.context?.images).toEqual([UUID_A]);
     });
   });
 
