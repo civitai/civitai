@@ -42,7 +42,21 @@ import { describe, expect, it } from 'vitest';
  * from the router's `.input(...)` shapes, not from the ledger, so a proc cannot enter the
  * population and stay out of the check.
  *
- * 🔴 WHAT IS STILL OUT OF REACH — do not read this file as wider than it is.
+ * 🔴 AND WHAT THAT LEDGER, AS FIRST WRITTEN, STILL COULD NOT SEE. A population derived
+ * from the router only covers procs the derivation can READ, and four things could make a
+ * proc unreadable while every assertion stayed green: an `.input()` schema behind a
+ * `.extend(…)` / `.merge(…)` / factory call rather than a bare identifier (`unresolved`
+ * demanded resolution only for the bare case); a schema chain deeper than the depth cap; a
+ * proc chunk cut short by a column-zero line; and a proc nested in a sub-router. Each is
+ * now either closed or ledgered-and-asserted — `schemaIdentifiers`, `truncated`,
+ * `every proc chunk keeps its own terminator`, and `PROC_RE`'s indent respectively. The
+ * generalisation worth keeping: for a DERIVED population, "this procedure is not in the
+ * set" and "this procedure could not be parsed" have to be different outcomes, or the
+ * second one hides inside the first.
+ *
+ * 🔴 WHAT IS STILL OUT OF REACH — do not read this file as wider than it is. Every entry
+ * below is a limit that is OPEN, stated because it is open. Where a limit was closed in a
+ * later round it was moved out of this list, not softened inside it.
  *   - A bridge proc that carries the token under some other input field name. The
  *     population is derived from the literal field `blockToken`; a `token:` or `jwt:`
  *     field is invisible here. That spelling is the repo's convention across all 15
@@ -52,10 +66,16 @@ import { describe, expect, it } from 'vitest';
  *     helper which calls the guard reads as UNGUARDED here and will fail. That is
  *     deliberate (fail-closed), but it means the answer is "reaches the guard from within
  *     the router", not "is authorized".
- *   - An import alias for `verifyBlockToken` still defeats `DIRECT_CALL_RE`, which is a
- *     spelling check. It is closed for this file by a separate structural assertion — the
- *     router must not import `verifyBlockToken` under ANY local name — rather than by
- *     teaching the regex about aliases.
+ *   - `verifyBlockToken` reached WITHOUT SPELLING ITS NAME in the router — a computed
+ *     member access (`mod['verify' + 'BlockToken']`), or a re-export under a different
+ *     name in another module. `DIRECT_CALL_RE`, the import-alias assertion and the wider
+ *     `only in prose` assertion are all SPELLING checks on that one identifier, and none
+ *     of them can see a name that is never written. What covers that case is not a
+ *     spelling check at all — it is `THE RELATIONSHIP`, which asks whether the proc
+ *     reaches `authorizeBlockBridgeToken`, and does not care what else it calls.
+ *   - Reachability is a TEXTUAL call-graph over the router, so it answers "the guard's
+ *     name appears in a body that runs" — not "the guard is awaited on every path". A
+ *     call behind a `if (someFlag)` reads as reaching it.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -64,8 +84,13 @@ const GUARD = 'src/server/services/blocks/block-bridge-auth.service.ts';
 
 /**
  * The bridge call sites, by owning procedure. `authorizeBlockBuzzRead` is the router's
- * own buzz self-read helper — it is a call SITE like any other (the procs behind it,
- * `getMyBuzzTransactions` and friends, reach the guard through it).
+ * own buzz self-read helper — it is a call SITE like any other, and the three procs behind
+ * it (`getMyBuzzAccounts`, `getMyBuzzTransactions`, `getMyDailyCompensation`) reach the
+ * guard through it, which is why they appear in the population ledger below but not here.
+ *
+ * ⚠️ Named rather than wildcarded: `getMyBuzzBalance` is a `getMyBuzz*` proc that does NOT
+ * go through the helper — it calls the guard directly, which is why it is listed here in
+ * its own right. A `getMyBuzz*` shorthand gets that exactly backwards in both directions.
  */
 const GUARD_CALL_SITE_LEDGER = [
   'authorizeBlockBuzzRead',
@@ -85,10 +110,13 @@ const GUARD_CALL_SITE_LEDGER = [
 
 /**
  * THE POPULATION: every procedure in `blocks.router.ts` whose `.input(...)` carries a
- * `blockToken` field — 12 spelled inline in the router, 3 (`getMyBuzz*`) arriving through
- * schemas imported from `~/server/schema/buzz.schema`. Derived, not hand-listed: this
- * ledger is the SET the derivation must reproduce, so adding a bridge proc fails here
- * whether or not its author knew this file existed.
+ * `blockToken` field — 12 spelled inline in the router, and 3 arriving through schemas
+ * imported from `~/server/schema/buzz.schema`: `getMyBuzzAccounts`,
+ * `getMyBuzzTransactions` and `getMyDailyCompensation`. (Named, not `getMyBuzz*`: that
+ * wildcard excludes `getMyDailyCompensation`, which is one of the three, and includes
+ * `getMyBuzzBalance`, which is not — its input is spelled inline.) Derived, not
+ * hand-listed: this ledger is the SET the derivation must reproduce, so adding a bridge
+ * proc fails here whether or not its author knew this file existed.
  */
 const BRIDGE_INPUT_LEDGER = [
   'cancelAppWorkflow',
@@ -108,10 +136,31 @@ const BRIDGE_INPUT_LEDGER = [
   'updateUserSettings',
 ].sort();
 
-/** `  someProc: publicProcedure` — the router's procedure definitions. */
-const PROC_RE = /^ {2}([A-Za-z0-9_]+):\s*[A-Za-z0-9_]*[Pp]rocedure\b/;
-/** `async function someHelper(` at module scope. */
-const FN_RE = /^(?:export )?(?:async )?function ([A-Za-z0-9_]+)/;
+/**
+ * `  someProc: publicProcedure` — the router's procedure definitions. The indent is
+ * `{2,}`, not `{2}`, so a proc nested inside a sub-router (`sub: router({ … })`, which
+ * indents its members by four) is still seen. Pinning two spaces meant a whole sub-router
+ * yielded an EMPTY population — every proc in it silently outside the check. There are no
+ * sub-routers in `blocks.router.ts` today (measured: 73 procs, all at two spaces, zero at
+ * three or more), so this is a latent shape being closed, not a bug being fixed.
+ */
+const PROC_RE = /^ {2,}([A-Za-z0-9_]+):\s*[A-Za-z0-9_]*[Pp]rocedure\b/;
+/**
+ * A module-scope helper, in EITHER declaration form: `async function someHelper(` or
+ * `const someHelper = async (`. The `function`-only version made every proc behind an
+ * arrow-function helper read as UNGUARDED — fail-closed and loud, but a false red on a
+ * legitimate refactor, and the docstring above promises router-local delegation is covered
+ * generally. `blocks.router.ts` has no module-scope arrow helpers today (measured: zero
+ * matches for a column-zero `const x = (`), so this too is a latent shape.
+ */
+const FN_RE =
+  /^(?:export )?(?:async )?function ([A-Za-z0-9_]+)|^(?:export )?const ([A-Za-z0-9_]+)\s*=\s*(?:async\s*)?\(/;
+
+/** The declared name from an `FN_RE` match, whichever of its two alternatives matched. */
+function fnName(line: string): string | null {
+  const m = FN_RE.exec(line);
+  return m ? m[1] ?? m[2] ?? null : null;
+}
 
 /** A CALL, not a type position — `ReturnType<typeof verifyBlockToken>` must not count. */
 const DIRECT_CALL_RE = /\bverifyBlockToken\s*\(/;
@@ -127,9 +176,10 @@ function scan(source: string): { guarded: string[]; direct: number[] } {
     if (DIRECT_CALL_RE.test(line)) direct.push(i + 1);
     if (!/\bauthorizeBlockBridgeToken\s*\(/.test(line)) return;
     for (let j = i; j >= 0; j--) {
-      const owner = PROC_RE.exec(lines[j]) ?? FN_RE.exec(lines[j]);
+      const proc = PROC_RE.exec(lines[j]);
+      const owner = proc ? proc[1] : fnName(lines[j]);
       if (owner) {
-        guarded.push(owner[1]);
+        guarded.push(owner);
         return;
       }
     }
@@ -171,10 +221,20 @@ type Chunk = { name: string; kind: 'proc' | 'fn'; text: string };
 
 /**
  * Split a module into top-level chunks: one per `  someProc: publicProcedure` and one per
- * module-scope `function someHelper(`. A chunk ends at the next chunk, or at the next line
- * that starts in COLUMN ZERO with a letter or `}` — which is `});` closing the router,
- * or a following `const`/`export`/`function`. Everything inside a proc or a function body
- * is indented, so that boundary is the file's own formatting rather than a brace count.
+ * module-scope helper (`function someHelper(` or `const someHelper = async (`). A chunk
+ * ends at the next chunk, or at the next line that starts in COLUMN ZERO with a letter or
+ * `}` — which is `});` closing the router, or a following `const`/`export`/`function`.
+ * Everything inside a proc or a function body is indented, so that boundary is the file's
+ * own formatting rather than a brace count.
+ *
+ * 🔴 THAT BOUNDARY IS A FORMATTING ASSUMPTION, AND IT CAN CUT A PROC SHORT. A line that
+ * legitimately starts in column zero INSIDE a proc — the continuation of a multi-line
+ * template literal, say — closes the chunk early. If that happens before the proc's
+ * `.input(`, the proc drops out of the population silently, which is the same class of
+ * hole the second ledger exists to close. It is not left to prose: `every proc chunk keeps
+ * its own terminator` below asserts that each chunk still contains the `.mutation(` /
+ * `.query(` / `.subscription(` that ends a tRPC procedure, so a truncated chunk goes RED
+ * instead of shrinking the population. Measured on the current router: 73 of 73 intact.
  */
 function chunks(source: string): Chunk[] {
   const lines = source.split('\n');
@@ -198,10 +258,10 @@ function chunks(source: string): Chunk[] {
       open = { name: proc[1], kind: 'proc', start: i };
       return;
     }
-    const fn = FN_RE.exec(line);
+    const fn = fnName(line);
     if (fn) {
       close(i);
-      open = { name: fn[1], kind: 'fn', start: i };
+      open = { name: fn, kind: 'fn', start: i };
       return;
     }
     if (open && /^[A-Za-z}]/.test(line)) close(i);
@@ -220,6 +280,137 @@ function inputArg(text: string): string | null {
     else if (text[i] === ')' && --depth === 0) return text.slice(at + 7, i);
   }
   return null;
+}
+
+/**
+ * Blank out comments and string/template literals, so the identifier scan below reads CODE
+ * and not prose. Not cosmetic: the `.input(z.object({…}))` arguments in this router carry
+ * long `//` commentaries, and tokenising those raw yields English words as candidate
+ * schema names. MEASURED on the current router with neither this nor the positional
+ * filtering in `schemaIdentifiers`: 990 proc→identifier pairs, 492 distinct word-shaped
+ * "identifiers" across 38 procedures, every one of them unresolvable. That is the noise
+ * that would make an `unresolved` ledger unusable and get it narrowed back to nothing.
+ * With both in place it is 0.
+ *
+ * A character scanner rather than a regex chain, because stripping `//` before strings
+ * mangles a URL literal (`'https://x'` loses its closing quote and the next real string
+ * swallows the code between them). Regex LITERALS are not modelled: a `/[a-z']/` would
+ * read as opening a string. None appear in this router's `.input()` arguments, and the
+ * assertion that `unresolved` is empty is what would notice if one arrived.
+ */
+function stripNonCode(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += ' ';
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i += 2;
+      out += ' ';
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      i++;
+      while (i < text.length && text[i] !== c) {
+        if (text[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      out += ' ';
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** Keywords and literals that tokenise as identifiers but can never NAME anything. */
+const RESERVED_WORDS = new Set([
+  'true',
+  'false',
+  'null',
+  'undefined',
+  'NaN',
+  'Infinity',
+  'async',
+  'await',
+  'new',
+  'typeof',
+  'void',
+  'return',
+  'this',
+  'in',
+  'of',
+  'as',
+]);
+
+/**
+ * 🔴 REAL BINDINGS this scan declines to follow — the ONLY place an identifier can be
+ * excused from resolving. The zod namespace is the BUILDER, not a schema, and it comes
+ * from a package `resolveModule` deliberately does not read, so leaving it in would make
+ * every inline `z.object(...)` argument report an unresolvable identifier forever.
+ *
+ * It stays a set of ONE. `the identifier exemption set is exactly the zod namespace` pins
+ * that, because the cheap way out of a red `unresolved` will always be to add a name here,
+ * and a suppression list is how this ledger stops meaning anything.
+ */
+const MODULE_EXEMPTIONS = new Set(['z']);
+
+const NON_SCHEMA_WORDS = new Set([...RESERVED_WORDS, ...MODULE_EXEMPTIONS]);
+
+/**
+ * The identifiers in an `.input(...)` argument that occupy a SCHEMA position — i.e. the
+ * ones that have to resolve to something before this scan can say whether the argument
+ * carries a `blockToken`.
+ *
+ * 🔴 WHY THIS REPLACED `is the whole argument one bare identifier`. The previous rule
+ * recorded an unreadable schema ONLY when the entire argument was a bare identifier, so
+ * `.input(mysteryBridgeInput)` was loud while `.input(mysteryBridgeInput.extend({ page }))`
+ * was silent — the proc vanished from the population with `procs: []` and `unresolved: []`,
+ * which is precisely the "scored as carrying no token" outcome the docstring on
+ * `bridgeInputProcs` promises never happens. Same for `.input(a.merge(b))`,
+ * `.input(makeInput())`, and any schema behind a relative-path or package import.
+ *
+ * What is dropped, and why each is not a schema reference:
+ *   - a member NAME (`.extend`, `.object`, `.min`) — the thing being called ON a schema;
+ *   - an object KEY (`blockToken:`, `page:`) — a field name;
+ *   - a parameter bound INSIDE the argument (`.refine((v) => !!v.slug)`) — `v` is local;
+ *   - a keyword or literal (`z.boolean().default(true)`);
+ *   - the zod namespace, per `NON_SCHEMA_WORDS`.
+ * Everything else survives and MUST resolve. An identifier the router neither imports nor
+ * declares cannot appear in a valid argument at all, so flagging it is fail-closed.
+ */
+function schemaIdentifiers(arg: string): string[] {
+  const code = stripNonCode(arg);
+
+  // Parameters bound by an arrow function inside the argument: `(v) => …` and `v => …`.
+  const bound = new Set<string>();
+  for (const re of [
+    /\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^)]*)?\)\s*=>/g,
+    /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g,
+  ]) {
+    for (let m = re.exec(code); m; m = re.exec(code)) bound.add(m[1]);
+  }
+
+  const out = new Set<string>();
+  // `(\.\s*)?` — preceded by a dot, so a member name. `(\s*:)?` — followed by a colon, so
+  // an object key. Either match disqualifies the token.
+  const re = /(\.\s*)?\b([A-Za-z_$][A-Za-z0-9_$]*)\b(\s*:)?/g;
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    if (m[1] || m[3]) continue;
+    const ident = m[2];
+    if (NON_SCHEMA_WORDS.has(ident) || bound.has(ident)) continue;
+    out.add(ident);
+  }
+  return [...out];
 }
 
 /** `importMap` over a repo-relative FILE, memoised. */
@@ -290,17 +481,36 @@ function findDefinitionText(file: string, ident: string): string | null {
  * suite treats as a failure rather than a `false`: an unresolvable schema is exactly the
  * silent hole this scan exists to not have.
  *
- * DEPTH is capped at 5. A schema chain longer than that returns `false`, so the cap is a
- * blind spot in principle; the real corpus resolves every `.input()` identifier within 2.
+ * 🔴 DEPTH. The cap is `MAX_SCHEMA_DEPTH`, and hitting it returns `false` — i.e. "no token
+ * here" for a branch nobody actually read, which is the same silent scoring `unresolved`
+ * exists to prevent. So a truncation is RECORDED in `truncated` and asserted empty, rather
+ * than described as a blind spot in prose.
+ *
+ * The previous wording here — "the real corpus resolves every `.input()` identifier within
+ * 2" — was false, and the cap it justified was load-bearing on the committed tree, not
+ * hypothetically: at a cap of 5 the walk reached depth 6 and truncated 9 calls across 7
+ * identifiers (`TokenScope` and `SKIP_OAUTH_CHECK` in `block-scope.constants.ts`, five
+ * spend bounds in `app-cap-limits.constants.ts`). No verdict moved — none of those carries
+ * a `blockToken` and the population was 15 either way — but nothing said so out loud.
+ * MEASURED: the walk terminates on its own at depth 8, with 800 resolution calls and no
+ * change in wall time between a cap of 5 and a cap of 12. The cap is set to 12 for that
+ * headroom, and `truncated` is what tells you when a chain outgrows it.
  */
+const MAX_SCHEMA_DEPTH = 12;
+
 function schemaCarriesBlockToken(
   ident: string,
   file: string,
   seen = new Set<string>(),
-  depth = 0
+  depth = 0,
+  truncated: string[] = []
 ): boolean | null {
   const key = `${file}#${ident}`;
-  if (seen.has(key) || depth > 5) return false;
+  if (depth > MAX_SCHEMA_DEPTH) {
+    truncated.push(`${key} @ depth ${depth}`);
+    return false;
+  }
+  if (seen.has(key)) return false;
   seen.add(key);
 
   const def = definitionText(file, ident);
@@ -309,7 +519,7 @@ function schemaCarriesBlockToken(
     if (!imported) return null;
     const target = resolveModule(imported.spec);
     if (!target) return null;
-    return schemaCarriesBlockToken(imported.imported, target, seen, depth + 1);
+    return schemaCarriesBlockToken(imported.imported, target, seen, depth + 1, truncated);
   }
 
   if (/\bblockToken\b/.test(def)) return true;
@@ -318,23 +528,37 @@ function schemaCarriesBlockToken(
   for (const other of new Set(def.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [])) {
     if (other === ident) continue;
     if (definitionText(file, other) == null && !localImports.has(other)) continue;
-    if (schemaCarriesBlockToken(other, file, seen, depth + 1) === true) return true;
+    if (schemaCarriesBlockToken(other, file, seen, depth + 1, truncated) === true) return true;
   }
   return false;
 }
 
 /**
- * The procedures whose input carries a block token, plus any `.input()` identifier whose
- * definition could not be found. `unresolved` is asserted EMPTY: a schema we cannot read is
- * indistinguishable from a schema with no `blockToken` in it, and silently scoring it as
- * "not a bridge proc" is how a population check quietly stops covering things.
+ * The procedures whose input carries a block token, plus every `.input()` identifier whose
+ * definition could not be read. Both `unresolved` and `truncated` are asserted EMPTY: a
+ * schema we cannot read is indistinguishable from a schema with no `blockToken` in it, and
+ * silently scoring it as "not a bridge proc" is how a population check quietly stops
+ * covering things.
+ *
+ * 🔴 THE RULE IS NOW THE ARGUMENT'S SCHEMA POSITIONS, NOT ITS SHAPE. Every identifier
+ * `schemaIdentifiers` returns has to resolve, whatever the argument looks like around it.
+ * The earlier rule only demanded resolution when the WHOLE argument was a bare identifier,
+ * which made the ledger's own promise false for every other shape — see that function's
+ * docstring for the measured escape.
+ *
+ * Note the ORDER: the literal-`blockToken` test runs against the RAW argument, before any
+ * comment stripping. A proc whose argument only MENTIONS the field in a comment therefore
+ * enters the population and has to reach the guard. That is deliberate — the error is in
+ * the fail-closed direction, and narrowing it would trade a harmless false member for a
+ * chance of a silent absent one.
  */
 function bridgeInputProcs(
   routerFile: string,
   source: string
-): { procs: string[]; unresolved: string[] } {
+): { procs: string[]; unresolved: string[]; truncated: string[] } {
   const procs: string[] = [];
   const unresolved: string[] = [];
+  const truncated: string[] = [];
 
   for (const chunk of chunks(source)) {
     if (chunk.kind !== 'proc') continue;
@@ -345,22 +569,17 @@ function bridgeInputProcs(
       continue;
     }
     let carries = false;
-    for (const ident of new Set(arg.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [])) {
-      const verdict = schemaCarriesBlockToken(ident, routerFile);
+    for (const ident of schemaIdentifiers(arg)) {
+      const verdict = schemaCarriesBlockToken(ident, routerFile, new Set(), 0, truncated);
       if (verdict === true) {
         carries = true;
         break;
       }
-      // Only a BARE identifier argument — `.input(someSchema)` — has to resolve. An
-      // inline `z.object({...})` is full of words (`z`, `object`, field names) that are
-      // not schemas and are not expected to.
-      if (verdict === null && /^\s*[A-Za-z_][A-Za-z0-9_]*\s*$/.test(arg)) {
-        unresolved.push(`${chunk.name} -> ${ident}`);
-      }
+      if (verdict === null) unresolved.push(`${chunk.name} -> ${ident}`);
     }
     if (carries) procs.push(chunk.name);
   }
-  return { procs: procs.sort(), unresolved };
+  return { procs: procs.sort(), unresolved, truncated };
 }
 
 /**
@@ -478,8 +697,118 @@ describe('the bridge scan can actually see what it claims to', () => {
     expect(procsReachingGuard(SYNTHETIC)).toEqual(['directlyGuarded', 'guardedViaHelper']);
   });
 
+  /**
+   * 🔴 THE POSITIVE CONTROL FOR `unresolved`, AND WHY ITS ABSENCE WAS THE REAL DEFECT.
+   * Every other control in this file asserts `unresolved` is EMPTY, and an empty result is
+   * indistinguishable from a probe wired to nothing — so the ledger could be, and was,
+   * structurally unable to report anything for four of the five argument shapes it claimed
+   * to cover, while reading green. This feeds four arguments whose schema CANNOT be read
+   * and requires the count to move off zero for each of them, separately, so a future
+   * narrowing shows up here instead of as a reassuring blank.
+   *
+   * `mysteryBridgeInput` / `otherInput` / `makeBridgeInput` are resolved against the REAL
+   * router, which neither declares nor imports them — the same position a schema behind an
+   * `@civitai/*` package or a relative path is in.
+   */
+  const UNREADABLE = [
+    'export const r = router({',
+    '  bareUnknown: publicProcedure',
+    '    .input(mysteryBridgeInput)',
+    '    .mutation(async () => 1),',
+    '  extendedUnknown: publicProcedure',
+    '    .input(mysteryBridgeInput.extend({ page: z.number().optional() }))',
+    '    .mutation(async () => 1),',
+    '  mergedUnknown: publicProcedure',
+    '    .input(mysteryBridgeInput.merge(otherInput))',
+    '    .mutation(async () => 1),',
+    '  factoryUnknown: publicProcedure',
+    '    .input(makeBridgeInput())',
+    '    .mutation(async () => 1),',
+    '});',
+  ].join('\n');
+
+  it('POSITIVE CONTROL — an unreadable schema moves `unresolved` off zero, in EVERY argument shape', () => {
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, UNREADABLE);
+
+    // None of them can be scored as carrying a token — that is the whole point: a proc
+    // this scan cannot read must not quietly leave the population.
+    expect(procs).toEqual([]);
+    expect([...unresolved].sort()).toEqual([
+      'bareUnknown -> mysteryBridgeInput',
+      'extendedUnknown -> mysteryBridgeInput',
+      'factoryUnknown -> makeBridgeInput',
+      'mergedUnknown -> mysteryBridgeInput',
+      'mergedUnknown -> otherInput',
+    ]);
+    // Report the pair, never the zero alone: 5 here, 0 against the real router below.
+    expect(unresolved.length).toBeGreaterThan(0);
+  });
+
+  it('NEGATIVE CONTROL — prose and field names inside an inline z.object are NOT schema identifiers', () => {
+    // The other half of the same claim. `schemaIdentifiers` has to be narrow enough that
+    // an ordinary annotated inline argument yields nothing, or `unresolved` fills with
+    // English words and gets switched off again. Measured on the router with neither
+    // half in place: 990 proc→identifier pairs across 38 procs, all unresolvable.
+    const arg = [
+      'z.object({',
+      '  // The blockToken the host minted — see mintBlockToken, which is not a schema.',
+      "  blockToken: z.string().min(1).describe('a token, aka someOtherSchema'),",
+      '  page: z.number().optional(),',
+      '})',
+      '  .refine((v) => !!v.page, { message: `page is required` })',
+    ].join('\n');
+    expect(schemaIdentifiers(arg)).toEqual([]);
+  });
+
+  it('the identifier exemption set is exactly the zod namespace', () => {
+    // Keywords can never name anything, so they are not exemptions. `MODULE_EXEMPTIONS` is
+    // the list of REAL bindings this scan declines to follow, and it must stay at one:
+    // the cheap way out of a red `unresolved` will always be to add a name to it.
+    expect([...MODULE_EXEMPTIONS]).toEqual(['z']);
+    expect([...RESERVED_WORDS].filter((w) => MODULE_EXEMPTIONS.has(w))).toEqual([]);
+  });
+
+  it('follows a router-local helper declared as an arrow const, not just a `function`', () => {
+    // FN_RE used to match `function` declarations only, so every proc behind
+    // `const helper = async (…) => …` read as UNGUARDED — fail-closed, but a false red on
+    // a legitimate refactor, and wider than the docstring admits.
+    const source = [
+      'const arrowGuard = async (blockToken: string) => {',
+      '  return authorizeBlockBridgeToken(blockToken);',
+      '};',
+      '',
+      'export const r = router({',
+      '  viaArrow: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => arrowGuard(input.blockToken)),',
+      '  stillUnguarded: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => input.blockToken.length),',
+      '});',
+    ].join('\n');
+    expect(procsReachingGuard(source)).toEqual(['viaArrow']);
+  });
+
+  it('sees a procedure nested in a sub-router, not only one at two-space indent', () => {
+    // PROC_RE used to pin a two-space indent, so `sub: router({ … })` yielded an EMPTY
+    // population — every proc inside it outside the check, with nothing going red.
+    const source = [
+      'export const r = router({',
+      '  sub: router({',
+      '    nestedBridgeProc: publicProcedure',
+      '      .input(z.object({ blockToken: z.string().min(1) }))',
+      '      .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '  }),',
+      '});',
+    ].join('\n');
+    const { procs } = bridgeInputProcs(ROUTER, source);
+    expect(procs).toEqual(['nestedBridgeProc']);
+    expect(procsReachingGuard(source)).toEqual(['nestedBridgeProc']);
+  });
+
   it('resolves an imported schema, not just an inline z.object', () => {
-    // The three `getMyBuzz*` procs carry their token through a schema imported from
+    // `getMyBuzzAccounts`, `getMyBuzzTransactions` and `getMyDailyCompensation` carry their
+    // token through a schema imported from
     // `~/server/schema/buzz.schema`. If import resolution silently broke, the population
     // would shrink by exactly those three and the ledger below would go red with no clue
     // why — so pin the resolution itself.
@@ -512,14 +841,25 @@ describe('no unguarded block-bridge token verification', () => {
   });
 
   it('ledgers every procedure that TAKES a block token — the population, not the call sites', () => {
-    const { procs, unresolved } = bridgeInputProcs(ROUTER, read(ROUTER));
+    const { procs, unresolved, truncated } = bridgeInputProcs(ROUTER, read(ROUTER));
 
     expect(
       unresolved,
-      'An .input(<schema>) identifier on a bridge-shaped procedure could not be resolved ' +
-        'to a definition, so this scan cannot say whether it carries a blockToken. An ' +
+      "An identifier in a procedure's .input(...) argument could not be resolved to a " +
+        'definition, so this scan cannot say whether it carries a blockToken. An ' +
         'unreadable schema scores the same as one with no token in it, which is how a ' +
-        'population check stops covering things without going red. Listed as proc -> ident.'
+        'population check stops covering things without going red. This covers ANY shape ' +
+        'of argument — a bare schema, a .extend(...)/.merge(...) chain, a factory call — ' +
+        'not only the bare-identifier case. If the schema legitimately lives somewhere ' +
+        'this scan does not read (a relative path, an @civitai/* package), teach ' +
+        'resolveModule about it; do not exempt the procedure. Listed as proc -> ident.'
+    ).toEqual([]);
+
+    expect(
+      truncated,
+      `A schema chain outgrew MAX_SCHEMA_DEPTH (${MAX_SCHEMA_DEPTH}), so the walk gave up ` +
+        'and scored that branch as carrying no blockToken — a verdict nobody read. Raise ' +
+        'the cap, or shorten the chain. Listed as file#ident @ depth.'
     ).toEqual([]);
 
     expect(
@@ -550,11 +890,66 @@ describe('no unguarded block-bridge token verification', () => {
     ).toEqual([]);
   });
 
+  it('keeps every proc chunk intact — a truncated chunk would shrink the population silently', () => {
+    // `chunks` ends a chunk at the next COLUMN-ZERO letter or `}`, which is the router's
+    // own formatting, not a brace count. A line that legitimately starts in column zero
+    // inside a proc — a multi-line template literal's continuation — cuts the chunk short,
+    // and if that lands before `.input(` the proc leaves the population with nothing going
+    // red. Every tRPC procedure ends in one of these three terminators, so their presence
+    // is a cheap structural proof that no chunk was cut.
+    const procChunks = chunks(read(ROUTER)).filter((c) => c.kind === 'proc');
+    const truncated = procChunks
+      .filter((c) => !/\.(mutation|query|subscription)\s*\(/.test(c.text))
+      .map((c) => c.name);
+
+    expect(
+      truncated,
+      'These procedure chunks do not contain the .mutation( / .query( / .subscription( ' +
+        'that terminates a tRPC procedure, which means the chunk was cut short — almost ' +
+        'certainly by a line starting in column zero inside the procedure body. Anything ' +
+        'after the cut, .input( included, is invisible to the population scan.'
+    ).toEqual([]);
+    // Positive control on the same read: the scan found procedures at all.
+    expect(procChunks.length).toBeGreaterThan(50);
+  });
+
+  it('mentions verifyBlockToken in the router only in PROSE — no code path spells it', () => {
+    // 🔴 WIDER THAN THE IMPORT ASSERTION BELOW, AND DELIBERATELY SO. `importMap` parses
+    // static `import { … } from '…'` only, so it cannot see
+    // `const { verifyBlockToken: vbt } = await import('~/server/middleware/…')` — an idiom
+    // this router uses 89 times for other modules. That defeats the alias check AND
+    // DIRECT_CALL_RE at once. Rather than add a third spelling regex per import syntax,
+    // pin the fact that the identifier appears in `blocks.router.ts` in COMMENTS ONLY.
+    //
+    // A code line carrying a trailing comment that names it would fail here. That is a
+    // false red, and the cure is to reword the comment — cheap, and the alternative is a
+    // check that can be walked by writing the import on a commented line.
+    const offenders = read(ROUTER)
+      .split('\n')
+      .map((line, i) => ({ line, n: i + 1 }))
+      .filter(({ line }) => /\bverifyBlockToken\b/.test(line))
+      .filter(({ line }) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+      .map(({ line, n }) => `${n}: ${line.trim()}`);
+
+    expect(
+      offenders,
+      `${ROUTER} names verifyBlockToken on a line that is not a comment. The bridge's only ` +
+        'entry point is authorizeBlockBridgeToken: a static import, a dynamic ' +
+        '`await import()` destructure, a member access on a namespace import and a direct ' +
+        'call are all reachable this way, and this is the one assertion that sees all four.'
+    ).toEqual([]);
+  });
+
   it('does not let an import alias hide the bare verify — the router may not import it at all', () => {
     // DIRECT_CALL_RE is a spelling check, so `import { verifyBlockToken as verify }` walks
-    // through it. Rather than teach the regex about aliases (which the next alias spelling
-    // would defeat again), pin the structural fact: the router has no business importing
-    // the bare verifier under ANY name.
+    // through it. This pins the structural fact instead: the router has no business
+    // importing the bare verifier under any local name.
+    //
+    // ⚠️ SCOPE, because the name of this test reads wider than it is: `importMap` parses
+    // STATIC `import { … } from '…'` declarations and nothing else. A dynamic
+    // `const { verifyBlockToken: vbt } = await import(…)` is invisible to it. That case is
+    // covered — by `mentions verifyBlockToken in the router only in PROSE` above, which
+    // works line-wise and needs no import syntax at all — not by this assertion.
     const local = [...importMap(read(ROUTER))].filter(
       ([, binding]) => binding.imported === 'verifyBlockToken'
     );

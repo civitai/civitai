@@ -51,10 +51,21 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
  * DB read (see `assertAppBlockApproved`) but still pays the Redis GET.
  *
  * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. `checkBlockCatalogRateLimit` has five
- * call sites in `blocks.router.ts` — `queryAppWorkflows`, `cancelAppWorkflow`,
- * `getImagesByIds`, `getMyViewer`, and the `authorizeBlockBuzzRead` helper that the three
- * `getMyBuzz*` procs go through — so seven of the fifteen bridge procedures are on it.
- * All five sites now run AFTER this helper, so an over-limit request has already paid the
+ * call sites in `blocks.router.ts`, covering seven of the fifteen bridge procedures. Four
+ * are in the procedure itself — `queryAppWorkflows`, `cancelAppWorkflow`, `getImagesByIds`
+ * and `getMyViewer` — and the fifth is in the `authorizeBlockBuzzRead` helper, which
+ * `getMyBuzzTransactions`, `getMyBuzzAccounts` and `getMyDailyCompensation` go through.
+ *
+ * ⚠️ NAMED, NOT WILDCARDED, AND THAT IS THE POINT. This said "the three `getMyBuzz*`
+ * procs" until the round-2 audit, which is wrong in BOTH directions: `getMyDailyCompensation`
+ * is behind the helper and is not a `getMyBuzz*` name, while `getMyBuzzBalance` IS one,
+ * reaches this guard directly, and carries NO limiter of any kind. So a reader enumerating
+ * the seven from that wildcard both missed a throttled proc and counted the one unthrottled
+ * buzz read as throttled. `authorizeBlockBuzzRead`'s own docblock carries the
+ * `getMyBuzzBalance` carve-out and explains why that proc cannot call the helper; this
+ * cross-file sentence did not.
+ *
+ * All five sites run AFTER this helper, so an over-limit request has already paid the
  * Redis GET and the `findUnique` by the time the limiter refuses it. That is not free,
  * and it is not an oversight:
  *   - The limiter CANNOT precede verification. It is keyed on `claims.blockInstanceId`,
@@ -65,10 +76,21 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
  *     `pollWorkflow` and `submitWorkflow` among them. Those are deliberately not on the
  *     catalog bucket, and a polling proc is exactly the one a shared ceiling would start
  *     refusing legitimately. That is an availability change, not a cleanup.
- *   - What the reorder would save is one Redis GET + one replica `findUnique`, and only
- *     on requests that are ALREADY over the ceiling — the abusive tail, not the normal
- *     path. Revocation is itself a Redis GET, i.e. the same class of work the limiter
- *     does, so refusing before it buys roughly one op.
+ *   - What the reorder would save, on requests ALREADY over the ceiling — the abusive
+ *     tail, not the normal path — is this helper's Redis GET, its replica `findUnique`,
+ *     AND everything the caller runs between this helper returning and the limiter. At
+ *     all five sites that last part is `assertAppBlocksEnabledForTokenUser`, and it is the
+ *     priciest of the three: it resolves the full `SessionUser` through
+ *     `sessionClient.getSessionUserById` — a shared-cache read that falls through to an
+ *     internal HTTP fetch against the auth hub on a miss — and then evaluates the
+ *     App-Blocks flag (an in-process, cached Flipt eval).
+ *     ⚠️ This enumeration used to omit that step while phrasing itself as closed ("what
+ *     the reorder would save is one Redis GET + one replica findUnique … roughly one
+ *     op"). It is not roughly one op: on a session-cache miss it is a network round-trip.
+ * The conclusion is unchanged, because it never rested on the cost: what decides it is the
+ * availability argument above — a shared 120/10s ceiling would reach `pollWorkflow`. The
+ * cost line only ever said the reorder was not worth making for its own sake, and a
+ * larger saving on an over-limit request does not buy a ceiling on the polling procs.
  * So the order stands. If a bridge proc ever needs a cheaper refusal than this, the
  * change to make is a limiter keyed on something available pre-verification, not a
  * reshuffle of these three steps.

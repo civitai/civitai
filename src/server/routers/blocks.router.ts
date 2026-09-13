@@ -421,13 +421,16 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
  * `userId` + verified `claims`.
  *
  * ⚠️ THE RATE LIMIT IS NOT FIRST, and this docblock claimed it ran "BEFORE any
- * db/ClickHouse work" until the revocation guard landed and made that false. A Redis
- * GET and a replica `findUnique` are now spent inside `authorizeBlockBridgeToken`
- * BEFORE the limiter can refuse anything. It cannot be hoisted above them: it is keyed
- * on `claims.blockInstanceId`, which does not exist until the token is verified. What
- * the limiter still bounds is everything AFTER it — the ClickHouse daily-compensation
- * read and the buzz-service calls in the three procs below, which are the expensive
- * half. See `block-bridge-auth.service.ts` for why the order was left as it is.
+ * db/ClickHouse work" until the revocation guard landed and made that false. Three
+ * things are now spent before the limiter can refuse anything: a Redis GET and a replica
+ * `findUnique` inside `authorizeBlockBridgeToken`, and then the full `SessionUser`
+ * resolve in `assertAppBlocksEnabledForTokenUser` — a cached read that falls through to
+ * an auth-hub fetch on a miss, i.e. the priciest of the three. The limiter cannot be
+ * hoisted above any of them: it is keyed on `claims.blockInstanceId`, which does not
+ * exist until the token is verified. What it still bounds is everything AFTER it — the
+ * ClickHouse daily-compensation read and the buzz-service calls in the three procs
+ * below, which are the expensive half. See `block-bridge-auth.service.ts` for why the
+ * order was left as it is.
  *
  * The consent scope — not an authoring capability — is the authority here: the
  * author gate that used to follow the kill-switch is gone from every runtime
