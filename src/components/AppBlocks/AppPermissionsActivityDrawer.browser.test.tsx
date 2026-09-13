@@ -305,8 +305,13 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     // The retained grant for THIS app still renders, and the other app's still does not leak.
     await expect.element(page.getByText('user:read:self')).toBeInTheDocument();
     expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
-    // 🔴 THE PIN. A component branching on bare `isError` shows this sentence INSTEAD of the list,
-    // so this is the assertion that fails on the mutant.
+    // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare
+    // `isError` fails this test on the GRANT-BADGE WAIT above, with
+    // `VitestBrowserElementError: Cannot find element with locator: getByText('user:read:self')`
+    // — i.e. on the claim that the retained grant is rendered, which is the guard's own reason. The
+    // `not.toContain` below never executes on that mutant and is NOT what catches it; it is the
+    // second pin, for a component that renders BOTH the list and the read-failure sentence, which
+    // the badge assertion alone would pass.
     expect(document.body.textContent ?? '').not.toContain(
       "couldn't load this app's permissions just now"
     );

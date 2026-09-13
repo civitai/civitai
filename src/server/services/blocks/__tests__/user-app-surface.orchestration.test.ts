@@ -144,8 +144,16 @@ describe('listMyScopeGrants', () => {
       // 🔴 `appBlock` IS DECLARED ON EVERY GRANT FIXTURE, because the SERVICE selects it and
       // the relation is REQUIRED — a row without it is a state production cannot produce, and
       // omitting it made this fixture exercise the service's unresolvable-AppBlock skip instead
-      // of the budget rule it names. (Three sibling fixtures asserting `null`/`false` passed
-      // VACUOUSLY for exactly that reason; all of them now declare the relation.)
+      // of the budget rule it names. (FOUR sibling fixtures asserting `null`/`false` passed
+      // VACUOUSLY for exactly that reason; all of them now declare the relation. ⚠️ FOUR, not the
+      // THREE an earlier revision of this comment and the commit message claimed. Re-measured by
+      // removing all SIX `appBlock: appBlock()` fixtures this change added and running the file:
+      // `2 failed | 60 passed (62)` — only `surfaces the consent budget from the grant row` and
+      // `spendScopeGranted is TRUE when the GRANT row carries ai:write:budgeted` depend on it, so
+      // the other four were vacuous: `reports null for a REVOKED grant…`, `reports null for a
+      // non-positive stored budget`, `spendScopeGranted is FALSE when only the APP…` and
+      // `spendScopeGranted is FALSE for a REVOKED grant…`. The repair was complete; the count was
+      // not.)
       { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: null, appBlock: appBlock() },
     ]);
     const result = await listMyScopeGrants(42);

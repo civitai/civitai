@@ -792,8 +792,13 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     for (const name of ['Demo App', 'Spender', 'Consented Only', 'Acted Only']) {
       expect(gridText).toContain(name);
     }
-    // 🔴 THE PIN. A component branching on bare `isError` shows this sentence INSTEAD of the grid,
-    // so this is the assertion that fails on the mutant.
+    // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare
+    // `isError` fails this test on the GRID WAIT above, with
+    // `VitestBrowserElementError: Cannot find element with locator:
+    // getByTestId('apps-installed-grants-grid')` — i.e. on the claim that the retained list is
+    // rendered, which is the guard's own reason. The `not.toContain` below never executes on that
+    // mutant and is NOT what catches it; it is the second pin, for a component that renders BOTH
+    // the list and the read-failure sentence — which the grid assertion alone would pass.
     expect(document.body.textContent ?? '').not.toContain(
       "couldn't load your apps and permissions just now"
     );
