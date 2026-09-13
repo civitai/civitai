@@ -293,12 +293,15 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
  * difference: if `app-listings` resolves `false`, this FALLS BACK to
  * `isAppBlocksEnabled(opts)`. That fallback is the whole point of the dark
  * decoupling:
- *   - The `app-listings` flag does NOT exist in Flipt at merge time (created
- *     AFTER, as a companion `flipt-state` PR). A bare eval of an absent flag
- *     resolves `false` for EVERYONE — which would REGRESS the currently-visible
- *     cohort (mods + the `app-dev-testers` segment of `app-blocks-enabled`) the
- *     instant this merges. The OR-fallback to `app-blocks-enabled` preserves
- *     their store access verbatim through the transition window.
+ *   - The `app-listings` flag did NOT exist in Flipt when this merged (it was
+ *     created AFTER, as a companion `flipt-state` PR). A bare eval of an absent
+ *     flag resolves `false` for EVERYONE — which would have REGRESSED the
+ *     then-visible cohort (mods + the `app-dev-testers` segment of
+ *     `app-blocks-enabled`) the instant this merged. The OR-fallback to
+ *     `app-blocks-enabled` preserved their store access verbatim through that
+ *     transition window. (Past tense on purpose: this is an as-merged note, not
+ *     live state — see the reading trap at the top of this file. The paragraph
+ *     below says what closes this TODAY.)
  *   - Because `app-blocks-enabled` already grants the mods + app-dev-testers
  *     cohort today, `isAppListingsEnabled` grants EXACTLY that same set until the
  *     `app-listings` flag is created and later widened — so the as-merged change
@@ -729,9 +732,11 @@ export async function isAppBlocksAgenticReviewEnabled(opts?: {
  *
  * Create it in Flipt as base `enabled: false` with the `moderators` segment (+
  * any community-cohort segment) exactly like `app-blocks-dev-tunnel`. The flag
- * does NOT exist in Flipt at merge time — the companion `flipt-state` entry is a
- * SEPARATE follow-up PR — so the as-merged posture is fully dark and cannot
- * regress the gate open.
+ * did NOT exist in Flipt when this merged — the companion `flipt-state` entry was
+ * a SEPARATE follow-up PR — so the as-merged posture was fully dark and could not
+ * regress the gate open. (Past tense on purpose: this is an as-merged note, not
+ * live state — see the reading trap at the top of this file. The paragraph above
+ * says what closes this TODAY.)
  */
 export const APP_BLOCKS_SHARED_STORAGE_FLAG = 'app-blocks-shared-storage';
 
