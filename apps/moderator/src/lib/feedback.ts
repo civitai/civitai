@@ -130,8 +130,10 @@ const isFilterValue = (value: unknown): value is string | number | boolean =>
  *      exported and appears on no read path. This app reads the same JSONB column for all of them.
  *   2. The producer is a SEPARATE DEPLOYABLE on its own release cadence. A guarantee asserted over
  *      there is not one this app can observe, and nothing fails if the two drift.
- * `src/lib/__tests__/feedback.test.ts` pins that this regex still exists and is still applied to
- * both `images` and `screenshotId`, so a deletion fails a test rather than shipping quietly.
+ * `src/lib/__tests__/feedback.test.ts` pins the BEHAVIOUR — hostile ids are filtered out of
+ * `images` and refused as a `screenshotId` — so removing or weakening this regex fails a test
+ * rather than shipping quietly. It does not pin that the SYMBOL exists (it is module-private, so
+ * there is nothing structural to assert); renaming or reimplementing it is free, gutting it is not.
  *
  * What actually closes it is that `:` and `/` are excluded, so no absolute, protocol-relative or
  * `data:` URL can match and no path can be traversed. The leading negative lookahead is separate

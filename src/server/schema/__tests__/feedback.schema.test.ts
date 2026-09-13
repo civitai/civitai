@@ -89,10 +89,17 @@ describe('feedback schema — context bounds', () => {
    * the same argument previously existed in four files, and four copies of one claim
    * drift apart silently. Read it there; this block only pins the cases.
    *
-   * 🔴 11 OF THE 12 CASES BELOW PARSED at `origin/main` under the old length-only
-   * bound — those are regression tests. `a whitespace-only id` is the exception and
-   * is labelled inline: it was rejected at base too, for a different reason, so it is
-   * an INVARIANT GUARD and must not be counted as regression coverage.
+   * 🔴 ALL BUT ONE OF THE CASES BELOW PARSED at `origin/main` under the old
+   * length-only bound — those are regression tests. `a whitespace-only id` is the
+   * single exception and is labelled inline: it was rejected at base too, for a
+   * different reason, so it is an INVARIANT GUARD and must not be counted as
+   * regression coverage.
+   *
+   * 🔴 THE COUNT IS ASSERTED BELOW, NOT WRITTEN HERE — DELIBERATELY. Two successive
+   * rounds of this PR's own audit wrote a total into this header and had it go stale
+   * inside the very commit that added a case (`11 of 12` when the list held 13). A
+   * number kept beside the thing it counts drifts; `expect(notUuids).toHaveLength(N)`
+   * cannot. Do not "helpfully" restore a figure to this sentence.
    *
    * 🔴 `a 36-character absolute URL` is the one that makes this block pin the SHAPE
    * rather than the old bound. Without it, replacing `z.uuid()` with a bare
@@ -131,6 +138,30 @@ describe('feedback schema — context bounds', () => {
       expect(URL_36).toHaveLength(UUID_A.length);
     });
 
+    // 🔴 THE HEADER'S COUNT, MECHANISED. This is the fix for a claim that went stale
+    // twice in this PR's own audit ladder — not decoration. Deleting a case from the
+    // list fails here, which is the whole job of the header sentence above.
+    it('carries every hostile shape — a deleted case fails here, not silently', () => {
+      expect(notUuids).toHaveLength(13);
+      // The labels, hand-typed. Reading them out of `notUuids` would make this follow
+      // any future edit instead of pinning the set.
+      expect(notUuids.map(([label]) => label)).toEqual([
+        'an absolute https URL',
+        'an absolute http URL',
+        'a 36-character absolute URL',
+        'a protocol-relative URL',
+        'a blob URL',
+        'a bare string starting with http',
+        'a data URL',
+        'a traversal',
+        'a plausible-looking opaque key',
+        'a uuid with its hyphens stripped',
+        'a whitespace-only id',
+        'a whitespace-padded uuid',
+        'a uuid with trailing path',
+      ]);
+    });
+
     it.each(notUuids)('rejects %s', (_label, value) => {
       expect(() => parse({ images: [value] })).toThrow();
       expect(() => parse({ screenshotId: value })).toThrow();
@@ -138,7 +169,7 @@ describe('feedback schema — context bounds', () => {
 
     // The positive control for the block above: the guard rejects those BECAUSE they
     // are not uuids, not because the field rejects everything.
-    it('still accepts the shape both mint paths actually emit', () => {
+    it('still accepts the shape every mint path actually emits', () => {
       expect(parse({ images: [UUID_A], screenshotId: UUID_B }).context?.images).toEqual([UUID_A]);
     });
   });
