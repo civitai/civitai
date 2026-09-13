@@ -85,6 +85,32 @@ const PURGE_LOG = 'app-storage-trpc';
 export const APP_USER_STORAGE_PURGE_ACTION = 'purge-user-storage' as const;
 
 /**
+ * WHO set this purge in motion. Recorded STRUCTURALLY in the audit row's
+ * `before.initiator`, never derived from the `reason` text.
+ *
+ * 🔴 THE REASON STRING CANNOT CARRY THIS AND MUST NOT BE READ AS IF IT DID. A
+ * moderator types `reason` freely, so any sentinel wording a system purge used
+ * could be typed by hand — "distinguishable" would then rest on a word another
+ * caller can spell. `initiator` is set by the CODE PATH: the two `apps.mod.*`
+ * verbs hard-code `'moderator'` and neither accepts it from input, and the
+ * account-wipe hook hard-codes `'system:account-wipe'`. So a later reader can
+ * always tell "the system did this as part of a wipe" from "a moderator decided
+ * this", which is the thing the audit record exists to carry.
+ */
+export type AppUserStoragePurgeInitiator = 'moderator' | 'system:account-wipe';
+
+/**
+ * The `reason` recorded when an account wipe triggers the purge.
+ *
+ * Deliberately reads as machine-emitted (bracketed tag, names the function that
+ * fired it) rather than as a sentence a human would write — but the LOAD-BEARING
+ * discriminator is `before.initiator`, not this string. It exists because the
+ * rail requires a non-empty 3..1000 char reason and a blank one would be worse:
+ * it would read as a moderator who could not be bothered.
+ */
+export const ACCOUNT_WIPE_PURGE_REASON = '[system] account content wipe (user.removeAllContent)';
+
+/**
  * How many individual rows the snapshot enumerates per app. The TOTALS
  * (`rowCount` / `totalBytes`) are always exact and computed over ALL rows; only
  * the per-row listing is capped, and `rowsTruncated` says when it was.
@@ -112,8 +138,23 @@ export const APP_USER_STORAGE_MAX_SCHEMAS = 500;
  * db's audit log would (a) defeat the purge — the content a moderator is
  * removing would survive in a second database — and (b) move app-owned payloads
  * across a database boundary they have never crossed. `md5()` is a core Postgres
- * function (no `pgcrypto` dependency); it is used here as an identity
- * fingerprint for matching against an app-side backup, NEVER as a security hash.
+ * function (no `pgcrypto` dependency); it is an identity fingerprint, NEVER a
+ * security hash.
+ *
+ * 🔴 AND THE FINGERPRINT'S USEFULNESS IS BOUNDED — do not read it as a restore
+ * path. Its only purpose is matching a purged row against an apps-DB backup, and
+ * that backup retention is SEVEN DAYS. The audit row is permanent, so from day 8
+ * onward every `valueMd5` in it matches nothing that still exists anywhere.
+ * Nothing in the tree reads this field today.
+ *
+ * It is kept rather than dropped because those seven days are exactly the window
+ * in which a wrongful purge gets contested, and the plumbing costs nothing — the
+ * 200-row cap and `rowsTruncated` are needed for a plain key list anyway. The
+ * honest cost, stated so a later reader can weigh it: a permanent md5 of content
+ * that no longer exists still lets someone CONFIRM A GUESS ("did this account
+ * store exactly X?"), which a bare key + byte count would not. If that trade
+ * stops looking worthwhile, dropping the `md5(value::text)` column from the
+ * snapshot query is a self-contained change.
  */
 export type AppUserStorageRowSnapshot = {
   key: string;
@@ -517,6 +558,72 @@ export async function previewUserAppStorage(args: {
 }
 
 /**
+ * THE READ, AS A MODERATOR PERFORMS IT — `previewUserAppStorage` plus the record
+ * that it happened. The router calls this; the account-wide purge calls the bare
+ * function above, so an internal enumeration does not forge a "a moderator
+ * looked" event.
+ *
+ * 🔴 WHY THIS EXISTS. Without it a moderator can enumerate ANY user's stored key
+ * names, sizes, timestamps and content fingerprints across every app and leave no
+ * trace — while an ordinary user deleting their OWN key writes a
+ * `recordScopeInvocation` row (`apps.router.ts`). The destructive verbs were
+ * specified with four audit fields and the read was specified to be built first,
+ * but nobody asked whether the read should be attributable. It should: reading
+ * another person's stored data is the act, whether or not anything is deleted.
+ *
+ * 🔴 A LOG LINE, NOT AN `AppListingModerationEvent` ROW — three reasons, and the
+ * middle one is structural rather than a preference:
+ *   1. That rail is a MODERATION-ACTION log. Its consumers render action chips in
+ *      the per-listing history and in the app owner's own history, where an entry
+ *      means "something was done to this listing". A read is not that, and
+ *      putting one there would be a category error visible in two UIs.
+ *   2. An ACCOUNT-WIDE preview has no listing and no single slug, and the rail
+ *      requires a non-null `slug`. Recording one would mean fabricating a
+ *      sentinel slug — the exact smell avoided everywhere else here.
+ *   3. Reads are unbounded relative to actions (a moderator previews repeatedly
+ *      while investigating), and it needs no DDL, so it adds nothing further for
+ *      a human to remember to apply.
+ *
+ * 🔴 WHAT A READER OF THE TRAIL CAN AND CANNOT RECONSTRUCT. CAN: that actor A
+ * enumerated target U's storage, at a time, at app or account scope, and how much
+ * was there (app count, row count, bytes) — for as long as the log store retains
+ * it, which is a retention window, NOT the permanent record a purge gets. CANNOT:
+ * WHICH KEYS they saw, ever. That is deliberate and is the same argument as
+ * storing no values in the purge snapshot — writing the key names here would copy
+ * the user's data into a second store in order to record that someone looked at
+ * it. So the trail answers "who looked at whose data, and when", and does not
+ * answer "what exactly did they see".
+ */
+export async function previewUserAppStorageAsModerator(args: {
+  actorUserId: number;
+  userId: number;
+  appBlockId?: string | null;
+}): Promise<AppUserStoragePreview> {
+  const preview = await previewUserAppStorage({
+    userId: args.userId,
+    appBlockId: args.appBlockId ?? null,
+  });
+  // Fire-and-forget: an audit line must never fail the read it describes.
+  logToAxiom(
+    {
+      event: 'mod_preview_user_storage',
+      actorUserId: args.actorUserId,
+      targetUserId: args.userId,
+      scope: args.appBlockId ? 'app' : 'account',
+      appBlockId: args.appBlockId ?? null,
+      // Counts only — never key names. See the note above.
+      appCount: preview.totals.appCount,
+      rowCount: preview.totals.rowCount,
+      totalBytes: preview.totals.totalBytes,
+      unmappedSchemaCount: preview.unmappedSchemas.length,
+      schemasTruncated: preview.schemasTruncated,
+    },
+    PURGE_LOG
+  ).catch(() => undefined);
+  return preview;
+}
+
+/**
  * Write the audit row BEFORE anything is destroyed. Returns the row id.
  *
  * The rail is `AppListingModerationEvent` — the audit log this codebase already
@@ -535,9 +642,17 @@ export async function previewUserAppStorage(args: {
  * actions and its own CHECK admits no moderation verb.
  */
 async function writeAuditIntent(args: {
-  actorUserId: number;
+  /**
+   * NULL when no human ordered it. `AppListingModerationEvent.actorUserId` is
+   * `Int?` with `onDelete: SetNull` precisely so the trail can outlive its actor,
+   * so null is a first-class state on this rail rather than a hole. It is the
+   * honest value for the webhook caller of `removeAllContent`, which is
+   * authenticated by a shared secret and carries no user identity at all.
+   */
+  actorUserId: number | null;
   targetUserId: number;
   reason: string;
+  initiator: AppUserStoragePurgeInitiator;
   view: AppUserStorageAppView;
   appListingId: string | null;
   batchId: string;
@@ -560,6 +675,7 @@ async function writeAuditIntent(args: {
       detail: `Purged per-user App Storage for user #${args.targetUserId} in ${view.slug}: ${view.rowCount} row(s), ${view.totalBytes} stored byte(s).`,
       before: {
         targetUserId: args.targetUserId,
+        initiator: args.initiator,
         appBlockId: view.appBlockId,
         schema: view.schema,
         scope: args.scope,
@@ -588,8 +704,9 @@ async function purgeOneApp(args: {
   tables: SchemaTables;
   view: AppUserStorageAppView;
   targetUserId: number;
-  actorUserId: number;
+  actorUserId: number | null;
   reason: string;
+  initiator: AppUserStoragePurgeInitiator;
   batchId: string;
   scope: 'app' | 'account';
 }): Promise<AppUserStoragePurgeResult> {
@@ -610,6 +727,7 @@ async function purgeOneApp(args: {
     actorUserId: args.actorUserId,
     targetUserId,
     reason: args.reason,
+    initiator: args.initiator,
     view,
     appListingId: identity.appListingId,
     batchId: args.batchId,
@@ -694,6 +812,7 @@ async function purgeOneApp(args: {
     {
       event: 'mod_purge_user_storage',
       scope: args.scope,
+      initiator: args.initiator,
       auditEventId,
       purgeBatchId: args.batchId,
       actorUserId: args.actorUserId,
@@ -727,10 +846,12 @@ export class AppUserStoragePurgeError extends Error {
 
 /** TARGETED purge — one user, one app. */
 export async function purgeUserAppStorage(args: {
-  actorUserId: number;
+  actorUserId: number | null;
   targetUserId: number;
   appBlockId: string;
   reason: string;
+  /** Defaults to `'moderator'`; the router never passes anything else. */
+  initiator?: AppUserStoragePurgeInitiator;
 }): Promise<AppUserStoragePurgeResult> {
   const identity = await resolveBlockIdentity(args.appBlockId);
   if (!identity) {
@@ -758,8 +879,41 @@ export async function purgeUserAppStorage(args: {
     targetUserId: args.targetUserId,
     actorUserId: args.actorUserId,
     reason: args.reason,
+    initiator: args.initiator ?? 'moderator',
     batchId: `apg_${newUlid()}`,
     scope: 'app',
+  });
+}
+
+/**
+ * ACCOUNT-WIPE hook — the entry point `removeAllContent` calls.
+ *
+ * 🔴 WHY THIS EXISTS AS ITS OWN FUNCTION rather than the wipe calling
+ * `purgeUserAppStorageEverywhere` directly: the `reason` and the `initiator` are
+ * a property of THIS path, not a decision for the call site. Inlining them at the
+ * caller would let a future second caller invent a different wording, and the
+ * audit trail's ability to say "the system did this" would then depend on every
+ * call site remembering to spell it the same way.
+ *
+ * 🔴 WHY THE WIPE AND NOT `deleteUser`. `deleteUser` is a SOFT delete: it sets
+ * `deletedAt`, scrubs the profile fields and reassigns models, and it has a live
+ * inverse in `restoreUser` (same file) which explicitly documents what it brings
+ * back. Hanging an irreversible cross-database purge off a reversible delete
+ * would be a worse defect than the gap it closes — restore would return an
+ * account whose app storage had been destroyed with no way back.
+ * `removeAllContent` is the hard wipe (`deleteMany` across ~18 tables, S3 objects,
+ * search-index deletes) and has no inverse, so it is the honest place for this.
+ */
+export async function purgeUserAppStorageForAccountWipe(args: {
+  targetUserId: number;
+  /** The acting moderator when one exists; null on the webhook path. */
+  actorUserId: number | null;
+}): Promise<AppUserStorageAccountPurge> {
+  return purgeUserAppStorageEverywhere({
+    actorUserId: args.actorUserId,
+    targetUserId: args.targetUserId,
+    reason: ACCOUNT_WIPE_PURGE_REASON,
+    initiator: 'system:account-wipe',
   });
 }
 
@@ -777,9 +931,11 @@ export type AppUserStorageAccountPurge = {
 
 /** ACCOUNT-WIDE purge — one user, every app that holds rows for them. */
 export async function purgeUserAppStorageEverywhere(args: {
-  actorUserId: number;
+  actorUserId: number | null;
   targetUserId: number;
   reason: string;
+  /** Defaults to `'moderator'`; the router never passes anything else. */
+  initiator?: AppUserStoragePurgeInitiator;
 }): Promise<AppUserStorageAccountPurge> {
   const batchId = `apg_${newUlid()}`;
   const preview = await previewUserAppStorage({ userId: args.targetUserId });
@@ -808,6 +964,7 @@ export async function purgeUserAppStorageEverywhere(args: {
           targetUserId: args.targetUserId,
           actorUserId: args.actorUserId,
           reason: args.reason,
+          initiator: args.initiator ?? 'moderator',
           batchId,
           scope: 'account',
         })

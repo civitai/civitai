@@ -1371,7 +1371,23 @@ export const updateAccountScope = async ({
   }
 };
 
-export const removeAllContent = async ({ id }: { id: number }) => {
+/**
+ * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
+ * above, which soft-deletes and has a live inverse in `restoreUser`.
+ *
+ * `actorUserId` is the acting moderator when one exists. It is OPTIONAL because
+ * one of the two callers genuinely has no user identity: `/api/mod/remove-all-
+ * content` is a `WebhookEndpoint`, authenticated by a shared secret, so there is
+ * no actor to thread. The tRPC caller (`user.removeAllContent`, a
+ * `moderatorProcedure`) passes `ctx.user.id`.
+ */
+export const removeAllContent = async ({
+  id,
+  actorUserId = null,
+}: {
+  id: number;
+  actorUserId?: number | null;
+}) => {
   const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
   const images = await dbRead.image.findMany({
     where: { userId: id },
@@ -1443,6 +1459,47 @@ export const removeAllContent = async ({ id }: { id: number }) => {
 
   for (const m of models) {
     await deleteBidsForModel({ modelId: m.id });
+  }
+
+  // ── App Blocks per-user storage (W4) ────────────────────────────────────────
+  // Everything above lives in the MAIN db (plus S3 + the search indexes). A
+  // user's App Storage rows do not: they sit in per-app `app_<slug>` schemas in
+  // the SEPARATE apps database, reached through a different pool, and nothing in
+  // this function could see them. Before this, a moderator hard-wipe left them
+  // behind in full — `user-storage-purge.service.ts` names that as the second of
+  // the two gaps it exists to close, and closing it needs a caller.
+  //
+  // 🔴 LAST, AND LOG-AND-CONTINUE. Same posture as the (3c) storage-provision
+  // block in `publish-request.service.ts`, for the same reason. The wipe is
+  // already complete by the time we get here, there is no transaction spanning
+  // the two databases, and a purge failure must NEVER abort or appear to undo it:
+  // a moderator's content wipe failing because an apps-DB schema was briefly
+  // unreachable would be a regression, not a safety feature. On ANY error we warn
+  // and return normally; the storage is recoverable via
+  // `apps.mod.userStorage.purgeAccount`, which is exactly this call by hand.
+  //
+  // Dynamic import, again mirroring (3c): this module is already enormous and the
+  // purge service pulls in the apps-db pool, which nothing else on this path
+  // needs.
+  //
+  // AUDIT SURVIVES THE FAILURE MODE, NOT JUST THE HAPPY PATH: the purge writes
+  // its `AppListingModerationEvent` row BEFORE it deletes anything, so a crash
+  // between the two leaves a record of what was about to go, never a silent
+  // destruction. That ordering is the purge's own safety argument and calling it
+  // from here does not weaken it.
+  try {
+    const { purgeUserAppStorageForAccountWipe } = await import(
+      '~/server/services/apps/user-storage-purge.service'
+    );
+    await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[removeAllContent] App Blocks per-user storage purge failed (userId=${id}); ` +
+        `the content wipe COMPLETED and is unaffected — re-run via apps.mod.userStorage.purgeAccount: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
   }
 };
 

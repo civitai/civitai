@@ -29,7 +29,7 @@ import * as z from 'zod';
 import { moderatorProcedure, router } from '~/server/trpc';
 import {
   AppUserStoragePurgeError,
-  previewUserAppStorage,
+  previewUserAppStorageAsModerator,
   purgeUserAppStorage,
   purgeUserAppStorageEverywhere,
 } from '~/server/services/apps/user-storage-purge.service';
@@ -64,8 +64,15 @@ export const appsModUserStorageRouter = router({
         appBlockId: appBlockIdInput.optional(),
       })
     )
-    .query(async ({ input }) =>
-      previewUserAppStorage({ userId: input.userId, appBlockId: input.appBlockId ?? null })
+    .query(async ({ ctx, input }) =>
+      // The MODERATOR-scoped wrapper, which records that the read happened.
+      // Reading another person's stored data is the act, whether or not anything
+      // is deleted — see the note on `previewUserAppStorageAsModerator`.
+      previewUserAppStorageAsModerator({
+        actorUserId: ctx.user.id,
+        userId: input.userId,
+        appBlockId: input.appBlockId ?? null,
+      })
     ),
 
   /** TARGETED purge — one user's per-user rows in ONE app. */

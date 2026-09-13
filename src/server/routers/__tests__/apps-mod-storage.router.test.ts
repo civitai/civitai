@@ -438,6 +438,64 @@ describe('preview (the read surface)', () => {
   });
 });
 
+// ── 1b. THE READ IS ATTRIBUTABLE ─────────────────────────────────────────────
+
+describe('preview attribution', () => {
+  const previewLines = () =>
+    mockLogToAxiom.mock.calls.filter(
+      (c: unknown[]) => (c[0] as { event?: string })?.event === 'mod_preview_user_storage'
+    );
+
+  it('records WHO looked at WHOSE data, at what scope, and how much was there', async () => {
+    await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
+
+    expect(previewLines()).toHaveLength(1);
+    const [payload, stream] = previewLines()[0] as [Record<string, unknown>, string];
+    expect(payload.actorUserId).toBe(MOD.id);
+    expect(payload.targetUserId).toBe(TARGET);
+    expect(payload.scope).toBe('app');
+    expect(payload.appBlockId).toBe(APP_A.id);
+    expect(payload.rowCount).toBe(3);
+    expect(payload.totalBytes).toBe(A_TARGET_BYTES);
+    // Same ops datastream the purge writes to — no new stream, no DDL.
+    expect(stream).toBe('app-storage-trpc');
+  });
+
+  it('marks an account-wide read as such', async () => {
+    await caller().preview({ userId: TARGET });
+    const [payload] = previewLines()[0] as [Record<string, unknown>];
+    expect(payload.scope).toBe('account');
+    expect(payload.appBlockId).toBeNull();
+    expect(payload.appCount).toBe(2);
+  });
+
+  it('🔴 never writes the KEY NAMES into the log', async () => {
+    // Recording that someone looked must not copy the thing they looked at into a
+    // second store. The trail answers "who looked at whose data, and when"; it
+    // deliberately does not answer "what exactly did they see".
+    await caller().preview({ userId: TARGET });
+    const serialized = JSON.stringify(previewLines());
+    for (const key of ['a-one', 'a-two', 'a-three', 'b-one']) {
+      expect(serialized).not.toContain(key);
+    }
+    expect(serialized).not.toContain('md5_');
+  });
+
+  it('a purge does NOT forge a "a moderator looked" event', async () => {
+    // The account-wide purge enumerates internally via the bare function. If it
+    // went through the moderator wrapper, every purge would also claim a read.
+    mockLogToAxiom.mockClear();
+    await caller().purgeAccount({ userId: TARGET, reason: 'account terminated' });
+    expect(previewLines()).toHaveLength(0);
+  });
+
+  it('a logging failure never fails the read', async () => {
+    mockLogToAxiom.mockRejectedValueOnce(new Error('log store down'));
+    const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
+    expect(out.apps[0].rowCount).toBe(3);
+  });
+});
+
 // ── 2. TARGETED PURGE + ITS NEGATIVE CONTROLS ────────────────────────────────
 
 describe('purgeApp (targeted)', () => {
