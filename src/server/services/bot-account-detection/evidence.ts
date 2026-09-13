@@ -114,12 +114,18 @@ export const MAX_FILENAMES_PER_MEMBER = 50;
  * widening it — while the process shares ONE connection pool with every other job, and a batch wide
  * enough to hold most of that pool would starve them for the length of a cohort walk.
  *
- * 🔴 NAME THE BOUND RATHER THAN GESTURING AT IT: the read pool this competes for is configured at
- * 20 connections by default (`src/env/server-schema.ts`), so 10 in flight is HALF of it, not the
- * "far below `EVIDENCE_CHUNK_SIZE`" the paragraph above makes it sound. Each statement is a
- * sub-millisecond index seek so the pool is held briefly and the exposure is small, but anyone
- * raising this number is spending a share of a pool of twenty and should size against that figure
- * rather than against 500.
+ * 🔴 NAME THE RIGHT POOL OR NAME NO NUMBER — AND THIS REPOSITORY CANNOT TELL YOU THE NUMBER. What
+ * these statements queue on is `dbRead`'s own pool: `createEvidenceReader` defaults `db` to
+ * `dbRead`, which is a stock `PrismaClient` over `DATABASE_REPLICA_URL` with no driver adapter, so
+ * the pool is the Prisma query engine's, sized by `connection_limit` on that URL and otherwise by
+ * Prisma's default. Neither value appears anywhere in this tree. `DATABASE_POOL_MAX` is NOT that
+ * pool in either its schema-default or its live form — it sizes the `pg` pools on the raw-SQL /
+ * Kysely path (`config.poolMax`, `src/server/db/db-helpers.ts`) and never reaches Prisma. This
+ * paragraph used to say the read competed for "20 connections by default", which is a correctly
+ * read number about a pool this read does not touch; a maintainer sizing a change against it would
+ * be reasoning from a bound that does not apply. So the honest statement is: the bound is real, it
+ * is set outside this repository, and anyone raising this constant has to read it off the deployed
+ * `DATABASE_REPLICA_URL` rather than off anything here.
  */
 export const FILENAME_READ_BATCH_SIZE = 10;
 
@@ -455,7 +461,9 @@ export function createEvidenceReader(
       // built from some of the members UNDERSTATES every ring that straddles the missing ones, and
       // understating is the direction that produces a confident zero. Worse, it would do so while
       // `evidence_source_read_failures` reported 0 — the run would look clean and read low. Pinned
-      // by `__tests__/evidence.test.ts` ("a single per-member read rejecting…").
+      // by `__tests__/evidence.test.ts`, "ONE per-member read rejecting inside the fan-out REJECTS
+      // THE WHOLE BATCH" — quoted verbatim so the pointer is greppable; the paraphrase that used to
+      // stand here matched no test name.
       //
       // 🔴 AND THE DISCARD IS NOW APPLIED OVER ~500× MORE STATEMENTS THAN IT WAS SIZED FOR. The old
       // shape issued one statement per `EVIDENCE_CHUNK_SIZE` chunk — about 50 for a full cohort.

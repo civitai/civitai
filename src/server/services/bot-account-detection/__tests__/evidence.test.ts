@@ -1000,9 +1000,16 @@ describe('collectCohortSignals', () => {
   });
 
   it('🔴 a failing FILENAME read degrades the run instead of killing it, and says so', async () => {
-    // Same contract as the content read: the partial data is DISCARDED rather than scored, because
-    // a cluster count built from some of the chunks understates every ring that straddles the
-    // missing ones — and understating is the direction that produces a confident zero.
+    // 🔴 WHAT THIS FIXTURE CAN AND CANNOT SHOW. `filenameError` throws on EVERY call, so the walk
+    // fails on its FIRST batch with nothing yet in hand. This test therefore pins that a filename
+    // failure DEGRADES the run — no throw escapes, availability goes false, the flag is not
+    // mistaken for an exhausted budget, and `membersSampledForFilenames` claims nobody — and it
+    // does NOT show that data already read is discarded, because there is none to discard. That
+    // claim needs a failure in a LATER batch; it is carried by '…and `collectCohortSignals`
+    // DISCARDS the partial data already read and RECORDS the failure' in the `createEvidenceReader`
+    // block below. This comment used to assert the discard here, over a fixture that cannot reach
+    // it — reading as coverage while providing none, which is the defect class this module's tests
+    // exist to remove.
     const text = 'Grab your 100 free credits at https://spam.example now';
     const s = await collectCohortSignals(
       fakeReader({
@@ -1424,35 +1431,54 @@ describe('createEvidenceReader', () => {
     await expect(reader.listFilenameSamples([1, 2, 3], 5)).rejects.toThrow('replica timeout');
   });
 
-  it('🔴 …and `collectCohortSignals` DISCARDS the partial data and RECORDS the failure', async () => {
+  it('🔴 …and `collectCohortSignals` DISCARDS the partial data already read and RECORDS the failure', async () => {
     // The other half of the invariant, driven end to end through the REAL reader rather than
     // through a fake that models the boundary. The structural claim above (it rejects) is not the
-    // claim that matters on its own — what matters is what the walk then does with it: zero rows
-    // scored, availability false, and `readFailures.filenameSamples` true so the run is legible as
-    // BROKEN rather than as quiet.
+    // claim that matters on its own — what matters is what the walk then does with it: the rows
+    // ALREADY IN HAND from an earlier batch are dropped, availability goes false, and
+    // `readFailures.filenameSamples` goes true so the run is legible as BROKEN rather than as quiet.
+    //
+    // 🔴 THE FIXTURE MUST SPAN MORE THAN ONE BATCH AND THE FAILURE MUST LAND IN A LATER ONE, or the
+    // discard is unreachable and this test is coverage that covers nothing. It previously used 3
+    // members at `filenameBatchSize: 3` — ONE batch, which rejects with `filenameSamples` still
+    // empty, so every assertion below held whether or not the discard existed and deleting
+    // `filenameSamples.length = 0;` from `collectCohortSignals`'s filename `catch` left the module
+    // suite fully green. Nine members at batch size 3 fail in batch TWO of three: batch one's rows
+    // are in hand when the failure arrives, so only the discard can remove them, and batch three is
+    // never issued. This mirrors the content-side template — 'discards the PARTIAL content already
+    // read when a later chunk fails' in the `collectCohortSignals` block above. In production the
+    // batch is `FILENAME_READ_BATCH_SIZE` (10) over up to `MAX_COHORT_ACCOUNTS` members, roughly
+    // 2,500 batches, so failing after the first batch is the ORDINARY case, not the exotic one.
     const image = {
       findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
-        if ((args.where.userId as unknown as number) === 2) throw new Error('replica timeout');
-        return [{ userId: args.where.userId as unknown as number, name: 'ring.jpg' }];
+        const userId = args.where.userId as unknown as number;
+        // Member 5 sits in the SECOND batch of [1,2,3] [4,5,6] [7,8,9].
+        if (userId === 5) throw new Error('replica timeout');
+        return [{ userId, name: 'ring.jpg' }];
       }),
     };
     const reader = createEvidenceReader({
       db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
       ch: null,
     });
-    const members = Array.from({ length: 3 }, (_, i) => member(i + 1, 'ring.test'));
+    const members = Array.from({ length: 9 }, (_, i) => member(i + 1, 'ring.test'));
     const s = await collectCohortSignals(reader, members, {
-      chunkSize: 3,
+      chunkSize: 9,
       filenameBatchSize: 3,
     });
 
-    // Nothing from the two members whose reads SUCCEEDED reaches the index. `ring.jpg` shared by
-    // two accounts is a filename cluster; scoring it from a partial read is what the discard
-    // refuses to do.
+    // 🔴 THE ASSERTION THE DISCARD OWNS. Without it, batch one's three `ring.jpg` rows survive the
+    // `catch` and this map holds one filename key counted at 3 — three accounts scored as a
+    // filename ring out of a read that FAILED, while `sources.filenameSamples` is false and
+    // `readFailures` says so, because `buildCohortSignals` indexes the rows it is handed and
+    // consults neither flag.
+    expect([...s.membersPerFingerprint.keys()]).toEqual([]);
     expect(s.sources.filenameSamples).toBe(false);
     expect(s.sources.readFailures.filenameSamples).toBe(true);
     expect(s.sources.membersSampledForFilenames).toBe(0);
-    expect([...s.membersPerFingerprint.keys()]).toEqual([]);
+    // Six statements, not nine: the walk stops at the failing batch instead of carrying on into the
+    // third. Asserted by count because "it returned nothing" is true of a walk that kept going too.
+    expect(image.findMany).toHaveBeenCalledTimes(6);
     // And the failure is scoped to its own source — the other two flags are untouched.
     expect(s.sources.readFailures).toEqual({
       registrationIps: false,
