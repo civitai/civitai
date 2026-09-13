@@ -227,10 +227,38 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // the two `apps.mod.*` verbs hard-code 'moderator'.
     expect(data.before.initiator).toBe('system:account-wipe');
     expect(data.reason).toBe('[system] account content wipe (user.removeAllContent)');
-    // The snapshot still says what was destroyed.
+    // The snapshot still says HOW MUCH was destroyed. The per-key detail is
+    // withheld on this path — see the erasure test below.
     expect(data.before.rowCount).toBe(2);
     expect(data.before.totalBytes).toBe(312);
-    expect(data.before.rows.map((r: any) => r.key).sort()).toEqual(['gone-a', 'gone-b']);
+    expect(data.before.rows).toBeUndefined();
+  });
+
+  it('🔴 ERASURE: the wipe row carries NO per-key detail — counts and bytes only', async () => {
+    // `removeAllContent` is an erasure. A permanent main-DB row holding the wiped
+    // account's key names and content fingerprints would be a durable derived
+    // artefact OF THE CONTENT BEING ERASED. The moderator-takedown framing that
+    // justifies `valueMd5` elsewhere does not transfer to this path.
+    //
+    // 🔴 ASSERTED ON STATE AND CONTENT, NOT ON A FIELD NAME. Grepping for the
+    // string `valueMd5` is walked past by a rename; this checks that none of the
+    // fixture's actual key names or fingerprint VALUES appear anywhere in the
+    // persisted payload, whatever they might be called.
+    await removeAllContent({ id: TARGET, actorUserId: MOD });
+
+    const { data } = dbMock.dbWrite.appListingModerationEvent.create.mock.calls[0][0] as any;
+    expect(data.before.initiator).toBe('system:account-wipe');
+
+    const serialized = JSON.stringify(data.before);
+    for (const key of ['gone-a', 'gone-b']) expect(serialized).not.toContain(key);
+    for (const md5 of ['md5_gone-a', 'md5_gone-b']) expect(serialized).not.toContain(md5);
+    expect(data.before.rows).toBeUndefined();
+
+    // …and it still answers "was anything removed, and how much?".
+    expect(data.before.rowCount).toBe(2);
+    expect(data.before.totalBytes).toBe(312);
+    expect(data.before.appBlockId).toBe('apb_wiped');
+    expect(data.before.rowDetailWithheld).toBe('erasure');
   });
 
   it('records a NULL actor when no human ordered it (the webhook caller)', async () => {

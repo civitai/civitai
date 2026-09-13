@@ -163,6 +163,12 @@ export const APP_USER_STORAGE_MAX_SCHEMAS = 500;
  * onward every `valueMd5` in it matches nothing that still exists anywhere.
  * Nothing in the tree reads this field today.
  *
+ * 🔴 AND IT IS RECORDED ON THE MODERATOR PATHS ONLY. The account-wipe path
+ * (`initiator: 'system:account-wipe'`) persists counts and bytes but NO `rows[]`
+ * at all — see the note in `writeAuditIntent`. An erasure must not leave a
+ * durable derived artefact of the content it erased; a takedown a human ordered
+ * is a different question, and this paragraph is about that one.
+ *
  * It is kept rather than dropped because those seven days are exactly the window
  * in which a wrongful purge gets contested, and the plumbing costs nothing — the
  * 200-row cap and `rowsTruncated` are needed for a plain key list anyway. The
@@ -753,9 +759,38 @@ async function writeAuditIntent(args: {
         counter: view.counter,
         counterMatchesRows: view.counterMatchesRows,
         sharedRowsNotPurged: view.sharedRowsNotPurged,
-        rowsTruncated: view.rowsTruncated,
-        snapshotRowCap: APP_USER_STORAGE_SNAPSHOT_ROW_CAP,
-        rows: view.rows,
+        // 🔴 THE PER-KEY SNAPSHOT IS WITHHELD ON THE ACCOUNT-WIPE PATH.
+        //
+        // `removeAllContent` is an ERASURE. Writing the wiped account's key names
+        // and content fingerprints into a permanent main-DB row would create a
+        // durable derived artefact OF THE CONTENT BEING ERASED — the audit row
+        // would outlive, and partially describe, the very thing the operation
+        // exists to remove.
+        //
+        // The `valueMd5` justification on `AppUserStorageRowSnapshot` is a
+        // MODERATOR-TAKEDOWN argument: a human chose to act, a reviewable record
+        // of what they destroyed is plainly wanted, and the fingerprint is
+        // matchable against a backup for seven days. None of that transfers to an
+        // erasure. So the two paths deliberately carry DIFFERENT shapes, and the
+        // docstring on that type says which is which.
+        //
+        // What survives is everything answering "was anything removed, and how
+        // much?" — counts, bytes, app identity, and the `after` outcome stamp.
+        // What goes is the per-key detail.
+        //
+        // 🔴 SELECTED BY `initiator`, WHICH THE CODE PATH SETS AND NO CALLER CAN
+        // SUPPLY, so the fuller shape cannot be chosen for a wipe (nor the reduced
+        // one for a takedown, which would be the more interesting abuse). Pinned
+        // by a guard that asserts the wipe row contains none of the key names or
+        // fingerprint values — a STATE assertion, so renaming the field does not
+        // walk past it.
+        ...(args.initiator === 'system:account-wipe'
+          ? { rowDetailWithheld: 'erasure' }
+          : {
+              rowsTruncated: view.rowsTruncated,
+              snapshotRowCap: APP_USER_STORAGE_SNAPSHOT_ROW_CAP,
+              rows: view.rows,
+            }),
       } as Prisma.InputJsonValue,
     },
   });

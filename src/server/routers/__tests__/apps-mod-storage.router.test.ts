@@ -706,6 +706,12 @@ describe('audit record', () => {
     ]);
     expect(data.before.schema).toBe('app_my_app');
     expect(data.before.scope).toBe('app');
+    // 🔴 POSITIVE CONTROL for the erasure reduction in
+    // `user-remove-all-content.app-storage.test.ts`: the MODERATOR path keeps the
+    // full per-key snapshot. If someone reduced BOTH paths, the erasure test would
+    // still pass and only this assertion would catch it.
+    expect(data.before.initiator).toBe('moderator');
+    expect(data.before.rowDetailWithheld).toBeUndefined();
 
     // 🔴 The snapshot carries no VALUES — that is the point of the fingerprint.
     expect(JSON.stringify(data.before)).not.toContain('"value"');
