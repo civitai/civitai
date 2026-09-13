@@ -530,7 +530,7 @@ function AppBudgetControl({
 }
 
 function ScopeGrantsPanel() {
-  const { data: grants, isLoading, isError } = trpc.blocks.listMyScopeGrants.useQuery();
+  const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
 
   if (isLoading) {
     return (
@@ -539,23 +539,28 @@ function ScopeGrantsPanel() {
       </Center>
     );
   }
-  /* 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY: without this
-     branch an error left `grants` undefined with `isLoading` false and fell through to the empty
-     state below, which ASSERTS the viewer has no installs, subscriptions or consents. Same shape,
-     same fix, in `AppPermissionsActivityDrawer`.
+  /* 🔴 A READ THAT NEVER ARRIVED MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY: an
+     undefined `grants` with `isLoading` false otherwise falls through to the empty state below,
+     which ASSERTS the viewer has no installs, subscriptions or consents. Same fix in
+     `AppPermissionsActivityDrawer`.
 
-     🔴 `isError && !grants`, NOT BARE `isError` — `isError` is ALSO true for a failed REFETCH, and
-     react-query RETAINS `data` in that state, so a bare test discarded a complete valid list on
-     the most ordinary interaction here (a budget save invalidates this query; the refetch's first
-     5xx is final — `queryRetry`, `src/utils/trpc.ts`). Guard the STATE ("nothing to show"), not a
-     library flag. The measured state table and the regression test that pins this are in
-     `src/components/Apps/AppActivityPage.browser.test.tsx`. */
-  if (isError && !grants) {
+     🔴 `!grants` ALONE — "no data" is the condition; an error is one way to reach it, and the other
+     is live today. Default `networkMode: 'online'` (no override in `src/utils/trpc.ts`) parks an
+     offline first fetch at `status='pending' fetchStatus='paused'`, so `isLoading`, `isError` and
+     `data` are all falsy, and the `isError &&` conjunct this replaces asserted the empty state from
+     a fetch that never left the browser. A failed REFETCH — the case that conjunct existed for —
+     keeps `data`, so the list arm still wins.
+
+     ⚠️ RESIDUAL, NAMED: a refetch failure retaining an EMPTY list still reaches the empty state,
+     `[]` being truthy. Latent — `staleTime: Infinity` + `refetchOnWindowFocus: false` mean only an
+     explicit `invalidate()` refetches, and both invalidators (`:111`, `:414`) render from a card.
+     All three cells are pinned in `src/components/Apps/AppActivityPage.browser.test.tsx`. */
+  if (!grants) {
     return (
       <EmptyState label="We couldn't load your apps and permissions just now. This is a problem reading the list, not a statement about what you have installed or granted — reload to try again." />
     );
   }
-  if (!grants || grants.length === 0) {
+  if (grants.length === 0) {
     /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
        to make, and it was false.
 
@@ -564,11 +569,13 @@ function ScopeGrantsPanel() {
        a grant row. The ACTIVITY leg closes (a) and (b) ALIKE, and only for an app that has made
        scope-gated API CALLS. 🔴 A block that consumes the viewer's data purely over the host-bridge
        postMessage protocol writes NO `block_scope_invocations` row, so BOTH survive for that class
-       and this page is still silent about it. The user-facing sentence below hedges correctly ("an
-       app that holds access but has never used it does not appear here"); this justification is the
-       one a maintainer will rely on, so it must not claim more than the code does. */
+       and this page is still silent about it.
+
+       🔴 THE SENTENCE BELOW IS NOW SCOPED TO THE RECORD. It opened "Nothing has touched your
+       account yet" — a universal about activity that the paragraph above refutes, written by THIS
+       PR (not inherited). An empty grant list proves no RECORDED call, which is what it now says. */
     return (
-      <EmptyState label="Nothing has touched your account yet, and you have no installs, subscriptions or consents. An app that holds access but has never used it does not appear here — Recent activity is the record of what was actually done." />
+      <EmptyState label="No app has made a recorded API call on your account, and you have no installs, subscriptions or consents. An app that holds access but has never used it does not appear here — Recent activity is the record of the API calls that were made." />
     );
   }
   return (

@@ -162,9 +162,11 @@ export function scopeGrantEmptyScopeLabel(origin: ScopeGrantOrigin): string {
     // than stronger and conditionally false.
     //
     // 🔴 THE FOURTH CLAUSE IS "EVERY API CALL IT MADE", NOT "EVERYTHING IT HAS DONE", AND THAT
-    // NARROWING IS A CORRECTION — the absolute was FALSE, on a TRANSPARENCY surface, which is the
-    // one place in this change where a wrong sentence is the product rather than a comment about
-    // it. `user-app-surface.service.ts` and `src/pages/apps/activity.tsx` both record the reason: a
+    // NARROWING IS A CORRECTION — the absolute was FALSE, on a TRANSPARENCY surface, where a wrong
+    // sentence is the product rather than a comment about it. ⚠️ THIS USED TO CLAIM IT WAS "the ONE
+    // place in this change" that is true of; it is not — `src/pages/apps/activity.tsx`'s empty state
+    // is a second, corrected in round 3 for the same reason. `user-app-surface.service.ts` and
+    // `src/pages/apps/activity.tsx` both record the reason: a
     // block that consumes the viewer's data purely over the host-bridge postMessage protocol writes
     // NO `block_scope_invocations` row, so Recent activity cannot be the record of EVERYTHING. A
     // reachable row class makes >= 1 scope-gated call (which is what mints this card) and ALSO uses

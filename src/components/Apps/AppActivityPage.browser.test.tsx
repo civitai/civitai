@@ -63,9 +63,9 @@ const mocks = vi.hoisted(() => ({
    * 🔴 DRIVES THE QUERY-ERROR ARM FOR `blocks.listMyScopeGrants`, AND IT IS THE ONLY WAY TO
    * RENDER THE STATE THE PANEL USED TO GET WRONG. On an error `data` is `undefined` with
    * `isLoading` false — indistinguishable from "the viewer has no rows" — so the panel fell
-   * through to an empty state that ASSERTS "Nothing has touched your account yet, and you have
-   * no installs, subscriptions or consents": a claim about the viewer's record, made from a read
-   * that never arrived. Per-proc rather than global so every other read stays unchanged.
+   * through to an empty state that ASSERTS "No app has made a recorded API call on your account,
+   * and you have no installs, subscriptions or consents": a claim about the viewer's record, made
+   * from a read that never arrived. Per-proc rather than global so every other read stays unchanged.
    */
   scopeGrantsError: false,
   /**
@@ -743,9 +743,9 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
   /**
    * 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY. Without the error
    * branch, `isError` left `grants` `undefined` with `isLoading` false — byte-for-byte the
-   * no-rows state — so the panel rendered "Nothing has touched your account yet, and you have no
-   * installs, subscriptions or consents." That is an assertion about the viewer's record, made
-   * from a read that never arrived.
+   * no-rows state — so the panel rendered "No app has made a recorded API call on your account, and
+   * you have no installs, subscriptions or consents." That is an assertion about the viewer's
+   * record, made from a read that never arrived.
    *
    * 🔴 THE SECOND HALF IS THE ONE THAT CATCHES A REGRESSION: showing the error text does not prove
    * the false claim is gone, because a component rendering BOTH passes. The `not.toContain` on the
@@ -758,7 +758,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     await expect
       .element(page.getByText(/couldn't load your apps and permissions just now/))
       .toBeInTheDocument();
-    expect(document.body.textContent ?? '').not.toContain('Nothing has touched your account yet');
+    expect(document.body.textContent ?? '').not.toContain('No app has made a recorded API call');
     // …and no card grid at all, so the error state cannot be mistaken for a partial render.
     expect(page.getByTestId('apps-installed-grants-grid').elements()).toHaveLength(0);
   });

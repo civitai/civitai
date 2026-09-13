@@ -287,11 +287,17 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
    * measured on this repo's `@tanstack/react-query` 5.101 with its own defaults as
    * `status=error isError=true isRefetchError=true isLoadingError=false data=[…]`. Because the
    * error arm sits BEFORE the list arm, a bare `isError` replaced a complete valid grant list with
-   * read-failure copy. Reachable on the most ordinary interaction: the activity page's install
-   * toggle / budget save calls `utils.blocks.listMyScopeGrants.invalidate()`, the refetch hits one
-   * transient 5xx, and the batch cohort retries ZERO times (`queryRetry` in `src/utils/trpc.ts`).
-   * The test above cannot see this — under a first-fetch failure `data` is undefined, so the broken
-   * and the fixed component render identically.
+   * read-failure copy. The test above cannot see this — under a first-fetch failure `data` is
+   * undefined, so the broken and the fixed component render identically.
+   *
+   * ⚠️ REACHABLE INDIRECTLY, NOT "ON THE ACTIVITY PAGE'S TOGGLE" — an earlier revision of this
+   * docblock named a trigger that cannot fire here. Complete enumeration: the only two
+   * `listMyScopeGrants.invalidate()` sites are `src/pages/apps/activity.tsx` `:111` and `:414`, and
+   * this drawer is mounted from exactly ONE place, `src/components/AppBlocks/IframeHost.tsx` — never
+   * from that page; with `staleTime: Infinity` and `refetchOnWindowFocus: false` it has no automatic
+   * refetch either. The real path: an activity-page invalidate whose refetch fails (the batch cohort
+   * retries ZERO times — `queryRetry` in `src/utils/trpc.ts`) leaves the query error-and-stale in
+   * the shared cache, and a LATER drawer mount observes that state.
    */
   test('🔴 a failed REFETCH keeps the grants it already has — `isError` alone would discard them', async () => {
     m.grants = [

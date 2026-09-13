@@ -30,7 +30,7 @@ const mockDbRead = dbMock.dbRead;
  * with no mock at all can fail on a missing export. The sibling
  * `user-app-surface.orchestration.test.ts` still uses `vi.hoisted` + `vi.mock` because it is
  * ALLOWLISTED as pre-existing; a new file is not, and copying its shape is what the ratchet
- * exists to catch. Behaviour is declared on `dbMock`/`loggingMock` instead; the global
+ * exists to catch. Behaviour is declared on `dbMock` instead; the global
  * `resetSharedMocks` in `src/__tests__/setup.ts` clears implementations AND call counts between
  * files, so this file resets only what it overrides.
  *
