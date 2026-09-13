@@ -15,10 +15,19 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
  * issuer/audience, not yet expired. It says nothing about whether the install still
  * exists or the app is still allowed to run, so on its own it keeps honouring a token
  * for a whole lifetime after the user uninstalled the app or a moderator suspended it.
- * The REST wrapper has always known this (`withBlockScope` → `BlockRevocation.isRevoked`),
- * and so do the two tRPC resolvers beside this one — `resolveStorageContext`
+ * The two tRPC resolvers beside this one check both — `resolveStorageContext`
  * (apps.router) and `resolveSharedContext` (apps-shared.router). The bridge procs called
  * `verifyBlockToken` directly, thirteen times, and checked neither.
+ *
+ * 🔴 THE REST WRAPPER CHECKS REVOCATION ONLY. `withBlockScope`
+ * (`block-scope.middleware.ts`) calls `BlockRevocation.isRevoked` and has NO
+ * approved-status gate, and neither does any handler it wraps — measured, not assumed.
+ * So step 3 below has no REST counterpart: after a moderator suspension (which flips
+ * `app_blocks.status` and writes NO revocation marker — see `flipBackingBlockStatus` in
+ * `offsite-moderation.service.ts`) the tRPC bridge refuses while the REST endpoints keep
+ * serving for the rest of the token lifetime. That asymmetry is REAL and is NOT closed
+ * here; do not read this helper as evidence the two paths agree. Widening `withBlockScope`
+ * was deliberately left out of scope rather than decided against.
  *
  * ORDER, and why it is this order:
  *   1. TOKEN VALIDITY — nothing downstream can be trusted before it; an unverifiable

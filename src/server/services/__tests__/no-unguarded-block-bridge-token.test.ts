@@ -165,10 +165,18 @@ describe('no unguarded block-bridge token verification', () => {
     ).toBe(1);
   });
 
-  it('has the two checks the guard exists for', () => {
+  it('still SPELLS the two checks the guard exists for', () => {
     const guard = read(GUARD);
-    // Spelled-out, because a guard that stops doing either of these still type-checks and
-    // every behavioural test that covers them lives in another project's file.
+    // 🔴 THIS IS A SPELLING CHECK, NOT A BEHAVIOURAL ONE — it asserts these three strings
+    // are still present, and that is ALL it can see. It is walkable in both directions: a
+    // semantically identical rewrite (`status === 'approved' ? … : throw`) FAILS it while
+    // the behaviour is intact, and a comparison against the WRONG value spelled this way
+    // PASSES it. So it cannot certify either check is correct — it only catches one
+    // dropped wholesale while everything still type-checks.
+    //
+    // What actually pins the behaviour is `blocks.router.bridgeTokenGuard.test.ts` (a
+    // different vitest project, which is why this cheap presence check exists at all). If
+    // you are tempted to read this test as coverage, read that file instead.
     expect(guard).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
     expect(guard).toMatch(/appBlock\.findUnique/);
     expect(guard).toMatch(/status !== 'approved'/);
