@@ -62,6 +62,50 @@ export const MAX_FILENAME_SAMPLES = 20_000;
 export const EVIDENCE_CHUNK_SIZE = 500;
 
 /**
+ * The most filenames one MEMBER contributes to a run.
+ *
+ * 🔴 A PER-ACCOUNT CAP, NOT A CAP ON THE RESULT, AND THE DIFFERENCE IS THE WHOLE FIX. The filename
+ * read used to be one `IN (…)` query per chunk under a single `take`, which is a cap on the RESULT
+ * with an `ORDER BY id DESC` under it — so the newest rows in the chunk consumed the entire
+ * allowance and EVICTED every other account in it. A ring of low-volume accounts is exactly what a
+ * handful of prolific uploaders would push out, silently, in the direction that understates every
+ * ring. That is the same defect `MAX_IPS_PER_ACCOUNT` was introduced to fix on the ClickHouse side
+ * (`LIMIT n BY targetUserId`); this constant is its Postgres half, and the two now say the same
+ * thing about the two sources.
+ *
+ * 🔴 MEASURED, NOT GUESSED. Over ten consecutive daily cohorts the global cap reached every member
+ * on eight of them and collapsed on the other two — on one of those it reached barely half the
+ * members that had uploaded anything, on the other about four fifths. The days it collapsed on are
+ * the days the cohort uploaded MOST, which is the population this heuristic exists to look at. As
+ * with `MAX_COHORT_ACCOUNTS`, the absolute daily figures are recorded outside this repository.
+ *
+ * Sized generously against what the heuristic actually needs: a ring shares ONE filename, and
+ * `buildCohortSignals` folds a member's samples into a SET, so the marginal value of a member's
+ * fiftieth sample is near zero. The cap bounds the worst case at
+ * `members × MAX_FILENAMES_PER_MEMBER` rows, under the `MAX_FILENAME_SAMPLES` budget that still
+ * stops the walk.
+ */
+export const MAX_FILENAMES_PER_MEMBER = 50;
+
+/**
+ * How many members' filename reads are issued together.
+ *
+ * 🔴 IT IS A CONCURRENCY WINDOW, NOT AN `IN (…)` WIDTH, because the filename read is now one query
+ * per account — see `filenameSampleArgs`. It is deliberately far below `EVIDENCE_CHUNK_SIZE`: that
+ * number is the width of a list handed to the planner, and reusing it here would put 500 queries in
+ * flight at once against a connection pool sized for the whole process.
+ *
+ * It is also the budget's checking cadence, so a run can overshoot `MAX_FILENAME_SAMPLES` by at
+ * most `FILENAME_READ_BATCH_SIZE × MAX_FILENAMES_PER_MEMBER` rows before the walk stops.
+ *
+ * Sized small on purpose. Each statement is an index seek costing a fraction of a millisecond, so
+ * the walk is bounded by round trips rather than by database work and there is little to buy by
+ * widening it — while the process shares ONE connection pool with every other job, and a batch wide
+ * enough to hold most of that pool would starve them for the length of a cohort walk.
+ */
+export const FILENAME_READ_BATCH_SIZE = 10;
+
+/**
  * How much of one comment is kept.
  *
  * Templated shill text is identical from its first words; the tail is padding. Truncating on receipt
@@ -143,12 +187,18 @@ export type EvidenceReader = {
   /** Up to `take` recent comments across both comment surfaces, for exactly these accounts. */
   listContentSamples(userIds: number[], take: number): Promise<ContentSampleRow[]>;
   /**
-   * Up to `take` recent uploaded filenames for exactly these accounts, uploaded at or before
-   * `createdBefore`.
+   * Up to `perMemberTake` recent uploaded filenames FOR EACH of these accounts, uploaded at or
+   * before `createdBefore`.
+   *
+   * 🔴 PER MEMBER, NOT ACROSS THEM — the contract changed, and reading it the old way is the defect
+   * it was changed to remove. `listContentSamples` above still takes a cap on the whole result, so
+   * the two sibling methods genuinely differ; see `MAX_FILENAMES_PER_MEMBER` for why, and
+   * `filenameSampleArgs` for the plan that forced it. The result is bounded by
+   * `userIds.length × perMemberTake`, so a caller sizing a budget must multiply.
    */
   listFilenameSamples(
     userIds: number[],
-    take: number,
+    perMemberTake: number,
     createdBefore?: Date
   ): Promise<FilenameSampleRow[]>;
   /** Whether a registration-IP read can happen at all. `false` means the source is missing, NOT
@@ -180,7 +230,41 @@ export function contentSampleArgs(userIds: number[], take: number) {
 }
 
 /**
- * The `findMany` arguments for one chunk of accounts' uploaded filenames.
+ * The `findMany` arguments for ONE account's uploaded filenames.
+ *
+ * 🔴 ONE ACCOUNT, NOT A CHUNK OF THEM, AND THAT IS A CORRECTION TO A SHIPPED DEFECT WITH TWO
+ * INDEPENDENT HALVES. This used to take a `userIds: number[]`, producing
+ * `WHERE userId IN (…300 ids…) AND createdAt <= $1 ORDER BY id DESC LIMIT 1000`, and that one
+ * statement was broken in two unrelated ways at once:
+ *
+ *  - **IT DID NOT COMPLETE.** `Image` is one of the largest tables on the site. The planner's
+ *    selectivity estimate for a wide `IN (…)` list over it is off by three orders of magnitude — it
+ *    expected six figures' worth of matching rows where the cohort owned three, so it chose a BACKWARD
+ *    PRIMARY-KEY SCAN on the strength of the `LIMIT`, reasoning that 1000 of a million matches would
+ *    turn up immediately. A day's new accounts own FEWER rows than the `LIMIT` asks for, so the
+ *    limit was never reached, the early exit never happened, and the scan degenerated into a walk of
+ *    the entire table. Measured on a replica: over 150 seconds, against 20 ms for the read below.
+ *    In production the connection was closed under it first and the run recorded a source failure.
+ *
+ *    🔴 CHUNKING THE ID LIST DOES NOT FIX THIS, and it is the obvious thing to reach for. The same
+ *    plan was measured at 100, 50 and 25 ids: the planner picks the same backward primary-key scan
+ *    every time, because a narrower list lowers the estimate and the `LIMIT` proportionally, leaving
+ *    the reasoning that produced the plan untouched. Smaller chunks are strictly worse — the same
+ *    full-table walk, once per chunk.
+ *
+ *  - **IT DID NOT COVER THE COHORT.** See `MAX_FILENAMES_PER_MEMBER`: the `take` was global across
+ *    the chunk, so a few prolific uploaders could own the newest rows and evict everyone else.
+ *
+ * The two halves are mutually exclusive by construction, which is why neither was ever visible: the
+ * `LIMIT` is reachable exactly when the cohort is large enough for the coverage defect to bite, and
+ * unreachable — hanging — on every other day. There is no day on which the old read was both
+ * complete and correct.
+ *
+ * A single-account read has neither problem. `WHERE userId = $1` is an equality on the leading
+ * column of `image_userid_id_idx`, so the index supplies the `ORDER BY id DESC` directly and the
+ * `LIMIT` is satisfied or the group is exhausted within a page — measured at 0.1–0.2 ms per account,
+ * including for the most prolific recent uploader on the site. The cost is one round trip per
+ * member instead of one per chunk, which `FILENAME_READ_BATCH_SIZE` issues concurrently.
  *
  * 🔴 IT DOES NOT FILTER ON `ingestion` OR `needsReview`, AND THAT OMISSION IS THE SIGNAL. There is a
  * partial index on `Image` covering `ingestion = 'Scanned' AND needsReview IS NULL`, and adding
@@ -190,14 +274,20 @@ export function contentSampleArgs(userIds: number[], take: number) {
  * exists to surface. A filter that reads as routine hygiene would delete the population under study
  * and leave a heuristic that still runs, still reports a number, and can no longer see anything.
  *
- * 🔴 `orderBy: { id: 'desc' }`, NOT `createdAt`, AND THIS IS A CORRECTION TO THE OBVIOUS CHOICE.
- * `Image` carries no `(userId, createdAt)` index — the ones it has are `(userId, postId)` and
- * `(userId, id)` (`image_userid_id_idx`), verified against `schema.prisma` rather than assumed — so
- * ordering on `createdAt` would sort a user's whole image history outside any index. `id` is a
+ * 🔴 `orderBy: { id: 'desc' }`, NOT `createdAt`. `schema.prisma` declares `(userId, postId)` and
+ * `(userId, id)` (`image_userid_id_idx`) on `Image` and no `(userId, createdAt)`, so ordering on
+ * `createdAt` would sort a member's whole image history outside any declared index. `id` is a
  * monotonic surrogate on an append-only table, so descending `id` IS descending upload order for
  * every practical purpose, and it is the order `contentSampleArgs` already reads its own surface in
- * for the same reason: the `take` bounds a chunk, so the order decides WHICH rows a bounded read
- * keeps, and the newest are the ones a wave is made of.
+ * for the same reason: the `take` bounds the read, so the order decides WHICH rows it keeps, and
+ * the newest are the ones a wave is made of.
+ *
+ * ⚠️ The previous wording here claimed `Image` has no `(userId, createdAt)` index as a fact about
+ * the database. It is a fact about `schema.prisma` only — the deployed table also carries an
+ * undeclared `(userId, createdAt)` index. That does not change the choice above (`image_userid_id_idx`
+ * serves this read directly, ordering included) but a docstring that asserts the live index set from
+ * the schema file is asserting more than it checked, and this read's whole defect was a claim about
+ * a plan nobody had looked at.
  *
  * `createdBefore` is an upper bound, not a lower one. A lower bound would be free of meaning — every
  * cohort account was created inside the run's window, so none of its images can predate it — while
@@ -207,10 +297,10 @@ export function contentSampleArgs(userIds: number[], take: number) {
  * Only `userId` and `name` are selected. Nothing else identifies a filename cluster, and an image's
  * url, hash and dimensions would only widen what this module holds in memory.
  */
-export function filenameSampleArgs(userIds: number[], take: number, createdBefore?: Date) {
+export function filenameSampleArgs(userId: number, take: number, createdBefore?: Date) {
   return {
     where: {
-      userId: { in: userIds },
+      userId,
       ...(createdBefore ? { createdAt: { lte: createdBefore } } : {}),
     },
     select: { userId: true, name: true },
@@ -325,9 +415,19 @@ export function createEvidenceReader(
       ]);
       return [...comments, ...commentsV2];
     },
-    listFilenameSamples: async (userIds, take, createdBefore) => {
-      if (!userIds.length || take <= 0) return [];
-      return db.image.findMany(filenameSampleArgs(userIds, take, createdBefore));
+    listFilenameSamples: async (userIds, perMemberTake, createdBefore) => {
+      if (!userIds.length || perMemberTake <= 0) return [];
+      // 🔴 ONE READ PER MEMBER, ISSUED TOGETHER. The caller sizes the batch
+      // (`FILENAME_READ_BATCH_SIZE`), so this fans out over exactly what it was handed rather than
+      // over the whole cohort. `Promise.all` REJECTS on the first failure, which is the behaviour
+      // the walk wants: a batch that partly failed is partial data, and the walk discards partial
+      // data rather than scoring it.
+      const perMember = await Promise.all(
+        userIds.map((userId) =>
+          db.image.findMany(filenameSampleArgs(userId, perMemberTake, createdBefore))
+        )
+      );
+      return perMember.flat();
     },
   };
 }
@@ -478,6 +578,30 @@ export type CohortSignals = {
    * consumer of this type is expected to branch on these before reading a zero as a signal.
    */
   sources: {
+    /**
+     * 🔴 A SOURCE READ THREW. Three booleans, one per source, and every one of them is `false`
+     * unless a read actually raised — nothing about an empty cohort, an empty result or an absent
+     * client can set one.
+     *
+     * 🔴 WHY THIS EXISTS ALONGSIDE THE AVAILABILITY FLAGS BELOW, which look like they already say
+     * it. They do not, in the one direction that cost a day. An availability flag is `false` for
+     * TWO reasons — the source was never there, or its read failed — and `registrationIps` in
+     * particular is `false` on every deployment with no ClickHouse configured, which is a normal
+     * state and not an incident. So "availability is false" cannot be alerted on, and the only
+     * record of a real read failure was a log line. A run whose filename read died produced
+     * counters that were, number for number, the counters of a day on which nobody uploaded
+     * anything: the flag said 0, the sample counts said 0, the budget said untouched, and the run
+     * reported success. These flags are the thing that is NOT zero when that happens.
+     *
+     * A consumer wanting "did anything break" sums them; a consumer wanting "was this heuristic
+     * blind" still reads the availability flag, because a source that was never configured leaves
+     * it just as blind.
+     */
+    readFailures: {
+      registrationIps: boolean;
+      contentSamples: boolean;
+      filenameSamples: boolean;
+    };
     /** ClickHouse was reachable and the registration-IP read ran. */
     registrationIps: boolean;
     /**
@@ -522,6 +646,14 @@ export function emptyCohortSignals(): CohortSignals {
     fingerprintsByUser: new Map(),
     membersPerFingerprint: new Map(),
     sources: {
+      // 🔴 NOT "did not run" — these are the only fields here whose safe default is `false`
+      // meaning what it says. An index over nothing is not a failure, and defaulting them to
+      // `true` would make every empty cohort look like an outage.
+      readFailures: {
+        registrationIps: false,
+        contentSamples: false,
+        filenameSamples: false,
+      },
       registrationIps: false,
       contentSamples: false,
       contentBudgetExhausted: false,
@@ -647,14 +779,32 @@ export function buildCohortSignals(args: {
  * description rather than an aspiration.
  *
  * The content walk is a BUDGET, not a per-chunk cap — see `MAX_CONTENT_SAMPLES`.
+ *
+ * 🔴 DEGRADING IS NOT THE SAME AS BEING LEGIBLE, and for a year it was treated as if it were. Every
+ * guard below records an AVAILABILITY flag, and a run that degraded published counters identical to
+ * a run that found nothing — so the degradation was visible only in a log line nobody was watching.
+ * Each `catch` now also sets `sources.readFailures.*`, which is `false` on a quiet day and cannot be
+ * made `true` by any amount of nothing. See that field.
  */
 export async function collectCohortSignals(
   reader: EvidenceReader,
   members: BotAccountCohortMember[],
   opts: {
     chunkSize?: number;
+    /**
+     * How many members' filename reads are issued together. Defaults to the NARROWER of
+     * `chunkSize` and `FILENAME_READ_BATCH_SIZE`.
+     *
+     * 🔴 ITS OWN KNOB BECAUSE IT IS ITS OWN UNIT. `chunkSize` is the width of an `IN (…)` list; the
+     * filename read has no `IN (…)` list any more, so reusing that number would put 500 concurrent
+     * queries in flight. Taking the narrower of the two keeps a caller that deliberately asked for
+     * a small chunk — every test here does — reading filenames at that same granularity.
+     */
+    filenameBatchSize?: number;
     maxContentSamples?: number;
     maxFilenameSamples?: number;
+    /** Per-member cap on filename rows. Defaults to `MAX_FILENAMES_PER_MEMBER`. */
+    maxFilenamesPerMember?: number;
     /** The run's window opening, passed through to the ClickHouse read as its `time` bound. */
     createdAfter?: Date;
     /** The run's own clock, passed to the filename read as its upper bound so the sample is a
@@ -665,19 +815,20 @@ export async function collectCohortSignals(
   } = {}
 ): Promise<CohortSignals> {
   const chunkSize = opts.chunkSize ?? EVIDENCE_CHUNK_SIZE;
+  const filenameBatchSize = opts.filenameBatchSize ?? Math.min(chunkSize, FILENAME_READ_BATCH_SIZE);
   const budgetTotal = opts.maxContentSamples ?? MAX_CONTENT_SAMPLES;
   const filenameBudgetTotal = opts.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
+  const filenamesPerMember = opts.maxFilenamesPerMember ?? MAX_FILENAMES_PER_MEMBER;
   const checkCanceled = opts.checkCanceled ?? (() => undefined);
   const log = opts.log ?? (() => undefined);
 
   if (!members.length) return emptyCohortSignals();
 
-  const chunks = chunk(
-    members.map((m) => m.userId),
-    chunkSize
-  );
+  const userIds = members.map((m) => m.userId);
+  const chunks = chunk(userIds, chunkSize);
 
   const registrationIps: RegistrationIpRow[] = [];
+  let ipsFailed = false;
   let ipsRead = reader.hasRegistrationIps;
   if (ipsRead) {
     for (const ids of chunks) {
@@ -695,6 +846,10 @@ export async function collectCohortSignals(
         });
         registrationIps.length = 0;
         ipsRead = false;
+        // 🔴 SET ONLY HERE, INSIDE THE `catch`. `ipsRead` is also `false` when ClickHouse is simply
+        // not configured, which is a normal deployment and not an incident; this one is reachable
+        // only by a read that threw.
+        ipsFailed = true;
         break;
       }
     }
@@ -715,6 +870,7 @@ export async function collectCohortSignals(
   // `checkCanceled()` stays OUTSIDE the try. It throws on purpose, and swallowing that would turn
   // cancellation into a degraded run that keeps going.
   let contentRead = true;
+  let contentFailed = false;
   for (const ids of chunks) {
     checkCanceled();
     if (budget <= 0) {
@@ -734,6 +890,7 @@ export async function collectCohortSignals(
       });
       contentSamples.length = 0;
       contentRead = false;
+      contentFailed = true;
       // A failed read is not an exhausted budget, and reporting it as one would send a grading pass
       // looking for a cohort too large rather than for a broken replica.
       budgetExhausted = false;
@@ -746,17 +903,27 @@ export async function collectCohortSignals(
   }
   if (contentRead && budget <= 0 && membersSampled < members.length) budgetExhausted = true;
 
-  // The filename walk. Structurally the content walk above, with its own budget and its own flags —
-  // see `MAX_FILENAME_SAMPLES` for why the budgets are separate, and `sources.filenameSamples` for
-  // why the availability flags are. Partial data is DISCARDED on failure here too: a cluster count
-  // built from some of the chunks understates every ring that straddles the missing ones, and
+  // The filename walk. The content walk above with its own budget and its own flags — see
+  // `MAX_FILENAME_SAMPLES` for why the budgets are separate, and `sources.filenameSamples` for why
+  // the availability flags are. Partial data is DISCARDED on failure here too: a cluster count built
+  // from some of the batches understates every ring that straddles the missing ones, and
   // understating is the direction that produces a confident zero.
+  //
+  // 🔴 IT WALKS ITS OWN BATCHES, NOT `chunks`, because the read is now one query per MEMBER rather
+  // than one per chunk — see `filenameSampleArgs` for the plan that forced that and
+  // `FILENAME_READ_BATCH_SIZE` for the width. The batch is also the budget's checking cadence, so a
+  // run can overshoot `maxFilenameSamples` by at most `filenameBatchSize × filenamesPerMember` rows
+  // before stopping. That overshoot is bounded and stated rather than eliminated: a per-row budget
+  // check would mean tearing a member's sample in half, and half a member's filenames is exactly
+  // the partial data every other guard here refuses to score.
   const filenameSamples: FilenameSampleRow[] = [];
+  const filenameBatches = chunk(userIds, filenameBatchSize);
   let filenameBudget = filenameBudgetTotal;
   let filenameBudgetExhausted = false;
   let filenameMembersSampled = 0;
   let filenameRead = true;
-  for (const ids of chunks) {
+  let filenameFailed = false;
+  for (const ids of filenameBatches) {
     checkCanceled();
     if (filenameBudget <= 0) {
       filenameBudgetExhausted = true;
@@ -764,12 +931,10 @@ export async function collectCohortSignals(
     }
     let rows: FilenameSampleRow[];
     try {
-      // One surface, so the take IS the remaining budget — no doubling, unlike the content read.
-      rows = await reader.listFilenameSamples(
-        ids,
-        Math.min(filenameBudget, chunkSize * 2),
-        opts.createdBefore
-      );
+      // 🔴 PER MEMBER, NOT ACROSS THE BATCH. Passing the remaining budget here — which is what the
+      // content read above does with its own — would restore the exact defect this read was changed
+      // to remove: a cap shared across accounts is a cap one account can spend.
+      rows = await reader.listFilenameSamples(ids, filenamesPerMember, opts.createdBefore);
     } catch (e) {
       log('bot-account-detection:filename-samples-failed', {
         chunkIds: ids.length,
@@ -777,6 +942,7 @@ export async function collectCohortSignals(
       });
       filenameSamples.length = 0;
       filenameRead = false;
+      filenameFailed = true;
       filenameBudgetExhausted = false;
       filenameMembersSampled = 0;
       break;
@@ -794,6 +960,11 @@ export async function collectCohortSignals(
     contentSamples,
     filenameSamples,
     sources: {
+      readFailures: {
+        registrationIps: ipsFailed,
+        contentSamples: contentFailed,
+        filenameSamples: filenameFailed,
+      },
       registrationIps: ipsRead,
       contentSamples: contentRead,
       contentBudgetExhausted: budgetExhausted,

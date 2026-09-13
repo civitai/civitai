@@ -19,6 +19,8 @@ import {
   normalizeContent,
   registrationIpSql,
   MAX_FILENAME_SAMPLES,
+  MAX_FILENAMES_PER_MEMBER,
+  FILENAME_READ_BATCH_SIZE,
   filenameFingerprint,
   filenameSampleArgs,
   normalizeFilename,
@@ -285,20 +287,41 @@ describe('unprefixFingerprint', () => {
 });
 
 describe('filenameSampleArgs', () => {
-  it('reads the newest images of exactly these accounts, bounded, two columns', () => {
-    const args = filenameSampleArgs([1, 2], 50);
-    expect(args.where.userId).toEqual({ in: [1, 2] });
+  it('reads the newest images of exactly ONE account, bounded, two columns', () => {
+    const args = filenameSampleArgs(1, 50);
+    expect(args.where.userId).toBe(1);
     expect(args.select).toEqual({ userId: true, name: true });
     expect(args.take).toBe(50);
   });
 
-  it('🔴 orders by id, NOT createdAt — `Image` has no (userId, createdAt) index', () => {
-    // Verified against `schema.prisma`: the indexes on `Image` are `(userId, postId)` and
-    // `(userId, id)` (`image_userid_id_idx`). Ordering on `createdAt` would sort a user's whole
-    // image history outside any index. `id` is monotonic on an append-only table, so descending
-    // `id` is descending upload order — and the `take` means the ORDER decides which rows a
-    // bounded read keeps.
-    expect(filenameSampleArgs([1], 10).orderBy).toEqual({ id: 'desc' });
+  it('🔴 pins `userId` to a SCALAR EQUALITY — never an `IN (…)` list under a LIMIT', () => {
+    // 🔴 THE REGRESSION GUARD FOR THE READ THAT NEVER COMPLETED. The shipped shape was
+    // `WHERE userId IN (…hundreds…) AND createdAt <= $1 ORDER BY id DESC LIMIT <take>`, and on a
+    // table the size of `Image` the planner's estimate for a wide `IN (…)` list is off by three
+    // orders of magnitude — it expects six figures' worth of matches where the cohort owns three. On that
+    // estimate a backward primary-key scan looks cheap, because the LIMIT is expected to be hit
+    // immediately. A day's new accounts own FEWER rows than the LIMIT asks for, so the LIMIT is
+    // never reached, the early exit never fires, and the scan walks the whole table. Measured on a
+    // replica: over 150 seconds versus 20 ms for the per-account read, and the connection was
+    // closed under it in production.
+    //
+    // 🔴 THE GUARD IS ON THE SHAPE, NOT ON THE LIST WIDTH, because narrowing the list does not fix
+    // it: the same backward primary-key scan was measured at 100, 50 and 25 ids — a shorter list
+    // lowers the estimate and the LIMIT together and leaves the reasoning intact. Only an equality
+    // on the leading column of `image_userid_id_idx` makes the ORDER BY index-supplied and the
+    // LIMIT reachable. So this asserts a NUMBER, which no `{ in: [...] }` of any width satisfies.
+    const where = filenameSampleArgs(7, 10).where;
+    expect(typeof where.userId).toBe('number');
+    expect(where.userId).not.toHaveProperty('in');
+  });
+
+  it('🔴 orders by id, NOT createdAt', () => {
+    // `schema.prisma` declares `(userId, postId)` and `(userId, id)` (`image_userid_id_idx`) on
+    // `Image` and no `(userId, createdAt)`, so ordering on `createdAt` would sort a member's image
+    // history outside any declared index. `id` is monotonic on an append-only table, so descending
+    // `id` is descending upload order — and the `take` means the ORDER decides which rows a bounded
+    // read keeps.
+    expect(filenameSampleArgs(1, 10).orderBy).toEqual({ id: 'desc' });
   });
 
   it('🔴 DOES NOT FILTER ON ingestion OR needsReview — the blocked rows ARE the signal', () => {
@@ -310,8 +333,8 @@ describe('filenameSampleArgs', () => {
     //
     // Asserted as the EXACT key set of `where`, so a new filter of ANY name fails here. A test
     // naming only `ingestion` and `needsReview` would be walkable by a third predicate.
-    expect(Object.keys(filenameSampleArgs([1], 10).where).sort()).toEqual(['userId']);
-    expect(Object.keys(filenameSampleArgs([1], 10, new Date()).where).sort()).toEqual([
+    expect(Object.keys(filenameSampleArgs(1, 10).where).sort()).toEqual(['userId']);
+    expect(Object.keys(filenameSampleArgs(1, 10, new Date()).where).sort()).toEqual([
       'createdAt',
       'userId',
     ]);
@@ -319,10 +342,10 @@ describe('filenameSampleArgs', () => {
 
   it('bounds on createdAt when given a window, and omits it when not', () => {
     const before = new Date('2026-09-03T12:00:00.000Z');
-    expect(filenameSampleArgs([1], 10, before).where).toMatchObject({
+    expect(filenameSampleArgs(1, 10, before).where).toMatchObject({
       createdAt: { lte: before },
     });
-    expect(filenameSampleArgs([1], 10).where).not.toHaveProperty('createdAt');
+    expect(filenameSampleArgs(1, 10).where).not.toHaveProperty('createdAt');
   });
 });
 
@@ -345,6 +368,20 @@ describe('the module constants', () => {
     expect(MIN_FINGERPRINT_CHARS).toBe(24);
     expect(MIN_FINGERPRINT_TOKENS).toBe(4);
     expect(MAX_IPS_PER_ACCOUNT).toBe(4);
+    // 🔴 THE PER-ACCOUNT CAP, PINNED FOR THE SAME REASON `MAX_IPS_PER_ACCOUNT` IS — they are the
+    // same idea on the two sources, and the defect they both prevent is one account spending an
+    // allowance the rest of its batch needed.
+    expect(MAX_FILENAMES_PER_MEMBER).toBe(50);
+    // 🔴 THE BATCH IS A CONCURRENCY WINDOW AND MUST STAY WELL UNDER THE `IN (…)` WIDTH. The filename
+    // read is one statement per member, so setting this to the chunk width would put 500 statements
+    // in flight from one job against a pool the whole process shares.
+    expect(FILENAME_READ_BATCH_SIZE).toBe(10);
+    expect(FILENAME_READ_BATCH_SIZE).toBeLessThan(EVIDENCE_CHUNK_SIZE);
+    // The worst-case overshoot past the budget, as arithmetic rather than prose: one batch's rows,
+    // which must stay small against the budget it can overshoot.
+    expect(FILENAME_READ_BATCH_SIZE * MAX_FILENAMES_PER_MEMBER).toBeLessThan(
+      MAX_FILENAME_SAMPLES / 10
+    );
   });
 
   it('renders a ClickHouse DateTime literal, not an ISO string', () => {
@@ -702,6 +739,7 @@ describe('buildCohortSignals', () => {
       registrationIps: [],
       contentSamples: [],
       sources: {
+        readFailures: { registrationIps: true, contentSamples: false, filenameSamples: false },
         registrationIps: false,
         contentSamples: true,
         contentBudgetExhausted: true,
@@ -712,6 +750,7 @@ describe('buildCohortSignals', () => {
       },
     });
     expect(s.sources).toEqual({
+      readFailures: { registrationIps: true, contentSamples: false, filenameSamples: false },
       registrationIps: false,
       contentSamples: true,
       contentBudgetExhausted: true,
@@ -729,6 +768,9 @@ describe('emptyCohortSignals', () => {
     // flags default to false for that reason — including `contentSamples`, whose false means "no
     // content was read", never "the cohort posted nothing that matched".
     expect(emptyCohortSignals().sources).toEqual({
+      // 🔴 THE ONE GROUP WHOSE `false` IS NOT "did not run". An index over nothing is not an
+      // outage, and defaulting these to true would make every empty cohort page an operator.
+      readFailures: { registrationIps: false, contentSamples: false, filenameSamples: false },
       registrationIps: false,
       contentSamples: false,
       contentBudgetExhausted: false,
@@ -792,10 +834,17 @@ function fakeReader(opts: {
       if (opts.contentError) throw opts.contentError;
       return (opts.content ?? []).filter((r) => ids.includes(r.userId)).slice(0, take);
     },
-    listFilenameSamples: async (ids, take, createdBefore) => {
-      filenameCalls.push({ ids, take, createdBefore });
+    // 🔴 THE FAKE MODELS THE PER-MEMBER CAP, and getting this wrong is how the defect stayed
+    // invisible. It used to `.slice(0, take)` the whole batch — i.e. the fake encoded the same
+    // global-take semantics the broken query had, so no test built on it could ever observe an
+    // account being evicted by another. A fake that reproduces the code's mistake makes the suite
+    // agree with the bug.
+    listFilenameSamples: async (ids, perMemberTake, createdBefore) => {
+      filenameCalls.push({ ids, take: perMemberTake, createdBefore });
       if (opts.filenameError) throw opts.filenameError;
-      return (opts.filenames ?? []).filter((r) => ids.includes(r.userId)).slice(0, take);
+      return ids.flatMap((id) =>
+        (opts.filenames ?? []).filter((r) => r.userId === id).slice(0, perMemberTake)
+      );
     },
   };
 }
@@ -993,6 +1042,91 @@ describe('collectCohortSignals', () => {
     expect(s.sources.membersSampledForFilenames).toBeLessThan(members.length);
   });
 
+  it('🔴 records WHICH read threw, in a field nothing but a `catch` can set', async () => {
+    // 🔴 THE SILENT-ZERO SEAM. Every other evidence field answers "was this heuristic blind", and
+    // each of them reads the same on a quiet day as on a broken one. `readFailures` is the field
+    // that does not: it is written only inside a `catch`, so a non-zero has no quiet-day reading.
+    const failed = await collectCohortSignals(
+      fakeReader({ filenameError: new Error('replica timeout') }),
+      members,
+      { chunkSize: 2 }
+    );
+    expect(failed.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: true,
+    });
+
+    // 🔴 THE CONTROL THAT MAKES THE ABOVE MEAN ANYTHING: the identical run with a source that
+    // simply found nothing. Every OTHER field this pair produces is identical — the availability
+    // flag, the sample count, the budget — which is exactly the ambiguity being removed.
+    const quiet = await collectCohortSignals(fakeReader({ filenames: [] }), members, {
+      chunkSize: 2,
+    });
+    expect(quiet.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+  });
+
+  it('🔴 an ABSENT ClickHouse client is not a read failure', async () => {
+    // The distinction the availability flag cannot draw and this one must: a deployment with no
+    // ClickHouse configured is a normal state, and reporting it as a failure would make the signal
+    // permanently non-zero on those deployments and therefore unalertable — the same uselessness as
+    // a permanently-zero one, from the other end.
+    const s = await collectCohortSignals(fakeReader({ hasIps: false }), members, { chunkSize: 2 });
+    expect(s.sources.registrationIps).toBe(false);
+    expect(s.sources.readFailures.registrationIps).toBe(false);
+  });
+
+  it('🔴 an EMPTY cohort is not a read failure either', async () => {
+    const s = await collectCohortSignals(fakeReader({}), []);
+    expect(s.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+  });
+
+  it('records a failing IP read and a failing content read on their own flags', async () => {
+    // Asserted per source rather than as an aggregate, so one source's failure cannot be reported
+    // under another's name — the same argument the availability flags are split for.
+    const ip = await collectCohortSignals(fakeReader({ ipError: new Error('down') }), members, {
+      chunkSize: 2,
+    });
+    expect(ip.sources.readFailures).toMatchObject({
+      registrationIps: true,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+    const content = await collectCohortSignals(
+      fakeReader({ contentError: new Error('down') }),
+      members,
+      { chunkSize: 2 }
+    );
+    expect(content.sources.readFailures).toMatchObject({
+      registrationIps: false,
+      contentSamples: true,
+      filenameSamples: false,
+    });
+  });
+
+  it('🔴 walks filenames in its OWN batches, narrower than the chunk width', async () => {
+    // The filename read is one statement per member now, so the `IN (…)` width is the wrong unit:
+    // reusing `chunkSize` would put 500 statements in flight at once. The default is the narrower
+    // of the two, which keeps a caller that deliberately asked for a small chunk reading filenames
+    // at that same granularity.
+    const many = Array.from({ length: 60 }, (_, i) => member(i + 1, 'ring.test'));
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, many, { chunkSize: 500 });
+    expect(FILENAME_READ_BATCH_SIZE).toBeLessThan(EVIDENCE_CHUNK_SIZE);
+    for (const call of reader.filenameCalls)
+      expect(call.ids.length).toBeLessThanOrEqual(FILENAME_READ_BATCH_SIZE);
+    // The content read is unaffected: it still uses the chunk width it was given.
+    expect(reader.contentCalls.map((c) => c.ids.length)).toEqual([60]);
+  });
+
   it('does not claim filename exhaustion when the whole cohort fit inside the budget', async () => {
     const s = await collectCohortSignals(fakeReader({ filenames: [] }), members, { chunkSize: 2 });
     expect(s.sources.filenameBudgetExhausted).toBe(false);
@@ -1033,12 +1167,23 @@ describe('collectCohortSignals', () => {
     expect(reader.filenameCalls.map((c) => c.createdBefore)).toEqual([createdBefore]);
   });
 
-  it('never asks for more filename rows than the budget has left', async () => {
+  it('🔴 asks for a PER-MEMBER cap, never the remaining budget', async () => {
+    // 🔴 THE INVERSION OF THE TEST THIS REPLACES, AND THE INVERSION IS THE FIX. The old assertion
+    // was `take <= remaining budget` — i.e. it pinned the budget as a cap on the RESULT, which is
+    // precisely the shape that let the newest rows in a chunk evict every other account in it. The
+    // cap handed down must be the per-member one and must NOT shrink with the budget, because a
+    // budget-shaped cap is a cap accounts compete for. The budget still bounds the run; it does so
+    // by stopping the WALK, not by narrowing what one member may contribute.
     const reader = fakeReader({
       filenames: Array.from({ length: 5 }, (_, i) => ({ userId: i + 1, name: `f${i}.jpg` })),
     });
-    await collectCohortSignals(reader, members, { chunkSize: 2, maxFilenameSamples: 3 });
-    for (const call of reader.filenameCalls) expect(call.take).toBeLessThanOrEqual(3);
+    await collectCohortSignals(reader, members, {
+      chunkSize: 2,
+      maxFilenameSamples: 3,
+      maxFilenamesPerMember: 7,
+    });
+    expect(reader.filenameCalls.length).toBeGreaterThan(0);
+    for (const call of reader.filenameCalls) expect(call.take).toBe(7);
   });
 
   it('hands the run window down to the registration-IP read', async () => {
@@ -1125,14 +1270,77 @@ describe('createEvidenceReader', () => {
     ]);
   });
 
-  it('reads the image surface for filenames, passing the bound through', async () => {
+  it('🔴 reads the image surface ONCE PER MEMBER, passing the bound through', async () => {
+    // 🔴 ONE STATEMENT PER ACCOUNT, NOT ONE PER LIST. It used to be a single `IN (…)` read, and
+    // that single statement carried both defects this change removes — see `filenameSampleArgs`.
+    // The fan-out is asserted by CALL COUNT and by the arguments of each call, because "it returned
+    // rows" is true of the broken shape too.
     const reader = createEvidenceReader({ db, ch: null });
     db.image.findMany.mockClear();
     const before = new Date('2026-09-03T12:00:00.000Z');
     expect(await reader.listFilenameSamples([1, 2], 10, before)).toEqual([
       { userId: 3, name: 'logo.jpg' },
+      { userId: 3, name: 'logo.jpg' },
     ]);
-    expect(db.image.findMany).toHaveBeenCalledWith(filenameSampleArgs([1, 2], 10, before));
+    expect(db.image.findMany).toHaveBeenCalledTimes(2);
+    expect(db.image.findMany).toHaveBeenNthCalledWith(1, filenameSampleArgs(1, 10, before));
+    expect(db.image.findMany).toHaveBeenNthCalledWith(2, filenameSampleArgs(2, 10, before));
+  });
+
+  it('🔴 EVERY MEMBER CONTRIBUTES — a prolific uploader cannot evict the rest of the batch', async () => {
+    // 🔴 THE COVERAGE HALF OF THE DEFECT, AT THE SEAM WHERE IT LIVED, AGAINST A FAKE THAT OBEYS
+    // PRISMA'S SEMANTICS RATHER THAN THE CODE'S ASSUMPTIONS. The old read was ONE statement per
+    // batch under ONE `take` with `ORDER BY id DESC`, so the newest rows in the batch consumed the
+    // whole allowance: if a handful of accounts owned them, every other account in the batch
+    // contributed NOTHING and the counters looked healthy while doing it. That is the shape a ring
+    // of low-volume accounts is invisible in — which is the population this heuristic exists for.
+    //
+    // Measured on ten consecutive real daily cohorts: the global cap reached every member on eight
+    // of them and collapsed on the other two — barely half the uploading members on one, about four
+    // fifths on the other. It collapses on
+    // the days the cohort uploaded MOST.
+    //
+    // The fixture is built so a global cap MUST fail it: one account owns every one of the newest
+    // rows, and the cap is smaller than that account's holding.
+    const rows = [
+      ...Array.from({ length: 20 }, (_, i) => ({ id: 1000 + i, userId: 1, name: 'prolific.jpg' })),
+      { id: 10, userId: 2, name: 'ring.jpg' },
+      { id: 9, userId: 3, name: 'ring.jpg' },
+    ];
+    // 🔴 A `findMany` THAT BEHAVES LIKE ONE, AND THAT UNDERSTANDS BOTH SHAPES — the second half is
+    // what makes this a regression test rather than a type error dressed as one. It honours a
+    // scalar `userId` AND an `{ in: [...] }` list, so running this test against the pre-change
+    // source reproduces the shipped statement faithfully (ONE query, the whole list, `ORDER BY id
+    // DESC`, one `take`) and fails because accounts 2 and 3 were EVICTED — not because the fake
+    // could not parse the old argument. A fake that only speaks the new shape would go red at base
+    // for the wrong reason and prove nothing about the behaviour.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
+        const target = args.where.userId as unknown as number | { in: number[] };
+        const matches =
+          typeof target === 'number'
+            ? (r: (typeof rows)[number]) => r.userId === target
+            : (r: (typeof rows)[number]) => target.in.includes(r.userId);
+        return rows
+          .filter(matches)
+          .sort((a, b) => b.id - a.id)
+          .slice(0, args.take)
+          .map((r) => ({ userId: r.userId, name: r.name }));
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+
+    const got = await reader.listFilenameSamples([1, 2, 3], 5);
+    const contributors = new Set(got.map((r) => r.userId));
+    // The assertion that a global cap of 5 over these rows cannot satisfy: under it, the five
+    // newest rows are all account 1's and accounts 2 and 3 are absent.
+    expect(contributors).toEqual(new Set([1, 2, 3]));
+    // And the prolific account is still capped, so the fix does not trade eviction for unbounded
+    // reads: the total is `members × cap`, never `members × everything`.
+    expect(got.filter((r) => r.userId === 1)).toHaveLength(5);
   });
 
   it('issues no filename statement for an empty id list or a zero take', async () => {

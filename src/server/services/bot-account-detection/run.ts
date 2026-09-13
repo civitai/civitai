@@ -221,6 +221,9 @@ export async function runBotAccountDetection(
     filenameSamples: signals.sources.filenameSamples,
     filenameBudgetExhausted: signals.sources.filenameBudgetExhausted,
     membersSampledForFilenames: signals.sources.membersSampledForFilenames,
+    // The failure half, beside the availability half. A reader of this line could previously see
+    // `filenameSamples: false` and not know whether a read had broken or a client was absent.
+    readFailures: signals.sources.readFailures,
   });
 
   const memberById = new Map(cohort.members.map((m) => [m.userId, m]));
@@ -338,6 +341,31 @@ export async function runBotAccountDetection(
     evidence_filename_budget_exhausted: signals.sources.filenameBudgetExhausted ? 1 : 0,
     evidence_members_sampled_for_filenames: signals.sources.membersSampledForFilenames,
     evidence_filename_budget: maxFilenameSamples,
+
+    // 🔴 THE SOURCE-FAILURE LEDGER, AND IT IS THE COUNTER TO ALERT ON. Every other evidence counter
+    // above answers "was this heuristic blind", and each of them reads `0` on a quiet day AND on a
+    // broken one. That is not a hypothetical: a run shipped whose filename read died on every
+    // attempt, and its counters — `evidence_filename_samples: 0`,
+    // `evidence_members_sampled_for_filenames: 0`, `evidence_distinct_filename_fingerprints: 0`,
+    // `evidence_filename_budget_exhausted: 0` — were number for number the counters of a day on
+    // which nobody uploaded anything. The run reported success, the report was filed, nothing
+    // alerted, and the only record of the failure was a log line.
+    //
+    // 🔴 WHY THIS ONE CANNOT BE READ THE SAME WRONG WAY: it is incremented ONLY inside a `catch`
+    // (see `CohortSignals.sources.readFailures`). No empty cohort, no empty result, no absent
+    // ClickHouse client and no exhausted budget can raise it above zero — so `> 0` means a read
+    // threw, full stop, and there is no quiet-day reading of a non-zero. The direction is the point:
+    // the reassuring value is 0 and the reassuring value is also the DEFAULT, so a run that never
+    // got far enough to set it reads as "nothing broke", which is why the per-source keys below are
+    // emitted alongside rather than only the total.
+    evidence_source_read_failures:
+      (signals.sources.readFailures.registrationIps ? 1 : 0) +
+      (signals.sources.readFailures.contentSamples ? 1 : 0) +
+      (signals.sources.readFailures.filenameSamples ? 1 : 0),
+    evidence_registration_ips_read_failed: signals.sources.readFailures.registrationIps ? 1 : 0,
+    evidence_content_read_failed: signals.sources.readFailures.contentSamples ? 1 : 0,
+    evidence_filename_read_failed: signals.sources.readFailures.filenameSamples ? 1 : 0,
+
     domains_suppressed_common: domainsSuppressed,
 
     ...heuristicCounters(scores),
@@ -377,8 +405,12 @@ export async function runBotAccountDetection(
     // stops a reader treating a low-confidence run as evidence that no ring existed.
     (signals.sources.registrationIps
       ? ''
-      : ` 🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run, so the clustering heuristic scored on ` +
-        `email domain alone — a low score from it is not evidence that accounts share no IP.`) +
+      : ` 🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run` +
+        (signals.sources.readFailures.registrationIps
+          ? ` BECAUSE THE READ FAILED (counted in evidence_source_read_failures)`
+          : ``) +
+        `, so the clustering heuristic scored on email domain alone — a low score from it is not ` +
+        `evidence that accounts share no IP.`) +
     // 🔴 THE READ RAN AND MATCHED NOTHING — the case the availability flag alone cannot express.
     // `evidence_registration_ips: 1` with `evidence_distinct_registration_ips: 0` over a non-empty
     // cohort is the signature of a query that is wrong rather than of a day with no shared
@@ -393,10 +425,14 @@ export async function runBotAccountDetection(
       : '') +
     (signals.sources.contentSamples
       ? ''
-      : ` 🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read either did not run or failed ` +
-        `and its partial result was discarded — so the content-templating heuristic scored 0 for ` +
-        `every member for want of data. That is not evidence that no accounts posted the same text. ` +
-        `The rest of the run was scored normally.`) +
+      : signals.sources.readFailures.contentSamples
+      ? ` 🔴 THE CONTENT SAMPLE READ FAILED this run and its partial result was discarded, so the ` +
+        `content-templating heuristic scored 0 for every member for want of data. That is not ` +
+        `evidence that no accounts posted the same text — it is a broken read, and it is counted ` +
+        `in evidence_source_read_failures. The rest of the run was scored normally.`
+      : ` 🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
+        `content-templating heuristic scored 0 for every member for want of data. That is not ` +
+        `evidence that no accounts posted the same text. The rest of the run was scored normally.`) +
     (signals.sources.contentBudgetExhausted
       ? ` 🔴 THE CONTENT SAMPLE BUDGET (${maxContentSamples} rows) WAS EXHAUSTED after ` +
         `${signals.sources.membersSampledForContent} of ${cohort.members.length} members. Members ` +
@@ -406,12 +442,20 @@ export async function runBotAccountDetection(
     // The filename half of `content-templating` gets its own disclosures, for the same reason the
     // comment half has them: a zero from a source that never ran is not a zero from a source that
     // found nothing, and only these sentences tell a reader which one they are looking at.
+    // 🔴 IT NAMES WHICH OF THE TWO HAPPENED. "did not run or failed" was one sentence covering two
+    // situations that call for different actions — one is a deployment without the source wired up,
+    // the other is a broken read that needs fixing today — and a reader could not tell them apart
+    // from the report OR from the counters. `readFailures` is what separates them.
     (signals.sources.filenameSamples
       ? ''
-      : ` 🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read either did not run or ` +
-        `failed and its partial result was discarded — so the filename half of the ` +
-        `content-templating heuristic scored 0 for every member for want of data. That is not ` +
-        `evidence that no accounts uploaded files under the same name.`) +
+      : signals.sources.readFailures.filenameSamples
+      ? ` 🔴 THE UPLOADED-FILENAME READ FAILED this run and its partial result was discarded, so ` +
+        `the filename half of the content-templating heuristic scored 0 for every member for want ` +
+        `of data. That is not evidence that no accounts uploaded files under the same name — it is ` +
+        `a broken read, and it is counted in evidence_source_read_failures.`
+      : ` 🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
+        `filename half of the content-templating heuristic scored 0 for every member for want of ` +
+        `data. That is not evidence that no accounts uploaded files under the same name.`) +
     (signals.sources.filenameBudgetExhausted
       ? ` 🔴 THE FILENAME SAMPLE BUDGET (${maxFilenameSamples} rows) WAS EXHAUSTED after ` +
         `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} members. ` +

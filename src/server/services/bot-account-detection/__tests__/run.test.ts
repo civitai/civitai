@@ -388,9 +388,125 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     });
     const result = await scenario.result;
     expect(result.counters.evidence_filename_samples).toBe(0);
-    expect(scenario.reports[0].summary).toContain('UPLOADED-FILENAME DATA WAS UNAVAILABLE');
+    expect(scenario.reports[0].summary).toContain('THE UPLOADED-FILENAME READ FAILED');
     // The run still completed and still filed a report — a dead source degrades it, never kills it.
     expect(result.reportsSent).toBeGreaterThan(0);
+  });
+
+  it('🔴 A FAILED FILENAME READ AND A QUIET DAY PRODUCE DIFFERENT COUNTERS', async () => {
+    // 🔴 THE SEAM THIS WHOLE CHANGE EXISTS FOR, ASSERTED AS A COMPARISON RATHER THAN AS A VALUE.
+    // A production run's filename read failed on every attempt and the run reported success. Its
+    // counters — `evidence_filename_samples: 0`, `evidence_members_sampled_for_filenames: 0`,
+    // `evidence_distinct_filename_fingerprints: 0`, `evidence_filename_budget_exhausted: 0` — were
+    // number for number the counters of a day on which nobody uploaded anything. Nothing alerted,
+    // every dashboard was green, and the only record was one log line. A test asserting any single
+    // counter's VALUE would have passed on both runs; only asserting that the two runs DIFFER
+    // states the property that was missing.
+    const failed = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const failedCounters = (await failed.result).counters;
+
+    // The control: the identical run whose filename read worked perfectly and found nothing.
+    const quiet = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    const quietCounters = (await quiet.result).counters;
+
+    // The two counter maps differ. ⚠️ LABELLED HONESTLY: this line alone is an INVARIANT GUARD, not
+    // regression coverage — it passes on the pre-change code too, because on a non-empty cohort
+    // with a working reader `evidence_filename_samples` and
+    // `evidence_members_sampled_for_filenames` already separated these two runs. It is kept because
+    // it is the property a reader will look for; the coverage is in the two blocks below.
+    expect(failedCounters).not.toEqual(quietCounters);
+
+    // 🔴 REGRESSION COVERAGE STARTS HERE: this key does not exist on the pre-change code. Asserted
+    // in BOTH directions — a counter only ever asserted non-zero could be hardcoded non-zero and
+    // still pass.
+    expect(failedCounters.evidence_source_read_failures).toBe(1);
+    expect(quietCounters.evidence_source_read_failures).toBe(0);
+    expect(failedCounters.evidence_filename_read_failed).toBe(1);
+    expect(quietCounters.evidence_filename_read_failed).toBe(0);
+
+    // 🔴 EMITTED ON EVERY RUN, ZEROS INCLUDED. A key that is absent on a healthy run cannot be
+    // alerted on with a threshold — the absence reads as "no data", not as "nothing broke".
+    expect(Object.keys(quietCounters)).toContain('evidence_source_read_failures');
+    expect(Object.keys(quietCounters)).toContain('evidence_filename_read_failed');
+    expect(Object.keys(quietCounters)).toContain('evidence_content_read_failed');
+    expect(Object.keys(quietCounters)).toContain('evidence_registration_ips_read_failed');
+
+    // ⚠️ TWO COUNTERS THIS ASSERTION FIRST OVERCLAIMED, CORRECTED BY WATCHING IT FAIL RATHER THAN
+    // BY REASONING. `evidence_filename_samples` and `evidence_members_sampled_for_filenames` DO
+    // separate a failed read from a quiet day on a non-empty cohort (0 vs 1, and 0 vs 6). Only
+    // these two carry no information at all, and saying more than that would be the same kind of
+    // claim-wider-than-the-code this file keeps finding:
+    for (const key of [
+      'evidence_distinct_filename_fingerprints',
+      'evidence_filename_budget_exhausted',
+    ])
+      expect(failedCounters[key]).toBe(quietCounters[key]);
+
+    // 🔴 THE THIRD ARM, AND THE ONE THAT MATCHES THE PRODUCTION INCIDENT: a run with NO evidence
+    // reader at all — the source never ran. EVERY filename counter is byte-identical to the failed
+    // run's, which is precisely why the report sentence used to have to say "the read either did
+    // not run or failed": nothing published could choose between them. The new key chooses.
+    const neverRan = run([account(1)]);
+    await neverRan.result;
+    const absentCounters = neverRan.reports[0].counters ?? {};
+    for (const key of [
+      'evidence_filename_samples',
+      'evidence_members_sampled_for_filenames',
+      'evidence_distinct_filename_fingerprints',
+      'evidence_filename_budget_exhausted',
+      'evidence_filename_budget',
+    ])
+      expect([key, absentCounters[key]]).toEqual([key, failedCounters[key]]);
+    expect(absentCounters.evidence_source_read_failures).toBe(0);
+    expect(failedCounters.evidence_source_read_failures).toBe(1);
+  });
+
+  it('🔴 a healthy run reports ZERO read failures — the other arm of the same key', async () => {
+    // A failure counter that is never watched going to zero is a counter nobody can trust a zero
+    // from. This arm is what makes the non-zero above attributable.
+    const scenario = ringRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    const counters = (await scenario.result).counters;
+    expect(counters.evidence_source_read_failures).toBe(0);
+    expect(counters.evidence_registration_ips_read_failed).toBe(0);
+    expect(counters.evidence_content_read_failed).toBe(0);
+    expect(counters.evidence_filename_read_failed).toBe(0);
+    expect(scenario.reports[0].summary).not.toContain('READ FAILED');
+  });
+
+  it('🔴 several sources failing are COUNTED, not collapsed to a boolean', async () => {
+    // The aggregate has to be a count for a reader to tell one broken source from all of them —
+    // the run where everything went is not the same incident as the run where one did.
+    const scenario = ringRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => {
+        throw new Error('clickhouse down');
+      },
+      listContentSamples: async () => {
+        throw new Error('replica timeout');
+      },
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const counters = (await scenario.result).counters;
+    expect(counters.evidence_source_read_failures).toBe(3);
   });
 
   it('the same cohort with NO evidence reader scores both ring heuristics 0 — the control', async () => {
@@ -538,7 +654,11 @@ describe('the evidence sources are reported, not assumed', () => {
     expect(result.reportsSent).toBe(1);
     expect(result.cohortSize).toBe(2);
     expect(out.reports[0].counters?.evidence_content_samples).toBe(0);
-    expect(out.reports[0].summary).toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
+    // 🔴 IT NAMES A FAILURE, NOT AN ABSENCE. The sentence used to read "the read either did not run
+    // or failed", which is one sentence covering two situations with different remedies — an
+    // unwired deployment and a broken read that needs fixing today.
+    expect(out.reports[0].summary).toContain('THE CONTENT SAMPLE READ FAILED');
+    expect(out.reports[0].counters?.evidence_content_read_failed).toBe(1);
     // Not reported as an exhausted budget: that would send a grading pass looking for a cohort too
     // large rather than for a broken replica.
     expect(out.reports[0].counters?.evidence_content_budget_exhausted).toBe(0);
@@ -567,6 +687,7 @@ describe('the evidence sources are reported, not assumed', () => {
     );
     expect(out.reports[0].counters?.evidence_content_samples).toBe(1);
     expect(out.reports[0].summary).not.toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
+    expect(out.reports[0].summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
   });
 
   it('🔴 says the budget ran out, in the summary as well as the counters', async () => {
