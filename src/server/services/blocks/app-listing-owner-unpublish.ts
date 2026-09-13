@@ -113,6 +113,11 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   'report-resolve',
   'report-dismiss',
   'message-owner',
+  // App Blocks per-user STORAGE takedown. NEUTRAL, and the classification is not a
+  // close call: it writes nothing in `app_listings` at all — it deletes rows from a
+  // per-app schema in a DIFFERENT DATABASE and records the fact here. So it must
+  // never displace the event that explains a removal, exactly like `message-owner`.
+  'purge-user-storage',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

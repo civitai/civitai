@@ -61,6 +61,7 @@ import {
   checkSharedReportRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
 // ── Limits (design M2/M3) ─────────────────────────────────────────────────────
 // The app quota row is SHARED with the per-user kv path; these mirror the
@@ -1014,6 +1015,16 @@ export function assertValidCounterKey(key: unknown): string {
  * from client input.
  */
 export const appsModRouter = router({
+  /**
+   * PER-USER storage moderation (`apps.mod.userStorage.*`) — preview + targeted
+   * purge + account-wide purge. A DIFFERENT surface from `purgeSharedRow` below:
+   * that one is row-scoped on `shared_kv` (app-global, cross-user readable, with
+   * votes cascading off it), this one is user-scoped on `kv` (the user's own
+   * self-scoped data) plus its `user_quota` accounting. Neither reaches the
+   * other's tables — see `user-storage-purge.service.ts` for why they stay apart.
+   */
+  userStorage: appsModUserStorageRouter,
+
   purgeSharedRow: moderatorProcedure
     .input(
       z.object({

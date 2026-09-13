@@ -77,8 +77,9 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * `20260706120100_w13_p3b_app_listing_moderation_events`; the last three
  * (`reset-to-pending`/`owner-unpublish`/`owner-republish`) are added by the W13
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
- * superset — additive DROP+ADD CHECK), and `message-owner` by
- * `20260824120000_app_listing_mod_action_message_owner`. A drift here would let a proc
+ * superset — additive DROP+ADD CHECK), `message-owner` by
+ * `20260824120000_app_listing_mod_action_message_owner`, and `purge-user-storage` by
+ * `20260912120000_app_listing_mod_action_purge_user_storage`. A drift here would let a proc
  * write an `action` the DB rejects (23514). The action-agreement unit test pins this
  * tuple against the LATEST action-CHECK migration's IN-list.
  *
@@ -103,6 +104,13 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // table of its own because it is a moderator action against a listing, attributable
   // to an actor and reviewable in the same history — which is all a message needs.
   'message-owner',
+  // App Blocks per-user STORAGE takedown. Like `message-owner` it changes no
+  // listing state — the row exists to make a destructive act against a USER's
+  // stored data attributable and reviewable. `reason` carries the moderator's
+  // rationale, `before` the pre-purge row snapshot (keys / sizes / content
+  // fingerprints, never the values) plus the target user id, and `after` what
+  // was actually removed. See `user-storage-purge.service.ts`.
+  'purge-user-storage',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

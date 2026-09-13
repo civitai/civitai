@@ -1822,8 +1822,32 @@ describe('listMyListingModerationEvents', () => {
     expect(res.items).toHaveLength(1);
     expect(res.nextCursor).toBe('alme_2');
     const args = mockRead.appListingModerationEvent.findMany.mock.calls[0][0];
-    expect(args.where).toEqual({ appListingId: APP_ID });
+    expect(args.where).toEqual({
+      appListingId: APP_ID,
+      action: { notIn: ['purge-user-storage'] },
+    });
     expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  it('🔴 WITHHOLDS actions about a THIRD PARTY — the projection alone is not enough', async () => {
+    // `purge-user-storage` is an act against ANOTHER USER's stored data that merely
+    // sits inside this app. The owner projection drops before/after (where the target
+    // user id lives) but KEEPS `reason` verbatim, and a purge rationale routinely names
+    // the user or their report. So the ROW is excluded, not merely projected down.
+    //
+    // Asserted on the `where` the proc hands Prisma — the only place that decides which
+    // rows leave the DB. The MOD-facing read below must NOT carry the same filter.
+    mockRead.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([]);
+    await listMyListingModerationEvents({ input: { appListingId: APP_ID }, userId: OWNER });
+    const ownerWhere = mockRead.appListingModerationEvent.findMany.mock.calls[0][0].where;
+    expect(ownerWhere.action).toEqual({ notIn: ['purge-user-storage'] });
+
+    mockRead.appListingModerationEvent.findMany.mockResolvedValueOnce([]);
+    await listModerationEvents({ appListingId: APP_ID });
+    const modWhere = mockRead.appListingModerationEvent.findMany.mock.calls[1][0].where;
+    expect(modWhere).toEqual({ appListingId: APP_ID });
+    expect(modWhere.action).toBeUndefined();
   });
 
   it('🔴 uses the OWNER-scoped projection — NO acting-mod identity / reportId / detail / snapshots', async () => {
