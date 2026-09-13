@@ -327,3 +327,60 @@ describe('faroSessionLink', () => {
     expect(link({ grafanaUrl: `${GRAFANA}/` })!.startsWith(`${GRAFANA}/explore?`)).toBe(true);
   });
 });
+
+/**
+ * 🔴 DRIFT GUARD FOR THE `IMAGE_KEY` FILTER — the thing standing between a stored id and an
+ * `<img src>` in a moderator's browser.
+ *
+ * WHY A TEST AND NOT A COMMENT. The producer's schema now requires a uuid, which makes this filter
+ * look redundant to anyone reading only that file. It is not: the producer binds WRITES ONLY, no
+ * read path revalidates a stored row, and the producer is a separate deployable. A comment saying
+ * so is exactly as deletable as the filter. This fails instead.
+ *
+ * It pins a RELATIONSHIP, not a symbol: the filter must be applied to BOTH fields. `IMAGE_KEY` is
+ * module-private, so there is nothing structural to assert — and behavioural is the stronger claim
+ * anyway, since a structural check passes over a filter wired to the wrong argument.
+ *
+ * The `length(36)` case is not decoration. A 36-character absolute URL is what distinguishes "this
+ * value is uuid-SHAPED" from "this value is 36 characters long", and a guard that cannot tell those
+ * apart is satisfied by a bound that still lets the attack through.
+ */
+describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
+  const UUID = '11111111-2222-4333-8444-555555555555';
+  // Exactly 36 characters — the length of a uuid — and still an absolute URL.
+  const URL_36 = 'https://a.io/aaaaaaaaaaaaaaaaaaaaaaa';
+
+  const hostile: Array<[string, string]> = [
+    ['an absolute https URL', 'https://attacker.example/x.png'],
+    ['a 36-character absolute URL', URL_36],
+    ['a protocol-relative URL', '//attacker.example/x.png'],
+    ['a blob URL', 'blob:https://civitai.com/abcd'],
+    ['a data URL', 'data:image/png;base64,AAAA'],
+    ['a traversal', '../../etc/passwd'],
+  ];
+
+  it('the 36-char case really is uuid-length, or it is testing nothing', () => {
+    expect(URL_36).toHaveLength(UUID.length);
+  });
+
+  it.each(hostile)('drops %s from images, and still shows it under other', (_label, value) => {
+    const out = splitContext({ images: [UUID, value] });
+    expect(out.images).toEqual([UUID]);
+    expect(out.other?.images).toEqual([UUID, value]);
+  });
+
+  it.each(hostile)('refuses %s as a screenshotId, and routes it to other', (_label, value) => {
+    const out = splitContext({ screenshotId: value });
+    expect(out.screenshotId).toBeNull();
+    expect(out.other?.screenshotId).toBe(value);
+  });
+
+  // The positive control: the cases above fail BECAUSE the values are hostile, not because the
+  // fields reject everything.
+  it('still carries a well-formed id through on both fields', () => {
+    const out = splitContext({ images: [UUID], screenshotId: UUID });
+    expect(out.images).toEqual([UUID]);
+    expect(out.screenshotId).toBe(UUID);
+    expect(out.other).toBeNull();
+  });
+});

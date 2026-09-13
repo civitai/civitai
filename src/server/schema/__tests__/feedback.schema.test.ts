@@ -40,6 +40,8 @@ describe('feedback schema — context bounds', () => {
   const UUID_A = '11111111-2222-4333-8444-555555555555';
   const UUID_B = 'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee';
   const UUID_C = '00000000-0000-4000-a000-000000000000';
+  /** An absolute URL of exactly a uuid's length — see the regression block below. */
+  const URL_36 = 'https://a.io/aaaaaaaaaaaaaaaaaaaaaaa';
 
   describe('the bounds themselves', () => {
     // Pins the numbers this whole file is written against. If one of these moves,
@@ -87,13 +89,25 @@ describe('feedback schema — context bounds', () => {
    * the same argument previously existed in four files, and four copies of one claim
    * drift apart silently. Read it there; this block only pins the cases.
    *
-   * Every case below PARSED at `origin/main` under the old length-only bound — they
-   * are regression tests, not invariant guards.
+   * 🔴 11 OF THE 12 CASES BELOW PARSED at `origin/main` under the old length-only
+   * bound — those are regression tests. `a whitespace-only id` is the exception and
+   * is labelled inline: it was rejected at base too, for a different reason, so it is
+   * an INVARIANT GUARD and must not be counted as regression coverage.
+   *
+   * 🔴 `a 36-character absolute URL` is the one that makes this block pin the SHAPE
+   * rather than the old bound. Without it, replacing `z.uuid()` with a bare
+   * `z.string().length(36)` passes the entire suite — measured — because every other
+   * hostile fixture here happens to be the wrong length as well. That mutant is the
+   * attack still working, so the case that kills it is the one carrying the property.
    */
   describe('images — ids that are not uuids (regression)', () => {
     const notUuids: Array<[string, string]> = [
       ['an absolute https URL', 'https://attacker.example/x.png'],
       ['an absolute http URL', 'http://attacker.example/x.png'],
+      // 🔴 EXACTLY 36 CHARACTERS — a uuid's length. This is the only case here that a
+      // bare `z.string().length(36)` does NOT also reject, so it is what separates
+      // "uuid-shaped" from "uuid-LENGTHED". Asserted below rather than counted by eye.
+      ['a 36-character absolute URL', URL_36],
       ['a protocol-relative URL', '//attacker.example/x.png'],
       ['a blob URL', 'blob:https://civitai.com/abcd'],
       // No colon, so it takes `getEdgeUrl`'s verbatim branch as a SAME-ORIGIN
@@ -110,6 +124,12 @@ describe('feedback schema — context bounds', () => {
       ['a whitespace-padded uuid', ` ${UUID_A} `],
       ['a uuid with trailing path', `${UUID_A}/../other`],
     ];
+
+    // Asserted, not counted by eye: if this ever stops being a uuid's length the case
+    // above silently stops being the one that kills the `length(36)` mutant.
+    it('the 36-character case really is uuid-length, or it is testing nothing', () => {
+      expect(URL_36).toHaveLength(UUID_A.length);
+    });
 
     it.each(notUuids)('rejects %s', (_label, value) => {
       expect(() => parse({ images: [value] })).toThrow();
