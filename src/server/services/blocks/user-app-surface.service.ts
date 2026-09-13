@@ -123,159 +123,123 @@ export type ScopeGrantSurface = {
 };
 
 /**
- * Rows per page of the all-time activity sweep below.
- *
- * Sized against the live shape rather than guessed. Measured on production 2026-09-12:
- * `block_scope_invocations` holds 1,034,384 rows of which only **2,773** carry a non-null
- * `app_block_id` (1,031,554 are `source = 'external-oauth'`, which have none), and the
- * heaviest single viewer has 1,919 — so one page covers every real account today and the
- * loop exists for the growth case, not the current one.
- */
-const ACTIVITY_SWEEP_PAGE_SIZE = 2000;
-
-/**
- * Pages the sweep will walk before giving up and SAYING SO.
- *
- * 🔴 A CEILING, NOT A LOOKBACK BOUND, AND IT IS DELIBERATELY NOT SILENT. The sweep is
- * ALL-TIME — there is no `invoked_at > now() - Nd` filter anywhere below, which supersedes
- * clawgate #532's own bounded-lookback acceptance criterion (the operator chose unbounded +
- * paging; that is flagged on the card). A lookback bound would make an app that last acted on
- * you outside the window silently invisible again, which is the precise defect this change
- * exists to remove. But an unbounded loop is a DoS on a future account with millions of
- * block-token rows, so there is a ceiling — and hitting it logs, because a truncated sweep
- * under-reports and an under-report nobody can see is the same defect wearing a different hat.
- *
- * 20 pages × 2,000 = 40,000 rows, ~14× the ENTIRE non-null `app_block_id` population measured
- * above, so nothing today is within an order of magnitude of it.
- */
-const ACTIVITY_SWEEP_MAX_PAGES = 20;
-
-/**
- * Walks one activity table in pages, collecting the DISTINCT `app_block_id`s it holds for the
- * viewer. Returns a Set, so a page boundary cutting through an app's rows cannot double-count.
- *
- * 🔴 THE CALLER SUPPLIES `fetchPage`; THIS OWNS THE LOOP. Two tables feed the activity leg
- * (`block_scope_invocations` and `block_buzz_attribution`) with different id types, different
- * timestamp columns and different filters, but ONE paging rule — page size, the
- * fewer-than-a-full-page exhaustion test, and the ceiling-with-a-log. Open-coding that rule
- * twice is how the two legs come to disagree about whether a truncated sweep is reportable.
- *
- * `fetchPage` is handed the previous page's last cursor (`null` on the first call) and must
- * return AT MOST `ACTIVITY_SWEEP_PAGE_SIZE` rows in a stable total order.
- */
-async function sweepDistinctAppBlockIds<C>(opts: {
-  /** Names the table in the truncation log — the whole point of which is attributability. */
-  label: string;
-  userId: number;
-  fetchPage: (cursor: C | null) => Promise<Array<{ appBlockId: string | null; cursor: C }>>;
-}): Promise<Set<string>> {
-  const found = new Set<string>();
-  let cursor: C | null = null;
-  for (let page = 0; page < ACTIVITY_SWEEP_MAX_PAGES; page++) {
-    const rows = await opts.fetchPage(cursor);
-    for (const row of rows) {
-      // Defensive: the queries below already exclude null `app_block_id`, but this loop is the
-      // only thing standing between a widened `where` and a `null` reaching a Map key.
-      if (row.appBlockId != null) found.add(row.appBlockId);
-    }
-    // A short page means the table is exhausted for this viewer — the ONLY clean stop.
-    if (rows.length < ACTIVITY_SWEEP_PAGE_SIZE) return found;
-    cursor = rows[rows.length - 1]!.cursor;
-  }
-  // 🔴 CEILING REACHED ⇒ THE SWEEP IS INCOMPLETE AND AN APP MAY STILL BE INVISIBLE. Logged
-  // rather than thrown: a permissions page that 500s is worse than one that is missing a row,
-  // and the rows we DID find are all true. But it must never be silent — see
-  // `ACTIVITY_SWEEP_MAX_PAGES`.
-  logToAxiom(
-    {
-      name: 'app-surface-activity-sweep-truncated',
-      type: 'warn',
-      table: opts.label,
-      userId: opts.userId,
-      pages: ACTIVITY_SWEEP_MAX_PAGES,
-      pageSize: ACTIVITY_SWEEP_PAGE_SIZE,
-      distinctAppsFound: found.size,
-    },
-    'civitai-prod'
-  ).catch(() => {
-    /* axiom unreachable — the sweep result still stands */
-  });
-  return found;
-}
-
-/**
  * Every AppBlock that has ACTED on this viewer, all-time — the third source behind a
  * permissions row.
  *
- * 🔴 TWO TABLES, AND THE SECOND ONE CONTRIBUTES NOTHING TODAY. `block_scope_invocations` is
- * the populated leg. `block_buzz_attribution` is EMPTY in production (measured 2026-09-12:
- * `count(*) = 0`), so its leg is UNTESTABLE against live data and is covered by a fixture
- * only — stated rather than implied. It is included because an un-consented BUZZ SPEND is a
- * strictly more serious thing to be invisible than an un-consented read, so the leg that
- * matters most is the one with no live data to prove it works.
+ * 🔴 ONE DATABASE AGGREGATE, NOT A PAGED ROW SWEEP — AND THE PAGING IT REPLACES BOUNDED
+ * NOTHING. An earlier revision walked this table in 2,000-row pages to a 20-page ceiling, i.e.
+ * fetched up to 40,000 ROWS to compute a set of a few dozen APP IDS. Measured on production
+ * 2026-09-12: the heaviest block-token account holds 1,919 such rows across 13 apps, a ~148:1
+ * rows-to-answer ratio. 🔴 And `take` could not limit the work it looked like it was limiting:
+ * the planner reaches these rows through the partial `bsi_app_block_invoked_idx
+ * (app_block_id IS NOT NULL)`, whose whole bitmap is 2,773 rows — scanned on the FIRST page for
+ * every viewer, including one with zero App Block activity. Paging multiplied round-trips over
+ * an unchanged scan.
+ *
+ * A GROUP BY is also strictly more correct, not merely cheaper: it cannot under-report, so the
+ * page ceiling's truncation log — which existed because a silently truncated sweep re-creates
+ * the very invisibility this function removes — has no subject left. Precedent for the shape:
+ * `dbRead.blockScopeInvocation.groupBy` in
+ * `src/server/services/blocks/app-analytics.service.ts`.
+ *
+ * MEASURED ON PRODUCTION 2026-09-12 against the nvme0 REPLICA, `EXPLAIN (ANALYZE, BUFFERS)`,
+ * and COLD vs WARM are stated separately because they differ by ~7×:
+ *
+ *   · viewer `8753561` (1,919 rows / 13 apps — the heaviest block-token account):
+ *     `Group → Sort → Bitmap Heap Scan → BitmapAnd(bsi_app_block_invoked_idx,
+ *     bsi_user_invoked_idx)`, 667 heap blocks, quicksort 49 kB.
+ *     COLD (first execution in the session, 57 buffer reads): **11.16 ms**.
+ *     WARM (×3, all buffer hits): **1.55 / 1.44 / 1.46 ms**.
+ *   · viewer `11107642` (393k rows, ALL `external-oauth`, zero App Blocks):
+ *     `HashAggregate → Bitmap Heap Scan`, `Recheck Cond: app_block_id IS NOT NULL`,
+ *     **953 heap blocks, 2,773 rows removed by filter**, WARM **1.68 / 0.93 ms**. A viewer with
+ *     no App Block activity still pays for the whole non-null bitmap.
+ *   · CONTROL, same session and same warmth — the single PAGE query this replaces
+ *     (`ORDER BY invoked_at DESC, id DESC LIMIT 2000` over the same predicate): WARM
+ *     **1.73 / 1.72 ms**, quicksort **183 kB**. So the aggregate is faster than ONE page of the
+ *     paged version, before counting the extra round-trips.
+ *
+ * 🔴 SO THE COST SCALES WITH THE PLATFORM-WIDE NON-NULL `app_block_id` POPULATION, NOT WITH THE
+ * VIEWER'S OWN VOLUME — which is the quantity App Blocks GA grows. No index is added here (at
+ * ~1.5 ms warm on a once-per-tab-load query it would be write amplification for nothing), and
+ * an earlier revision of this comment claimed the query "matches `bsi_user_invoked_idx` … so
+ * this adds no new index need", which was false about the plan even where it was right about
+ * the conclusion: that index is one ARM of a BitmapAnd on the heavy account and is not used at
+ * all on the 393k-row one. If the block-token population grows by orders of magnitude the
+ * remedy is a partial index —
+ * `(user_id, invoked_at DESC, id DESC) WHERE app_block_id IS NOT NULL AND synthetic_app_id IS
+ * NULL` — applied as raw SQL BY HAND per environment, never by `prisma migrate` (see the repo's
+ * Database rule).
+ *
+ * ALL-TIME: there is no `invoked_at > now() - Nd` predicate, which supersedes clawgate #532's
+ * own bounded-lookback acceptance criterion (the operator chose unbounded; flagged on the
+ * card). A lookback bound would make an app that last acted on you outside the window silently
+ * invisible again — the precise defect this change exists to remove.
  *
  * ⚠️ NO `source` FILTER, DELIBERATELY, AND IT IS NOT AN OVERSIGHT. An `external-oauth`
- * invocation has `app_block_id IS NULL` by construction (there is no App Block — the acting
- * app is captured in `oauth_client_id`), so `appBlockId: { not: null }` already excludes that
- * whole population. Filtering on `source` instead would break the pre-migration safety the
- * rest of this file maintains, for no additional exclusion. Same reasoning as
+ * invocation has `app_block_id IS NULL` by construction (there is no App Block — the acting app
+ * is captured in `oauth_client_id`), so `appBlockId: { not: null }` already excludes that whole
+ * population. Filtering on `source` instead would break the pre-migration safety the rest of
+ * this file maintains, for no additional exclusion. Same reasoning as
  * `GLOBAL_SCOPE_ACTIVITY_OR`'s docblock.
+ *
+ * 🔴 `block_buzz_attribution` IS NOT A SOURCE HERE, AND AN EARLIER REVISION MADE IT ONE ON A
+ * JUSTIFICATION THAT NAMED THE WRONG TABLE. That justification read: "an un-consented BUZZ
+ * SPEND is strictly more serious to be invisible than an un-consented read." True — and about a
+ * different table. `block_buzz_attribution` is a PURCHASE / revenue-share ledger:
+ * `recordAttribution` (`src/server/services/blocks/buzz-attribution.service.ts`) is reached
+ * only from `src/pages/api/webhooks/stripe.ts` and `src/server/paddle/paddle.service.ts` after a
+ * completed Buzz purchase, splitting the gross via `computeRateCardSplit`. A row there means
+ * THE VIEWER BOUGHT BUZZ inside the app with their own card — so minting a row whose copy
+ * describes an app that used their account without an install would be actively wrong about a
+ * purchase they made themselves. An app SPENDING the viewer's Buzz needs `ai:write:budgeted`,
+ * which is consent-GATED rather than exempt, and is recorded in `block_scope_invocations` as a
+ * `workflow:submit:*` row — i.e. by the one leg below. The table also holds 0 rows in
+ * production (re-measured 2026-09-12), so its leg was fixture-only as well as misjustified.
  */
 async function listAppBlocksThatActedOnUser(userId: number): Promise<Set<string>> {
-  const fromInvocations = await sweepDistinctAppBlockIds<bigint>({
-    label: 'block_scope_invocations',
-    userId,
-    fetchPage: async (cursor) => {
-      const rows = (await dbRead.blockScopeInvocation.findMany({
-        where: {
-          userId,
-          // A row with no resolvable App Block cannot mint a named card, and this also
-          // excludes the external-OAuth population (see the docblock above).
-          appBlockId: { not: null },
-          // 🔴 (d) SYNTHETIC DEV-TUNNEL ROWS ARE EXCLUDED. A pre-approval App-Dev-Tunnel call
-          // writes `synthetic_app_id` — the developer testing their OWN unpublished app
-          // against their OWN account. That is not a third party acting on you, it is you
-          // driving your own build, and surfacing it as "an app you never consented to" would
-          // put a permanent scary card on every App Blocks developer's permissions tab. 59
-          // such rows exist in production (measured 2026-09-12), none of them among the 13
-          // invisible pairs — so this guard has a real data shape behind it rather than a
-          // hypothetical one. NB a synthetic row ALSO has `app_block_id IS NULL`, so it is
-          // doubly excluded; the explicit clause is what makes the INTENT checkable, and it
-          // stays correct if the retry path ever learns to set both columns.
-          syntheticAppId: null,
-        } as unknown as Prisma.BlockScopeInvocationWhereInput,
-        // Matches `bsi_user_invoked_idx` (user_id, invoked_at DESC, id DESC) — the same access
-        // pattern `listMyScopeInvocations` already uses, so this adds no new index need.
-        orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
-        take: ACTIVITY_SWEEP_PAGE_SIZE,
-        ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
-        select: { id: true, appBlockId: true },
-      })) as Array<{ id: bigint; appBlockId: string | null }>;
-      return rows.map((r) => ({ appBlockId: r.appBlockId, cursor: r.id }));
-    },
+  const grouped = await dbRead.blockScopeInvocation.groupBy({
+    by: ['appBlockId'],
+    // 🔴 `satisfies`, NOT `as unknown as …`. The bridge cast this replaces was introduced by the
+    // same change that introduced this query, and it ERASED THE KEY-NAME CHECK: measured, a
+    // `syntheticAppid` typo behind the cast produced **0 type errors**, while the same typo under
+    // `satisfies` produces `TS2561: Object literal may only specify known properties, but
+    // 'syntheticAppid' does not exist in type 'BlockScopeInvocationWhereInput'. Did you mean to
+    // write 'syntheticAppId'?`. The sibling leaf `scope-activity-predicate.ts` carries a docblock
+    // recording that exactly this check was lost once here (an `appBlokId` typo typechecked
+    // clean) and was deliberately restored; do not re-open it one file away from that note.
+    where: {
+      userId,
+      // A row with no resolvable App Block cannot mint a named card, and this also excludes the
+      // external-OAuth population (see the docblock above).
+      appBlockId: { not: null },
+      // ⚠️ AN INVARIANT GUARD — IT EXCLUDES ZERO ROWS, AND IT IS NOT THE DEVELOPER PROTECTION
+      // AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS. A pre-approval App-Dev-Tunnel call
+      // writes `synthetic_app_id`, and such a row ALSO has `app_block_id IS NULL`, so the clause
+      // above already excludes every one: re-measured on production 2026-09-12, all **59**
+      // synthetic rows carry a null `app_block_id`, so this predicate removes **0** rows from
+      // the result. Kept because it stays correct if the retry path ever learns to set both
+      // columns, and because it makes the intent checkable — not because it is load-bearing.
+      //
+      // 🔴 AND IT CANNOT PROTECT THE DEVELOPER CASE IT WAS WRITTEN FOR. The dev-tunnel SCOPED
+      // mint (`src/pages/api/v1/block-tokens/index.ts`, the `resolveOwnedNonApprovedPageBlock`
+      // path) signs the app's REAL ids, so a developer driving their own APPROVED app writes
+      // ordinary rows this clause is blind to. What actually keeps the card off a developer's
+      // own permissions tab is the OWNER SKIP in `listMyScopeGrants` below — measured, 2 of the
+      // 13 invisible pairs are the app's own author.
+      syntheticAppId: null,
+    } satisfies Prisma.BlockScopeInvocationWhereInput,
   });
 
-  const fromAttribution = await sweepDistinctAppBlockIds<string>({
-    label: 'block_buzz_attribution',
-    userId,
-    fetchPage: async (cursor) => {
-      // `appBlockId` is NON-nullable on this table (a required `Restrict` FK), so there is no
-      // null filter to apply and no synthetic population to exclude — a pre-approval spend
-      // cannot write an attribution row at all, which is precisely why the synthetic audit
-      // trail lives on `block_scope_invocations`.
-      const rows = await dbRead.blockBuzzAttribution.findMany({
-        where: { userId },
-        orderBy: [{ attributedAt: 'desc' }, { id: 'desc' }],
-        take: ACTIVITY_SWEEP_PAGE_SIZE,
-        ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
-        select: { id: true, appBlockId: true },
-      });
-      return rows.map((r) => ({ appBlockId: r.appBlockId, cursor: r.id }));
-    },
-  });
-
-  for (const id of fromAttribution) fromInvocations.add(id);
-  return fromInvocations;
+  const found = new Set<string>();
+  for (const row of grouped) {
+    // The `where` above excludes nulls, so this is a SEAM guard against a future widening of
+    // that predicate: without it a `null` reaches `appBlock.findMany({ id: { in: [...] } })` and
+    // a Map key. `groupBy` types `appBlockId` as `string | null` because the COLUMN is nullable,
+    // so the guard is also what makes this loop compile without a cast.
+    if (row.appBlockId != null) found.add(row.appBlockId);
+  }
+  return found;
 }
 
 /**
@@ -439,6 +403,15 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       logMissingBudgetColumn('listMyScopeGrants', err);
     }
     for (const g of grants) {
+      // ⚠️ `g.appBlock` IS REQUIRED ON ALL THREE WRITES, NOT JUST THE ROW CREATION BELOW. An
+      // earlier revision gated only the row creation on it, so a grant whose AppBlock did not
+      // resolve still seeded the budget and spend maps — keys no row could ever read, except on
+      // an app that some OTHER leg had minted a row for, where they would have decided that
+      // row's budget control off an unresolvable grant. Inferred unreachable for the same reason
+      // the row-creation guard is (required relation, `onDelete: Cascade`, no `relationMode`, so
+      // Postgres enforces the FK), and aligned anyway: one predicate, applied once, is what
+      // stops the three writes disagreeing.
+      if (!g.appBlock) continue;
       // Mirror getConsentBuzzBudget's guards EXACTLY — revoked → null, and a
       // non-positive stored value → null — so this display can never disagree with
       // what the spend path enforces.
@@ -461,21 +434,24 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // `revoked_at` today, so this is an invariant guard, not a reachable branch —
       // labelled as such rather than counted as coverage.)
       //
-      // ⚠️ `g.appBlock` IS A SECOND INVARIANT GUARD, NOT A REACHABLE BRANCH — stated because
-      // an earlier revision of this comment implied otherwise. `AppUserScopeGrant.appBlock`
-      // is a REQUIRED relation with `onDelete: Cascade`
-      // (`packages/civitai-db-schema/prisma/schema.full.prisma`), and the datasource sets no
-      // `relationMode`, so Postgres enforces the FK: deleting an AppBlock deletes the grant
-      // row rather than orphaning it. The subscription leg's own `if (!row.appBlock) continue`
-      // is unreachable for exactly the same reason — it is precedent for the shape, NOT
-      // evidence that the state occurs. (Migrations here are applied by hand per environment,
-      // so "the constraint exists in prod" is not verifiable from the schema alone; the guard
-      // costs nothing and is kept for that residual.)
+      // ⚠️ `g.appBlock` IS NOT RE-CHECKED HERE — the loop's own `if (!g.appBlock) continue`
+      // above owns it, for all three writes. It is an invariant guard either way, not a
+      // reachable branch: `AppUserScopeGrant.appBlock` is a REQUIRED relation with
+      // `onDelete: Cascade` (`packages/civitai-db-schema/prisma/schema.full.prisma`) and the
+      // datasource sets no `relationMode`, so Postgres enforces the FK — deleting an AppBlock
+      // deletes the grant row rather than orphaning it. The subscription leg's own
+      // `if (!row.appBlock) continue` is unreachable for exactly the same reason; it is
+      // precedent for the shape, NOT evidence that the state occurs. (Migrations here are
+      // applied by hand per environment, so "the constraint exists in prod" is not verifiable
+      // from the schema alone; the guard costs nothing and is kept for that residual.) 🔴 It is
+      // deliberately NOT duplicated at this condition as well: a redundantly-guarded rule is an
+      // untestable one — deleting either copy leaves the suite green because each mutant dies to
+      // the other — which is the same finding that removed the activity leg's second `has()`.
       //
       // The `has` check keeps the subscription leg authoritative for apps that have
       // BOTH: that entry already carries real `modelInstallCount`/`subscriptionScopes`,
       // and overwriting it here would zero them.
-      if (!g.revokedAt && g.appBlock && !byAppBlock.has(g.appBlockId)) {
+      if (!g.revokedAt && !byAppBlock.has(g.appBlockId)) {
         byAppBlock.set(g.appBlockId, {
           appBlock: g.appBlock,
           modelInstallCount: 0,
@@ -495,7 +471,18 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   // the app can read and write the account and own no row on either of the two legs above.
   // Measured on production 2026-09-12: 13 `(user, app)` pairs across 10 users and 6 apps were
   // invisible, every one of them invocation-only (`block_buzz_attribution` is empty), and 84 of
-  // 111 such calls were `collections:read:self`.
+  // 111 such calls were `collections:read:self`. Of those 13, **2** are the app's own AUTHOR
+  // driving their own app and are skipped below, leaving **11** pairs over 9 users and 4 apps.
+  //
+  // 🔴 THE ROW DESCRIBES A RELATIONSHIP, NOT A CONSENT FAILURE — because for the CURRENT
+  // population it would be wrong if it did. All six apps are FIRST-PARTY (every one owned by uid
+  // `8753561`, enumerated not sampled), 4 of the 10 viewers are plausibly-public users
+  // accounting for 64 of the 111 calls, and EVERY scope involved is in `CONSENT_EXEMPT_SCOPES`,
+  // which `scope-grant.service.ts` documents as needing no prompt precisely because read:self
+  // covers public data — "nothing sensitive to consent to". A row asserting the viewer "never
+  // consented" would therefore be alleging a failure that did not occur, with no remedy to
+  // offer (nothing in the repo writes a non-null `revoked_at`). The copy lives in
+  // `scopeGrantEmptyScopeLabel` / `buildScopeGrantSurfaceLine`.
   //
   // 🔴 THE `has()` GUARD IS THE PRECEDENCE RULE, NOT A MICRO-OPTIMISATION. An installed or
   // consented app that has ALSO acted is the NORMAL shape, not a corner: overwriting its entry
@@ -514,9 +501,35 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // simply omits, giving the same "skip an unresolvable row" outcome as the legs above.
       const apps = (await dbRead.appBlock.findMany({
         where: { id: { in: needed } },
-        select: { id: true, blockId: true, manifest: true, approvedScopes: true },
-      })) as AppBlockRow[];
+        select: {
+          id: true,
+          blockId: true,
+          manifest: true,
+          approvedScopes: true,
+          // 🔴 THE OWNER'S id, SELECTED ONLY FOR THE SKIP BELOW. `AppBlock` has no `userId` of its
+          // own — authorship is `AppBlock.app.userId` on the `OauthClient` row.
+          app: { select: { userId: true } },
+        },
+      })) as Array<AppBlockRow & { app: { userId: number } | null }>;
       for (const app of apps) {
+        // 🔴 THE VIEWER'S OWN APP IS NOT "AN APP THAT ACTED ON YOU". A developer driving their own
+        // block writes ordinary invocation rows against their own account, and a card telling them
+        // an app used their account without an install is noise at best and alarming at worst —
+        // permanently, on every App Blocks author's permissions tab.
+        //
+        // 🔴 THIS IS THE GUARD THAT ACTUALLY DELIVERS THAT, AND `syntheticAppId: null` DOES NOT.
+        // The synthetic predicate excludes the PRE-APPROVAL dev-tunnel rows only, and measured on
+        // production 2026-09-12 it excludes **0** rows from this query because every one of the 59
+        // synthetic rows also has `app_block_id IS NULL`. The dev-tunnel SCOPED mint
+        // (`src/pages/api/v1/block-tokens/index.ts`, `resolveOwnedNonApprovedPageBlock`) signs the
+        // app's REAL ids, so an author driving their own APPROVED app produces rows indistinguishable
+        // from a third party's. Measured: 2 of the 13 invisible pairs are exactly that case.
+        //
+        // A NULL `app` is an invariant guard, not a reachable branch: `AppBlock.app` is a REQUIRED
+        // relation with `onDelete: Cascade` and the datasource sets no `relationMode`, so Postgres
+        // enforces the FK. Skipping on null would HIDE a row; defaulting to "not the owner" shows
+        // it, which is the safe direction for a transparency surface.
+        if (app.app != null && app.app.userId === userId) continue;
         // 🔴 NO SECOND `has()` CHECK HERE, AND ITS REMOVAL WAS A MUTATION-TESTING FINDING RATHER
         // THAN A TIDY-UP. This loop carried one, "re-checked rather than assumed". With the
         // `needed` filter above it that made the precedence rule REDUNDANTLY guarded — and a

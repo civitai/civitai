@@ -59,6 +59,15 @@ const mocks = vi.hoisted(() => ({
   /** Shared `mutate` spy for every `useMutation` in the tree — the budget editor is the
    *  only mutation these tests drive, and they clear it first. */
   mutate: vi.fn(),
+  /**
+   * 🔴 DRIVES THE QUERY-ERROR ARM FOR `blocks.listMyScopeGrants`, AND IT IS THE ONLY WAY TO
+   * RENDER THE STATE THE PANEL USED TO GET WRONG. On an error `data` is `undefined` with
+   * `isLoading` false — indistinguishable from "the viewer has no rows" — so the panel fell
+   * through to an empty state that ASSERTS "Nothing has touched your account yet, and you have
+   * no installs, subscriptions or consents": a claim about the viewer's record, made from a read
+   * that never arrived. Per-proc rather than global so every other read stays unchanged.
+   */
+  scopeGrantsError: false,
 }));
 
 /**
@@ -103,6 +112,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     mutate: vi.fn(),
     mutateAsync: vi.fn(),
     invalidate: vi.fn(),
+    // Explicit `false`, not absent: a component branching on `isError` must see a real boolean
+    // on every OTHER query too, or the arm under test cannot be attributed to the one proc.
+    isError: false,
   };
   /**
    * The reads whose CONTENT this file depends on — everything else is inert.
@@ -191,6 +203,29 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               buzzBudgetPerDay: null,
               spendScopeGranted: false,
             },
+            /* 🔴 THE ACTIVITY-ONLY SHAPE, AND IT WAS THE ONE ROW CLASS NO FIXTURE AT ANY TIER
+               PRODUCED. Complete enumeration at the time it was added: `apps-grant-surface-line`
+               appeared ONLY in `src/pages/apps/activity.tsx` with zero references anywhere else,
+               and the component-tier fixture carried `origin: 'install'` ×2 and `'consent'` ×1 and
+               no activity row — so the seam `grant.origin → buildScopeGrantSurfaceLine /
+               scopeGrantEmptyScopeLabel` was UNPINNED. Passing the wrong origin, or rendering the
+               activity copy on every card, was invisible in every tier. The leaf's own behaviour
+               is well covered (`app-surface-provenance.test.ts`); it is the WIRING that was not.
+
+               `0 / 0` and `scopes: []` are the row class, not a convenience: that is exactly what
+               makes it indistinguishable from the `Consented Only` row above by counts alone, and
+               therefore what makes the assertions below a claim about `origin`. */
+            {
+              appBlockId: 'apb_activity',
+              blockId: 'acted',
+              name: 'Acted Only',
+              slug: 'acted-only',
+              scopes: [],
+              origin: 'activity' as const,
+              surfaces: { modelInstallCount: 0, subscriptionScopes: [] },
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
           ]
         : [],
     'blocks.listMyAppActivity': () => ({ pages: [{ items: [], nextCursor: null }] }),
@@ -205,14 +240,22 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       hasPendingInvites: false,
     }),
   };
-  const node = (read?: () => unknown): unknown =>
+  /** Per-proc error arms, keyed exactly like `DATA`. */
+  const ERRORS: Record<string, () => boolean> = {
+    'blocks.listMyScopeGrants': () => mocks.scopeGrantsError,
+  };
+  const node = (read?: () => unknown, errored?: () => boolean): unknown =>
     new Proxy(
       {},
       {
         get(_t, key: string) {
           if (key === 'useQuery' || key === 'useInfiniteQuery') {
             // Called at RENDER time, so `mocks.flags` is the arm's own value.
-            return () => (read === undefined ? inert : { ...inert, data: read() });
+            if (read === undefined) return () => inert;
+            // The error arm mirrors react-query exactly: `data` undefined AND `isLoading` false.
+            // Returning data alongside `isError` would make the test pass against a component
+            // that reads neither.
+            return () => (errored?.() ? { ...inert, isError: true } : { ...inert, data: read() });
           }
           if (key === 'useMutation') return () => ({ ...inert, mutate: mocks.mutate });
           if (key === 'invalidate' || key === 'fetch') return vi.fn();
@@ -233,7 +276,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           {
             get(_t2, proc: string) {
               if (proc === 'then') return undefined;
-              return node(DATA[`${router}.${proc}`]);
+              return node(DATA[`${router}.${proc}`], ERRORS[`${router}.${proc}`]);
             },
           }
         );
@@ -275,6 +318,7 @@ const bodyMarketplaceLinks = () =>
 
 beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+  mocks.scopeGrantsError = false;
   router.query = {};
   router.pathname = '/apps/activity';
   vi.mocked(router.replace).mockClear();
@@ -570,15 +614,16 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       .toHaveTextContent('Daily Buzz limit: 750 Buzz/day');
   });
 
-  // 🔴 THE DISCRIMINATING HALF. The fixture holds THREE apps and only one has the spend
+  // 🔴 THE DISCRIMINATING HALF. The fixture holds FOUR apps and only one has the spend
   // scope GRANTED, so exactly one control may render. Without this, a control rendered
   // unconditionally would pass the test above.
-  // (⚠️ Said TWO until the grant-only fixture was added below and this count was left
-  // behind — a claim staled by the same commit that added the third card.)
+  // (⚠️ Said TWO until the grant-only fixture was added, then THREE until the activity-only
+  // fixture was — twice a claim staled by the same commit that added the card. The count is
+  // re-derived from `apps-grant-surface-line` below rather than restated a fourth time.)
   test('renders NO limit control for an app without the granted spend scope', async () => {
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
-    // Positive control: ALL THREE apps really rendered, so "one control" is a fact about
+    // Positive control: EVERY fixture app really rendered, so "one control" is a fact about
     // the grant and not about a panel that only drew one card.
     expect(page.getByTestId('app-budget-value').elements()).toHaveLength(1);
     const names = Array.from(
@@ -593,6 +638,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     // "one control across THREE cards" rather than "one control across the two that
     // happened to render".
     expect(names).toContain('Consented Only');
+    expect(names).toContain('Acted Only');
     // Its surface line names the provenance it actually came from. Pinned as the whole
     // string: a keyword match would pass on the previous text ("Subscriptions: none"),
     // which on a consent surface reads as a claim that the app has no access.
@@ -603,6 +649,93 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       'the grant-only card must name its provenance, not report "Subscriptions: none"'
     ).toBe(true);
     expect(page.getByTestId('app-budget-row').elements()).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 THE SEAM, NOT THE LEAF: `grant.origin` → `buildScopeGrantSurfaceLine` /
+   * `scopeGrantEmptyScopeLabel`. The leaf's own behaviour is pinned behaviourally in the node-env
+   * `unit` project (`src/shared/constants/__tests__/app-surface-provenance.test.ts`, 3/3 provenance
+   * mutants die). What was unpinned until this test is the WIRING: complete enumeration showed
+   * `apps-grant-surface-line` referenced ONLY in `src/pages/apps/activity.tsx`, with no activity
+   * fixture anywhere, so the page could pass the wrong `origin` — or render the activity copy on
+   * every card — and no tier would notice.
+   *
+   * 🔴 EXPECTATIONS ARE DERIVED BY CALLING THE OWNER, NOT TRANSCRIBED. A "these two agree" guard
+   * written as a hand-copied literal on each side pins nothing: reword the leaf and its own copy
+   * of the literal and both stay green while the page silently diverges. This is the same
+   * correction already applied to the drawer's browser test.
+   *
+   * 🔴 AND THE "EXACTLY ONE" COUNTS ARE THE HALF THAT CATCHES THE OPPOSITE MUTANT. A page that
+   * dropped the `origin` branch and emitted the activity copy unconditionally satisfies every
+   * `toContain`; only a count can see it.
+   */
+  test('🔴 the activity-origin card renders the activity copy, and no other card does', async () => {
+    const { buildScopeGrantSurfaceLine, scopeGrantEmptyScopeLabel } = await import(
+      '~/shared/constants/app-surface-provenance'
+    );
+    const ACTIVITY_LINE = buildScopeGrantSurfaceLine({
+      origin: 'activity',
+      modelInstallCount: 0,
+      subscriptionScopes: [],
+    });
+    const CONSENT_LINE = buildScopeGrantSurfaceLine({
+      origin: 'consent',
+      modelInstallCount: 0,
+      subscriptionScopes: [],
+    });
+    const ACTIVITY_EMPTY_LABEL = scopeGrantEmptyScopeLabel('activity');
+    // Guard the guards: an owner returning '' would make every match below vacuous, and two
+    // identical strings would make the "exactly one" counts meaningless.
+    expect(ACTIVITY_LINE.length).toBeGreaterThan(5);
+    expect(ACTIVITY_EMPTY_LABEL.length).toBeGreaterThan(40);
+    expect(ACTIVITY_LINE).not.toBe(CONSENT_LINE);
+
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
+
+    const lines = Array.from(
+      document.querySelectorAll('[data-testid="apps-grant-surface-line"]')
+    ).map((el) => el.textContent?.trim());
+    // One line per fixture row — the positive control that the panel drew every card.
+    expect(lines).toHaveLength(4);
+    // EXACTLY ONE activity line, and exactly one consent line: the two row classes are both
+    // `0 / 0`, so a page deriving provenance from the counts could not tell them apart and would
+    // emit the same string twice.
+    expect(lines.filter((l) => l === ACTIVITY_LINE)).toHaveLength(1);
+    expect(lines.filter((l) => l === CONSENT_LINE)).toHaveLength(1);
+
+    // …and the activity row's EMPTY-SCOPE label is the origin-derived one, rendered exactly once.
+    const gridText =
+      document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
+    expect(gridText).toContain(ACTIVITY_EMPTY_LABEL);
+    expect(gridText.split(ACTIVITY_EMPTY_LABEL)).toHaveLength(2);
+    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: `BlockScopeList`'s own
+    // fallback tells the viewer the app requests no permissions, which is false by construction
+    // for a row minted from the app's scope-gated calls.
+    expect(gridText).not.toContain("doesn't request any permissions");
+  });
+
+  /**
+   * 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY. Without the error
+   * branch, `isError` left `grants` `undefined` with `isLoading` false — byte-for-byte the
+   * no-rows state — so the panel rendered "Nothing has touched your account yet, and you have no
+   * installs, subscriptions or consents." That is an assertion about the viewer's record, made
+   * from a read that never arrived.
+   *
+   * 🔴 THE SECOND HALF IS THE ONE THAT CATCHES A REGRESSION: showing the error text does not prove
+   * the false claim is gone, because a component rendering BOTH passes. The `not.toContain` on the
+   * empty-state sentence is the pin. Same defect and same fix in
+   * `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx`.
+   */
+  test('🔴 a query ERROR shows a read failure, not a claim about installs and consents', async () => {
+    mocks.scopeGrantsError = true;
+    renderWithProviders(<AppActivityPage />);
+    await expect
+      .element(page.getByText(/couldn't load your apps and permissions just now/))
+      .toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('Nothing has touched your account yet');
+    // …and no card grid at all, so the error state cannot be mistaken for a partial render.
+    expect(page.getByTestId('apps-installed-grants-grid').elements()).toHaveLength(0);
   });
 
   test('Save sends the new limit for THAT app, and widens no scope', async () => {

@@ -543,10 +543,7 @@ function AppBudgetControl({
 }
 
 function ScopeGrantsPanel() {
-  const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
-  // Only to build the Recent-activity pointer below through `activityTabQuery`, which needs the
-  // route's current query so it can preserve keys it does not own.
-  const router = useRouter();
+  const { data: grants, isLoading, isError } = trpc.blocks.listMyScopeGrants.useQuery();
 
   if (isLoading) {
     return (
@@ -555,20 +552,34 @@ function ScopeGrantsPanel() {
       </Center>
     );
   }
+  /* 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY. Without this
+     branch an error leaves `grants` `undefined` with `isLoading` false, so the code fell through
+     to the empty state below — which asserts "Nothing has touched your account yet, and you have
+     no installs, subscriptions or consents." That is a claim about the viewer's record, and the
+     client cannot make it when it never received the record. (The string this empty state
+     replaced was record-shaped and survived the confusion; the current wording is a strictly
+     stronger factual claim, which is what makes the missing branch matter.) The same shape was
+     live in `AppPermissionsActivityDrawer`, fixed in the same change. */
+  if (isError) {
+    return (
+      <EmptyState label="We couldn't load your apps and permissions just now. This is a problem reading the list, not a statement about what you have installed or granted — reload to try again." />
+    );
+  }
   if (!grants || grants.length === 0) {
     /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
        to make, and it was false.
 
-       ⚠️ THE ENUMERATED CAVEAT THAT USED TO LIVE HERE IS DELETED, NOT REWORDED, BECAUSE THIS
-       CHANGE REMOVED ITS SUBJECT. It named two surviving silent populations: (a) blocks OTHER
-       people installed, and (b) an app the viewer never installed whose scopes are all in
-       `CONSENT_EXEMPT_SCOPES`, which therefore never gets a grant row. Both were silent only
-       for as long as a row required an install or a consent. The ACTIVITY leg now mints a row
-       from `block_scope_invocations` / `block_buzz_attribution` alone, so an app in EITHER
-       population appears here the moment it actually touches the account — which is what (a)
-       and (b) were both descriptions of. Carrying a narrowed version of the list would be a
-       third rewording of a caveat whose reason has gone; the residual is stated in one clause
-       instead, and it is a different shape: an app that COULD act and simply has not. */
+       ⚠️ THE ENUMERATED CAVEAT THAT USED TO LIVE HERE IS DELETED, NOT REWORDED — BUT NOT
+       BECAUSE ITS SUBJECT IS FULLY GONE, AND AN EARLIER REVISION OF THIS COMMENT OVERSTATED
+       EXACTLY THAT. It named two silent populations: (a) blocks OTHER people installed, and (b)
+       an app the viewer never installed whose scopes are all in `CONSENT_EXEMPT_SCOPES`, which
+       therefore never gets a grant row. The ACTIVITY leg closes (b) outright and closes (a) only
+       for blocks that make scope-gated API CALLS. 🔴 A block that consumes the viewer's data
+       purely over the host-bridge postMessage protocol writes NO `block_scope_invocations` row,
+       so population (a) survives for that class and this page is still silent about it. The
+       user-facing sentence below hedges correctly ("an app that holds access but has never used
+       it does not appear here"); this justification is the one a maintainer will rely on, so it
+       must not claim more than the code does. */
     return (
       <EmptyState label="Nothing has touched your account yet, and you have no installs, subscriptions or consents. An app that holds access but has never used it does not appear here — Recent activity is the record of what was actually done." />
     );
@@ -608,25 +619,15 @@ function ScopeGrantsPanel() {
               scopes={grant.scopes}
               emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)}
             />
-            {grant.origin === 'activity' && (
-              /* The pointer out to the full record. 🔴 BUILT FROM THE SHARED TAB MECHANISM, NOT
-                 A HAND-WRITTEN URL: `activityTabQuery('activity', …)` is the same helper the tab
-                 bar's `onChange` uses, and it deliberately DROPS the `tab` key for the default
-                 tab rather than writing `?tab=activity`, so this link produces the page's own
-                 canonical URL and preserves any other query key. Spelling the href by hand is
-                 how a link and a tab resolver come to disagree. */
-              <Anchor
-                component={Link}
-                href={{
-                  pathname: router.pathname,
-                  query: activityTabQuery('activity', router.query),
-                }}
-                size="xs"
-                data-testid="apps-grant-activity-pointer"
-              >
-                See what it did under Recent activity
-              </Anchor>
-            )}
+            {/* ⚠️ NO SECOND RECENT-ACTIVITY POINTER HERE. An earlier revision rendered an
+                `<Anchor>` reading "See what it did under Recent activity" directly beneath
+                `<BlockScopeList>` — whose `emptyLabel` for this row class already ENDS with
+                "…is under Recent activity". Two adjacent DOM nodes saying the same thing, the
+                second of them adding a `useRouter()` call to this component for its href alone.
+                It was also inaccurate in its own right: `activityTabQuery('activity', …)` lands
+                on the UNFILTERED feed, so a link promising "what IT did" delivered what every
+                app did. The prose half is kept — the drawer shares that label and has no tab to
+                link to — and the link is deleted rather than narrowed. */}
             {/* Only for an app the viewer has actually GRANTED the spend scope to —
                 `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
                 `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what

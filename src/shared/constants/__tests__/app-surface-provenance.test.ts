@@ -72,11 +72,23 @@ describe('buildScopeGrantSurfaceLine', () => {
     );
   });
 
-  it('🔴 says the app ACTED on the account and names neither install nor consent', () => {
+  /**
+   * 🔴 THE LINE DESCRIBES THE RELATIONSHIP AND ALLEGES NOTHING. Pinned as the WHOLE normalised
+   * string, plus the two things it must never say, because a keyword guard here is walkable by
+   * rewording: the previous line ('Acted on your account · you never installed or consented to
+   * it') would satisfy any check for "install" or "consent".
+   */
+  it('🔴 names the relationship without asserting a consent failure', () => {
     const line = buildScopeGrantSurfaceLine(ACTIVITY_ONLY);
-    expect(line).toBe('Acted on your account · you never installed or consented to it');
-    // The specific falsehood the discriminator exists to prevent.
+    expect(line).toBe('Used without an install');
+    // The falsehood the discriminator exists to prevent.
     expect(line).not.toContain('Granted at consent');
+    // 🔴 AND THE ACCUSATION THE PREVIOUS LINE MADE. Measured on production 2026-09-12 over the
+    // complete population: all six apps are first-party, and every scope involved is in
+    // `CONSENT_EXEMPT_SCOPES`, i.e. one that needs no prompt by design — so "you never consented"
+    // named a failure that did not occur, for 100% of real viewers, with no remedy on offer.
+    expect(line).not.toContain('never');
+    expect(line).not.toContain('consent');
   });
 
   it('a CONSENT row keeps the consent sentence', () => {
@@ -103,7 +115,7 @@ describe('buildScopeGrantSurfaceLine', () => {
         modelInstallCount: 4,
         subscriptionScopes: ['viewer_personal'],
       })
-    ).toBe('Acted on your account · you never installed or consented to it');
+    ).toBe('Used without an install');
   });
 
   // ── The pre-existing install/consent behaviour, unchanged and pinned so the move is a move.
@@ -193,10 +205,41 @@ describe('scopeGrantEmptyScopeLabel', () => {
     expect(label).not.toBe(COMPONENT_DEFAULT);
     expect(label).not.toContain("doesn't request any permissions");
     expect(label).not.toContain('postMessage');
-    // It must say the two things that ARE true of this row class: nothing was granted, and the
-    // record of what happened is elsewhere.
-    expect(label).toContain('granted it no permissions');
+    // It must say the two things that ARE true of this row class: there is no install and no
+    // grant on record, and the record of what happened is elsewhere.
+    expect(label).toContain('not installed this app');
+    expect(label).toContain('no separate permission grant is on record');
     expect(label).toContain('Recent activity');
+  });
+
+  /**
+   * 🔴 THE WHOLE NORMALISED STRING, AND THE TWO CLAIMS IT MUST NOT MAKE. This is the copy the
+   * operator's decision turned around, so it is pinned byte-for-byte rather than by keyword — a
+   * cosmetic reword failing this test is the price of a machine-readable claim.
+   *
+   * Claim 1 it must not make: a CONSENT FAILURE. The previous label opened "You never installed
+   * this app or consented to it". Measured on production 2026-09-12 over the complete population
+   * (not sampled): all six apps are FIRST-PARTY, 4 of the 10 viewers are plausibly-public users
+   * accounting for 64 of the 111 calls, and EVERY scope involved is in `CONSENT_EXEMPT_SCOPES` —
+   * which `scope-grant.service.ts` documents as needing no prompt because read:self covers public
+   * data. So the sentence alleged a failure that had not occurred for 100% of real viewers, and
+   * offered no remedy (nothing writes a non-null `revoked_at`).
+   *
+   * Claim 2 it must not make: "it read ONLY data that needs no separate permission". That is the
+   * operator's stated direction and it is TRUE of today's whole population, but this function is
+   * handed no scope set, so the claim cannot be gated and would go FALSE the first time a
+   * third-party app uses a non-exempt scope. The shipped sentence states the general fact that
+   * some data needs no grant without claiming that is all this app read.
+   */
+  it('🔴 the activity label, pinned whole: no consent failure, no unconditional "only" claim', () => {
+    expect(scopeGrantEmptyScopeLabel('activity')).toBe(
+      'You have not installed this app, and no separate permission grant is on record for it — some data can be read without one. Everything it has done on your account, with every call and its result, is under Recent activity.'
+    );
+    const label = scopeGrantEmptyScopeLabel('activity');
+    expect(label).not.toContain('never');
+    expect(label).not.toContain('consent');
+    expect(label).not.toContain('only data');
+    expect(label).not.toContain('read only');
   });
 
   /**
@@ -210,7 +253,12 @@ describe('scopeGrantEmptyScopeLabel', () => {
       const label = scopeGrantEmptyScopeLabel(origin);
       expect(label).not.toContain('never installed');
       expect(label).not.toContain('no install or consent');
-      expect(label).not.toContain('granted it no permissions');
+      // Tracks the activity label's CURRENT wording, not a retired one: the clause below is the
+      // half of that label which denies an install, so this is the assertion that stays meaningful
+      // if the activity copy is reworded again. (`granted it no permissions` was the phrase here
+      // before the reframe; it no longer appears in either label, so asserting its absence had
+      // quietly become vacuous.)
+      expect(label).not.toContain('not installed this app');
     }
   });
 
@@ -228,9 +276,29 @@ describe('scopeGrantEmptyScopeLabel', () => {
     );
   });
 
-  it('install and consent share one label; activity is the only distinct one', () => {
+  /**
+   * ⚠️ THE LEDGER HAS THREE VALUES AND TWO BEHAVIOURS, AND THIS IS WHERE THAT IS RECORDED
+   * MECHANICALLY. `install` vs `consent` changes NOTHING — not this label, not the surface line,
+   * and not any of the three consumer branches, all of which test `=== 'activity'`. The pair is
+   * kept as documentation of WHY a row exists for a reader of the server leg and of the API
+   * payload; it is not something the code acts on, and the enum's size must not be read as
+   * evidence that it is.
+   */
+  it('install and consent are behaviourally IDENTICAL; activity is the only distinct one', () => {
     expect(scopeGrantEmptyScopeLabel('install')).toBe(scopeGrantEmptyScopeLabel('consent'));
     expect(scopeGrantEmptyScopeLabel('activity')).not.toBe(scopeGrantEmptyScopeLabel('install'));
+    // The surface line too, across inputs that exercise every branch of the counts arm — so the
+    // claim is about the function, not about one lucky fixture.
+    for (const c of [
+      { modelInstallCount: 0, subscriptionScopes: [] as string[] },
+      { modelInstallCount: 1, subscriptionScopes: [] as string[] },
+      { modelInstallCount: 2, subscriptionScopes: ['viewer_personal'] },
+      { modelInstallCount: 0, subscriptionScopes: ['publisher_all_my_models'] },
+    ]) {
+      expect(buildScopeGrantSurfaceLine({ origin: 'install', ...c })).toBe(
+        buildScopeGrantSurfaceLine({ origin: 'consent', ...c })
+      );
+    }
   });
 
   it('every origin in the ledger gets a non-empty label', () => {

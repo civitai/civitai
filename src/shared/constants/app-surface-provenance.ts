@@ -35,8 +35,17 @@
  *
  *   · `install`  — the viewer has a `block_user_subscriptions` row (blanket or model-pinned).
  *   · `consent`  — no subscription, but a live (non-revoked) `app_user_scope_grants` row.
- *   · `activity` — NEITHER. The app acted on the viewer's account anyway: a
- *                  `block_scope_invocations` row, or a `block_buzz_attribution` row.
+ *   · `activity` — NEITHER. The app used the viewer's account anyway: a
+ *                  `block_scope_invocations` row.
+ *
+ * ⚠️ ONLY ONE OF THE THREE DISTINCTIONS IS BEHAVIOUR; THE OTHER IS DOCUMENTATION, AND SAYING SO
+ * IS THE POINT. Every branch on this field, in both functions below and at all three consumer
+ * sites, tests `=== 'activity'`. NOTHING distinguishes `'install'` from `'consent'` — they
+ * return the identical empty-scope label and take the identical path through the surface line,
+ * which this module's own suite asserts ("install and consent share one label; activity is the
+ * only distinct one"). The pair is kept because it records WHY a row exists for a reader of the
+ * server leg and of an API payload, not because any code reads it; do not infer from the
+ * three-value ledger that three behaviours exist.
  */
 export const SCOPE_GRANT_ORIGINS = ['install', 'consent', 'activity'] as const;
 
@@ -57,10 +66,25 @@ export function buildScopeGrantSurfaceLine(surfaces: {
   subscriptionScopes: string[];
 }): string {
   if (surfaces.origin === 'activity') {
-    // 🔴 NO SCOPE LIST AND NO SCOPE COUNT IN THIS SENTENCE — see
-    // `scopeGrantEmptyScopeLabel` for the measurement that rules both out. The honest
-    // content of the row is the RELATIONSHIP, not a permission set: nothing was ever granted.
-    return 'Acted on your account · you never installed or consented to it';
+    // 🔴 THIS SENTENCE DESCRIBES THE RELATIONSHIP AND ASSERTS NO CONSENT FAILURE, AND THE
+    // PREVIOUS ONE DID THE OPPOSITE. It read 'Acted on your account · you never installed or
+    // consented to it', which is an accusation, and it was wrong for **100% of the real current
+    // population** — enumerated, not sampled, on production 2026-09-12. All six apps behind the
+    // 13 invisible pairs are FIRST-PARTY (uid `8753561`); 4 of the 10 viewers are
+    // plausibly-public users accounting for 64 of the 111 calls; and EVERY scope involved is in
+    // `CONSENT_EXEMPT_SCOPES`, which `scope-grant.service.ts` documents as needing no prompt
+    // because read:self covers public data — "nothing sensitive to consent to". Concretely: a
+    // viewer opens the first-party `playable-collections`, plays with their OWN collections, it
+    // reads them 37 times, and the old line told them an app had acted on their account that
+    // they never consented to — with no remedy available, since nothing in the repo writes a
+    // non-null `revoked_at`.
+    //
+    // 🔴 NO SCOPE LIST AND NO SCOPE COUNT — see `scopeGrantEmptyScopeLabel` for the measurement
+    // that rules both candidate sets out. And deliberately NOT "it only read data that needs no
+    // permission": that is true of today's whole population and would be FALSE the first time a
+    // third-party app uses a non-exempt scope, and this function is handed no scope set it could
+    // gate the claim on. The weaker sentence that cannot go false is the one that ships.
+    return 'Used without an install';
   }
   const parts: string[] = [];
   if (surfaces.modelInstallCount > 0) {
@@ -116,7 +140,22 @@ export function buildScopeGrantSurfaceLine(surfaces: {
  */
 export function scopeGrantEmptyScopeLabel(origin: ScopeGrantOrigin): string {
   if (origin === 'activity') {
-    return 'You never installed this app or consented to it, so you have granted it no permissions. What it has actually done on your account — every call, with its endpoint and result — is under Recent activity.';
+    // 🔴 REFRAMED FROM AN ACCUSATION TO A DESCRIPTION, BECAUSE THE ACCUSATION WAS FALSE FOR EVERY
+    // REAL VIEWER. The previous sentence opened "You never installed this app or consented to it,
+    // so you have granted it no permissions" — see `buildScopeGrantSurfaceLine` above for the
+    // enumerated population, but the short version is that all six apps are first-party and every
+    // scope involved is `CONSENT_EXEMPT`, i.e. one that needs no prompt by design. "You never
+    // consented" reads as a consent failure where there was nothing to consent to, and the page
+    // offers no remedy for it.
+    //
+    // 🔴 THE THIRD CLAUSE IS THE WEAK FORM ON PURPOSE. The operator's direction was "It read only
+    // data that needs no separate permission", which is TRUE of the entire population measured
+    // today and becomes FALSE the first time a third-party app uses a non-exempt scope — and this
+    // function receives no scope set it could gate that claim on (the row class deliberately
+    // carries `scopes: []`). So the sentence states the general fact that some data needs no
+    // grant, WITHOUT claiming that is all this app read. Weaker and unconditionally true, rather
+    // than stronger and conditionally false.
+    return 'You have not installed this app, and no separate permission grant is on record for it — some data can be read without one. Everything it has done on your account, with every call and its result, is under Recent activity.';
   }
   // `install` / `consent` with an empty effective set. ⚠️ DELIBERATELY DOES NOT ASSERT WHICH
   // CAUSE: `scopes` is `manifest.scopes ∩ approved_scopes`, and an empty intersection means

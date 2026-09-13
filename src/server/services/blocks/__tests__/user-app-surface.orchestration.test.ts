@@ -22,7 +22,15 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
     blockUserSubscription: { findMany: vi.fn(), findUnique: vi.fn() },
     blockBuzzAttribution: { findMany: vi.fn() },
     appBlockPublishRequest: { groupBy: vi.fn(), findFirst: vi.fn() },
-    blockScopeInvocation: { findMany: vi.fn() },
+    // 🔴 `groupBy` IS REQUIRED HERE, AND ITS ABSENCE IS THE HAZARD THE
+    // `no-direct-shared-module-mock` RATCHET EXISTS FOR. This file is ALLOWLISTED as
+    // pre-existing, so it still hand-writes the client shape — which means every method the
+    // service starts calling has to be added here by hand or all 32 of its `listMyScopeGrants`
+    // tests die with `dbRead.blockScopeInvocation.groupBy is not a function`. That is exactly
+    // what happened when the activity leg moved from a paged `findMany` to one `groupBy`.
+    blockScopeInvocation: { findMany: vi.fn(), groupBy: vi.fn() },
+    // `AppBlock` is read by the activity leg's batched presentation resolve. Also hand-listed.
+    appBlock: { findMany: vi.fn() },
     // The consent BUDGET lives on the grant row, which `listMyScopeGrants` now reads to
     // surface the viewer's per-app daily Buzz limit alongside the scopes.
     appUserScopeGrant: { findMany: vi.fn() },
@@ -58,6 +66,10 @@ beforeEach(() => {
   mockDbRead.appBlockPublishRequest.groupBy.mockResolvedValue([]);
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([]);
+  // Default: nothing used the viewer's account, so the activity leg contributes no row and
+  // every expectation in this file stays a claim about the install/consent legs it is about.
+  mockDbRead.blockScopeInvocation.groupBy.mockResolvedValue([]);
+  mockDbRead.appBlock.findMany.mockResolvedValue([]);
   // Default: no grant rows ⇒ every app reports `buzzBudgetPerDay: null`, which is the
   // pre-column behaviour and what the existing expectations below assume.
   mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([]);
@@ -129,7 +141,12 @@ describe('listMyScopeGrants', () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
-      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: null },
+      // 🔴 `appBlock` IS DECLARED ON EVERY GRANT FIXTURE, because the SERVICE selects it and
+      // the relation is REQUIRED — a row without it is a state production cannot produce, and
+      // omitting it made this fixture exercise the service's unresolvable-AppBlock skip instead
+      // of the budget rule it names. (Three sibling fixtures asserting `null`/`false` passed
+      // VACUOUSLY for exactly that reason; all of them now declare the relation.)
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: null, appBlock: appBlock() },
     ]);
     const result = await listMyScopeGrants(42);
     expect(result[0].buzzBudgetPerDay).toBe(750);
@@ -285,7 +302,7 @@ describe('listMyScopeGrants', () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
-      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: new Date() },
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 750, revokedAt: new Date(), appBlock: appBlock() },
     ]);
     const result = await listMyScopeGrants(42);
     expect(result[0].buzzBudgetPerDay).toBeNull();
@@ -298,7 +315,7 @@ describe('listMyScopeGrants', () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([pinnedSub()]);
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
-      { appBlockId: 'apb_1', buzzBudgetPerDay: 0, revokedAt: null },
+      { appBlockId: 'apb_1', buzzBudgetPerDay: 0, revokedAt: null, appBlock: appBlock() },
     ]);
     const result = await listMyScopeGrants(42);
     expect(result[0].buzzBudgetPerDay).toBeNull();
@@ -318,6 +335,7 @@ describe('listMyScopeGrants', () => {
         buzzBudgetPerDay: 750,
         revokedAt: null,
         grantedScopes: ['user:read:self', 'ai:write:budgeted'],
+        appBlock: appBlock(),
       },
     ]);
     const result = await listMyScopeGrants(42);
@@ -343,6 +361,7 @@ describe('listMyScopeGrants', () => {
         buzzBudgetPerDay: null,
         revokedAt: null,
         grantedScopes: ['user:read:self'], // the user granted something else
+        appBlock: appBlock(),
       },
     ]);
     const result = await listMyScopeGrants(42);
@@ -359,6 +378,7 @@ describe('listMyScopeGrants', () => {
         buzzBudgetPerDay: 750,
         revokedAt: new Date(),
         grantedScopes: ['ai:write:budgeted'],
+        appBlock: appBlock(),
       },
     ]);
     const result = await listMyScopeGrants(42);

@@ -27,6 +27,12 @@ const m = vi.hoisted(() => ({
   // outside a provider, which fails CLOSED — so a link test run at the default would be
   // vacuous. The seam test below sets a store-ELIGIBLE viewer deliberately.
   flags: null as null | Record<string, boolean>,
+  // 🔴 DRIVES THE QUERY-ERROR ARM. Without it there was no way to render the state the
+  // drawer's new error branch exists for, and that state is the one the component used to
+  // get WRONG: `data` undefined + `isLoading` false is indistinguishable from "no grant
+  // row", so a failed read rendered an affirmative sentence about what the viewer had
+  // granted. A flag rather than a second spy so the success arms stay byte-identical.
+  grantsError: false,
 }));
 
 // 🔴 `AppActivityPanel`'s `When` column renders `DaysFromNow`, which reads
@@ -62,7 +68,11 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
  * the real one.
  */
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const grantsSpy = vi.fn(() => ({ data: m.grants, isLoading: false }));
+  const grantsSpy = vi.fn(() =>
+    m.grantsError
+      ? { data: undefined, isLoading: false, isError: true }
+      : { data: m.grants, isLoading: false, isError: false }
+  );
   const buzzSpy = vi.fn(() => ({
     data: { pages: [{ items: m.buzz, nextCursor: null }] },
     isLoading: false,
@@ -108,6 +118,7 @@ beforeEach(() => {
   m.user = { id: 1, username: 'viewer', isModerator: false };
   m.flags = null;
   m.grants = [];
+  m.grantsError = false;
   m.buzz = [];
   m.scopes = [];
   m.grantsSpy?.mockClear();
@@ -225,6 +236,35 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     expect(expectedEmptyLabel.length).toBeGreaterThan(40);
     await expect.element(page.getByText(expectedEmptyLabel)).toBeInTheDocument();
     await expect.element(page.getByText(/No activity yet\./)).toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 A FAILED READ MUST NOT RENDER A CLAIM ABOUT THE VIEWER'S HISTORY. The defect: on a query
+   * error `data` is `undefined` and `isLoading` is `false`, which is byte-for-byte the state the
+   * test ABOVE sets up — so with no error branch the drawer fell through to
+   * `scopeGrantEmptyScopeLabel('activity')` and told the viewer what they had and had not granted,
+   * from a read it never received. (The hard-coded string this label replaced was record-shaped,
+   * "No permissions recorded …", so it survived the same state; the origin-derived label is a
+   * strictly stronger factual claim and needs the branch the old one did not.)
+   *
+   * 🔴 THE SECOND HALF IS THE ONE THAT CATCHES THE REGRESSION. Asserting the error text appears
+   * does not prove the denial is gone — a component rendering BOTH would pass. The
+   * `not.toBeInTheDocument` on the derived label is what pins it, and it is derived from the owner
+   * for the same reason the test above is.
+   */
+  test('🔴 a query ERROR shows a read failure, not a statement about what was granted', async () => {
+    m.grantsError = true;
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
+    );
+    await expect
+      // `&apos;` in the JSX is U+0027, not a typographic apostrophe — the class of mismatch that
+      // makes a text locator silently match nothing, so the character is spelled, not guessed.
+      .element(page.getByText(/couldn't load this app's permissions just now/))
+      .toBeInTheDocument();
+    const deniedLabel = scopeGrantEmptyScopeLabel('activity');
+    expect(deniedLabel.length).toBeGreaterThan(40);
+    await expect.element(page.getByText(deniedLabel)).not.toBeInTheDocument();
   });
 
   test('anonymous viewer gets a sign-in empty state and the activity queries do not fire', async () => {

@@ -105,6 +105,19 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
           <Center py="md">
             <Loader size="sm" />
           </Center>
+        ) : grantsQuery.isError ? (
+          /* 🔴 AN ERROR BRANCH, BECAUSE WITHOUT ONE A FAILED READ ASSERTED A DENIAL. On a query
+             error `data` is `undefined` and `isLoading` is `false`, so this fell straight through
+             to `<BlockScopeList>` with `scopeGrantEmptyScopeLabel('activity')` — a sentence about
+             what the viewer has and has not granted. The client cannot make a claim about the
+             viewer's record from a read that failed, and the previous hard-coded string was
+             record-shaped ("No permissions recorded …") so it survived the same state; the
+             origin-derived label is a stronger factual claim and needs the branch the old one
+             did not. Same defect, same fix, in `src/pages/apps/activity.tsx`. */
+          <Text size="xs" c="dimmed" fs="italic">
+            We couldn&apos;t load this app&apos;s permissions just now. That is a problem reading
+            them, not a statement about what you have granted.
+          </Text>
         ) : (
           /* 🔴 THE EMPTY LABEL IS NOT "no permissions granted", AND THE PANEL BELOW IS WHY.
              `grant` is `grants.find(g => g.appBlockId === appBlockId)` over
