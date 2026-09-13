@@ -56,25 +56,144 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * is therefore intentionally OMITTED (it would also break the headless CLI, which
  * sends no Origin).
  *
- * Body `{ bundleBase64: "<base64 zip>" }`, same ~72 MiB body ceiling +
- * MAX_BUNDLE_SIZE_BYTES schema cap as the session route. Returns
+ * Body `{ bundleBase64: "<base64 zip>" }`. ⚠ The transport ceiling here is
+ * MAX_REQUEST_BODY_BYTES (~10 MiB, about a 7.5 MiB ZIP once base64-encoded) — NOT the
+ * session route's ~72 MiB, because this path is proxy-matched and Next truncates it.
+ * An oversize submit gets a 413 naming the actual size (civitai/cli #423); see
+ * `readJsonBody`. MAX_BUNDLE_SIZE_BYTES still caps the DECODED bundle. Returns
  * `{ publishRequestId, slug, version, status }`.
  */
 export const config = {
   api: {
-    bodyParser: {
-      // Match the session route: a 50 MiB ZIP base64-encodes to ~67 MiB JSON.
-      // The schema-level cap (MAX_BUNDLE_SIZE_BYTES) is enforced below and the
-      // service re-checks the decoded buffer size.
-      sizeLimit: '72mb',
-    },
+    // 🔴 The body is read and parsed BY THIS ROUTE — see `readJsonBody`. That is not a
+    // style choice; it is the only way this endpoint can answer a size problem with a
+    // size error.
+    //
+    // This path is covered by `src/proxy.ts`'s `matcher`, and Next truncates a
+    // proxy-matched body at `experimental.proxyClientMaxBodySize` (default 10485760)
+    // and then ENDS THE STREAM without saying so. With `bodyParser` enabled the
+    // truncated remains are handed to `parseBody`, which fails on half a JSON document
+    // and answers `400 Invalid JSON` — an error about the parse, downstream of the real
+    // cause. That is civitai/cli #423: the CLI had to start reporting what it SENT
+    // because the response carried nothing usable.
+    //
+    // 🔴 AND NO `sizeLimit` VALUE FIXES IT — measured, not reasoned. `parseBody` 413s
+    // only when the bytes it RECEIVES exceed the declared limit, and the proxy truncates
+    // at a CHUNK BOUNDARY, so what arrives is a ragged size strictly BELOW the cap
+    // (12,000,000 in gave 10,438,916 / 10,479,830 / 10,483,999 across three runs). Every
+    // one is under any limit that would not also reject legitimate traffic. A previous
+    // attempt to declare one byte below the cap shipped and was refuted by execution:
+    // `civitai#4793`, closed unmerged, carries the full matrix.
+    //
+    // What is NOT truncated is the `Content-Length` HEADER. It still states the size the
+    // client actually sent, which is why the check in `readJsonBody` can refuse before
+    // reading a byte and name the real number. Same mechanism as
+    // `src/pages/api/v1/image-upload/relay.ts`, which is the only other route here that
+    // needs a size refusal to work.
+    bodyParser: false,
   },
 };
 
+/**
+ * Largest body this route will accept, and the point Next truncates at.
+ *
+ * Not a product limit — `MAX_BUNDLE_SIZE_BYTES` (50 MiB) still bounds the DECODED
+ * bundle and the service re-checks it. This is the transport ceiling, and it is set by
+ * the framework rather than chosen: above it the request cannot arrive intact, so
+ * accepting it would mean storing or rejecting a body we never fully received.
+ *
+ * ⚠ A ~7.5 MiB ZIP once base64 expansion (4/3) and the JSON envelope are counted. The
+ * product promises 50 MiB, so this endpoint is NARROWER than the session route at
+ * `src/pages/api/blocks/submit-version.ts`, which is not proxy-matched and really does
+ * receive 72mb. Closing that gap means raising `experimental.proxyClientMaxBodySize` in
+ * next.config.mjs AND this constant, in the SAME change — raising either alone leaves
+ * the limit where it is.
+ */
+export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
+
 // Bundle submit is heavy (decode + ZIP extract + deep manifest validation up to
-// ~72 MiB). Keep the per-key window tight. The retool endpoint defaults to
+// MAX_REQUEST_BODY_BYTES). Keep the per-key window tight. The retool endpoint defaults to
 // 60/min for cheap mod actions; a bundle upload warrants far less.
 const RATE_LIMIT = { max: 10, windowSeconds: 60 } as const;
+
+/**
+ * Read the request body and parse it as JSON, refusing an oversize one with a SIZE error.
+ *
+ * Returns `undefined` when it has already answered on the wire — every caller must
+ * `return` on that, or it would send a second response.
+ *
+ * 🔴 The `Content-Length` pre-check is the whole point and it runs BEFORE a byte is read.
+ * The proxy truncates the BODY but not the HEADER, so on the request that motivated this
+ * (civitai/cli #423) the header still says what the client sent and we can name that
+ * number back. Reading first and measuring afterwards cannot work: the bytes are already
+ * gone, and what is left looks like a complete-but-malformed document.
+ *
+ * The running-total check below is NOT redundant with it — a chunked request sends no
+ * `Content-Length` at all, and a client may understate one. Neither can overrun the cap.
+ *
+ * The truncation check is the third case and it is the subtle one: a body that ARRIVES
+ * shorter than its own declared length was cut in transit, which is exactly what the
+ * proxy does. Parsing that would either fail confusingly or — worse, if the cut happened
+ * to land on a valid boundary — succeed on a partial bundle.
+ */
+export async function readJsonBody(
+  req: NextApiRequest,
+  res: NextApiResponse
+): Promise<unknown | undefined> {
+  const declaredRaw = req.headers['content-length'];
+  const declared = Number(Array.isArray(declaredRaw) ? declaredRaw[0] : declaredRaw);
+  const hasDeclared = Number.isInteger(declared) && declared >= 0;
+
+  const tooLarge = (actual: number) => {
+    res.status(413).json({
+      message:
+        `Bundle payload is ${actual} bytes; this endpoint accepts at most ` +
+        `${MAX_REQUEST_BODY_BYTES}. Reduce the bundle (roughly ${Math.floor(
+          (MAX_REQUEST_BODY_BYTES * 3) / 4 / 1024 / 1024
+        )} MiB of ZIP once base64-encoded) and submit again.`,
+    });
+  };
+
+  if (hasDeclared && declared > MAX_REQUEST_BODY_BYTES) {
+    tooLarge(declared);
+    return undefined;
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  // Iterated by hand rather than with `for await`: breaking out of a `for await` calls
+  // the iterator's `return()`, which DESTROYS the stream and can lose the response we
+  // just wrote. Driving `next()` leaves the socket intact.
+  const iterator = req[Symbol.asyncIterator]();
+  for (;;) {
+    const { value, done } = await iterator.next();
+    if (done) break;
+    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    total += buf.length;
+    if (total > MAX_REQUEST_BODY_BYTES) {
+      chunks.length = 0;
+      tooLarge(total);
+      return undefined;
+    }
+    chunks.push(buf);
+  }
+
+  if (hasDeclared && total < declared) {
+    res.status(413).json({
+      message:
+        `Bundle payload was truncated in transit: ${declared} bytes were announced but ` +
+        `${total} arrived. This endpoint accepts at most ${MAX_REQUEST_BODY_BYTES} bytes.`,
+    });
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    res.status(400).json({ message: 'Invalid JSON' });
+    return undefined;
+  }
+}
 
 function clientIp(req: NextApiRequest): string {
   const xff = req.headers['x-forwarded-for'];
@@ -240,9 +359,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
 
-  // 6. Validate the JSON body (same schema as the session route: bundleBase64
-  // with the MAX_BUNDLE_SIZE_BYTES pre-decode cap).
-  const parsed = submitVersionSchema.safeParse(req.body);
+  // 6. Read + validate the JSON body. `readJsonBody` owns the size refusal and has
+  // already answered on the wire if it returns undefined.
+  const body = await readJsonBody(req, res);
+  if (body === undefined) return;
+
+  // Same schema as the session route: bundleBase64 with the MAX_BUNDLE_SIZE_BYTES
+  // pre-decode cap.
+  const parsed = submitVersionSchema.safeParse(body);
   if (!parsed.success) {
     // Names the offending field when the failure is confined to the #4059
     // provenance fields; still exactly 'Invalid bundle payload' for a bundle

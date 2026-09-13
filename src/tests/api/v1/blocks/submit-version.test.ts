@@ -6,16 +6,34 @@ function createMocks({
   method = 'POST',
   headers = {},
   body = {},
+  rawBody,
+  declaredLength,
 }: {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
+  rawBody?: Buffer;
+  declaredLength?: number | null;
 }) {
+  // The route sets `bodyParser: false` and reads the stream itself, so a request here
+  // must be ASYNC-ITERABLE rather than carrying a pre-parsed `body`. `rawBody` /
+  // `declaredLength` let a size case diverge from that default deliberately:
+  //   - rawBody         : send these exact bytes instead of JSON.stringify(body)
+  //   - declaredLength  : announce a Content-Length that differs from what is sent,
+  //                       which is how an in-transit truncation is simulated.
+  const sent = rawBody ?? Buffer.from(JSON.stringify(body), 'utf8');
+  const announced = declaredLength ?? sent.byteLength;
   const req = {
     method,
-    headers,
-    body,
+    headers: {
+      'content-type': 'application/json',
+      ...(announced === null ? {} : { 'content-length': String(announced) }),
+      ...headers,
+    },
     socket: { remoteAddress: '203.0.113.7' },
+    [Symbol.asyncIterator]: async function* () {
+      if (sent.byteLength > 0) yield sent;
+    },
   } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown = undefined;
@@ -542,5 +560,86 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ message: 'Invalid bundle payload' });
+  });
+
+  // civitai/cli #423: an oversize bundle used to return `400 Invalid JSON` — an error
+  // about the PARSE, downstream of the real cause — because the proxy truncated the body
+  // and Next's parser saw half a document. These pin the SIZE error that replaced it.
+  //
+  // 🔴 Regression guards, red against the pre-change route: it declared
+  // `bodyParser: { sizeLimit: '72mb' }` and never inspected Content-Length, so the
+  // oversize cases below reached the schema and answered 400, not 413.
+  describe('oversize and truncated bodies answer with a SIZE error (cli #423)', () => {
+    // Each case authenticates: the size refusal sits AFTER the auth gate on purpose, so
+    // an unauthenticated oversize request is rejected 401 and its body is never read.
+    it('refuses on the declared Content-Length WITHOUT reading the body', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      let pulled = 0;
+      const { req, res } = createMocks({
+        headers: { authorization: 'Bearer key' },
+        body: goodBody,
+      });
+      // Replace the iterator so consumption is observable: a status code cannot witness
+      // "did not read", and reading-then-measuring is the thing that cannot work here.
+      (req as unknown as { [Symbol.asyncIterator]: () => AsyncGenerator<Buffer> })[
+        Symbol.asyncIterator
+      ] = async function* () {
+        pulled += 1;
+        yield Buffer.from('{}');
+      };
+      (req as { headers: Record<string, string> }).headers['content-length'] = String(12_000_000);
+
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(413);
+      expect(pulled).toBe(0);
+      expect(String((res._getJSONData() as { message: string }).message)).toContain('12000000');
+    });
+
+    it('refuses a body that OVERRUNS the cap with no Content-Length (chunked)', async () => {
+      // A chunked request announces nothing, so only the running total can catch it.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = createMocks({
+        headers: { authorization: 'Bearer key' },
+        rawBody: Buffer.alloc(11 * 1024 * 1024, 0x61),
+        declaredLength: null,
+      });
+
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(413);
+    });
+
+    it('refuses a body TRUNCATED in transit — arrived shorter than announced', async () => {
+      // Exactly the proxy's behaviour: the header still states what the client sent,
+      // the bytes do not. Parsing this could fail confusingly or, on an unlucky cut,
+      // succeed on a partial bundle.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const full = Buffer.from(JSON.stringify(goodBody), 'utf8');
+      const { req, res } = createMocks({
+        headers: { authorization: 'Bearer key' },
+        rawBody: full.subarray(0, full.byteLength - 10),
+        declaredLength: full.byteLength,
+      });
+
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(413);
+      expect(String((res._getJSONData() as { message: string }).message)).toContain('truncated');
+    });
+
+    it('still answers 400 for genuinely malformed JSON, not 413', async () => {
+      // The size errors must not swallow the ordinary parse failure — that would trade
+      // one misleading message for another.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = createMocks({
+        headers: { authorization: 'Bearer key' },
+        rawBody: Buffer.from('{"bundleBase64":', 'utf8'),
+      });
+
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(400);
+    });
   });
 });
