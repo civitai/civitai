@@ -52,10 +52,16 @@ const { mockPool, mockClient, fake } = vi.hoisted(() => {
     statements: [] as string[],
     /** Set to a message to make the NEXT `DELETE … .kv` throw (fault injection). */
     failNextKvDelete: null as string | null,
+    /** Make `COMMIT` throw — the server may still have applied it. */
+    failOnCommit: null as string | null,
+    /** Make `ROLLBACK` throw, so its result cannot be confirmed. */
+    failOnRollback: null as string | null,
     reset() {
       fake.schemas = new Map();
       fake.statements = [];
       fake.failNextKvDelete = null;
+      fake.failOnCommit = null;
+      fake.failOnRollback = null;
     },
     addSchema(name: string, init: Partial<SchemaState> = {}) {
       fake.schemas.set(name, {
@@ -131,6 +137,8 @@ const { mockPool, mockClient, fake } = vi.hoisted(() => {
     fake.statements.push(sql);
     const flat = sql.replace(/\s+/g, ' ').trim();
 
+    if (/^COMMIT$/i.test(flat) && fake.failOnCommit) throw new Error(fake.failOnCommit);
+    if (/^ROLLBACK$/i.test(flat) && fake.failOnRollback) throw new Error(fake.failOnRollback);
     if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(flat)) return { rows: [], rowCount: 0 };
     if (/^SET LOCAL/i.test(flat)) return { rows: [], rowCount: 0 };
 
@@ -527,6 +535,25 @@ describe('preview (the read surface)', () => {
     expect(mockDbWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
+  it('🔴 the TARGETED preview disqualifies a shared schema, like the other two paths', async () => {
+    // The read and the write disagreed: `purgeApp` refused with CONFLICT and the
+    // account-wide preview called the schema unresolvable, while the targeted
+    // preview happily rendered BOTH apps' rows as if they belonged to the one
+    // named. Nothing was destroyed by that, but the read surface is what a
+    // moderator approves.
+    mockDbRead.appBlock.findMany.mockImplementation(async () => [
+      { id: APP_A.id, blockId: 'my-app', appListing: { id: 'apl_a', slug: 'my-app' } },
+      { id: 'apb_ccc', blockId: 'my--app', appListing: null },
+    ]);
+
+    const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
+    expect(out.apps).toEqual([]);
+    expect(out.unmappedSchemas).toEqual([APP_A.schema]);
+    // No key names or fingerprints leak out of the disqualified schema.
+    const serialized = JSON.stringify(out);
+    for (const k of ['a-one', 'a-two', 'a-three']) expect(serialized).not.toContain(k);
+  });
+
   it('an app that was never provisioned reads as empty, not as an error', async () => {
     fake.schemas.delete(APP_A.schema);
     const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
@@ -762,10 +789,96 @@ describe('audit record', () => {
     const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
     expect(update.data.after.outcome).toBe('failed');
     expect(update.data.after.deletedRowCount).toBe(0);
-    expect(update.data.after.rolledBack).toBe(true);
+    // The EVIDENCE the outcome was derived from, recorded so a reader can
+    // re-derive it rather than trust it.
+    expect(update.data.after.connected).toBe(true);
+    expect(update.data.after.commitAttempted).toBe(false);
+    expect(update.data.after.rollbackConfirmed).toBe(true);
     expect(String(update.data.after.error)).toContain('deadlock');
     // And the rows really are intact — the stamp is not merely claiming it.
     expect(fake.kv(APP_A.schema)).toHaveLength(4);
+  });
+
+  it('🔴 a COMMIT that threw records outcome UNKNOWN and omits deletedRowCount', async () => {
+    // THE INVERSION THIS REPLACES. The connection dies during COMMIT: the server
+    // may already have applied it. The old code discarded the rollback result and
+    // wrote `deletedRowCount: 0, rolledBack: true` from constants, so the
+    // permanent row asserted "NOTHING was destroyed" about a purge that may have
+    // destroyed everything — and a reader acts on that.
+    //
+    // An audit row that is merely ambiguous is a gap; one that is confidently
+    // wrong is worse than none.
+    fake.failOnCommit = 'connection terminated unexpectedly';
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toThrow(/connection terminated/);
+
+    const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
+    expect(update.data.after.outcome).toBe('unknown');
+    // 🔴 ABSENT, not zero. Its absence IS the signal.
+    expect(update.data.after).not.toHaveProperty('deletedRowCount');
+    // What the DELETE itself reported — the bound on what may be gone.
+    expect(update.data.after.observedDeleteRowCount).toBe(3);
+    expect(update.data.after.commitAttempted).toBe(true);
+  });
+
+  it('🔴 a failed ROLLBACK is also UNKNOWN — the result is read, not assumed', async () => {
+    fake.failNextKvDelete = 'deadlock detected';
+    fake.failOnRollback = 'connection terminated unexpectedly';
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toThrow(/deadlock/);
+
+    const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
+    expect(update.data.after.outcome).toBe('unknown');
+    expect(update.data.after.rollbackConfirmed).toBe(false);
+    expect(update.data.after).not.toHaveProperty('deletedRowCount');
+  });
+
+  it('🔴 a pool checkout failure is stamped, logged and wrapped — not an orphan', async () => {
+    // `pool.connect()` used to sit OUTSIDE the try, so the most ordinary fault
+    // there is — a connection timeout — bypassed the failure stamp, the log line
+    // AND the error wrapper carrying the audit id, producing exactly the orphaned
+    // `before`-only row this service claims to have eliminated.
+    mockPool.connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
+
+    await expect(
+      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+    ).rejects.toThrow(/timeout exceeded/);
+
+    const created = mockDbWrite.appListingModerationEvent.create.mock.calls[0][0] as any;
+
+    // 1. STAMPED — and as 'failed', because nothing can have run without a client.
+    const update = mockDbWrite.appListingModerationEvent.update.mock.calls[0][0] as any;
+    expect(update.where.id).toBe(created.data.id);
+    expect(update.data.after.outcome).toBe('failed');
+    expect(update.data.after.connected).toBe(false);
+    expect(update.data.after.deletedRowCount).toBe(0);
+
+    // 2. LOGGED, with the audit id.
+    const line = mockLogToAxiom.mock.calls.find(
+      (c: unknown[]) => (c[0] as { event?: string })?.event === 'mod_purge_app_failed'
+    ) as [Record<string, unknown>, string];
+    expect(line).toBeTruthy();
+    expect(line[0].auditEventId).toBe(created.data.id);
+
+    // 3. And nothing was touched.
+    expect(fake.kv(APP_A.schema)).toHaveLength(4);
+  });
+
+  it('a pool checkout failure carries the audit id into the sweep failures[]', async () => {
+    // The correlation the wrapper exists for did not apply on this path either:
+    // the sweep recorded `auditEventId: null`.
+    mockPool.connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
+    const out = await caller().purgeAccount({ userId: TARGET, reason: 'account terminated' });
+
+    const failed = out.failures.find((f) => f.appBlockId === APP_A.id);
+    expect(failed).toBeTruthy();
+    expect(failed!.auditEventId).not.toBeNull();
+    const createdA = (mockDbWrite.appListingModerationEvent.create.mock.calls as any[]).find(
+      (c) => c[0].data.before.appBlockId === APP_A.id
+    );
+    expect(failed!.auditEventId).toBe(createdA[0].data.id);
   });
 
   it('a successful purge stamps after.outcome PURGED', async () => {

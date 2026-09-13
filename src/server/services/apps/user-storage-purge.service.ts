@@ -53,21 +53,31 @@
 // done and refusing would misreport it — the stamp is therefore best-effort and
 // its failure is surfaced as `auditCompletionRecorded: false` rather than thrown.
 //
-// 🔴 `after` ANSWERS "WERE THE ROWS ACTUALLY REMOVED?", AND IT HAS THREE STATES —
-// it used to have two spellings for three meanings, which made the row unable to
-// carry the one fact it exists for. A rolled-back delete and a successful delete
-// whose stamp failed BOTH left `before` present and `after` null, i.e. the same
-// record for opposite outcomes. Now:
+// 🔴 `after` ANSWERS "WERE THE ROWS ACTUALLY REMOVED?", AND EVERY STATE IT CAN
+// HOLD IS SOMETHING THAT WAS OBSERVED. The states:
 //
-//   after.outcome === 'purged'  — the rows are gone; counts are in the same object.
-//   after.outcome === 'failed'  — the delete rolled back; `deletedRowCount: 0`,
-//                                 with the error text. NOTHING was destroyed.
-//   after === null              — genuinely unknown: both the success stamp and
-//                                 the failure stamp failed to write. Rare, and it
-//                                 no longer doubles as the common case.
+//   after.outcome === 'purged'   — COMMIT returned. The rows are gone; the counts
+//                                  are in the same object.
+//   after.outcome === 'failed'   — observed to have destroyed NOTHING: either no
+//                                  connection was ever made, or COMMIT was never
+//                                  reached and ROLLBACK came back clean.
+//                                  `deletedRowCount: 0` is a measurement here.
+//   after.outcome === 'unknown'  — COMMIT threw (the server may have applied it),
+//                                  or the ROLLBACK itself failed. `deletedRowCount`
+//                                  is ABSENT, deliberately: its absence is the
+//                                  signal. `observedDeleteRowCount` says what the
+//                                  DELETE reported, which bounds what may be gone.
+//   after === null               — the row was written and NO stamp reached the
+//                                  database. Nothing about the rows' fate is
+//                                  recorded.
 //
-// Prose elsewhere that called a null `after` "attempted, completion unrecorded"
-// was describing only one of the two outcomes it actually covered.
+// 🔴 TWO EARLIER VERSIONS OF THIS COMMENT WERE WRONG, IN THE SAME DIRECTION BOTH
+// TIMES — they named a state and asserted an outcome the code had not established.
+// A null `after` was called "attempted, completion unrecorded" while it also
+// covered a completed purge; then `'failed'` asserted `rolledBack: true` and
+// `deletedRowCount: 0` from a rollback result that had been discarded. If a state's
+// meaning cannot be established, this comment must say it cannot — that is why
+// `'unknown'` exists and why it omits the count rather than defaulting it.
 
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -254,7 +264,8 @@ export type AppUserStoragePurgeResult = {
   auditEventId: string;
   /**
    * False when the post-delete outcome stamp failed. The audit row still exists
-   * and still carries the pre-purge snapshot; only its `after` is missing.
+   * and still carries the pre-purge snapshot; only its `after` is missing, which
+   * is the one state in which the rows' fate is genuinely unrecorded.
    */
   auditCompletionRecorded: boolean;
   /** True when the `user_quota` counter row was removed (schema had the table). */
@@ -538,7 +549,31 @@ export async function previewUserAppStorage(args: {
         schemasTruncated: false,
       };
     }
-    const tables = shape.get(`app_${identity.storageSlug}`);
+    // 🔴 THE SAME OWNERSHIP CHECK THE SWEEP AND THE PURGE MAKE. Without it the
+    // READ and the WRITE disagreed about the same schema: with `my-app` and
+    // `my--app` both present (the reachable collision — see
+    // `resolveSchemaOwnership`), a targeted preview of `my-app` reported BOTH
+    // apps' rows, key names and fingerprints as if they were all `my-app`'s,
+    // while the account-wide preview called that schema unresolvable and
+    // `purgeApp` refused with CONFLICT. Nothing was destroyed by it, but the read
+    // surface is what a moderator approves, and it showed one app's contents
+    // merged into another's with no signal at all.
+    //
+    // Disqualified the same way the sweep does — reported, not rendered — so all
+    // three paths give one answer.
+    const targetedSchemaName = `app_${identity.storageSlug}`;
+    const { collidingSchemas } = await resolveSchemaOwnership();
+    if (collidingSchemas.has(targetedSchemaName)) {
+      return {
+        userId,
+        apps: [],
+        totals: { appCount: 0, rowCount: 0, totalBytes: 0 },
+        unmappedSchemas: [targetedSchemaName],
+        schemasTruncated: false,
+      };
+    }
+
+    const tables = shape.get(targetedSchemaName);
     // Not provisioned (or provisioned without `kv`, which cannot happen through
     // the provisioner) → nothing stored, rather than a relation error.
     if (!tables?.hasKv) {
@@ -778,9 +813,14 @@ async function writeAuditIntent(args: {
         // much?" — counts, bytes, app identity, and the `after` outcome stamp.
         // What goes is the per-key detail.
         //
-        // 🔴 SELECTED BY `initiator`, WHICH THE CODE PATH SETS AND NO CALLER CAN
-        // SUPPLY, so the fuller shape cannot be chosen for a wipe (nor the reduced
-        // one for a takedown, which would be the more interesting abuse). Pinned
+        // 🔴 SELECTED BY `initiator`. The exact guarantee, because this is the
+        // security argument for the reduction and a loose version of it is worth
+        // nothing: NEITHER tRPC PROCEDURE ACCEPTS `initiator` FROM INPUT — both
+        // schemas omit it, so no remote caller can choose a shape. It is NOT true
+        // that "no caller can supply it": both service functions export an
+        // optional `initiator?:`, and `purgeUserAppStorageForAccountWipe` is
+        // exactly such a caller. The boundary is the tRPC input schema, not the
+        // function signature. Pinned
         // by a guard that asserts the wipe row contains none of the key names or
         // fingerprint values — a STATE assertion, so renaming the field does not
         // walk past it.
@@ -837,12 +877,31 @@ async function purgeOneApp(args: {
     scope: args.scope,
   });
 
-  const pool = requireAppsDb();
-  const client = await pool.connect();
   let deletedRowCount = 0;
   let deletedBytes = 0;
   let userQuotaReset = false;
+
+  // 🔴 THE POOL CHECKOUT IS INSIDE THE TRY. It used to sit above it, and that one
+  // line put the whole failure apparatus out of reach of the most ordinary fault
+  // there is: a connection timeout. Anything throwing between the audit write and
+  // `BEGIN` bypassed the failure stamp, the `mod_purge_app_failed` log AND the
+  // error wrapper that carries the audit id — producing exactly the orphaned
+  // `before`-only row this service claims to have eliminated, with
+  // `auditEventId: null` in the sweep's `failures[]` so the correlation did not
+  // apply either. Measured with an injected `connect()` rejection: one row, no
+  // stamp of either kind, no log line.
+  //
+  // `client` is declared out here so the catch can tell "never connected" from
+  // "connected, then rolled back" — those are different answers to the only
+  // question the row exists to answer.
+  let client: Awaited<ReturnType<ReturnType<typeof requireAppsDb>['connect']>> | undefined;
+  // Whether `COMMIT` was REACHED. Load-bearing for the outcome below: a COMMIT
+  // that threw may still have been applied by the server, so "we sent it" and
+  // "it did not happen" are not the same claim.
+  let commitAttempted = false;
   try {
+    const pool = requireAppsDb();
+    client = await pool.connect();
     await client.query('BEGIN');
     // Same GUC the ordinary `storage.delete` path sets: `kv_quota_trigger` reads
     // it to decrement the APP-wide `quota` row. One connection, so SET LOCAL is
@@ -873,9 +932,30 @@ async function purgeOneApp(args: {
       );
       userQuotaReset = true;
     }
+    commitAttempted = true;
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    // 🔴 READ THE ROLLBACK'S RESULT INSTEAD OF DISCARDING IT. The previous version
+    // ran `.catch(() => undefined)` here and then asserted `rolledBack: true`
+    // unconditionally — recording a conclusion it had thrown away the evidence
+    // for. Same inversion this block was added to fix, on the lines that fixed it.
+    let rollbackConfirmed: boolean | null = null;
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+        rollbackConfirmed = true;
+      } catch {
+        rollbackConfirmed = false;
+      }
+    }
+
+    // 🔴 WHEN CAN WE SAY "NOTHING WAS DESTROYED"? Only when we OBSERVED it:
+    //   - we never connected, so no statement ever ran; or
+    //   - we connected, never reached COMMIT, and the ROLLBACK came back clean.
+    // Anything else — a COMMIT that threw (the server may have applied it), or a
+    // ROLLBACK that itself failed — leaves the state genuinely unestablished, and
+    // the row must say so rather than pick the reassuring answer.
+    const nothingDestroyed = !client || (!commitAttempted && rollbackConfirmed === true);
     // 🔴 STAMP THE FAILURE BEFORE RETHROWING, or this row becomes ambiguous.
     // "Were the rows actually removed?" is the question a takedown record exists
     // to answer, and without this stamp a rolled-back delete and a successful
@@ -892,9 +972,23 @@ async function purgeOneApp(args: {
         where: { id: auditEventId },
         data: {
           after: {
-            outcome: 'failed',
-            deletedRowCount: 0,
-            rolledBack: true,
+            outcome: nothingDestroyed ? 'failed' : 'unknown',
+            // Emitted ONLY when observed. Its ABSENCE is the signal that the
+            // count is not established — better than a literal 0, which is a
+            // confident claim, and the wrong one, about a purge that may have
+            // committed.
+            ...(nothingDestroyed ? { deletedRowCount: 0 } : {}),
+            // What the DELETE statement itself reported, before the transaction
+            // resolved. Not the same thing as "rows destroyed" — on the 'failed'
+            // path these rows came back — but it is what was observed, and on the
+            // 'unknown' path it is the best available bound on what may be gone.
+            observedDeleteRowCount: deletedRowCount,
+            observedDeleteBytes: deletedBytes,
+            // The evidence the outcome above was derived from, recorded so a
+            // reader can re-derive it rather than trust it.
+            connected: !!client,
+            commitAttempted,
+            rollbackConfirmed,
             error: err instanceof Error ? err.message : String(err),
             failedAt: new Date().toISOString(),
           } as Prisma.InputJsonValue,
@@ -908,6 +1002,11 @@ async function purgeOneApp(args: {
     // logged nothing at all, so the row a reviewer found could not be tied to
     // any operational record. Both verbs funnel through here, so one line covers
     // both and cannot drift between them.
+    //
+    // That funnel only became real when the pool checkout moved INSIDE the try
+    // above. While `connect()` sat outside it, a connection timeout reached none
+    // of this — the claim was true of the code it pointed at and false of the
+    // path that actually failed most often.
     logToAxiom(
       {
         event: 'mod_purge_app_failed',
@@ -930,7 +1029,7 @@ async function purgeOneApp(args: {
       err
     );
   } finally {
-    client.release();
+    client?.release();
   }
 
   // Best-effort outcome stamp. The destruction has already happened; failing the
@@ -995,8 +1094,9 @@ async function purgeOneApp(args: {
 
 /**
  * A purge whose DELETE failed and rolled back. Carries the `auditEventId` so the
- * orphaned audit row — which now carries `after.outcome === 'failed'` — can be
- * tied to the operational record and to the sweep's `failures[]` entry. The
+ * audit row — whose `after.outcome` is `'failed'` when the purge was observed to
+ * have destroyed nothing, or `'unknown'` when it could not be established — can
+ * be tied to the operational record and to the sweep's `failures[]` entry. The
  * original error is preserved as `cause`; nothing about the failure is dropped
  * in order to attach the id.
  */
@@ -1114,8 +1214,15 @@ export type AppUserStorageAccountPurge = {
     appBlockId: string;
     slug: string;
     error: string;
-    /** The audit row for this app, whose `after.outcome` is `'failed'`.
-     *  Null only when the purge never got as far as writing one. */
+    /**
+     * The audit row for this app. Its `after.outcome` is `'failed'` (observed to
+     * have destroyed nothing) or `'unknown'` (COMMIT threw, or the ROLLBACK could
+     * not be confirmed) — read it rather than assuming which.
+     *
+     * Null ONLY when the purge threw before the row was written. Since the pool
+     * checkout moved inside the try, a connection failure is NOT such a case: it
+     * is stamped like any other.
+     */
     auditEventId: string | null;
   }[];
   unmappedSchemas: string[];
@@ -1170,10 +1277,11 @@ export async function purgeUserAppStorageEverywhere(args: {
         appBlockId: view.appBlockId,
         slug: view.slug,
         error: err instanceof Error ? err.message : String(err),
-        // `purgeOneApp` stamps the audit row `after.outcome: 'failed'` and throws
-        // an `AppUserStoragePurgeFailed` carrying its id, so the sweep's report
-        // and the orphaned row can be tied together. Anything else that threw
-        // (before the row existed) leaves this null.
+        // `purgeOneApp` stamps the audit row (`after.outcome` is `'failed'` or
+        // `'unknown'` — it does not assume which) and throws an
+        // `AppUserStoragePurgeFailed` carrying its id, so the sweep's report and
+        // the row can be tied together. Anything that threw BEFORE the row existed
+        // leaves this null.
         auditEventId: err instanceof AppUserStoragePurgeFailed ? err.auditEventId : null,
       });
       // NOT logged here — `purgeOneApp` already emits `mod_purge_app_failed`

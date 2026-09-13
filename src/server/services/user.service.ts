@@ -1514,6 +1514,19 @@ export const removeAllContent = async ({
             .join('; ')
       );
     }
+    if (result.schemasTruncated) {
+      // The THIRD way the sweep can complete having deliberately skipped rows,
+      // alongside `failures[]` and `unmappedSchemas[]`. Unreachable today (the cap
+      // is 500 against ~20 schemas), but a reader of this block would reasonably
+      // assume all three conditions are covered, and two of three is how the next
+      // silent partial wipe happens.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: the schema sweep for userId=${id} ` +
+          `hit its candidate cap, so some schemas were NOT examined. Re-run via ` +
+          `apps.mod.userStorage.purgeAccount.`
+      );
+    }
     if (result.unmappedSchemas.length > 0) {
       // Reported separately because it is a different condition with a different
       // remedy: these schemas hold the user's rows but map to no single AppBlock,
