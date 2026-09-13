@@ -342,22 +342,37 @@ export async function runBotAccountDetection(
     evidence_members_sampled_for_filenames: signals.sources.membersSampledForFilenames,
     evidence_filename_budget: maxFilenameSamples,
 
-    // 🔴 THE SOURCE-FAILURE LEDGER, AND IT IS THE COUNTER TO ALERT ON. Every other evidence counter
-    // above answers "was this heuristic blind", and each of them reads `0` on a quiet day AND on a
-    // broken one. That is not a hypothetical: a run shipped whose filename read died on every
-    // attempt, and its counters — `evidence_filename_samples: 0`,
-    // `evidence_members_sampled_for_filenames: 0`, `evidence_distinct_filename_fingerprints: 0`,
-    // `evidence_filename_budget_exhausted: 0` — were number for number the counters of a day on
-    // which nobody uploaded anything. The run reported success, the report was filed, nothing
-    // alerted, and the only record of the failure was a log line.
+    // 🔴 THE SOURCE-FAILURE LEDGER. Every other evidence counter above answers "was this heuristic
+    // blind", and each of them reads `0` on a quiet day AND on a broken one. That is not a
+    // hypothetical: a run shipped whose filename read died on every attempt, and its counters —
+    // `evidence_filename_samples: 0`, `evidence_members_sampled_for_filenames: 0`,
+    // `evidence_distinct_filename_fingerprints: 0`, `evidence_filename_budget_exhausted: 0` — were
+    // number for number the counters of a day on which nobody uploaded anything. The run reported
+    // success, the report was filed, nothing alerted, and the only record of the failure was a log
+    // line.
     //
-    // 🔴 WHY THIS ONE CANNOT BE READ THE SAME WRONG WAY: it is incremented ONLY inside a `catch`
-    // (see `CohortSignals.sources.readFailures`). No empty cohort, no empty result, no absent
-    // ClickHouse client and no exhausted budget can raise it above zero — so `> 0` means a read
-    // threw, full stop, and there is no quiet-day reading of a non-zero. The direction is the point:
-    // the reassuring value is 0 and the reassuring value is also the DEFAULT, so a run that never
-    // got far enough to set it reads as "nothing broke", which is why the per-source keys below are
-    // emitted alongside rather than only the total.
+    // 🔴 NOTHING READS THIS COUNTER YET, AND CALLING IT "the counter to alert on" WAS THE SAME
+    // MISTAKE ONE LEVEL UP. These keys land in `abuse_detection_run.counters`; no consumer anywhere
+    // reads that column to alert on, and this change does not add one. What DOES close the loop
+    // today is the other two halves of it: the `bot-account-detection:signals` log line above now
+    // carries `readFailures` in a structured, queryable payload, and the report summary below now
+    // says FAILED rather than "did not run or failed" on a board a moderator already reads. The
+    // counter is emitted so a consumer has something to read when one exists. That is its whole
+    // present value, and it is written down rather than dressed up as something stronger.
+    //
+    // 🔴 WHY THE SHAPE IS RIGHT NOW RATHER THAN LATER: it is set ONLY inside a `catch` (see
+    // `CohortSignals.sources.readFailures`). No empty cohort, no empty result, no absent ClickHouse
+    // client and no exhausted budget can raise it above zero — so `> 0` means a read threw, full
+    // stop, and there is no quiet-day reading of a non-zero. Every key here is emitted on every run,
+    // zeros included, so an absent key means the producer did not run rather than that nothing
+    // broke.
+    //
+    // 🔴 THE PER-SOURCE KEYS ARE FOR TRIAGE, NOT FOR DISAMBIGUATION. An earlier version of this
+    // comment justified them by the total's reassuring default — a run that never got far enough
+    // reads as "nothing broke" — and that reasoning does not survive contact with these three, which
+    // default to `0` for exactly the same reason and so say nothing the total does not. What they
+    // add is WHICH read broke: ClickHouse, the comment read, or the filename read. That is the
+    // difference between a fix aimed at the right source and a morning spent reading logs.
     evidence_source_read_failures:
       (signals.sources.readFailures.registrationIps ? 1 : 0) +
       (signals.sources.readFailures.contentSamples ? 1 : 0) +
