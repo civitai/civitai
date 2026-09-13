@@ -114,11 +114,39 @@ describe('chat-completion — registration', () => {
 });
 
 describe('chat-completion — the model allowlist', () => {
-  it('exposes exactly the three v1 models, as BOTH the enum and the variants', () => {
-    expect(CHAT_COMPLETION_MODELS).toEqual([
+  /**
+   * 🔴 THE WHOLE ALLOWLIST, AS A SET, SO THE NEXT ADDITION IS A DELIBERATE ONE.
+   *
+   * This fails when the set GROWS or SHRINKS, which is the point: every id here
+   * is reachable by any app block on the platform — the allowlist is SHARED, not
+   * per-app — and each one is a third-party model whose output this entry's
+   * `'textOutput'` posture then has to stand behind. A silent addition is a
+   * silent widening of what every block can spend a viewer's Buzz on.
+   *
+   * 🔴 ASSERTED AS A NORMALISED SET, NOT A LENGTH AND NOT PER-ITEM `includes`. A
+   * length check passes on any swap; a per-item `includes` passes while an
+   * unrelated fourth id is also present. Sorting makes the membership assertion
+   * independent of declaration order — the ORDER is pinned separately below,
+   * because `canonicalParamsFor` runs once per entry at registry load and an
+   * insertion rather than an append reorders that.
+   */
+  const EXPECTED_MODELS = [
+    '~deepseek/deepseek-v4-flash-latest',
+    'cognitivecomputations/dolphin-mistral-24b-venice-edition',
+    'deepseek/deepseek-chat',
+    'openai/gpt-4o-mini',
+  ];
+
+  it('🔴 pins the ENTIRE allowlist as a set — fails when it grows OR shrinks', () => {
+    expect([...CHAT_COMPLETION_MODELS].sort()).toEqual([...EXPECTED_MODELS].sort());
+  });
+
+  it('pins the DECLARATION ORDER — a new model is appended, never inserted', () => {
+    expect([...CHAT_COMPLETION_MODELS]).toEqual([
       'deepseek/deepseek-chat',
       'cognitivecomputations/dolphin-mistral-24b-venice-edition',
       'openai/gpt-4o-mini',
+      '~deepseek/deepseek-v4-flash-latest',
     ]);
     // 🔴 The two must be the same set. The enum is the parse-time bound and
     // `variants` is the money-path bound; a divergence means one of them is
@@ -137,6 +165,86 @@ describe('chat-completion — the model allowlist', () => {
     // CHARGED 1 Buzz, and then fails at execution with no output and no refund.
     const result = parse(withParam('model', 'openai/gpt-5-turbo-fictional'));
     expect(result.success).toBe(false);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 `~deepseek/deepseek-v4-flash-latest` — THE FIRST ID HERE WITH A LEADING
+  // `~`, WHICH IS A LITERAL PART OF THE ID AND NOT A TYPO.
+  //
+  // It is OpenRouter's marker for a FLOATING alias (every `~`-prefixed id in
+  // their public listing ends `-latest`). A tilde is unusual enough in a
+  // provider id that the plausible failure is a silent normalisation somewhere
+  // on the path to the wire — a slug, a trim, a URL-encode — which would leave
+  // the enum accepting the value while the orchestrator received a DIFFERENT
+  // string and failed at execution, after the submit had been quoted and
+  // charged. That is the same no-refund shape the allowlist itself exists for.
+  //
+  // These cases assert BOTH directions in one place, with a negative control:
+  // the new id parses, and ids that are deliberately NOT in the enum still do
+  // not. Without the negative control a green run cannot distinguish "the
+  // addition worked" from "the enum stopped bounding anything".
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('the `~`-prefixed floating alias', () => {
+    const ALIAS = '~deepseek/deepseek-v4-flash-latest';
+
+    it('🔴 is a member of the allowlist, spelled with its leading tilde', () => {
+      // Pins the SPELLING, not merely that a fourth entry exists — a mutant that
+      // dropped the `~` would still have four members and still pass a count.
+      expect([...CHAT_COMPLETION_MODELS]).toContain(ALIAS);
+      expect(ALIAS.startsWith('~')).toBe(true);
+    });
+
+    it('🔴 PARSES, where an unregistered id does NOT — both directions, one place', () => {
+      expect(parse(withParam('model', ALIAS)).success).toBe(true);
+
+      // NEGATIVE CONTROL. Three shapes of non-member, because each would pass
+      // for a different wrong reason:
+      //   (a) the SAME id WITHOUT its tilde — the exact mutant a normalising
+      //       transform would produce, and what a substring-style bound would
+      //       wrongly accept;
+      //   (b) a tilde-prefixed id that is NOT the registered one — proves the
+      //       enum bounds the WHOLE string and not just the prefix;
+      //   (c) the PINNED sibling this change deliberately did NOT register.
+      for (const nonMember of [
+        'deepseek/deepseek-v4-flash-latest',
+        '~deepseek/deepseek-v4-pro-latest',
+        'deepseek/deepseek-v4-flash-0731',
+      ]) {
+        expect(
+          parse(withParam('model', nonMember)).success,
+          `expected '${nonMember}' to be REJECTED — the enum must still be bounded`
+        ).toBe(false);
+      }
+    });
+
+    it('🔴 resolves to itself as the bounded variant — tilde intact on the money path', () => {
+      // `resolveStepVariant` is what the price lookup, the settle record and the
+      // audit row's `detail.variant` all key off. A transform here mis-keys all
+      // three at once.
+      const step = chatCompletionStep as unknown as AnyBlockStep;
+      expect(resolveStepVariant(step, withParam('model', ALIAS))).toBe(ALIAS);
+    });
+
+    // 🔴 LABELLED AN INVARIANT GUARD, NOT REGRESSION COVERAGE — nothing was
+    // broken and this case is green before and after the change that added it.
+    // The investigation behind this change found NO transform anywhere on the
+    // path from the parsed param to the built step input: `buildStep` copies
+    // `params.model` verbatim, `resolveStepVariant` is a pure `includes`
+    // membership test, the orchestrator's only two tests of the field are
+    // `StartsWith("urn:air:")`, and its pricing client keys an exact-match
+    // dictionary off the same id. This exists so a future edit that introduces
+    // one — a slug, a lowercase, an `encodeURIComponent` — fails HERE rather
+    // than at execution on a submit that has already been charged.
+    it('🔴 reaches the built step input BYTE-IDENTICAL (invariant guard)', () => {
+      const built = chatCompletionStep.buildStep({ ...VALID_PARAMS, model: ALIAS });
+      const wireModel = (built.input as { model: string }).model;
+      expect(wireModel).toBe(ALIAS);
+      // Spelled out as a literal too, so this cannot degenerate into comparing
+      // the value against itself if `ALIAS` were ever re-derived from the array.
+      expect(wireModel).toBe('~deepseek/deepseek-v4-flash-latest');
+      expect(wireModel.charCodeAt(0)).toBe(0x7e);
+      expect(wireModel).toHaveLength(34);
+    });
   });
 
   it('resolves each model to itself as the bounded variant, and prices off it', () => {

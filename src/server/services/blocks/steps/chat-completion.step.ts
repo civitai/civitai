@@ -235,7 +235,11 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
  * WHY NO CONSTANT CAN BE RIGHT. Every model in `CHAT_COMPLETION_MODELS` is a
  * third-party model that the orchestrator prices per token, so the charge moves
  * with the model, the conversation and `maxTokens` — none of which this repo can
- * see, and none of which a constant can track. The pricing itself is the
+ * see, and none of which a constant can track. 🔴 AND SINCE THE ALLOWLIST NOW
+ * CARRIES A FLOATING `~…-latest` ALIAS, THE CHARGE FOR A FIXED MODEL STRING AND A
+ * FIXED CONVERSATION CAN MOVE WITH NO CHANGE ON EITHER SIDE — the rate card is
+ * fetched live per quote, so there is no deploy, no diff and no review in the loop
+ * when it does. See `CHAT_COMPLETION_MODELS`. The pricing itself is the
  * orchestrator's and is deliberately not restated here; the figures and the
  * derivation are in the internal tracker. The one part of it this constant IS:
  * the orchestrator floors the price at 1, and that floor is what this number
@@ -272,8 +276,38 @@ export const CHAT_COMPLETION_PRICE_BUZZ = 1;
  * unreachable anyway — but the next person adding an unreleased model to this
  * list should know both facts.
  *
- * v1 is deliberately three. All three were driven to `succeeded` against the
- * live orchestrator; adding a fourth later is a one-line additive change.
+ * v1 was deliberately three, all three driven to `succeeded` against the live
+ * orchestrator. The fourth — `~deepseek/deepseek-v4-flash-latest` — was NOT, and
+ * that asymmetry is stated rather than glossed: it was verified to EXIST in
+ * OpenRouter's public `/api/v1/models` listing (which is the same listing the
+ * orchestrator's own `OpenRouterPricingClient` keys its pricing dictionary off,
+ * by exact id), and to advertise `tools` / `tool_choice` in its
+ * `supported_parameters`, but no live submit was driven through it from here. The
+ * live orchestrator is token-gated and nothing in this repo can reach it.
+ *
+ * 🔴 A LEADING `~` IS PART OF THE ID, NOT A TYPO TO NORMALISE AWAY. It is
+ * OpenRouter's marker for a FLOATING alias: 16 ids in that listing carry it and
+ * every one of them ends `-latest`. Nothing on the path to the wire transforms it
+ * — `resolveStepVariant` is a pure `includes` membership test, `buildStep` copies
+ * `params.model` verbatim, and the orchestrator's two `urn:air:` tests are
+ * `StartsWith` checks that a `~` simply does not match, so the request takes the
+ * OpenRouter branch as intended. Pinned by a byte-identity test in
+ * `__tests__/chat-completion.step.test.ts`.
+ *
+ * 🔴 AND THE FLOATING PART IS A REAL, ACCEPTED COST — IT IS THE ONLY ID HERE
+ * WHOSE MEANING CAN CHANGE WITHOUT A DEPLOY ON EITHER SIDE. What the alias
+ * resolves to is OpenRouter's choice, so both the per-token rate (see
+ * `CHAT_COMPLETION_PRICE_BUZZ`, which is only the FLOOR) and the model's
+ * capabilities can move under a fixed string. The pinned alternatives that would
+ * trade that away for staleness are `deepseek/deepseek-v4-flash-0731` and
+ * `deepseek/deepseek-v4.1-flash`. 🔴 AND THE ALIAS IS NOT SIMPLY A SECOND NAME FOR
+ * THE FORMER — checked field by field off the listing rather than assumed. The two
+ * agree exactly on context length (1,310,720), on `top_provider` and on
+ * `supported_parameters`, but they do NOT agree on PRICE: the alias is cheaper per
+ * token (prompt 0.03 vs 0.04, completion 0.07 vs 0.08 USD per million). So
+ * "just pin it" is a change in cost as well as in staleness, in the direction of
+ * paying slightly more. Choosing the alias is a decision about wanting the
+ * upstream's current best; it is not a free one.
  *
  * 🔴 `cognitivecomputations/dolphin-mistral-24b-venice-edition` IS AN UNCENSORED
  * MODEL, and it is listed on purpose. Its output is not trusted — it is scanned
@@ -288,6 +322,9 @@ export const CHAT_COMPLETION_MODELS = [
   'deepseek/deepseek-chat',
   'cognitivecomputations/dolphin-mistral-24b-venice-edition',
   'openai/gpt-4o-mini',
+  // APPENDED, never inserted — the order is asserted as a whole set below, and
+  // `canonicalParamsFor` is called once per entry at registry load.
+  '~deepseek/deepseek-v4-flash-latest',
 ] as const;
 
 export type ChatCompletionModel = (typeof CHAT_COMPLETION_MODELS)[number];
@@ -306,6 +343,16 @@ export type ChatCompletionModel = (typeof CHAT_COMPLETION_MODELS)[number];
  * characters-per-token runs far above the nominal (long whitespace runs and
  * repeated substrings merge into single BPE tokens). The cap would only be
  * reached at ~12.5 chars/token sustained across the whole reply.
+ *
+ * 🔴 THE DERIVATION IS MODEL-INDEPENDENT, AND A BIG-CONTEXT MODEL DOES NOT INVITE
+ * RAISING IT. The binding constraint is the SCAN CAP on generated characters, not
+ * anything the provider will accept, so a model with a far larger window changes
+ * nothing here: `~deepseek/deepseek-v4-flash-latest` advertises a 1,310,720-token
+ * context and a 943,718-token completion cap, i.e. ~236x this ceiling, and this
+ * ceiling stays the binding one BY DESIGN. The provider's window is also inert on
+ * the money path — the orchestrator's `EstimateOutputTokens` consults a model's
+ * `context_length` ONLY as a fallback for an ABSENT `maxTokens`, which the
+ * required param below makes unreachable for this entry.
  *
  * 🔴 THE TWO NUMBERS ARE PINNED TOGETHER BY A TEST, DELIBERATELY NOT BY AN
  * IMPORT. Importing `MAX_SCANNED_CONTENT_CHARS` here would drag
@@ -407,7 +454,10 @@ export const CHAT_COMPLETION_SEED_EXCLUSIVE_MAX = 2 ** 31;
  * runs `assertStepInvariants` at MODULE SCOPE, and that calls `buildStep` once
  * per declared variant (`./index`, the load-time invariant loop). Measured by
  * spying on `globalThis.crypto.getRandomValues` and importing the registry:
- * **3 calls, one per `CHAT_COMPLETION_MODELS` entry, before any request exists.**
+ * **one call per `CHAT_COMPLETION_MODELS` entry, before any request exists** — 3
+ * when that was measured, 4 today. The COUNT is incidental; the RELATIONSHIP is
+ * the load-bearing part, so it is stated as the relationship and not as a literal
+ * that goes stale on every addition to the allowlist.
  *
  * That makes the choice above load-bearing rather than merely tidy, and it is
  * why this docstring no longer says "only ever runs server-side" — it did, and
