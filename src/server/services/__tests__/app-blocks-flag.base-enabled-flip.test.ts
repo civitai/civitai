@@ -1,14 +1,17 @@
-import { createServer, type Server } from 'http';
-import type { AddressInfo } from 'net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import baseTrueSnapshot from './fixtures/flipt-base-enabled-flip.snapshot.json';
+import sourceSnapshot from './fixtures/flipt-store-scope.snapshot.json';
+import {
+  deriveSnapshotFromFlagShape,
+  startFliptFixtureServer,
+  SNAPSHOT_PATH,
+  type FliptFixtureServer,
+} from './fixtures/flipt-fixture-server';
 import type { SessionUser } from '~/types/session';
 
 /**
- * 🔴 THE MEASUREMENT BEHIND "GLOBAL-EVAL SEMANTICS" IN `app-blocks-flag.ts`, AND THE
- * REGRESSION GUARD FOR THE INFERENCE THAT WAS RETRACTED WITH IT.
+ * 🔴 THE MEASUREMENT BEHIND "GLOBAL-EVAL SEMANTICS" IN `app-blocks-flag.ts`.
  *
- * Several docblocks in `app-blocks-flag.ts` used to reason:
+ * Several docblocks in that file used to reason:
  *
  *     no user → a global eval that can never match a segment → fail-closed / denied
  *
@@ -17,40 +20,50 @@ import type { SessionUser } from '~/types/session';
  * with the flag's own base value, so a base-`enabled: true` widening turns every
  * no-user branch in that file from a deny into a pass.
  *
- * Nothing in the repo measured that, which is exactly how the inference survived: the
- * sibling suites stub `isFlipt` with a fake whose base is `false`, so they reproduce
- * the conclusion without ever exercising its precondition. This suite runs the REAL
- * client against a REAL evaluation snapshot whose flags are base `enabled: true`:
+ * ## This is a reproduction, not a discovery
  *
- *   fixture snapshot  →  a real HTTP server on localhost
+ * The inversion was already measured against PRODUCTION Flipt (v2.10.0, 2026-08-15)
+ * and is recorded in `civitai/flipt-state`'s `scripts/validate-flag-shape.py`
+ * docstring, with both controls firing. That validator exists to guard this exact
+ * shape. What it CANNOT cover is the code side: it blocks the misconfiguration form
+ * (a boolean flag whose rollouts are all segment-scoped must be base-false) but
+ * deliberately exempts flags with no rollouts at all — which is precisely the shape
+ * of an intended GA flip. So the config gate permits the GA by design, and the code
+ * is the only control left on that half. This suite is that control's evidence.
+ *
+ * Nothing in THIS repo measured it, which is how the inference survived here: the
+ * sibling suites stub `isFlipt` with a fake whose base is `false`, so they reproduce
+ * the conclusion without ever exercising its precondition.
+ *
+ *   derived snapshot  →  a real HTTP server on localhost
  *                     →  the REAL `createFliptClient` from `@civitai/flipt`
  *                     →  the REAL `@flipt-io/flipt-client-js` wasm engine
  *                     →  the REAL `isAppBlocksAuthorEnabled` / `isAppBlocksEnabled`
  *
  * ## About the fixture
  *
- * `fixtures/flipt-base-enabled-flip.snapshot.json` is the sibling
- * `flipt-store-scope.snapshot.json` (a real Flipt v2 evaluation snapshot carrying the
- * production flag SHAPE — base + a single `SEGMENT_ROLLOUT_TYPE` whose
- * `OR_SEGMENT_OPERATOR` combines an `ALL_SEGMENT_MATCH_TYPE` moderator segment with an
- * `ANY_SEGMENT_MATCH_TYPE` allowlist) re-keyed to `app-blocks-author` /
- * `app-blocks-enabled` with `enabled` flipped to `true`. It models ONE thing: the
- * forcing condition this guard exists for — a base-true flip of a flag that still
- * carries its segment rollout. `base-false-control` is the same shape left at
- * `enabled: false`, so every `true` below is attributable to the base value and not to
- * the harness. The user ids are SYNTHETIC (`9000xxxxx`); this repo is public.
+ * DERIVED at runtime from `fixtures/flipt-store-scope.snapshot.json` — a real Flipt
+ * v2 evaluation snapshot carrying the production flag SHAPE (base + a single
+ * `SEGMENT_ROLLOUT_TYPE` whose `OR_SEGMENT_OPERATOR` combines an
+ * `ALL_SEGMENT_MATCH_TYPE` moderator segment with an `ANY_SEGMENT_MATCH_TYPE`
+ * allowlist). Only the key and `enabled` change. It is deliberately NOT a second
+ * checked-in file: that source's own docblock notes a re-capture means re-anonymising
+ * it, so a hand-edited twin would silently keep the old segment shape while still
+ * claiming production fidelity. `base-false-control` is the same shape left at
+ * `enabled: false`, so every `true` below is attributable to the base value and not
+ * to the harness.
  *
  * ## What this suite structurally CANNOT see
  *
  * - The live production flag documents. Both flags are base `false` with segment
- *   rollouts TODAY (`civitai/flipt-state`, `civitai-app/default/features.yaml`), so
- *   this fixture is a hypothetical, deliberately: the point is that the code must not
- *   depend on that staying true.
+ *   rollouts TODAY, so this fixture is a hypothetical, deliberately: the point is
+ *   that the code must not depend on that staying true.
  * - The real network path to production Flipt (TLS, auth, circuit breaker, refreshes).
  * - `FLIPT_LOCAL_OVERRIDES`, the other route to a no-user `true`. It is hard-disabled
  *   when `NODE_ENV === 'production'` (`packages/civitai-flipt/src/env.ts`).
- * - Any call site. The router-level consequence is pinned separately, by
- *   `blocks.router.flag-gate-hydrate.test.ts`.
+ * - The 2 of 10 call sites that hand `isAppBlocksAuthorEnabled` a nullable subject.
+ *   Those are a COMPILE error now, not a runtime one, so the guard for them is
+ *   `pnpm typecheck` and there is deliberately no test here pretending otherwise.
  */
 
 vi.hoisted(() => {
@@ -59,59 +72,37 @@ vi.hoisted(() => {
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
 });
 
-const SNAPSHOT_PATH = '/internal/v1/evaluation/snapshot/namespace/default';
+const URL_ENV = '__TEST_FLIPT_BASE_FLIP_URL';
 
-/** Requests the fake Flipt actually received — used as the instrument control. */
-const received: { url: string; environment?: string; auth?: string }[] = [];
-
-let server: Server;
-
-/**
- * Substitutes ONLY the app's env plumbing (`~/env/server` is not loadable in a unit
- * run): the exported `isFlipt` is a REAL `createFliptClient` instance pointed at the
- * fixture server. The evaluator, its cache, and the segment matcher are production code.
- */
 vi.mock('~/server/flipt/client', async () => {
-  const { createFliptClient } = await import('@civitai/flipt');
-  const flipt = createFliptClient({
-    url: process.env.__TEST_FLIPT_BASE_FLIP_URL as string,
-    clientToken: 'test-token',
-    environment: 'civitai-app',
-    log: () => undefined,
-    onInitError: (e) => {
-      throw e;
-    },
-  });
-  return {
-    isFlipt: flipt.isEnabled,
-    isFliptSync: flipt.isEnabledSync,
-    getFliptVariant: flipt.getVariant,
-    getFliptBoolean: flipt.getBoolean,
-    ensureFliptInitialized: flipt.ensureInitialized,
-  };
+  const { buildRealFliptClientMock } = await import('./fixtures/flipt-fixture-server');
+  return buildRealFliptClientMock('__TEST_FLIPT_BASE_FLIP_URL');
 });
 
+/**
+ * The GA-flip hypothetical: `app-blocks-author` and `app-blocks-enabled` widened by
+ * BASE while still carrying their segment rollout, plus the same shape left base-false
+ * as the negative control.
+ */
+const baseTrueSnapshot = deriveSnapshotFromFlagShape(
+  sourceSnapshot as never,
+  'app-blocks-enabled',
+  [
+    { key: 'app-blocks-author', enabled: true },
+    { key: 'app-blocks-enabled', enabled: true },
+    { key: 'base-false-control', enabled: false },
+  ]
+);
+
+let server: FliptFixtureServer;
+
 beforeAll(async () => {
-  server = createServer((req, res) => {
-    received.push({
-      url: req.url ?? '',
-      environment: req.headers['x-flipt-environment'] as string | undefined,
-      auth: req.headers.authorization as string | undefined,
-    });
-    if (!req.url?.startsWith(SNAPSHOT_PATH)) {
-      res.writeHead(404).end('{}');
-      return;
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(baseTrueSnapshot));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  process.env.__TEST_FLIPT_BASE_FLIP_URL = `http://127.0.0.1:${port}`;
+  server = await startFliptFixtureServer(baseTrueSnapshot);
+  process.env[URL_ENV] = server.url;
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await server.close();
 });
 
 /** Minimal SessionUser — only the fields `buildFliptContext` reads. */
@@ -119,16 +110,26 @@ function sessionUser(id: number, extra: Partial<SessionUser> = {}): SessionUser 
   return { id, isModerator: false, tier: 'free', onboarding: 0, ...extra } as SessionUser;
 }
 
-const UNAFFILIATED_ID = 4242; // matches no segment in the fixture
+const UNAFFILIATED_ID = 4242; // matches no segment in the derived snapshot
 
 describe('a base-`enabled: true` flip, measured against the real Flipt engine', () => {
   it('INSTRUMENT CONTROL: the fixture server is reached, and an unknown key still fails closed', async () => {
     const { isFlipt } = await import('~/server/flipt/client');
     await expect(isFlipt('a-flag-that-does-not-exist')).resolves.toBe(false);
-    expect(received.length).toBeGreaterThan(0);
-    expect(received[0].url).toContain(SNAPSHOT_PATH);
-    expect(received[0].environment).toBe('civitai-app');
-    expect(received[0].auth).toBe('Bearer test-token');
+    expect(server.received.length).toBeGreaterThan(0);
+    expect(server.received[0].url).toContain(SNAPSHOT_PATH);
+    expect(server.received[0].environment).toBe('civitai-app');
+    expect(server.received[0].auth).toBe('Bearer test-token');
+  });
+
+  it('FIXTURE CONTROL: the derived flags really carry a segment rollout (not a bare boolean)', async () => {
+    // Without this, every `true` below could come from a flag with no rollouts at
+    // all — which is a different shape and a different claim. The derivation helper
+    // also throws if the template has no rollouts; this pins the result.
+    for (const flag of baseTrueSnapshot.flags) {
+      expect(Array.isArray((flag as { rollouts?: unknown[] }).rollouts)).toBe(true);
+      expect((flag as { rollouts: unknown[] }).rollouts.length).toBeGreaterThan(0);
+    }
   });
 
   it('🔴 THE RETRACTED PREMISE, MEASURED: a GLOBAL eval of a base-true segmented flag returns TRUE', async () => {
@@ -154,29 +155,24 @@ describe('a base-`enabled: true` flip, measured against the real Flipt engine', 
     ).resolves.toBe(true);
   });
 
-  it('🔴 isAppBlocksAuthorEnabled DENIES an undefined user even when the flag is base-true', async () => {
+  it('the author gate evaluates a real subject against the base-true flag (the path that still exists)', async () => {
     const { isAppBlocksAuthorEnabled } = await import('~/server/services/app-blocks-flag');
-    // The claim the docblock makes. Before the fix this resolved TRUE here, because the
-    // no-user branch was `return isFlipt(APP_BLOCKS_AUTHOR_FLAG)` and the base is true.
-    await expect(isAppBlocksAuthorEnabled({ user: undefined })).resolves.toBe(false);
-    await expect(isAppBlocksAuthorEnabled()).resolves.toBe(false);
-  });
-
-  it('the author gate still PASSES a real subject under the same base-true flag (not a suite wired to deny)', async () => {
-    const { isAppBlocksAuthorEnabled } = await import('~/server/services/app-blocks-flag');
-    // POSITIVE CONTROL: same flag, same fixture, same call — only a user is added. If
-    // this were also `false` the assertion above would prove nothing about the branch.
+    // `isAppBlocksAuthorEnabled` has no no-user branch left to test at runtime — its
+    // `user` parameter is required and non-nullable, so the undefined case is a
+    // COMPILE error. What remains testable is that a present subject is still
+    // evaluated normally under the same flag, i.e. the type change did not turn the
+    // helper into a blanket deny.
     await expect(isAppBlocksAuthorEnabled({ user: sessionUser(UNAFFILIATED_ID) })).resolves.toBe(
       true
     );
   });
 
-  it('isAppBlocksEnabled KEEPS its no-user global eval — deliberately, for the machine caller', async () => {
+  it('isAppBlocksEnabled KEEPS its no-user global eval — deliberately, because it is a kill-switch', async () => {
     const { isAppBlocksEnabled } = await import('~/server/services/app-blocks-flag');
-    // Documented and intentional: the no-arg overload reads the flag's base value for
-    // `pages/api/v1/developer/block-manifests.ts`, the only no-arg call site. This
-    // asserts the ASYMMETRY with the author helper above is real, so nobody "fixes"
-    // one of them into the other by accident.
+    // The asymmetry with the author helper, pinned so nobody "unifies" them. A
+    // kill-switch answers "is the feature on at all", which a subject-less machine
+    // path may legitimately ask and which the base value IS. A capability answers
+    // "may THIS subject", which is unanswerable without one.
     await expect(isAppBlocksEnabled()).resolves.toBe(true);
   });
 });

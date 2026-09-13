@@ -237,9 +237,11 @@ export async function resolveSharedContext(
   // base `enabled` value, so a base-`enabled: true` GA flip of
   // `app-blocks-shared-storage` would admit a token whose subject no longer exists.
   // The WRITE path happened to catch it downstream (the `userId == null` check +
-  // the min-trust gate); the READ ops — `list` / `counts` — have no second belt, so
-  // the flag was the only thing standing there. Mechanism + the measurement against
-  // the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+  // the min-trust gate below); EVERY op in `READ_OPS` skips that block entirely and
+  // has no second belt, so the flag was the only thing standing in front of all of
+  // them. Do not re-enumerate that set here — it is four ops today and adding a
+  // fifth must not silently make this comment wrong. Mechanism + the measurement
+  // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
   if (userId != null && !subjectUser) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
   }

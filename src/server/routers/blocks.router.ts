@@ -307,10 +307,12 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
  * `app-blocks-author` would have turned an unresolvable subject into a PASS on an
  * AUTHZ gate. The refusal is now structural — no subject, no capability, no Flipt
  * call — which is the same shape `apps.router.ts` already uses for its own
- * `assertViewerIsAppDeveloper`. `isAppBlocksAuthorEnabled` independently returns
- * `false` for an undefined user, so this is belt-and-suspenders, and the distinct
- * message keeps the two refusals separable in a log and in a test. Mechanism +
- * the measurement: see GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+ * `assertViewerIsAppDeveloper`. It is not optional politeness: `user` is a
+ * REQUIRED, non-nullable parameter of `isAppBlocksAuthorEnabled`, so this narrowing
+ * is what makes the next line compile, and deleting it is a type error rather than
+ * a silent re-opening. The distinct message keeps the two refusals separable in a
+ * log and in a test. Mechanism + the measurement: see GLOBAL-EVAL SEMANTICS in
+ * `app-blocks-flag.ts`.
  *
  * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
  * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged — it

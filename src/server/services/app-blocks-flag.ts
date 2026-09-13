@@ -50,13 +50,14 @@ const APP_BLOCKS_FLAG = 'app-blocks-enabled';
  *
  * ⚠️ SECOND, UNRELATED READING TRAP IN THIS FILE: most docblocks below carry a
  * sentence of the form "the flag does NOT exist in Flipt at merge time / yet".
- * Each was an AS-MERGED note written by the PR that added the flag, and most are
- * now false — all but one of this file's flags have since been created, and two
- * (`app-blocks-pipeline-enabled`, `app-blocks-runtime-enabled`) are base `true`.
- * Those sentences are history, not live state, and the "so the as-merged posture
- * is dark" conclusions they support expired with them. Never plan on one: the
- * live definitions are `civitai/flipt-state` at
- * `civitai-app/default/features.yaml`, and the live answer is Flipt itself.
+ * Each was an AS-MERGED note written by the PR that added that flag, so each is a
+ * claim about the day it was written — and flags get created and widened after
+ * merge, which is the whole point of shipping dark. Those sentences are history,
+ * not live state, and the "so the as-merged posture is dark" conclusions they
+ * support expire with them. Never plan on one, and do not replace one with a
+ * fresher enumeration here — this file cannot hold live flag state without
+ * becoming the same trap. Read the definitions from `civitai/flipt-state`
+ * (`civitai-app/default/features.yaml`); the live answer is Flipt itself.
  */
 
 /**
@@ -234,17 +235,26 @@ export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
  *   below, and the pipeline helper, preserve the global-eval behaviour).
  *
  *   🔴 The no-user branch here is a request for `app-blocks-enabled`'s BASE
- *   value, not a guaranteed deny. It is KEPT (unlike the author helper's, which
- *   now returns `false` outright) because it has a real caller that wants
- *   exactly that: the dormant JOB_TOKEN manifest registrar
- *   `pages/api/v1/developer/block-manifests.ts`, the only no-arg call site in
- *   the repo. The consequence to hold on to: at a base-`enabled: true` GA flip
- *   every no-user caller of THIS helper starts passing. That is the intended
- *   reading for a kill-switch ("is the feature on at all"), and it is why the
- *   identity-shaped callers must not route a missing subject through it — see
- *   GLOBAL-EVAL SEMANTICS at the top of this file, and
- *   `blocks.router.ts::assertAppBlocksEnabledForTokenUser`, which refuses an
- *   unhydratable subject before it gets here.
+ *   value, not a guaranteed deny. It is KEPT — unlike `isAppBlocksAuthorEnabled`,
+ *   whose `user` parameter is REQUIRED — and the reason is SEMANTIC, not a head
+ *   count of callers. This flag is a KILL-SWITCH: it answers "is the feature on
+ *   at all", a question a subject-less machine path can legitimately ask, and the
+ *   flag's base value IS that answer. `app-blocks-author` is a CAPABILITY: it
+ *   answers "may THIS subject author", which is unanswerable without a subject,
+ *   so there the absence of one is a type error rather than a `false`.
+ *
+ *   (The only no-arg call site is `pages/api/v1/developer/block-manifests.ts` —
+ *   the JOB_TOKEN manifest registrar, which is DORMANT: nothing in this repo
+ *   outside tests and docs invokes that endpoint. Do not rest the asymmetry on
+ *   that caller existing; rest it on the kill-switch/capability distinction
+ *   above, which survives the endpoint being deleted.)
+ *
+ *   The consequence to hold on to: at a base-`enabled: true` GA flip every
+ *   no-user caller of THIS helper starts passing. That is the intended reading
+ *   for a kill-switch, and it is why the identity-shaped callers must not route a
+ *   missing subject through it — see GLOBAL-EVAL SEMANTICS at the top of this
+ *   file, and `blocks.router.ts::assertAppBlocksEnabledForTokenUser`, which
+ *   refuses an unhydratable subject before it gets here.
  *
  * The FLAG_OVERRIDE/local-overrides env exists for unit tests + local dev that
  * need to flip the flag without standing up Flipt.
@@ -358,39 +368,43 @@ export async function isAppListingsEnabled(opts?: { user?: SessionUser }): Promi
  * returns `false` when the client is null and when the evaluation throws. That
  * half is independent of how the flag is configured.
  *
- * 🔴 A VANISHED/UNDEFINED USER IS DENIED STRUCTURALLY — `return false`, not by
- * evaluating the flag. This docblock used to derive that denial from "no floor +
- * global eval (can never match a segment) → denied", and the INFERENCE was
- * wrong. The premise is true: a no-user eval carries entityId `'global'` and an
- * empty context, so no `STRING_COMPARISON_TYPE` segment (which is every identity
- * / tier / cohort segment we have) can match it. The conclusion did not follow
- * from the premise — it followed from the flag's BASE VALUE being `false`. When
- * no rollout matches, Flipt answers with the flag's own base `enabled`, so a
- * base-`enabled: true` flip would have made this branch resolve TRUE and admit a
- * caller with no resolvable subject through an AUTHZ gate. MEASURED against the
- * real `@flipt-io/flipt-client-js` wasm engine — base `enabled: true` plus a
- * non-matching `SEGMENT_ROLLOUT_TYPE`, evaluated with no entityId and no
- * context, resolves `true`; the same shape with base `false` resolves `false`;
- * an unknown key resolves `false`. The measurement is
- * `app-blocks-flag.base-enabled-flip.test.ts`.
+ * 🔴 THERE IS NO NO-USER BRANCH, AND THE COMPILER IS WHAT GUARANTEES THAT.
+ * `user` is REQUIRED and non-nullable. That is the entire guard: a capability has
+ * nothing to authorize without a subject, so a caller holding a nullable one
+ * cannot reach this function until it has said, in code, what it wants to happen.
  *
- * There is no subject to authorize when `user` is undefined, so this branch
- * answers `false` instead of asking Flipt. Enumerated when the branch changed:
- * all 10 call sites of this helper pass `{ user }`; none wants a global eval of
- * this key, and the only one that can actually reach the branch is
- * `blocks.router.ts::assertViewerIsAppDeveloper` (a token subject that no longer
- * hydrates), which now refuses before calling here as well.
+ * This docblock used to say a vanished/undefined user was denied because of "no
+ * floor + global eval (can never match a segment) → denied". The premise is true
+ * — a no-user eval carries entityId `'global'` and an empty context, so no
+ * `STRING_COMPARISON_TYPE` segment (which is every identity / tier / cohort
+ * segment we have) can match it. The conclusion did NOT follow from it: it
+ * followed from the flag's BASE VALUE being `false`. When no rollout matches,
+ * Flipt answers with the flag's own base `enabled`, so under a base-`enabled:
+ * true` flip that branch resolved TRUE and admitted a caller with no resolvable
+ * subject through an AUTHZ gate. See GLOBAL-EVAL SEMANTICS at the top of this
+ * file for the measurement and for the production-Flipt precedent.
+ *
+ * Why a REQUIRED parameter rather than a `if (!user) return false` branch: the
+ * branch answers for the caller, silently, and every one of them wants to answer
+ * for itself (refuse a vanished token subject / refuse an unauthenticated
+ * request). A required parameter turns each of those into a compile error until
+ * the intent is written down, and it cannot be walked by rewording — unlike the
+ * branch, which reads as handled at every call site without any of them having
+ * decided anything. Making it required errored at exactly 2 of the 10 call sites,
+ * both bare `middleware(...)` whose `ctx.user` type is not narrowed by the
+ * `protectedProcedure` they are attached to; both now refuse explicitly.
+ *
+ * 🔴 What this does NOT stop: a deliberate `user!` or `as SessionUser` cast. At
+ * runtime such a call throws inside `buildFliptContext` / `String(user.id)`
+ * rather than returning `true`, so it still cannot open the gate — but it is a
+ * crash, not a refusal, and review is the only thing that catches the cast.
  */
-export async function isAppBlocksAuthorEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
-  const user = opts?.user;
+export async function isAppBlocksAuthorEnabled(opts: { user: SessionUser }): Promise<boolean> {
+  const user = opts.user;
   // Moderator floor — the `availability: ['mod']` static fallback. Keeps mods'
   // existing author access intact while the Flipt flag is absent (dark window)
   // and regardless of how the flag's segments are later configured.
-  if (user?.isModerator) return true;
-  // No subject → nothing to authorize. DENY here rather than falling through to a
-  // global eval, whose answer is the flag's base value and therefore flips to
-  // `true` the moment `app-blocks-author` is widened by base rather than segment.
-  if (!user) return false;
+  if (user.isModerator) return true;
   // Per-user eval — same entityId + context shape as isAppBlocksEnabled, so the
   // author cohort segment resolves identically to the client/hasFeature gate.
   return isFlipt(APP_BLOCKS_AUTHOR_FLAG, String(user.id), buildFliptContext(user));

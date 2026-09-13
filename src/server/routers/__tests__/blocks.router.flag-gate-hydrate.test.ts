@@ -308,14 +308,17 @@ describe('assertViewerIsAppDeveloper — the AUTHOR gate refuses an unresolvable
   it('POSITIVE CONTROL: a subject that hydrates on both calls passes BOTH gates', async () => {
     // Proves the refusal above is attributable to the missing subject, not to the
     // author capability or to anything downstream: same flag, same input, same
-    // mocks — only the second hydration differs. It fails later (the mocked
-    // BlockRegistry returns no instance), which is past both gates.
+    // mocks — only the second hydration differs. Asserting the SPECIFIC downstream
+    // outcome is load-bearing: `rejects.not.toMatchObject(...)` passes on ANY other
+    // rejection, so it cannot tell "got past both gates" from "blew up differently".
+    // NOT_FOUND / 'Block install not found' comes from the mocked BlockRegistry
+    // returning no instance, which is several steps PAST both gates.
     mockIsFlipt.mockImplementation(async () => true);
     mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' } as never);
 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.updateUserSettings({ blockToken: 'tok', settings: {} })
-    ).rejects.not.toMatchObject({ message: 'block token subject could not be resolved' });
+    ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Block install not found' });
   });
 });
