@@ -445,17 +445,36 @@ export async function previewUserAppStorage(args: {
   const blocks = await dbRead.appBlock.findMany({
     select: { id: true, blockId: true, appListing: { select: { id: true, slug: true } } },
   });
+  //
+  // 🔴 AND IT IS NOT GUARANTEED INJECTIVE, SO A COLLISION DISQUALIFIES THE SCHEMA
+  // RATHER THAN PICKING A WINNER. `sanitizeAppSlug` maps every non-alphanumeric
+  // character to `_`, so `my-app` and `my_app` would both resolve to
+  // `app_my_app`. Today they cannot BOTH exist — the published manifest schema
+  // pins `blockId` to `^[a-z][a-z0-9-]*[a-z0-9]$`, which admits no underscore, so
+  // the map is injective over every id that path can produce. That is a property
+  // of a JSON-schema pattern in another file, though, not of anything here, and
+  // the cost of it changing is that a purge aimed at one app silently deletes
+  // another app's rows (they would share the `kv` table too). So a schema claimed
+  // by two blocks is reported as unmapped and skipped, which is the same
+  // treatment as a schema claimed by none.
   const bySchema = new Map<string, BlockIdentity & { storageSlug: string }>();
+  const collidingSchemas = new Set<string>();
   for (const b of blocks) {
     const storageSlug = sanitizeAppSlug(b.blockId);
     if (!storageSlug) continue;
-    bySchema.set(`app_${storageSlug}`, {
+    const schemaName = `app_${storageSlug}`;
+    if (bySchema.has(schemaName)) {
+      collidingSchemas.add(schemaName);
+      continue;
+    }
+    bySchema.set(schemaName, {
       appBlockId: b.id,
       slug: b.appListing?.slug ?? b.blockId,
       appListingId: b.appListing?.id ?? null,
       storageSlug,
     });
   }
+  for (const name of collidingSchemas) bySchema.delete(name);
 
   const apps: AppUserStorageAppView[] = [];
   const unmappedSchemas: string[] = [];

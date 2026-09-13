@@ -403,6 +403,28 @@ describe('preview (the read surface)', () => {
     expect(out.totals.totalBytes).toBe(A_TARGET_BYTES + B_TARGET_BYTES);
   });
 
+  it('two blocks claiming ONE schema disqualifies it — no arbitrary winner', async () => {
+    // `sanitizeAppSlug` maps every non-alphanumeric char to `_`, so `my-app` and
+    // `my_app` would both resolve to `app_my_app` and share one `kv` table. The
+    // manifest schema forbids the underscore form today; if that ever changes, a
+    // purge aimed at one app must NOT delete the other's rows. The colliding
+    // schema is reported as unmapped and skipped, exactly like an orphan.
+    mockDbRead.appBlock.findMany.mockImplementation(async () => [
+      { id: APP_A.id, blockId: 'my-app', appListing: { id: 'apl_a', slug: 'my-app' } },
+      { id: 'apb_ccc', blockId: 'my_app', appListing: null },
+      { id: APP_B.id, blockId: APP_B.blockId, appListing: null },
+    ]);
+    const out = await caller().preview({ userId: TARGET });
+    expect(out.apps.map((a) => a.appBlockId)).toEqual([APP_B.id]);
+    expect(out.unmappedSchemas.sort()).toEqual([APP_A.schema, ORPHAN_SCHEMA].sort());
+
+    // …and the account-wide purge then leaves that schema's rows alone.
+    const purge = await caller().purgeAccount({ userId: TARGET, reason: 'account terminated' });
+    expect(purge.unmappedSchemas).toContain(APP_A.schema);
+    expect(fake.kv(APP_A.schema)).toHaveLength(4);
+    expect(fake.kv(APP_B.schema)).toEqual([]);
+  });
+
   it('an app that was never provisioned reads as empty, not as an error', async () => {
     fake.schemas.delete(APP_A.schema);
     const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
