@@ -349,6 +349,13 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // And the remedy the operator is given must not be the one that cannot work.
     expect(truncated).not.toContain('Re-run via apps.mod.userStorage.purgeAccount');
     expect(truncated).toContain('purgeApp');
+    // 🔴 …and it must warn that the actionable remedy re-introduces the artefact
+    // the erasure path exists to avoid: purgeApp records as a MODERATOR purge, so
+    // its audit row keeps the per-key snapshot this wipe deliberately withheld.
+    // The old advice was inert, so nobody could act on it; making it work made
+    // this reachable.
+    expect(truncated).toContain('per-key snapshot');
+    expect(truncated).toContain('raising the cap');
     warn.mockRestore();
   });
 

@@ -676,42 +676,72 @@ describe('initiator is not a remote input', () => {
    * gets a takedown whose permanent row records NONE of the keys they destroyed —
    * with the suite green.
    *
-   * Asserted against the procedure's own zod schema, which is what actually
-   * decides what a remote caller may send.
+   * Asserted against the procedure's own zod schemas — ALL of them, which is what
+   * actually decides what a remote caller may send.
+   *
+   * 🔴 `_def.inputs` IS A LIST, AND READING `[0]` LEFT A HOLE IN THE GUARD THAT
+   * CARRIES THIS ARGUMENT. tRPC MERGES chained `.input()` calls, so a second
+   * chained `.input(z.object({ initiator: … }))` is admitted from the wire while
+   * an `inputs[0]` reader reports the field absent. Demonstrated: with that
+   * mutation applied the whole suite stayed green, `_def.inputs.length === 2`,
+   * and the merged parse returned `initiator` alongside the declared fields.
+   *
+   * A guard whose docstring claims it checks "the procedure's own zod schema"
+   * while checking only the first of several is worse than no guard — it reads as
+   * coverage and stops anyone looking. Everything below reduces over the whole
+   * list.
    */
-  const inputSchemaOf = (name: 'preview' | 'purgeApp' | 'purgeAccount') => {
+  type InputSchema = {
+    shape?: Record<string, unknown>;
+    parse: (v: unknown) => Record<string, unknown>;
+  };
+
+  const inputSchemasOf = (name: 'preview' | 'purgeApp' | 'purgeAccount'): InputSchema[] => {
     const proc = (
       appsModUserStorageRouter as never as {
         _def: { procedures: Record<string, { _def: { inputs: unknown[] } }> };
       }
     )._def.procedures[name];
     expect(proc).toBeTruthy();
-    return proc._def.inputs[0] as { shape?: Record<string, unknown> };
+    const inputs = proc._def.inputs as InputSchema[];
+    // POSITIVE CONTROL on the reader itself: a procedure with no declared input
+    // would make every "does not contain" assertion below vacuously true.
+    expect(inputs.length).toBeGreaterThan(0);
+    return inputs;
   };
+
+  /** Every key any of the procedure's input schemas declares. */
+  const inputKeysOf = (name: 'preview' | 'purgeApp' | 'purgeAccount') =>
+    inputSchemasOf(name).flatMap((i) => Object.keys(i.shape ?? {}));
 
   it.each(['preview', 'purgeApp', 'purgeAccount'] as const)(
     '%s does not admit `initiator` from the wire',
     (name) => {
-      const shape = inputSchemaOf(name).shape ?? {};
+      const keys = inputKeysOf(name);
       // POSITIVE CONTROL — the reader really is looking at the field list.
-      expect(Object.keys(shape)).toContain('userId');
-      expect(Object.keys(shape)).not.toContain('initiator');
+      expect(keys).toContain('userId');
+      expect(keys).not.toContain('initiator');
     }
   );
 
   it('a client that sends `initiator` anyway cannot change the recorded shape', () => {
     // The schemas are strict-by-omission: an unknown key is stripped, not honoured.
-    const parsed = (
-      inputSchemaOf('purgeApp') as unknown as {
-        parse: (v: unknown) => Record<string, unknown>;
-      }
-    ).parse({
+    // Parsed through EVERY input and merged, which is what tRPC does with chained
+    // `.input()` calls — so a second schema that DID accept the field would show
+    // up here rather than being skipped.
+    const sent = {
       userId: TARGET,
       appBlockId: APP_A.id,
       reason: 'abuse',
       initiator: 'system:account-wipe',
-    });
+    };
+    const parsed = inputSchemasOf('purgeApp').reduce<Record<string, unknown>>(
+      (acc, schema) => ({ ...acc, ...schema.parse(sent) }),
+      {}
+    );
     expect(parsed).not.toHaveProperty('initiator');
+    // Positive control: the merge really did produce the declared fields.
+    expect(parsed).toMatchObject({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' });
   });
 });
 

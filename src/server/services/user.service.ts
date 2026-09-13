@@ -1532,7 +1532,10 @@ export const removeAllContent = async ({
           `hit its candidate cap, so some schemas were NOT examined — and re-running ` +
           `purgeAccount would skip the SAME ones (the candidate list is sorted and ` +
           `truncated deterministically). Purge the remaining apps individually via ` +
-          `apps.mod.userStorage.purgeApp, or raise APP_USER_STORAGE_MAX_SCHEMAS.`
+          `apps.mod.userStorage.purgeApp, or raise APP_USER_STORAGE_MAX_SCHEMAS. ` +
+          `NOTE: purgeApp records as a MODERATOR purge, so its audit row keeps the ` +
+          `per-key snapshot (key names, sizes, md5 fingerprints) that the wipe path ` +
+          `deliberately withholds for an erased account — prefer raising the cap.`
       );
     }
     if (result.unmappedSchemas.length > 0) {
