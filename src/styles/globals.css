@@ -189,12 +189,17 @@
    this repo is kept — an entry with no stated reason cannot be reviewed later.
 
    WHEN IT IS WARRANTED — TWO GROUNDS, AND AN ENTRY MUST SAY WHICH ONE IT CLAIMS.
-   The default exists because an app cannot know how wide the viewer's monitor is
-   and almost none of them defend against it themselves, so an entry has to argue
-   its way past that, not merely assert a preference.
+   They are not the same KIND of thing, and conflating them is how the cap dies:
+   ground (1) is an argument that can be checked against the app, ground (2) is an
+   override that cannot.
 
    (1) THE SURFACE IS THE CANVAS: an infinite grid, a timeline, a map, a
-   side-by-side compare — where a centred column is actively worse.
+   side-by-side compare — where a centred column is actively worse. This is where
+   the default's reasoning bites — an app cannot know how wide the viewer's monitor
+   is and almost none of them defend against it themselves — so an entry here has
+   to argue its way past that rather than assert a preference. NOT for "it looks
+   bigger": that exclusion has force HERE, because here there is a claim about the
+   surface to be wrong about, and a reviewer can open the app and disagree.
 
    (2) AN EXPLICIT PRODUCT DECISION BY THE REPO OWNER. This is ground (1)'s
    opposite in one specific way: nothing is malfunctioning, the cap binds exactly
@@ -202,19 +207,42 @@
    admissible ONLY if it records the three things a reviewer would need to
    re-examine it later, none of which can be recovered from the diff:
 
-     · WHO decided — named, not "we", and not the PR author by default;
+     · WHO decided — the specific decider, not "we", and not the PR author by
+       default. A role ("the repo owner, directly") satisfies this; a personal name
+       is not required, and this file is world-readable, which is a reason not to
+       ask for one;
      · WHAT TRADE was accepted — the cost as it was stated at the time, and what
        the decision was taken AGAINST if there was an alternative on the table;
      · WHAT IT IS WORTH — the benefit's CLASS, measured: which display widths it
        reaches, and which it provably does not.
 
-   NOT for "it looks bigger" — and ground (2) is not a hole in that exclusion, it
-   is what makes the exclusion enforceable. "It looks bigger" is a preference with
-   no author, no stated cost and no measured reach; ground (2) requires all three,
-   so an entry that cannot produce them has not made a product decision, it has
-   expressed a preference, and it is refused by the same sentence. Ground (2) also
-   does NOT waive ground (1) generally: it admits the entry that SHOWS ITS COST,
-   one at a time, which is why the three bullets are a bar and not a formality.
+   🔴 BE HONEST ABOUT WHAT THOSE THREE BULLETS DO: THEY MAKE AN ENTRY RECORDED AND
+   REVIEWABLE, NOT JUSTIFIED. An earlier version of this comment claimed they also
+   refuse "it looks bigger" — that a preference has "no author, no stated cost and
+   no measured reach" so the bullets exclude it. That is RETRACTED: it does not
+   hold, and believing it would let this ground swallow the cap. All three are
+   satisfiable by procedure alone, with nothing said about the app:
+
+     · every request has a requester, so WHO is always available;
+     · WHAT TRADE is the same ~150px-gutter arithmetic for EVERY app — it is a
+       property of the 1600 cap, not of the app asking;
+     · WHAT IT IS WORTH measures the reach of the EXEMPTION, not of the benefit —
+       "which display widths it reaches" has a literally identical answer for any
+       two apps.
+
+   So ground (2) is an OWNER OVERRIDE, and the bullets are the receipt for it. What
+   actually limits it is that it takes an owner decision each time and leaves a
+   record naming who took it — not a test a reviewer can apply on their own. A
+   reviewer who finds all three bullets present has confirmed the entry is
+   reviewable, and nothing more; whether the override should have been made is the
+   owner's call to answer, not the bullets'.
+
+   🔴 WHICH MEANS THE SHAPE TO WATCH FOR IS AN ENTRY COPIED FROM ANOTHER. Ground (2)
+   does NOT waive ground (1) generally, and a run of entries each admitted on
+   "the owner said so" is the cap being repealed one app at a time rather than
+   reconsidered once. If that is what is happening, the honest change is to move or
+   drop the 1600 default — a decision with its own evidence, taken where the
+   arithmetic lives, on `APP_PAGE_MAX_WIDTH_PX` — not to keep appending here.
 
    The mechanism is MEASURED, not merely written down: the "opt-out" cases in
    `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
@@ -268,7 +296,11 @@
        IS WORTH, STATED NARROWLY" below.
 
    That is the WHOLE record. Nothing else about the owner's reasoning is known, and
-   this entry deliberately does not extrapolate one.
+   this entry deliberately does not extrapolate one. Ground (2) says plainly what
+   that makes this entry: RECORDED AND REVIEWABLE, not justified by an argument about
+   sensei. 🔴 SO THIS IS NOT A TEMPLATE. A third entry is not admitted by producing
+   the same three bullets — see the retraction under ground (2) for why the bullets
+   cannot do that work — it is admitted by the owner deciding again.
 
    THE RATIONALE OF RECORD, AND IT HAS NOW BEEN RE-TAKEN. The census on
    `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` reads: "TWO do not cap at all —
@@ -303,7 +335,12 @@
    viewport. The benefit is confined to WIDE DESKTOP DISPLAYS — the cap binds on a
    maximised browser at 1080p (~1905 CSS px) for a ~150px gutter either side, and on
    NOTHING in the laptop classes (1280/1366/1440/1536), no tablet, and no phone in
-   either orientation. So this changes nothing at all for where the traffic is.
+   either orientation. ⚠️ THAT IS A CLAIM ABOUT WIDTHS, NOT ABOUT TRAFFIC — the
+   display-width CLASSES the exemption reaches are computed from the cap and are
+   checkable here; how many viewers sit in each is a population this repo measures
+   nowhere. So do NOT read "and that is where the traffic is" into it: the sibling
+   sentence on `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` does say it, and it is
+   unsourced there too.
 
    🔴 NOTEPAD IS THE SIBLING CASE AND IS DELIBERATELY NOT A MEMBER. The census line
    names both apps; only one is being excused, and the asymmetry is intended rather

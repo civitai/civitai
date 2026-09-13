@@ -462,7 +462,7 @@ frame than the default.
 
 **Currently opted out** — read the ledger in `src/styles/globals.css`, which is the
 authority for both the membership and each entry's reason, and whose comment states
-the two grounds on which an entry is admitted. Neither the list nor a count is
+the grounds on which an entry is admitted. Neither the list nor a count is
 mirrored here, because a copy on this page is a second claim that rots on the next
 entry without anything noticing. The ledger's membership is asserted in a test, so a
 rule cannot be added or removed without that being a deliberate, reviewed change.

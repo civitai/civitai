@@ -169,6 +169,42 @@ afterEach(() => {
 });
 
 /**
+ * The ONE spelling of "a `data-block-id` value inside a selector", used by BOTH
+ * the CSSOM walk below and the raw-text parse it is checked against.
+ *
+ * 🔴 SHARED ON PURPOSE. The two parses are compared for EQUALITY, so the claim that
+ * comparison makes must be about WHERE a rule is reachable from — and about nothing
+ * else. An attribute value may be written unquoted in CSS (`[data-block-id=sensei]`
+ * is legal, and `selectorText` hands it back quoted), so two patterns that disagreed
+ * about quoting would make the comparison fail over a spelling difference, with a
+ * message pointing a reader at an at-rule that is not there. One pattern, tolerant
+ * of both, cannot. Built fresh per call rather than hoisted as a `/g` literal so no
+ * caller can inherit another's `lastIndex`.
+ *
+ * Sorted, because neither side's order is meaningful: the walk yields document
+ * order within whatever it descended into, the raw parse yields file order.
+ */
+function blockIdsIn(text: string): string[] {
+  return [...text.matchAll(/\[data-block-id\s*=\s*['"]?([^'"\]]+)['"]?\]/g)]
+    .map((m) => m[1])
+    .sort();
+}
+
+/**
+ * `globals.css` with its block comments removed.
+ *
+ * The ledger's own doc comment contains a TEMPLATE rule (`'my-canvas-app'`), and
+ * the entries discuss their own selectors in prose, so an id count taken over the
+ * raw file counts things that do not ship. Same strip, for the same reason, as
+ * `code()` in `__tests__/pageBlockHostMaxWidth.test.ts`. Block comments only —
+ * CSS has no `//` comment, and stripping one would eat the rest of any line
+ * holding a `url(https://…)`.
+ */
+function cssWithoutComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/**
  * The REAL full-bleed opt-out rules, parsed out of `globals.css` itself.
  *
  * 🔴 WHY THIS INDIRECTION EXISTS RATHER THAN JUST LOADING THE STYLESHEET. The
@@ -188,6 +224,16 @@ afterEach(() => {
  * there each shipped a defect (a comment glued to the next property, a `}` inside
  * a string truncating the capture), because several regexes cannot agree on where
  * a CSS block ends. `replaceSync` hands that to the engine that will evaluate it.
+ *
+ * ⚠️ WHAT THE WALK DOES NOT REACH, AND WHY THAT IS CHECKED RATHER THAN TRUSTED. It
+ * descends through `@layer` blocks and nothing else — not `@media`, `@supports` or
+ * `@container` — because a rule inside a conditional at-rule cannot be injected
+ * unconditionally without changing what it means. That is a deliberate limit, and
+ * it is also a HOLE: a member whose rule moves into such a block disappears from
+ * `ids`, the derived green arm never measures it, and the test still passes on the
+ * remaining members. So the caller asserts these `ids` EQUAL the ids in the raw
+ * file text — see the assertion in the LEDGER case, which is the only thing
+ * standing between that limit and a silently unmeasured member.
  */
 function ledgerFromGlobals(): { css: string; ids: string[] } {
   const sheet = new CSSStyleSheet();
@@ -199,8 +245,7 @@ function ledgerFromGlobals(): { css: string; ids: string[] } {
       if (rule instanceof CSSStyleRule) {
         if (!rule.selectorText.includes('data-block-id')) continue;
         css.push(rule.cssText);
-        for (const m of rule.selectorText.matchAll(/\[data-block-id\s*=\s*['"]?([^'"\]]+)['"]?\]/g))
-          ids.push(m[1]);
+        ids.push(...blockIdsIn(rule.selectorText));
       } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
         walk(rule.cssRules);
       }
@@ -541,6 +586,46 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
         'rules moved somewhere this walk does not reach — and with an empty list the green arm ' +
         'below iterates nothing and asserts nothing.'
     ).not.toHaveLength(0);
+
+    /**
+     * 🔴 AND NON-EMPTY IS NOT ENOUGH — THE WALK MUST HAVE REACHED *EVERY* MEMBER.
+     *
+     * A count cannot see a PARTIAL loss, and that is the whole exposure of a derived
+     * arm: with two members, one rule moving into an `@media`/`@supports`/`@container`
+     * block drops it from `ids` while the OTHER member keeps the list non-empty, so the
+     * check above passes, the loop measures one app, and the app that just stopped
+     * being full-bleed is never mounted. Measured, not theorised: wrapping the sensei
+     * rule in `@media (min-width: 3000px)` — a plausible "only above the cap"
+     * refinement with a wrong bound — left this file 11/11 and the two node-tier guard
+     * files 16/16 while sensei rendered capped at 1600 on a 2560 display. Neither of
+     * those guards can see it: the membership assertion in
+     * `__tests__/pageBlockHostMaxWidth.test.ts` regexes the raw text, where the id is
+     * still present, and `__tests__/ledgerSelectorSurvivesProdStrip.test.ts` is
+     * text-based too. Only a CSSOM read can tell a reachable rule from a written one,
+     * and this file is the only tier that has one.
+     *
+     * So the relationship is pinned instead: what the CSSOM walk could REACH equals
+     * what the file SAYS. No membership is restated here — both sides are derived from
+     * the same shipped file — and a future entry is covered the day its rule lands.
+     * The two sides differ in exactly one respect, which is the respect that matters:
+     * one went through the engine's rule tree, the other did not.
+     */
+    expect(
+      [...ledger.ids].sort(),
+      'the CSSOM walk over src/styles/globals.css did not reach the same set of ' +
+        '`[data-block-id=…]` rules that the file textually contains. RECEIVED is what ' +
+        '`ledgerFromGlobals` could reach by walking the parsed stylesheet; EXPECTED is every id ' +
+        'in the file with comments stripped. An id that is MISSING from the walk means its rule ' +
+        'now sits inside an at-rule the walk does not descend into — `@media`, `@supports`, ' +
+        '`@container`, anything but `@layer` — so the derived green arm below never mounts that ' +
+        'app, this test stays green on the OTHER members alone, and an app that was excused from ' +
+        'the ultrawide cap is being letterboxed again at every width the at-rule excludes. Fix ' +
+        'it by moving the rule back to the top level (or into a `@layer`), or by teaching ' +
+        '`ledgerFromGlobals` to descend into that at-rule AND mounting the green arm at a ' +
+        'viewport its condition admits — not by relaxing this assertion. An EXTRA id in the walk ' +
+        'is the mirror case: the raw parse missed a spelling the engine accepts, so it is the ' +
+        'regex in `blockIdsIn` that is wrong.'
+    ).toEqual(blockIdsIn(cssWithoutComments(globalsCss)));
 
     // …and the negative arm must really be OUTSIDE the set it is contrasted with.
     // If the fixture's own slug ever became a ledger member, the last assertion in
