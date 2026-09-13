@@ -29,7 +29,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * never read back out of the fake's own aggregate.
  */
 
-const { mockPool, mockClient, mockDbRead, mockDbWrite, mockLogToAxiom, fake } = vi.hoisted(() => {
+const { mockPool, mockClient, fake } = vi.hoisted(() => {
   type KvRow = {
     user_id: number;
     block_instance_id: string;
@@ -219,27 +219,23 @@ const { mockPool, mockClient, mockDbRead, mockDbWrite, mockLogToAxiom, fake } = 
     fake,
     mockPool,
     mockClient,
-    mockDbRead: {
-      appBlock: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
-    },
-    mockDbWrite: {
-      appListingModerationEvent: {
-        create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data),
-        update: vi.fn(async () => ({})),
-      },
-    },
-    mockLogToAxiom: vi.fn(async () => undefined),
   };
 });
 
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
-
 import { appsModUserStorageRouter } from '../apps-mod-storage.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import { APP_USER_STORAGE_PURGE_ACTION } from '~/server/services/apps/user-storage-purge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
+dbMock.dbWrite.appListingModerationEvent.create.mockImplementation(
+  async ({ data }: { data: Record<string, unknown> }) => data
+);
+dbMock.dbWrite.appListingModerationEvent.update.mockImplementation(async () => ({}));
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 // Three schemas, three users. Byte sizes are DISTINCT PRIMES so that no wrong
@@ -280,12 +276,14 @@ function seed() {
   fake.addSchema(ORPHAN_SCHEMA);
   fake.addSchema(PREVIEW_SCHEMA);
 
-  fake.kv(APP_A.schema).push(
-    kvRow(TARGET, 'a-one', 101),
-    kvRow(TARGET, 'a-two', 211, 'mbi_2'),
-    kvRow(TARGET, 'a-three', 307),
-    kvRow(BYSTANDER, 'b-keep', A_BYSTANDER_BYTES)
-  );
+  fake
+    .kv(APP_A.schema)
+    .push(
+      kvRow(TARGET, 'a-one', 101),
+      kvRow(TARGET, 'a-two', 211, 'mbi_2'),
+      kvRow(TARGET, 'a-three', 307),
+      kvRow(BYSTANDER, 'b-keep', A_BYSTANDER_BYTES)
+    );
   fake.kv(APP_B.schema).push(kvRow(TARGET, 'b-one', B_TARGET_BYTES));
   fake.kv(ORPHAN_SCHEMA).push(kvRow(TARGET, 'orphan-key', 4001));
   fake.kv(PREVIEW_SCHEMA).push(kvRow(TARGET, 'preview-key', 5003));
@@ -298,9 +296,12 @@ function seed() {
 
   mockDbRead.appBlock.findUnique.mockImplementation(async ({ where }: any) => {
     if (where.id === APP_A.id)
-      return { id: APP_A.id, blockId: APP_A.blockId, appListing: { id: 'apl_a', slug: APP_A.slug } };
-    if (where.id === APP_B.id)
-      return { id: APP_B.id, blockId: APP_B.blockId, appListing: null };
+      return {
+        id: APP_A.id,
+        blockId: APP_A.blockId,
+        appListing: { id: 'apl_a', slug: APP_A.slug },
+      };
+    if (where.id === APP_B.id) return { id: APP_B.id, blockId: APP_B.blockId, appListing: null };
     return null;
   });
   mockDbRead.appBlock.findMany.mockImplementation(async () => [
@@ -325,8 +326,7 @@ function ctx(user: unknown = MOD) {
   };
 }
 
-const caller = (user: unknown = MOD) =>
-  appsModUserStorageRouter.createCaller(ctx(user) as never);
+const caller = (user: unknown = MOD) => appsModUserStorageRouter.createCaller(ctx(user) as never);
 
 beforeEach(() => {
   vi.clearAllMocks();

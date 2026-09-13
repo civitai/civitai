@@ -87,7 +87,12 @@ export const appsModUserStorageRouter = router({
         });
       } catch (err) {
         if (err instanceof AppUserStoragePurgeError) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: err.message });
+          // `cause` is load-bearing, not decoration: without it
+          // `isDriverAuthoredMessage` cannot see the original error in the cause
+          // chain, and a 4xx that forwards a caught `.message` re-opens the
+          // civitai#3845/3 leak at this site. Pinned repo-wide by
+          // `rest-error-envelope-ledger.test.ts`.
+          throw new TRPCError({ code: 'NOT_FOUND', message: err.message, cause: err });
         }
         throw err;
       }
