@@ -82,24 +82,13 @@ describe('feedback schema — context bounds', () => {
   /**
    * 🔴 THE SHAPE IS A SECURITY GUARD, NOT TIDINESS, AND THIS IS THE REGRESSION BLOCK.
    *
-   * Both mint paths produce `randomUUID()` — the presigned one
-   * (`src/pages/api/v1/image-upload/index.ts`) and the relay's own server-side mint
-   * (`uploadImageBufferToStore` in `src/utils/s3-utils.ts`) — so a legitimate id is
-   * ALWAYS a uuid. The field used to be bounded by LENGTH ALONE
-   * (`z.string().trim().min(1).max(100)`), which accepted any string a client cared to
-   * send and wrote it verbatim into a JSONB column.
+   * 🔴 WHY, IN ONE PLACE ONLY: the field note on `images` in
+   * `src/server/schema/feedback.schema.ts`. It is deliberately NOT restated here —
+   * the same argument previously existed in four files, and four copies of one claim
+   * drift apart silently. Read it there; this block only pins the cases.
    *
-   * The consumer is what makes that matter: the moderator queue renders these as
-   * inline thumbnails, and its `getEdgeUrl` returns any `http`-prefixed argument
-   * VERBATIM. An id spelled as an absolute URL therefore becomes
-   * `<img src="https://attacker.example/x.png">` in a moderator's browser — an
-   * outbound request giving the reporter a read receipt naming which moderator opened
-   * their report and when.
-   *
-   * `apps/moderator/src/lib/feedback.ts`'s `IMAGE_KEY` regex already closes this on
-   * the READ side. These cases close it at the source, so the guarantee does not
-   * depend on one consumer remembering to filter. Every case below PARSED before this
-   * change — they are red at `origin/main`, not invariant guards.
+   * Every case below PARSED at `origin/main` under the old length-only bound — they
+   * are regression tests, not invariant guards.
    */
   describe('images — ids that are not uuids (regression)', () => {
     const notUuids: Array<[string, string]> = [
@@ -114,6 +103,10 @@ describe('feedback schema — context bounds', () => {
       ['a traversal', '../../etc/passwd'],
       ['a plausible-looking opaque key', 'cf-image-1'],
       ['a uuid with its hyphens stripped', '11111111222243338444555555555555'],
+      // Previously rejected too, but for a DIFFERENT reason: `.trim()` reduced it to
+      // '' and `.min(1)` caught it. Kept so dropping `.trim()` cannot silently lose
+      // the case along with the test that named it.
+      ['a whitespace-only id', '   '],
       ['a whitespace-padded uuid', ` ${UUID_A} `],
       ['a uuid with trailing path', `${UUID_A}/../other`],
     ];
