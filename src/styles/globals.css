@@ -188,11 +188,33 @@
    Add the rule together with a one-line reason, the way every other ledger in
    this repo is kept — an entry with no stated reason cannot be reviewed later.
 
-   WHEN IT IS WARRANTED: an app whose surface is the canvas — an infinite grid, a
-   timeline, a map, a side-by-side compare — where a centred column is actively
-   worse. NOT for "it looks bigger". The default exists because an app cannot
-   know how wide the viewer's monitor is and almost none of them defend against
-   it themselves.
+   WHEN IT IS WARRANTED — TWO GROUNDS, AND AN ENTRY MUST SAY WHICH ONE IT CLAIMS.
+   The default exists because an app cannot know how wide the viewer's monitor is
+   and almost none of them defend against it themselves, so an entry has to argue
+   its way past that, not merely assert a preference.
+
+   (1) THE SURFACE IS THE CANVAS: an infinite grid, a timeline, a map, a
+   side-by-side compare — where a centred column is actively worse.
+
+   (2) AN EXPLICIT PRODUCT DECISION BY THE REPO OWNER. This is ground (1)'s
+   opposite in one specific way: nothing is malfunctioning, the cap binds exactly
+   as designed, and the trade is taken anyway. An entry on this ground is
+   admissible ONLY if it records the three things a reviewer would need to
+   re-examine it later, none of which can be recovered from the diff:
+
+     · WHO decided — named, not "we", and not the PR author by default;
+     · WHAT TRADE was accepted — the cost as it was stated at the time, and what
+       the decision was taken AGAINST if there was an alternative on the table;
+     · WHAT IT IS WORTH — the benefit's CLASS, measured: which display widths it
+       reaches, and which it provably does not.
+
+   NOT for "it looks bigger" — and ground (2) is not a hole in that exclusion, it
+   is what makes the exclusion enforceable. "It looks bigger" is a preference with
+   no author, no stated cost and no measured reach; ground (2) requires all three,
+   so an entry that cannot produce them has not made a product decision, it has
+   expressed a preference, and it is refused by the same sentence. Ground (2) also
+   does NOT waive ground (1) generally: it admits the entry that SHOWS ITS COST,
+   one at a time, which is why the three bullets are a bar and not a formality.
 
    The mechanism is MEASURED, not merely written down: the "opt-out" cases in
    `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
@@ -230,21 +252,51 @@
 /* Sensei (`sensei`) — a two-pane chat shell, and ONE OF THE TWO APPS THIS CAP WAS
    CREATED FOR.
 
-   🔴 A PRODUCT DECISION BY THE REPO OWNER, NOT A BUG FIX, AND SAYING SO IS THE
-   POINT OF THIS ENTRY. Nothing here is malfunctioning for this app — the cap binds
-   exactly as designed and the opt-out mechanism works — the owner decided the trade
-   should go the other way for this one. A later reader must not go looking for the
-   defect that motivated it, because there isn't one.
+   🔴 ADMITTED ON GROUND (2) ABOVE — AN EXPLICIT PRODUCT DECISION, NOT A BUG FIX,
+   AND SAYING SO IS THE POINT OF THIS ENTRY. Nothing here is malfunctioning for this
+   app: the cap binds exactly as designed and the opt-out mechanism works. A later
+   reader must not go looking for the defect that motivated it, because there isn't
+   one. The three things ground (2) requires, on the record:
 
-   THE RATIONALE OF RECORD, quoted rather than re-taken. The census on
+     · WHO — the repo owner, directly. The ask was "sensei app container should be
+       full-width".
+     · WHAT TRADE — full bleed was chosen over an alternative that was on the table:
+       pairing the exemption with an internal measure on the transcript itself. The
+       ~150px-either-side cost at 1080p, quantified below, was stated in front of him
+       before he chose; "truly full-bleed" is what he chose knowing it.
+     · WHAT IT IS WORTH — the measured display-width class; see "WHAT THE EXEMPTION
+       IS WORTH, STATED NARROWLY" below.
+
+   That is the WHOLE record. Nothing else about the owner's reasoning is known, and
+   this entry deliberately does not extrapolate one.
+
+   THE RATIONALE OF RECORD, AND IT HAS NOW BEEN RE-TAKEN. The census on
    `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` reads: "TWO do not cap at all —
    Notepad and Sensei, both `100dvh` two-pane app shells (a fixed 280 / 240px
    sidebar beside an unbounded `flex: 1` pane). Those are the shipped apps that
-   genuinely stretched to the monitor." ⚠️ THAT CENSUS FLAGS ITSELF AS A CROSS-REPO
-   READING THAT NOTHING ASSERTS AND THAT WOULD SILENTLY ROT — no ref recorded, no
-   fixture reproducing it. It is cited here as the reasoning that was in front of
-   whoever picked 1600, NOT as a live measurement: the sensei repo was not re-read
-   for this entry, and this comment claims nothing about its current layout.
+   genuinely stretched to the monitor." That census recorded no ref and nothing
+   asserted it, so it was re-read for this entry rather than quoted on trust — and
+   it HOLDS, at `ZacxDev/civitai-app-sensei` `trunk 6fd63c0` (release 0.1.22):
+
+     · root shell `width: 100%; height: 100dvh`, flex column — `src/App.tsx:2724`
+     · main row `display: flex; flex: 1; min-height: 0` — `src/App.tsx:2831`
+     · sidebar `width: 240` (plus `min-width: 200`) —
+       `src/components/SessionList.tsx:54`
+     · chat pane `flex: 1; flex-direction: column; min-width: 0` —
+       `src/App.tsx:2904`
+     · and NO `max-width` anywhere on the transcript path. The app's only two are
+       `maxWidth: '100%'` (`src/components/ResourceMention.tsx:33`) and a 440px error
+       card (`src/components/RootBoundary.tsx:56`); `src/index.css` declares none,
+       and `MessageBubble.tsx` sets neither a width nor an `align-self`.
+
+   So this cap really is the only thing bounding the app's width, and 1600 − 240 =
+   1360 is where the "~1350px content pane" figure below comes from.
+
+   ⚠️ `trunk 6fd63c0` IS A BRANCH TIP, NOT A RESOLVED DEPLOYED REF — unlike
+   `playable-collections` above, which cites `sync/deployed-0.2.2`. No deployed ref
+   was resolved for sensei, so these citations pin what trunk held when this entry
+   was written; a later reader re-checking them must re-resolve what is actually
+   live rather than assume this sha is it.
 
    WHAT THE EXEMPTION IS WORTH, STATED NARROWLY. At the 1600 cap sensei gets roughly
    a 1350px content pane (the constant's own figure); full bleed gives it the

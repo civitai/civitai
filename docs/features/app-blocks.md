@@ -460,26 +460,12 @@ your app's line with a one-line reason, or ask a maintainer to. A narrower value
 (`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
 frame than the default.
 
-**Currently opted out** — the authority is the ledger in `src/styles/globals.css`;
-this list mirrors it and carries no count, because a count here is a second claim
-that rots on the next entry without anything noticing:
-
-- `playable-collections` — a collection player whose three open-collection view
-  modes (slideshow, ticker, wall) are all uncapped by the app itself, so a centred
-  column shrinks the player and truncates the grids. Its own 960px well applies
-  only to the browse list, which sits behind an early return and is unaffected
-  either way.
-- `sensei` — a two-pane chat shell, and one of the apps the cap was originally
-  written for. Excused by an explicit product decision rather than because anything
-  is malfunctioning, and the benefit is confined to wide desktop displays: the cap
-  binds on a maximised browser at 1080p for a ~150px gutter either side and on
-  nothing in the laptop classes, tablet or phone. The reasoning — including which
-  parts of it are a quoted cross-repo reading rather than a live measurement — is on
-  the rule in `globals.css`.
-
-Every entry is expected to carry a reason like these; the ledger's membership is
-asserted in a test, so a rule cannot be added or removed here without that being a
-deliberate, reviewed change.
+**Currently opted out** — read the ledger in `src/styles/globals.css`, which is the
+authority for both the membership and each entry's reason, and whose comment states
+the two grounds on which an entry is admitted. Neither the list nor a count is
+mirrored here, because a copy on this page is a second claim that rots on the next
+entry without anything noticing. The ledger's membership is asserted in a test, so a
+rule cannot be added or removed without that being a deliberate, reviewed change.
 
 **What actually guards the snippet above.** The CSS block on this page is read by
 `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
