@@ -60,7 +60,21 @@ import { logToAxiom } from '~/server/logging/client';
 import { newAppListingModerationEventId, newUlid } from '~/server/utils/app-block-ids';
 import { appSchemaIdent, isValidAppSlug, sanitizeAppSlug } from '~/server/utils/apps-slug';
 
-const PURGE_LOG = 'app-storage-mod-purge';
+/**
+ * The SAME datastream `apps.router`'s storage ops write to, not a new one.
+ *
+ * Two reasons, and the second is a gate. A purge is a tRPC storage op on the same
+ * rows as the `set`/`delete` events that created them, so keeping one stream is
+ * what lets a reviewer read the writes and the takedown in one place. And
+ * `axiom-datastream-ledger.test.ts` requires every datastream a production call
+ * site names to be either PROVISIONED in Axiom or ledgered LOKI-ONLY: a fresh
+ * name here would be neither, i.e. a stream nobody had provisioned and nothing
+ * could read. `app-storage-trpc` is already ledgered for exactly this traffic.
+ *
+ * Note this is the OPS log only. The durable, reviewable record of a purge is the
+ * `AppListingModerationEvent` row, not this line.
+ */
+const PURGE_LOG = 'app-storage-trpc';
 
 /**
  * The moderation-event `action` this path writes. Part of
