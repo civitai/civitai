@@ -228,7 +228,13 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       new Error('new row violates check constraint')
     );
     await removeAllContent({ id: TARGET, actorUserId: MOD });
-    // The wipe still completed (see the next test); the STORAGE is intact.
+
+    // 🔴 The ATTEMPT assertion is what stops this being vacuous. "No rows were
+    // destroyed" is trivially true of a build where nothing purges at all — it
+    // passed at the base ref for exactly that reason. Pinning that the audit
+    // write was REACHED makes the claim "the purge ran and stopped at the audit
+    // row", which is the invariant this test is named for.
+    expect(dbMock.dbWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
     expect(fake.kv.map((r) => r.key).sort()).toEqual(['gone-a', 'gone-b', 'keep']);
   });
 
@@ -237,6 +243,12 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     // Must RESOLVE, not reject.
     await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toBeUndefined();
+
+    // 🔴 Same anti-vacuity point: a build that never calls the purge also never
+    // rejects, so "it resolved" alone is satisfied by the bug this whole commit
+    // fixes. Assert the purge was genuinely ATTEMPTED against the (downed) apps
+    // pool — that is the state under test, and it is false at the base ref.
+    expect(mockPool.query).toHaveBeenCalled();
 
     // And the main-DB wipe must have happened in full regardless. These are the
     // deletes that define the wipe; if the purge could abort it, they would be
