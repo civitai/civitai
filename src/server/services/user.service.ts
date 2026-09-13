@@ -1371,7 +1371,23 @@ export const updateAccountScope = async ({
   }
 };
 
-export const removeAllContent = async ({ id }: { id: number }) => {
+/**
+ * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
+ * above, which soft-deletes and has a live inverse in `restoreUser`.
+ *
+ * `actorUserId` is the acting moderator when one exists. It is OPTIONAL because
+ * one of the two callers genuinely has no user identity: `/api/mod/remove-all-
+ * content` is a `WebhookEndpoint`, authenticated by a shared secret, so there is
+ * no actor to thread. The tRPC caller (`user.removeAllContent`, a
+ * `moderatorProcedure`) passes `ctx.user.id`.
+ */
+export const removeAllContent = async ({
+  id,
+  actorUserId = null,
+}: {
+  id: number;
+  actorUserId?: number | null;
+}) => {
   const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
   const images = await dbRead.image.findMany({
     where: { userId: id },
@@ -1443,6 +1459,105 @@ export const removeAllContent = async ({ id }: { id: number }) => {
 
   for (const m of models) {
     await deleteBidsForModel({ modelId: m.id });
+  }
+
+  // ── App Blocks per-user storage (W4) ────────────────────────────────────────
+  // Everything above lives in the MAIN db (plus S3 + the search indexes). A
+  // user's App Storage rows do not: they sit in per-app `app_<slug>` schemas in
+  // the SEPARATE apps database, reached through a different pool, and nothing in
+  // this function could see them. Before this, a moderator hard-wipe left them
+  // behind in full — `user-storage-purge.service.ts` names that as the second of
+  // the two gaps it exists to close, and closing it needs a caller.
+  //
+  // 🔴 LAST, AND LOG-AND-CONTINUE. Same posture as the (3c) storage-provision
+  // block in `publish-request.service.ts`, for the same reason. The wipe is
+  // already complete by the time we get here, there is no transaction spanning
+  // the two databases, and a purge failure must NEVER abort or appear to undo it:
+  // a moderator's content wipe failing because an apps-DB schema was briefly
+  // unreachable would be a regression, not a safety feature. On ANY error we warn
+  // and return normally; the storage is recoverable via
+  // `apps.mod.userStorage.purgeAccount`, which is exactly this call by hand.
+  //
+  // Dynamic import, again mirroring (3c): this module is already enormous and the
+  // purge service pulls in the apps-db pool, which nothing else on this path
+  // needs.
+  //
+  // AUDIT SURVIVES THE FAILURE MODE, NOT JUST THE HAPPY PATH: the purge writes
+  // its `AppListingModerationEvent` row BEFORE it deletes anything, so a crash
+  // between the two leaves a record of what was about to go, never a silent
+  // destruction. That ordering is the purge's own safety argument and calling it
+  // from here does not weaken it.
+  //
+  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep is log-and-continue BY
+  // DESIGN: it catches each app's failure into `failures[]` and RESOLVES. So a
+  // bare try/catch here sees a clean resolve and says nothing, no matter how
+  // much failed — the outer catch only ever fires for an enumeration-stage
+  // fault. That is not hypothetical: until the `action` CHECK widen is applied,
+  // EVERY app's audit write is rejected with 23514, every app lands in
+  // `failures[]`, nothing is purged, and the operator would have seen a silent
+  // success. A warning that cannot fire for the most likely failure is worse
+  // than no warning, because it reads as coverage.
+  try {
+    const { purgeUserAppStorageForAccountWipe } = await import(
+      '~/server/services/apps/user-storage-purge.service'
+    );
+    const result = await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
+    if (result.failures.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage purge INCOMPLETE (userId=${id}): ` +
+          `${result.failures.length} app(s) failed, ${result.totals.appCount} purged. ` +
+          `The content wipe COMPLETED and is unaffected — re-run via ` +
+          `apps.mod.userStorage.purgeAccount. Failures: ` +
+          result.failures
+            .map((f) => `${f.slug}(${f.auditEventId ?? 'no-audit-row'}): ${f.error}`)
+            .join('; ')
+      );
+    }
+    if (result.schemasTruncated) {
+      // The THIRD way the sweep can complete having deliberately skipped rows,
+      // alongside `failures[]` and `unmappedSchemas[]`. Unreachable today (the cap
+      // is 500 against ~20 schemas), but a reader of this block would reasonably
+      // assume all three conditions are covered, and two of three is how the next
+      // silent partial wipe happens.
+      // 🔴 DO NOT tell the operator to re-run `purgeAccount` here. That path
+      // enumerates the same `information_schema` names, `.sort()`s them and takes
+      // the same `.slice(0, MAX)` — so a re-run drops exactly the same schemas,
+      // deterministically, forever. (Re-running genuinely does help for
+      // `failures[]`, which is transient, and the `unmappedSchemas` warning
+      // correctly asks for a human; this one needed its own remedy.)
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: the schema sweep for userId=${id} ` +
+          `hit its candidate cap, so some schemas were NOT examined — and re-running ` +
+          `purgeAccount would skip the SAME ones (the candidate list is sorted and ` +
+          `truncated deterministically). Purge the remaining apps individually via ` +
+          `apps.mod.userStorage.purgeApp, or raise APP_USER_STORAGE_MAX_SCHEMAS. ` +
+          `NOTE: purgeApp records as a MODERATOR purge, so its audit row keeps the ` +
+          `per-key snapshot (key names, sizes, md5 fingerprints) that the wipe path ` +
+          `deliberately withholds for an erased account — prefer raising the cap.`
+      );
+    }
+    if (result.unmappedSchemas.length > 0) {
+      // Reported separately because it is a different condition with a different
+      // remedy: these schemas hold the user's rows but map to no single AppBlock,
+      // so the sweep deliberately skipped them and they need a human.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: ${result.unmappedSchemas.length} ` +
+          `schema(s) hold rows for userId=${id} but map to no single app block and were SKIPPED: ` +
+          result.unmappedSchemas.join(', ')
+      );
+    }
+  } catch (err) {
+    // The enumeration-stage faults only — a dead apps DB, a bad pool checkout.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[removeAllContent] App Blocks per-user storage purge failed (userId=${id}); ` +
+        `the content wipe COMPLETED and is unaffected — re-run via apps.mod.userStorage.purgeAccount: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
   }
 };
 
