@@ -235,11 +235,13 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
  * WHY NO CONSTANT CAN BE RIGHT. Every model in `CHAT_COMPLETION_MODELS` is a
  * third-party model that the orchestrator prices per token, so the charge moves
  * with the model, the conversation and `maxTokens` — none of which this repo can
- * see, and none of which a constant can track. 🔴 AND SINCE THE ALLOWLIST NOW
- * CARRIES A FLOATING `~…-latest` ALIAS, THE CHARGE FOR A FIXED MODEL STRING AND A
- * FIXED CONVERSATION CAN MOVE WITH NO CHANGE ON EITHER SIDE — the rate card is
- * fetched live per quote, so there is no deploy, no diff and no review in the loop
- * when it does. See `CHAT_COMPLETION_MODELS`. The pricing itself is the
+ * see, and none of which a constant can track. 🔴 AND THE RATE CARD IS FETCHED
+ * LIVE PER QUOTE, SO THE CHARGE FOR A FIXED MODEL STRING AND A FIXED
+ * CONVERSATION CAN MOVE WITH NO DEPLOY, NO DIFF AND NO REVIEW ON EITHER SIDE.
+ * That is a property of the pricing mechanism itself, not of any one id: every
+ * entry in `CHAT_COMPLETION_MODELS` is repriced upstream on every quote. It is
+ * also why no figure for any model is restated in this file as a constant — see
+ * `CHAT_COMPLETION_MODELS`. The pricing itself is the
  * orchestrator's and is deliberately not restated here; the figures and the
  * derivation are in the internal tracker. The one part of it this constant IS:
  * the orchestrator floors the price at 1, and that floor is what this number
@@ -277,37 +279,64 @@ export const CHAT_COMPLETION_PRICE_BUZZ = 1;
  * list should know both facts.
  *
  * v1 was deliberately three, all three driven to `succeeded` against the live
- * orchestrator. The fourth — `~deepseek/deepseek-v4-flash-latest` — was NOT, and
+ * orchestrator. The fourth — `deepseek/deepseek-v4-flash-0731` — was NOT, and
  * that asymmetry is stated rather than glossed: it was verified to EXIST in
  * OpenRouter's public `/api/v1/models` listing (which is the same listing the
  * orchestrator's own `OpenRouterPricingClient` keys its pricing dictionary off,
- * by exact id), and to advertise `tools` / `tool_choice` in its
- * `supported_parameters`, but no live submit was driven through it from here. The
- * live orchestrator is token-gated and nothing in this repo can reach it.
+ * by exact id), and every one of its 28 provider endpoints advertises `tools` and
+ * `tool_choice`, but no live submit was driven through it from here. The live
+ * orchestrator is token-gated and nothing in this repo can reach it.
  *
- * 🔴 A LEADING `~` IS PART OF THE ID, NOT A TYPO TO NORMALISE AWAY. It is
- * OpenRouter's marker for a FLOATING alias: 16 ids in that listing carry it and
- * every one of them ends `-latest`. Nothing on the path to the wire transforms it
- * — `resolveStepVariant` is a pure `includes` membership test, `buildStep` copies
- * `params.model` verbatim, and the orchestrator's two `urn:air:` tests are
- * `StartsWith` checks that a `~` simply does not match, so the request takes the
- * OpenRouter branch as intended. Pinned by a byte-identity test in
- * `__tests__/chat-completion.step.test.ts`.
+ * 🔴 WHY IT IS REGISTERED: COST, NOT CAPABILITY. THIS DOES NOT ENABLE TOOL
+ * CALLING FOR ANYONE. `openai/gpt-4o-mini` and `deepseek/deepseek-chat` are
+ * already listed and both support `tools`, so any tool-driven consumer could
+ * already ship on those. What this entry buys is a cheaper default — roughly half
+ * the quoted Buzz of `openai/gpt-4o-mini` on a representative tool-using
+ * conversation, both of which then floor to 1 anyway on a short reply. No
+ * consumer is blocked on it.
  *
- * 🔴 AND THE FLOATING PART IS A REAL, ACCEPTED COST — IT IS THE ONLY ID HERE
- * WHOSE MEANING CAN CHANGE WITHOUT A DEPLOY ON EITHER SIDE. What the alias
- * resolves to is OpenRouter's choice, so both the per-token rate (see
- * `CHAT_COMPLETION_PRICE_BUZZ`, which is only the FLOOR) and the model's
- * capabilities can move under a fixed string. The pinned alternatives that would
- * trade that away for staleness are `deepseek/deepseek-v4-flash-0731` and
- * `deepseek/deepseek-v4.1-flash`. 🔴 AND THE ALIAS IS NOT SIMPLY A SECOND NAME FOR
- * THE FORMER — checked field by field off the listing rather than assumed. The two
- * agree exactly on context length (1,310,720), on `top_provider` and on
- * `supported_parameters`, but they do NOT agree on PRICE: the alias is cheaper per
- * token (prompt 0.03 vs 0.04, completion 0.07 vs 0.08 USD per million). So
- * "just pin it" is a change in cost as well as in staleness, in the direction of
- * paying slightly more. Choosing the alias is a decision about wanting the
- * upstream's current best; it is not a free one.
+ * 🔴 AND IT IS NOT AN SFW/MODERATION DECISION. This id reports
+ * `is_moderated: false` upstream; `openai/gpt-4o-mini` is the only entry in this
+ * list that reports `true`. Safety here is delivered by the model-independent
+ * text-output scan, which is exactly how the deliberately-uncensored
+ * `cognitivecomputations/…` entry below is handled too. Nothing about this entry
+ * changes that posture in either direction.
+ *
+ * 🔴 PINNED, DATE-STAMPED ID — DELIBERATELY NOT THE UPSTREAM'S `~…-latest`
+ * ALIAS. OpenRouter publishes a floating alias for this family (a leading `~`
+ * marks one). It was considered and rejected: what an alias resolves to is the
+ * upstream's choice, so both the per-token rate and the model's advertised
+ * capabilities can move under a fixed string with no deploy, no diff and no
+ * review on either side — and because the charge is repriced from the live rate
+ * per quote (see `CHAT_COMPLETION_PRICE_BUZZ`, which is only the FLOOR), that
+ * makes the cost of a FIXED conversation unpredictable. A pin trades that for
+ * staleness, which is the right trade for a default path.
+ *
+ * 🔴 PINNING ALSO BOUGHT VERIFIABILITY, WHICH THE ALIAS STRUCTURALLY COULD NOT.
+ * `GET /api/v1/models/<id>/endpoints` returns an EMPTY `endpoints` array for
+ * every `~` alias, so an alias's actual routing cannot be inspected at all and
+ * its aggregate record is the only readable source. This pinned id exposes 28
+ * endpoints, which is how the `tools` claim above is evidenced per-endpoint
+ * rather than from a union.
+ *
+ * ⚠ THE TOP-LEVEL ADVERTISED FIGURES ARE A BEST CASE ACROSS PROVIDERS, NOT A
+ * GUARANTEED ROUTE. Read across those 28 endpoints, the advertised per-token rate
+ * is matched or beaten by only a small minority of them, and the advertised
+ * context length is reached by exactly one — which charges an order of magnitude
+ * above the advertised rate. The aggregate record is a union artifact. This is
+ * not a defect and needs no handling here, because the money path uses the
+ * orchestrator's live per-submit quote rather than any advertised figure; it is
+ * recorded so nobody later reasons about cost from the headline number.
+ *
+ * ⚠ `seed` IS NOT OFFERED BY EVERY ENDPOINT — 17 of the 28 advertise it, and the
+ * orchestrator sets no `require_parameters`, so a submit carrying a seed CAN be
+ * routed to one of the 11 that will ignore it. That is harmless HERE, and for a
+ * specific reason rather than by assumption: the seed exists to defeat the
+ * platform's input-hash result reuse (see `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX`),
+ * and that hash is computed by the orchestrator from the whole input object
+ * BEFORE any provider is chosen — so a dropped seed cannot reintroduce the replay
+ * it guards against. Nothing in this repo depends on the seed being honoured at
+ * sampling time; it is explicitly not a determinism feature.
  *
  * 🔴 `cognitivecomputations/dolphin-mistral-24b-venice-edition` IS AN UNCENSORED
  * MODEL, and it is listed on purpose. Its output is not trusted — it is scanned
@@ -322,9 +351,10 @@ export const CHAT_COMPLETION_MODELS = [
   'deepseek/deepseek-chat',
   'cognitivecomputations/dolphin-mistral-24b-venice-edition',
   'openai/gpt-4o-mini',
-  // APPENDED, never inserted — the order is asserted as a whole set below, and
-  // `canonicalParamsFor` is called once per entry at registry load.
-  '~deepseek/deepseek-v4-flash-latest',
+  // APPENDED, never inserted — the order is asserted as a whole array by the
+  // allowlist test, and `canonicalParamsFor` is called once per entry at
+  // registry load.
+  'deepseek/deepseek-v4-flash-0731',
 ] as const;
 
 export type ChatCompletionModel = (typeof CHAT_COMPLETION_MODELS)[number];
@@ -347,10 +377,14 @@ export type ChatCompletionModel = (typeof CHAT_COMPLETION_MODELS)[number];
  * 🔴 THE DERIVATION IS MODEL-INDEPENDENT, AND A BIG-CONTEXT MODEL DOES NOT INVITE
  * RAISING IT. The binding constraint is the SCAN CAP on generated characters, not
  * anything the provider will accept, so a model with a far larger window changes
- * nothing here: `~deepseek/deepseek-v4-flash-latest` advertises a 1,310,720-token
- * context and a 943,718-token completion cap, i.e. ~236x this ceiling, and this
- * ceiling stays the binding one BY DESIGN. The provider's window is also inert on
- * the money path — the orchestrator's `EstimateOutputTokens` consults a model's
+ * nothing here. `deepseek/deepseek-v4-flash-0731` is the case in point: its
+ * advertised per-completion token cap was read as 943,718 on 2026-09-13 — three
+ * orders of magnitude above this ceiling — so OURS stays the binding one BY
+ * DESIGN, and it would stay binding across any plausible movement in that
+ * upstream figure. That is the only reason the number is quoted at all; it is a
+ * third-party value that can move without a deploy, so treat it as the reading it
+ * was rather than as a constant. The provider's window is also inert on the money
+ * path — the orchestrator's `EstimateOutputTokens` consults a model's
  * `context_length` ONLY as a fallback for an ABSENT `maxTokens`, which the
  * required param below makes unreachable for this entry.
  *

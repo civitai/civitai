@@ -115,38 +115,36 @@ describe('chat-completion — registration', () => {
 
 describe('chat-completion — the model allowlist', () => {
   /**
-   * 🔴 THE WHOLE ALLOWLIST, AS A SET, SO THE NEXT ADDITION IS A DELIBERATE ONE.
+   * 🔴 THE WHOLE ALLOWLIST, IN ORDER, SO THE NEXT ADDITION IS A DELIBERATE ONE.
    *
-   * This fails when the set GROWS or SHRINKS, which is the point: every id here
-   * is reachable by any app block on the platform — the allowlist is SHARED, not
-   * per-app — and each one is a third-party model whose output this entry's
-   * `'textOutput'` posture then has to stand behind. A silent addition is a
-   * silent widening of what every block can spend a viewer's Buzz on.
+   * This fails when the list GROWS, SHRINKS or is RESPELLED, which is the point:
+   * every id here is reachable by any app block on the platform — the allowlist
+   * is SHARED, not per-app — and each one is a third-party model whose output
+   * this entry's `'textOutput'` posture then has to stand behind. A silent
+   * addition is a silent widening of what every block can spend a viewer's Buzz
+   * on.
    *
-   * 🔴 ASSERTED AS A NORMALISED SET, NOT A LENGTH AND NOT PER-ITEM `includes`. A
-   * length check passes on any swap; a per-item `includes` passes while an
-   * unrelated fourth id is also present. Sorting makes the membership assertion
-   * independent of declaration order — the ORDER is pinned separately below,
-   * because `canonicalParamsFor` runs once per entry at registry load and an
-   * insertion rather than an append reorders that.
+   * 🔴 ONE EXACT-ARRAY ASSERTION, NOT A LENGTH, NOT PER-ITEM `includes`, AND
+   * DELIBERATELY NOT A SECOND SORTED-SET ASSERTION ALONGSIDE IT. A length check
+   * passes on any swap and a per-item `includes` passes while an unrelated extra
+   * id is also present, so both are too weak. But a sorted-set assertion beside
+   * this one is strictly REDUNDANT rather than additional coverage: this compares
+   * the array to a literal, and `actual === literal` implies
+   * `sorted(actual) === sorted(literal)`, so the set form cannot fail unless this
+   * one already has. An earlier revision of this file carried both; the set guard
+   * was deleted because a guard that can never fail alone reads as coverage while
+   * providing none.
+   *
+   * Order is the right thing to pin rather than mere membership, because
+   * `canonicalParamsFor` runs once per entry at registry load, so an insertion
+   * rather than an append reorders that.
    */
-  const EXPECTED_MODELS = [
-    '~deepseek/deepseek-v4-flash-latest',
-    'cognitivecomputations/dolphin-mistral-24b-venice-edition',
-    'deepseek/deepseek-chat',
-    'openai/gpt-4o-mini',
-  ];
-
-  it('🔴 pins the ENTIRE allowlist as a set — fails when it grows OR shrinks', () => {
-    expect([...CHAT_COMPLETION_MODELS].sort()).toEqual([...EXPECTED_MODELS].sort());
-  });
-
-  it('pins the DECLARATION ORDER — a new model is appended, never inserted', () => {
+  it('🔴 pins the ENTIRE allowlist IN ORDER — grow, shrink or respell all fail here', () => {
     expect([...CHAT_COMPLETION_MODELS]).toEqual([
       'deepseek/deepseek-chat',
       'cognitivecomputations/dolphin-mistral-24b-venice-edition',
       'openai/gpt-4o-mini',
-      '~deepseek/deepseek-v4-flash-latest',
+      'deepseek/deepseek-v4-flash-0731',
     ]);
     // 🔴 The two must be the same set. The enum is the parse-time bound and
     // `variants` is the money-path bound; a divergence means one of them is
@@ -168,47 +166,43 @@ describe('chat-completion — the model allowlist', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 🔴 `~deepseek/deepseek-v4-flash-latest` — THE FIRST ID HERE WITH A LEADING
-  // `~`, WHICH IS A LITERAL PART OF THE ID AND NOT A TYPO.
+  // 🔴 `deepseek/deepseek-v4-flash-0731` — A PINNED, DATE-STAMPED PROVIDER ID.
   //
-  // It is OpenRouter's marker for a FLOATING alias (every `~`-prefixed id in
-  // their public listing ends `-latest`). A tilde is unusual enough in a
-  // provider id that the plausible failure is a silent normalisation somewhere
-  // on the path to the wire — a slug, a trim, a URL-encode — which would leave
-  // the enum accepting the value while the orchestrator received a DIFFERENT
-  // string and failed at execution, after the submit had been quoted and
-  // charged. That is the same no-refund shape the allowlist itself exists for.
+  // It is registered as a cheaper tool-calling default. The id is PINNED rather
+  // than pointed at the upstream's floating `~…-latest` alias, deliberately: an
+  // alias's rate and capabilities can change under a fixed string, and the
+  // charge here is repriced from the provider's live per-token rate on every
+  // quote, so a floating id makes the cost of a fixed conversation unpredictable
+  // with no deploy, no diff and no review on either side.
   //
   // These cases assert BOTH directions in one place, with a negative control:
-  // the new id parses, and ids that are deliberately NOT in the enum still do
-  // not. Without the negative control a green run cannot distinguish "the
-  // addition worked" from "the enum stopped bounding anything".
+  // the new id parses, and ids that are NOT in the enum still do not. Without
+  // the negative control a green run cannot distinguish "the addition worked"
+  // from "the enum stopped bounding anything".
+  //
+  // 🔴 THE NEGATIVE CONTROLS ARE DELIBERATELY UNREGISTRABLE SPELLINGS, NOT REAL
+  // UPSTREAM IDS. An earlier revision of this file used the real sibling id as a
+  // non-member control, which meant the case asserted the OPPOSITE of the truth
+  // the moment that id was registered — a tripwire that goes red for a correct
+  // change. Both controls below are fabricated mutations of the registered
+  // string and can never legitimately become members.
   // ───────────────────────────────────────────────────────────────────────────
-  describe('the `~`-prefixed floating alias', () => {
-    const ALIAS = '~deepseek/deepseek-v4-flash-latest';
-
-    it('🔴 is a member of the allowlist, spelled with its leading tilde', () => {
-      // Pins the SPELLING, not merely that a fourth entry exists — a mutant that
-      // dropped the `~` would still have four members and still pass a count.
-      expect([...CHAT_COMPLETION_MODELS]).toContain(ALIAS);
-      expect(ALIAS.startsWith('~')).toBe(true);
-    });
+  describe('the pinned `deepseek/deepseek-v4-flash-0731` entry', () => {
+    const PINNED = 'deepseek/deepseek-v4-flash-0731';
 
     it('🔴 PARSES, where an unregistered id does NOT — both directions, one place', () => {
-      expect(parse(withParam('model', ALIAS)).success).toBe(true);
+      expect(parse(withParam('model', PINNED)).success).toBe(true);
 
-      // NEGATIVE CONTROL. Three shapes of non-member, because each would pass
-      // for a different wrong reason:
-      //   (a) the SAME id WITHOUT its tilde — the exact mutant a normalising
-      //       transform would produce, and what a substring-style bound would
-      //       wrongly accept;
-      //   (b) a tilde-prefixed id that is NOT the registered one — proves the
-      //       enum bounds the WHOLE string and not just the prefix;
-      //   (c) the PINNED sibling this change deliberately did NOT register.
+      // NEGATIVE CONTROL. Two shapes of non-member, each of which would be
+      // wrongly accepted by a different too-loose bound:
+      //   (a) the registered id plus a SUFFIX — a `startsWith`-style bound would
+      //       accept it, so this proves the enum bounds the WHOLE string;
+      //   (b) the registered id plus a leading `~` — proves a stray prefix is not
+      //       tolerated either, in the direction a normalising transform or a
+      //       copy-paste from the upstream's alias listing would produce.
       for (const nonMember of [
-        'deepseek/deepseek-v4-flash-latest',
-        '~deepseek/deepseek-v4-pro-latest',
-        'deepseek/deepseek-v4-flash-0731',
+        'deepseek/deepseek-v4-flash-0731-fictional',
+        '~deepseek/deepseek-v4-flash-0731',
       ]) {
         expect(
           parse(withParam('model', nonMember)).success,
@@ -217,12 +211,12 @@ describe('chat-completion — the model allowlist', () => {
       }
     });
 
-    it('🔴 resolves to itself as the bounded variant — tilde intact on the money path', () => {
+    it('🔴 resolves to itself as the bounded variant — intact on the money path', () => {
       // `resolveStepVariant` is what the price lookup, the settle record and the
       // audit row's `detail.variant` all key off. A transform here mis-keys all
       // three at once.
       const step = chatCompletionStep as unknown as AnyBlockStep;
-      expect(resolveStepVariant(step, withParam('model', ALIAS))).toBe(ALIAS);
+      expect(resolveStepVariant(step, withParam('model', PINNED))).toBe(PINNED);
     });
 
     // 🔴 LABELLED AN INVARIANT GUARD, NOT REGRESSION COVERAGE — nothing was
@@ -236,14 +230,12 @@ describe('chat-completion — the model allowlist', () => {
     // one — a slug, a lowercase, an `encodeURIComponent` — fails HERE rather
     // than at execution on a submit that has already been charged.
     it('🔴 reaches the built step input BYTE-IDENTICAL (invariant guard)', () => {
-      const built = chatCompletionStep.buildStep({ ...VALID_PARAMS, model: ALIAS });
+      const built = chatCompletionStep.buildStep({ ...VALID_PARAMS, model: PINNED });
       const wireModel = (built.input as { model: string }).model;
-      expect(wireModel).toBe(ALIAS);
-      // Spelled out as a literal too, so this cannot degenerate into comparing
-      // the value against itself if `ALIAS` were ever re-derived from the array.
-      expect(wireModel).toBe('~deepseek/deepseek-v4-flash-latest');
-      expect(wireModel.charCodeAt(0)).toBe(0x7e);
-      expect(wireModel).toHaveLength(34);
+      // Spelled out as a literal rather than compared to `PINNED`, so this cannot
+      // degenerate into comparing the value against itself if `PINNED` were ever
+      // re-derived from the allowlist array.
+      expect(wireModel).toBe('deepseek/deepseek-v4-flash-0731');
     });
   });
 
