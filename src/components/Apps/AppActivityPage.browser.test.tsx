@@ -76,6 +76,22 @@ const mocks = vi.hoisted(() => ({
    * way), which is exactly why that fixture is blind to this mutant and this one exists.
    */
   scopeGrantsRefetchError: false,
+  /**
+   * 🔴 THE THIRD ERROR SHAPE: A FAILED REFETCH THAT RETAINS AN **EMPTY** LIST. `data` is `[]`, so
+   * it is neither the undefined of `scopeGrantsError` nor the populated list of
+   * `scopeGrantsRefetchError`, and it is the one cell the `!grants` guard deliberately does NOT
+   * close (`[]` is truthy). The arm exists so that choice is pinned rather than assumed — see the
+   * residual test below, which is a BOUNDARY PIN and not regression coverage.
+   */
+  scopeGrantsEmptyRefetchError: false,
+  /**
+   * 🔴 NOT AN ERROR AT ALL, AND THAT IS THE POINT — the cell `isError && !grants` could not see.
+   * With the default `networkMode: 'online'` (no override in `src/utils/trpc.ts`) an offline FIRST
+   * fetch parks at `status='pending' fetchStatus='paused'`: `isFetching` false, so `isLoading`
+   * (`isPending && isFetching`) is false; `isError` false; `data` undefined. Measured in
+   * `@tanstack/query-core@5.101.0/build/modern/queryObserver.js:310,332`.
+   */
+  scopeGrantsPaused: false,
 }));
 
 /**
@@ -251,17 +267,32 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   /**
    * Per-proc error arms, keyed exactly like `DATA`.
    *
-   * 🔴 TWO SHAPES, BECAUSE react-query HAS TWO. `'load'` is a FIRST-fetch failure: `data`
+   * 🔴 FOUR SHAPES, BECAUSE react-query HAS FOUR REACHABLE "the panel holds no usable list"
+   * STATES — and the guard under test is a claim about ALL of them, not about `isError`.
+   * `'empty-refetch'` retains `[]`; `'paused'` is not an error at all (offline first fetch under
+   * the default `networkMode: 'online'`). The two docblocks on `mocks` above carry the
+   * measurements.
+   *
+   * 🔴 `'load'` is a FIRST-fetch failure: `data`
    * undefined, `isLoadingError` true. `'refetch'` is a failure AFTER a success: `isError` true,
    * `isRefetchError` true, `data` STILL PRESENT. Measured against this repo's 5.101 with its own
    * defaults. The distinction is the whole point of the arm — the broken and the fixed component
    * are indistinguishable under `'load'`.
    */
-  const ERRORS: Record<string, () => false | 'load' | 'refetch'> = {
+  type QueryArm = false | 'load' | 'refetch' | 'empty-refetch' | 'paused';
+  const ERRORS: Record<string, () => QueryArm> = {
     'blocks.listMyScopeGrants': () =>
-      mocks.scopeGrantsRefetchError ? 'refetch' : mocks.scopeGrantsError ? 'load' : false,
+      mocks.scopeGrantsRefetchError
+        ? 'refetch'
+        : mocks.scopeGrantsEmptyRefetchError
+        ? 'empty-refetch'
+        : mocks.scopeGrantsPaused
+        ? 'paused'
+        : mocks.scopeGrantsError
+        ? 'load'
+        : false,
   };
-  const node = (read?: () => unknown, errored?: () => false | 'load' | 'refetch'): unknown =>
+  const node = (read?: () => unknown, errored?: () => QueryArm): unknown =>
     new Proxy(
       {},
       {
@@ -278,6 +309,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               if (mode === 'load') return { ...inert, isError: true, isLoadingError: true };
               if (mode === 'refetch')
                 return { ...inert, isError: true, isRefetchError: true, data: read() };
+              // A refetch failure that retains an EMPTY list. `data` is `[]`, which is TRUTHY —
+              // the cell the `!grants` guard does not close, pinned by the residual test below.
+              if (mode === 'empty-refetch')
+                return { ...inert, isError: true, isRefetchError: true, data: [] };
+              // Offline FIRST fetch: `isPending` true with `fetchStatus: 'paused'`, so `isFetching`
+              // and therefore `isLoading` are false, `isError` is false, `data` undefined. The
+              // extra fields are fidelity, not inputs — this panel reads only the three above.
+              if (mode === 'paused')
+                return { ...inert, isPending: true, fetchStatus: 'paused', isPaused: true };
               return { ...inert, data: read() };
             };
           }
@@ -344,6 +384,8 @@ beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
   mocks.scopeGrantsError = false;
   mocks.scopeGrantsRefetchError = false;
+  mocks.scopeGrantsEmptyRefetchError = false;
+  mocks.scopeGrantsPaused = false;
   router.query = {};
   router.pathname = '/apps/activity';
   vi.mocked(router.replace).mockClear();
@@ -799,6 +841,61 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     // rendered, which is the guard's own reason. The `not.toContain` below never executes on that
     // mutant and is NOT what catches it; it is the second pin, for a component that renders BOTH
     // the list and the read-failure sentence — which the grid assertion alone would pass.
+    expect(document.body.textContent ?? '').not.toContain(
+      "couldn't load your apps and permissions just now"
+    );
+  });
+
+  /**
+   * 🔴 THE CELL NEITHER ARM ABOVE CAN REACH, AND IT NEEDS NO ERROR — WHICH IS WHY `isError &&
+   * !grants` COULD NOT SEE IT. With the default `networkMode: 'online'` and no override in
+   * `src/utils/trpc.ts`, an offline FIRST fetch parks at `status='pending' fetchStatus='paused'`:
+   * `isLoading` is `isPending && isFetching` and `isFetching` is false, so `isLoading` is false,
+   * `isError` is false, and `data` is undefined. The conjunct form therefore fell through and
+   * asserted "you have no installs, subscriptions or consents" from a fetch that never left the
+   * browser. Pre-existing and live, closed by dropping the `isError &&`.
+   *
+   * MUTATION-VERIFIED: restoring `if (isError && !grants)` makes this test fail on the read-failure
+   * WAIT below — `VitestBrowserElementError: Cannot find element with locator:
+   * getByText(/couldn't load your apps and permissions just now/)` — i.e. on this guard's own
+   * sentence, not on another guard's error. The `not.toContain` is the second pin, for a component
+   * rendering BOTH.
+   */
+  test('🔴 an offline PAUSED first fetch shows the read failure, not a claim about the viewer', async () => {
+    mocks.scopeGrantsPaused = true;
+    renderWithProviders(<AppActivityPage />);
+    await expect
+      .element(page.getByText(/couldn't load your apps and permissions just now/))
+      .toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('No app has made a recorded API call');
+    expect(page.getByTestId('apps-installed-grants-grid').elements()).toHaveLength(0);
+  });
+
+  /**
+   * ⚠️ A BOUNDARY PIN, NOT REGRESSION COVERAGE — SAID PLAINLY BECAUSE A TEST THAT READS AS COVERAGE
+   * WHILE PROVIDING NONE IS WORSE THAN NONE. The defect this file's error arms exist for was never
+   * reachable in this cell; the cell is the one the `!grants` guard deliberately leaves OPEN, and
+   * this test records that choice so the next person does not have to re-derive it.
+   *
+   * THE CELL: a refetch failure that retains an EMPTY list. `data` is `[]`, which is truthy, so
+   * `!grants` is false and control reaches the empty state — which asserts the viewer has no
+   * installs, subscriptions or consents while the read that would have proved it failed. LATENT,
+   * not live: `staleTime: Infinity` + `refetchOnWindowFocus: false` mean only an explicit
+   * `invalidate()` refetches, and both invalidators (`src/pages/apps/activity.tsx` `:111`, `:414`)
+   * render from a card — i.e. only when the list already has >= 1 row.
+   *
+   * MUTATION-VERIFIED AS A PIN: widening the guard to `if (!grants || isError)` fails this test on
+   * the empty-state assertion below (`expected … to contain 'No app has made a recorded API
+   * call'`). That is the mutant a future "fix" of this residual would introduce, and failing here is
+   * the intended signal to update the residual comment with it — not a bug.
+   */
+  test('⚠️ RESIDUAL: a refetch failure retaining an EMPTY list still reaches the empty state', async () => {
+    mocks.scopeGrantsEmptyRefetchError = true;
+    renderWithProviders(<AppActivityPage />);
+    await expect
+      .element(page.getByText(/No app has made a recorded API call on your account/))
+      .toBeInTheDocument();
+    // The read-failure copy is NOT shown here — that is the over-claim this cell still carries.
     expect(document.body.textContent ?? '').not.toContain(
       "couldn't load your apps and permissions just now"
     );

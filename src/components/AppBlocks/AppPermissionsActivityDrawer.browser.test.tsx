@@ -323,6 +323,44 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     );
   });
 
+  /**
+   * 🔴 THE CELL BOTH ARMS ABOVE MISS, AND THE REASON THE GUARD TESTS `grant` RATHER THAN `data`.
+   * This component consumes exactly one thing — `grantsQuery.data?.find(g => g.appBlockId ===
+   * appBlockId)` — so "the client holds SOME data" is the wrong question. With `data` retained from
+   * a prior success that did NOT contain this app, plus a failed refetch, `!grantsQuery.data` was
+   * false and control fell through to `scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')`: a
+   * DENIAL about this app ("You have not installed this app, and no separate permission grant is on
+   * record for it") drawn from a read that failed. That is verbatim the defect the first arm above
+   * exists to prevent, surviving in a state that arm cannot produce.
+   *
+   * Reachable by the same indirect path as the arm above: the drawer is mounted only from
+   * `IframeHost.tsx`, so it observes an activity-page invalidate whose refetch failed — and the
+   * activity page's own list need not mention the app whose run-frame this drawer sits on.
+   *
+   * MUTATION-VERIFIED: reverting the guard to `isError && !grantsQuery.data` fails this test on the
+   * read-failure WAIT below — `VitestBrowserElementError: Cannot find element with locator:
+   * getByText(/couldn't load this app's permissions just now/)` — i.e. on this guard's own sentence.
+   * The `not.toBeInTheDocument` on the derived label is the second pin, for a component rendering
+   * BOTH.
+   */
+  test('🔴 a failed refetch whose retained list LACKS this app shows the read failure, not a denial', async () => {
+    m.grants = [{ appBlockId: 'ab-2', slug: 'other', name: 'Other', scopes: ['buzz:read:self'] }];
+    m.grantsRefetchError = true;
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
+    );
+    await expect
+      .element(page.getByText(/couldn't load this app's permissions just now/))
+      .toBeInTheDocument();
+    // 🔴 THE DENIAL MUST BE ABSENT, and it is derived from its owner rather than retyped — a copy
+    // of the sentence here would keep passing after the owner's wording changed.
+    const deniedLabel = scopeGrantEmptyScopeLabel('activity');
+    expect(deniedLabel.length).toBeGreaterThan(40);
+    await expect.element(page.getByText(deniedLabel)).not.toBeInTheDocument();
+    // …and the OTHER app's retained scope must not leak into this drawer either.
+    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
+  });
+
   test('anonymous viewer gets a sign-in empty state and the activity queries do not fire', async () => {
     m.user = null;
     renderWithProviders(
