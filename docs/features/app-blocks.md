@@ -460,13 +460,12 @@ your app's line with a one-line reason, or ask a maintainer to. A narrower value
 (`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
 frame than the default.
 
-**Currently opted out:** `playable-collections` — a collection player whose three
-open-collection view modes (slideshow, ticker, wall) are all uncapped by the app
-itself, so a centred column shrinks the player and truncates the grids. Its own
-960px well applies only to the browse list, which sits behind an early return and
-is unaffected either way. Every entry is expected to carry a reason like this
-one; the ledger's membership is asserted in a test, so a rule cannot be added or
-removed here without that being a deliberate, reviewed change.
+**Currently opted out** — read the ledger in `src/styles/globals.css`, which is the
+authority for both the membership and each entry's reason, and whose comment states
+the grounds on which an entry is admitted. Neither the list nor a count is
+mirrored here, because a copy on this page is a second claim that rots on the next
+entry without anything noticing. The ledger's membership is asserted in a test, so a
+rule cannot be added or removed without that being a deliberate, reviewed change.
 
 **What actually guards the snippet above.** The CSS block on this page is read by
 `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
