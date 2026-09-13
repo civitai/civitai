@@ -310,9 +310,18 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
  * `assertViewerIsAppDeveloper`. It is not optional politeness: `user` is a
  * REQUIRED, non-nullable parameter of `isAppBlocksAuthorEnabled`, so this narrowing
  * is what makes the next line compile, and deleting it is a type error rather than
- * a silent re-opening. The distinct message keeps the two refusals separable in a
- * log and in a test. Mechanism + the measurement: see GLOBAL-EVAL SEMANTICS in
+ * a silent re-opening. Mechanism + the measurement: see GLOBAL-EVAL SEMANTICS in
  * `app-blocks-flag.ts`.
+ *
+ * 🔴 Unlike its sibling `assertAppBlocksEnabledForTokenUser`, this refusal is NOT on
+ * the compiled-branch watchlist, and that is measured rather than assumed: losing it
+ * cannot silently re-open anything, because `isAppBlocksAuthorEnabled` takes a
+ * non-nullable subject and dereferences it immediately, so a dropped guard yields a
+ * `TypeError` (a 500) rather than a pass. The enabled gate's guard IS watchlisted,
+ * because losing THAT one falls through to a global eval returning the flag's base
+ * value. Its message text differs from this one's on purpose — two different
+ * conditions, and an identical string under a different code is not separable in a
+ * log.
  *
  * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
  * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged — it
@@ -323,7 +332,7 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   if (!user) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'block token subject could not be resolved',
+      message: 'app-authoring subject could not be resolved',
     });
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
@@ -376,9 +385,11 @@ async function assertAppEditAccess(
  * the flag base-`false` + `moderators`/cohort segments as it is today, it resolves
  * `true` only for an in-segment subject and a non-mod outside the cohort resolves
  * `false` → blocked. An ANONYMOUS token (`sub:'anon'`) never reaches this function
- * at all — all 17 call sites run `parseSubjectUserId(claims.sub)` and throw
- * UNAUTHORIZED on `null` first, so the no-subject case handled below is a VANISHED
- * user, not an anon caller. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
+ * at all — each of its 16 call sites runs `parseSubjectUserId(claims.sub)` and
+ * throws UNAUTHORIZED on `null` first (17 `parseSubjectUserId` sites in this file;
+ * the 17th guards `assertViewerIsAppDeveloper` the same way), so the no-subject case
+ * handled below is a VANISHED user, not an anon caller.
+ * `verifyBlockToken` (caller) already rejected invalid/expired/revoked
  * tokens before this runs, and every other belt (the per-scope consent checks,
  * budget cap, daily Buzz cap, the per-(user, app) consent budget,
  * reserveBlockBuzzSpend, getOrchestratorToken, forced-SFW) is unchanged — this

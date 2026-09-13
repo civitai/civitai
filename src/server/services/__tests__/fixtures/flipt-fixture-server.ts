@@ -112,7 +112,13 @@ export function deriveSnapshotFromFlagShape(
         `(has: ${source.flags.map((f) => f.key).join(', ')})`
     );
   }
-  if (!Array.isArray((template as { rollouts?: unknown }).rollouts)) {
+  const rollouts = (template as { rollouts?: unknown }).rollouts;
+  // 🔴 `length > 0`, not just `Array.isArray` — an EMPTY array passes the shape test
+  // while being exactly the case the message warns about. A base-`enabled: true` flag
+  // with no rollouts is an honest global on-switch, a different shape and a different
+  // claim; deriving from one would make every `true` in the consuming suite
+  // unattributable to the segment-rollout case it exists to measure.
+  if (!Array.isArray(rollouts) || rollouts.length === 0) {
     throw new Error(
       `deriveSnapshotFromFlagShape: template flag '${templateKey}' has no rollouts — ` +
         `the derived snapshot would not model a segment-rolled-out flag at all`

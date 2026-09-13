@@ -512,8 +512,8 @@ export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
  * `isAppBlocksReviewSandboxEnabled`. No user → a global eval, which returns the
  * flag's BASE value; that is `false` today (base OFF + segment rollout) and it is
  * the base, not the segment miss, that closes it — see GLOBAL-EVAL SEMANTICS at
- * the top of this file. Unconditionally closed only while the flag is absent or
- * Flipt is unreachable. See APP_BLOCKS_DEV_TUNNEL_FLAG.
+ * the top of this file. The only UNCONDITIONAL closure left is an unreachable
+ * Flipt. See APP_BLOCKS_DEV_TUNNEL_FLAG.
  *
  * NOTE: unlike `isAppBlocksAuthorEnabled`, there is NO moderator static floor —
  * the flag is created as the rollout, so an absent flag resolves `false` for
@@ -692,12 +692,11 @@ export const APP_BLOCKS_AGENTIC_REVIEW_FLAG = 'app-blocks-agentic-review';
  * Mod-segmented gate for the AGENTIC MOD CODE-REVIEW (App Blocks P1). Evaluated
  * WITH the moderator's context (entityId = user id, context carries server-side
  * `isModerator`) so the `moderators` segment can match — identical eval shape to
- * `isAppBlocksReviewSandboxEnabled({ user })`. An absent flag evaluates `false`
- * unconditionally — that half IS fail-closed, and it is the load-bearing one
- * while this flag does not exist in Flipt. No user → a global eval, which returns
- * the flag's BASE value once the flag DOES exist; base OFF + segment rollout is
- * what keeps that closed, not the segment miss. See GLOBAL-EVAL SEMANTICS at the
- * top of this file, and APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ * `isAppBlocksReviewSandboxEnabled({ user })`. An absent flag, and an unreachable
+ * Flipt, each evaluate `false` unconditionally — that half IS fail-closed. No user
+ * → a global eval, which returns the flag's BASE value; base OFF plus a segment
+ * rollout is what keeps that closed, not the segment miss. See GLOBAL-EVAL
+ * SEMANTICS at the top of this file, and APP_BLOCKS_AGENTIC_REVIEW_FLAG.
  */
 export async function isAppBlocksAgenticReviewEnabled(opts?: {
   user?: SessionUser;

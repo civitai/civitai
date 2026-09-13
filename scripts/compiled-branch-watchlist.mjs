@@ -76,4 +76,38 @@ export const COMPILED_BRANCH_WATCHLIST = [
       },
     ],
   },
+  {
+    id: 'shared-storage-subject-refusal',
+    module: 'src/server/routers/apps-shared.router.ts',
+    why: "`resolveSharedContext` refuses a block token whose subject no longer hydrates, BEFORE consulting `app-blocks-shared-storage`. Lost, an unresolvable subject falls through to `{ user: undefined }` — a global eval, which returns the flag's BASE value, not a deny. Under a base-`enabled: true` GA flip every op in READ_OPS then serves shared rows to a token whose subject is gone. The write path is covered downstream by the min-trust gate; the read ops skip that block entirely and have no second belt, so this branch is the only thing in front of them.",
+    control: [
+      {
+        code: 'if (!(await isAppBlocksSharedStorageEnabled({ user: subjectUser ?? undefined }))) {',
+        why: 'the flag call immediately after the refusal — same function, known to survive. Unmapped means this gate is looking at a build that never emitted `resolveSharedContext`, not at a violation.',
+      },
+    ],
+    required: [
+      {
+        code: "message: 'token subject could not be resolved' });",
+        why: 'the refusal itself. Lost, the next line evaluates the flag with no subject and the answer becomes the flag base.',
+      },
+    ],
+  },
+  {
+    id: 'block-token-subject-refusal',
+    module: 'src/server/routers/blocks.router.ts',
+    why: "`assertAppBlocksEnabledForTokenUser` refuses an unhydratable token subject BEFORE consulting `app-blocks-enabled`. Lost, it falls through to `isAppBlocksEnabled`'s no-user branch — a deliberate global eval kept for the machine registrar — which returns the flag's BASE value. Under a base-`enabled: true` GA flip a token whose subject no longer resolves then passes the kill-switch on 16 block-token runtime procs. NB the sibling `assertViewerIsAppDeveloper` guard is deliberately NOT listed: `isAppBlocksAuthorEnabled` takes a non-nullable subject and dereferences it at once, so losing that one throws rather than passing.",
+    control: [
+      {
+        code: 'if (!(await isAppBlocksEnabled({ user }))) {',
+        why: 'the flag call immediately after the refusal — same function, known to survive. Unmapped means the build never emitted this function.',
+      },
+    ],
+    required: [
+      {
+        code: "message: 'block token subject could not be resolved',",
+        why: 'the refusal itself. Lost, the gate evaluates the kill-switch with no subject and a base-true flag answers `true`.',
+      },
+    ],
+  },
 ];

@@ -301,7 +301,7 @@ describe('assertViewerIsAppDeveloper — the AUTHOR gate refuses an unresolvable
       caller.updateUserSettings({ blockToken: 'tok', settings: {} })
     ).rejects.toMatchObject({
       code: 'FORBIDDEN',
-      message: 'block token subject could not be resolved',
+      message: 'app-authoring subject could not be resolved',
     });
   });
 
