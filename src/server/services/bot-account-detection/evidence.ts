@@ -113,6 +113,13 @@ export const MAX_FILENAMES_PER_MEMBER = 50;
  * the walk is bounded by round trips rather than by database work and there is little to buy by
  * widening it — while the process shares ONE connection pool with every other job, and a batch wide
  * enough to hold most of that pool would starve them for the length of a cohort walk.
+ *
+ * 🔴 NAME THE BOUND RATHER THAN GESTURING AT IT: the read pool this competes for is configured at
+ * 20 connections by default (`src/env/server-schema.ts`), so 10 in flight is HALF of it, not the
+ * "far below `EVIDENCE_CHUNK_SIZE`" the paragraph above makes it sound. Each statement is a
+ * sub-millisecond index seek so the pool is held briefly and the exposure is small, but anyone
+ * raising this number is spending a share of a pool of twenty and should size against that figure
+ * rather than against 500.
  */
 export const FILENAME_READ_BATCH_SIZE = 10;
 
@@ -202,10 +209,18 @@ export type EvidenceReader = {
    * before `createdBefore`.
    *
    * 🔴 PER MEMBER, NOT ACROSS THEM — the contract changed, and reading it the old way is the defect
-   * it was changed to remove. `listContentSamples` above still takes a cap on the whole result, so
-   * the two sibling methods genuinely differ; see `MAX_FILENAMES_PER_MEMBER` for why, and
+   * it was changed to remove. See `MAX_FILENAMES_PER_MEMBER` for the coverage argument and
    * `filenameSampleArgs` for the plan that forced it. The result is bounded by
    * `userIds.length × perMemberTake`, so a caller sizing a budget must multiply.
+   *
+   * 🔴 THE ASYMMETRY WITH `listContentSamples` IS UNFINISHED WORK, NOT A DECISION. That method
+   * still takes a cap on the WHOLE result with an `ORDER BY id DESC` under it — which is verbatim
+   * the shape this one was changed to remove, so one prolific commenter's newest rows can evict
+   * every other account in the chunk exactly as a prolific uploader used to here. Nothing in this
+   * module justifies keeping it; this paragraph previously pointed at `MAX_FILENAMES_PER_MEMBER`
+   * as if it did, and that constant says nothing about the content surface. The content read has
+   * simply not been addressed — it is a separate change with its own measurement, and reading the
+   * two methods as "genuinely different by design" is how it stays unaddressed.
    */
   listFilenameSamples(
     userIds: number[],
@@ -432,7 +447,25 @@ export function createEvidenceReader(
       // (`FILENAME_READ_BATCH_SIZE`), so this fans out over exactly what it was handed rather than
       // over the whole cohort. `Promise.all` REJECTS on the first failure, which is the behaviour
       // the walk wants: a batch that partly failed is partial data, and the walk discards partial
-      // data rather than scoring it.
+      // data rather than scoring it. `collectCohortSignals` then empties the whole run's
+      // `filenameSamples` and stops — see its filename loop.
+      //
+      // 🔴 DO NOT "MAKE THIS RESILIENT" WITH `Promise.allSettled` KEEPING THE FULFILLED HALF. That
+      // is the obvious next edit and it inverts the module's central invariant: a fingerprint count
+      // built from some of the members UNDERSTATES every ring that straddles the missing ones, and
+      // understating is the direction that produces a confident zero. Worse, it would do so while
+      // `evidence_source_read_failures` reported 0 — the run would look clean and read low. Pinned
+      // by `__tests__/evidence.test.ts` ("a single per-member read rejecting…").
+      //
+      // 🔴 AND THE DISCARD IS NOW APPLIED OVER ~500× MORE STATEMENTS THAN IT WAS SIZED FOR. The old
+      // shape issued one statement per `EVIDENCE_CHUNK_SIZE` chunk — about 50 for a full cohort.
+      // This one issues one per MEMBER, and `collectCohortSignals` is called once for the whole
+      // cohort, so a run can issue up to `MAX_COHORT_ACCOUNTS` (25,000) of them. All-or-nothing over
+      // 50 statements and all-or-nothing over 25,000 are different bets: one transient failure
+      // anywhere in the walk now zeroes the entire day's filename signal. That is still the right
+      // trade — the read it replaced completed NEVER, so the comparison is against no signal at all,
+      // not against a partial one — but the policy was chosen at the smaller scale and anyone
+      // resizing it should know it was not re-argued at this one.
       const perMember = await Promise.all(
         userIds.map((userId) =>
           db.image.findMany(filenameSampleArgs(userId, perMemberTake, createdBefore))
@@ -815,11 +848,23 @@ export async function collectCohortSignals(
      * concurrency without asking to. In production `chunkSize` is `COHORT_PAGE_SIZE` (500) so the
      * `min` was always `FILENAME_READ_BATCH_SIZE` and nothing there changes; the coupling only ever
      * bound small-page callers and the tests, and the tests now pass this knob explicitly.
+     *
+     * 🔴 IT IS A TEST AFFORDANCE, DELIBERATELY. `run.ts` does not pass it and is not meant to: the
+     * production value is the constant, and a second place to set it is a second place for the two
+     * to disagree. Stated because "optional with a default" reads as a production dial someone
+     * forgot to wire, and the previous round's fix made the DEFAULT honest without saying who calls
+     * it. If a caller ever needs it, that caller is the reason to change this sentence.
      */
     filenameBatchSize?: number;
     maxContentSamples?: number;
     maxFilenameSamples?: number;
-    /** Per-member cap on filename rows. Defaults to `MAX_FILENAMES_PER_MEMBER`. */
+    /**
+     * Per-member cap on filename rows. Defaults to `MAX_FILENAMES_PER_MEMBER`.
+     *
+     * 🔴 ALSO A TEST AFFORDANCE — same reasoning as `filenameBatchSize` above. `run.ts` passes
+     * `maxFilenameSamples` (the run-level budget) and NOT this one, so the per-member cap is the
+     * constant in production, always.
+     */
     maxFilenamesPerMember?: number;
     /** The run's window opening, passed through to the ClickHouse read as its `time` bound. */
     createdAfter?: Date;
