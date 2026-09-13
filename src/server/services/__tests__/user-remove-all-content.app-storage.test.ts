@@ -28,10 +28,18 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
     quota: new Map<string, boolean>(),
     /** Set to make every apps-DB statement throw (fault injection). */
     poolDown: null as string | null,
+    /**
+     * Extra EMPTY app schemas, purely to push the enumeration past its candidate
+     * cap. They hold no rows for anyone, so they are filtered out of `hits` and
+     * never reach `buildAppView` — the only thing they change is the candidate
+     * COUNT, which is exactly the condition under test.
+     */
+    extraSchemas: 0,
     reset() {
       fake.kv = [];
       fake.quota = new Map();
       fake.poolDown = null;
+      fake.extraSchemas = 0;
     },
   };
 
@@ -62,24 +70,31 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
     }
     assertBindArity(sql, params);
     if (flat.includes('information_schema.tables')) {
-      return {
-        rows: [
-          { table_schema: 'app_wiped_app', table_name: 'kv' },
-          { table_schema: 'app_wiped_app', table_name: 'user_quota' },
-        ],
-        rowCount: 2,
-      };
+      const rows = [
+        { table_schema: 'app_wiped_app', table_name: 'kv' },
+        { table_schema: 'app_wiped_app', table_name: 'user_quota' },
+      ];
+      for (let i = 0; i < fake.extraSchemas; i++) {
+        rows.push({ table_schema: `app_filler_${i}`, table_name: 'kv' });
+      }
+      return { rows, rowCount: rows.length };
     }
     if (flat.includes('AS schema_name')) {
       const uid = params[0] as number;
+      // Answer every branch the statement actually contains, so a capped
+      // enumeration is reflected here rather than assumed.
+      const branches = [...flat.matchAll(/SELECT '(app_[a-z0-9_]+)' AS schema_name/g)].map(
+        (m) => m[1]
+      );
       return {
-        rows: [
-          {
-            schema_name: 'app_wiped_app',
-            n: String(fake.kv.filter((r) => r.user_id === uid).length),
-          },
-        ],
-        rowCount: 1,
+        rows: branches.map((name) => ({
+          schema_name: name,
+          n:
+            name === 'app_wiped_app'
+              ? String(fake.kv.filter((r) => r.user_id === uid).length)
+              : '0',
+        })),
+        rowCount: branches.length,
       };
     }
     if (flat.includes('AS row_count') && flat.includes('AS total_bytes')) {
@@ -170,6 +185,7 @@ vi.mock('~/server/services/auction.service', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { removeAllContent } from '~/server/services/user.service';
+import { APP_USER_STORAGE_MAX_SCHEMAS } from '~/server/services/apps/user-storage-purge.service';
 
 const TARGET = 42;
 const BYSTANDER = 77;
@@ -292,6 +308,26 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     expect(incomplete).toContain('check constraint');
     // And nothing was destroyed, which is the state the warning describes.
     expect(fake.kv.map((r) => r.key).sort()).toEqual(['gone-a', 'gone-b', 'keep']);
+    warn.mockRestore();
+  });
+
+  it('🔴 WARNS when the schema sweep hit its candidate cap and skipped schemas', async () => {
+    // The THIRD way the sweep completes having deliberately skipped rows,
+    // alongside failures[] and unmappedSchemas[]. Unreachable at today's scale
+    // (the cap is 500 against ~20 schemas), which is exactly why it was easy to
+    // leave unread — and why two-of-three covered is how the next silent partial
+    // wipe happens. Reached here by seeding past the cap rather than by asserting
+    // the branch is unreachable.
+    fake.extraSchemas = APP_USER_STORAGE_MAX_SCHEMAS + 1;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await removeAllContent({ id: TARGET, actorUserId: MOD });
+
+    const truncated = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('hit its candidate cap'));
+    expect(truncated).toBeTruthy();
+    expect(truncated).toContain(`userId=${TARGET}`);
     warn.mockRestore();
   });
 
