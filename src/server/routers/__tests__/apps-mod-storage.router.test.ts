@@ -743,6 +743,36 @@ describe('initiator is not a remote input', () => {
     // Positive control: the merge really did produce the declared fields.
     expect(parsed).toMatchObject({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' });
   });
+
+  /**
+   * 🔴 THE LEDGER, BECAUSE EVERY ASSERTION ABOVE IS SPELLED RATHER THAN
+   * STRUCTURAL. They pin the WORD `initiator`, and the sentence they carry has a
+   * second link they never observe: what the ROUTER BODY forwards to the
+   * service's `initiator?:`. A schema can omit `initiator` and still hand the
+   * service one, under any other name.
+   *
+   * Demonstrated: adding `asSystem: z.boolean().optional()` to `purgeApp`'s input
+   * and `initiator: input.asSystem ? 'system:account-wipe' : undefined` to the
+   * service call ran the whole delta suite green. A moderator then POSTs
+   * `{userId, appBlockId, reason, asSystem: true}` and gets a MODERATOR TAKEDOWN
+   * whose permanent audit row carries `rowDetailWithheld: 'erasure'` and names
+   * NONE of the keys it destroyed — verbatim the failure the docstring at the top
+   * of this describe says it prevents. The row-shape test misses it for exactly
+   * the reason that docstring predicts: its caller simply does not send the field.
+   *
+   * So pin the WIRE KEY SET EXACTLY. It fails when the set GROWS or SHRINKS, so it
+   * catches any alias by construction rather than any particular spelling — which
+   * is the whole point, the old guard being able to see only the one word it
+   * named. A new wire field is a deliberate edit here, where the reviewer is
+   * looking at this comment.
+   */
+  it.each([
+    ['preview', ['appBlockId', 'userId']],
+    ['purgeApp', ['appBlockId', 'reason', 'userId']],
+    ['purgeAccount', ['reason', 'userId']],
+  ] as const)('%s accepts EXACTLY these wire keys, and no others', (name, expected) => {
+    expect([...inputKeysOf(name)].sort()).toEqual([...expected].sort());
+  });
 });
 
 // ── 2. TARGETED PURGE + ITS NEGATIVE CONTROLS ────────────────────────────────

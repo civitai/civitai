@@ -849,17 +849,39 @@ async function writeAuditIntent(args: {
         // much?" — counts, bytes, app identity, and the `after` outcome stamp.
         // What goes is the per-key detail.
         //
-        // 🔴 SELECTED BY `initiator`. The exact guarantee, because this is the
-        // security argument for the reduction and a loose version of it is worth
-        // nothing: NEITHER tRPC PROCEDURE ACCEPTS `initiator` FROM INPUT — both
-        // schemas omit it, so no remote caller can choose a shape. It is NOT true
-        // that "no caller can supply it": both service functions export an
-        // optional `initiator?:`, and `purgeUserAppStorageForAccountWipe` is
-        // exactly such a caller. The boundary is the tRPC input schema, not the
-        // function signature. Pinned
-        // by a guard that asserts the wipe row contains none of the key names or
-        // fingerprint values — a STATE assertion, so renaming the field does not
-        // walk past it.
+        // 🔴 SELECTED BY `initiator`, AND THE GUARANTEE RESTS ON TWO THINGS, NOT
+        // ONE. This is the security argument for the reduction, so it is stated at
+        // the strength it actually holds rather than at the strength that reads
+        // well.
+        //
+        //   (1) Neither tRPC procedure DECLARES `initiator` in its input schema.
+        //   (2) Each procedure's wire key set is pinned EXACTLY by a ledger in
+        //       `apps-mod-storage.router.test.ts`, which fails when the set grows
+        //       OR shrinks.
+        //
+        // (1) alone is NECESSARY BUT NOT SUFFICIENT, and an earlier version of
+        // this comment claimed it was — "both schemas omit it, so no remote caller
+        // can choose a shape". That is false, because the schema is only the first
+        // of two links: the ROUTER BODY is what passes anything to the service's
+        // `initiator?:`. A schema can omit `initiator` and still forward one under
+        // another name. Measured: adding `asSystem: z.boolean().optional()` to
+        // `purgeApp`'s input plus `initiator: input.asSystem ? …` to the service
+        // call is a moderator takedown whose permanent row names none of the keys
+        // it destroyed — and it ran the whole delta suite green until (2) existed.
+        //
+        // (2) is what closes it, and it closes it BY CONSTRUCTION rather than by
+        // spelling: it does not look for the word `initiator`, it refuses any new
+        // wire key at all. So the honest form is "a new wire field cannot be added
+        // without that ledger failing", not "no remote caller can choose a shape".
+        //
+        // Neither point is about the function signature: both service functions
+        // export an optional `initiator?:` and `purgeUserAppStorageForAccountWipe`
+        // is exactly such an in-process caller. That is fine and deliberate.
+        //
+        // Separately, the REDUCTION ITSELF is pinned by a guard asserting the wipe
+        // row contains none of the key names or fingerprint VALUES — a state
+        // assertion, so renaming the field does not walk past it. That guard pins
+        // what gets written; the ledger above pins who can ask for it.
         ...(args.initiator === 'system:account-wipe'
           ? { rowDetailWithheld: 'erasure' }
           : {
