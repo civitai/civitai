@@ -174,7 +174,10 @@ interface SharedContext {
  *   4. for WRITE ops: authenticated subject + the min-trust gate
  * Anon may READ list/counts; anon NEVER writes/votes.
  */
-export async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<SharedContext> {
+export async function resolveSharedContext(
+  blockToken: string,
+  op: SharedOp
+): Promise<SharedContext> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
@@ -221,15 +224,31 @@ export async function resolveSharedContext(blockToken: string, op: SharedOp): Pr
     throw new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' });
   }
   // Hydrate the TOKEN SUBJECT (block-token path has no ctx.user) — needed for both
-  // the flag segment eval and the trust gate. Fail-closed on a vanished subject.
+  // the flag segment eval and the trust gate.
   const subjectUser =
     userId != null
       ? ((await sessionClient.getSessionUserById(userId)) as SessionUser | null)
       : null;
 
-  // Dedicated fail-closed kill-switch (evaluated with the subject's context so the
-  // flag's mod/cohort segments resolve identically to the client gate; anon read →
-  // global eval → fail-closed until a base-enabled GA flip).
+  // 🔴 A VANISHED SUBJECT IS NOT AN ANONYMOUS CALLER — refuse it here, before the
+  // flag. Both used to collapse into the single `subjectUser ?? undefined` below,
+  // and the comment claimed that was "fail-closed on a vanished subject". It was
+  // not: a no-user eval cannot match a segment, but its answer is the flag's own
+  // base `enabled` value, so a base-`enabled: true` GA flip of
+  // `app-blocks-shared-storage` would admit a token whose subject no longer exists.
+  // The WRITE path happened to catch it downstream (the `userId == null` check +
+  // the min-trust gate); the READ ops — `list` / `counts` — have no second belt, so
+  // the flag was the only thing standing there. Mechanism + the measurement against
+  // the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+  if (userId != null && !subjectUser) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
+  }
+
+  // Dedicated kill-switch, evaluated with the subject's context so the flag's
+  // mod/cohort segments resolve identically to the client gate. An ANON token
+  // (`sub:'anon'`, `userId == null`) still reaches this with no user, which is
+  // deliberate: that is a global eval, i.e. the flag's BASE value, and anon shared
+  // access is exactly the GA widening a base-`enabled` flip is meant to perform.
   if (!(await isAppBlocksSharedStorageEnabled({ user: subjectUser ?? undefined }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
   }
@@ -315,9 +334,7 @@ export const appsSharedRouter = router({
       const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
       const pool = requireAppsDb();
 
-      const afterKey = input.cursor
-        ? Buffer.from(input.cursor, 'base64').toString('utf8')
-        : null;
+      const afterKey = input.cursor ? Buffer.from(input.cursor, 'base64').toString('utf8') : null;
       const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
       const prefixPattern = `${escapedPrefix}%`;
 
@@ -709,10 +726,9 @@ export const appsSharedRouter = router({
       // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
       // FK on votes.key is the belt for a race between this and the insert.
       const exists = (
-        await pool.query(
-          `SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`,
-          [input.key]
-        )
+        await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`, [
+          input.key,
+        ])
       ).rowCount;
       if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
 
@@ -816,9 +832,7 @@ export const appsSharedRouter = router({
    * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
    */
   report: publicProcedure
-    .input(
-      blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() })
-    )
+    .input(blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() }))
     .mutation(async ({ input }) => {
       const { userId, slug, schema, appBlockId } = await resolveSharedContext(
         input.blockToken,

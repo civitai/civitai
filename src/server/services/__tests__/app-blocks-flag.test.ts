@@ -201,18 +201,43 @@ describe('isAppBlocksAuthorEnabled — author capability (developer soft-launch)
     await expect(isAppBlocksAuthorEnabled({ user })).resolves.toBe(false);
   });
 
-  it('resolves OFF for an anonymous / vanished user (no floor, global eval never matches)', async () => {
+  it('resolves OFF for an anonymous / vanished user — WITHOUT evaluating the flag', async () => {
     await expect(isAppBlocksAuthorEnabled({ user: undefined })).resolves.toBe(false);
     await expect(isAppBlocksAuthorEnabled()).resolves.toBe(false);
-    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-author');
+    // 🔴 This used to assert `toHaveBeenCalledWith('app-blocks-author')` — i.e. that
+    // the helper DID fall through to a global eval — on the reasoning that a global
+    // eval "can never match a segment". The premise is true and the conclusion was
+    // not: a global eval returns the flag's BASE value, so that test passed only
+    // because this file's fake has a false base. The branch now denies structurally,
+    // and the assertion is inverted to pin that.
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+  });
+
+  it('🔴 stays OFF for an undefined user even when the flag is base-`enabled: true`', async () => {
+    // The forcing condition: `app-blocks-author` widened by BASE rather than by
+    // segment. A base-true flag answers `true` to a no-entityId eval (measured
+    // against the real wasm engine in `app-blocks-flag.base-enabled-flip.test.ts`),
+    // which is what the retracted derivation could not see.
+    mockIsFlipt.mockImplementation(async () => true);
+    await expect(isAppBlocksAuthorEnabled({ user: undefined })).resolves.toBe(false);
+    await expect(isAppBlocksAuthorEnabled()).resolves.toBe(false);
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+    // POSITIVE CONTROL — same base-true flag, same call, only a user added. Without
+    // this, the two denials above are indistinguishable from a stub wired to nothing.
+    await expect(isAppBlocksAuthorEnabled({ user: makeUser({ id: 555 }) })).resolves.toBe(true);
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-blocks-author',
+      '555',
+      expect.objectContaining({ userId: '555' })
+    );
   });
 
   it('Flipt-down / flag absent → mods only (static fallback), non-mods denied', async () => {
     // isFlipt returns false for everything (flag absent or Flipt unreachable).
     mockIsFlipt.mockImplementation(async () => false);
-    await expect(
-      isAppBlocksAuthorEnabled({ user: makeUser({ isModerator: true }) })
-    ).resolves.toBe(true); // mod floor
+    await expect(isAppBlocksAuthorEnabled({ user: makeUser({ isModerator: true }) })).resolves.toBe(
+      true
+    ); // mod floor
     await expect(
       isAppBlocksAuthorEnabled({ user: makeUser({ id: 777, isModerator: false }) })
     ).resolves.toBe(false); // cohort denied when flag absent
