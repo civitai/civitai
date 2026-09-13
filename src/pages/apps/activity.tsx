@@ -559,8 +559,23 @@ function ScopeGrantsPanel() {
      client cannot make it when it never received the record. (The string this empty state
      replaced was record-shaped and survived the confusion; the current wording is a strictly
      stronger factual claim, which is what makes the missing branch matter.) The same shape was
-     live in `AppPermissionsActivityDrawer`, fixed in the same change. */
-  if (isError) {
+     live in `AppPermissionsActivityDrawer`, fixed in the same change.
+
+     🔴 `isError && !grants`, NOT BARE `isError` — BECAUSE `isError` IS ALSO TRUE FOR A FAILED
+     REFETCH, AND IN THAT STATE react-query RETAINS `data`. Measured against this repo's
+     `@tanstack/react-query` 5.101 with its own defaults: after a successful fetch and one failed
+     refetch the result is `status=error isError=true isRefetchError=true isLoadingError=false`
+     with `data` STILL HOLDING EVERY ROW. A bare `isError` here sits BEFORE the empty/list
+     branches, so it discarded a complete valid list — and the live path is the most ordinary
+     interaction on this page: saving a daily Buzz limit calls
+     `utils.blocks.listMyScopeGrants.invalidate()` (above), the refetch hits one transient 5xx,
+     and the batch cohort retries ZERO times (`src/utils/trpc.ts`). The grid would be replaced by
+     this error copy while the client still held the rows. Narrower than `isLoadingError` on
+     purpose: the guard belongs on the STATE this branch exists for — "there is nothing to show" —
+     not on a library flag that is `false` for a GC'd-data error too. A refetch failure over a
+     previously-EMPTY successful read falls through to the empty state below, which is correct:
+     that sentence then reports a record the client really did receive. */
+  if (isError && !grants) {
     return (
       <EmptyState label="We couldn't load your apps and permissions just now. This is a problem reading the list, not a statement about what you have installed or granted — reload to try again." />
     );

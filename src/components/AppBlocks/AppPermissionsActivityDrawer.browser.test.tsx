@@ -33,6 +33,14 @@ const m = vi.hoisted(() => ({
   // row", so a failed read rendered an affirmative sentence about what the viewer had
   // granted. A flag rather than a second spy so the success arms stay byte-identical.
   grantsError: false,
+  /**
+   * 🔴 THE SECOND ERROR SHAPE, WHICH `grantsError` ABOVE CANNOT EXPRESS. react-query sets
+   * `isError` for a failed REFETCH too, and RETAINS `data` in that state — so an error arm placed
+   * before the list arm discards a grant list the client still holds. Under `grantsError` the
+   * broken and the fixed component render identically (`data` is undefined either way), which is
+   * precisely why that flag is blind to this mutant.
+   */
+  grantsRefetchError: false,
 }));
 
 // 🔴 `AppActivityPanel`'s `When` column renders `DaysFromNow`, which reads
@@ -68,9 +76,14 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
  * the real one.
  */
 vi.mock('~/utils/trpc', async (importOriginal) => {
+  // Three arms, mirroring react-query's three reachable states for this read. The REFETCH arm is
+  // the one that carries `data` alongside `isError` — measured on 5.101 with this repo's defaults
+  // as `status=error isError=true isRefetchError=true isLoadingError=false data=[…]`.
   const grantsSpy = vi.fn(() =>
-    m.grantsError
-      ? { data: undefined, isLoading: false, isError: true }
+    m.grantsRefetchError
+      ? { data: m.grants, isLoading: false, isError: true, isRefetchError: true }
+      : m.grantsError
+      ? { data: undefined, isLoading: false, isError: true, isLoadingError: true }
       : { data: m.grants, isLoading: false, isError: false }
   );
   const buzzSpy = vi.fn(() => ({
@@ -119,6 +132,7 @@ beforeEach(() => {
   m.flags = null;
   m.grants = [];
   m.grantsError = false;
+  m.grantsRefetchError = false;
   m.buzz = [];
   m.scopes = [];
   m.grantsSpy?.mockClear();
@@ -265,6 +279,37 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     const deniedLabel = scopeGrantEmptyScopeLabel('activity');
     expect(deniedLabel.length).toBeGreaterThan(40);
     await expect.element(page.getByText(deniedLabel)).not.toBeInTheDocument();
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF THE SAME CONTRACT, AND THE TEST ABOVE IS STRUCTURALLY BLIND TO IT.
+   * `isError` is ALSO true for a failed REFETCH, and in that state react-query RETAINS `data` —
+   * measured on this repo's `@tanstack/react-query` 5.101 with its own defaults as
+   * `status=error isError=true isRefetchError=true isLoadingError=false data=[…]`. Because the
+   * error arm sits BEFORE the list arm, a bare `isError` replaced a complete valid grant list with
+   * read-failure copy. Reachable on the most ordinary interaction: the activity page's install
+   * toggle / budget save calls `utils.blocks.listMyScopeGrants.invalidate()`, the refetch hits one
+   * transient 5xx, and the batch cohort retries ZERO times (`queryRetry` in `src/utils/trpc.ts`).
+   * The test above cannot see this — under a first-fetch failure `data` is undefined, so the broken
+   * and the fixed component render identically.
+   */
+  test('🔴 a failed REFETCH keeps the grants it already has — `isError` alone would discard them', async () => {
+    m.grants = [
+      { appBlockId: 'ab-1', slug: 'my-app', name: 'My App', scopes: ['user:read:self'] },
+      { appBlockId: 'ab-2', slug: 'other', name: 'Other', scopes: ['buzz:read:self'] },
+    ];
+    m.grantsRefetchError = true;
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={() => {}} />
+    );
+    // The retained grant for THIS app still renders, and the other app's still does not leak.
+    await expect.element(page.getByText('user:read:self')).toBeInTheDocument();
+    expect(page.getByText('buzz:read:self').elements()).toHaveLength(0);
+    // 🔴 THE PIN. A component branching on bare `isError` shows this sentence INSTEAD of the list,
+    // so this is the assertion that fails on the mutant.
+    expect(document.body.textContent ?? '').not.toContain(
+      "couldn't load this app's permissions just now"
+    );
   });
 
   test('anonymous viewer gets a sign-in empty state and the activity queries do not fire', async () => {

@@ -68,6 +68,14 @@ const mocks = vi.hoisted(() => ({
    * that never arrived. Per-proc rather than global so every other read stays unchanged.
    */
   scopeGrantsError: false,
+  /**
+   * 🔴 THE SECOND ERROR SHAPE, AND THE ONE `scopeGrantsError` ABOVE CANNOT EXPRESS. react-query
+   * sets `isError` for a failed REFETCH too, and in that state it RETAINS `data` — so an error arm
+   * placed before the list arm throws away a complete valid list. Both the correct and the broken
+   * component render identically under `scopeGrantsError` (because `data` is undefined either
+   * way), which is exactly why that fixture is blind to this mutant and this one exists.
+   */
+  scopeGrantsRefetchError: false,
 }));
 
 /**
@@ -240,11 +248,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       hasPendingInvites: false,
     }),
   };
-  /** Per-proc error arms, keyed exactly like `DATA`. */
-  const ERRORS: Record<string, () => boolean> = {
-    'blocks.listMyScopeGrants': () => mocks.scopeGrantsError,
+  /**
+   * Per-proc error arms, keyed exactly like `DATA`.
+   *
+   * 🔴 TWO SHAPES, BECAUSE react-query HAS TWO. `'load'` is a FIRST-fetch failure: `data`
+   * undefined, `isLoadingError` true. `'refetch'` is a failure AFTER a success: `isError` true,
+   * `isRefetchError` true, `data` STILL PRESENT. Measured against this repo's 5.101 with its own
+   * defaults. The distinction is the whole point of the arm — the broken and the fixed component
+   * are indistinguishable under `'load'`.
+   */
+  const ERRORS: Record<string, () => false | 'load' | 'refetch'> = {
+    'blocks.listMyScopeGrants': () =>
+      mocks.scopeGrantsRefetchError ? 'refetch' : mocks.scopeGrantsError ? 'load' : false,
   };
-  const node = (read?: () => unknown, errored?: () => boolean): unknown =>
+  const node = (read?: () => unknown, errored?: () => false | 'load' | 'refetch'): unknown =>
     new Proxy(
       {},
       {
@@ -252,10 +269,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           if (key === 'useQuery' || key === 'useInfiniteQuery') {
             // Called at RENDER time, so `mocks.flags` is the arm's own value.
             if (read === undefined) return () => inert;
-            // The error arm mirrors react-query exactly: `data` undefined AND `isLoading` false.
-            // Returning data alongside `isError` would make the test pass against a component
-            // that reads neither.
-            return () => (errored?.() ? { ...inert, isError: true } : { ...inert, data: read() });
+            // Each error arm mirrors react-query exactly. `'load'`: `data` undefined, `isLoading`
+            // false — returning data alongside it would make the test pass against a component
+            // that reads neither. `'refetch'`: `isError` true WITH `data`, which is the state
+            // react-query really reports once a success has landed.
+            return () => {
+              const mode = errored?.();
+              if (mode === 'load') return { ...inert, isError: true, isLoadingError: true };
+              if (mode === 'refetch')
+                return { ...inert, isError: true, isRefetchError: true, data: read() };
+              return { ...inert, data: read() };
+            };
           }
           if (key === 'useMutation') return () => ({ ...inert, mutate: mocks.mutate });
           if (key === 'invalidate' || key === 'fetch') return vi.fn();
@@ -319,6 +343,7 @@ const bodyMarketplaceLinks = () =>
 beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
   mocks.scopeGrantsError = false;
+  mocks.scopeGrantsRefetchError = false;
   router.query = {};
   router.pathname = '/apps/activity';
   vi.mocked(router.replace).mockClear();
@@ -736,6 +761,42 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
     expect(document.body.textContent ?? '').not.toContain('Nothing has touched your account yet');
     // …and no card grid at all, so the error state cannot be mistaken for a partial render.
     expect(page.getByTestId('apps-installed-grants-grid').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF THE ERROR CONTRACT, AND THE TEST ABOVE IS STRUCTURALLY BLIND TO IT.
+   * react-query sets `isError` for a failed REFETCH as well as a failed first fetch, and in the
+   * refetch case it RETAINS `data`. Measured against this repo's `@tanstack/react-query` 5.101
+   * with its own defaults (`retry: false`, `refetchOnWindowFocus: false`):
+   *
+   *   after success  : status=success isError=false isLoadingError=false isRefetchError=false data=[…]
+   *   after refetch X: status=error   isError=true  isLoadingError=false isRefetchError=true  data=[…]
+   *
+   * So a bare `if (isError)` sitting BEFORE the list arm discards a complete valid list. The live
+   * path is the most ordinary interaction on this page: saving a daily Buzz limit (or toggling an
+   * install) calls `utils.blocks.listMyScopeGrants.invalidate()`, the refetch hits one transient
+   * 5xx, and the batch cohort retries ZERO times (`queryRetry` in `src/utils/trpc.ts`) — and the
+   * whole "Apps & permissions" grid is replaced by read-failure copy while the client still holds
+   * every row. That is strictly WORSE than the pre-change behaviour, which rendered the correct
+   * list. The arm above cannot see it: under a first-fetch failure `data` is undefined, so the
+   * broken and the fixed component render identically.
+   */
+  test('🔴 a failed REFETCH keeps the list it already has — `isError` alone would discard it', async () => {
+    mocks.scopeGrantsRefetchError = true;
+    renderWithProviders(<AppActivityPage />);
+    // The rows the client still holds are rendered, not replaced.
+    await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
+    const gridText =
+      document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
+    // All four fixture rows, so this is the full retained list and not a partial render.
+    for (const name of ['Demo App', 'Spender', 'Consented Only', 'Acted Only']) {
+      expect(gridText).toContain(name);
+    }
+    // 🔴 THE PIN. A component branching on bare `isError` shows this sentence INSTEAD of the grid,
+    // so this is the assertion that fails on the mutant.
+    expect(document.body.textContent ?? '').not.toContain(
+      "couldn't load your apps and permissions just now"
+    );
   });
 
   test('Save sends the new limit for THAT app, and widens no scope', async () => {

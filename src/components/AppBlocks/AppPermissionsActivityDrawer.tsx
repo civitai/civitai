@@ -105,7 +105,7 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
           <Center py="md">
             <Loader size="sm" />
           </Center>
-        ) : grantsQuery.isError ? (
+        ) : grantsQuery.isError && !grantsQuery.data ? (
           /* 🔴 AN ERROR BRANCH, BECAUSE WITHOUT ONE A FAILED READ ASSERTED A DENIAL. On a query
              error `data` is `undefined` and `isLoading` is `false`, so this fell straight through
              to `<BlockScopeList>` with `scopeGrantEmptyScopeLabel('activity')` — a sentence about
@@ -113,7 +113,19 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              viewer's record from a read that failed, and the previous hard-coded string was
              record-shaped ("No permissions recorded …") so it survived the same state; the
              origin-derived label is a stronger factual claim and needs the branch the old one
-             did not. Same defect, same fix, in `src/pages/apps/activity.tsx`. */
+             did not. Same defect, same fix, in `src/pages/apps/activity.tsx`.
+
+             🔴 `isError && !grantsQuery.data`, NOT BARE `isError` — `isError` IS ALSO TRUE FOR A
+             FAILED REFETCH, AND react-query RETAINS `data` IN THAT STATE. Measured against this
+             repo's `@tanstack/react-query` 5.101 with its own defaults: after one success and one
+             failed refetch the result is `status=error isError=true isRefetchError=true
+             isLoadingError=false` with `data` intact. This arm sits BEFORE the list arm, so a bare
+             `isError` replaced a complete valid grant list with a read-failure sentence — and the
+             reachable trigger is routine: the install toggle on the activity page calls
+             `utils.blocks.listMyScopeGrants.invalidate()`, the refetch hits one transient 5xx, and
+             the batch cohort retries ZERO times (`src/utils/trpc.ts`). Guard the STATE ("nothing
+             to show"), not the flag name — `isLoadingError` is also `false` when an error leaves
+             `data` undefined for any other reason. Same fix in `src/pages/apps/activity.tsx`. */
           <Text size="xs" c="dimmed" fs="italic">
             We couldn&apos;t load this app&apos;s permissions just now. That is a problem reading
             them, not a statement about what you have granted.
