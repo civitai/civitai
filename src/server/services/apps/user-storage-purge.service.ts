@@ -621,7 +621,7 @@ async function purgeOneApp(args: {
     }
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch(() => undefined);
     throw err;
   } finally {
     client.release();
