@@ -42,6 +42,36 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
  * is bounded by the token lifetime instead of by Redis recovery time — see that
  * service's own note). That is a property of the primitive, deliberately inherited here
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
+ *
+ * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
+ * ones. Steps 2 and 3 add ONE Redis GET plus ONE indexed `dbRead.appBlock.findUnique`
+ * (the `(appId, blockId)` unique, on the replica — never the primary) to every bridge
+ * request. `pollWorkflow` is the shape to think about: a running block polls it on a
+ * timer, so that pair is paid per poll, per open block instance. A `dev` token skips the
+ * DB read (see `assertAppBlockApproved`) but still pays the Redis GET.
+ *
+ * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. `checkBlockCatalogRateLimit` has five
+ * call sites in `blocks.router.ts` — `queryAppWorkflows`, `cancelAppWorkflow`,
+ * `getImagesByIds`, `getMyViewer`, and the `authorizeBlockBuzzRead` helper that the three
+ * `getMyBuzz*` procs go through — so seven of the fifteen bridge procedures are on it.
+ * All five sites now run AFTER this helper, so an over-limit request has already paid the
+ * Redis GET and the `findUnique` by the time the limiter refuses it. That is not free,
+ * and it is not an oversight:
+ *   - The limiter CANNOT precede verification. It is keyed on `claims.blockInstanceId`,
+ *     which only exists once the token has been verified — there is no earlier key to
+ *     throttle on, so step 1 is a hard floor beneath it.
+ *   - Moving it INTO this helper, between steps 1 and 2, would apply a 120-req/10s
+ *     ceiling to ALL FIFTEEN bridge procedures rather than the seven that opted in —
+ *     `pollWorkflow` and `submitWorkflow` among them. Those are deliberately not on the
+ *     catalog bucket, and a polling proc is exactly the one a shared ceiling would start
+ *     refusing legitimately. That is an availability change, not a cleanup.
+ *   - What the reorder would save is one Redis GET + one replica `findUnique`, and only
+ *     on requests that are ALREADY over the ceiling — the abusive tail, not the normal
+ *     path. Revocation is itself a Redis GET, i.e. the same class of work the limiter
+ *     does, so refusing before it buys roughly one op.
+ * So the order stands. If a bridge proc ever needs a cheaper refusal than this, the
+ * change to make is a limiter keyed on something available pre-verification, not a
+ * reshuffle of these three steps.
  */
 export async function authorizeBlockBridgeToken(blockToken: string): Promise<BlockTokenClaims> {
   const claims = await verifyBlockToken(blockToken);

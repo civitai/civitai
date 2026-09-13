@@ -412,11 +412,22 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
  * versus a spendable-balance read — which is why these three also carry the
  * per-instance rate limit below.
  *
- * Order (each step fail-closed): verify token → require consent scope → self-bind
- * the userId off `claims.sub` (never client input) → App-Blocks kill-switch
- * against the token subject → per-instance rate limit (keyed on the stable
- * `blockInstanceId`, BEFORE any db/ClickHouse work). Returns the self-bound
+ * Order (each step fail-closed, except where noted): `authorizeBlockBridgeToken`
+ * — which is itself verify token → revocation (a Redis GET, fail-OPEN) → approved
+ * status (an indexed `dbRead.appBlock.findUnique`, skipped for a `dev` token) —
+ * then require the consent scope → self-bind the userId off `claims.sub` (never
+ * client input) → App-Blocks kill-switch against the token subject → per-instance
+ * rate limit, keyed on the stable `blockInstanceId`. Returns the self-bound
  * `userId` + verified `claims`.
+ *
+ * ⚠️ THE RATE LIMIT IS NOT FIRST, and this docblock claimed it ran "BEFORE any
+ * db/ClickHouse work" until the revocation guard landed and made that false. A Redis
+ * GET and a replica `findUnique` are now spent inside `authorizeBlockBridgeToken`
+ * BEFORE the limiter can refuse anything. It cannot be hoisted above them: it is keyed
+ * on `claims.blockInstanceId`, which does not exist until the token is verified. What
+ * the limiter still bounds is everything AFTER it — the ClickHouse daily-compensation
+ * read and the buzz-service calls in the three procs below, which are the expensive
+ * half. See `block-bridge-auth.service.ts` for why the order was left as it is.
  *
  * The consent scope — not an authoring capability — is the authority here: the
  * author gate that used to follow the kill-switch is gone from every runtime
@@ -439,7 +450,8 @@ async function authorizeBlockBuzzRead(
   await assertAppBlocksEnabledForTokenUser(userId);
   // Per-instance rate limit (shared blocks limiter) — bounds a block hammering
   // these private reads (esp. daily-compensation → ClickHouse) onto the origin.
-  // Runs BEFORE any service call. Fail-open on a redis incident.
+  // Runs before the buzz/ClickHouse service calls in the procs below, but AFTER
+  // the guard's own Redis GET + `appBlock.findUnique`. Fail-open on a redis incident.
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
     throw new TRPCError({
@@ -3879,7 +3891,11 @@ export const blocksRouter = router({
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
       // Per-instance rate limit (shared blocks limiter), BEFORE any orchestrator
-      // read/DELETE or DB query. Cancel is the HEAVIER path (2 orchestrator GETs +
+      // read/DELETE and before this resolver's own DB lookups. It is NOT before
+      // every DB query on the request: `authorizeBlockBridgeToken` above already
+      // spent a Redis GET and an indexed `appBlock.findUnique` on the replica, and
+      // the limiter cannot be hoisted above them because it is keyed on
+      // `claims.blockInstanceId`. Cancel is the HEAVIER path (2 orchestrator GETs +
       // 1 DELETE + 1 DB lookup per call), so it MUST be bounded exactly like the
       // sibling queryAppWorkflows — same key (blockInstanceId) + scope. Fail-open
       // on a redis incident (matches the buzz self-read bridges / query proc).
@@ -5443,7 +5459,11 @@ export const blocksRouter = router({
       await assertAppBlocksEnabledForTokenUser(userId);
       // Per-instance rate limit (shared blocks limiter) — bounds a block
       // hammering the PRIMARY (the ban/mute lookup below reads dbWrite). Runs
-      // BEFORE the db read. Fail-open on a redis incident.
+      // BEFORE that primary read, which is the one worth bounding — but NOT
+      // before every db read: `authorizeBlockBridgeToken` above already spent a
+      // Redis GET and an indexed `appBlock.findUnique` on the REPLICA. The
+      // limiter is keyed on `claims.blockInstanceId`, so it cannot precede the
+      // verification that produces it. Fail-open on a redis incident.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         throw new TRPCError({
