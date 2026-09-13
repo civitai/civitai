@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const mockDbRead = dbMock.dbRead;
-const mockLogToAxiom = loggingMock.logToAxiom;
 
 /**
  * THE ACTIVITY LEG of `listMyScopeGrants` — apps that USED the viewer's account with NEITHER an
@@ -123,11 +121,9 @@ beforeEach(() => {
     mockDbRead.blockScopeInvocation.groupBy,
     mockDbRead.appUserScopeGrant.findMany,
     mockDbRead.appBlock.findMany,
-    mockLogToAxiom,
   ]) {
     fn.mockReset();
   }
-  mockLogToAxiom.mockResolvedValue(undefined);
   mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
   mockDbRead.blockBuzzAttribution.findMany.mockResolvedValue([]);
   mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([]);

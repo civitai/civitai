@@ -230,11 +230,23 @@ describe('scopeGrantEmptyScopeLabel', () => {
    * handed no scope set, so the claim cannot be gated and would go FALSE the first time a
    * third-party app uses a non-exempt scope. The shipped sentence states the general fact that
    * some data needs no grant without claiming that is all this app read.
+   *
+   * Claim 3 it must not make, and the one the PINNED STRING CHANGED FOR: "EVERYTHING it has done …
+   * is under Recent activity". That absolute was false and false on a transparency surface. A block
+   * consuming the viewer's data purely over the host-bridge postMessage protocol writes NO
+   * `block_scope_invocations` row — stated in this same change at
+   * `src/pages/apps/activity.tsx` — and a reachable row class makes >= 1 scope-gated call (which is
+   * what mints this card) and ALSO uses the bridge. "Every API call it made" is exactly the
+   * invocation table's contents, so it is the strongest true form. The `not.toContain('Everything
+   * it has done')` below is the pin that stops the absolute coming back by reword.
    */
   it('🔴 the activity label, pinned whole: no consent failure, no unconditional "only" claim', () => {
     expect(scopeGrantEmptyScopeLabel('activity')).toBe(
-      'You have not installed this app, and no separate permission grant is on record for it — some data can be read without one. Everything it has done on your account, with every call and its result, is under Recent activity.'
+      'You have not installed this app, and no separate permission grant is on record for it — some data can be read without one. Every API call it made on your account, with its result, is under Recent activity.'
     );
+    // 🔴 THE OVER-CLAIM THIS STRING REPLACED, pinned so a reword cannot reintroduce it: the page
+    // cannot promise a record of EVERYTHING an app did, only of every API call it made.
+    expect(scopeGrantEmptyScopeLabel('activity')).not.toContain('Everything it has done');
     const label = scopeGrantEmptyScopeLabel('activity');
     expect(label).not.toContain('never');
     expect(label).not.toContain('consent');
@@ -279,7 +291,10 @@ describe('scopeGrantEmptyScopeLabel', () => {
   /**
    * ⚠️ THE LEDGER HAS THREE VALUES AND TWO BEHAVIOURS, AND THIS IS WHERE THAT IS RECORDED
    * MECHANICALLY. `install` vs `consent` changes NOTHING — not this label, not the surface line,
-   * and not any of the three consumer branches, all of which test `=== 'activity'`. The pair is
+   * and not any of the FOUR sites that read the field (⚠️ four, not the three an earlier revision
+   * counted: `src/pages/apps/activity.tsx` ×2, `AppPermissionsActivityDrawer` ×1, and
+   * `src/server/services/blocks/user-app-surface.service.ts`'s own `entry.origin === 'activity'`
+   * deciding `scopes: []`), every one of which distinguishes ONLY `'activity'`. The pair is
    * kept as documentation of WHY a row exists for a reader of the server leg and of the API
    * payload; it is not something the code acts on, and the enum's size must not be read as
    * evidence that it is.

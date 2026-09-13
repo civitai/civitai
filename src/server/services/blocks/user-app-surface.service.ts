@@ -131,10 +131,26 @@ export type ScopeGrantSurface = {
  * fetched up to 40,000 ROWS to compute a set of a few dozen APP IDS. Measured on production
  * 2026-09-12: the heaviest block-token account holds 1,919 such rows across 13 apps, a ~148:1
  * rows-to-answer ratio. 🔴 And `take` could not limit the work it looked like it was limiting:
- * the planner reaches these rows through the partial `bsi_app_block_invoked_idx
- * (app_block_id IS NOT NULL)`, whose whole bitmap is 2,773 rows — scanned on the FIRST page for
- * every viewer, including one with zero App Block activity. Paging multiplied round-trips over
- * an unchanged scan.
+ * the planner reaches these rows through `bsi_app_block_invoked_idx`, whose bitmap for
+ * `app_block_id IS NOT NULL` is 2,773 rows — scanned on the FIRST page for every viewer,
+ * including one with zero App Block activity. Paging multiplied round-trips over an unchanged
+ * scan.
+ *
+ * ⚠️ THAT INDEX IS NOT PARTIAL, AND AN EARLIER REVISION OF THIS COMMENT SAID IT WAS. The repo's
+ * own migration is authoritative —
+ * `packages/civitai-db-schema/prisma/migrations/20260530170000_w5_pin_version_and_scope_audit/migration.sql`
+ * creates it as a plain btree `("app_block_id", "invoked_at" DESC)` with NO `WHERE`, and
+ * `schema.full.prisma` agrees (Prisma cannot express a partial index at all). The only partial
+ * index on this table is `bsi_synthetic_app_invoked_idx … WHERE "synthetic_app_id" IS NOT NULL`.
+ * The plan and the timings below are unaffected — Postgres serves `app_block_id IS NOT NULL` from
+ * a plain btree by scanning the non-null portion, which is what produces the "2,773 rows removed
+ * by filter" line. What the wrong word changed was the WRITE-AMPLIFICATION premise: the index has
+ * an entry for EVERY row of `block_scope_invocations`, not only the 2,773 App Block ones — one
+ * single viewer below holds 393k `external-oauth` rows, all of them indexed here — so any
+ * reasoning about its maintenance cost from the 2,773 figure is wrong by orders of magnitude.
+ * (The live table's exact row count was NOT re-measured here; the 393k is a lower bound read off
+ * the plan below.) If a hand-applied partial variant exists in production, the repo does not
+ * declare it and that would be unverified drift — this comment asserts only what the migrations say.
  *
  * A GROUP BY is also strictly more correct, not merely cheaper: it cannot under-report, so the
  * page ceiling's truncation log — which existed because a silently truncated sweep re-creates
@@ -156,8 +172,14 @@ export type ScopeGrantSurface = {
  *     no App Block activity still pays for the whole non-null bitmap.
  *   · CONTROL, same session and same warmth — the single PAGE query this replaces
  *     (`ORDER BY invoked_at DESC, id DESC LIMIT 2000` over the same predicate): WARM
- *     **1.73 / 1.72 ms**, quicksort **183 kB**. So the aggregate is faster than ONE page of the
- *     paged version, before counting the extra round-trips.
+ *     **1.73 / 1.72 ms**, quicksort **183 kB**, plus a `Limit → Sort` the aggregate does not have.
+ *     ⚠️ SO THE CLAIM IS "NOT SLOWER, AND DEMONSTRABLY DOING LESS WORK" — NOT "FASTER", WHICH AN
+ *     EARLIER REVISION CLAIMED AND THIS INSTRUMENT CANNOT SUPPORT. Aggregate warm mean 1.483 ms
+ *     (n=3) vs control 1.725 ms (n=2) is a 0.24 ms gap from ONE session on a shared replica, while
+ *     the same aggregate on the other viewer spans 1.68 / 0.93 ms — a 0.75 ms intra-query spread,
+ *     ~3× the effect. The work reduction is the durable half: 49 kB of quicksort against 183 kB,
+ *     and no Limit+Sort at all. Add the extra round-trips the paged version needed and the
+ *     conclusion stands without the timing.
  *
  * 🔴 SO THE COST SCALES WITH THE PLATFORM-WIDE NON-NULL `app_block_id` POPULATION, NOT WITH THE
  * VIEWER'S OWN VOLUME — which is the quantity App Blocks GA grows. No index is added here (at
@@ -499,7 +521,13 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // One batched read for the presentation columns. These ids came out of an FK column, so
       // they resolve — except where the AppBlock has since been deleted, which `findMany`
       // simply omits, giving the same "skip an unresolvable row" outcome as the legs above.
-      const apps = (await dbRead.appBlock.findMany({
+      // 🔴 NO RESULT CAST. The `as Array<AppBlockRow & { app: … }>` that used to sit here threw
+      // away Prisma's own inference over this `select` — so the owner field the skip below depends
+      // on was asserted rather than checked, and a `select` that stopped requesting `app` would
+      // still have type-checked. Prisma already types a `select`ed `findMany` precisely; letting it
+      // do so makes `app.userId` type-covered as well as test-covered (mutant M-OWN-3 plus the
+      // structural "selects the app owner…" case).
+      const apps = await dbRead.appBlock.findMany({
         where: { id: { in: needed } },
         select: {
           id: true,
@@ -510,7 +538,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
           // own — authorship is `AppBlock.app.userId` on the `OauthClient` row.
           app: { select: { userId: true } },
         },
-      })) as Array<AppBlockRow & { app: { userId: number } | null }>;
+      });
       for (const app of apps) {
         // 🔴 THE VIEWER'S OWN APP IS NOT "AN APP THAT ACTED ON YOU". A developer driving their own
         // block writes ordinary invocation rows against their own account, and a card telling them

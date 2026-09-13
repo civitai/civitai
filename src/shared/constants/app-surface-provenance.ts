@@ -39,8 +39,13 @@
  *                  `block_scope_invocations` row.
  *
  * ⚠️ ONLY ONE OF THE THREE DISTINCTIONS IS BEHAVIOUR; THE OTHER IS DOCUMENTATION, AND SAYING SO
- * IS THE POINT. Every branch on this field, in both functions below and at all three consumer
- * sites, tests `=== 'activity'`. NOTHING distinguishes `'install'` from `'consent'` — they
+ * IS THE POINT. Every read of this field distinguishes ONLY `'activity'`. ⚠️ FOUR SITES, NOT
+ * THREE — an earlier revision said three and omitted the server one. Both functions below branch
+ * `=== 'activity'`; `src/pages/apps/activity.tsx` reads it twice and
+ * `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx` once, all three delegating to those
+ * functions; and `src/server/services/blocks/user-app-surface.service.ts` branches on it DIRECTLY
+ * (`entry.origin === 'activity'` deciding `scopes: []`), which is the fourth and the one the count
+ * missed. NOTHING distinguishes `'install'` from `'consent'` — they
  * return the identical empty-scope label and take the identical path through the surface line,
  * which this module's own suite asserts ("install and consent share one label; activity is the
  * only distinct one"). The pair is kept because it records WHY a row exists for a reader of the
@@ -155,7 +160,17 @@ export function scopeGrantEmptyScopeLabel(origin: ScopeGrantOrigin): string {
     // carries `scopes: []`). So the sentence states the general fact that some data needs no
     // grant, WITHOUT claiming that is all this app read. Weaker and unconditionally true, rather
     // than stronger and conditionally false.
-    return 'You have not installed this app, and no separate permission grant is on record for it — some data can be read without one. Everything it has done on your account, with every call and its result, is under Recent activity.';
+    //
+    // 🔴 THE FOURTH CLAUSE IS "EVERY API CALL IT MADE", NOT "EVERYTHING IT HAS DONE", AND THAT
+    // NARROWING IS A CORRECTION — the absolute was FALSE, on a TRANSPARENCY surface, which is the
+    // one place in this change where a wrong sentence is the product rather than a comment about
+    // it. `user-app-surface.service.ts` and `src/pages/apps/activity.tsx` both record the reason: a
+    // block that consumes the viewer's data purely over the host-bridge postMessage protocol writes
+    // NO `block_scope_invocations` row, so Recent activity cannot be the record of EVERYTHING. A
+    // reachable row class makes >= 1 scope-gated call (which is what mints this card) and ALSO uses
+    // the bridge, and for that class the absolute was plainly wrong. "Every API call it made" is
+    // exactly what the invocation table holds, and is unconditionally true of it.
+    return 'You have not installed this app, and no separate permission grant is on record for it — some data can be read without one. Every API call it made on your account, with its result, is under Recent activity.';
   }
   // `install` / `consent` with an empty effective set. ⚠️ DELIBERATELY DOES NOT ASSERT WHICH
   // CAUSE: `scopes` is `manifest.scopes ∩ approved_scopes`, and an empty intersection means
