@@ -359,19 +359,6 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-/* 🔴 `buildSurfaceLine` LIVED HERE AND HAS MOVED TO
-   `src/shared/constants/app-surface-provenance.ts` — it is now `buildScopeGrantSurfaceLine`,
-   and it takes `origin` rather than inferring provenance from the counts.
-
-   WHY IT MOVED RATHER THAN GAINING A BRANCH IN PLACE. Its own comment recorded that this is
-   "the one copy site a literal sweep cannot find — it is computed", and the copy was wrong for
-   the new row class in a way no grep could see: the `0 / 0` fallback claimed "Granted at
-   consent", which an ACTIVITY-ONLY row also satisfies and for which it is FALSE. A computed
-   copy site needs a behavioural test, and this file is a Next page — its only coverage tier is
-   `*.browser.test.tsx`, which is report-only and cannot run without a Playwright binary. The
-   leaf module is React-free, so the rule is pinned in the node-env `unit` project instead. Same
-   precedent, and the same reason, as `appsActivityTabs.ts`. */
-
 /** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
 const SPEND_SCOPE = 'ai:write:budgeted';
 
@@ -552,29 +539,17 @@ function ScopeGrantsPanel() {
       </Center>
     );
   }
-  /* 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY. Without this
-     branch an error leaves `grants` `undefined` with `isLoading` false, so the code fell through
-     to the empty state below — which asserts "Nothing has touched your account yet, and you have
-     no installs, subscriptions or consents." That is a claim about the viewer's record, and the
-     client cannot make it when it never received the record. (The string this empty state
-     replaced was record-shaped and survived the confusion; the current wording is a strictly
-     stronger factual claim, which is what makes the missing branch matter.) The same shape was
-     live in `AppPermissionsActivityDrawer`, fixed in the same change.
+  /* 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY: without this
+     branch an error left `grants` undefined with `isLoading` false and fell through to the empty
+     state below, which ASSERTS the viewer has no installs, subscriptions or consents. Same shape,
+     same fix, in `AppPermissionsActivityDrawer`.
 
-     🔴 `isError && !grants`, NOT BARE `isError` — BECAUSE `isError` IS ALSO TRUE FOR A FAILED
-     REFETCH, AND IN THAT STATE react-query RETAINS `data`. Measured against this repo's
-     `@tanstack/react-query` 5.101 with its own defaults: after a successful fetch and one failed
-     refetch the result is `status=error isError=true isRefetchError=true isLoadingError=false`
-     with `data` STILL HOLDING EVERY ROW. A bare `isError` here sits BEFORE the empty/list
-     branches, so it discarded a complete valid list — and the live path is the most ordinary
-     interaction on this page: saving a daily Buzz limit calls
-     `utils.blocks.listMyScopeGrants.invalidate()` (above), the refetch hits one transient 5xx,
-     and the batch cohort retries ZERO times (`src/utils/trpc.ts`). The grid would be replaced by
-     this error copy while the client still held the rows. Narrower than `isLoadingError` on
-     purpose: the guard belongs on the STATE this branch exists for — "there is nothing to show" —
-     not on a library flag that is `false` for a GC'd-data error too. A refetch failure over a
-     previously-EMPTY successful read falls through to the empty state below, which is correct:
-     that sentence then reports a record the client really did receive. */
+     🔴 `isError && !grants`, NOT BARE `isError` — `isError` is ALSO true for a failed REFETCH, and
+     react-query RETAINS `data` in that state, so a bare test discarded a complete valid list on
+     the most ordinary interaction here (a budget save invalidates this query; the refetch's first
+     5xx is final — `queryRetry`, `src/utils/trpc.ts`). Guard the STATE ("nothing to show"), not a
+     library flag. The measured state table and the regression test that pins this are in
+     `src/components/Apps/AppActivityPage.browser.test.tsx`. */
   if (isError && !grants) {
     return (
       <EmptyState label="We couldn't load your apps and permissions just now. This is a problem reading the list, not a statement about what you have installed or granted — reload to try again." />
@@ -584,20 +559,14 @@ function ScopeGrantsPanel() {
     /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
        to make, and it was false.
 
-       ⚠️ THE ENUMERATED CAVEAT THAT USED TO LIVE HERE IS DELETED, NOT REWORDED — BUT NOT
-       BECAUSE ITS SUBJECT IS FULLY GONE, AND AN EARLIER REVISION OF THIS COMMENT OVERSTATED
-       EXACTLY THAT. It named two silent populations: (a) blocks OTHER people installed, and (b)
-       an app the viewer never installed whose scopes are all in `CONSENT_EXEMPT_SCOPES`, which
-       therefore never gets a grant row. The ACTIVITY leg closes (a) and (b) ALIKE, and only for an
-       app that has made scope-gated API CALLS — ⚠️ "closes (b) outright" was the asymmetric
-       earlier wording and it was wrong in the same direction for both: an all-exempt-scope app the
-       viewer never installed that has never invoked anything is exactly as silent as the bridge-only
-       class. 🔴 A block that consumes the viewer's data purely over the host-bridge postMessage
-       protocol writes NO `block_scope_invocations` row, so BOTH populations survive for that class
-       and this page is still silent about it. The
-       user-facing sentence below hedges correctly ("an app that holds access but has never used
-       it does not appear here"); this justification is the one a maintainer will rely on, so it
-       must not claim more than the code does. */
+       TWO SILENT POPULATIONS REMAIN: (a) blocks OTHER people installed, and (b) an app the viewer
+       never installed whose scopes are all in `CONSENT_EXEMPT_SCOPES`, which therefore never gets
+       a grant row. The ACTIVITY leg closes (a) and (b) ALIKE, and only for an app that has made
+       scope-gated API CALLS. 🔴 A block that consumes the viewer's data purely over the host-bridge
+       postMessage protocol writes NO `block_scope_invocations` row, so BOTH survive for that class
+       and this page is still silent about it. The user-facing sentence below hedges correctly ("an
+       app that holds access but has never used it does not appear here"); this justification is the
+       one a maintainer will rely on, so it must not claim more than the code does. */
     return (
       <EmptyState label="Nothing has touched your account yet, and you have no installs, subscriptions or consents. An app that holds access but has never used it does not appear here — Recent activity is the record of what was actually done." />
     );
@@ -917,9 +886,7 @@ export default function AppActivityPage() {
                     (install / subscribe / consent), which was an exact description of the three
                     things the panel could render and is why the gap was invisible: an app that
                     acted on you with none of them was outside what the heading even claimed to
-                    cover. Apostrophes are `&apos;` here because this file's 5 pre-existing
-                    `react/no-unescaped-entities` errors are fixed in this PR — they sit on files
-                    it touches, and ESLint shares one CI check with Prettier. */}
+                    cover. */}
                 <Text size="sm" c="dimmed">
                   The apps you&apos;ve installed, subscribed to or granted permissions to, plus any
                   app that has acted on your account without either — what each one may use, and
