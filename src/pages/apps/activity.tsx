@@ -588,10 +588,13 @@ function ScopeGrantsPanel() {
        BECAUSE ITS SUBJECT IS FULLY GONE, AND AN EARLIER REVISION OF THIS COMMENT OVERSTATED
        EXACTLY THAT. It named two silent populations: (a) blocks OTHER people installed, and (b)
        an app the viewer never installed whose scopes are all in `CONSENT_EXEMPT_SCOPES`, which
-       therefore never gets a grant row. The ACTIVITY leg closes (b) outright and closes (a) only
-       for blocks that make scope-gated API CALLS. 🔴 A block that consumes the viewer's data
-       purely over the host-bridge postMessage protocol writes NO `block_scope_invocations` row,
-       so population (a) survives for that class and this page is still silent about it. The
+       therefore never gets a grant row. The ACTIVITY leg closes (a) and (b) ALIKE, and only for an
+       app that has made scope-gated API CALLS — ⚠️ "closes (b) outright" was the asymmetric
+       earlier wording and it was wrong in the same direction for both: an all-exempt-scope app the
+       viewer never installed that has never invoked anything is exactly as silent as the bridge-only
+       class. 🔴 A block that consumes the viewer's data purely over the host-bridge postMessage
+       protocol writes NO `block_scope_invocations` row, so BOTH populations survive for that class
+       and this page is still silent about it. The
        user-facing sentence below hedges correctly ("an app that holds access but has never used
        it does not appear here"); this justification is the one a maintainer will rely on, so it
        must not claim more than the code does. */

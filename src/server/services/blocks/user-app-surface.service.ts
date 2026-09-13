@@ -526,7 +526,11 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // on was asserted rather than checked, and a `select` that stopped requesting `app` would
       // still have type-checked. Prisma already types a `select`ed `findMany` precisely; letting it
       // do so makes `app.userId` type-covered as well as test-covered (mutant M-OWN-3 plus the
-      // structural "selects the app owner…" case).
+      // structural "selects the app owner…" case). MEASURED, not assumed: deleting the
+      // `app: { select: … }` line below now fails `pnpm typecheck` with
+      // `TS2339: Property 'app' does not exist on type '{ id; blockId; manifest; approvedScopes }'`
+      // at the `app.app != null` site — which it could NOT have done while the cast was asserting
+      // the field into existence.
       const apps = await dbRead.appBlock.findMany({
         where: { id: { in: needed } },
         select: {
