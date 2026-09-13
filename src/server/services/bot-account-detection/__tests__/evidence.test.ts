@@ -1159,8 +1159,11 @@ describe('collectCohortSignals', () => {
     await collectCohortSignals(reader, many, { chunkSize: 2 });
     expect(reader.filenameCalls.map((c) => c.ids.length)).toEqual([10, 10, 10]);
     // The point is INDEPENDENCE, not that the filename read overrides the caller: the content read
-    // still walks at the width it was given.
-    expect(reader.contentCalls.every((c) => c.ids.length <= 2)).toBe(true);
+    // still walks at the width it was given. Asserted as the full list of widths rather than with
+    // `.every`, which is true of an empty array and would pass if the content read never ran.
+    expect(reader.contentCalls.map((c) => c.ids.length)).toEqual(
+      Array.from({ length: 15 }, () => 2)
+    );
   });
 
   it('honours an explicit filenameBatchSize (invariant guard — the knob had no caller before)', async () => {
