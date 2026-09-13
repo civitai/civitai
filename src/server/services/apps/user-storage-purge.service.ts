@@ -80,6 +80,10 @@
 // `'unknown'` exists and why it omits the count rather than defaulting it.
 
 import type { Prisma } from '@prisma/client';
+// The pool's `connect` is OVERLOADED (callback form + promise form), so deriving
+// the client type from its return — `Awaited<ReturnType<…['connect']>>` — selects
+// the CALLBACK overload and resolves to `void`. Name the type instead.
+import type { PoolClient } from 'pg';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { logToAxiom } from '~/server/logging/client';
@@ -894,7 +898,7 @@ async function purgeOneApp(args: {
   // `client` is declared out here so the catch can tell "never connected" from
   // "connected, then rolled back" — those are different answers to the only
   // question the row exists to answer.
-  let client: Awaited<ReturnType<ReturnType<typeof requireAppsDb>['connect']>> | undefined;
+  let client: PoolClient | undefined;
   // Whether `COMMIT` was REACHED. Load-bearing for the outcome below: a COMMIT
   // that threw may still have been applied by the server, so "we sent it" and
   // "it did not happen" are not the same claim.
