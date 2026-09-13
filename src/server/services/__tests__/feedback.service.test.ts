@@ -23,6 +23,20 @@ beforeEach(() => {
 const writtenContext = () => dbMock.dbWrite.feedback.create.mock.calls[0][0].data.context;
 
 /**
+ * Synthetic v4 uuids, used for EVERY image-id fixture in this file including the ones
+ * that call `createFeedback` directly.
+ *
+ * The direct-call cases would pass with any string — the service writes whatever it is
+ * handed — but `createFeedbackSchema` now requires a uuid, so a placeholder id here
+ * would be a fixture encoding a shape the real boundary rejects. The seam test below
+ * is the one that would notice; the others would go on being quietly unfaithful.
+ * Not keys copied out of production: this repo is public.
+ */
+const UUID_1 = '11111111-2222-4333-8444-555555555555';
+const UUID_2 = 'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee';
+const UUID_SHOT = '99999999-8888-4777-b666-555544443333';
+
+/**
  * `createFeedback` persistence for the extended context.
  *
  * The point of asserting on `dbWrite.feedback.create`'s argument rather than on the
@@ -39,13 +53,13 @@ describe('createFeedback — extended context', () => {
   };
 
   it('writes attached image ids into the stored context', async () => {
-    await createFeedback({ ...args, context: { images: ['cf-1', 'cf-2'] } });
-    expect(writtenContext()).toEqual({ images: ['cf-1', 'cf-2'] });
+    await createFeedback({ ...args, context: { images: [UUID_1, UUID_2] } });
+    expect(writtenContext()).toEqual({ images: [UUID_1, UUID_2] });
   });
 
   it('writes the screenshot id into the stored context', async () => {
-    await createFeedback({ ...args, context: { screenshotId: 'cf-shot' } });
-    expect(writtenContext()).toEqual({ screenshotId: 'cf-shot' });
+    await createFeedback({ ...args, context: { screenshotId: UUID_SHOT } });
+    expect(writtenContext()).toEqual({ screenshotId: UUID_SHOT });
   });
 
   it('writes the Faro session id into the stored context', async () => {
@@ -59,16 +73,16 @@ describe('createFeedback — extended context', () => {
       context: {
         path: '/images',
         reportedSource: 'bitdex',
-        images: ['cf-1'],
-        screenshotId: 'cf-shot',
+        images: [UUID_1],
+        screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
     });
     expect(writtenContext()).toEqual({
       path: '/images',
       reportedSource: 'bitdex',
-      images: ['cf-1'],
-      screenshotId: 'cf-shot',
+      images: [UUID_1],
+      screenshotId: UUID_SHOT,
       sessionId: 'faro-abc',
     });
     expect(dbMock.dbWrite.feedback.create.mock.calls[0][0].data.userId).toBe(7);
@@ -87,16 +101,16 @@ describe('createFeedback — extended context', () => {
       message: 'the feed repeated itself',
       context: {
         path: '/images',
-        images: ['cf-1', 'cf-2'],
-        screenshotId: 'cf-shot',
+        images: [UUID_1, UUID_2],
+        screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
     });
     await createFeedback({ ...parsed, userId: 7 });
     expect(writtenContext()).toEqual({
       path: '/images',
-      images: ['cf-1', 'cf-2'],
-      screenshotId: 'cf-shot',
+      images: [UUID_1, UUID_2],
+      screenshotId: UUID_SHOT,
       sessionId: 'faro-abc',
     });
   });
@@ -104,9 +118,9 @@ describe('createFeedback — extended context', () => {
   // Faro absent (dev/test/preview, or a blocked SDK) is the ordinary case: the
   // submission must be written with no sessionId rather than failing.
   it('writes a submission that carries no sessionId', async () => {
-    await createFeedback({ ...args, context: { images: ['cf-1'] } });
+    await createFeedback({ ...args, context: { images: [UUID_1] } });
     expect(writtenContext()).not.toHaveProperty('sessionId');
-    expect(writtenContext()).toEqual({ images: ['cf-1'] });
+    expect(writtenContext()).toEqual({ images: [UUID_1] });
   });
 
   it('writes an empty object when there is no context at all (invariant guard)', async () => {

@@ -24,11 +24,14 @@ export const FEEDBACK_MESSAGE_MAX_LENGTH = 2000;
 export const FEEDBACK_RATE_LIMIT = { max: 5, periodSeconds: 60 * 60 };
 
 /**
- * Attachments a single submission may carry, and the length of one stored id.
+ * Attachments a single submission may carry.
  *
- * Both are storage bounds first: `context` is a JSONB column and every value in it
- * is client-supplied, so an unbounded array or an unbounded string is a write-amp
- * vector regardless of what the UI does. The UI cap is a convenience on top.
+ * A storage bound first: `context` is a JSONB column and every value in it is
+ * client-supplied, so an unbounded array is a write-amp vector regardless of what
+ * the UI does. The UI cap is a convenience on top. There is no companion
+ * id-LENGTH bound — an image id is bounded by SHAPE (`z.uuid()`) in
+ * `feedback.schema.ts`, which fixes its length at 36 and is a security guard
+ * besides; see the field note there.
  *
  * UPLOAD BUDGET. The prompt uploads nothing until Send is pressed, so the feedback
  * surface can mint at most `FEEDBACK_IMAGE_MAX_COUNT + 1` Cloudflare uploads per
@@ -42,9 +45,6 @@ export const FEEDBACK_RATE_LIMIT = { max: 5, periodSeconds: 60 * 60 };
  * app), so closing that is a change to that endpoint, not to this constant.
  */
 export const FEEDBACK_IMAGE_MAX_COUNT = 3;
-
-/** Cloudflare image ids written here are `randomUUID()` (36 chars); this is headroom, not a fit. */
-export const FEEDBACK_IMAGE_ID_MAX_LENGTH = 100;
 
 /**
  * Length ceiling on `context.path`.

@@ -115,11 +115,25 @@ const isFilterValue = (value: unknown): value is string | number | boolean =>
  * A Cloudflare-images key, as the delivery URL builder requires one.
  *
  * 🔴 THIS IS A SECURITY GUARD, NOT A TIDINESS ONE. `getEdgeUrl` returns its argument VERBATIM when
- * it starts with `http` or `blob` (`$lib/media/edge-url.ts`), and the producer bounds these values
- * by LENGTH ONLY — `z.string().trim().min(1).max(100)`, no format at all. So an unfiltered id
- * renders `<img src="https://attacker.example/x.png">` in a moderator's browser: an arbitrary
- * outbound request, giving the reporter a read receipt naming which moderator opened their report
- * and when. That is wider than the accepted risk, which was about objects in our OWN account.
+ * it starts with `http` or `blob` (`$lib/media/edge-url.ts`). So an unfiltered id renders
+ * `<img src="https://attacker.example/x.png">` in a moderator's browser: an arbitrary outbound
+ * request, giving the reporter a read receipt naming which moderator opened their report and when.
+ * That is wider than the accepted risk, which was about objects in our OWN account.
+ *
+ * 🔴 DO NOT DELETE THIS AS REDUNDANT — THE PRODUCER'S GUARD DOES NOT COVER WHAT THIS ONE COVERS.
+ * The producer used to bound these values by LENGTH ONLY (`z.string().trim().min(1).max(100)`, no
+ * format at all); it now requires a uuid (`z.uuid()` on `images`/`screenshotId` in the main app's
+ * `src/server/schema/feedback.schema.ts`). That reads like it makes this regex unnecessary. It does
+ * not, for two independent reasons:
+ *   1. The producer's bound applies at WRITE time only. Every row written before it shipped is
+ *      still arbitrary text, and NOTHING revalidates a stored row — `feedbackContextSchema` is not
+ *      exported and appears on no read path. This app reads the same JSONB column for all of them.
+ *   2. The producer is a SEPARATE DEPLOYABLE on its own release cadence. A guarantee asserted over
+ *      there is not one this app can observe, and nothing fails if the two drift.
+ * `src/lib/__tests__/feedback.test.ts` pins the BEHAVIOUR — hostile ids are filtered out of
+ * `images` and refused as a `screenshotId` — so removing or weakening this regex fails a test
+ * rather than shipping quietly. It does not pin that the SYMBOL exists (it is module-private, so
+ * there is nothing structural to assert); renaming or reimplementing it is free, gutting it is not.
  *
  * What actually closes it is that `:` and `/` are excluded, so no absolute, protocol-relative or
  * `data:` URL can match and no path can be traversed. The leading negative lookahead is separate

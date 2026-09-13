@@ -205,6 +205,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.html2canvas.mockResolvedValue(canvasYielding(CAPTURED_JPEG));
   mocks.loadHtml2Canvas.mockResolvedValue(mocks.html2canvas);
+  // ⚠ The id is DERIVED FROM THE FILENAME on purpose, and is deliberately NOT the
+  // shape the real upload returns. `uploadToCF` resolves with the presign's key, a
+  // `randomUUID()`, and `createFeedbackSchema` now REQUIRES that shape
+  // (`z.uuid()` on `images`/`screenshotId`). A uuid here would be faithful and
+  // useless: these tests assert `screenshotId === 'cf-page-capture.jpg'` precisely to
+  // prove the CAPTURE — not one of the hand-attached files — is what reached that
+  // field, and an opaque uuid cannot express which file it came from.
+  //
+  // Safe only because `trpc` is mocked wholesale above, so no assertion in this file
+  // ever crosses the boundary schema. 🔴 If a test here is ever changed to parse a
+  // real submission, these ids must become uuids first — it would otherwise fail for
+  // a reason that has nothing to do with what it is testing.
   mocks.uploadToCF.mockImplementation(async (file: File) => ({
     url: `https://cf.example/${file.name}`,
     id: `cf-${file.name}`,
