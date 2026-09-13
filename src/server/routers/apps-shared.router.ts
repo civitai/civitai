@@ -242,6 +242,13 @@ export async function resolveSharedContext(
   // them. Do not re-enumerate that set here — it is four ops today and adding a
   // fifth must not silently make this comment wrong. Mechanism + the measurement
   // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+  //
+  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
+  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
+  // runtime branch, so a bundler that drops it re-opens the exposure with the source
+  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
+  // Moving or rewording the `throw` below is fine; the gate resolves its anchor from
+  // source. DELETING it fails the Docker build at `assert-compiled-branches.mjs`.
   if (userId != null && !subjectUser) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
   }
