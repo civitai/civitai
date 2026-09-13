@@ -79,11 +79,22 @@ export const EVIDENCE_CHUNK_SIZE = 500;
  * the days the cohort uploaded MOST, which is the population this heuristic exists to look at. As
  * with `MAX_COHORT_ACCOUNTS`, the absolute daily figures are recorded outside this repository.
  *
- * Sized generously against what the heuristic actually needs: a ring shares ONE filename, and
- * `buildCohortSignals` folds a member's samples into a SET, so the marginal value of a member's
- * fiftieth sample is near zero. The cap bounds the worst case at
- * `members × MAX_FILENAMES_PER_MEMBER` rows, under the `MAX_FILENAME_SAMPLES` budget that still
- * stops the walk.
+ * 🔴 THE VALUE ITSELF IS A JUDGEMENT, AND THE ARGUMENT BELOW DOES NOT PICK IT. A ring shares ONE
+ * filename, and `buildCohortSignals` folds a member's samples into a SET, so the marginal value of a
+ * member's fiftieth sample is near zero. That establishes only that SOME N is enough, and it cuts
+ * toward a SMALLER number rather than toward this one — nothing here measured where the knee is. 50
+ * is chosen, not derived. What WAS measured is the coverage collapse the per-member SHAPE fixes,
+ * above; the shape is the fix and this constant is a bound on it.
+ *
+ * 🔴 AND THE COVERAGE IT BUYS IS CONDITIONAL ON A BUDGET THAT DID NOT MOVE. The worst case is
+ * `members × MAX_FILENAMES_PER_MEMBER` rows against `MAX_FILENAME_SAMPLES`, so every member is
+ * reached UNCONDITIONALLY only while the cohort is at most
+ * `MAX_FILENAME_SAMPLES / MAX_FILENAMES_PER_MEMBER` members — 400 at these values, against a
+ * `MAX_COHORT_ACCOUNTS` of 25,000. Past that the walk still stops in member order and the members
+ * after the stop contribute nothing, exactly as before. So the honest claim is NOT "every member
+ * contributes, by construction": it is that no single member can consume another's allowance, and
+ * that `sources.filenameBudgetExhausted` records when the walk stopped short. Raising this constant
+ * narrows the unconditional range in direct proportion, which is the trade it should be read as.
  */
 export const MAX_FILENAMES_PER_MEMBER = 50;
 

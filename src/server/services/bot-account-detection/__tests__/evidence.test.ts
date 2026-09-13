@@ -1,5 +1,6 @@
 import { NON_PUBLIC_IP_RANGES, publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_COHORT_ACCOUNTS } from '../cohort';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
 import {
   MAX_CONTENT_CHARS,
@@ -382,6 +383,20 @@ describe('the module constants', () => {
     expect(FILENAME_READ_BATCH_SIZE * MAX_FILENAMES_PER_MEMBER).toBeLessThan(
       MAX_FILENAME_SAMPLES / 10
     );
+  });
+
+  it('pins the cohort size over which filename coverage is UNCONDITIONAL (invariant guard)', () => {
+    // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it is green before this assertion existed and
+    // catches no bug. It exists because the per-member cap's coverage claim is CONDITIONAL on a
+    // budget that did not move with it, and that condition was being stated in prose only. Worst
+    // case is `members × MAX_FILENAMES_PER_MEMBER` rows against `MAX_FILENAME_SAMPLES`, so every
+    // member is reached unconditionally only up to this many members.
+    expect(MAX_FILENAME_SAMPLES / MAX_FILENAMES_PER_MEMBER).toBe(400);
+    // 🔴 AND IT IS REACHABLE, which is the half that makes the condition worth writing down: the
+    // cohort walk admits far more accounts than that, so a wave day can still stop the filename walk
+    // short — `sources.filenameBudgetExhausted` is what says it did. Raising the per-member cap
+    // without raising the budget narrows this range in direct proportion.
+    expect(MAX_FILENAME_SAMPLES / MAX_FILENAMES_PER_MEMBER).toBeLessThan(MAX_COHORT_ACCOUNTS);
   });
 
   it('renders a ClickHouse DateTime literal, not an ISO string', () => {
