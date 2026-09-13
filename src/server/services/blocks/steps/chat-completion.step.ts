@@ -283,17 +283,69 @@ export const CHAT_COMPLETION_PRICE_BUZZ = 1;
  * that asymmetry is stated rather than glossed: it was verified to EXIST in
  * OpenRouter's public `/api/v1/models` listing (which is the same listing the
  * orchestrator's own `OpenRouterPricingClient` keys its pricing dictionary off,
- * by exact id), and every one of its 28 provider endpoints advertises `tools` and
- * `tool_choice`, but no live submit was driven through it from here. The live
- * orchestrator is token-gated and nothing in this repo can reach it.
+ * by exact id), and every one of its 28 provider endpoints lists `tools` and
+ * `tool_choice` in `supported_parameters`, but no live submit was driven through
+ * it from here. The live orchestrator is token-gated and nothing in this repo can
+ * reach it. There is also no rollback lever short of a revert — see NO ROLLBACK
+ * LEVER below, which is the other half of the same risk posture.
+ *
+ * ⚠ AND `supported_parameters` IS THE COARSE FIELD. The same endpoint records
+ * carry `supports_tool_choice` as a PER-MODE object, and it is NOT uniform.
+ * Re-measured across all 28 on 2026-09-13, every endpoint carrying all four keys
+ * explicitly: `auto` true on 28 of 28, `none` false on 7, and `required` and
+ * `function` both false on the same 6 — CoreWeave, Mancer 2, SiliconFlow,
+ * GMICloud, Alibaba, Novita. All four modes are reachable from a block:
+ * `ChatCompletionToolChoiceWire` declares them and `buildChatCompletionInput`
+ * forwards `toolChoice` verbatim as `tool_choice`. So in a COST-motivated entry
+ * the concrete consequence is a charged one: a block sends
+ * `toolChoice: 'required'`, routes to one of those 6, the forced call is not
+ * honoured, the model answers in prose, and the block's tool loop spends another
+ * charged round. Nothing documented excludes those 6 — OpenRouter states only a
+ * "best effort to route to providers known to support tool use" for a request
+ * carrying `tools`/`tool_choice`, with no per-mode granularity, and
+ * `require_parameters` defaults to `false`.
+ *
+ * ⚠ THE TWO FIELDS ARE INDEPENDENT AND DISAGREE IN BOTH DIRECTIONS, so neither
+ * alone establishes that a forced call will be honoured. Here, all 28 advertise
+ * `tool_choice` in `supported_parameters` while 6 report `required: false`; on
+ * `openai/gpt-4o-mini` the two Azure endpoints do the opposite — they OMIT `tools`
+ * and `tool_choice` from `supported_parameters` while reporting all four
+ * `supports_tool_choice` modes true.
  *
  * 🔴 WHY IT IS REGISTERED: COST, NOT CAPABILITY. THIS DOES NOT ENABLE TOOL
  * CALLING FOR ANYONE. `openai/gpt-4o-mini` and `deepseek/deepseek-chat` are
- * already listed and both support `tools`, so any tool-driven consumer could
- * already ship on those. What this entry buys is a cheaper default — roughly half
- * the quoted Buzz of `openai/gpt-4o-mini` on a representative tool-using
- * conversation, both of which then floor to 1 anyway on a short reply. No
- * consumer is blocked on it.
+ * already listed and both advertise `tools`, so any tool-driven consumer could
+ * already ship on those. No consumer is blocked on this entry.
+ *
+ * ⚠ BUT "both advertise `tools`" IS AN AGGREGATE READ, and the asymmetry is named
+ * rather than left looking like the per-endpoint standard this entry's own claim
+ * is held to. Per endpoint, 2026-09-13: `openai/gpt-4o-mini` lists `tools` on
+ * **1 of its 3** endpoints (OpenAI yes, both Azure no) and
+ * `cognitivecomputations/dolphin-mistral-24b-venice-edition` on **0 of 1**
+ * (Venice); `deepseek/deepseek-chat` is 2 of 2. So "nobody is blocked" holds at
+ * the aggregate level the router works at, not per-endpoint — weaker than it
+ * reads, and stated weakly on purpose.
+ *
+ * 🔴 THE COST MARGIN IS TWO SEPARATE FACTS THAT DISAGREE, AND AN EARLIER REVISION
+ * OF THIS PARAGRAPH CONFLATED THEM INTO "roughly half … both of which then floor
+ * to 1 anyway". That was wrong twice: no conversation shape makes it 2×, and the
+ * two clauses contradict each other — if both floored to 1 there would be no
+ * saving at all.
+ *   • PER TOKEN the margin is large. Advertised rates read 2026-09-13: this id
+ *     $0.04/$0.08 per million prompt/completion, `openai/gpt-4o-mini`
+ *     $0.15/$0.60 — so gpt-4o-mini is **3.75× on prompt and 7.50× on
+ *     completion**, and ANY blend of the two is bounded in [3.75×, 7.5×]. It can
+ *     never be 2×.
+ *   • AT THE INTEGER QUOTE the margin is one Buzz, and that is an artifact of the
+ *     floor and the ceiling rather than of the rate. The orchestrator computes
+ *     `Math.Ceiling(Math.Max(1, rawBuzz))`; on the reference tool-using
+ *     conversation the raw quote here is **0.274 Buzz**, which the floor lifts to
+ *     1, while gpt-4o-mini's raw quote is above 1 and ceilings to 2.
+ * Both matter and for different reasons — the per-token figure is the real saving
+ * on a large conversation, the integer figure is what a viewer sees on a small
+ * one. This is the entry's ONLY stated justification, weighed against "never
+ * driven to `succeeded` live" above, so understating it ~4× argued for rejecting
+ * a change that is in fact well-motivated.
  *
  * 🔴 AND IT IS NOT AN SFW/MODERATION DECISION. This id reports
  * `is_moderated: false` upstream; `openai/gpt-4o-mini` is the only entry in this
@@ -320,18 +372,106 @@ export const CHAT_COMPLETION_PRICE_BUZZ = 1;
  * rather than from a union.
  *
  * ⚠ THE TOP-LEVEL ADVERTISED FIGURES ARE A BEST CASE ACROSS PROVIDERS, NOT A
- * GUARANTEED ROUTE. Read across those 28 endpoints, the advertised per-token rate
- * is matched or beaten by only a small minority of them, and the advertised
- * context length is reached by exactly one — which charges an order of magnitude
- * above the advertised rate. The aggregate record is a union artifact. This is
- * not a defect and needs no handling here, because the money path uses the
- * orchestrator's live per-submit quote rather than any advertised figure; it is
- * recorded so nobody later reasons about cost from the headline number.
+ * GUARANTEED ROUTE. Re-measured across those 28 endpoints on 2026-09-13: the
+ * advertised $0.04/$0.08 per million is matched or beaten on BOTH halves by only
+ * two of them (Relace matches exactly, OpenInference beats it on completion at
+ * $0.04/$0.07; Baidu is cheaper on prompt and dearer on completion), the dearest
+ * three charge $0.44/$1.32 — **11× prompt and 16.5× completion** — and the
+ * advertised 1,310,720 context length is reached by exactly one endpoint,
+ * Cloudflare, which is one of those dearest three. The aggregate record is a
+ * union artifact.
  *
- * ⚠ `seed` IS NOT OFFERED BY EVERY ENDPOINT — 17 of the 28 advertise it, and the
- * orchestrator sets no `require_parameters`, so a submit carrying a seed CAN be
- * routed to one of the 11 that will ignore it. That is harmless HERE, and for a
- * specific reason rather than by assumption: the seed exists to defeat the
+ * 🔴 AN EARLIER REVISION OF THIS PARAGRAPH CLOSED WITH "this is not a defect and
+ * needs no handling here, because the money path uses the orchestrator's live
+ * per-submit quote rather than any advertised figure". THAT INVERTS THE MECHANISM.
+ * The live quote IS BUILT FROM the advertised figure, and from this exact union
+ * record: `OpenRouterPricingClient.FetchModelsAsync` reads `pricing.prompt` and
+ * `pricing.completion` off the TOP-LEVEL `/api/v1/models` entry, and
+ * `EstimateOpenRouterCostAsync` multiplies those by its token estimate, ×1000 ×1.3.
+ * There is no per-endpoint rate anywhere on the quote path.
+ *
+ * 🔴 WHAT IS EXPOSED IS THE PLATFORM'S SPEND, NOT THE VIEWER'S CHARGE — and that
+ * is the useful way to hold it, because it is the reason this still needs no
+ * handling HERE while emphatically not being "not a defect". The viewer is charged
+ * the advertised rate plus the 30% margin; OpenRouter bills the platform at
+ * whatever rate the ROUTED endpoint publishes. The orchestrator does measure the
+ * difference — the worker reports `openrouter_cost_usd` and `OnJobEventAsync`
+ * stores it on step metadata — but it never applies it to the charge on the
+ * success path: `HasPostBilling` is `State.ServerToolCallCount > 0`, and
+ * `ServerToolCallCount` only increments for `civitai:web_search`-class SERVER
+ * tools, which an app block's `type: 'function'` tool is not. So
+ * `WorkflowStepManager`'s recalculate-on-final-event branch never fires for an
+ * ordinary submit. The measured figure is not inert, though: it is folded into the
+ * step's `billed_usd` metadata and shipped to ClickHouse alongside the `Charged`
+ * Buzz, so the gap is WATCHABLE in telemetry — it is simply never RECONCILED
+ * against the charge.
+ *
+ * ⚠ DO NOT UPGRADE THE ENDPOINT LISTING'S ORDER INTO A ROUTING MECHANISM. The 28
+ * come back in strict ascending price order, which is an observation about the
+ * RESPONSE and says nothing about routing. What OpenRouter DOCUMENTS is a
+ * "Price-Based Load Balancing (Default Strategy)": with no `provider` preferences
+ * it prioritises providers with no significant outage in the last 30 seconds, then
+ * selects among the lowest-cost of those weighted by the INVERSE SQUARE of price,
+ * and uses the remainder as fallbacks. So the cheap endpoints are strongly
+ * favoured, but the dear ones are reachable — probabilistically, and outright when
+ * the cheap ones are down. It is a weighting, not a floor.
+ *
+ * 🔴 HOW BIG, AND UNDER WHAT CONDITION — the 1-Buzz floor covers most of it, and
+ * the condition is what makes this bounded and watchable rather than a general
+ * loss. On the reference conversation the raw quote is 0.274 Buzz and
+ * `Math.Max(1, …)` charges 1, so the charge carries ~3.6× the quote; on top of the
+ * quote's own 1.3× margin that absorbs a routed endpoint up to roughly 4.7× the
+ * advertised rate — about the cheaper half of the 28. The floor's protection
+ * SHRINKS AS THE QUOTE GROWS and is gone once the raw quote clears 1 Buzz, after
+ * which the charge is just advertised × 1.3 and any endpoint dearer than 1.3×
+ * advertised costs the platform more than it collects. The quote is driven by
+ * input tokens plus `maxTokens`, NOT by the reply's actual length —
+ * `EstimateOutputTokens` uses `maxTokens` whenever it is set, and the required
+ * param below means it always is — so at the advertised rate the crossing point is
+ * roughly `inputTokens + 2 × maxTokens > 19,000`: about 11,000 input tokens at the
+ * 4,000-token cap, ~45,000 characters, well inside the `MAX_MESSAGES` ×
+ * `MAX_MESSAGE_CHARS` bound. A LARGE-CONTEXT CONVERSATION ROUTED TO A DEAR
+ * ENDPOINT is the condition to watch; a short one is covered by the floor.
+ *
+ * 🔴 NO ROLLBACK LEVER, WHICH IS THE OTHER HALF OF THE "never driven to
+ * `succeeded` live" ASYMMETRY ABOVE. Together they are the actual risk posture, so
+ * they are stated together. Verified absent 2026-09-13:
+ *   • NO PER-APP NARROWING. `assertStepRequestAllowed` in `blocks.router.ts` is
+ *     the only pre-submit gate on a registry step, and it reads the token's kind,
+ *     its scopes and its subject — no manifest, no model. This allowlist is
+ *     platform-wide.
+ *   • NO KILL-SWITCH. LoRA training has an ops-configured `blockedModels` list
+ *     (`training.orch.ts`); `chat-completion` has no equivalent, here or in the
+ *     orchestrator.
+ *   • NO UPSTREAM-RESOLUTION CHECK anywhere. Nothing notices an id that stops
+ *     resolving after merge.
+ * The adjacent guard does NOT cover it either: the submit path refuses when the
+ * orchestrator returns NO quote, and a de-listed id still returns one — the
+ * pricing lookup misses, the metrics fallback returns 0 for an id with no
+ * succeeded history, and `Math.Max(1, 0)` quotes 1. That bounds the severity
+ * usefully (1 Buzz per attempt, not an unbounded charge) and it also means there
+ * is nothing to switch off: disabling this id is a revert and a deploy.
+ *
+ * ⚠ `seed` IS NOT OFFERED BY EVERY ENDPOINT — 17 of the 28 advertise it
+ * (re-counted 2026-09-13), and `provider.require_parameters` is NOT SET ANYWHERE
+ * I CAN READ, so a submit carrying a seed CAN be routed to one of the 11 that will
+ * ignore it.
+ *
+ * ⚠ "not set anywhere I can read" IS DELIBERATELY WEAKER THAN "not set". An
+ * earlier revision said "the orchestrator sets no `provider.require_parameters`
+ * anywhere in its source", which is a measurement taken in a component that does
+ * not build the OpenRouter HTTP request at all: the orchestrator's only outbound
+ * call to OpenRouter in its own source is the pricing LISTING, and
+ * `ChatCompletionJob` carries no `provider` field, so the completion request is
+ * assembled downstream of anything readable from here. The conclusion is
+ * unaffected in either direction — OpenRouter documents `require_parameters` as
+ * defaulting to `false` (a provider that does not support a parameter receives the
+ * request and ignores it), and if something downstream did set it `true` the effect
+ * would be to NARROW routing to the 17 seed-capable endpoints. Neither is a charged
+ * failure path.
+ *
+ * A DROPPED SEED IS HARMLESS HERE, and for a specific reason rather than by
+ * assumption: the seed exists to defeat the
  * platform's input-hash result reuse (see `CHAT_COMPLETION_SEED_EXCLUSIVE_MAX`),
  * and that hash is computed by the orchestrator from the whole input object
  * BEFORE any provider is chosen — so a dropped seed cannot reintroduce the replay
@@ -377,16 +517,31 @@ export type ChatCompletionModel = (typeof CHAT_COMPLETION_MODELS)[number];
  * 🔴 THE DERIVATION IS MODEL-INDEPENDENT, AND A BIG-CONTEXT MODEL DOES NOT INVITE
  * RAISING IT. The binding constraint is the SCAN CAP on generated characters, not
  * anything the provider will accept, so a model with a far larger window changes
- * nothing here. `deepseek/deepseek-v4-flash-0731` is the case in point: its
- * advertised per-completion token cap was read as 943,718 on 2026-09-13 — three
- * orders of magnitude above this ceiling — so OURS stays the binding one BY
- * DESIGN, and it would stay binding across any plausible movement in that
- * upstream figure. That is the only reason the number is quoted at all; it is a
- * third-party value that can move without a deploy, so treat it as the reading it
- * was rather than as a constant. The provider's window is also inert on the money
- * path — the orchestrator's `EstimateOutputTokens` consults a model's
- * `context_length` ONLY as a fallback for an ABSENT `maxTokens`, which the
- * required param below makes unreachable for this entry.
+ * nothing here. `deepseek/deepseek-v4-flash-0731` is the case in point — but the
+ * headroom has to be quoted against the figure that actually binds, and an earlier
+ * revision of this paragraph quoted it against the wrong one twice over:
+ *   • `top_provider.max_completion_tokens` was read as 943,718 on 2026-09-13.
+ *     Against this 4,000-token ceiling that is **236×**, i.e. 2.4 orders of
+ *     magnitude — NOT the "three orders of magnitude" this paragraph claimed.
+ *   • Worse, 943,718 is the SAME `top_provider` union artifact that
+ *     `CHAT_COMPLETION_MODELS` warns about three docstrings up. No single endpoint
+ *     serves that cap fleet-wide. Read PER ENDPOINT on the same day, the MINIMUM
+ *     `max_completion_tokens` across the 28 is **32,768** (Venice), so the
+ *     worst-case real headroom over this ceiling is **8.2×**, not 236×.
+ * The conclusion is unchanged and 8.2× is still ample — but this is the paragraph
+ * whose entire job is telling a maintainer how much room they have, and it was
+ * wrong by ~29× in exactly that number. Both figures are third-party readings that
+ * can move without a deploy; treat them as readings, not constants.
+ *
+ * The provider's window is also inert on the money path — the orchestrator's
+ * `EstimateOutputTokens` consults a model's `context_length` ONLY as a fallback for
+ * an ABSENT `maxTokens`, which the required param below makes unreachable for this
+ * entry. And the per-endpoint minimum does not narrow routing at this ceiling
+ * either: OpenRouter documents that a request setting `max_tokens` "will only route
+ * to providers that support a response of that length", and 4,000 is below every
+ * one of the 28 caps, so all of them stay eligible. That is the same fact from the
+ * other side — a raise past 32,768 would start silently EXCLUDING endpoints as well
+ * as courting a withhold.
  *
  * 🔴 THE TWO NUMBERS ARE PINNED TOGETHER BY A TEST, DELIBERATELY NOT BY AN
  * IMPORT. Importing `MAX_SCANNED_CONTENT_CHARS` here would drag
@@ -486,12 +641,20 @@ export const CHAT_COMPLETION_SEED_EXCLUSIVE_MAX = 2 ** 31;
  * 🔴 AND THE CALL IS NOT SERVER-ONLY EITHER — IT RUNS AT MODULE LOAD, IN EVERY
  * RUNTIME THAT EVALUATES THE REGISTRY, THE CLIENT BUNDLE INCLUDED. `./index`
  * runs `assertStepInvariants` at MODULE SCOPE, and that calls `buildStep` once
- * per declared variant (`./index`, the load-time invariant loop). Measured by
- * spying on `globalThis.crypto.getRandomValues` and importing the registry:
- * **one call per `CHAT_COMPLETION_MODELS` entry, before any request exists** — 3
- * when that was measured, 4 today. The COUNT is incidental; the RELATIONSHIP is
- * the load-bearing part, so it is stated as the relationship and not as a literal
- * that goes stale on every addition to the allowlist.
+ * per declared variant (`./index`, the load-time invariant loop) — so this
+ * function runs **once per `CHAT_COMPLETION_MODELS` entry, before any request
+ * exists**. The COUNT is incidental; the RELATIONSHIP is the load-bearing part, so
+ * it is stated as the relationship and not as a literal that goes stale on every
+ * addition to the allowlist.
+ *
+ * ⚠ THAT IS READ OFF `./index`, NOT HELD BY A TEST. An earlier revision of this
+ * paragraph cited it as "measured by spying on `globalThis.crypto.getRandomValues`
+ * and importing the registry". No test spies on `getRandomValues`: the only
+ * occurrence of that identifier anywhere in `src/` is the call below, checked with
+ * a positive control on the same search. The citation pointed at a measurement
+ * nothing keeps, which reads as coverage while providing none — so it is stated as
+ * a reading of the invariant loop instead. Anyone who wants it enforced has to
+ * write the spy.
  *
  * That makes the choice above load-bearing rather than merely tidy, and it is
  * why this docstring no longer says "only ever runs server-side" — it did, and
@@ -937,15 +1100,27 @@ const chatCompletionParamsSchema = z
     /**
      * 🔴 REQUIRED, NEVER `.optional()`, AND THAT IS THE POINT OF THE FIELD.
      * `.strict()` rejects params it does not know about; it does NOT bound a
-     * param the caller simply OMITS. An omitted `maxTokens` falls through to the
-     * orchestrator's own default, which nothing on this side bounds — and since
-     * the price is FLAT at 1 Buzz from 1 token to 200,000 (measured), an
-     * unbounded token count is unbounded compute at a fixed price, plus a
-     * guaranteed `over-cap` withhold once the reply passes 50,000 characters.
+     * param the caller simply OMITS. An omitted `maxTokens` would fall through to
+     * the orchestrator's own default, which nothing on this side bounds:
+     * `ChatCompletionTokenEstimator.EstimateOutputTokens` prices an absent
+     * `maxTokens` at `min(4096, contextLength / 4)` while the tokens actually
+     * GENERATED are bounded only by the routed provider's own cap. So the quote
+     * would be computed from a budget the app author never chose, against a reply
+     * length nothing on either side bounds, plus a guaranteed `over-cap` withhold
+     * once the reply passes 50,000 characters.
+     *
+     * ⚠ THIS USED TO SAY "the price is FLAT at 1 Buzz from 1 token to 200,000
+     * (measured)". THAT PREMISE IS RETRACTED, in this same file — see
+     * `CHAT_COMPLETION_PRICE_BUZZ`, which records the retraction and the
+     * re-measurement: the price is per-token, differs per model, and RISES with
+     * `maxTokens`; 1 Buzz is only the FLOOR. A comment is a claim, and this one was
+     * still restating a claim the file had already withdrawn — which is how the
+     * retracted figure would have been re-derived by the next reader. The argument
+     * for requiring the field never depended on it and is restated above without it.
      *
      * Required rather than `.default(...)` because a default is a compute budget
-     * the app author never chose and — the price being flat — would never see a
-     * cost signal for. Making it explicit is the narrower surface; adding a
+     * the app author never chose, and one whose cost signal arrives only after the
+     * submit is charged. Making it explicit is the narrower surface; adding a
      * default later is additive, removing one is breaking.
      */
     maxTokens: z.number().int().min(1).max(CHAT_COMPLETION_MAX_OUTPUT_TOKENS),
