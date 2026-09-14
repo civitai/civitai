@@ -63,44 +63,81 @@ ruleTester.run('no-ssr-divergent-media-query', rule, {
     // ── each banned name, in the shape it actually appears in this repo ──
     {
       code: `const isWide = useMediaQuery('(min-width: 1300px)');`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useMediaQuery', spelled: 'useMediaQuery' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useMediaQuery', spelled: 'useMediaQuery' },
+        },
+      ],
     },
     {
       code: `const isMobile = useIsMobile();`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useIsMobile', spelled: 'useIsMobile' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useIsMobile', spelled: 'useIsMobile' },
+        },
+      ],
     },
     {
       code: `const small = useContainerQuery({ smallerThan: 'md' });`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useContainerQuery', spelled: 'useContainerQuery' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useContainerQuery', spelled: 'useContainerQuery' },
+        },
+      ],
     },
     {
       // The one the precedent uses. Reduced from CollectionsLayout.tsx:88.
       code: `const isMobile = useContainerSmallerThan('sm');`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useContainerSmallerThan', spelled: 'useContainerSmallerThan' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useContainerSmallerThan', spelled: 'useContainerSmallerThan' },
+        },
+      ],
     },
     // ── an ALIASED import is resolved back through the import ──
     {
       code: `import { useMediaQuery as useMQ } from '@mantine/hooks';
              const isWide = useMQ('(min-width: 1300px)');`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useMediaQuery', spelled: 'useMQ' } }],
+      errors: [
+        { messageId: 'ssrDivergentMediaQuery', data: { name: 'useMediaQuery', spelled: 'useMQ' } },
+      ],
     },
     // ── a member call ──
     {
       code: `const isMobile = hooks.useIsMobile();`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useIsMobile', spelled: 'useIsMobile' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useIsMobile', spelled: 'useIsMobile' },
+        },
+      ],
     },
     // ── inside JSX, i.e. deciding a render outright ──
     {
       code: `export function Body() {
                return useContainerSmallerThan('sm') ? <Drawer /> : <Rail />;
              }`,
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useContainerSmallerThan', spelled: 'useContainerSmallerThan' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useContainerSmallerThan', spelled: 'useContainerSmallerThan' },
+        },
+      ],
     },
     // ── the `extraHooks` option widens the set without a code change ──
     {
       code: `const v = useViewportSize();`,
       options: [{ extraHooks: ['useViewportSize'] }],
-      errors: [{ messageId: 'ssrDivergentMediaQuery', data: { name: 'useViewportSize', spelled: 'useViewportSize' } }],
+      errors: [
+        {
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name: 'useViewportSize', spelled: 'useViewportSize' },
+        },
+      ],
     },
   ],
 });

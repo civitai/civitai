@@ -176,9 +176,14 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  *
  * 1100 IS STILL THE SHIPPED VALUE, deliberately: it sits 13px under the bound, so the
  * second column survives a small change in the rail width, the gutter or the scrollbar
- * allowance without the rung silently vanishing — which is the margin the four-column
- * store rung conspicuously does NOT have (see `LISTING_FOUR_COLUMN_MIN_WIDTH`). A value
- * AT the bound would be maximally loose and maximally fragile.
+ * allowance without the rung silently vanishing. A value AT the bound would be maximally
+ * loose and maximally fragile.
+ *
+ * ⚠️ That margin used to be contrasted with `LISTING_FOUR_COLUMN_MIN_WIDTH`, the store's
+ * chrome-derived four-column rung, which had ZERO margin at 2560. That constant is gone —
+ * the store ladder re-tune was reverted and its wide rungs come from the card-width floor
+ * again — so the contrast has no second term and the reference is removed rather than
+ * left dangling.
  *
  * The rungs, recomputed for the rail-open widths (`n` columns need
  * `n × 1100 + (n − 1) × 16` of grid, so two need **2216**):
