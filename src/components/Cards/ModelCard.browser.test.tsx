@@ -536,7 +536,11 @@ describe('ModelCard New badge coexists with the money badge', () => {
         />
       </WithPalette>
     );
-    expect((await awaitBadge('recency')).textContent).toBe('Updated');
+    const recency = (await awaitBadge('recency')) as HTMLElement;
+    expect(recency.textContent).toBe('Updated');
+    // Updated wears the same blue as New — one colour for one kind of fact. The teal it used to
+    // have is still the Early Access chip's, which is why sharing it read as a third state.
+    expect(recency.style.backgroundColor).toBe('rgb(34, 139, 230)');
     expect((await awaitBadge('access')).getAttribute('aria-label')).toBe('Paid');
   });
 });

@@ -105,13 +105,11 @@ function ModelCardContent({ data }: Props) {
       isEarlyAccess || isPaidAccess ? { backgroundColor: theme.colors.success[5] } : undefined,
     [isEarlyAccess, isPaidAccess, theme]
   );
+  // New and Updated share one blue. They are the same kind of fact — this model changed recently —
+  // and two colours for that read as two unrelated states, especially beside a third chip.
   const recencyBadgeStyle = useMemo(
-    () => ({
-      backgroundColor: isUpdated
-        ? theme.colors.teal[5]
-        : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
-    }),
-    [isUpdated, theme, colorScheme]
+    () => ({ backgroundColor: theme.colors.blue[getPrimaryShade(theme, colorScheme)] }),
+    [theme, colorScheme]
   );
 
   const { useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider } =
