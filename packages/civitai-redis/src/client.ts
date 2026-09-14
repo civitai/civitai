@@ -2301,6 +2301,12 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  CRUCIBLE: {
+    ELO: 'crucible:elo',
+    VOTED_PAIRS: 'crucible:voted',
+    JUDGES: 'crucible:judges',
+    USER_VOTES: 'crucible:user-votes',
+  },
 } as const;
 
 // Cached data.
@@ -2582,6 +2588,9 @@ const REDIS_KEYS_UNPREFIXED = {
       Read by: the moderator app's dashboard, which filters its most-reported list through it.
      */
     RESOLVED_RECENT: 'report:resolved-recent',
+  },
+  CRUCIBLE: {
+    USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
 } as const;
 

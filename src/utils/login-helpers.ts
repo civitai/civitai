@@ -41,6 +41,8 @@ export const loginRedirectReasons = {
   'create-challenge': 'You need to be logged in to create a challenge',
   'submit-challenge': 'You need to be logged in to submit entries to a challenge',
   'view-content': 'You need to log in to view this content',
+  'create-crucible': 'You need to be logged in to create a crucible',
+  'judge-crucible': 'You need to be logged in to judge crucible entries',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

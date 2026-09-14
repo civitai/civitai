@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crucible Landing - Civitai Mockup</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+    }
+    body {
+      background: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .card {
+      background: #25262b;
+      border-radius: 0.5rem;
+    }
+    .card-elevated {
+      background: #2c2e33;
+      border-radius: 0.5rem;
+    }
+
+    /* HERO SECTION (v1e improvement) */
+    .hero-section {
+      position: relative;
+      height: 500px;
+      background: linear-gradient(135deg, #1a1b1e 0%, #25262b 100%);
+      overflow: hidden;
+    }
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      background-image: url('https://picsum.photos/seed/cruciblehero/1600/500');
+      background-size: cover;
+      background-position: center;
+      opacity: 0.5;
+    }
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, rgba(26,27,30,0.1) 0%, rgba(26,27,30,0.8) 100%);
+    }
+    /* v1b wrapper structure applied to hero */
+    .hero-content-wrapper {
+      position: relative;
+      z-index: 10;
+      height: 100%;
+      max-width: 80rem; /* 1280px - same as Tailwind max-w-7xl */
+      margin: 0 auto;
+      padding: 0 1rem;
+      display: flex;
+      align-items: flex-end;
+    }
+    .overlay-card {
+      background: rgba(37, 38, 43, 0.95);
+      border: 1px solid rgba(201, 203, 207, 0.1);
+      border-radius: 12px;
+      padding: 32px;
+      max-width: 600px;
+      backdrop-filter: blur(10px);
+      margin-bottom: 2rem;
+    }
+    .overlay-card h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+      margin: 0 0 12px 0;
+    }
+    .status-chip {
+      background: rgba(34, 139, 230, 0.5);
+      border-radius: 9999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      display: inline-block;
+      margin-bottom: 12px;
+    }
+    .overlay-card .description {
+      font-size: 14px;
+      color: #a6adbb;
+      line-height: 1.6;
+      margin-bottom: 16px;
+      max-height: 120px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+    .creator-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .creator-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #7950f2 0%, #228be6 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: white;
+      flex-shrink: 0;
+      font-size: 14px;
+    }
+    .creator-details {
+      flex: 1;
+    }
+    .creator-details .name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      margin: 0;
+    }
+    .creator-details .handle {
+      font-size: 12px;
+      color: #909296;
+      margin: 0;
+    }
+
+    /* MAIN WRAPPER (v1b structure) */
+    .main-wrapper {
+      max-width: 80rem; /* 1280px - same as Tailwind max-w-7xl */
+      margin: 0 auto;
+      padding: 2rem 1rem;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 2rem;
+    }
+
+    /* STAT GRID (v1b) */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-box {
+      background: #25262b;
+      padding: 1rem;
+      border-radius: 0.5rem;
+      text-align: center;
+    }
+    .stat-value {
+      font-weight: 700;
+      font-size: 1.5rem;
+      color: #fff;
+      margin: 0;
+    }
+    .stat-label {
+      font-size: 0.75rem;
+      color: #909296;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 0.25rem 0 0 0;
+    }
+
+    /* CTA BUTTON (v1b style) */
+    .cta-button {
+      background: linear-gradient(135deg, #228be6 0%, #40c057 100%);
+      color: white;
+      font-weight: 600;
+      padding: 1.25rem 2.5rem;
+      border-radius: 0.5rem;
+      border: none;
+      cursor: pointer;
+      font-size: 1.125rem;
+      transition: all 300ms;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      width: 100%;
+      box-shadow: 0 8px 24px rgba(34, 139, 230, 0.3);
+      margin-bottom: 2rem;
+    }
+    .cta-button:hover {
+      background: linear-gradient(135deg, #1c7ec0 0%, #37b24d 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 32px rgba(34, 139, 230, 0.4);
+    }
+    .cta-button.secondary {
+      background: rgba(201, 203, 207, 0.1);
+      color: #c1c2c5;
+      padding: 0.75rem 1.5rem;
+      font-size: 0.9375rem;
+      box-shadow: none;
+      margin-bottom: 1rem;
+    }
+    .cta-button.secondary:hover {
+      background: rgba(201, 203, 207, 0.15);
+    }
+
+    /* ENTRIES GRID */
+    .entries-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 1rem;
+    }
+    .entry-card {
+      background: #25262b;
+      border-radius: 0.5rem;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 300ms;
+    }
+    .entry-card:hover {
+      background: #2c2e33;
+    }
+    .entry-image {
+      aspect-ratio: 4/5;
+      overflow: hidden;
+      position: relative;
+      background: #373a40;
+    }
+    .entry-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 400ms ease;
+    }
+    .entry-card:hover .entry-image img {
+      transform: scale(1.05);
+    }
+    .entry-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.8) 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 1rem;
+      color: white;
+    }
+    .entry-title {
+      font-weight: 600;
+      font-size: 0.875rem;
+      line-height: 1.25;
+    }
+    .entry-author {
+      font-size: 0.75rem;
+      color: #adb5bd;
+      margin-top: 0.25rem;
+    }
+    .entry-stats {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      font-size: 0.7rem;
+      color: #adb5bd;
+    }
+    .entry-stat {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    /* SIDEBAR */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* YOUR ENTRIES SECTION (in main content) */
+    .your-entries-section {
+      margin-bottom: 2rem;
+    }
+    .section-heading {
+      color: white;
+      font-weight: 700;
+      font-size: 1rem;
+      margin: 0 0 1rem 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .section-heading .count {
+      color: #909296;
+      font-weight: 400;
+      font-size: 0.875rem;
+    }
+    .position-badge {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      z-index: 10;
+    }
+    .position-badge.top-3 {
+      background: linear-gradient(135deg, #fab005 0%, #fd7e14 100%);
+    }
+    .position-badge i {
+      font-size: 0.875rem;
+    }
+
+    /* YOUR ENTRIES PANEL (sidebar) */
+    .your-entries-panel {
+      background: #25262b;
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+    }
+    .panel-title {
+      color: white;
+      font-weight: 700;
+      font-size: 0.875rem;
+      margin: 0 0 1rem 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .entry-fee {
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #373a40;
+    }
+    .fee-label {
+      color: #909296;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+    }
+    .fee-value {
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.9375rem;
+    }
+    .entry-counter {
+      color: #909296;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+    }
+    .counter-value {
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      margin-bottom: 0.5rem;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: rgba(201, 203, 207, 0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #228be6 0%, #40c057 100%);
+      width: 40%;
+    }
+
+    /* PRIZE POOL & LEADERBOARD (v1b styling) */
+    .prize-section {
+      background: #2c2e33;
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+    }
+    .section-header {
+      border-bottom: 1px solid #373a40;
+      padding-bottom: 1rem;
+      margin-bottom: 1rem;
+    }
+    .section-title {
+      margin: 0 0 1rem 0;
+      color: white;
+      font-weight: 700;
+      font-size: 1.125rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .prize-total {
+      background: #1a1b1e;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      text-align: center;
+    }
+    .prize-amount {
+      color: #fab005;
+      font-weight: 700;
+      font-size: 1.5rem;
+    }
+    .prize-label {
+      color: #909296;
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .prize-position {
+      padding: 0.75rem;
+      background: #25262b;
+      border-radius: 0.5rem;
+      margin-bottom: 0.5rem;
+      border-left: 3px solid transparent;
+    }
+    .prize-position.first {
+      border-left-color: #fab005;
+    }
+    .prize-position.second {
+      border-left-color: #868e96;
+    }
+    .prize-position.third {
+      border-left-color: #cd7f32;
+    }
+    .medal-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.75rem;
+      height: 1.75rem;
+      border-radius: 0.375rem;
+      font-weight: 700;
+      font-size: 0.875rem;
+      margin-right: 0.5rem;
+    }
+    .medal-badge.gold {
+      background: rgba(250, 176, 5, 0.2);
+      color: #fab005;
+    }
+    .medal-badge.silver {
+      background: rgba(134, 142, 150, 0.2);
+      color: #adb5bd;
+    }
+    .medal-badge.bronze {
+      background: rgba(205, 127, 50, 0.2);
+      color: #ffa94d;
+    }
+    .leaderboard-entry {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+    }
+    .position-info {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 1;
+    }
+    .position-details {
+      flex: 1;
+    }
+    .position-rank {
+      color: white;
+      font-weight: 600;
+      font-size: 0.875rem;
+      margin: 0;
+    }
+    .position-prize {
+      color: #909296;
+      font-size: 0.75rem;
+      margin: 0;
+    }
+    .leaderboard-name {
+      flex: 1;
+      margin: 0 0.5rem;
+      font-size: 0.875rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: white;
+      font-weight: 600;
+    }
+    .leaderboard-score {
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: #228be6;
+    }
+    .leaderboard-meta {
+      font-size: 0.7rem;
+      color: #909296;
+      margin-top: 0.25rem;
+    }
+    .distribution-box {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #25262b;
+      border-radius: 0.5rem;
+    }
+    .dist-title {
+      color: white;
+      font-weight: 600;
+      font-size: 0.875rem;
+      margin-bottom: 0.5rem;
+    }
+    .dist-prize {
+      color: #adb5bd;
+      font-size: 0.75rem;
+    }
+
+    /* RULES & REQUIREMENTS */
+    .rules-section {
+      background: #25262b;
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+    }
+    .rules-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .rule-item {
+      display: flex;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: #adb5bd;
+    }
+    .rule-icon {
+      color: #228be6;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 0.125rem;
+    }
+    .rule-text {
+      flex: 1;
+      line-height: 1.4;
+    }
+    .rule-text strong {
+      color: white;
+      font-weight: 600;
+    }
+    .content-levels {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    .level-badge {
+      background: rgba(34, 139, 230, 0.2);
+      border: 1px solid rgba(34, 139, 230, 0.3);
+      color: #228be6;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+
+    /* INFINITE SCROLL INDICATOR */
+    .scroll-indicator {
+      text-align: center;
+      padding: 2rem;
+      background: #25262b;
+      border-radius: 0.5rem;
+      color: #909296;
+      margin-top: 2rem;
+      font-size: 0.875rem;
+    }
+
+    /* RESPONSIVE */
+    @media (max-width: 1024px) {
+      .main-wrapper {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+      }
+      .stat-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 640px) {
+      .hero-section {
+        height: 350px;
+      }
+      .overlay-card {
+        padding: 20px;
+        max-width: 100%;
+      }
+      .overlay-card h1 {
+        font-size: 22px;
+      }
+      .stat-grid {
+        grid-template-columns: 1fr;
+      }
+      .entries-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 0.75rem;
+      }
+      .cta-button {
+        padding: 1rem 1.5rem;
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- HEADER / TOP NAV -->
+  <nav class="sticky top-0 z-40 bg-[#1a1b1e]/95 backdrop-blur border-b border-[#373a40]">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <i class="ti ti-trophy text-[#fab005]" style="font-size: 1.5rem;"></i>
+        <span style="color: white; font-weight: 700; font-size: 1.125rem;">Crucible</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="#" style="color: #909296; text-decoration: none; font-size: 0.875rem;">Back to Home</a>
+        <button style="background: #228be6; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 600;">Sign In</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO SECTION (v1e improvements with v1b wrapper) -->
+  <div class="hero-section">
+    <div class="hero-bg"></div>
+    <div class="hero-overlay"></div>
+    <div class="hero-content-wrapper">
+      <div class="overlay-card">
+        <span class="status-chip">ACTIVE NOW</span>
+        <h1>Flux Portrait Challenge 2026</h1>
+        <p class="description">Submit stunning portrait images created with Flux models. Showcase your prompt engineering and artistic vision in this premier competition for AI art enthusiasts.</p>
+        <div class="creator-info">
+          <div class="creator-avatar">CT</div>
+          <div class="creator-details">
+            <p class="name">Civitai Team</p>
+            <p class="handle">@civitai</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT (v1b wrapper structure) -->
+  <div class="main-wrapper">
+    <!-- LEFT CONTENT (2/3) -->
+    <div>
+      <!-- STATS GRID (above Start Judging) -->
+      <div class="stat-grid">
+        <div class="stat-box">
+          <p class="stat-value">47</p>
+          <p class="stat-label">Entries</p>
+        </div>
+        <div class="stat-box">
+          <p class="stat-value">923</p>
+          <p class="stat-label">Judges</p>
+        </div>
+        <div class="stat-box">
+          <p class="stat-value">4d 12h</p>
+          <p class="stat-label">Time Left</p>
+        </div>
+      </div>
+
+      <!-- CTA BUTTON (LARGE & PROMINENT) -->
+      <button class="cta-button">
+        <i class="ti ti-gavel"></i>
+        Start Judging Now
+      </button>
+
+      <!-- YOUR ENTRIES SECTION -->
+      <div class="your-entries-section">
+        <h3 class="section-heading">
+          <i class="ti ti-photo" style="color: #228be6;"></i>
+          Your Entries
+          <span class="count">(2 of 5)</span>
+        </h3>
+        <div class="entries-grid" style="margin-bottom: 0;">
+          <!-- Your Entry 1 - Currently #3 -->
+          <div class="entry-card">
+            <div class="entry-image">
+              <div class="position-badge top-3">
+                <i class="ti ti-trophy"></i>
+                #3
+              </div>
+              <img src="https://picsum.photos/seed/myentry1/400/500" alt="Your entry">
+              <div class="entry-overlay">
+                <div class="entry-title">Neon Dreams</div>
+                <div class="entry-author">by @you</div>
+                <div class="entry-stats">
+                  <div class="entry-stat"><i class="ti ti-heart"></i> 412</div>
+                  <div class="entry-stat"><i class="ti ti-eye"></i> 2.8k</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Your Entry 2 - Currently #7 -->
+          <div class="entry-card">
+            <div class="entry-image">
+              <div class="position-badge">
+                <i class="ti ti-chart-line"></i>
+                #7
+              </div>
+              <img src="https://picsum.photos/seed/myentry2/400/500" alt="Your entry">
+              <div class="entry-overlay">
+                <div class="entry-title">Cyber Sunset</div>
+                <div class="entry-author">by @you</div>
+                <div class="entry-stats">
+                  <div class="entry-stat"><i class="ti ti-heart"></i> 156</div>
+                  <div class="entry-stat"><i class="ti ti-eye"></i> 1.1k</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ALL ENTRIES SECTION -->
+      <h3 class="section-heading">
+        <i class="ti ti-users" style="color: #909296;"></i>
+        All Entries
+        <span class="count">(47)</span>
+      </h3>
+
+      <!-- ENTRIES GRID (infinite scroll, no tabs) -->
+      <div class="entries-grid">
+        <!-- Entry 1 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait1/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Ethereal Dreamer</div>
+              <div class="entry-author">by @artistname1</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 234</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.2k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 2 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait2/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Midnight Gaze</div>
+              <div class="entry-author">by @artistname2</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 189</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 892</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 3 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait3/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Golden Hour</div>
+              <div class="entry-author">by @artistname3</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 456</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 2.1k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 4 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait4/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Crimson Veil</div>
+              <div class="entry-author">by @artistname4</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 312</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.5k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 5 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait5/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Emerald Eyes</div>
+              <div class="entry-author">by @artistname5</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 278</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.8k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 6 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait6/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Sapphire Dreams</div>
+              <div class="entry-author">by @artistname6</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 145</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 723</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 7 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait7/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Radiant Spirit</div>
+              <div class="entry-author">by @artistname7</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 401</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.95k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 8 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait8/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Twilight Echo</div>
+              <div class="entry-author">by @artistname8</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 223</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.1k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 9 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait9/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Cosmic Glow</div>
+              <div class="entry-author">by @artistname9</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 567</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 2.3k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 10 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait10/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Silken Dreams</div>
+              <div class="entry-author">by @artistname10</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 334</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.6k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 11 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait11/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Azure Vision</div>
+              <div class="entry-author">by @artistname11</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 289</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 1.4k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entry 12 -->
+        <div class="entry-card">
+          <div class="entry-image">
+            <img src="https://picsum.photos/seed/portrait12/400/500" alt="Portrait entry">
+            <div class="entry-overlay">
+              <div class="entry-title">Infinite Dreams</div>
+              <div class="entry-author">by @artistname12</div>
+              <div class="entry-stats">
+                <div class="entry-stat"><i class="ti ti-heart"></i> 412</div>
+                <div class="entry-stat"><i class="ti ti-eye"></i> 2.0k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- INFINITE SCROLL INDICATOR -->
+      <div class="scroll-indicator">
+        <i class="ti ti-infinity" style="opacity: 0.6;"></i> Scroll for more entries
+      </div>
+    </div>
+
+    <!-- RIGHT SIDEBAR (1/3) -->
+    <div class="sidebar">
+      <!-- 1. YOUR ENTRIES PANEL (TOP) -->
+      <div class="your-entries-panel">
+        <div class="panel-title">
+          <i class="ti ti-pencil"></i>
+          Your Entries
+        </div>
+
+        <button class="cta-button secondary" style="margin-bottom: 1rem;">
+          <i class="ti ti-upload"></i>
+          Submit Entry
+        </button>
+
+        <div class="entry-fee">
+          <div class="fee-label">Entry Fee</div>
+          <div class="fee-value">500 Buzz</div>
+        </div>
+
+        <div>
+          <div class="entry-counter">Your Entries</div>
+          <div class="counter-value">2 of 5 used</div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: 40%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. PRIZE POOL & LEADERBOARD (v1b styling) -->
+      <div class="prize-section">
+        <div class="section-header">
+          <h3 class="section-title">
+            <i class="ti ti-trophy" style="color: #fab005;"></i>
+            Prize Pool & Leaderboard
+          </h3>
+          <div class="prize-total">
+            <div class="prize-amount">100,000 Buzz</div>
+            <div class="prize-label">Total Prize Pool</div>
+          </div>
+        </div>
+
+        <!-- 1st Place -->
+        <div class="prize-position first">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <div class="medal-badge gold">1st</div>
+              <div>
+                <div class="position-rank">1st Place</div>
+                <div class="position-prize">50% (50,000 Buzz)</div>
+              </div>
+            </div>
+          </div>
+          <div class="leaderboard-entry">
+            <div style="color: #fab005; font-weight: 700; font-size: 1.125rem; width: 1.5rem; text-align: center;">👑</div>
+            <div class="leaderboard-name">@aurora_flux</div>
+            <div class="leaderboard-score">92 pts</div>
+          </div>
+          <div class="leaderboard-meta">Currently on track to win</div>
+        </div>
+
+        <!-- 2nd Place -->
+        <div class="prize-position second">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <div class="medal-badge silver">2nd</div>
+              <div>
+                <div class="position-rank">2nd Place</div>
+                <div class="position-prize">30% (30,000 Buzz)</div>
+              </div>
+            </div>
+          </div>
+          <div class="leaderboard-entry">
+            <div style="color: #adb5bd; font-weight: 700; font-size: 1.125rem; width: 1.5rem; text-align: center;">2</div>
+            <div class="leaderboard-name">@portrait_wizard</div>
+            <div class="leaderboard-score">87 pts</div>
+          </div>
+          <div class="leaderboard-meta">Closing in quickly</div>
+        </div>
+
+        <!-- 3rd Place -->
+        <div class="prize-position third">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <div class="medal-badge bronze">3rd</div>
+              <div>
+                <div class="position-rank">3rd Place</div>
+                <div class="position-prize">15% (15,000 Buzz)</div>
+              </div>
+            </div>
+          </div>
+          <div class="leaderboard-entry">
+            <div style="color: #ffa94d; font-weight: 700; font-size: 1.125rem; width: 1.5rem; text-align: center;">3</div>
+            <div class="leaderboard-name">@flux_artisan</div>
+            <div class="leaderboard-score">84 pts</div>
+          </div>
+          <div class="leaderboard-meta">Strong position</div>
+        </div>
+
+        <!-- 4-10 Distribution -->
+        <div class="distribution-box">
+          <div class="dist-title">4th - 10th Place</div>
+          <div class="dist-prize">5% (5,000 Buzz) - Divided equally</div>
+        </div>
+      </div>
+
+      <!-- 3. RULES & REQUIREMENTS (compact format) -->
+      <div class="rules-section">
+        <h3 class="panel-title">
+          <i class="ti ti-book"></i>
+          Rules & Requirements
+        </h3>
+
+        <div class="rules-list">
+          <div class="rule-item">
+            <span class="rule-icon">•</span>
+            <span class="rule-text"><strong>Content Levels:</strong></span>
+          </div>
+          <div class="content-levels">
+            <span class="level-badge">PG</span>
+            <span class="level-badge">PG-13</span>
+            <span class="level-badge">R</span>
+          </div>
+
+          <div class="rule-item" style="margin-top: 0.75rem;">
+            <span class="rule-icon">•</span>
+            <span class="rule-text"><strong>Required:</strong> Flux Base Model, Style LoRA</span>
+          </div>
+
+          <div class="rule-item">
+            <span class="rule-icon">•</span>
+            <span class="rule-text"><strong>Deadline:</strong> Jan 29, 2025</span>
+          </div>
+
+          <div class="rule-item">
+            <span class="rule-icon">•</span>
+            <span class="rule-text"><strong>Format:</strong> PNG/JPG, 512px min</span>
+          </div>
+
+          <div class="rule-item">
+            <span class="rule-icon">•</span>
+            <span class="rule-text"><strong>Judging:</strong> Continuous & Live</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
