@@ -273,6 +273,38 @@ describe('H3 min-trust gate (write + vote)', () => {
     expect(out.items).toEqual([]);
   });
 
+  it('🔴 a VANISHED subject is refused on a READ even with the flag base-`enabled: true`', async () => {
+    // The READ ops have no second belt: `append`/`vote` catch a vanished subject on
+    // the min-trust gate above, `list`/`get` never reach it, so the shared-storage
+    // flag was the only thing standing there — and its no-user branch is a GLOBAL
+    // eval, which returns the flag's BASE value rather than a guaranteed `false`.
+    // `mockIsSharedEnabled` is forced TRUE here to model the GA base flip; before the
+    // fix, `list` resolved and served shared rows to a token whose subject is gone.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'user:999' }));
+    mockGetSessionUser.mockResolvedValue(null);
+    mockIsSharedEnabled.mockResolvedValue(true);
+    await expect(caller().list({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'token subject could not be resolved',
+    });
+    await expect(caller().get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'token subject could not be resolved',
+    });
+  });
+
+  it('POSITIVE CONTROL: an ANON token still READS under the same base-true flag', async () => {
+    // The anon path must NOT be swept up by the refusal above — `sub:'anon'` has no
+    // subject to vanish, and a global eval of a base-enabled flag is precisely the
+    // intended GA widening. Without this, the previous test is indistinguishable from
+    // a change that simply closed shared reads.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    mockGetSessionUser.mockResolvedValue(null);
+    mockIsSharedEnabled.mockResolvedValue(true);
+    const out = await caller().list({ blockToken: 't' });
+    expect(out.items).toEqual([]);
+  });
+
   it('anon NEVER writes (UNAUTHORIZED)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
     await expect(caller().append({ blockToken: 't', value: { title: 'x' } })).rejects.toMatchObject(

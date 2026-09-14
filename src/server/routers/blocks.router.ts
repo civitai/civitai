@@ -297,9 +297,35 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
  * enabled kill-switch that runs right before this) — `sessionClient
  * .getSessionUserById`, the authoritative hub-backed resolver, never a
  * client-supplied value — so `buildFliptContext` sees the subject's real
- * isModerator/tier and the mod floor / segment match can't be spoofed. A
- * vanished user → undefined → no mod floor + global eval (never matches a
- * segment) → FORBIDDEN (fail-closed).
+ * isModerator/tier and the mod floor / segment match can't be spoofed.
+ *
+ * 🔴 A VANISHED SUBJECT IS REFUSED BEFORE THE CAPABILITY IS EVALUATED. This
+ * docblock used to say "a vanished user → undefined → no mod floor + global eval
+ * (never matches a segment) → FORBIDDEN (fail-closed)", and that derivation was
+ * wrong: a no-user eval cannot match a segment, but its answer is the flag's own
+ * base `enabled` value, so a base-`enabled: true` widening of
+ * `app-blocks-author` would have turned an unresolvable subject into a PASS on an
+ * AUTHZ gate. The refusal is now structural — no subject, no capability, no Flipt
+ * call — which is the same shape `apps.router.ts` already uses for its own
+ * `assertViewerIsAppDeveloper`. It is not optional politeness: `user` is a
+ * REQUIRED, non-nullable parameter of `isAppBlocksAuthorEnabled`, so this narrowing
+ * is what makes the next line compile, and deleting it is a type error rather than
+ * a silent re-opening. Mechanism + the measurement: see GLOBAL-EVAL SEMANTICS in
+ * `app-blocks-flag.ts`.
+ *
+ * 🔴 Unlike its sibling `assertAppBlocksEnabledForTokenUser`, this refusal is NOT on
+ * the compiled-branch watchlist, and that is measured rather than assumed: losing it
+ * cannot silently re-open anything, because `isAppBlocksAuthorEnabled` takes a
+ * non-nullable subject and dereferences it immediately, so a dropped guard yields a
+ * `TypeError` (a 500) rather than a pass. The enabled gate's guard IS watchlisted,
+ * because losing THAT one falls through to a global eval returning the flag's base
+ * value. Its message text differs from this one's on purpose — two different
+ * conditions, and an identical string under a different code is not separable in a
+ * log. Both are also distinct APP-WIDE, which is the level that actually matters to
+ * an operator: the kill-switch one was byte-identical to `apps.router.ts`'s
+ * structurally-identical refusal until it was renamed to `'runtime block token
+ * subject could not be resolved'`. If you add a fourth refusal of this shape, give
+ * it text no other one uses — and note that this one doubles as a watchlist anchor.
  *
  * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
  * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged — it
@@ -307,7 +333,13 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
  */
 async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  if (!(await isAppBlocksAuthorEnabled({ user: user ?? undefined }))) {
+  if (!user) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'app-authoring subject could not be resolved',
+    });
+  }
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'Apps authoring is not enabled for this account',
@@ -353,10 +385,24 @@ async function assertAppEditAccess(
  * user, not `ctx.user`.
  *
  * The flag stays a real kill-switch (a flip still shuts these procs down) — we
- * only fix the IDENTITY it's evaluated against. This does NOT widen access: the
- * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
- * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
- * blocked. `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
+ * only fix the IDENTITY it's evaluated against. This does NOT widen access: with
+ * the flag base-`false` + `moderators`/cohort segments as it is today, it resolves
+ * `true` only for an in-segment subject and a non-mod outside the cohort resolves
+ * `false` → blocked. An ANONYMOUS token (`sub:'anon'`) never reaches this function
+ * at all — each of its 16 call sites runs `parseSubjectUserId(claims.sub)` and
+ * throws UNAUTHORIZED on `null` first, so the no-subject case handled below is a
+ * VANISHED user, not an anon caller. There are **16** such parse sites, not 17:
+ * the 17th gate call is `assertViewerIsAppDeveloper`, which shares the parse site
+ * of the enabled-gate call immediately above it rather than adding one, so the two
+ * sets OVERLAP and must not be added. (No raw-occurrence total is recorded here,
+ * and none should be: a grep for either identifier also matches this docblock's
+ * own prose and the import at the top of the file, and for the gate it matches a
+ * DIFFERENT function of the same name in `apps.router.ts`. Nor is a re-derivation
+ * command given — the obvious one contains the identifier it searches for, so it
+ * matches the very line it is written on and returns one too many. Enumerate the
+ * call sites if you need the number; this paragraph has now been wrong four
+ * rounds running, each time by writing a figure down.)
+ * `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
  * tokens, revoked instances and non-approved apps before this runs — the "revoked"
  * half of that sentence used to be false, because the caller ran a bare
  * `verifyBlockToken`, which never checked it. Every other belt (the per-scope
@@ -385,15 +431,42 @@ async function assertAppEditAccess(
  */
 async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
   // Full, authoritative SessionUser (cached; tier derived from active
-  // subscriptions) so buildFliptContext sees the user's REAL tier/isMember,
-  // not type-defaults. A vanished user → undefined → global eval → flag false
-  // → blocked (fail-closed). This is the LAST identity-shaped belt on most runtime
-  // procs now that the author gate is off them, so its fail-closed posture is not
-  // backed up by a second one — do not weaken it.
-  // getSessionUserById returns the package SessionUser (loosely typed at this boundary — cast as bearer-token.ts
-  // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
+  // subscriptions) so buildFliptContext sees the user's REAL tier/isMember, not
+  // type-defaults. getSessionUserById returns the package SessionUser (loosely
+  // typed at this boundary — cast as bearer-token.ts does) or null for a vanished
+  // user. This is the LAST identity-shaped belt on most runtime procs now that the
+  // author gate is off them, so its fail-closed posture is not backed up by a
+  // second one — do not weaken it.
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
+  // 🔴 REFUSE AN UNHYDRATABLE SUBJECT OUTRIGHT, before the flag is consulted.
+  // This used to pass `{ user: user ?? undefined }`, and the comment derived the
+  // denial from "global eval → flag false → blocked". The premise holds (a no-user
+  // eval carries entityId 'global' and an empty context, which no segment can
+  // match) but the conclusion came from `app-blocks-enabled` being base-`false`,
+  // not from the segment miss: a global eval returns the flag's own base value, so
+  // a base-`enabled: true` GA flip would have let a token whose subject no longer
+  // resolves through this gate. `isAppBlocksEnabled`'s no-user branch is KEPT for
+  // its real machine caller, so the refusal has to live here. Mechanism + the
+  // measurement against the real wasm engine: GLOBAL-EVAL SEMANTICS in
+  // `app-blocks-flag.ts`. Distinct message so the two refusals stay separable.
+  //
+  // 🔴 WATCHLISTED as `block-token-subject-refusal` in
+  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
+  // runtime branch, so a bundler that drops it re-opens the exposure with the source
+  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
+  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
+  // so line numbers do not matter. DELETING it fails the production Docker build at
+  // `assert-compiled-branches.mjs`. And 🔴 REWORDING THE MESSAGE BELOW IS A WATCHLIST
+  // EDIT: that exact string IS this entry's anchor, so changing it makes the gate exit 2
+  // ("no line contains this anchor") — a failure that reads like gate breakage rather
+  // than like the copy change that caused it. Update the entry in the same commit.
+  if (!user) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'runtime block token subject could not be resolved',
+    });
+  }
+  if (!(await isAppBlocksEnabled({ user }))) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
 }

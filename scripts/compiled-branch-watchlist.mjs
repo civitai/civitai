@@ -51,6 +51,37 @@
  *           not observe the function at all (exit 2) instead of claiming a violation.
  *           Without one, a module that simply was not emitted reads as N violations.
  *
+ * 🔴 CHOOSING THE ANCHOR TEXT — the real rot vector, and it is NOT line numbers.
+ * Anchors are resolved to a line at run time, so an anchor survives the code moving,
+ * and comment churn above it cannot SHIFT it. What DOES break it is the anchored TEXT
+ * changing, and a miss is `die(2)` — which `--warn-only` deliberately does not
+ * downgrade, so the first red is the production image build.
+ *
+ * 🔴 An earlier revision of this paragraph said "comment churn above it cannot break
+ * it", full stop. That is FALSE and it misled a reader into treating a docblock edit in
+ * a watchlisted module as free. `resolveAnchor` scans EVERY line, comments included, and
+ * more than one match is also a hard error — so a COMMENT that merely CONTAINS the
+ * anchor text breaks resolution just as a reword does. Rule 1 below makes this likelier,
+ * not less: the shortest fragment is the easiest for prose to collide with. It is caught
+ * by this gate's own unit suite rather than first at the image build
+ * (`scripts/__tests__/assert-compiled-branches.test.ts` asserts every anchor resolves to
+ * exactly one line), which is the only reason it is not a deploy-blocking trap. Two
+ * rules follow:
+ *
+ *   1. Anchor a substring that survives REFORMATTING. Do not include a trailing `,`
+ *      or `});`, and do not anchor a whole long line: a line near `printWidth` reflows
+ *      the moment anyone adds a property (`cause`, a metrics counter), and prettier
+ *      then splits it. Prefer the shortest unique fragment — stopping at an open
+ *      paren is a good trick, since argument reflow keeps the callee on its own line.
+ *   2. Prefer the branch's CONDITION over a payload inside it. A string literal can in
+ *      principle be interned from elsewhere and keep a mapping while the branch around
+ *      it is eliminated; a condition cannot. Where a condition is not unique in the
+ *      module, a literal that is unique APP-WIDE is an acceptable substitute — see
+ *      `block-token-subject-refusal` — because nothing else can intern it.
+ *
+ * Rewording an anchored message is therefore a watchlist edit too, not just a copy
+ * change. That is the price of the gate, and it is cheap next to the defect it catches.
+ *
  * Keep this list SMALL and justified — a fail-closed branch whose loss changes who can
  * see what. Every entry must say what goes wrong when the branch disappears.
  */
@@ -73,6 +104,40 @@ export const COMPILED_BRANCH_WATCHLIST = [
       {
         code: "return 'none';",
         why: "the fail-closed default. Lost, the function falls off the end and returns `undefined`, which a `?? 'full'` default upstream turns into a full-catalog grant.",
+      },
+    ],
+  },
+  {
+    id: 'shared-storage-subject-refusal',
+    module: 'src/server/routers/apps-shared.router.ts',
+    why: "`resolveSharedContext` refuses a block token whose subject no longer hydrates, BEFORE consulting `app-blocks-shared-storage`. Lost, an unresolvable subject falls through to `{ user: undefined }` — a global eval, which returns the flag's BASE value, not a deny. Under a base-`enabled: true` GA flip every op in READ_OPS then serves shared rows to a token whose subject is gone. The write path is covered downstream by the min-trust gate; the read ops skip that block entirely and have no second belt, so this branch is the only thing in front of them.",
+    control: [
+      {
+        code: 'isAppBlocksSharedStorageEnabled(',
+        why: 'the flag call immediately after the refusal — same function, known to survive. Unmapped means this gate is looking at a build that never emitted `resolveSharedContext`, not at a violation. Deliberately stops at the open paren so reflowing the arguments cannot move it off this line.',
+      },
+    ],
+    required: [
+      {
+        code: 'if (userId != null && !subjectUser) {',
+        why: "the refusal's own CONDITION — the branch itself, not a payload inside it. Lost, the next line evaluates the flag with no subject and the answer becomes the flag base. The `userId != null &&` half is load-bearing in the other direction: without it a genuine anon token (`sub:'anon'`) would be refused too, which is the GA widening this gate must NOT block.",
+      },
+    ],
+  },
+  {
+    id: 'block-token-subject-refusal',
+    module: 'src/server/routers/blocks.router.ts',
+    why: "`assertAppBlocksEnabledForTokenUser` refuses an unhydratable token subject BEFORE consulting `app-blocks-enabled`. Lost, it falls through to `isAppBlocksEnabled`'s no-user branch — a deliberate global eval kept for the machine registrar — which returns the flag's BASE value. Under a base-`enabled: true` GA flip a token whose subject no longer resolves then passes the kill-switch on 16 block-token runtime procs. NB the sibling `assertViewerIsAppDeveloper` guard is deliberately NOT listed: `isAppBlocksAuthorEnabled` takes a non-nullable subject and dereferences it at once, so losing that one throws rather than passing.",
+    control: [
+      {
+        code: 'await isAppBlocksEnabled({ user })',
+        why: 'the flag call immediately after the refusal — same function, known to survive. Unmapped means the build never emitted this function.',
+      },
+    ],
+    required: [
+      {
+        code: "'runtime block token subject could not be resolved'",
+        why: "the refusal's message literal. Lost, the gate evaluates the kill-switch with no subject and a base-true flag answers `true`. NB this anchors a literal INSIDE the branch rather than the branch's condition, because `if (!user) {` is not unique in this module (the author gate above uses the same condition). That is sound here only because the literal is unique ACROSS THE WHOLE APP: a minifier cannot intern it from another site, so a surviving mapping for this line means this site survived. Keep it unique — do not reuse this string elsewhere.",
       },
     ],
   },
