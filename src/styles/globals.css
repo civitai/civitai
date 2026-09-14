@@ -149,13 +149,42 @@
    it grows OR shrinks, so adding or removing a rule here without updating that
    expectation is a test failure, not a silent change.
 
-   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD. The App Block manifest schema is
-   byte-mirrored across three repos (`public/schemas/app-block/v1.json`, the Go
-   CLI, `@civitai/app-sdk`) and has to move in lockstep, and this host is pinned
-   to `@civitai/app-sdk@^0.14.0` while guests ship 0.35.x — so a new manifest
-   field would be UNTYPED at exactly the point the host consumes it. A rule here
-   is one line, needs no schema motion, and cannot be forged: the guest is
-   cross-origin and can never reach this cascade.
+   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD: AN OPERATOR DECISION, NOT A
+   TECHNICAL FINDING. Full bleed is managed by styling — this ledger — because the
+   repo owner decided it should be. That decision is the whole of the reason, and
+   it is written down here so that no one has to reconstruct one. The alternative
+   was not hypothetical: a `page` manifest field replacing this ledger was built
+   and opened as PR #4812, and it was closed unmerged on exactly that call.
+
+   🔴 THE TECHNICAL REASON THIS COMMENT USED TO GIVE WAS MEASURED FALSE. It is
+   kept here, retracted, so it is not rediscovered and acted on. It read: the
+   schema is mirrored across three repos and "this host is pinned to
+   `@civitai/app-sdk@^0.14.0` while guests ship 0.35.x — so a new manifest field
+   would be UNTYPED at exactly the point the host consumes it." The PIN IS REAL;
+   the conclusion does not follow, because the host never reads a manifest through
+   an SDK type at all. `src/server/services/block-manifest-validator.service.ts`
+   imports nothing from `@civitai/app-sdk` and validates against this repo's own
+   rules, and `src/components/AppBlocks/types.ts` DECLARES the host's own
+   `BlockManifest` — its "Matches @civitai/app-sdk/blocks v1" line is prose in a
+   docblock, not an import, and that file has no imports at all. So the SDK pin is
+   not a cost of adding a manifest field and must never be cited as one again.
+
+   WHAT A MANIFEST FIELD WOULD ACTUALLY COST, MEASURED. The three-repo mirroring
+   is the part that IS true, and it is strict: `public/schemas/app-block/v1.json`
+   (canonical), the Go CLI's `schema/app-block.manifest.schema.json`, and the copy
+   `@civitai/app-sdk` vendors and re-exports. All three declare `page` with
+   `additionalProperties` false, so a new key is unusable by an author until all
+   three have re-vendored at a release cut. Measured against the released CLI
+   0.1.101: adding an undeclared key under `page` and running `civitai app
+   validate` exits 1 with "page: additional properties 'fullBleed' not allowed",
+   locally, before any network call. That is the real price of the alternative,
+   and it is recorded because the alternative was on the table — NOT because it is
+   the reason. The reason is the decision above.
+
+   Mechanically, a rule here is one line, needs no schema motion, and cannot be
+   forged: the guest is cross-origin and can never reach this cascade. That is a
+   description of how this mechanism behaves, not a second justification for
+   choosing it.
 
    🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION,
    AND THAT IS EXACTLY HOW THIS LEDGER SHIPPED BROKEN. `next.config.mjs` sets
