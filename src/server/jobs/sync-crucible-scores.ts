@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 const BATCH_SIZE = 50;
 
@@ -30,6 +31,9 @@ export const syncCrucibleScoresJob = createJob(
   'sync-crucible-scores',
   '*/5 * * * *', // Run every 5 minutes
   async () => {
+    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CRUCIBLE_JOBS_ENABLED)))
+      return { synced: 0, totalEntries: 0, crucibles: [] };
+
     log('Starting sync-crucible-scores job');
 
     // Get all active crucibles
