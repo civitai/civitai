@@ -63,11 +63,16 @@
  *     `assertViewerIsAppDeveloper(sub)` plus the per-call (`DEV_BUZZ_BUDGET_CAP`) / per-session /
  *     per-day caps. SCOPE SOURCE (`:383-389`): real spend on a brand-new, never-reviewed app is
  *     additionally gated by the `app-blocks-dev-tunnel-unsubmitted-spend` flag.
- *   - `src/server/services/block-registry.service.ts:2117-2119` — where that flag gate actually
- *     bites: `if (!opts?.unsubmittedSpendAllowed) ephemeralScopes = ephemeralScopes.filter((s) =>
- *     s !== 'ai:write:budgeted')`. ⚠️ It sits in the `else` (BRAND-NEW) branch only. The PENDING
- *     branch (`:2104-2114`) applies no such strip, so for an author's own pending submission the
- *     caps-and-author-flag argument above is the whole of it.
+ *   - `src/server/services/block-registry.service.ts`, in `resolveEphemeralDevPageBlock` — where
+ *     that flag gate actually bites: `if (!opts?.unsubmittedSpendAllowed) ephemeralScopes =
+ *     ephemeralScopes.filter((s) => s !== 'ai:write:budgeted')`. ⚠️ It sits in the `else`
+ *     (BRAND-NEW) arm of that function's `if (pending)` only. The PENDING arm — the one that
+ *     clamps `pendingManifest.scopes` — applies no such strip, so for an author's own pending
+ *     submission the caps-and-author-flag argument above is the whole of it.
+ *     ⚠️ ADDRESSED BY SYMBOL AND BY BRANCH, NOT BY LINE, DELIBERATELY: both of those used to be
+ *     line ranges (`:2117-2119` and `:2104-2114`), and both were silently walked off their
+ *     targets by a PR that only inserted code ABOVE them. Nothing asserts a citation in this
+ *     docblock, so a stale one stays stale and reads as authoritative.
  * `:455-480` is the call side of the same thing (the resolver call at `:455-459` passes
  * `unsubmittedSpendAllowed`; `resolveDevBuzzBudget` runs on the clamp's output at `:470`).
  *
@@ -112,8 +117,10 @@ export type BlockScopeManifestInput = { scopes?: unknown } | null | undefined;
  *       · `BlockManifestValidator.validate` ACCEPTS a duplicated scope. Measured:
  *         `scopes: ['models:read:self','models:read:self']` returns `{valid:true}`, against a
  *         negative control (`scopes:['models:read:all']` → `{valid:false}`) proving the
- *         validator can reject. `block-manifest-validator.service.ts:478-496` is a per-element
- *         loop with no uniqueness check, and `public/schemas/app-block/v1.json`
+ *         validator can reject. `BlockManifestValidator.validate`'s `scopes` branch in
+ *         `block-manifest-validator.service.ts` — the `if (!Array.isArray(m.scopes)) … else { for
+ *         (const scope of m.scopes) … }` — is a per-element loop with no uniqueness check (cited
+ *         by symbol for the reason given above), and `public/schemas/app-block/v1.json`
  *         `properties.scopes` declares no `uniqueItems`.
  *       · So pre-change `getInstallConfig` could return `['x','x']`, and that array reaches
  *         `src/components/Apps/AppSettingsModal.tsx` (`declaredScopes = installConfig?.scopes`)
