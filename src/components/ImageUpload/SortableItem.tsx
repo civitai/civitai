@@ -17,8 +17,9 @@ export function SortableItem({
   cursor?: CSSProperties['cursor'];
 }) {
   // `disabled` has to reach dnd-kit, not only the cursor: without it the row stays draggable and
-  // reorders while a caller believes it has switched dragging off. `SortableGrid` and the
-  // suggested-resources modal both rely on this prop to mean "not reorderable".
+  // reorders while a caller believes it has switched dragging off. dnd-kit derives both
+  // `aria-disabled` and the dropped listeners from this one value, so it is also what makes the
+  // state observable.
   const sortable = useSortable({ id, disabled });
 
   const { attributes, listeners, isDragging, setNodeRef, transform, transition } = sortable;

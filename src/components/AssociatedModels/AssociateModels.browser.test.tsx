@@ -261,6 +261,9 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
       page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
       'search dropdown'
     ).toBeNull();
+    // The paused notice is gated on the list having been delivered. Without that it renders here
+    // too, above the loader, explaining a pause to someone who is waiting for a first load.
+    expect(page.getByText(/editing is paused/i).query(), 'paused notice').toBeNull();
   });
 
   test('no search dropdown, and the failure is named, when the query delivers nothing', async () => {
@@ -281,6 +284,9 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
     // creator their model has no suggested resources and to search above for a box that the
     // guard had just removed.
     expect(page.getByText(/search above to add one/i).query(), 'empty-state copy').toBeNull();
+    // And not two contradictory explanations at once: the load failed, so there is no list whose
+    // freshness could be in question.
+    expect(page.getByText(/editing is paused/i).query(), 'paused notice').toBeNull();
   });
 
   test('the dropdown is live once the saved list is delivered and current', async () => {
@@ -366,11 +372,10 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
     await expect.element(page.getByText('Saved two')).toBeInTheDocument();
     await page.getByRole('button', { name: FORCE_SELECT_LABEL }).click();
 
-    // Nothing was committed, so nothing is saveable: `changed` is what Save is gated on.
-    expect(
-      page.getByRole('button', { name: 'Save Changes' }).query(),
-      'save button'
-    ).toBeDisabled();
+    // Deliberately NOT asserting Save is disabled: it is gated on `!changed || !canEdit`, and
+    // `canEdit` is false in this fixture, so that assertion would hold whether or not the handler
+    // refused anything. The two below are what discriminate — the row never entered the list, and
+    // nothing was sent.
     expect(page.getByText('Freshly picked').query(), 'forced row').toBeNull();
     expect(mutate).not.toHaveBeenCalled();
   });
