@@ -78,6 +78,33 @@ export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 export const BLOCK_POST_RATE_LIMIT_MAX = 3;
 export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
 
+// APP-AGGREGATE post bucket, keyed on `claims.appId`. The per-instance bucket
+// above bounds ONE INSTALL, so an app with N installs can post N × 3 per hour and
+// no ceiling anywhere sees the total. This is the aggregate the per-instance
+// bucket cannot express.
+//
+// 🔴 HOW THE NUMBER WAS CHOSEN, STATED PLAINLY BECAUSE IT IS NOT DATA-DERIVED.
+// It is 100 × the per-instance ceiling: an app has to have 100 DISTINCT installs
+// each posting at their own hourly maximum, in the same hour, before this engages
+// at all. That is the whole rationale — there is no measurement behind it, and
+// the per-instance 3/hour it multiplies is itself an acknowledged guess. It is a
+// STARTING VALUE to be revised from the `block_scope_invocations` audit rows once
+// a real app has run on this path; the rows record every post outcome per app, so
+// the observed per-app hourly distribution is exactly what should replace it.
+//
+// DELIBERATELY GENEROUS, because the two failure directions are not symmetric. A
+// too-tight aggregate throttles a popular, legitimate app and reaches its users
+// as "posting is broken" — a quiet, diffuse failure that nobody attributes to a
+// rate limit — while a too-loose one leaves a bounded amount of content that the
+// self-dealing guard, the per-source ownership proofs and the per-post consent
+// confirm have each already refused to admit on their own terms. Err loose.
+//
+// ⚠️ SAME STATED LIMITS AS THE BUCKET ABOVE: fixed window (a 2× burst across a
+// boundary is reachable by construction) and FAILS OPEN on a Redis error. It is a
+// cost ceiling, not a security control.
+export const BLOCK_POST_APP_RATE_LIMIT_MAX = 300;
+export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
 export type BlockCatalogRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
@@ -197,6 +224,50 @@ export async function checkBlockPostRateLimit(
     let retryAfter = await redis.ttl(key as never);
     if (!Number.isFinite(retryAfter) || retryAfter < 1) {
       retryAfter = BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS;
+    }
+    return { allowed: false, retryAfterSeconds: retryAfter };
+  } catch {
+    // Fail open — never block a legitimate post on a redis incident.
+    return { allowed: true };
+  }
+}
+
+/**
+ * Records ONE post against `appId`'s AGGREGATE post window — the ceiling the
+ * per-instance bucket structurally cannot express, because it is keyed on the
+ * install and an app has many of those.
+ *
+ * Distinct `:post-app:` sub-namespace so it can never contend with the
+ * per-instance `:post:` bucket, the publish, catalog or mint buckets. Weight is
+ * always 1, the same unit as the per-instance bucket, so the two numbers are
+ * directly comparable.
+ *
+ * 🔴 ADDITIVE, NOT A REPLACEMENT. The caller checks BOTH; either refusing refuses
+ * the post. Neither subsumes the other: the per-instance bucket stops one install
+ * spamming, this one stops an app aggregating that allowance across installs.
+ *
+ * Same fail-open posture as every sibling limiter — a Redis incident must not
+ * break a legitimate post. See `BLOCK_POST_APP_RATE_LIMIT_MAX` for how the
+ * ceiling was chosen and why it is not derived from data.
+ */
+export async function checkBlockPostAppRateLimit(
+  appId: string
+): Promise<BlockCatalogRateLimitResult> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:post-app:${appId}` as const;
+  try {
+    const count = await redis.incrBy(key as never, 1);
+    if (count === 1) {
+      await redis.expire(key as never, BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS);
+    } else {
+      const ttl = await redis.ttl(key as never);
+      if (ttl < 0) await redis.expire(key as never, BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS);
+    }
+
+    if (count <= BLOCK_POST_APP_RATE_LIMIT_MAX) return { allowed: true };
+
+    let retryAfter = await redis.ttl(key as never);
+    if (!Number.isFinite(retryAfter) || retryAfter < 1) {
+      retryAfter = BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS;
     }
     return { allowed: false, retryAfterSeconds: retryAfter };
   } catch {

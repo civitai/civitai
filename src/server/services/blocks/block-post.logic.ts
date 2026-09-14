@@ -11,6 +11,12 @@
  * the transaction — is `block-post.service.ts`.
  */
 
+// TYPE-ONLY, and that is what keeps this module pure: the import is erased at
+// compile time, so nothing in `workflow.service`'s runtime dependency graph is
+// pulled in here. It exists so `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES` is checked
+// against the real wire contract instead of a hand-copied literal union.
+import type { AppWorkflow } from '~/server/services/blocks/workflow.service';
+
 /** Hard ceiling on images in ONE app-created post. */
 export const BLOCK_POST_MAX_IMAGES = 20;
 
@@ -36,10 +42,18 @@ export const BLOCK_POST_MAX_TAGS = 5;
 
 /**
  * The block→host wire shape for one image source, after host-side sanitisation.
- * TWO kinds, because operator decision 3 admits BOTH the app's own fresh workflow
- * outputs AND images the app previously published — and `PUBLISH_GENERATION_OUTPUTS`
- * cannot express that (its `workflowId` is a single required string), which is the
- * shape half of why this is a sibling message rather than an extension.
+ *
+ * TWO kinds, and that is an OPERATOR DECISION rather than a requirement the
+ * problem forced: the eligible images for an app-created post are the app's OWN
+ * workflow outputs AND images the app previously published. The alternative on
+ * the table was the narrower one — fresh workflow outputs only, with previously
+ * published images reachable only by re-generating them — and it was rejected
+ * because an app whose whole shape is "publish to the grid, then let the viewer
+ * post the one they like" could not be built on it.
+ *
+ * `PUBLISH_GENERATION_OUTPUTS` cannot express two kinds at all (its `workflowId`
+ * is a single required string), which is the shape half of why this is a sibling
+ * message rather than an extension of that one.
  */
 export type BlockPostSource =
   | { kind: 'workflow'; workflowId: string; imageIndexes?: number[] }
@@ -164,6 +178,54 @@ export function resolveWorkflowOutputSelection(input: {
     if (selected.length >= maxCount) break;
   }
   return selected;
+}
+
+/**
+ * The workflow statuses from which a post may draw outputs: the TERMINAL ones.
+ *
+ * 🔴 THIS IS THE PRIMARY INVARIANT BEHIND THE PREVIEW/WRITE CONSENT GUARANTEE,
+ * AND IT WORKS BY REMOVING THE RACE RATHER THAN DETECTING IT. The preview and the
+ * write resolve `sources` independently, and a `workflow` source with no
+ * `imageIndexes` means "every available output" — so a workflow that is still
+ * RUNNING can gain an output between the two phases, and the viewer who was shown
+ * N thumbnails gets a post with N+1 images. Nothing about that is an
+ * authorization failure; every check still passes. It is the CONFIRM becoming
+ * inaccurate, which is the one thing the confirm exists to prevent.
+ *
+ * A workflow that has reached a terminal state produces no further outputs, so
+ * both phases necessarily see the same set. Refusing a non-terminal source is
+ * therefore the generator-level fix: it costs ZERO extra IO (the status is
+ * already on the projection `resolveOwnedWorkflowOutputs` reads) and it binds
+ * EVERY caller, including ones that never render a consent dialog.
+ *
+ * ⚠️ WHY `failed` / `expired` / `canceled` ARE ADMITTED and not only `succeeded`.
+ * The property that matters here is that the output set is FROZEN, and it is
+ * frozen in all four. A partially-successful workflow that produced usable,
+ * allowlisted blobs is postable content; narrowing this to `succeeded` would be a
+ * product change wearing a safety guard's clothes. What is refused is exactly the
+ * set that can still change: `pending` and `processing`.
+ *
+ * The `satisfies` binds this list to the wire contract — renaming or dropping a
+ * status in `AppWorkflow` breaks the build here rather than silently widening the
+ * gate to an unlisted status.
+ */
+export const BLOCK_POST_TERMINAL_WORKFLOW_STATUSES = [
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+] as const satisfies readonly AppWorkflow['status'][];
+
+/**
+ * True when a workflow can no longer gain or lose outputs. See
+ * `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES`.
+ *
+ * Takes a plain `string` on purpose: the orchestrator is an external system and
+ * an UNRECOGNISED status must read as non-terminal (fail closed), not fall
+ * through a union-typed parameter that TypeScript believes is exhaustive.
+ */
+export function isTerminalBlockPostWorkflowStatus(status: string): boolean {
+  return (BLOCK_POST_TERMINAL_WORKFLOW_STATUSES as readonly string[]).includes(status);
 }
 
 /**

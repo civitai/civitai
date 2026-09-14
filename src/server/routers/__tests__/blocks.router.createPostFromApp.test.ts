@@ -28,6 +28,7 @@ const {
   mockGetWorkflow,
   mockCheckCatalogRate,
   mockCheckPostRate,
+  mockCheckPostAppRate,
   mockCheckPublishRate,
   mockPreviewBlockPost,
   mockResolveBlockPostSources,
@@ -49,6 +50,7 @@ const {
   mockGetWorkflow: vi.fn(),
   mockCheckCatalogRate: vi.fn(),
   mockCheckPostRate: vi.fn(),
+  mockCheckPostAppRate: vi.fn(),
   mockCheckPublishRate: vi.fn(),
   mockPreviewBlockPost: vi.fn(),
   mockResolveBlockPostSources: vi.fn(),
@@ -86,6 +88,7 @@ vi.mock('~/server/services/blocks/workflow.service', async (importOriginal) => {
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckCatalogRate(...a),
   checkBlockPostRateLimit: (...a: unknown[]) => mockCheckPostRate(...a),
+  checkBlockPostAppRateLimit: (...a: unknown[]) => mockCheckPostAppRate(...a),
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckPublishRate(...a),
 }));
 vi.mock('~/server/services/blocks/block-post.service', () => ({
@@ -171,9 +174,12 @@ function ctx() {
   };
 }
 
+// `confirmedImageCount` is REQUIRED on the write arm and must match the default
+// one-image resolution below; cases that resolve a different number override it.
 const INPUT = {
   blockToken: 'tok',
   sources: [{ kind: 'workflow' as const, workflowId: 'wf_1' }],
+  confirmedImageCount: 1,
 };
 
 function caller(c = ctx()) {
@@ -192,6 +198,7 @@ beforeEach(() => {
   mockGetOrchestratorToken.mockResolvedValue('orch-token');
   mockCheckCatalogRate.mockResolvedValue({ allowed: true });
   mockCheckPostRate.mockResolvedValue({ allowed: true });
+  mockCheckPostAppRate.mockResolvedValue({ allowed: true });
   mockCheckPublishRate.mockResolvedValue({ allowed: true });
   mockPreviewBlockPost.mockResolvedValue({
     title: null,
@@ -342,7 +349,7 @@ describe('rate buckets', () => {
       { kind: 'published', imageId: 3, url: 'u', width: 1, height: 1 },
     ]);
 
-    await caller().createPostFromApp(INPUT);
+    await caller().createPostFromApp({ ...INPUT, confirmedImageCount: 3 });
 
     expect(mockCheckPostRate).toHaveBeenCalledTimes(1);
     expect(mockCheckPostRate).toHaveBeenCalledWith('bki_alpha');
@@ -359,6 +366,56 @@ describe('rate buckets', () => {
     });
     expect(mockResolveBlockPostSources).not.toHaveBeenCalled();
     expect(mockWriteBlockPost).not.toHaveBeenCalled();
+  });
+
+  it('charges the APP bucket too, keyed on appId — the aggregate the instance bucket cannot see', async () => {
+    await caller().createPostFromApp(INPUT);
+
+    expect(mockCheckPostAppRate).toHaveBeenCalledTimes(1);
+    expect(mockCheckPostAppRate).toHaveBeenCalledWith('appblk-alpha');
+    // 🔴 THE KEY IS THE CLAIM. Handing it the INSTANCE id would compile, pass
+    // every other assertion in this file, and silently make the app ceiling a
+    // second copy of the per-instance one.
+    expect(mockCheckPostAppRate).not.toHaveBeenCalledWith('bki_alpha');
+  });
+
+  it('🔴 REFUSES over the APP ceiling even when the instance bucket still allows', async () => {
+    // THE AGGREGATION GAP, directly. The per-instance bucket is keyed on the
+    // install, so an app with N installs gets N × its ceiling and nothing sees
+    // the total. Here the instance bucket says yes and the post is still refused.
+    mockCheckPostRate.mockResolvedValue({ allowed: true });
+    mockCheckPostAppRate.mockResolvedValue({ allowed: false, retryAfterSeconds: 900 });
+
+    await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(mockResolveBlockPostSources).not.toHaveBeenCalled();
+    expect(mockWriteBlockPost).not.toHaveBeenCalled();
+  });
+
+  it('a DIFFERENT app is unaffected by the first app’s exhausted ceiling', async () => {
+    // The half that proves the bucket is APP-scoped and not accidentally global.
+    // Without it, a limiter keyed on a constant would pass the refusal case above
+    // and every other assertion here.
+    const exhausted = new Set(['appblk-alpha']);
+    mockCheckPostAppRate.mockImplementation(async (appId: string) =>
+      exhausted.has(appId) ? { allowed: false, retryAfterSeconds: 900 } : { allowed: true }
+    );
+
+    await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+
+    mockAuthorizeBlockBridgeToken.mockResolvedValue(
+      claims({ appId: 'appblk-beta', blockInstanceId: 'bki_beta' })
+    );
+    await expect(caller().createPostFromApp(INPUT)).resolves.toMatchObject({ postId: 5150 });
+    expect(mockCheckPostAppRate).toHaveBeenLastCalledWith('appblk-beta');
+  });
+
+  it('the PREVIEW charges neither post bucket', async () => {
+    await caller().previewPostFromApp(INPUT);
+    expect(mockCheckPostAppRate).not.toHaveBeenCalled();
   });
 
   it('REFUSES over the image ceiling before materialising anything', async () => {
@@ -451,7 +508,7 @@ describe('materialisation + audit', () => {
     ]);
     mockPersistImage.mockResolvedValue({ imageId: 888 });
 
-    await caller().createPostFromApp(INPUT);
+    await caller().createPostFromApp({ ...INPUT, confirmedImageCount: 2 });
 
     expect(mockPersistImage).toHaveBeenCalledTimes(1);
     // Order preserved: the workflow output first, then the adopted image.
@@ -466,7 +523,7 @@ describe('materialisation + audit', () => {
       { kind: 'published', imageId: 2, url: 'u', width: 1, height: 1 },
     ]);
 
-    await caller().createPostFromApp(INPUT);
+    await caller().createPostFromApp({ ...INPUT, confirmedImageCount: 2 });
 
     expect(mockRecordScopeInvocation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -553,9 +610,16 @@ describe('materialisation + audit', () => {
 
   it('🔴 REFUSES when the resolved image set no longer matches what the viewer confirmed', async () => {
     // THE CASE THE AUTHORIZATION CHECKS CANNOT SEE. Preview and write resolve
-    // `sources` independently; a still-running workflow with no `imageIndexes`
-    // can GAIN an output between them. Every guard still passes and the viewer
-    // gets a post containing an image they were never shown.
+    // `sources` independently, so the resolved set can differ from the one the
+    // dialog rendered. Every guard still passes and the viewer gets a post
+    // containing an image they were never shown.
+    //
+    // The KNOWN generator of that divergence — a still-running workflow gaining
+    // an output — is refused upstream by the terminality gate in
+    // `resolveOwnedWorkflowOutputs` (`block-post.service.test.ts` owns that red).
+    // This case is DEFENCE IN DEPTH for the class: it forces the mismatch
+    // directly at the service boundary, which is what a future source arm or an
+    // expiring blob would do without tripping any gate above.
     mockResolveBlockPostSources.mockResolvedValue([
       { kind: 'published', imageId: 1, url: 'u', width: 1, height: 1 },
       { kind: 'published', imageId: 2, url: 'u', width: 1, height: 1 },
@@ -584,11 +648,28 @@ describe('materialisation + audit', () => {
     ).resolves.toMatchObject({ postId: 5150 });
   });
 
-  it('omitting the confirmed count weakens NOTHING else — it is an integrity check, not authz', async () => {
-    mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ scopes: ['ai:write:budgeted'] }));
-    await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
-      message: 'block lacks posts:write:self scope',
+  it('🔴 the confirmed count is REQUIRED — a caller cannot decline the check', async () => {
+    // The point of making it required. An integrity check a future caller may
+    // omit is a suggestion, not an invariant: it would be declined by exactly
+    // the callers least likely to have rendered a dialog. Omitting it now fails
+    // input validation, before the procedure body runs at all — so no rate
+    // bucket is charged and no source is resolved.
+    const { confirmedImageCount: _omitted, ...withoutCount } = INPUT;
+
+    await expect(caller().createPostFromApp(withoutCount as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
     });
+    expect(mockCheckPostRate).not.toHaveBeenCalled();
+    expect(mockResolveBlockPostSources).not.toHaveBeenCalled();
+    expect(mockWriteBlockPost).not.toHaveBeenCalled();
+  });
+
+  it('the PREVIEW does NOT require it — it is the phase that produces the number', async () => {
+    // The asymmetry between the two arms, asserted so a later "harmonise the
+    // shapes" change has to break a test rather than quietly demand that the
+    // preview answer its own question.
+    const { confirmedImageCount: _omitted, ...withoutCount } = INPUT;
+    await expect(caller().previewPostFromApp(withoutCount as never)).resolves.toBeDefined();
   });
 
   it('audits a refusal that happens AFTER the rate bucket admitted the call', async () => {

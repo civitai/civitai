@@ -2,15 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
   BLOCK_CATALOG_RATE_LIMIT_MAX,
+  BLOCK_POST_APP_RATE_LIMIT_MAX,
+  BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS,
   BLOCK_POST_RATE_LIMIT_MAX,
   BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS,
   BLOCK_PUBLISH_RATE_LIMIT_MAX,
+  checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
 } from '../block-catalog-rate-limit';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const mockRedis = redisMock.redis;
 const KEY = 'blocks:token-rate-limit:post:bki_test';
+const APP_KEY = 'blocks:token-rate-limit:post-app:appblk_test';
 
 /**
  * The DEDICATED post bucket for `blocks.createPostFromApp`.
@@ -107,5 +111,114 @@ describe('checkBlockPostRateLimit', () => {
     await checkBlockPostRateLimit('bki_a');
     await checkBlockPostRateLimit('bki_b');
     expect(mockRedis.incrBy.mock.calls[0][0]).not.toBe(mockRedis.incrBy.mock.calls[1][0]);
+  });
+});
+
+/**
+ * The APP-AGGREGATE post bucket — the ceiling the per-instance one structurally
+ * cannot express.
+ *
+ * 🔴 WHAT THIS SUITE IS ACTUALLY FOR: the per-instance bucket is keyed on the
+ * INSTALL, so an app with N installs posts N × its ceiling per hour and no
+ * ceiling anywhere sees the total. Every case below is about the KEY — that it is
+ * derived from the app, that it lands in its own sub-namespace, and that two apps
+ * do not share it. A limiter that refused correctly on a single app while being
+ * keyed on a constant would be globally wrong and locally invisible.
+ */
+describe('checkBlockPostAppRateLimit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS);
+  });
+
+  it('uses its OWN `:post-app:` sub-namespace — never the per-instance post bucket', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockPostAppRateLimit('appblk_test');
+
+    const key = mockRedis.incrBy.mock.calls[0][0] as string;
+    expect(key).toBe(APP_KEY);
+    // Sharing `:post:` would make the app bucket and the install bucket the same
+    // counter, so exhausting one would exhaust the other with no error anywhere.
+    expect(key).not.toBe(KEY);
+    expect(key).not.toContain(':publish:');
+    expect(key).not.toContain(':catalog:');
+  });
+
+  it('charges exactly ONE token per call — the same unit as the per-instance bucket', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockPostAppRateLimit('appblk_test');
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(APP_KEY, 1);
+  });
+
+  it('first hit arms the TTL', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    const res = await checkBlockPostAppRateLimit('appblk_test');
+    expect(res).toEqual({ allowed: true });
+    expect(mockRedis.expire).toHaveBeenCalledWith(
+      APP_KEY,
+      BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS
+    );
+  });
+
+  it(`allows exactly ${BLOCK_POST_APP_RATE_LIMIT_MAX} and REFUSES the next one`, async () => {
+    mockRedis.incrBy.mockResolvedValue(BLOCK_POST_APP_RATE_LIMIT_MAX);
+    await expect(checkBlockPostAppRateLimit('appblk_test')).resolves.toEqual({ allowed: true });
+
+    mockRedis.incrBy.mockResolvedValue(BLOCK_POST_APP_RATE_LIMIT_MAX + 1);
+    // 777 is distinct from every window/ceiling constant in this module, so a
+    // mutant returning a constant instead of the TTL is visible.
+    mockRedis.ttl.mockResolvedValue(777);
+    await expect(checkBlockPostAppRateLimit('appblk_test')).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 777,
+    });
+  });
+
+  it('🔴 two DIFFERENT apps get DIFFERENT keys — the bucket is app-scoped, not global', async () => {
+    // The half that proves app-scoping. A limiter keyed on a constant passes the
+    // ceiling case above and fails only here.
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockPostAppRateLimit('appblk_alpha');
+    await checkBlockPostAppRateLimit('appblk_beta');
+
+    const [a, b] = mockRedis.incrBy.mock.calls.map((c) => c[0] as string);
+    expect(a).toContain('appblk_alpha');
+    expect(b).toContain('appblk_beta');
+    expect(a).not.toBe(b);
+  });
+
+  it('is GENEROUS relative to the per-instance bucket — a popular app is not throttled', async () => {
+    // A structural claim about the relationship, not the literals: the aggregate
+    // must be far above one install's allowance or it re-creates the failure it
+    // was added to avoid, and a too-tight aggregate reaches users as "posting is
+    // broken" rather than as a rate limit.
+    expect(BLOCK_POST_APP_RATE_LIMIT_MAX).toBeGreaterThan(BLOCK_POST_RATE_LIMIT_MAX * 10);
+    // Same window, so the two numbers are directly comparable.
+    expect(BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS).toBe(BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS);
+  });
+
+  it('re-asserts a lost TTL rather than leaving an unbounded key', async () => {
+    mockRedis.incrBy.mockResolvedValue(2);
+    mockRedis.ttl.mockResolvedValue(-1);
+    await checkBlockPostAppRateLimit('appblk_test');
+    expect(mockRedis.expire).toHaveBeenCalledWith(
+      APP_KEY,
+      BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS
+    );
+  });
+
+  it('falls back to the full window when the TTL read is unusable', async () => {
+    mockRedis.incrBy.mockResolvedValue(BLOCK_POST_APP_RATE_LIMIT_MAX + 1);
+    mockRedis.ttl.mockResolvedValue(-2);
+    await expect(checkBlockPostAppRateLimit('appblk_test')).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS,
+    });
+  });
+
+  it('FAILS OPEN on a redis error — the same stated limitation as its siblings', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    await expect(checkBlockPostAppRateLimit('appblk_test')).resolves.toEqual({ allowed: true });
   });
 });

@@ -45,11 +45,7 @@ import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
-import {
-  assertSharedWriteTrust,
-  MIN_ACCOUNT_AGE_MS,
-  REQUIRE_PAID_TIER,
-} from '~/server/services/blocks/block-write-trust.service';
+import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import {
@@ -84,10 +80,14 @@ const SHARED_KV_PER_USER_ROW_CAP = 50;
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
 // MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
 // SECOND caller (`blocks.createPostFromApp`), and a trust predicate open-coded at
-// two sites is one that will be wrong at one of them. Re-exported below so every
-// existing importer of `assertSharedWriteTrust` from this router keeps working;
-// the rule, its signals and its exact deny messages are unchanged.
-export { assertSharedWriteTrust, MIN_ACCOUNT_AGE_MS, REQUIRE_PAID_TIER };
+// two sites is one that will be wrong at one of them. The rule, its signals and
+// its exact deny messages are unchanged.
+//
+// NOT re-exported from here. The importers of this module were enumerated when
+// the predicate moved, and none of them took `assertSharedWriteTrust`,
+// `MIN_ACCOUNT_AGE_MS` or `REQUIRE_PAID_TIER` from it — they take
+// `appsSharedRouter`/`appsModRouter`, `sanitizeDiscordText`, and the counter
+// helpers. Import the predicate from the service that owns it.
 
 type SharedOp =
   | 'list'

@@ -382,6 +382,80 @@ describe('resolveOwnedWorkflowOutputs', () => {
     await expect(call(getWorkflow)).resolves.toHaveLength(1);
   });
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE TERMINALITY GATE — the primary invariant behind the preview/write
+  // consent guarantee. Preview and write resolve `sources` independently, so a
+  // RUNNING workflow can gain an output between them and publish an image the
+  // viewer was never shown. Every authorization check still passes; it is the
+  // CONFIRM going wrong. Refusing a non-terminal source removes the race rather
+  // than detecting it afterwards, and binds every caller including ones that
+  // render no dialog.
+  describe.each([
+    ['pending', true],
+    ['processing', true],
+    ['succeeded', false],
+    ['failed', false],
+    ['expired', false],
+    ['canceled', false],
+  ] as const)('status %s', (status, shouldRefuse) => {
+    it(
+      shouldRefuse ? 'is REFUSED (still running)' : 'is admitted (output set is frozen)',
+      async () => {
+        const getWorkflow = vi.fn().mockResolvedValue({ ...taggedWorkflow, status });
+
+        if (shouldRefuse) {
+          await expectRejection(
+            call(getWorkflow),
+            'BAD_REQUEST',
+            'workflow is still running — wait for it to finish before posting'
+          );
+        } else {
+          await expect(call(getWorkflow)).resolves.toHaveLength(1);
+        }
+      }
+    );
+  });
+
+  it('an UNRECOGNISED orchestrator status is refused — the gate fails CLOSED', async () => {
+    // The orchestrator is an external system. A status this codebase has never
+    // heard of must not fall through into "terminal"; a new non-terminal state
+    // added upstream would otherwise silently re-open the race.
+    const getWorkflow = vi
+      .fn()
+      .mockResolvedValue({ ...taggedWorkflow, status: 'someNewUpstreamState' });
+
+    await expectRejection(
+      call(getWorkflow),
+      'BAD_REQUEST',
+      'workflow is still running — wait for it to finish before posting'
+    );
+  });
+
+  it('the terminality gate runs AFTER both ownership proofs, not instead of them', async () => {
+    // Ordering matters for what a caller learns: a workflow it does not own must
+    // get the ownership refusal, not a state refusal that would confirm the
+    // workflow exists and is running.
+    OWNED_WORKFLOW.mockResolvedValue(false);
+    await expectRejection(
+      call(vi.fn().mockResolvedValue({ ...taggedWorkflow, status: 'processing' })),
+      'FORBIDDEN',
+      'workflow is not in this app subqueue'
+    );
+
+    OWNED_WORKFLOW.mockResolvedValue(true);
+    await expectRejection(
+      call(
+        vi.fn().mockResolvedValue({
+          ...taggedWorkflow,
+          status: 'processing',
+          tags: ['app-block:appblk-someone-else'],
+        })
+      ),
+      'FORBIDDEN',
+      'workflow is not tagged for this app'
+    );
+  });
+
   it('drops an output whose host is not on the orchestrator allowlist', async () => {
     // The host renders these urls as consent thumbnails, so an off-allowlist url
     // would be an image request the HOST makes to an arbitrary origin.
@@ -462,7 +536,7 @@ describe('resolveBlockPostSources — the image cap REFUSES rather than truncati
     expect(out).toHaveLength(BLOCK_POST_MAX_IMAGES);
   });
 
-  it('combines BOTH source kinds in request order (operator decision 3)', async () => {
+  it('combines BOTH source kinds in request order — fresh outputs AND prior publishes', async () => {
     const getWorkflow = vi.fn().mockResolvedValue(workflowWith(1));
     dbMock.dbRead.$queryRaw.mockResolvedValue([imageRow({ id: 9001 })]);
 

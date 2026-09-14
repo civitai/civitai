@@ -11,6 +11,7 @@ import { appBlockTag, projectAppWorkflow } from '~/server/services/blocks/workfl
 import {
   BLOCK_POST_MAX_IMAGES,
   BLOCK_POST_MAX_TAGS,
+  isTerminalBlockPostWorkflowStatus,
   normalizeBlockPostTagNames,
   resolveWorkflowOutputSelection,
   validateBlockPostText,
@@ -193,6 +194,16 @@ export type ResolvedGalleryTarget = {
 /**
  * Gate + resolve a `modelVersionId` gallery attach.
  *
+ * THAT THIS PATH EXISTS IN THE FIRST RELEASE IS AN OPERATOR DECISION, not a
+ * requirement of the feature: an app-created post may attach to a model
+ * gallery via `modelVersionId`. The alternative that was weighed was DEFERRING
+ * gallery attach to a later, separately-gated phase — ship profile posts only,
+ * add galleries once the path has run in production. It was rejected because a
+ * post that cannot reach the gallery is not the thing app authors asked for, and
+ * a second gated phase would have to re-litigate the same guards. The price of
+ * taking it now is the self-dealing exposure below, which is why that guard is
+ * part of this function rather than a later hardening pass.
+ *
  * 🔴 THIS IS STRICTLY STRICTER THAN NATIVE, ON PURPOSE, AND NATIVE IS THE REASON.
  * `createPost` performs NO ownership, status, or permission check on
  * `modelVersionId` whatsoever — it reads only `model.availability`, never throws,
@@ -315,12 +326,18 @@ export async function resolveGalleryTarget(input: {
  * projection `queryAppWorkflows` hands the block — so the block's `imageIndexes`
  * line up with what it saw.
  *
- * Both guards are copied from `publishGenerationOutputs` verbatim in intent and
- * order, and for the same reason: (a) `blockWorkflowOwnedByAppUser` is the
- * durable (user, app, workflow) binding the orchestrator lacks and is the
+ * The first two guards are copied from `publishGenerationOutputs` verbatim in
+ * intent and order, and for the same reason: (a) `blockWorkflowOwnedByAppUser` is
+ * the durable (user, app, workflow) binding the orchestrator lacks and is the
  * load-bearing user check; (b) the orchestrator's own record must carry the
  * `app-block:<appId>` tag, as defence in depth. Either fails → FORBIDDEN, and
  * nothing is fetched.
+ *
+ * (c) is NOT inherited from the publish path and is specific to posting: the
+ * workflow must be TERMINAL. A publish is a one-shot grid write with no consent
+ * screen behind it, so a running workflow gaining an output costs nothing there;
+ * a post is confirmed against a specific set of thumbnails, so it costs the
+ * accuracy of the confirm. See `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES`.
  *
  * 🔴 `blockWorkflowOwnedByAppUser` FAILS CLOSED BY RETURNING FALSE, NOT BY
  * THROWING — a DB error reads as "not owned". That is the correct trade for a
@@ -348,12 +365,33 @@ export async function resolveOwnedWorkflowOutputs(input: {
     forbidden('workflow is not tagged for this app');
   }
 
+  const projected = projectAppWorkflow(workflow);
+
+  // 🔴 TERMINALITY GATE — the invariant that makes the preview and the write
+  // agree on WHICH IMAGES. A still-running workflow can gain an output between
+  // the two phases, so the viewer confirms N thumbnails and gets N+1 images. This
+  // refuses the GENERATOR of that divergence rather than detecting the symptom
+  // afterwards: a terminal workflow's output set is frozen, so both phases must
+  // see the same set. Free — `projectAppWorkflow` already computed the status on
+  // the projection this function was reading anyway — and it binds every caller,
+  // including any future one that renders no dialog.
+  //
+  // BAD_REQUEST, not FORBIDDEN: nothing about the caller is unauthorised. The
+  // workflow is simply not finished, and the message says so because the app's
+  // correct response is to wait and retry, which it cannot infer from a refusal
+  // that reads as a permission problem. See
+  // `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES` for which statuses count and why
+  // `failed`/`expired`/`canceled` are admitted.
+  if (!isTerminalBlockPostWorkflowStatus(projected.status)) {
+    badRequest('workflow is still running — wait for it to finish before posting');
+  }
+
   // Re-validate every url against the output-host allowlist HERE, not only at
   // fetch time. These urls are handed to the HOST to render as consent
   // thumbnails, so an off-allowlist url would be an image request the host makes
   // to an arbitrary origin on the block's behalf — a different exposure from the
   // server-side fetch the persist path already bounds.
-  return projectAppWorkflow(workflow).images.filter((img) => isAllowedOutputHost(img.url));
+  return projected.images.filter((img) => isAllowedOutputHost(img.url));
 }
 
 /** The gated edge-url width used for consent thumbnails + the published-image read. */
@@ -735,9 +773,17 @@ export async function writeBlockPost(input: {
  * native side effects live in `post.controller.ts`'s create/update handlers, not
  * in `post.service.ts` — so a path that writes the Post row itself inherits NONE
  * of them and silently produces a post that pays no reward, busts no gallery
- * cache and never reaches the search index. Operator decision 4 is that an
- * app-created post participates in rewards EXACTLY like a native one, so the
- * effects are re-issued explicitly rather than inherited by accident.
+ * cache and never reaches the search index.
+ *
+ * 🔴 THE OPERATOR DECISION, IN FULL, BECAUSE IT IS THE REASON REWARDS FIRE HERE
+ * AT ALL: an app-created post participates in rewards EXACTLY like a native one.
+ * The alternative that was considered and rejected was ATTRIBUTE-BUT-SUPPRESS —
+ * mark the post as app-created and pay nothing for it — on the grounds that a
+ * post the viewer consented to, under the viewer's own byline, is the viewer's
+ * post, and paying it differently would make the reward depend on which client
+ * composed it. The consequence to hold in mind when reading the list below is
+ * that this path is a real Buzz-spending surface, which is why the rate buckets
+ * and the self-dealing guard exist rather than being belt-and-braces.
  *
  * What fires, and the native line it mirrors:
  *   - `firstDailyPostReward`      — 25 blue Buzz, 25/day cap, double-deduped.

@@ -40,6 +40,7 @@ import {
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
   checkBlockCatalogRateLimit,
+  checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
@@ -424,11 +425,15 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
  */
 const blockPostPayloadShape = {
   /**
-   * Image sources, in POST ORDER. Two kinds, because operator decision 3 admits
-   * BOTH the app's own fresh workflow outputs AND images it previously published
-   * — and `PUBLISH_GENERATION_OUTPUTS` cannot express that at all (its
-   * `workflowId` is a single required string), which is the shape half of why
-   * this is a sibling message rather than a flag on that one.
+   * Image sources, in POST ORDER. TWO kinds by OPERATOR DECISION: the eligible
+   * images are the app's own fresh workflow outputs AND images the app previously
+   * published. The narrower alternative — fresh workflow outputs only — was
+   * rejected, because an app that publishes to its grid first and lets the viewer
+   * post the one they like could not be built on it.
+   *
+   * `PUBLISH_GENERATION_OUTPUTS` cannot express that at all (its `workflowId` is
+   * a single required string), which is the shape half of why this is a sibling
+   * message rather than a flag on that one.
    *
    * 🔴 NO ARM ACCEPTS A URL. A `workflow` source carries INDEXES into the
    * server's own ordered projection and a `published` source carries `Image` ids
@@ -465,30 +470,39 @@ const blockPostPayloadShape = {
   tags: z.string().array().max(20).optional(),
   /** Optional model-version gallery attach. Gated hard in `resolveGalleryTarget`. */
   modelVersionId: z.number().int().positive().optional(),
-  /**
-   * 🔴 THE CONFIRM-INTEGRITY CHECK, AND IT CLOSES A GAP NOTHING ELSE DOES.
-   *
-   * The preview and the write each resolve `sources` INDEPENDENTLY. For a
-   * `published` source that is stable (fixed image ids), but a `workflow` source
-   * with no `imageIndexes` means "every available output" — and a workflow that
-   * is still running can GAIN outputs between the two calls. The viewer would
-   * then be shown N thumbnails, click Publish, and get a post with N+1 images.
-   * Every authorization check still passes, because nothing about it is an
-   * authorization problem: it is the CONFIRM becoming inaccurate, which is the
-   * one thing the confirm exists to prevent.
-   *
-   * So the HOST echoes back the count the SERVER'S OWN preview returned, and the
-   * write refuses on a mismatch. It is safe to trust because it is host chrome,
-   * not the block: the block never holds the block token and cannot reach this
-   * procedure — it can only post a message the host chooses to act on.
-   *
-   * OPTIONAL, because it is an integrity check rather than an authorization one:
-   * a caller that omits it (a test, a future non-dialog path) gets no weaker
-   * authorization, only no protection against this specific divergence. The host
-   * handler always sends it.
-   */
-  confirmedImageCount: z.number().int().positive().max(100).optional(),
 } as const;
+
+/**
+ * 🔴 THE CONFIRM-INTEGRITY CHECK — DEFENCE IN DEPTH, AND REQUIRED.
+ *
+ * The primary invariant is elsewhere and is a refusal at the source: a `workflow`
+ * source must be TERMINAL (`BLOCK_POST_TERMINAL_WORKFLOW_STATUSES`), so a running
+ * workflow can no longer gain an output between the preview and the write. That
+ * closes the known generator of preview/write divergence.
+ *
+ * This stays because it is not the same claim. It pins the WHOLE resolved set
+ * against the number the viewer actually saw, so any FUTURE divergence — a
+ * `published` image that stops resolving, an expiring blob that drops out of a
+ * terminal workflow's projection, a source arm nobody has written yet — surfaces
+ * as a refusal rather than as a post the viewer did not agree to. The terminality
+ * gate removes one known race; this bounds the class.
+ *
+ * 🔴 IT IS DECLARED HERE, OUTSIDE `blockPostPayloadShape`, AND THAT ASYMMETRY IS
+ * THE POINT. The shared shape exists so the preview and the write can never
+ * validate different content. This field is not content: it is the write's echo
+ * of what the preview RETURNED, so the preview cannot be asked for it — it is the
+ * thing that produces it. Keeping it out of the shared shape is what lets it be
+ * REQUIRED on the write without making the preview demand an answer to its own
+ * question.
+ *
+ * REQUIRED, changed from optional: an integrity check a caller may decline is not
+ * an invariant, it is a suggestion. Every caller now states the count it showed.
+ *
+ * It is safe to trust because it is host chrome, not the block: the block never
+ * holds the block token and cannot reach this procedure — it can only post a
+ * message the host chooses to act on.
+ */
+const confirmedImageCountInput = z.number().int().positive().max(100);
 
 /**
  * The FIRST FIVE guards of both post procedures, in one place so the read
@@ -4427,9 +4441,12 @@ export const blocksRouter = router({
    *      shared-storage path: it is the platform's existing answer to "may this
    *      human write something other users see", and a public post is strictly
    *      more consequential than a 64 KB shared-storage row.
-   *   7. ✚ a DEDICATED post rate bucket (3/hour/instance), plus the image count
-   *      charged to the existing publish bucket so this path cannot be used to
-   *      bypass the per-image origin-cost ceiling.
+   *   7. ✚ TWO dedicated post rate buckets — per INSTALL (3/hour/instance) and
+   *      per APP (300/hour/appId, the aggregate an install-keyed bucket cannot
+   *      express) — plus the image count charged to the existing publish bucket so
+   *      this path cannot be used to bypass the per-image origin-cost ceiling.
+   *      All three FAIL OPEN on a Redis error; they are cost ceilings, not
+   *      authorization.
    *   8. per-source ownership: a `workflow` source needs the durable
    *      (user, app, workflow) binding AND the orchestrator's own app tag; a
    *      `published` source needs owner + provenance marker + `postId IS NULL` +
@@ -4448,7 +4465,15 @@ export const blocksRouter = router({
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
   createPostFromApp: publicProcedure
-    .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        ...blockPostPayloadShape,
+        // Write-only, and REQUIRED. See `confirmedImageCountInput` for why it is
+        // not part of the shared payload shape.
+        confirmedImageCount: confirmedImageCountInput,
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       const { claims, userId, subjectUser } = await authorizeBlockPostRequest(input.blockToken);
 
@@ -4461,11 +4486,31 @@ export const blocksRouter = router({
       }
       assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
 
-      // The POST bucket — one token per POST regardless of image count. The
-      // per-image origin cost is charged separately below, once the selection is
-      // known, so a block cannot route around the publish ceiling by posting.
+      // ── THE TWO POST BUCKETS. One token per POST in each, regardless of image
+      // count; the per-image origin cost is charged separately below, once the
+      // selection is known, so a block cannot route around the publish ceiling by
+      // posting.
+      //
+      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The per-INSTANCE bucket bounds
+      // one install. An app has many installs, so on its own it bounds the app at
+      // N × the per-install ceiling and no ceiling anywhere sees the total — the
+      // APP bucket is that total. A popular legitimate app never reaches it (see
+      // `BLOCK_POST_APP_RATE_LIMIT_MAX` for how the number was picked, and for the
+      // plain statement that it is not derived from data).
+      //
+      // ⚠️ BOTH FAIL OPEN on a Redis error, by the convention every blocks
+      // limiter follows. Do not read either as a hard cap or a security control:
+      // what actually bounds abuse on this path is the self-dealing guard, the
+      // per-source ownership proofs and the per-post consent confirm.
       const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
       if (!postRate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const appPostRate = await checkBlockPostAppRateLimit(claims.appId);
+      if (!appPostRate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -4546,11 +4591,19 @@ export const blocksRouter = router({
           getWorkflow: (workflowId) => getWorkflow({ token, path: { workflowId } }),
         });
 
-        // CONFIRM INTEGRITY — see `confirmedImageCount` on the input shape. The
-        // viewer agreed to a specific SET of thumbnails; publishing a different
-        // number of images than were shown would make the consent screen wrong
-        // even though every authorization check passed.
-        if (input.confirmedImageCount != null && input.confirmedImageCount !== resolved.length) {
+        // CONFIRM INTEGRITY — DEFENCE IN DEPTH; see `confirmedImageCountInput`.
+        // The viewer agreed to a specific SET of thumbnails; publishing a
+        // different number of images than were shown would make the consent
+        // screen wrong even though every authorization check passed.
+        //
+        // The known generator of that divergence — a still-running workflow
+        // gaining an output between preview and write — is refused upstream by
+        // the terminality gate in `resolveOwnedWorkflowOutputs`, so on today's
+        // code this branch should be unreachable. It is kept, and the field made
+        // REQUIRED, because it pins the whole resolved set rather than one race:
+        // a future source arm, or a blob that expires out of a terminal
+        // workflow's projection, would diverge without tripping any gate above.
+        if (input.confirmedImageCount !== resolved.length) {
           throw new TRPCError({
             code: 'CONFLICT',
             message: 'the images changed since you confirmed — please try again',
@@ -4580,10 +4633,15 @@ export const blocksRouter = router({
         // `scannedAt`, `nsfwLevel` or `needsReview` before setting `publishedAt`,
         // and visibility is enforced DOWNSTREAM instead (`getPostDetail` requires
         // `nsfwLevel != 0` for non-owners, and the search index only picks an image
-        // up after the scan webhook). The design note calling for `Scanned` on
-        // every image is therefore unimplementable for this source and is honoured
-        // where it IS implementable: an ALREADY-PUBLISHED image must pass the full
-        // `classifyGatedImageForViewer` gate before it can be adopted.
+        // up after the scan webhook). The stated intent when this path was
+        // designed was that every image in an app-created post be terminally
+        // `Scanned` before publish; for a FRESH output that is unimplementable —
+        // the row is created in this very call — so it is honoured where it IS
+        // implementable: an ALREADY-PUBLISHED image must pass the full
+        // `classifyGatedImageForViewer` gate before it can be adopted. The
+        // asymmetry is deliberate and it is the accepted position, not an
+        // oversight: matching native behaviour for fresh outputs was preferred
+        // over blocking the post until a scan completed.
         const { persistBlockWorkflowOutputImage } = await import(
           '~/server/services/blocks/block-image-upload.service'
         );
