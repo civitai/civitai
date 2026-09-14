@@ -178,7 +178,7 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-34 live in `src/server/services/__tests__/no-*.test.ts`:
+35 live in `src/server/services/__tests__/no-*.test.ts`:
 `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
 `no-divergent-can-generate-derivation`, `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
@@ -189,6 +189,9 @@ the trigger silently stops opening),
 `no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unbumped-draft-status-write`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
 owner checked — see `assertWorkflowOwner`),
+`no-unguarded-block-rest-token` (every block REST page route must be wrapped by
+`withBlockScope`, which is the only place the REST surface takes the approved-status
+decision — an open-coded `verifyBlockToken` in a route is the same shape the bridge had),
 `no-unguarded-block-bridge-token` (every tRPC bridge proc must resolve its claims through
 `authorizeBlockBridgeToken`, never a bare `verifyBlockToken`), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
 `no-unmoderated-blob-retraction` (the ledger of flows allowed to ask the image-cache service to
@@ -205,7 +208,7 @@ fail only in a full-suite run. Five were missing when this was last audited, on 
 wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
-`test:lint-rules` names 39 files today.
+`test:lint-rules` names 40 files today.
 
 Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
 above literally — edit the numbers, not the shapes.

@@ -302,4 +302,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
 // still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, { endpoint: 'images', allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, {
+  endpoint: 'images',
+  allowOpaqueOrigin: true,
+  // Public, maturity-clamped image catalog — the same argument as blocks/models.ts. No
+  // requiredScope, nothing viewer-scoped, nothing written; the maturity ceiling comes from
+  // the token's own signed claim, not from the approval row, so a failed approval read
+  // cannot widen what this returns.
+  onApprovalLookupFailure: 'serve',
+});
