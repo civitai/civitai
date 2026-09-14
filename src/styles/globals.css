@@ -201,9 +201,17 @@
 
      · THIS comment block, both `MIGRATION ENTRY` comments, and both rules — i.e.
        everything from the `FULL-BLEED CSS LEDGER` header above down to the closing
-       brace of the `data-block-id='sensei'` rule. (It is ~230 lines, and the
-       sensei ENTRY comment alone is ~78 of them; do not stop at the first comment
-       terminator you reach.)
+       brace of the `data-block-id='sensei'` rule. Those two named boundaries ARE
+       the instruction. DO NOT STOP AT THE FIRST COMMENT TERMINATOR OR THE FIRST
+       CLOSING BRACE YOU REACH: most of the span is comment, the `playable-collections`
+       rule closes partway through, and its `}` looks exactly like the end.
+       🔴 NO LINE COUNT IS GIVEN, DELIBERATELY. One used to be ("~230 lines"), it was
+       wrong, and it was wrong in the direction that does damage — counted from the
+       header it landed inside the span, between the `playable-collections` rule and
+       the `sensei` one, i.e. it stopped a reader at precisely the intermediate
+       terminator the sentence beside it warned them not to stop at. A count over a
+       region that is edited this often rots on the next edit and nothing fails when
+       it does; the named boundaries cannot rot without the names moving.
      · `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts`, three
        cases: 'the full-bleed opt-out ledger — membership is explicit…', 'stamps
        BOTH ledger attributes on the host root…', and 'globals.css documents the
