@@ -147,19 +147,30 @@ describe('formatFeedbackFilterValue', () => {
   });
 
   /**
-   * 🔴 THE BYTE-IDENTICAL PIN. Every `(area, key, value)` triple the panel can actually be handed
-   * today, with its EXACT rendered output hand-typed. This table is what makes the removal of the
-   * former two-level `(area, key)` formatter registry a refactor rather than a behaviour change: if
-   * any reachable input renders differently from the registry's output, one of these rows moves.
+   * 🔴 THE BYTE-IDENTICAL PIN, over the triples LISTED BELOW — with their EXACT rendered output
+   * hand-typed. This table is what makes the removal of the former two-level `(area, key)` formatter
+   * registry a refactor rather than a behaviour change: if any input in it renders differently from
+   * the registry's output, one of these rows moves.
    *
-   * The reachable population, measured in this round rather than assumed:
-   *   - `area` ∈ `FEEDBACK_AREAS` — `bitdex-image-feed`, `apps-marketplace`, `site-bug-report`. It is
-   *     a stored TEXT column, so an unknown slug is included too.
-   *   - `key`s that live producers write: `kind`, `category`, `sort`, `query`
-   *     (`src/components/Apps/appsStoreFeedbackContext.ts`). `FeedbackDrawer.tsx` writes `path` only,
-   *     which is not a `filters` entry at all.
-   *   - `browsingLevel`, which no live producer writes: it exists only on the 23 historical
+   * ⚠️ IT IS NOT AN ENUMERATION OF EVERYTHING THE PANEL CAN BE HANDED, and an earlier version of
+   * this comment said it was. `context.filters` is a schemaless JSONB blob and `area` is a stored
+   * TEXT column, so the true population is open by construction — it includes whatever historical
+   * producers wrote, not only what live ones write. The round-1 audit read production and found two
+   * shapes this table had missed on the `bitdex-image-feed` rows: a `period` key (a string,
+   * `'AllTime'`), present on all 23 of them, and `sort` values shaped `'Most Collected'` rather than
+   * the `'newest'` used below. Both render generically either way — that is why nothing behaved
+   * wrongly — and both are now rows here. The lesson the sentence had to lose is the general one:
+   * this is a fixed list of cases, and a claim of completeness over an open set cannot be kept true.
+   *
+   * What the list does cover, and why each part is in it:
+   *   - `area` ∈ `FEEDBACK_AREAS` — `bitdex-image-feed`, `apps-marketplace`, `site-bug-report` —
+   *     plus an unknown slug, since the column is free text.
+   *   - the keys live producers write: `kind`, `category`, `sort`, `query`
+   *     (`src/components/Apps/appsStoreFeedbackContext.ts`). `FeedbackDrawer.tsx` writes `path`
+   *     only, which is not a `filters` entry at all.
+   *   - `browsingLevel`, which no live producer writes: it exists only on those 23 historical
    *     `bitdex-image-feed` rows, because BitDex was decommissioned 2026-09-01.
+   *   - the two historical shapes named above.
    */
   const reachable: Array<[string, string, string | number | boolean, string, string | null]> = [
     // area                key              value      text            title
@@ -185,6 +196,11 @@ describe('formatFeedbackFilterValue', () => {
     ['bitdex-image-feed', 'category', 'none', '(none)', null],
     ['bitdex-image-feed', 'query', '', '—', null],
     ['bitdex-image-feed', 'sort', 'newest', 'newest', null],
+    // The two shapes the round-1 audit read off the live rows: a `period` key this table had never
+    // held, and BitDex's own `sort` vocabulary, which is nothing like the marketplace's. Both sit on
+    // the ONE area that decodes, which is the only place a key-scoping slip could reach them.
+    ['bitdex-image-feed', 'period', 'AllTime', 'AllTime', null],
+    ['bitdex-image-feed', 'sort', 'Most Collected', 'Most Collected', null],
     // A non-string value on an undecoded key still stringifies.
     ['site-bug-report', 'nsfw', true, 'true', null],
     ['site-bug-report', 'page', 4, '4', null],

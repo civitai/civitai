@@ -3,7 +3,9 @@ import {
   DEFAULT_FEEDBACK_TAB,
   FEEDBACK_FORM_TAB,
   FEEDBACK_TABS,
+  FEEDBACK_OPEN_PARAM,
   FEEDBACK_TAB_PARAM,
+  feedbackOpenHref,
   feedbackTabFromUrl,
   feedbackTabHref,
   feedbackTabLabel,
@@ -139,5 +141,69 @@ describe('feedbackTabHref', () => {
     for (const tab of FEEDBACK_TABS) {
       expect(feedbackTabHref(at('?open=12'), tab.id).startsWith('/feedback')).toBe(true);
     }
+  });
+});
+
+describe('feedbackOpenHref', () => {
+  /**
+   * 🔴 THE REGRESSION THIS FUNCTION EXISTS FOR. `?tab=` is a property of the panel the operator is
+   * READING, but it rides the same query string as the queue's filters, so it outlived the row it
+   * was chosen for: triage row 7 on the Triage tab, click Open on row 9, and row 9's panel came up
+   * showing four status buttons and none of its report text. A moderator in a rhythm can dismiss a
+   * report they never read. Opening a row starts at the default tab.
+   */
+  it('drops the tab when opening a different row', () => {
+    const url = new URL(
+      feedbackOpenHref(at('?status=new&tab=triage&open=7'), 9),
+      'https://mod.example.test'
+    );
+    expect(url.searchParams.get(FEEDBACK_TAB_PARAM)).toBeNull();
+    expect(url.searchParams.get(FEEDBACK_OPEN_PARAM)).toBe('9');
+    // Landing on the default is the POINT, not merely a side effect of deleting the param.
+    expect(feedbackTabFromUrl(url)).toBe(DEFAULT_FEEDBACK_TAB);
+  });
+
+  /**
+   * The filters and the keyset page describe the QUEUE, which is the same queue before and after.
+   * Only `?tab=` is scoped to one row, so only `?tab=` goes.
+   */
+  it('keeps every other param', () => {
+    const url = new URL(
+      feedbackOpenHref(at('?status=new&area=site-bug-report&cursor=99&tab=issue'), 4),
+      'https://mod.example.test'
+    );
+    expect(url.pathname).toBe('/feedback');
+    expect(url.searchParams.get('status')).toBe('new');
+    expect(url.searchParams.get('area')).toBe('site-bug-report');
+    expect(url.searchParams.get('cursor')).toBe('99');
+  });
+
+  it('closes the row, and the tab with it, on null', () => {
+    expect(feedbackOpenHref(at('?tab=triage&open=7'), null)).toBe('/feedback');
+    expect(feedbackOpenHref(at('?status=new&tab=triage&open=7'), null)).toBe(
+      '/feedback?status=new'
+    );
+  });
+
+  it('is a no-op on the tab when the URL carries none', () => {
+    expect(feedbackOpenHref(at('?status=new'), 9)).toBe('/feedback?status=new&open=9');
+  });
+
+  /**
+   * 🔴 THE TWO HREFS BOUND EACH OTHER, AND THE PAIR IS THE GUARD. `feedbackTabHref` must PRESERVE
+   * `open` (moving tabs may not close the row the operator is reading — pinned above); this one must
+   * DROP `tab`. Making either match the other reintroduces the bug the other prevents, so both
+   * directions are asserted here, against one URL, in one place.
+   */
+  it('is the exact opposite of feedbackTabHref on these two params', () => {
+    const start = at('?open=12&tab=context');
+
+    const afterTabClick = new URL(feedbackTabHref(start, 'triage'), 'https://mod.example.test');
+    expect(afterTabClick.searchParams.get(FEEDBACK_OPEN_PARAM)).toBe('12');
+    expect(afterTabClick.searchParams.get(FEEDBACK_TAB_PARAM)).toBe('triage');
+
+    const afterOpenClick = new URL(feedbackOpenHref(start, 13), 'https://mod.example.test');
+    expect(afterOpenClick.searchParams.get(FEEDBACK_OPEN_PARAM)).toBe('13');
+    expect(afterOpenClick.searchParams.get(FEEDBACK_TAB_PARAM)).toBeNull();
   });
 });

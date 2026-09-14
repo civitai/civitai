@@ -14,6 +14,7 @@
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { issuesUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
+  import { feedbackOpenHref } from '$lib/feedback-tabs';
   import {
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
@@ -26,7 +27,13 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  const rowHref = (id: number) => urlWith(page.url, { open: data.open === id ? null : id });
+  /**
+   * 🔴 `feedbackOpenHref`, NOT a bare `urlWith({ open })` — it also DELETES `?tab=`, and that
+   * deletion is the whole reason the helper exists (its docstring carries the repro). Opening a row
+   * is the one navigation that changes WHICH report is on screen, so it is the one that must not
+   * inherit the tab chosen for the previous one.
+   */
+  const rowHref = (id: number) => feedbackOpenHref(page.url, data.open === id ? null : id);
 
   /**
    * 🔴 THE NO-JS SURFACE, and only that. Deleting it as dead code is the mistake to avoid.

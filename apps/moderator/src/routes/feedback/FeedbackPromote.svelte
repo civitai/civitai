@@ -9,6 +9,8 @@
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { issuesUrl } from '$lib/entity-url';
   import { clearPaging } from '$lib/paging';
+  import { feedbackOpenHref } from '$lib/feedback-tabs';
+  import type { FeedbackPromoteDraft } from '$lib/feedback-drafts';
   import type { FeedbackRow, FeedbackSibling } from '$lib/server/feedback.service';
 
   let {
@@ -17,6 +19,7 @@
     civitaiUrl,
     canPromote,
     form: promoteForm,
+    draft,
   }: {
     row: FeedbackRow;
     siblings: FeedbackSibling[];
@@ -31,20 +34,37 @@
      * form posting neither.
      */
     form: FormState;
+    /**
+     * 🔴 ALSO CONSTRUCTED BY `FeedbackDetail`, FOR THE SAME REASON AS `form` — and it must stay
+     * there. A tab click is a NAVIGATION, and this whole section sits inside the panel's
+     * `{:else if activeTab === 'issue'}` branch, so the branch is DESTROYED and rebuilt whenever the
+     * operator looks at another tab. State declared in this file dies with it: a half-written issue
+     * title was gone the moment anyone flipped to Context and back, with no warning and nothing to
+     * undo. `FeedbackDetail` survives that navigation (the row's `{#if open}` never goes false), so
+     * the draft lives there and is handed down.
+     *
+     * It is MUTATED IN PLACE, never reassigned: it is a `$state` proxy, so writing `draft.title`
+     * here is what the parent sees. Replacing the object with a fresh one would write a prop the
+     * parent does not read back, which is the same defect wearing a different shape.
+     */
+    draft: FeedbackPromoteDraft;
   } = $props();
 
   /**
    * A sibling can sit on an earlier keyset page, where carrying this page's `?cursor=` lands the
    * operator on "not in this view" for a row that plainly exists.
+   *
+   * 🔴 IT GOES THROUGH `feedbackOpenHref`, which deletes `?tab=`. These links only exist ON the
+   * Issue tab, so writing `open` by hand here is the sticky-tab bug at its sharpest: every sibling
+   * link would open the next report onto ITS Issue tab — the one panel that shows the issue this
+   * report is already attached to and none of what the reporter wrote. The operator clicked a
+   * sibling to read what THAT person said.
    */
   function siblingHref(id: number) {
     const next = new URL(page.url);
     clearPaging(next.searchParams);
-    next.searchParams.set('open', String(id));
-    return next.pathname + next.search;
+    return feedbackOpenHref(next, id);
   }
-
-  let attachMode = $state(false);
 </script>
 
 <section class="flex flex-col gap-3">
@@ -82,42 +102,51 @@
       <!-- 🔴 The mode is POSTED, never inferred server-side from whether the number box is blank:
            inferring it sends an empty box down the create-an-issue branch, which then refuses with
            a message naming fields this form is not showing. -->
-      <input type="hidden" name="mode" value={attachMode ? 'attach' : 'create'} />
+      <input type="hidden" name="mode" value={draft.attachMode ? 'attach' : 'create'} />
 
-      {#if attachMode}
+      <!-- 🔴 EVERY BOX IS `bind:value`-d TO THE PARENT-OWNED DRAFT, not left uncontrolled. An
+           uncontrolled input keeps what was typed in the DOM node, and the DOM node dies with this
+           branch on the next tab click. -->
+      {#if draft.attachMode}
         <div class="flex flex-col gap-1">
           <Label for={`bug-${row.id}`} class="text-xs text-dark-2">Existing issue number</Label>
-          <Input id={`bug-${row.id}`} name="bugId" inputmode="numeric" class="w-40" />
+          <Input
+            id={`bug-${row.id}`}
+            name="bugId"
+            inputmode="numeric"
+            class="w-40"
+            bind:value={draft.bugId}
+          />
         </div>
       {:else}
         <div class="flex flex-col gap-1">
           <Label for={`title-${row.id}`} class="text-xs text-dark-2">
             Issue title — a summary, not the complaint
           </Label>
-          <Input id={`title-${row.id}`} name="title" />
+          <Input id={`title-${row.id}`} name="title" bind:value={draft.title} />
         </div>
         <div class="flex flex-col gap-1">
           <Label for={`summary-${row.id}`} class="text-xs text-dark-2">
             Summary — what the issue board shows
           </Label>
-          <Textarea id={`summary-${row.id}`} name="summary" rows={2} />
+          <Textarea id={`summary-${row.id}`} name="summary" rows={2} bind:value={draft.summary} />
         </div>
       {/if}
 
       <div class="flex flex-wrap items-center gap-2">
         <Button type="submit" size="sm" disabled={promoteForm.submitting}>
-          {attachMode ? 'Attach to issue' : 'Create issue'}
+          {draft.attachMode ? 'Attach to issue' : 'Create issue'}
         </Button>
         <Button
           type="button"
           size="sm"
           variant="outline"
           onclick={() => {
-            attachMode = !attachMode;
+            draft.attachMode = !draft.attachMode;
             promoteForm.error = null;
           }}
         >
-          {attachMode ? 'Create a new issue instead' : 'Attach to an existing issue instead'}
+          {draft.attachMode ? 'Create a new issue instead' : 'Attach to an existing issue instead'}
         </Button>
       </div>
       <p class="text-xs text-dark-2">

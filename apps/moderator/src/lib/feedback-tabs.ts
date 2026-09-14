@@ -74,3 +74,27 @@ export function feedbackTabFromUrl(url: URL): FeedbackTab {
 export function feedbackTabHref(url: URL, tab: FeedbackTab): string {
   return urlWith(url, { [FEEDBACK_TAB_PARAM]: tab === DEFAULT_FEEDBACK_TAB ? null : tab });
 }
+
+/** The param that names the open row. Spelled once here because two hrefs now write it. */
+export const FEEDBACK_OPEN_PARAM = 'open';
+
+/**
+ * The `href` that OPENS a report's panel (or closes it, with `id === null`).
+ *
+ * 🔴 IT DELETES `?tab=`, AND THAT IS THE POINT OF THIS FUNCTION EXISTING AT ALL. The tab is a
+ * property of the panel the operator is READING, not of the queue — but it is stored in the same
+ * query string as the queue's filters, so it outlived the row it was chosen for. Triaging row A on
+ * the Triage tab and then opening row B produced `?tab=triage&open=B`: row B's panel rendered four
+ * status buttons and none of its report text, so the next click could dismiss a report nobody had
+ * read. A new row starts at `DEFAULT_FEEDBACK_TAB`, the tab that carries the complaint.
+ *
+ * Everything else on the URL survives — the filters and `?cursor=` still describe the QUEUE, which
+ * is the same queue before and after. Only `?tab=` is scoped to one row.
+ *
+ * `feedbackTabHref` is the opposite direction and deliberately preserves `open`: moving tabs must
+ * not close the row. The two functions bound each other; changing either to match the other
+ * reintroduces the bug the other one prevents.
+ */
+export function feedbackOpenHref(url: URL, id: number | null): string {
+  return urlWith(url, { [FEEDBACK_OPEN_PARAM]: id, [FEEDBACK_TAB_PARAM]: null });
+}
