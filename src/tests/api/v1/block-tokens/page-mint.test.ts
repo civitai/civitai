@@ -769,6 +769,76 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(res._body.missingScopes).toEqual([]);
     });
   });
+
+  // ── posts:write:self — the SURVIVES-INTO-A-MINTED-TOKEN proof. ────────────
+  //
+  // 🔴 THIS IS THE ONE PROPERTY THAT FAILS SILENTLY AND LOOKS CORRECT WHILE IT
+  // DOES. A scope that is neither consent-EXEMPT nor consent-PROMPTED is STRIPPED
+  // at mint with no signal: the runtime looks right, the manifest looks right,
+  // the schema looks right, and every op 403s on a scope the app "has". A
+  // constants-level test cannot see it — the strip happens in the mint handler —
+  // so this is driven through the REAL handler, exactly as the #3090 pair above.
+  //
+  // ⚠️ The OAuth bit matters HERE and nowhere else in this describe: unlike the
+  // collections scopes (SKIP_OAUTH_CHECK), `posts:write:self` maps to a REAL bit
+  // (`TokenScope.MediaWrite`), so the fixture must grant it or the mint refuses
+  // for an unrelated reason and the consent claim goes untested.
+  describe('posts:write:self — consent-PROMPTED, and it reaches the token', () => {
+    // TokenScope.MediaWrite = 1 << 6; TokenScope.ModelsRead = 1 << 2. BOTH must be
+    // in the fixture's ceiling: the mint validates the WHOLE manifest scope set
+    // against it, so granting only MediaWrite 403s the request on `models:read:self`
+    // and the consent claim below would go untested behind an unrelated refusal.
+    const MEDIA_WRITE_BIT = 1 << 6;
+    const MODELS_READ_BIT = 1 << 2;
+    const PAGE_POST_BLOCK = () =>
+      PAGE_BLOCK(
+        ['models:read:self', 'posts:write:self'],
+        ['models:read:self', 'posts:write:self'],
+        MEDIA_WRITE_BIT | MODELS_READ_BIT
+      );
+
+    it('NO grant: the token OMITS it and the host is told it needs consent', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_POST_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.scopes).not.toContain('posts:write:self');
+      // 🔴 WITHHELD **WITH A SIGNAL**, not silently. `needsConsent` is what drives
+      // the host's re-consent flow; without it the app is simply broken with no
+      // way for anyone to find out why.
+      expect(res._body.needsConsent).toBe(true);
+      expect(res._body.missingScopes).toContain('posts:write:self');
+      // The consent-exempt scope beside it still mints — proving the withhold is
+      // per-scope and did not just break the whole mint.
+      expect(signArg.scopes).toContain('models:read:self');
+    });
+
+    it('WITH grant: the token CARRIES it end-to-end', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['posts:write:self'],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_POST_BLOCK());
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.scopes).toEqual(
+        expect.arrayContaining(['models:read:self', 'posts:write:self'])
+      );
+      expect(res._body.needsConsent).toBe(false);
+      expect(res._body.missingScopes).toEqual([]);
+    });
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

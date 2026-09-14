@@ -30,7 +30,8 @@ export type BlockActionCode =
   | 'settings.update'
   | 'storage.set'
   | 'storage.delete'
-  | 'storage.increment';
+  | 'storage.increment'
+  | 'post.create';
 
 export type BlockActionDetail = {
   /** Stable action code (see BlockActionCode). Free-form on the wire for fwd-compat. */
@@ -98,6 +99,18 @@ export type BlockActionDetail = {
    * row rather than appearing only once some entry opts in.
    */
   variant?: string;
+  /**
+   * Number of images in a `post.create`. Bounded by construction
+   * (`BLOCK_POST_MAX_IMAGES`), server-counted, never a client claim.
+   */
+  imageCount?: number;
+  /**
+   * Gallery target of a `post.create`, when the post was attached to a model
+   * version. Present ONLY on an attached post — its ABSENCE is the signal that
+   * no model owner was paid, which is exactly the dimension an abuse sweep over
+   * this table needs. (The post itself is on `entityType`/`entityId`.)
+   */
+  modelVersionId?: number;
 };
 
 /**
@@ -211,6 +224,21 @@ export function describeBlockAction(
       return detail.key ? `Deleted app storage "${detail.key}"` : 'Deleted app storage';
     case 'storage.increment':
       return detail.key ? `Bumped shared counter "${detail.key}"` : 'Bumped a shared counter';
+    case 'post.create': {
+      // Named rather than generic: without a case here the Activity feed renders
+      // "Performed an app action" for the single most consequential thing a block
+      // can do to a viewer's account, which is the opposite of what an audit row
+      // is for.
+      const n = typeof detail.imageCount === 'number' ? detail.imageCount : null;
+      const what = n == null ? 'a post' : `a post with ${n} image${n === 1 ? '' : 's'}`;
+      const failed = detail.outcome === 'failed' ? ' — failed' : '';
+      // `describeSubject` reads `entityType`/`entityId`, which for this action is
+      // the POST. The gallery target is a separate field and is named separately
+      // so the sentence cannot confuse "posted to your profile" with "attached to
+      // a model gallery" — they have different consequences.
+      const gallery = detail.modelVersionId != null ? ', attached to a model gallery' : '';
+      return `Published ${what} to your profile${gallery}${failed}`;
+    }
     default:
       // Unknown / forward-compat action code — safe generic line.
       return 'Performed an app action';

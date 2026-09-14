@@ -75,6 +75,8 @@ describe('endpoint label map ⇄ server writers drift guard', () => {
 
   it('pins the exact current set, so ADDING a writer is a deliberate act', () => {
     expect(boundedEndpointLiterals()).toEqual([
+      // `blocks.createPostFromApp` — added with the App-Blocks → Post bridge.
+      'post:create',
       'storage:delete',
       'storage:set',
       'user-settings:write',

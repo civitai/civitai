@@ -51,6 +51,33 @@ export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 export const BLOCK_PUBLISH_RATE_LIMIT_MAX = 60;
 export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 
+// POST bucket (blocks.createPostFromApp). A DEDICATED bucket, not a share of the
+// publish one, because the two limit different things and the wrong unit gives
+// the wrong answer in both directions:
+//
+//   - PUBLISH is weighted by IMAGES and bounds ORIGIN COST (fetch + S3 upload +
+//     scan per image). 60 images / 5 min is generous there.
+//   - POST is weighted by POSTS and bounds PUBLIC-FEED IMPACT + REWARD EXPOSURE.
+//     A single post is cheap to serve and expensive to un-do: it carries the
+//     viewer's byline into the feed, and (with `modelVersionId`) pays a model
+//     owner. Charging posts against the image bucket would let one 3-image post
+//     and one 60-image publish trade against each other, which is incoherent.
+//
+// 3 posts / hour / block instance. A real app posts a finished result once; three
+// gives room for a mistake and a retry without opening a spam faucet. The window
+// is long ON PURPOSE — unlike the catalog bucket (where a short window means a
+// tripped instance recovers in seconds, which is what you want for a read), a
+// short window here would let a block post continuously at the ceiling.
+//
+// ⚠️ STATED LIMITS, so nobody reads this as more than it is: the bucket is keyed
+// on `blockInstanceId` (the same choice, for the same `jti`-churn reason, as the
+// other two), it is a FIXED window so a 2× burst across a boundary is reachable
+// by construction, and it FAILS OPEN on a Redis error. It is a cost ceiling, not
+// a security control. The controls that actually bound abuse are the self-dealing
+// guard, the per-source ownership proofs, and the per-post consent confirm.
+export const BLOCK_POST_RATE_LIMIT_MAX = 3;
+export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
 export type BlockCatalogRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
@@ -134,6 +161,46 @@ export async function checkBlockPublishRateLimit(
     return { allowed: false, retryAfterSeconds: retryAfter };
   } catch {
     // Fail open — never block a legitimate publish on a redis incident.
+    return { allowed: true };
+  }
+}
+
+/**
+ * Records ONE post against `blockInstanceId`'s post window and reports whether it
+ * is within the per-instance ceiling. Distinct `:post:` sub-namespace so it can
+ * NEVER contend with the catalog-read, publish or mint buckets.
+ *
+ * Weight is always 1 — a post is the unit, regardless of how many images it
+ * carries. The per-image origin cost of adopting/persisting those images is
+ * charged SEPARATELY against the publish bucket by the caller, so a block cannot
+ * use the post path to bypass the image ceiling.
+ *
+ * Same fail-open posture as the sibling limiters: a Redis incident must not break
+ * a legitimate post. See the ceiling constants above for what this bucket is and
+ * is not.
+ */
+export async function checkBlockPostRateLimit(
+  blockInstanceId: string
+): Promise<BlockCatalogRateLimitResult> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:post:${blockInstanceId}` as const;
+  try {
+    const count = await redis.incrBy(key as never, 1);
+    if (count === 1) {
+      await redis.expire(key as never, BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS);
+    } else {
+      const ttl = await redis.ttl(key as never);
+      if (ttl < 0) await redis.expire(key as never, BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS);
+    }
+
+    if (count <= BLOCK_POST_RATE_LIMIT_MAX) return { allowed: true };
+
+    let retryAfter = await redis.ttl(key as never);
+    if (!Number.isFinite(retryAfter) || retryAfter < 1) {
+      retryAfter = BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS;
+    }
+    return { allowed: false, retryAfterSeconds: retryAfter };
+  } catch {
+    // Fail open — never block a legitimate post on a redis incident.
     return { allowed: true };
   }
 }

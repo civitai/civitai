@@ -16,6 +16,12 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
+import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
+import {
+  BLOCK_POST_DETAIL_MAX,
+  BLOCK_POST_MAX_SOURCES,
+  BLOCK_POST_TITLE_MAX,
+} from '~/server/services/blocks/block-post.logic';
 import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
@@ -34,6 +40,7 @@ import {
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
   checkBlockCatalogRateLimit,
+  checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import {
@@ -92,7 +99,11 @@ import {
   allowMatureContentForCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksAuthorEnabled,
+  isAppBlocksEnabled,
+  isAppBlocksPostCreationEnabled,
+} from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
@@ -395,6 +406,212 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
   if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+  }
+}
+
+/**
+ * The shared payload half of `previewPostFromApp` / `createPostFromApp`.
+ *
+ * `blockToken` is DELIBERATELY NOT in here and is spelled INLINE at both `.input(`
+ * sites. Two reasons, and the second is the load-bearing one: (a) it keeps the
+ * token field visible where a reader of the procedure looks for it; (b)
+ * `no-unguarded-block-bridge-token.test.ts` derives the bridge POPULATION from
+ * the literal field `blockToken` inside each proc's `.input(...)`, and a proc
+ * that hides its token inside a spread constant is a proc that can silently drop
+ * out of that population. The payload itself is single-sourced here so the
+ * preview and the write can never validate different shapes — which would let a
+ * block preview one post and publish another.
+ */
+const blockPostPayloadShape = {
+  /**
+   * Image sources, in POST ORDER. Two kinds, because operator decision 3 admits
+   * BOTH the app's own fresh workflow outputs AND images it previously published
+   * — and `PUBLISH_GENERATION_OUTPUTS` cannot express that at all (its
+   * `workflowId` is a single required string), which is the shape half of why
+   * this is a sibling message rather than a flag on that one.
+   *
+   * 🔴 NO ARM ACCEPTS A URL. A `workflow` source carries INDEXES into the
+   * server's own ordered projection and a `published` source carries `Image` ids
+   * the server re-verifies — so a sandboxed iframe can never name the bytes that
+   * get published, only choose among bytes the server already attributed to it.
+   */
+  sources: z
+    .array(
+      z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('workflow'),
+          workflowId: z.string().min(1).max(64),
+          imageIndexes: z.number().int().nonnegative().array().max(50).optional(),
+        }),
+        z.object({
+          kind: z.literal('published'),
+          imageIds: z.number().int().positive().array().min(1).max(50),
+        }),
+      ])
+    )
+    .min(1)
+    .max(BLOCK_POST_MAX_SOURCES),
+  /**
+   * Bounds are re-asserted SERVER-SIDE in `validateBlockPostText` (which also
+   * refuses links). They are duplicated here so an over-long payload is refused
+   * before any DB or orchestrator work, not because the zod bound is the control.
+   */
+  title: z.string().max(BLOCK_POST_TITLE_MAX).optional(),
+  detail: z.string().max(BLOCK_POST_DETAIL_MAX).optional(),
+  /**
+   * Requested tag NAMES. Resolved against EXISTING `Tag` rows only — unmatched
+   * names are dropped, never created. See `resolveExistingPostTags`.
+   */
+  tags: z.string().array().max(20).optional(),
+  /** Optional model-version gallery attach. Gated hard in `resolveGalleryTarget`. */
+  modelVersionId: z.number().int().positive().optional(),
+  /**
+   * 🔴 THE CONFIRM-INTEGRITY CHECK, AND IT CLOSES A GAP NOTHING ELSE DOES.
+   *
+   * The preview and the write each resolve `sources` INDEPENDENTLY. For a
+   * `published` source that is stable (fixed image ids), but a `workflow` source
+   * with no `imageIndexes` means "every available output" — and a workflow that
+   * is still running can GAIN outputs between the two calls. The viewer would
+   * then be shown N thumbnails, click Publish, and get a post with N+1 images.
+   * Every authorization check still passes, because nothing about it is an
+   * authorization problem: it is the CONFIRM becoming inaccurate, which is the
+   * one thing the confirm exists to prevent.
+   *
+   * So the HOST echoes back the count the SERVER'S OWN preview returned, and the
+   * write refuses on a mismatch. It is safe to trust because it is host chrome,
+   * not the block: the block never holds the block token and cannot reach this
+   * procedure — it can only post a message the host chooses to act on.
+   *
+   * OPTIONAL, because it is an integrity check rather than an authorization one:
+   * a caller that omits it (a test, a future non-dialog path) gets no weaker
+   * authorization, only no protection against this specific divergence. The host
+   * handler always sends it.
+   */
+  confirmedImageCount: z.number().int().positive().max(100).optional(),
+} as const;
+
+/**
+ * The FIRST FIVE guards of both post procedures, in one place so the read
+ * (preview) and the write (create) can never drift on them — a preview that
+ * passed a gate the write did not, or vice versa, would either leak a resolvable
+ * preview to an app that may not post or render a dialog that always fails.
+ *
+ * 🔴 THE GUARD CALL LIVES HERE, AND THAT IS WHY THIS IS A MODULE-SCOPE HELPER
+ * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
+ * reachability TEXTUALLY, inside `blocks.router.ts` only: a proc that delegates
+ * to an imported helper which calls `authorizeBlockBridgeToken` reads as
+ * UNGUARDED and fails. `authorizeBlockBuzzRead` is the existing precedent for
+ * exactly this shape, and like it, this helper is itself ledgered as a call site.
+ *
+ * Order, and why:
+ *   1. `authorizeBlockBridgeToken` — validity, then instance revocation, then the
+ *      backing app still `approved`. Nothing below can be trusted before it, and
+ *      it is the ONLY place the bridge resolves claims.
+ *   2. scope — cheap, and refusing an unscoped app before hydrating a session
+ *      keeps the unauthorized path off the auth hub.
+ *   3. non-anon subject.
+ *   4. the App-Blocks RUNTIME flag, evaluated on the token SUBJECT.
+ *   5. the DEDICATED post-creation flag, also on the subject. Separate from (4)
+ *      on purpose: a GA widening of the runtime flag must not arm public post
+ *      creation on the same day, and this is the per-capability kill switch.
+ */
+type BlockPostRequestAuth = {
+  claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
+  userId: number;
+  subjectUser: SessionUser | null;
+};
+
+/**
+ * ⚠️ THE RETURN TYPE IS A NAMED ALIAS ON PURPOSE, AND IT IS NOT STYLE.
+ * `no-unguarded-block-bridge-token.test.ts` splits this router into chunks
+ * textually and ends a chunk at the first line starting in COLUMN ZERO with a
+ * letter or `}`. An inline multi-line return type closes with `}> {` in column
+ * zero — which cuts this helper's chunk off at its own signature, so the guard
+ * call below falls outside it and BOTH post procedures score as UNGUARDED.
+ * Measured: that is exactly what happened on the first attempt. Keep the
+ * signature one line.
+ *
+ * ⚠️ AND DO NOT WRITE THE GUARD'S NAME FOLLOWED BY AN OPEN PAREN IN PROSE
+ * ANYWHERE IN THIS FILE. That test's call-site scan does NOT strip comments: it
+ * greps every line for `<guardName>(` and attributes the hit to the nearest
+ * preceding declaration. A comment that spells the call therefore invents a
+ * phantom call site on whatever function happens to sit above it — measured, and
+ * it named `assertAppBlocksEnabledForTokenUser` as a guard caller.
+ */
+async function authorizeBlockPostRequest(blockToken: string): Promise<BlockPostRequestAuth> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  // NOT `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
+  // generation has NOT thereby been authorised to publish under their name — the
+  // equivalence the publish path draws is defensible for a bare Image row and is
+  // not defensible for a public Post.
+  if (!claims.scopes.includes('posts:write:self')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks posts:write:self scope' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'posting requires an authenticated viewer',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+
+  const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  // Fail-closed: an ABSENT flag resolves false for everyone, mods included, so
+  // the capability is fully dark until a deliberate Flipt flip.
+  if (!(await isAppBlocksPostCreationEnabled({ user: subjectUser ?? undefined }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'posting from apps is not enabled' });
+  }
+
+  return { claims, userId, subjectUser };
+}
+
+/**
+ * The durable per-user audit row for one post attempt — what makes the viewer's
+ * Activity feed able to say "this app posted on your behalf", and what makes a
+ * retroactive abuse sweep possible at all.
+ *
+ * ⚠️ NET-NEW ON THIS FAMILY. `publishGenerationOutputs` writes NO such row (its
+ * omission is a real gap, not a precedent), so the shape is modelled on the
+ * workflow-submit call site instead. `endpoint` is the `topEndpoints` GROUP BY
+ * key and must stay BOUNDED — hence the templated `'post:create'` with the ids in
+ * `detail`, never `post:create:<postId>`.
+ *
+ * BEST-EFFORT: a failed audit write must never fail an already-committed post,
+ * and must never add latency to the reply.
+ */
+async function recordBlockPostInvocation(opts: {
+  claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
+  userId: number;
+  outcome: 'ok' | 'failed';
+  imageCount: number;
+  modelVersionId: number | null;
+  postId?: number;
+}): Promise<void> {
+  try {
+    const { recordScopeInvocation } = await import(
+      '~/server/services/blocks/user-app-surface.service'
+    );
+    await recordScopeInvocation({
+      userId: opts.userId,
+      appBlockId: opts.claims.appBlockId,
+      blockInstanceId: opts.claims.blockInstanceId,
+      scope: 'posts:write:self',
+      endpoint: 'post:create',
+      statusCode: opts.outcome === 'failed' ? 500 : 200,
+      detail: {
+        action: 'post.create',
+        outcome: opts.outcome,
+        imageCount: opts.imageCount,
+        ...(opts.postId != null ? { entityType: 'Post', entityId: opts.postId } : {}),
+        ...(opts.modelVersionId != null ? { modelVersionId: opts.modelVersionId } : {}),
+      },
+      // A dev token may carry a SYNTHETIC, non-FK-resolving appBlockId; the
+      // helper routes that to the nullable-appBlockId retry so the row persists.
+      dev: opts.claims.dev === true,
+    });
+  } catch {
+    /* best-effort: an audit failure never breaks (or slows) a committed post */
   }
 }
 
@@ -4114,6 +4331,329 @@ export const blocksRouter = router({
           : new TRPCError({ code: 'BAD_REQUEST', message: 'failed to publish any output' });
       }
       return { imageIds };
+    }),
+
+  /**
+   * ── CREATE_POST_FROM_APP, part 1 of 2: the READ-ONLY preview. ───────────────
+   *
+   * Resolves EVERYTHING the host-chrome consent dialog renders — the exact title
+   * and detail that will be written, the tag names that will ACTUALLY be applied
+   * (existing tags only; the requested-but-unresolvable ones come back in
+   * `droppedTags`), the HOST-FETCHED model + version names for a gallery attach,
+   * and real image thumbnails resolved from the app's own workflow outputs and
+   * previously-published images.
+   *
+   * 🔴 THIS EXISTS BECAUSE A SANDBOXED BLOCK CANNOT BE TRUSTED TO DISPLAY
+   * TRUTHFULLY, AND THE DIALOG IS THE SECURITY CONTROL. A confirm that renders
+   * block-supplied copy, block-supplied tag names or block-supplied thumbnails
+   * lets the block show one thing and publish another — the exact failure the
+   * collection-follow bridge documents ("IT MUST STAY HOST-FETCHED. Do NOT add a
+   * block-supplied `name` to the wire and render it", `collectionFollowGate.ts`).
+   * Every field this returns is derived server-side from ids the server verified.
+   *
+   * It CONFERS NOTHING. `createPostFromApp` re-runs every guard from scratch, so
+   * a caller that skips the preview gets the identical refusals and a
+   * preview/commit divergence is a UX bug, never an authorization hole.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows), despite
+   * being a pure read.
+   */
+  previewPostFromApp: publicProcedure
+    .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken);
+      // NOTE: the CATALOG bucket, not the post bucket. The preview writes
+      // nothing, so charging it against the 3-posts/hour ceiling would let a
+      // block exhaust its own posting budget by rendering dialogs — and the
+      // viewer would see a rate-limit error for an action they never took.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { previewBlockPost } = await import('~/server/services/blocks/block-post.service');
+      const { resolveViewerBrowsingLevel } = await import(
+        '~/server/services/blocks/block-gated-images.service'
+      );
+      const token = await getOrchestratorToken(userId, ctx);
+      return previewBlockPost({
+        actor: {
+          userId,
+          appId: claims.appId,
+          appBlockId: claims.appBlockId,
+          browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
+        },
+        sources: input.sources,
+        title: input.title,
+        detail: input.detail,
+        tags: input.tags,
+        modelVersionId: input.modelVersionId,
+        getWorkflow: (workflowId) => getWorkflow({ token, path: { workflowId } }),
+      });
+    }),
+
+  /**
+   * ── CREATE_POST_FROM_APP, part 2 of 2: the WRITE. ──────────────────────────
+   *
+   * Creates a REAL, PUBLISHED `Post` on the VIEWER'S profile from the calling
+   * app's OWN generation outputs, optionally attached to a model version's
+   * gallery. The strictly-more-consequential sibling of
+   * `publishGenerationOutputs`: that op makes a bare `Image` row with no post, no
+   * feed presence, no reward and no notification; this one makes public,
+   * feed-visible, reward-earning content under the viewer's byline.
+   *
+   * It is a SIBLING and not a flag on that op for six reasons, of which two are
+   * decisive: `PUBLISH_GENERATION_OUTPUTS`' payload carries a SINGLE required
+   * `workflowId` and cannot express multi-source images at all; and its consent
+   * copy ("Publish to the shared grid? … become visible to other viewers of this
+   * app") is FALSE for a profile post, and that sentence is the security control.
+   *
+   * GUARDS, in order — those marked ✚ are additions over the publish path:
+   *   1. `authorizeBlockBridgeToken` — token validity, instance revocation, and
+   *      the backing app still `approved`. All three, in one call, because that
+   *      helper is the single gate for every bridge proc.
+   *   2. ✚ scope `posts:write:self` — consent-GATED and sensitive, NOT
+   *      `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
+   *      generation has NOT thereby been authorised to publish under their name.
+   *   3. non-anon subject — there is no anonymous profile to post to.
+   *   4. `assertAppBlocksEnabledForTokenUser` — the runtime flag, on the SUBJECT.
+   *   5. ✚ `isAppBlocksPostCreationEnabled` — the DEDICATED fail-closed flag, so
+   *      a GA widening of the runtime flag does not arm public post creation on
+   *      the same day.
+   *   6. ✚ `assertSharedWriteTrust` — not banned / not muted / onboarded /
+   *      email-or-OAuth verified / account ≥ 7 days. Reused verbatim from the
+   *      shared-storage path: it is the platform's existing answer to "may this
+   *      human write something other users see", and a public post is strictly
+   *      more consequential than a 64 KB shared-storage row.
+   *   7. ✚ a DEDICATED post rate bucket (3/hour/instance), plus the image count
+   *      charged to the existing publish bucket so this path cannot be used to
+   *      bypass the per-image origin-cost ceiling.
+   *   8. per-source ownership: a `workflow` source needs the durable
+   *      (user, app, workflow) binding AND the orchestrator's own app tag; a
+   *      `published` source needs owner + provenance marker + `postId IS NULL` +
+   *      the viewer's maturity clamp.
+   *   9. ✚ text bounds + link refusal + `throwOnBlockedUserContent` over title,
+   *      detail AND the resolved tag names (native screens title/detail only).
+   *  10. ✚ existing-tags-only resolution — a block may never mint a site tag.
+   *  11. ✚ the `modelVersionId` gate incl. the SELF-DEALING guard.
+   *  12. ✚ an atomic create → adopt → publish transaction.
+   *
+   * 🔴 THE HOST CONFIRM IS NOT ONE OF THESE GUARDS AND MUST NOT BE READ AS ONE.
+   * It is the CONSENT boundary and it lives in host chrome, outside this proc's
+   * reach; every line above is enforced server-side and would still refuse a
+   * caller that never rendered a dialog.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  createPostFromApp: publicProcedure
+    .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId, subjectUser } = await authorizeBlockPostRequest(input.blockToken);
+
+      // WRITE TRUST. Reused from the shared-storage path. "Verified email" is
+      // satisfied by emailVerified OR a linked OAuth account; only query for the
+      // link when emailVerified is absent, so a verified-email user pays nothing.
+      let hasLinkedOAuth = false;
+      if (subjectUser && !subjectUser.emailVerified) {
+        hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
+      }
+      assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
+
+      // The POST bucket — one token per POST regardless of image count. The
+      // per-image origin cost is charged separately below, once the selection is
+      // known, so a block cannot route around the publish ceiling by posting.
+      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
+      if (!postRate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+
+      const {
+        resolveBlockPostSources,
+        resolveExistingPostTags,
+        resolveGalleryTarget,
+        writeBlockPost,
+        applyBlockPostPublishEffects,
+      } = await import('~/server/services/blocks/block-post.service');
+      const { validateBlockPostText } = await import('~/server/services/blocks/block-post.logic');
+      const { resolveViewerBrowsingLevel } = await import(
+        '~/server/services/blocks/block-gated-images.service'
+      );
+      const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
+
+      const actor = {
+        userId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
+      };
+
+      // ── AUDIT SCOPE. Everything below runs INSIDE `recordOutcome`, so a
+      // `block_scope_invocations` row is written for EVERY outcome from here on —
+      // a refused gallery attach, a provenance failure, a blocked title, a
+      // mid-transaction conflict — not only for a successful post.
+      //
+      // 🔴 IT STARTS HERE AND NOT AT THE TOP OF THE PROCEDURE, DELIBERATELY. The
+      // preamble refusals above (no scope, anon, flags off, untrusted account,
+      // over the rate ceiling) are NOT audited, because an audit row is itself a
+      // write and rows written before the rate bucket admits the call would be
+      // unbounded — a refused app could fill the viewer's activity feed with
+      // rows describing actions that never happened. Past the bucket the count is
+      // bounded by the bucket itself, which is what makes auditing every outcome
+      // affordable. The refused-before-admission cases are visible in the
+      // platform's own error telemetry instead.
+      let auditImageCount = 0;
+      let auditModelVersionId: number | null = null;
+      let auditPostId: number | undefined;
+      const recordOutcome = async (outcome: 'ok' | 'failed') =>
+        recordBlockPostInvocation({
+          claims,
+          userId,
+          outcome,
+          imageCount: auditImageCount,
+          modelVersionId: auditModelVersionId,
+          ...(auditPostId != null ? { postId: auditPostId } : {}),
+        });
+
+      try {
+        // ── Re-derive EVERYTHING. The preview is a rendering aid; nothing it
+        // returned is trusted or carried forward, so this block repeats the same
+        // validations rather than accepting a token or a cached decision.
+        const text = validateBlockPostText({ title: input.title, detail: input.detail });
+        if (!text.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: text.reason });
+        const tags = await resolveExistingPostTags(input.tags ?? []);
+        await throwOnBlockedUserContent([text.title, text.detail, ...tags.names], {
+          surface: 'post',
+        });
+        const gallery =
+          input.modelVersionId != null
+            ? await resolveGalleryTarget({
+                modelVersionId: input.modelVersionId,
+                posterUserId: userId,
+                appId: claims.appId,
+              })
+            : null;
+        auditModelVersionId = gallery?.modelVersionId ?? null;
+
+        const token = await getOrchestratorToken(userId, ctx);
+        const resolved = await resolveBlockPostSources({
+          sources: input.sources,
+          actor,
+          getWorkflow: (workflowId) => getWorkflow({ token, path: { workflowId } }),
+        });
+
+        // CONFIRM INTEGRITY — see `confirmedImageCount` on the input shape. The
+        // viewer agreed to a specific SET of thumbnails; publishing a different
+        // number of images than were shown would make the consent screen wrong
+        // even though every authorization check passed.
+        if (input.confirmedImageCount != null && input.confirmedImageCount !== resolved.length) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'the images changed since you confirmed — please try again',
+          });
+        }
+
+        // Charge the per-image origin cost to the PUBLISH bucket. Fresh workflow
+        // outputs each cost a fetch + S3 upload + scan, exactly as a publish does;
+        // already-published images cost nothing new but are charged anyway so the
+        // two paths cannot be arbitraged against each other.
+        const imageRate = await checkBlockPublishRateLimit(claims.blockInstanceId, resolved.length);
+        if (!imageRate.allowed) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Rate limit exceeded, please retry shortly.',
+          });
+        }
+
+        // ── MATERIALISE fresh workflow outputs OUTSIDE the transaction: each is a
+        // network fetch + S3 upload and must never hold one open. These are the
+        // same bare, real-scanned rows `publishGenerationOutputs` creates.
+        //
+        // ⚠️ A FRESH OUTPUT IS `Pending` INGESTION AT THIS MOMENT AND THAT IS
+        // UNAVOIDABLE — the row is created in this very call, so there is no scan
+        // to have completed. This MATCHES native behaviour: nothing in
+        // `addPostImage` / `updatePost` / the publish handler inspects `ingestion`,
+        // `scannedAt`, `nsfwLevel` or `needsReview` before setting `publishedAt`,
+        // and visibility is enforced DOWNSTREAM instead (`getPostDetail` requires
+        // `nsfwLevel != 0` for non-owners, and the search index only picks an image
+        // up after the scan webhook). The design note calling for `Scanned` on
+        // every image is therefore unimplementable for this source and is honoured
+        // where it IS implementable: an ALREADY-PUBLISHED image must pass the full
+        // `classifyGatedImageForViewer` gate before it can be adopted.
+        const { persistBlockWorkflowOutputImage } = await import(
+          '~/server/services/blocks/block-image-upload.service'
+        );
+        const imageIds: number[] = [];
+        for (const item of resolved) {
+          if (item.kind === 'published') {
+            imageIds.push(item.imageId);
+            continue;
+          }
+          const { imageId } = await persistBlockWorkflowOutputImage({
+            imageUrl: item.url,
+            width: item.width,
+            height: item.height,
+            userId,
+            appId: claims.appId,
+          });
+          imageIds.push(imageId);
+        }
+        auditImageCount = imageIds.length;
+
+        const created = await writeBlockPost({
+          actor,
+          materialisedImageIds: imageIds,
+          title: text.title,
+          detail: text.detail,
+          tagIds: tags.tagIds,
+          tagNames: tags.names,
+          gallery,
+        });
+        auditPostId = created.postId;
+
+        // ── Post-commit. Everything below is BEST-EFFORT: the post is already
+        // public, so a failed cache bust or reward must never turn a successful
+        // publish into an error the block sees (which would invite a retry and a
+        // duplicate post).
+        await applyBlockPostPublishEffects({
+          postId: created.postId,
+          userId,
+          imageIds,
+          modelVersionId: created.modelVersionId,
+          modelId: gallery?.modelId ?? null,
+          ip: ctx.ip,
+        }).catch((error) =>
+          logToAxiom({
+            name: 'block-post-effects-failed',
+            type: 'error',
+            postId: created.postId,
+            error: String(error),
+          }).catch(() => undefined)
+        );
+
+        // ClickHouse tracking — the native create+publish pair. Issued here rather
+        // than in the service because it needs the request-scoped tracker.
+        // Optional-chained: `ctx.track` is always present on a real request, but a
+        // missing tracker must never be the thing that fails an already-public
+        // post. Same reasoning as the best-effort block above.
+        await ctx.track
+          ?.post({ type: 'Create', nsfw: false, postId: created.postId, tags: created.tagNames })
+          ?.catch(() => undefined);
+        await ctx.track
+          ?.post({ type: 'Publish', nsfw: false, postId: created.postId, tags: created.tagNames })
+          ?.catch(() => undefined);
+
+        await recordOutcome('ok');
+
+        return { postId: created.postId, url: created.url, imageIds };
+      } catch (err) {
+        await recordOutcome('failed');
+        throw err;
+      }
     }),
 
   /**

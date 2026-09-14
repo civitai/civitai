@@ -623,6 +623,7 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *   - social:tip:self    → claims.sub != 'anon'
  *   - user:read:self     → claims.sub != 'anon'
  *   - ai:write:budgeted  → claims.buzzBudget > 0
+ *   - posts:write:self   → claims.sub != 'anon'
  *
  * Throws ForbiddenError on mismatch.
  */
@@ -713,6 +714,25 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // the read:private scope) + the maturity clamp; the follow write is
         // self-bound to this subject. No request-shape binding is added here —
         // presence of the scope + a non-anon subject is the middleware check.
+        if (claims.sub === 'anon') {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
+      case 'posts:write:self': {
+        // A Post belongs to a USER — there is no anonymous profile to post to, so
+        // an anon subject can never satisfy this scope. Presence of the scope +
+        // a non-anon subject is the middleware check; the real authority is
+        // `blocks.createPostFromApp` (approval + revocation + write-trust +
+        // per-source ownership/provenance + the host-chrome consent confirm).
+        //
+        // 🔴 THIS CASE IS NOT OPTIONAL AND ITS ABSENCE IS NOT SCOPED TO POSTING.
+        // The loop walks EVERY scope on the token, and the `default:` arm below
+        // throws. A known scope with no case here therefore 403s every REST
+        // request the token makes — a models read, a catalog read, anything — so
+        // omitting it bricks the whole app and reads as a bug in an unrelated
+        // endpoint. It must land in the same commit as the
+        // BLOCK_SCOPE_TO_OAUTH_BIT entry.
         if (claims.sub === 'anon') {
           throw forbidden(`${scope} requires authenticated subject`);
         }

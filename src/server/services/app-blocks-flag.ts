@@ -615,6 +615,46 @@ export async function isAppBlocksSharedStorageEnabled(opts?: {
 }
 
 /**
+ * Dedicated fail-closed flag for App Blocks POST CREATION — `posts:write:self` /
+ * `blocks.createPostFromApp` / `CREATE_POST_FROM_APP`, the first surface on which
+ * a third-party block produces PUBLIC, feed-visible, reward-earning content under
+ * the VIEWER'S own byline.
+ *
+ * 🔴 IT IS DELIBERATELY INDEPENDENT OF `app-blocks-enabled`, AND THAT IS THE
+ * POINT. `app-blocks-enabled` is the block-RUNTIME gate and is expected to widen
+ * toward GA. Post creation must not widen with it — a GA flip of the runtime flag
+ * would otherwise arm public post creation for every user on the same day, with
+ * no separate decision. This flag is the switch that keeps those two rollouts on
+ * separate clocks, and it is also the per-capability kill switch: flip it off and
+ * every create/preview call refuses immediately, independent of the runtime
+ * rollout and without disabling any other block capability.
+ *
+ * Mirrors `app-blocks-shared-storage` exactly: a brand-new surface with NO
+ * existing access to preserve, so there is deliberately NO moderator static floor
+ * — an ABSENT flag resolves `false` for EVERYONE, mods included. Evaluated WITH
+ * the TOKEN SUBJECT'S context (the hydrated `SessionUser`, never `ctx.user` and
+ * never a client value) so the `moderators` / cohort segments resolve identically
+ * to the client gate.
+ *
+ * 🔴 SHIPS OFF. The flag does NOT exist in Flipt when this merges — the
+ * `flipt-state` entry is a separate follow-up — so `isFlipt` returns `false` and
+ * the whole capability is dark as merged. Create it as base `enabled: false` with
+ * the `moderators` (+ any cohort) segment, exactly like
+ * `app-blocks-shared-storage`. There is no code path that can regress this open:
+ * the gate is a plain `if (!enabled) throw`, checked on BOTH the preview read and
+ * the create write.
+ */
+export const APP_BLOCKS_POST_CREATION_FLAG = 'app-blocks-post-creation';
+
+export async function isAppBlocksPostCreationEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_POST_CREATION_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_POST_CREATION_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
  * lets the store serve `kind='offsite'` (external app) listings to a viewer while
  * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL
