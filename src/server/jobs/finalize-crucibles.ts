@@ -2,6 +2,7 @@ import { createJob } from './job';
 import { createLogger } from '~/utils/logging';
 import { finalizeCrucible, getCruciblesForFinalization } from '~/server/services/crucible.service';
 import { logToAxiom } from '~/server/logging/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 const log = createLogger('finalize-crucibles', 'yellow');
 
@@ -23,6 +24,8 @@ export const finalizeCruciblesJob = createJob(
   'finalize-crucibles',
   '* * * * *', // Run every minute
   async () => {
+    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CRUCIBLE_JOBS_ENABLED))) return { finalized: 0 };
+
     log('Starting finalize-crucibles job');
 
     // Get all crucibles that need finalization

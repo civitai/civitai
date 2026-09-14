@@ -13,6 +13,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
 import { useCrucibleFilters } from '~/components/Crucible/crucible.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 function CruciblesPage() {
   const filters = useCrucibleFilters();
@@ -66,5 +67,11 @@ function CruciblesPage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ features }) => {
+    if (!features?.crucible) return { notFound: true };
+  },
+});
 
 export default Page(CruciblesPage, { InnerLayout: FeedLayout, announcements: true });
