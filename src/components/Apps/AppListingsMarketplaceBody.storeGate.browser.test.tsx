@@ -26,7 +26,7 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * `isAppListingsEnabled`, which ORs both flags), which is why this query DOES
  * widen with the store — in deliberate contrast to `blocks.getNavSummary`, whose
  * `enabled` stays on `appBlocks` alone because ITS proc gates on
- * `enforceAppBlocksFlag`. See `AppsSubNav.storeGate.browser.test.tsx`.
+ * `enforceAppBlocksFlag`. See `AppsRailNav.storeGate.browser.test.tsx`.
  */
 
 function makeCard(id: string, name: string): ListingCard {

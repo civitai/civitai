@@ -94,8 +94,8 @@ export default function AppEditPage() {
       {/*
         🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. The `getServerSideProps` above
         gates on `appBlocks` ALONE,
-        with no author requirement, while `AppsSubNav` hides itself entirely below TWO
-        qualifying tabs. Only "Marketplace" is unconditional; every other tab needs an
+        with no author requirement, while the `/apps` rail (`useAppsNavSections` +
+        `AppsPageLayout`) hides itself entirely below TWO qualifying sections. Only "Marketplace" is unconditional; every other tab needs an
         author capability, an install, an approved app, a pending invite, reviewer status,
         or the `appBlocksGetStarted` flag ("Build apps" is gated on it, mirroring
         `resolveGetStartedAccess`). So a viewer granted `app-blocks-enabled` in Flipt who

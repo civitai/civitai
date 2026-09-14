@@ -8,7 +8,20 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 
 /**
- * Regression: `AppsSubNav` HYDRATION SAFETY (prod incident — every /apps page inert).
+ * Regression: `/apps` NAV HYDRATION SAFETY (prod incident — every /apps page inert).
+ *
+ * 🔴 PORTED FROM `AppsSubNav.hydration.browser.test.tsx` WHEN THE TAB STRIP BECAME A LEFT
+ * RAIL. Every claim below is carried over unchanged — the incident, the deferral, the
+ * capability/summary split. What moved: the container `AppsSubNav` became the hook
+ * `useAppsNavSections` (real here) plus the `< 2` collapse in `AppsPageLayout`, so these
+ * render the REAL LAYOUT; and entries are anchors in a `<nav>`, so `role="tab"` became
+ * `role="link"`.
+ *
+ * 🔴 THE INVARIANT GOT *WIDER* WITH THE RAIL, WHICH IS WORTH SAYING EXPLICITLY. A tab set
+ * that differed between the server and the first client paint cost a row of chrome; a RAIL
+ * that differs costs 276px of the page's WIDTH, and the store grid beneath it is a
+ * container query — so the same mismatch now re-ladders every card on the page rather than
+ * shifting one bar. The deferral is load-bearing for more than it was.
  *
  * The conditional sub-nav tabs (Installed / Invites / Revenue / Review) are driven by the
  * client-only `blocks.getNavSummary` query. tRPC runs with `ssr:false`, so the SERVER
@@ -44,11 +57,12 @@ import type * as TrpcMod from '~/utils/trpc';
  * pairs below, it is the invariant itself: an author's extra tab MUST NOT appear before
  * mount, or hydration breaks exactly as it did in the incident.
  *
- * These tests drive the `AppsSubNav` CONTAINER (not the pure `AppsSubNavView`) so the
+ * These tests drive the REAL `useAppsNavSections` hook through `AppsPageLayout` (not the
+ * props-only `AppsRailNavView`) so the
  * `useIsClient` gate + the `canAccessAppsBuild` / `isAppDeveloper` derivations are all
  * exercised.
  * (The REAL `renderToString` → `hydrateRoot` check, with a console.error positive
- * control, lives in `AppsSubNav.ssrHydration.browser.test.tsx`.)
+ * control, lives in `AppsRailNav.ssrHydration.browser.test.tsx`.)
  */
 
 const ALL_TRUE_SUMMARY = {
@@ -94,32 +108,36 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 // deferral, and forcing the data in regardless of the query gate is what makes the
 // deferral observable (and what makes `isAuthor`'s session-scoping observable for a
 // logged-out viewer, whose real query would never run). The sibling
-// `AppsSubNav.storeGate.browser.test.tsx` HONOURS `enabled` and pins the production
+// `AppsRailNav.storeGate.browser.test.tsx` HONOURS `enabled` and pins the production
 // wiring.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: mocks.navSummary }) } } },
 }));
 
-const { AppsSubNav } = await import('./AppsSubNav');
+const { AppsPageLayout } = await import('./AppsPageLayout');
 
-function tab(name: string) {
-  return page.getByRole('tab', { name });
+function link(name: string) {
+  return page.getByRole('link', { name });
 }
 
-/** The tab labels currently in the document, in DOM order. */
-function renderedTabs(): string[] {
-  return page
-    .getByRole('tab')
-    .elements()
-    .map((el) => (el.textContent ?? '').trim());
+/** The rail's `<nav>`, or null when the gate or the collapse removed it. */
+function navEl(): HTMLElement | null {
+  return document.querySelector('nav[aria-label="App sections"]');
+}
+
+/** The section labels currently in the rail, in DOM order. */
+function renderedSections(): string[] {
+  const nav = navEl();
+  if (!nav) return [];
+  return Array.from(nav.querySelectorAll('a')).map((el) => (el.textContent ?? '').trim());
 }
 
 /**
  * 🔴 RENDER BARRIER — required before every "renders nothing" assertion.
  *
  * `render()` commits through a React 18 concurrent root on a LATER task, so a
- * synchronous `expect(renderedTabs()).toEqual([])` right after `renderWithProviders`
+ * synchronous `expect(renderedSections()).toEqual([])` right after `renderWithProviders`
  * reads an EMPTY container and passes whatever the component does. Caught by mutation:
  * deleting the `links.length < 2` hide left these tests green until the barrier was
  * added. Render the sentinel alongside the component and AWAIT it first.
@@ -127,13 +145,18 @@ function renderedTabs(): string[] {
 const RENDER_BARRIER = 'render-barrier';
 const RenderBarrier = () => <div data-testid={RENDER_BARRIER} />;
 
-/** Render `AppsSubNav` behind a render barrier and wait for the commit. */
-async function renderSubNav() {
+/** Render the real layout behind a render barrier and wait for the commit. */
+async function renderRail() {
+  // The rail is `display: none` below `APPS_RAIL_MIN_VIEWPORT` (1300) — a CSS media
+  // query, so the server and the first client paint agree. A browser-mode iframe
+  // defaults narrower than that, and a hidden rail is absent from the accessibility
+  // tree: every role query below would resolve nothing and report a correctly-rendered
+  // rail as missing.
+  await page.viewport(1440, 900);
   renderWithProviders(
-    <>
+    <AppsPageLayout>
       <RenderBarrier />
-      <AppsSubNav />
-    </>
+    </AppsPageLayout>
   );
   await expect.element(page.getByTestId(RENDER_BARRIER)).toBeInTheDocument();
 }
@@ -155,32 +178,32 @@ beforeEach(() => {
   mocks.user = { id: 1, username: 'dev', isModerator: false };
 });
 
-describe('AppsSubNav container — hydration-safe conditional tabs', () => {
+describe('the rail — hydration-safe conditional tabs', () => {
   test('pre-mount (server + first client paint) renders ONLY the SSR-frozen tabs, even when the query already has a full summary', async () => {
     mocks.isClient = false; // server / first client paint
-    await renderSubNav();
+    await renderRail();
 
     // The two capability-driven tabs render — their inputs are SSR-frozen.
-    await expect.element(tab('Build')).toBeInTheDocument();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await expect.element(link('Build')).toBeInTheDocument();
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
 
     // The conditional tabs MUST NOT render pre-mount — this is what keeps the first
     // client paint identical to the SSR HTML (the fix). Before the fix, the query
     // data leaked into the first render and produced these tabs → hydration mismatch.
     for (const name of CONDITIONAL) {
-      expect(tab(name).elements()).toHaveLength(0);
+      expect(link(name).elements()).toHaveLength(0);
     }
   });
 
   test('post-mount (isClient=true) reveals the conditional tabs from the summary', async () => {
     mocks.isClient = true; // after mount / hydration has matched
-    await renderSubNav();
+    await renderRail();
 
     for (const name of ['Marketplace', 'Build', ...CONDITIONAL]) {
-      await expect.element(tab(name)).toBeInTheDocument();
+      await expect.element(link(name)).toBeInTheDocument();
     }
-    expect(renderedTabs()).toEqual([
+    expect(renderedSections()).toEqual([
       'Marketplace',
       'Activity',
       'Invites',
@@ -193,12 +216,12 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
   test('pre-mount with NO summary data also shows only the SSR-frozen tabs (server parity)', async () => {
     mocks.isClient = false;
     mocks.navSummary = undefined; // server: query never resolved
-    await renderSubNav();
+    await renderRail();
 
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
     for (const name of CONDITIONAL) {
-      expect(tab(name).elements()).toHaveLength(0);
+      expect(link(name).elements()).toHaveLength(0);
     }
   });
 
@@ -224,11 +247,11 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
       hasPendingInvites: false,
       // …leaving hasSubmissions + hasEditableApps as the only true flags.
     };
-    await renderSubNav();
-    await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
     for (const retired of ['My apps', 'My submissions', 'Create', 'Build apps']) {
-      expect(tab(retired).elements(), `a tab named "${retired}" is rendered`).toHaveLength(0);
+      expect(link(retired).elements(), `a tab named "${retired}" is rendered`).toHaveLength(0);
     }
   });
 });
@@ -255,7 +278,7 @@ describe('AppsSubNav container — hydration-safe conditional tabs', () => {
  * so lifting `Invites` out of the `useIsClient` deferral makes it fail while the
  * non-author pair stays green.
  */
-describe('AppsSubNav container — SSR tab set === first client render', () => {
+describe('the rail — SSR tab set === first client render', () => {
   // 🔴 BOTH COHORTS HOLD `appBlocksGetStarted`, DELIBERATELY. The pairs assert
   // SSR ≡ first-client-paint against a pinned literal, and an EMPTY literal is
   // satisfied by two renders that are equally broken — a non-author without this flag
@@ -266,7 +289,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
   // ever sourced from something client-only the "Build" tab would appear on one side of
   // a pair and not the other and these tests would fail. (The cohorts WITHOUT the flag —
   // where the collapse fires — are pinned in the last describe of this file and in
-  // `AppsSubNav.storeGate.browser.test.tsx`.)
+  // `AppsRailNav.storeGate.browser.test.tsx`.)
   const NON_AUTHOR = () => {
     // A store-visible non-author who reaches `/apps/build` on the get-started term alone.
     // ⚠️ THIS IS A SHAPE, NOT A LIVE COHORT, and the "verified live" claim that used to sit
@@ -285,60 +308,60 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
     NON_AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = undefined;
-    await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await renderRail();
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 
   test('NON-AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
     NON_AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // the prod condition that broke hydration
-    await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await renderRail();
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 
   test('AUTHOR, server render (no query data) → Build + Marketplace', async () => {
     AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = undefined;
-    await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await renderRail();
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 
   test('AUTHOR, first client paint (query data PRESENT, invites pending) → the identical set', async () => {
     AUTHOR();
     mocks.isClient = false;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
-    await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
+    await renderRail();
+    await expect.element(link('Marketplace')).toBeInTheDocument();
     // Non-empty on BOTH sides of the pair: the capability gates applied on the first
     // paint (Build is here pre-mount) while the summary gate did NOT — including the
     // author-only `Invites`, whose summary flag is true in this fixture.
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
-    expect(tab('Invites').elements()).toHaveLength(0);
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(link('Invites').elements()).toHaveLength(0);
   });
 
   test('POSITIVE CONTROL: the same reader DOES see the conditional tabs post-mount', async () => {
     // Guards every pinned pre-mount literal above against being vacuously green — if
-    // `renderedTabs()` were wired to nothing it would return the same short list here.
+    // `renderedSections()` were wired to nothing it would return the same short list here.
     NON_AUTHOR();
     mocks.isClient = true;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
-    await renderSubNav();
-    await expect.element(tab('Activity')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    await renderRail();
+    await expect.element(link('Activity')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
     // Invites is the one tab the author gate removes — this viewer has a pending invite
     // in the summary and still must not get it.
-    expect(renderedTabs()).not.toContain('Invites');
+    expect(renderedSections()).not.toContain('Invites');
   });
 });
 
 /**
- * The build-capability derivation IN THE CONTAINER — the half that `AppsSubNavView`
- * (props-only) cannot cover: that `AppsSubNav` feeds the SHARED
+ * The build-capability derivation IN THE DATA HOOK — the half that `AppsRailNavView`
+ * (props-only) cannot cover: that `useAppsNavSections` feeds the SHARED
  * `canAccessAppsBuild(currentUser, features)`, the same call `resolveBuildPageAccess`
  * makes in `/apps/build`'s `getServerSideProps`, rather than an inlined flag read.
  *
@@ -347,7 +370,7 @@ describe('AppsSubNav container — SSR tab set === first client render', () => {
  * (`store && (isAppDeveloper || appBlocksGetStarted)`), so both disjuncts and the
  * moderator floor inside `isAppDeveloper` are exercised here.
  */
-describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', () => {
+describe('the rail — the Build tab keys off canAccessAppsBuild', () => {
   beforeEach(() => {
     mocks.isClient = true; // post-mount, so the full tab set is observable
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
@@ -356,17 +379,17 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
   test('non-mod with NEITHER the author capability nor get-started → no Build tab', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
-    await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument(); // positive control
-    expect(tab('Build').elements()).toHaveLength(0);
+    await renderRail();
+    await expect.element(link('Marketplace')).toBeInTheDocument(); // positive control
+    expect(link('Build').elements()).toHaveLength(0);
   });
 
   test('non-mod WITH the author capability → Build tab', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: true };
     mocks.user = { id: 7, username: 'author', isModerator: false };
-    await renderSubNav();
-    await expect.element(tab('Build')).toBeInTheDocument();
-    expect(tab('Build').element().getAttribute('href')).toBe('/apps/build');
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(link('Build').element().getAttribute('href')).toBe('/apps/build');
   });
 
   test('non-mod, non-author WITH appBlocksGetStarted → Build tab (the second disjunct)', async () => {
@@ -375,15 +398,15 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
     // `isAppDeveloper` alone.
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
-    await renderSubNav();
-    await expect.element(tab('Build')).toBeInTheDocument();
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
   });
 
   test('🔴 MODERATOR FLOOR: a mod keeps Build even with appBlocksAuthor=false', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 1, username: 'mod', isModerator: true };
-    await renderSubNav();
-    await expect.element(tab('Build')).toBeInTheDocument();
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
   });
 
   test('the flags being ABSENT entirely behaves as false for a non-mod', async () => {
@@ -391,9 +414,9 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
     // are simply missing. `canAccessAppsBuild` fails CLOSED.
     mocks.flags = { appBlocks: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
-    await renderSubNav();
-    await expect.element(tab('Marketplace')).toBeInTheDocument();
-    expect(tab('Build').elements()).toHaveLength(0);
+    await renderRail();
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(link('Build').elements()).toHaveLength(0);
   });
 
   /**
@@ -417,20 +440,20 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
     mocks.flags = { appBlocks: true, appBlocksAuthor: true };
     mocks.user = null;
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // hasPendingInvites: true
-    await renderSubNav();
-    await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
-    expect(tab('Invites').elements()).toHaveLength(0);
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    expect(link('Invites').elements()).toHaveLength(0);
   });
 
   test('a logged-out viewer with no capability at all gets no bar', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = null;
     mocks.navSummary = undefined; // the summary query is protected — no data for anon
-    await renderSubNav(); // barrier awaited inside — absence below is a real observation
+    await renderRail(); // barrier awaited inside — absence below is a real observation
     // Marketplace is all that qualifies (`canBuild` needs one of the two capability
     // terms), so the `< 2` collapse removes the bar entirely.
-    expect(renderedTabs()).toEqual([]);
+    expect(renderedSections()).toEqual([]);
   });
 
   test('🔴 a logged-out viewer WITH appBlocksGetStarted does get Build (positive control)', async () => {
@@ -441,9 +464,9 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = null;
     mocks.navSummary = undefined;
-    await renderSubNav();
-    await expect.element(tab('Build')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    await renderRail();
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 });
 
@@ -454,7 +477,7 @@ describe('AppsSubNav container — the Build tab keys off canAccessAppsBuild', (
  * third test is the same fixture with only that one flag moved, which is what attributes
  * the difference to the flag rather than to two unrelated fixtures.
  */
-describe('AppsSubNav container — hides entirely below two tabs', () => {
+describe('the rail — hides entirely below two tabs', () => {
   const EMPTY_SUMMARY = {
     hasInstalls: false,
     hasActivity: false,
@@ -470,9 +493,9 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     mocks.navSummary = { ...EMPTY_SUMMARY };
-    await renderSubNav(); // barrier awaited inside — absence below is a real observation
+    await renderRail(); // barrier awaited inside — absence below is a real observation
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
-    expect(renderedTabs()).toEqual([]);
+    expect(renderedSections()).toEqual([]);
   });
 
   test('one install is enough to bring the bar back', async () => {
@@ -480,11 +503,11 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     mocks.navSummary = { ...EMPTY_SUMMARY, hasInstalls: true };
-    await renderSubNav();
+    await renderRail();
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Activity']);
+    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
   });
 
   test('🔴 …and so is appBlocksGetStarted, on the OTHERWISE IDENTICAL viewer', async () => {
@@ -492,10 +515,10 @@ describe('AppsSubNav container — hides entirely below two tabs', () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     mocks.navSummary = { ...EMPTY_SUMMARY };
-    await renderSubNav();
+    await renderRail();
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 });

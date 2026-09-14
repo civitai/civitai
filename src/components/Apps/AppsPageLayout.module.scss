@@ -1,0 +1,63 @@
+/**
+ * `/apps/*` chrome — the LEFT RAIL's responsive switch.
+ *
+ * 🔴 THE 1300px THRESHOLD IS DERIVED, NOT CHOSEN HERE, AND A UNIT TEST PARSES THIS FILE
+ * TO PROVE IT. `APPS_RAIL_MIN_VIEWPORT` in `appsRailState.tsx` is the constant;
+ * `__tests__/appsRailGeometry.test.ts` reads the `@media` rules below and fails unless
+ * every one of them equals it. Same seam guard `appListingGrid.test.ts` puts on the
+ * store grid's container queries, for the same reason: a TypeScript constant that
+ * nothing at runtime reads is exactly the thing that silently stops describing the CSS.
+ *
+ * 🔴 WHY A MEDIA QUERY RATHER THAN A `useMediaQuery` HOOK. `window.matchMedia` has no
+ * server-side answer, so a hook-driven swap between the rail and the drawer renders the
+ * drawer shape in the SSR HTML and the rail shape on a desktop's first client paint.
+ * That is a hydration mismatch, and this surface has already paid for one: a differing
+ * tab set bailed hydration of the whole `/apps` root and left every page inert. Both
+ * shapes are rendered unconditionally and the BROWSER picks one, so the server HTML and
+ * the first client render are byte-identical — no mismatch, and no mount-time flash in
+ * either direction.
+ *
+ * 🔴 WHY A MEDIA QUERY RATHER THAN A CONTAINER QUERY, when the store grid one level
+ * down uses the opposite. The grid asks "how wide is the box I am in", which is a
+ * container question. This asks "is there room on this SCREEN for a 276px rail beside a
+ * usable page", which is a viewport question — and it has to be answered BEFORE the box
+ * exists, since the rail is what decides that box's width. A container query on the row
+ * would be querying the thing it is about to resize.
+ */
+
+/* The rail + body row. `items-start` so the aside does not stretch to the body's height
+   — the sticky positioning inside it needs a short box to pin against, not a full-height
+   column. */
+.railRow {
+  display: flex;
+  align-items: flex-start;
+  /* 🔴 THE GAP IS ONLY EVER BETWEEN VISIBLE ITEMS. Below the threshold `.rail` is
+     `display: none`, which removes it as a flex item — so the row has ONE child and CSS
+     emits no gap at all. That is what lets the narrow layout be byte-identical to the
+     pre-rail page rather than starting 16px in. */
+  gap: 16px;
+}
+
+/* The rail's own box. Its WIDTH is an inline style (the collapse state is React's, and
+   it has to be readable from a rendered tree in the node tier); only its PRESENCE is
+   decided here. */
+.rail {
+  display: none;
+  flex-shrink: 0;
+}
+
+/* The drawer trigger that stands in for the rail on a narrow screen. Mirror image of
+   `.rail`: exactly one of the two is ever displayed. */
+.railDrawerTrigger {
+  display: flex;
+}
+
+@media (min-width: 1300px) {
+  .rail {
+    display: block;
+  }
+
+  .railDrawerTrigger {
+    display: none;
+  }
+}

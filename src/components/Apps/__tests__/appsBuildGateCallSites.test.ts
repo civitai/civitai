@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
  * predicate; it cannot prove the call was passed the right arguments, and it would
  * type-check past `canAccessAppsBuild(someOtherUser, someOtherFlags)`. That half is
  * covered by `appsBuildAccess.test.ts` (the resolver) and
- * `AppsSubNav.storeGate.browser.test.tsx` (the rendered bar). Stated rather than implied.
+ * `AppsRailNav.storeGate.browser.test.tsx` (the rendered rail). Stated rather than implied.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -34,7 +34,7 @@ const SRC = path.resolve(__dirname, '../../..');
  * whole point of the consolidation is that there is one rule with one implementation.
  */
 const BUILD_GATE_SITES = [
-  'components/Apps/AppsSubNav.tsx',
+  'components/Apps/useAppsNavSections.ts',
   'components/Apps/resolveBuildPageAccess.ts',
 ] as const;
 

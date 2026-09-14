@@ -39,7 +39,7 @@ import {
  * 🔴 HYDRATION. Everything here is a pure function of `router.query`. No
  * `window`, no `localStorage`, no `Date`, no feature flag — so the server render
  * and the first client paint are identical BY CONSTRUCTION, which is the actual
- * invariant behind the `/apps` hydration incident documented in `AppsSubNav.tsx`
+ * invariant behind the `/apps` hydration incident documented in `useAppsNavSections.ts`
  * (a first-client-paint divergence bailed hydration of the whole `/apps` root
  * and left every page inert). Do not reach for a client-only source in here; the
  * regression test `AppListingsMarketplaceBody.hydration.browser.test.tsx` mounts

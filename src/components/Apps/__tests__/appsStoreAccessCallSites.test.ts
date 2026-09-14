@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
  *
  * WHY THIS FILE EXISTS — measured, not hypothetical. The PR that extracted
  * `hasAppsStoreAccess` converted SIX sites, but only TWO of them
- * (`resolveAppsPageAccess`, `AppsSubNav`) had behavioural tests that could
+ * (`resolveAppsPageAccess`, `useAppsNavSections`) had behavioural tests that could
  * observe the conversion. An adversarial audit reverted the other four to
  * `!!features.appBlocks` and re-ran the ENTIRE cited suite — 93/93 component +
  * 21/21 unit still GREEN. The mutant survived completely. A consolidation that
@@ -24,7 +24,7 @@ import { describe, it, expect } from 'vitest';
  * the predicate; it cannot prove the call was passed the right argument, and it
  * would type-check past `hasAppsStoreAccess(someOtherObject)`. Behavioural
  * coverage lives alongside it and is deliberately NOT replaced by this file:
- *   - `AppsSubNav.storeGate.browser.test.tsx`      — the sub-nav's rendered output
+ *   - `AppsRailNav.storeGate.browser.test.tsx`     — the rail's rendered output
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
  *
@@ -62,7 +62,7 @@ import { describe, it, expect } from 'vitest';
  * looks. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the
  * exceptions: their behavioural tests are unit tests, so they block too — the
  * resolver's cover is the two `resolveAppsPageAccess` describe blocks inside
- * `hasAppsStoreAccess.test.ts`. Two more are browser-covered (`AppsSubNav`,
+ * `hasAppsStoreAccess.test.ts`. Two more are browser-covered (`AppsRailNav`,
  * `AppListingsMarketplaceBody`) and therefore blocking-covered NOWHERE: enumerated,
  * 3 + 2 + 3 = 8.)
  *
@@ -144,7 +144,7 @@ const STORE_GATE_SITES = [
   // store-gated.
   'components/Apps/AppActivityPanel.tsx',
   'components/Apps/AppListingsMarketplaceBody.tsx',
-  'components/Apps/AppsSubNav.tsx',
+  'components/Apps/useAppsNavSections.ts',
   'components/Apps/RelatedListings.tsx',
   'components/Apps/resolveAppsPageAccess.ts',
   // 🔴 THE EMPTY-STATE `/apps` ANCHOR ON `/apps/activity` — the sibling of the panel

@@ -65,6 +65,37 @@
 export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
 
 /**
+ * 🔴 THE LEFT RAIL WIDENS THE BAND THAT SCROLLS, AND THAT COST WAS ACCEPTED RATHER THAN
+ * EXEMPTED. Recorded here, at the constant, because "why does `/apps/build` scroll
+ * sideways on my laptop" is a question asked of this number.
+ *
+ * The rail takes 276px off the body on every `/apps/*` route, so the container width the
+ * table sees drops by that much and this floor bites at wider viewports than before.
+ * Measured, as VIEWPORT widths (each already net of a 10px reserved scrollbar and the
+ * Container's 32px gutter):
+ *
+ *   viewport   today      rail OPEN   rail COLLAPSED
+ *   1440       SCROLLS    SCROLLS     SCROLLS
+ *   1600       fits       SCROLLS     fits
+ *   1920       fits       fits        fits
+ *
+ * 🔴 THE FIRST ROW IS THE ONE THAT SETTLES IT: `/apps/build` ALREADY SCROLLS AT 1440
+ * TODAY — the container yields 1408 against this 1424 floor, 16px short — so the rail
+ * does not INTRODUCE horizontal scrolling on this page, it widens a band that already
+ * exists by one viewport step (1600). The table has carried a real
+ * `Table.ScrollContainer` since it was written, so the affordance is present and works.
+ *
+ * 🔴 NO EXEMPTION WAS ADDED, DELIBERATELY. The two ways to exempt it are both worse than
+ * the scroll. (a) Hiding the rail on `/apps/build` re-creates the per-route chrome that
+ * `AppsPageLayout` exists to have deleted, and would break the 12-route alignment ledger
+ * in `AppsPageLayout.chromeAlignment.browser.test.tsx` by design. (b) Shrinking this
+ * floor is a column-legibility decision about a table nobody re-measured, taken to work
+ * around a layout change — the exact shape of the `/apps/review` cap that had to be
+ * deleted later (see `APPS_PAGE_CONTAINER_WIDTH`). A viewer who wants the width back has
+ * a one-click, persisted answer: collapse the rail, which restores 1600.
+ */
+
+/**
  * Chrome (px) that `AppsPageLayout` + the submissions `Card` take out of the
  * container width before the table sees it: Mantine `Container` pads `2 x 16`, and
  * `<Card withBorder>` draws a `1 px` border on each side.

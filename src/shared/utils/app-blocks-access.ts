@@ -71,7 +71,7 @@ export type AppsBuildFeatureFlags =
  *
  * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach the build surface", and it
  * is consumed by exactly TWO callers that MUST agree: the `Build` row in
- * `SUB_NAV_LINKS` (`~/components/Apps/AppsSubNav`) and the page's own SSR gate
+ * `appsSections` (`~/components/Apps/apps-sections`) and the page's own SSR gate
  * (`~/components/Apps/resolveBuildPageAccess`, called from `pages/apps/build.tsx`).
  *
  * ## Why one predicate, in one place
@@ -97,7 +97,7 @@ export type AppsBuildFeatureFlags =
  * `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
  *
  * - The STORE term is a hard precondition. `/apps/build` is a surface INSIDE the apps
- *   store IA — it renders under the same `AppsSubNav` chrome, its workbench state links
+ *   store IA — it renders under the same `/apps` rail chrome, its workbench state links
  *   into `/apps/listing/<id>/edit`, and its Marketplace sibling tab is store-gated. A
  *   viewer with no store access has no `/apps` at all, so admitting them here would put
  *   them on a page whose every onward link 404s.
@@ -191,7 +191,8 @@ export type AppsStoreFeatureFlags =
  * Do NOT re-inline `features.appListings || features.appBlocks`; the
  * gates drifting apart is exactly what this function exists to prevent, and it
  * had already happened once: of the SIX store-visibility sites, five spelled the
- * OR out and the sixth — `AppsSubNav` — spelled only half of it (`appBlocks`
+ * OR out and the sixth — the `/apps` nav's own gate, now `useAppsNavSections` — spelled
+ * only half of it (`appBlocks`
  * alone), so an `app-listings`-only cohort would have loaded `/apps` with no
  * sub-navigation at all.
  *

@@ -33,7 +33,7 @@ import type * as TrpcMod from '~/utils/trpc';
  * FIDELITY FOR ITS OWN SAKE. A disabled query never runs, so React Query never sets
  * `isFetched` on it. A mock that ignored `enabled` would return whatever `mocks.isFetched`
  * says and the permanent-skeleton case below would be structurally unobservable — it would
- * pass while production hung. (The sibling `AppsSubNav.hydration.browser.test.tsx`
+ * pass while production hung. (The sibling `AppsRailNav.hydration.browser.test.tsx`
  * deliberately IGNORES `enabled` because its subject is the `useIsClient` deferral; the
  * choice is per-suite, not a house style.)
  */
@@ -131,7 +131,7 @@ const WORKBENCH_CTA = 'apps-build-new-app';
  * through a React 18 concurrent root on a LATER task, so a synchronous absence assertion
  * right after `renderWithProviders` reads an EMPTY container and passes whatever the
  * component does. Render the sentinel alongside and await it first. (Same reasoning, and
- * the same mutation-found hole, as `AppsSubNav.hydration.browser.test.tsx`.)
+ * the same mutation-found hole, as `AppsRailNav.hydration.browser.test.tsx`.)
  */
 const RENDER_BARRIER = 'render-barrier';
 const RenderBarrier = () => <div data-testid={RENDER_BARRIER} />;

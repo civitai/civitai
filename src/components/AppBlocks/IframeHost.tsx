@@ -559,7 +559,7 @@ export function AppBlockChrome({
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
       {/* 🔴 THE ICONS AND THE "Marketplace" LABEL ARE MIRRORED FROM THE STORE
           SUBNAV, WHICH IS THE SOURCE OF TRUTH — `SUB_NAV_LINKS` in
-          `~/components/Apps/AppsSubNav`. This section and that tab bar are two
+          `~/components/Apps/apps-sections`. This section and that nav are two
           renderings of ONE platform navigation: a user who opens an app from the
           store and then reaches for this menu is looking for the same four
           destinations they just left, and until now every shared concept was drawn

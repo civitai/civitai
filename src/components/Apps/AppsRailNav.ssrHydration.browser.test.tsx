@@ -14,7 +14,7 @@ import type * as TrpcMod from '~/utils/trpc';
  * 🔴 THE REAL HYDRATION CHECK — `renderToString` → `hydrateRoot`, with a POSITIVE
  * CONTROL proving the detector can go red.
  *
- * Its sibling `AppsSubNav.hydration.browser.test.tsx` SIMULATES the two frames by
+ * Its sibling `AppsRailNav.hydration.browser.test.tsx` SIMULATES the two frames by
  * driving a mocked `useIsClient`. That pins the tab sets, but it never performs a
  * hydration — so a "no hydration warning" assertion there would be a probe wired to
  * nothing, i.e. a reassuring zero. This file does the actual thing: it renders the
@@ -91,7 +91,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: { blocks: { getNavSummary: { useQuery: () => ({ data: mocks.navSummary }) } } },
 }));
 
-const { AppsSubNav } = await import('./AppsSubNav');
+const { AppsPageLayout } = await import('./AppsPageLayout');
 
 function Tree({ children }: { children: React.ReactNode }) {
   const queryClient = new QueryClient({
@@ -181,9 +181,18 @@ async function hydrateInto(html: string, tree: React.ReactElement) {
   return container;
 }
 
+/**
+ * 🔴 THE REAL LAYOUT, NOT A NAV IN ISOLATION — and for this file that is a STRENGTHENING
+ * rather than a port artefact. The `< 2 sections` collapse lives in `AppsPageLayout` now,
+ * so the SSR tree under test is the one production serves: rail chrome, body column and
+ * all. A mismatch introduced by the rail's own width or its sticky wrapper would be
+ * invisible to a tree that rendered only the `<nav>`.
+ */
 const subNav = () => (
   <Tree>
-    <AppsSubNav />
+    <AppsPageLayout>
+      <div data-testid="body" />
+    </AppsPageLayout>
   </Tree>
 );
 
@@ -197,8 +206,8 @@ const RETIRED_ROUTES = ['/apps/get-started', '/apps/mine', '/apps/submit'] as co
  * FALSE RED, and it was written that way before being checked. `MantineProvider` renders
  * two `<style data-mantine-styles>` elements of its own (`MantineClasses` and
  * `MantineCssVariables`, both default-on — read out of the installed @mantine/core
- * 7.17.8), so the server HTML of this tree is NON-EMPTY even when `AppsSubNav` returns
- * `null`. Absence is therefore asserted on markers this component alone emits, and as an
+ * 7.17.8), so the server HTML of this tree is NON-EMPTY even when the rail is collapsed
+ * away. Absence is therefore asserted on markers this component alone emits, and as an
  * object so the failure message names WHICH marker survived rather than dumping a
  * stylesheet.
  */
@@ -210,7 +219,7 @@ function barMarkers(html: string) {
   };
 }
 
-describe('AppsSubNav — real SSR → hydrate', () => {
+describe('the /apps rail — real SSR → hydrate', () => {
   test('🔴 INSTRUMENT CHECK: a genuine server/client divergence IS reported by BOTH signals', async () => {
     // Renders <p>server</p> on the server and <span>client</span> on the client —
     // exactly the class of divergence the /apps incident was. If this does not fire,

@@ -51,6 +51,7 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
@@ -235,58 +236,71 @@ function MyApp(props: CustomAppProps) {
           >
             <UpdateRequiredWatcher>
               <IsClientProvider>
-                <ClientHistoryStore />
-                <RegisterCatchNavigation />
-                <RouterTransition />
-                {/* <ChadGPT isAuthed={!!session} /> */}
-                <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
-                  {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
-                  <FaroProvider />
-                  <GoogleAnalytics />
-                  <AccountProvider>
-                    <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                      <ErrorBoundary>
-                        <BrowserSettingsProvider>
-                          <BrowsingLevelProvider>
-                            <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
-                              <SignalsProviderStack>
-                                <ActivityReportingProvider>
-                                  <ReferralsProvider {...cookies.referrals}>
-                                    <FiltersProvider>
-                                      <AdsProvider gated={adsGated}>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </AdsProvider>
-                                    </FiltersProvider>
-                                  </ReferralsProvider>
-                                </ActivityReportingProvider>
-                              </SignalsProviderStack>
-                            </BrowsingSettingsAddonsProvider>
-                          </BrowsingLevelProvider>
-                        </BrowserSettingsProvider>
-                      </ErrorBoundary>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </FeatureFlagsProvider>
+                {/* The `/apps/*` left rail's collapse state, SSR-seeded from the cookie
+                    `parseCookies` already reads above — the same shape as
+                    `cookies.consent` / `cookies.disableHidden` / `cookies.referrals`
+                    going to their own providers.
+
+                    🔴 IT IS MOUNTED HERE, ABOVE THE ROUTER OUTLET, BECAUSE THAT IS WHAT
+                    MAKES THE COLLAPSE ONE GLOBAL VALUE. `AppsPageLayout` is unmounted
+                    and remounted on every navigation, so state held there would re-open
+                    the rail on every click between apps pages — and
+                    `AppsPageLayout.chromeAlignment.browser.test.tsx` asserts the rail's
+                    left edge and width are identical on all 12 routes. */}
+                <AppsRailProvider value={cookies.appsRail}>
+                  <ClientHistoryStore />
+                  <RegisterCatchNavigation />
+                  <RouterTransition />
+                  {/* <ChadGPT isAuthed={!!session} /> */}
+                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
+                    <FaroProvider />
+                    <GoogleAnalytics />
+                    <AccountProvider>
+                      <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                        <ErrorBoundary>
+                          <BrowserSettingsProvider>
+                            <BrowsingLevelProvider>
+                              <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
+                                <SignalsProviderStack>
+                                  <ActivityReportingProvider>
+                                    <ReferralsProvider {...cookies.referrals}>
+                                      <FiltersProvider>
+                                        <AdsProvider gated={adsGated}>
+                                          <HiddenPreferencesProvider>
+                                            <CivitaiLinkProvider>
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </CivitaiLinkProvider>
+                                          </HiddenPreferencesProvider>
+                                        </AdsProvider>
+                                      </FiltersProvider>
+                                    </ReferralsProvider>
+                                  </ActivityReportingProvider>
+                                </SignalsProviderStack>
+                              </BrowsingSettingsAddonsProvider>
+                            </BrowsingLevelProvider>
+                          </BrowserSettingsProvider>
+                        </ErrorBoundary>
+                      </CivitaiSessionProvider>
+                    </AccountProvider>
+                  </FeatureFlagsProvider>
+                </AppsRailProvider>
               </IsClientProvider>
             </UpdateRequiredWatcher>
           </SessionProvider>
