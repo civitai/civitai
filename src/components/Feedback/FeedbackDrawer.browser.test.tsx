@@ -34,7 +34,7 @@ const { mocks } = vi.hoisted(() => ({
      * failed request, neither of which the scaffold produces. Its honest answer here is always
      * `[]`, so an absence-only test would pass with the whole `readConsoleErrors()` call deleted.
      */
-    consoleErrors: { value: [] as string[] },
+    consoleErrors: { value: [] as Array<{ message: string; count: number }> },
     networkErrors: {
       value: [] as Array<{ url: string; status: number; initiatorType: string }>,
     },
@@ -96,7 +96,6 @@ vi.mock('~/utils/notifications', () => ({
 }));
 
 const FeedbackDrawer = (await import('~/components/Feedback/FeedbackDrawer')).default;
-const { FEEDBACK_TELEMETRY_DISCLOSURE } = await import('~/components/Feedback/FeedbackAttachments');
 
 const messageBox = () => page.getByPlaceholder('What were you doing, and what happened instead?');
 
@@ -220,16 +219,16 @@ describe('🔴 the Grafana Faro session travels with the report', () => {
  */
 describe('🔴 the browser-error snapshot travels with the report', () => {
   const NETWORK = [{ url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' }];
+  // A repeat count above 1, so the whole entry — not just the message — is shown to travel. A
+  // `count: 1` fixture cannot distinguish "the entry is forwarded" from "the count is defaulted".
+  const CONSOLE = [{ message: 'TypeError: x is not a function', count: 4 }];
 
   test('console and network errors are attached when the recorder has any', async () => {
-    mocks.consoleErrors.value = ['TypeError: x is not a function'];
+    mocks.consoleErrors.value = CONSOLE;
     mocks.networkErrors.value = NETWORK;
     await fileReport();
 
-    expect(await context()).toMatchObject({
-      consoleErrors: ['TypeError: x is not a function'],
-      networkErrors: NETWORK,
-    });
+    expect(await context()).toMatchObject({ consoleErrors: CONSOLE, networkErrors: NETWORK });
   });
 
   /**
@@ -252,40 +251,17 @@ describe('🔴 the browser-error snapshot travels with the report', () => {
 });
 
 /**
- * 🔴 THE DISCLOSURE, AND WHY IT IS ASSERTED ON BOTH SURFACES RATHER THAN ONCE.
+ * 🔴 A FALSE CLAIM THAT MUST NOT COME BACK, pinned on its own rather than as part of a copy test.
  *
- * `context` already carried the page path, the `/apps` filters INCLUDING the typed search term,
- * and the Faro session id, none of it disclosed, while the screenshot — the one thing a reporter
- * would expect to be asked about — was the only opt-in. Adding console and network capture to that
- * same silent payload is what makes the gap indefensible, so the line ships here rather than as a
- * follow-up.
- *
- * It is asserted against the exported CONSTANT, not against a re-typed sentence: a test carrying
- * its own copy of the words passes while the two surfaces show different text, which is exactly
- * the state this replaced (the inline prompt disclosed nothing; this drawer claimed console errors
- * were already being collected when the Faro allow-list excluded them).
+ * The drawer used to read "We attach your browser session automatically, so console errors come
+ * with the report" — but `FaroProvider` runs an explicit instrumentation allow-list that EXCLUDES
+ * the Console instrumentation, so no `console.error` had ever been collected and the sentence was
+ * simply untrue. A console snapshot now genuinely does ride along, which makes it true for the
+ * first time, and it stays deleted anyway: it names the WRONG MECHANISM. The snapshot is not the
+ * Faro session, so a reader who believed the sentence would go looking for the data in Loki, where
+ * it has never been and still is not.
  */
-describe('🔴 what rides along is disclosed before Send', () => {
-  test('the drawer names the payload without the reporter opening anything', async () => {
-    await openDrawer();
-    await expect.element(page.getByText(FEEDBACK_TELEMETRY_DISCLOSURE)).toBeVisible();
-  });
-
-  test('the disclosure names console errors, failed requests and the session id', async () => {
-    // Pins the CLAIM, not just that some sentence is on screen. A reword that quietly drops one of
-    // the three things now actually collected fails here.
-    expect(FEEDBACK_TELEMETRY_DISCLOSURE).toContain('session id');
-    expect(FEEDBACK_TELEMETRY_DISCLOSURE).toContain('errors and failed requests');
-    expect(FEEDBACK_TELEMETRY_DISCLOSURE).toContain('filters or search');
-  });
-
-  /**
-   * 🔴 THE CLAIM THIS REPLACED WAS FALSE AND MUST NOT COME BACK. The drawer used to read "We
-   * attach your browser session automatically, so console errors come with the report" — but
-   * `FaroProvider` runs an explicit instrumentation allow-list that EXCLUDES the Console
-   * instrumentation, so no `console.error` had ever been collected. It is also the wrong mechanism
-   * now that one is: the snapshot is not the Faro session.
-   */
+describe('🔴 the drawer makes no claim about the Faro session', () => {
   test('the drawer no longer attributes console errors to the Faro session', async () => {
     await openDrawer();
     await expect

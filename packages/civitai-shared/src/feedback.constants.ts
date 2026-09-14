@@ -91,10 +91,17 @@ export const FEEDBACK_FILTER_VALUE_MAX_LENGTH = 200;
  * it is "how much of a stranger's session is it proportionate to keep forever to triage one bug".
  * Ten entries is roughly one screenful; it is deliberately not fifty.
  *
+ * 🔴 `FEEDBACK_CONSOLE_ERROR_MAX_COUNT` BOUNDS DISTINCT MESSAGES, NOT EVENTS. The recorder
+ * collapses a repeat into a `count` on the entry it already holds (`CountingBuffer` in
+ * `src/utils/feedback/browserErrorLog.ts`), because a React cascade emits the same downstream
+ * message over and over and a keep-the-last-ten buffer spent the entire budget on it while evicting
+ * the originating error. So this number bounds the STORAGE and the privacy exposure — which is what
+ * it is for — while the number of console events a row can describe is unbounded.
+ *
  * Worst case per row, which is the number to re-derive if either is widened:
- *   10 × 300  = 3.0 KB of console text
+ *   10 × ~330 = 3.3 KB of console entries (message + count)
  * + 10 × ~330 = 3.3 KB of network entries (url + initiatorType + status)
- *   ≈ 6.3 KB, against a `FEEDBACK_MESSAGE_MAX_LENGTH` of 2000.
+ *   ≈ 6.6 KB, against a `FEEDBACK_MESSAGE_MAX_LENGTH` of 2000.
  *
  * As everywhere else here, `feedbackContextSchema` REJECTS an over-count or over-length value
  * rather than clipping it, so the CAPTURE side must clip to these numbers — see

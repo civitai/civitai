@@ -245,9 +245,10 @@ export function useFeedbackSubmission({
       // is the ordinary case and never blocks the submission.
       const sessionId = getFaroSessionId();
 
-      // Read at submit time for the same reason `sessionId` is: the last errors before someone
-      // gives up and files a report are the ones describing what they gave up on. Both arrays are
-      // already redacted, clipped and count-bounded by the recorder — nothing is sanitized here,
+      // Read at submit time for the same reason `sessionId` is: the errors before someone gives up
+      // and files a report are the ones describing what they gave up on. Both arrays are already
+      // redacted, clipped and count-bounded by the recorder — and console repeats are already
+      // collapsed into a per-entry `count` there — so nothing is sanitized here,
       // because a second sanitizing site is a second place to get it wrong. Empty is the ordinary
       // case (a session with nothing wrong in it, or a browser with no `responseStatus`), and an
       // empty array is OMITTED rather than stored: `{}` in the column reads as "we looked and

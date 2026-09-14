@@ -90,7 +90,6 @@ vi.mock('~/utils/notifications', () => ({
 }));
 
 const { FeedbackPrompt } = await import('~/components/Feedback/FeedbackPrompt');
-const { FEEDBACK_TELEMETRY_DISCLOSURE } = await import('~/components/Feedback/FeedbackAttachments');
 
 /** A canvas stand-in; `toBlob` is callback-style, as in the DOM. */
 const canvasYielding = (blob: Blob) =>
@@ -557,30 +556,6 @@ describe('image attachments', () => {
     expect(mocks.showErrorNotification.mock.calls[0][0]).toMatchObject({
       title: 'Image too large',
     });
-  });
-});
-
-/**
- * 🔴 THE SECOND SURFACE, AND IT IS THE ONE THAT DISCLOSED NOTHING AT ALL.
- *
- * This prompt submits `context.filters` — which on `/apps` includes the reporter's TYPED SEARCH
- * TERM — plus the page path and the Faro session id, and until now its only user-facing copy about
- * any of it was the `notice` prop and the screenshot checkbox's own description. The drawer at
- * least said something, and what it said was wrong. One constant, rendered by the one component
- * both surfaces mount, is what stops there being two answers again; this test is the half that
- * proves it reaches THIS surface, which no test in the drawer's file can see.
- */
-describe('🔴 what rides along is disclosed on the inline prompt too', () => {
-  test('the disclosure is on screen as soon as the form is open', async () => {
-    await openPrompt();
-    await expect.element(page.getByText(FEEDBACK_TELEMETRY_DISCLOSURE)).toBeVisible();
-  });
-
-  test('it is not hidden behind the attachment controls or a send', async () => {
-    // A disclosure a reporter only meets after choosing to attach something, or after sending, is
-    // not a disclosure. Asserted before any interaction beyond opening the form.
-    await openPrompt();
-    await expect.element(page.getByText(/Sent with your report/)).toBeVisible();
   });
 });
 

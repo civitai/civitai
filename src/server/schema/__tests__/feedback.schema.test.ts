@@ -258,19 +258,80 @@ describe('feedback schema — context bounds', () => {
       status: 500,
       initiatorType: 'fetch',
     };
+    const CONSOLE_ENTRY = { message: 'TypeError: x is not a function', count: 3 };
 
     it('carries both new keys out of the parse while a genuinely unknown key is stripped', () => {
       const parsed = parse({
-        consoleErrors: ['TypeError: x is not a function'],
+        consoleErrors: [CONSOLE_ENTRY],
         networkErrors: [NETWORK_ENTRY],
         // The control. If THIS survives, the two assertions above prove nothing about declaring
         // a field — they would pass for any key at all.
-        definitelyNotAField: ['TypeError: x is not a function'],
+        definitelyNotAField: [CONSOLE_ENTRY],
       } as Record<string, unknown>);
 
-      expect(parsed.context?.consoleErrors).toEqual(['TypeError: x is not a function']);
+      expect(parsed.context?.consoleErrors).toEqual([CONSOLE_ENTRY]);
       expect(parsed.context?.networkErrors).toEqual([NETWORK_ENTRY]);
       expect(parsed.context).not.toHaveProperty('definitelyNotAField');
+    });
+
+    /**
+     * 🔴 `count` SURVIVING THE PARSE IS THE WHOLE OF THE REPEAT-COLLAPSE FEATURE ON THIS SIDE, and
+     * the way it fails is silent. Stripping happens at EVERY level of a `z.object`, not just the
+     * top: an element schema of `z.object({ message })` accepts `{message, count}` without an
+     * error, stores the message alone, and the moderator panel then renders every entry as a single
+     * occurrence. The producer would be counting correctly the whole time. Nothing anywhere throws.
+     *
+     * 🔴 THE NEGATIVE CONTROL IS INSIDE THE SAME ELEMENT, NOT BESIDE IT, AND THAT IS THE POINT. The
+     * block above already proves a top-level unknown key is stripped; that says nothing about the
+     * NESTED object, which is a different schema doing its own stripping. `alsoNotAField` rides in
+     * the same entry as `count`, so the pair distinguishes "this element schema keeps declared
+     * fields" from "this element schema is passthrough and would keep anything at all".
+     */
+    it('carries the repeat count out of the parse while an unknown SIBLING field is stripped', () => {
+      const parsed = parse({
+        consoleErrors: [{ message: 'The above error occurred in <ModelCard>', count: 40 }],
+      });
+
+      expect(parsed.context?.consoleErrors?.[0]).toEqual({
+        message: 'The above error occurred in <ModelCard>',
+        count: 40,
+      });
+      // Read on its own too: `toEqual` above would also pass if `count` were somehow defaulted.
+      expect(parsed.context?.consoleErrors?.[0].count).toBe(40);
+
+      const withUnknown = parse({
+        consoleErrors: [{ message: 'boom', count: 2, alsoNotAField: 'x' }],
+      } as Record<string, unknown>);
+      expect(withUnknown.context?.consoleErrors?.[0]).toEqual({ message: 'boom', count: 2 });
+      expect(withUnknown.context?.consoleErrors?.[0]).not.toHaveProperty('alsoNotAField');
+    });
+
+    /**
+     * The `min(1)` on `count`. An entry that exists fired at least once, so a `0` is the producer
+     * contradicting itself — and the panel would draw a message next to `×0`.
+     */
+    it('rejects a count below 1, or one that is not a whole number', () => {
+      expect(() => parse({ consoleErrors: [{ message: 'boom', count: 0 }] })).toThrow();
+      expect(() => parse({ consoleErrors: [{ message: 'boom', count: -1 }] })).toThrow();
+      expect(() => parse({ consoleErrors: [{ message: 'boom', count: 1.5 }] })).toThrow();
+      expect(() => parse({ consoleErrors: [{ message: 'boom', count: '3' }] })).toThrow();
+      // Required, not optional: an entry with no count would render as a single occurrence and
+      // there would be nothing to say it was guessed.
+      expect(() => parse({ consoleErrors: [{ message: 'boom' }] })).toThrow();
+      // The positive control — 1 is accepted, so this is a floor and not a ban on small counts.
+      expect(
+        parse({ consoleErrors: [{ message: 'boom', count: 1 }] }).context?.consoleErrors
+      ).toEqual([{ message: 'boom', count: 1 }]);
+    });
+
+    /**
+     * No UPPER bound on `count`, unlike every other value in this object. The others bound a
+     * STRING, which is what a JSONB column pays for; this is one integer of fixed cost, and a cap
+     * would make the number a lie exactly in the cascade case it exists to describe.
+     */
+    it('accepts a large count, because the bound is on entries and not on occurrences', () => {
+      const parsed = parse({ consoleErrors: [{ message: 'boom', count: 100000 }] });
+      expect(parsed.context?.consoleErrors?.[0].count).toBe(100000);
     });
 
     it('carries every field of a network entry, not just the ones it is keyed on', () => {
@@ -306,6 +367,7 @@ describe('feedback schema — context bounds', () => {
    */
   describe('consoleErrors / networkErrors bounds', () => {
     const entry = (url: string) => ({ url, status: 404, initiatorType: 'fetch' });
+    const msg = (message: string, count = 1) => ({ message, count });
 
     it('is 10 entries each, 300 chars of console text, 300 chars of URL', () => {
       expect(FEEDBACK_CONSOLE_ERROR_MAX_COUNT).toBe(10);
@@ -317,14 +379,19 @@ describe('feedback schema — context bounds', () => {
 
     it('accepts exactly 10 console errors and rejects 11', () => {
       expect(
-        parse({ consoleErrors: Array.from({ length: 10 }, () => 'boom') }).context?.consoleErrors
+        parse({ consoleErrors: Array.from({ length: 10 }, (_, i) => msg(`boom ${i}`)) }).context
+          ?.consoleErrors
       ).toHaveLength(10);
-      expect(() => parse({ consoleErrors: Array.from({ length: 11 }, () => 'boom') })).toThrow();
+      expect(() =>
+        parse({ consoleErrors: Array.from({ length: 11 }, (_, i) => msg(`boom ${i}`)) })
+      ).toThrow();
     });
 
     it('accepts a 300-character console error and rejects 301', () => {
-      expect(parse({ consoleErrors: [id(300)] }).context?.consoleErrors?.[0]).toHaveLength(300);
-      expect(() => parse({ consoleErrors: [id(301)] })).toThrow();
+      expect(
+        parse({ consoleErrors: [msg(id(300))] }).context?.consoleErrors?.[0].message
+      ).toHaveLength(300);
+      expect(() => parse({ consoleErrors: [msg(id(301))] })).toThrow();
     });
 
     it('accepts exactly 10 network errors and rejects 11', () => {
@@ -357,14 +424,15 @@ describe('feedback schema — context bounds', () => {
      * is not our producer. Same shape as `sessionId`'s `.min(1)`.
      */
     it('rejects an empty console error', () => {
-      expect(() => parse({ consoleErrors: [''] })).toThrow();
+      expect(() => parse({ consoleErrors: [msg('')] })).toThrow();
       // The positive control: a one-character message is still fine, so this is a `min(1)` and
       // not an accidental ban on short messages.
-      expect(parse({ consoleErrors: ['x'] }).context?.consoleErrors).toEqual(['x']);
+      expect(parse({ consoleErrors: [msg('x')] }).context?.consoleErrors).toEqual([msg('x')]);
     });
 
     it('rejects a non-string console error', () => {
       expect(() => parse({ consoleErrors: [42] })).toThrow();
+      expect(() => parse({ consoleErrors: ['boom'] })).toThrow();
       expect(() => parse({ consoleErrors: 'boom' })).toThrow();
     });
 

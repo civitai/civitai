@@ -47,6 +47,37 @@ describe('browser error log — sanitizing', () => {
       expect(sanitizeConsoleMessage('x'.repeat(500))).toHaveLength(300);
     });
 
+    /**
+     * 🔴 THE MARKER IS THE ONLY THING SEPARATING "CUT OFF HERE" FROM "THIS IS THE WHOLE MESSAGE".
+     * A React hydration error runs well past 300 characters and a real 300-character message does
+     * not, and the moderator panel draws both as the same bordered box — so without the marker a
+     * moderator reads a fragment as a complete error and looks for a component name that was cut.
+     *
+     * 🔴 BOTH ARMS, AND THE BOUNDARY FROM BOTH SIDES. An unconditional marker is the obvious wrong
+     * implementation and it passes a cut-only test: it would stamp "there is more" onto every
+     * complete message. `300` must be unmarked and `301` must be marked — one character apart, so
+     * a `>=`/`>` slip in `clip` is visible here rather than only in production.
+     */
+    it('marks a clipped message, and only when it actually cut', () => {
+      const cut = sanitizeConsoleMessage('x'.repeat(500));
+      expect(cut.endsWith('…')).toBe(true);
+      // The marker is SPENT out of the bound, never added to it: the schema REJECTS an over-long
+      // value, so a 301-character result would fail the reporter's whole submission.
+      expect(cut).toHaveLength(300);
+      expect(cut).toBe(`${'x'.repeat(299)}…`);
+
+      // Exactly at the bound: complete, so no marker and no character spent saying so.
+      const exact = sanitizeConsoleMessage('y'.repeat(300));
+      expect(exact).toBe('y'.repeat(300));
+      expect(exact).not.toContain('…');
+
+      // One over: marked. The pair either side of the boundary is the point.
+      expect(sanitizeConsoleMessage('z'.repeat(301))).toBe(`${'z'.repeat(299)}…`);
+
+      // Well under: untouched.
+      expect(sanitizeConsoleMessage('short')).toBe('short');
+    });
+
     it('scrubs an email out of a message', () => {
       expect(sanitizeConsoleMessage('failed for someone@example.com')).toBe(
         'failed for [redacted-email]'
@@ -168,6 +199,32 @@ describe('browser error log — sanitizing', () => {
       const long = `https://civitai.com/${'a'.repeat(400)}`;
       expect(sanitizeNetworkUrl(long)).toHaveLength(300);
     });
+
+    /**
+     * The same marker, for the same reason as `sanitizeConsoleMessage`: a clipped URL and a long
+     * complete one render identically in the panel, and a moderator comparing a clipped path
+     * against the route they think failed needs to know the tail is missing.
+     *
+     * Both arms and the boundary from both sides, as above — an unconditional marker would pass a
+     * cut-only assertion while stamping every long-but-complete URL.
+     */
+    it('marks a clipped URL, and only when it actually cut', () => {
+      const cut = sanitizeNetworkUrl(`https://civitai.com/${'a'.repeat(400)}`);
+      expect(cut?.endsWith('…')).toBe(true);
+      expect(cut).toHaveLength(300);
+
+      // `https://civitai.com/` is 20 characters, so a 280-character path lands exactly on 300.
+      const exact = `https://civitai.com/${'b'.repeat(280)}`;
+      expect(exact).toHaveLength(300);
+      expect(sanitizeNetworkUrl(exact)).toBe(exact);
+
+      // One character more: marked, and still exactly 300 long.
+      const over = `https://civitai.com/${'c'.repeat(281)}`;
+      expect(sanitizeNetworkUrl(over)).toBe(`${over.slice(0, 299)}…`);
+
+      // Well under: untouched, so an ordinary URL never grows a marker.
+      expect(sanitizeNetworkUrl('https://civitai.com/x')).toBe('https://civitai.com/x');
+    });
   });
 
   describe('formatConsoleArgs', () => {
@@ -222,13 +279,96 @@ describe('browser error log — sanitizing', () => {
 describe('browser error log — buffers', () => {
   beforeEach(() => resetBrowserErrorLog());
 
-  it('keeps the LAST N console errors, not the first N', () => {
+  it('keeps the LAST N DISTINCT console errors, not the first N', () => {
     for (let i = 0; i < 25; i++) recordConsoleError(`error ${i}`);
     const out = readConsoleErrors();
     expect(out).toHaveLength(10);
     // The last ones. A first-N buffer would end at `error 9`.
-    expect(out[0]).toBe('error 15');
-    expect(out[9]).toBe('error 24');
+    expect(out[0]).toEqual({ message: 'error 15', count: 1 });
+    expect(out[9]).toEqual({ message: 'error 24', count: 1 });
+  });
+
+  /**
+   * 🔴 THE DEFECT THIS FIXES, REPRODUCED. One broken React render is not one `console.error` — the
+   * error, the component stack, the boundary re-render and the retry all arrive as separate calls,
+   * and a keep-the-last-ten buffer ships ten copies of the downstream symptom with the ORIGINATING
+   * error already evicted. That is the entry a moderator needs and the one that used to go missing.
+   *
+   * The fixture is a cascade, not a clean sequence: the originating error arrives FIRST and is then
+   * buried under far more repeats than the bound. The assertion is that it survived.
+   */
+  it('keeps the originating error when a cascade repeats one message past the bound', () => {
+    recordConsoleError('TypeError: cannot read properties of undefined (reading "id")');
+    for (let i = 0; i < 40; i++) recordConsoleError('The above error occurred in <ModelCard>');
+
+    const out = readConsoleErrors();
+    // Two DISTINCT messages from 41 events, and the first one is still here. Before the collapse
+    // this read as ten copies of the second message and nothing else.
+    expect(out).toEqual([
+      { message: 'TypeError: cannot read properties of undefined (reading "id")', count: 1 },
+      { message: 'The above error occurred in <ModelCard>', count: 40 },
+    ]);
+  });
+
+  it('collapses a repeat into a count rather than spending a slot on it', () => {
+    recordConsoleError('boom');
+    recordConsoleError('boom');
+    recordConsoleError('boom');
+    expect(readConsoleErrors()).toEqual([{ message: 'boom', count: 3 }]);
+  });
+
+  /**
+   * 🔴 A REPEAT MUST NOT REFRESH RECENCY, AND THIS IS THE ARM THAT CATCHES IT. Bumping a repeated
+   * entry to the end of the buffer is the natural-looking implementation (it is what an LRU does),
+   * and it REINTRODUCES the original defect by a different route: a message firing in a loop would
+   * outlive, and then evict, the originating error that arrived before it.
+   *
+   * The fixture makes the two orderings disagree — `first` is repeated AFTER `second` is seen, so a
+   * recency-refreshing buffer would order them `second, first`.
+   */
+  it('does not move a repeated entry to the end', () => {
+    recordConsoleError('first');
+    recordConsoleError('second');
+    recordConsoleError('first');
+
+    expect(readConsoleErrors().map((e) => e.message)).toEqual(['first', 'second']);
+    expect(readConsoleErrors()).toEqual([
+      { message: 'first', count: 2 },
+      { message: 'second', count: 1 },
+    ]);
+  });
+
+  /**
+   * The bound is on DISTINCT messages, so a repeat of something already held must NOT evict
+   * anything — that is the whole reason the collapse buys room for genuinely distinct errors.
+   */
+  it('a repeat of a held message evicts nothing', () => {
+    for (let i = 0; i < 10; i++) recordConsoleError(`error ${i}`);
+    for (let i = 0; i < 50; i++) recordConsoleError('error 0');
+
+    const out = readConsoleErrors();
+    expect(out).toHaveLength(10);
+    expect(out[0]).toEqual({ message: 'error 0', count: 51 });
+    // `error 9` is still the last entry: nothing was pushed out by 50 repeats.
+    expect(out[9]).toEqual({ message: 'error 9', count: 1 });
+  });
+
+  /**
+   * An evicted message must lose its count with it. If eviction dropped the entry but left the
+   * `message → entry` index pointing at it, the same message arriving again would increment an
+   * object no longer in the buffer — a console error recorded after eviction would then be stored
+   * NOWHERE, silently, and only on the second sighting.
+   */
+  it('re-admits an evicted message as a fresh entry rather than losing it', () => {
+    recordConsoleError('evict-me');
+    for (let i = 0; i < 10; i++) recordConsoleError(`filler ${i}`);
+    expect(readConsoleErrors().map((e) => e.message)).not.toContain('evict-me');
+
+    recordConsoleError('evict-me');
+    recordConsoleError('evict-me');
+    const out = readConsoleErrors();
+    expect(out).toHaveLength(10);
+    expect(out[9]).toEqual({ message: 'evict-me', count: 2 });
   });
 
   it('keeps the LAST N network errors, not the first N', () => {
@@ -242,7 +382,20 @@ describe('browser error log — buffers', () => {
 
   it('stores console errors already sanitized, so a reader cannot forget to', () => {
     recordConsoleError('mail someone@example.com');
-    expect(readConsoleErrors()).toEqual(['mail [redacted-email]']);
+    expect(readConsoleErrors()).toEqual([{ message: 'mail [redacted-email]', count: 1 }]);
+  });
+
+  /**
+   * Repeats are keyed on the SANITIZED message, which is what makes the collapse work on the case
+   * it exists for: two failures differing only inside a redacted span are the same error to a
+   * moderator, and a raw-keyed buffer would spend two slots on them.
+   */
+  it('collapses messages that differ only in redacted content', () => {
+    recordConsoleError('login failed for alice@example.com');
+    recordConsoleError('login failed for bob@example.com');
+    expect(readConsoleErrors()).toEqual([
+      { message: 'login failed for [redacted-email]', count: 2 },
+    ]);
   });
 
   it('stores network URLs already stripped, so a reader cannot forget to', () => {
@@ -259,6 +412,16 @@ describe('browser error log — buffers', () => {
   it('drops a blank console message rather than storing an empty entry', () => {
     recordConsoleError('   ');
     expect(readConsoleErrors()).toEqual([]);
+  });
+
+  /**
+   * The schema bounds `count` at `>= 1`, so a stored entry must never claim zero occurrences. This
+   * is the producer half: an entry exists only because it was recorded at least once.
+   */
+  it('never stores an entry with a count below 1', () => {
+    for (let i = 0; i < 15; i++) recordConsoleError(`error ${i}`);
+    recordConsoleError('error 14');
+    for (const entry of readConsoleErrors()) expect(entry.count).toBeGreaterThanOrEqual(1);
   });
 
   /**
@@ -317,8 +480,31 @@ describe('browser error log — buffers', () => {
 
   it('hands back a copy, so a caller mutating the result cannot corrupt the buffer', () => {
     recordConsoleError('boom');
-    readConsoleErrors().push('injected');
-    expect(readConsoleErrors()).toEqual(['boom']);
+    readConsoleErrors().push({ message: 'injected', count: 99 });
+    expect(readConsoleErrors()).toEqual([{ message: 'boom', count: 1 }]);
+  });
+
+  /**
+   * 🔴 THE ENTRIES MUST BE COPIES TOO, NOT JUST THE ARRAY, BECAUSE `count` IS MUTABLE AND THE
+   * BUFFER KEEPS RECORDING AFTER A READ. `useFeedbackSubmission` reads the array and then awaits
+   * image uploads before the mutation fires, so a shared reference would let an error arriving in
+   * that window change a count in the payload already assembled — and, in the other direction, a
+   * caller mutating what it was handed would corrupt the buffer. A `[...this.entries]` shallow copy
+   * of the array passes the test above and fails this one.
+   */
+  it('hands back copies of the entries, not the live objects', () => {
+    recordConsoleError('boom');
+    const snapshot = readConsoleErrors();
+
+    // The buffer moves on after the read.
+    recordConsoleError('boom');
+    expect(snapshot[0].count).toBe(1);
+    expect(readConsoleErrors()[0].count).toBe(2);
+
+    // And a caller writing to what it was handed cannot reach the buffer.
+    snapshot[0].count = 999;
+    snapshot[0].message = 'tampered';
+    expect(readConsoleErrors()).toEqual([{ message: 'boom', count: 2 }]);
   });
 
   it('reads empty before anything is recorded, which is the ordinary case', () => {

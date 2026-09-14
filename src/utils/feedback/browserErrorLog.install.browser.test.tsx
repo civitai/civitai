@@ -48,6 +48,14 @@ describe('installBrowserErrorLog', () => {
     return uninstall;
   };
 
+  /**
+   * Just the recorded MESSAGES. The buffer stores `{message, count}` because repeats are collapsed
+   * — which is the concern of `browserErrorLog.test.ts`, not of this file: what is under test here
+   * is whether the wrapper and the listeners reach the buffer AT ALL. Asserting the count alongside
+   * every message would couple these tests to a rule they are not about.
+   */
+  const messages = () => readConsoleErrors().map((entry) => entry.message);
+
   beforeEach(() => {
     cleanups = [];
     resetBrowserErrorLog();
@@ -89,7 +97,7 @@ describe('installBrowserErrorLog', () => {
 
       console.error('boom', { a: 1 });
 
-      expect(readConsoleErrors()).toContain('boom {"a":1}');
+      expect(messages()).toContain('boom {"a":1}');
     });
 
     test('records an Error message and NOT its stack', () => {
@@ -98,10 +106,10 @@ describe('installBrowserErrorLog', () => {
 
       console.error(new Error('render failed'));
 
-      expect(readConsoleErrors()).toContain('Error: render failed');
+      expect(messages()).toContain('Error: render failed');
       // A stack from this file would name it. Asserted on the joined buffer so a stack landing in
       // any entry fails, not only in the one this test happens to look at.
-      expect(readConsoleErrors().join(' ')).not.toContain('browserErrorLog.install');
+      expect(messages().join(' ')).not.toContain('browserErrorLog.install');
     });
 
     test('redacts on the way into the buffer, not on the way out', () => {
@@ -110,7 +118,7 @@ describe('installBrowserErrorLog', () => {
 
       console.error('mail someone@example.com');
 
-      expect(readConsoleErrors()).toContain('mail [redacted-email]');
+      expect(messages()).toContain('mail [redacted-email]');
     });
 
     /**
@@ -124,7 +132,7 @@ describe('installBrowserErrorLog', () => {
       const uninstall = install();
 
       console.error('while installed');
-      expect(readConsoleErrors()).toContain('while installed');
+      expect(messages()).toContain('while installed');
       expect(console.error).not.toBe(sentinel);
 
       uninstall();
@@ -134,13 +142,19 @@ describe('installBrowserErrorLog', () => {
       console.error('after uninstall');
       // The sentinel still receives it — so the line is not lost, it is merely not recorded.
       expect(calls.at(-1)).toEqual(['after uninstall']);
-      expect(readConsoleErrors()).toEqual([]);
+      expect(messages()).toEqual([]);
     });
 
     /**
      * `_app.tsx` mounts this under React StrictMode, which runs mount → cleanup → mount in
      * development. A second install must not stack a second wrapper, or every line is recorded
-     * twice and the 10-entry buffer holds five errors.
+     * twice.
+     *
+     * 🔴 THIS ASSERTS THE COUNT, AND IT HAS TO. The obvious form — "there is exactly one entry for
+     * `once`" — became VACUOUS the moment the buffer started collapsing repeats: a stacked wrapper
+     * records the line twice, the collapse folds the two into ONE entry, and an entry-count
+     * assertion passes with the defect fully present. `count` is now the only observable that can
+     * tell one wrapper from two, so it is what the guard reads.
      */
     test('a second install is a no-op rather than a second wrapper', () => {
       withSentinelConsole();
@@ -149,11 +163,13 @@ describe('installBrowserErrorLog', () => {
 
       console.error('once');
 
-      expect(readConsoleErrors().filter((line) => line === 'once')).toHaveLength(1);
+      expect(readConsoleErrors().filter((entry) => entry.message === 'once')).toEqual([
+        { message: 'once', count: 1 },
+      ]);
       // The no-op uninstaller must also not tear down the live one.
       second();
       console.error('still recording');
-      expect(readConsoleErrors()).toContain('still recording');
+      expect(messages()).toContain('still recording');
     });
   });
 
@@ -165,7 +181,7 @@ describe('installBrowserErrorLog', () => {
         new ErrorEvent('error', { message: 'Uncaught TypeError: x is not a function' })
       );
 
-      expect(readConsoleErrors()).toContain('Uncaught TypeError: x is not a function');
+      expect(messages()).toContain('Uncaught TypeError: x is not a function');
     });
 
     /**
@@ -191,7 +207,7 @@ describe('installBrowserErrorLog', () => {
 
       window.dispatchEvent(new ErrorEvent('error', { message: '' }));
 
-      expect(readConsoleErrors()).not.toContain('');
+      expect(messages()).not.toContain('');
     });
 
     test('an unhandled rejection is recorded with its reason', async () => {
@@ -208,7 +224,7 @@ describe('installBrowserErrorLog', () => {
       );
 
       await vi.waitFor(() =>
-        expect(readConsoleErrors()).toContain('Unhandled rejection: Error: the fetch blew up')
+        expect(messages()).toContain('Unhandled rejection: Error: the fetch blew up')
       );
     });
   });

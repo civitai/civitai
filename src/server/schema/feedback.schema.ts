@@ -29,14 +29,11 @@ export const feedbackAreaSchema = z.enum(FEEDBACK_AREAS);
 // column will store exactly what it is handed.
 //
 // 🔴 `consoleErrors` / `networkErrors` ARE A DATA-COLLECTION SURFACE, not two more
-// debug fields, and they are why the prompt now carries a disclosure line (see
-// `FEEDBACK_TELEMETRY_DISCLOSURE` in `FeedbackAttachments.tsx`). Unlike `path` or
-// `filters` they are not a restatement of something the reporter typed or navigated
-// to — they are a slice of their session that nothing else on this platform retains,
-// kept indefinitely, readable by moderators. Their bounds are a proportionality
-// judgement rather than a storage one: read the note on
-// `FEEDBACK_CONSOLE_ERROR_MAX_COUNT` before widening either, and re-read the
-// disclosure line in the same change.
+// debug fields. Unlike `path` or `filters` they are not a restatement of something
+// the reporter typed or navigated to — they are a slice of their session that
+// nothing else on this platform retains, kept indefinitely, readable by moderators.
+// Their bounds are a proportionality judgement rather than a storage one: read the
+// note on `FEEDBACK_CONSOLE_ERROR_MAX_COUNT` before widening either.
 const feedbackContextSchema = z.object({
   path: z.string().max(FEEDBACK_PATH_MAX_LENGTH).optional(),
   reportedSource: z.string().max(50).optional(),
@@ -115,7 +112,21 @@ const feedbackContextSchema = z.object({
   /** Grafana Faro session id, to join a report to that session's RUM signals. */
   sessionId: z.string().trim().min(1).max(FEEDBACK_SESSION_ID_MAX_LENGTH).optional(),
   /**
-   * The last few console errors the reporter's browser recorded before they pressed Send.
+   * The distinct console errors the reporter's browser recorded before they pressed Send, each
+   * with how many times it fired.
+   *
+   * 🔴 `count` IS A DECLARED FIELD OF A NESTED `z.object`, AND THAT IS THE ONLY REASON IT ARRIVES.
+   * The stripping described below happens at EVERY level, not just the top one: an element schema
+   * of `z.object({ message })` accepts `{message, count}` happily and stores the message alone, so
+   * the producer would count repeats correctly, submit cleanly, and the moderator would see every
+   * entry as `×1`. There is no error and no log on that path — the only observable that separates
+   * it from a working one is reading `count` back out of the parsed value, which
+   * `feedback.schema.test.ts` does.
+   *
+   * WHY A COUNT RATHER THAN REPEATED ENTRIES. A React cascade emits the same downstream message
+   * many times; a buffer that kept each copy spent the whole budget on it and evicted the
+   * originating error. See `CountingBuffer` in the capture module — the bound is on DISTINCT
+   * messages, so this array can describe far more than ten console events.
    *
    * 🔴 DECLARING THE KEY IS THE WHOLE FEATURE, NOT PAPERWORK. `feedbackContextSchema` is a
    * `z.object`, and a `z.object` STRIPS what it does not declare — silently, with no error and no
@@ -136,11 +147,24 @@ const feedbackContextSchema = z.object({
    * the bound, which is a bug worth a rejection rather than a silent truncation.
    */
   consoleErrors: z
-    // `.min(1)`: an empty string is not an error message, and the moderator panel renders one as an
-    // empty bordered box that reads as "an error we failed to display". `recordConsoleError` already
-    // refuses empties, so no legitimate submission can carry one and this bound costs the producer
-    // nothing — it closes the case for a client that is not our producer. Same shape as `sessionId`.
-    .array(z.string().min(1).max(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH))
+    .array(
+      z.object({
+        // `.min(1)`: an empty string is not an error message, and the moderator panel renders one
+        // as an empty bordered box that reads as "an error we failed to display".
+        // `recordConsoleError` already refuses empties, so no legitimate submission can carry one
+        // and this bound costs the producer nothing — it closes the case for a client that is not
+        // our producer. Same shape as `sessionId`.
+        message: z.string().min(1).max(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH),
+        // `.min(1)` because an entry that exists fired at least once — a `0` would be the producer
+        // contradicting itself, and the panel would render `×0` next to a message it is showing.
+        //
+        // NO UPPER BOUND, unlike every other value in this object, and the asymmetry is deliberate:
+        // the others bound a STRING, whose size is what a JSONB column pays for, while this is one
+        // integer whose size is fixed whatever it holds. A cap would buy nothing and would make the
+        // number a lie precisely in the cascade case the field exists to describe.
+        count: z.number().int().min(1),
+      })
+    )
     .max(FEEDBACK_CONSOLE_ERROR_MAX_COUNT)
     .optional(),
   /**

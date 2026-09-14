@@ -98,6 +98,18 @@ export type FeedbackNetworkError = {
   initiatorType: string;
 };
 
+/**
+ * One DISTINCT console message from the snapshot, and how many times it fired.
+ *
+ * The producer collapses repeats rather than storing each copy, so `count` can be far larger than
+ * the array — ten entries can describe hundreds of console events. A section header reading
+ * "N captured" is therefore a count of DISTINCT messages, not of events.
+ */
+export type FeedbackConsoleError = {
+  message: string;
+  count: number;
+};
+
 export type FeedbackContext = {
   path: string | null;
   filters: FeedbackFilters | null;
@@ -106,7 +118,7 @@ export type FeedbackContext = {
   sessionId: string | null;
   /** Console errors the reporter's browser recorded. Empty when absent, empty, OR malformed —
    *  a malformed array is routed to `other` and shown there, not silently dropped. */
-  consoleErrors: string[];
+  consoleErrors: FeedbackConsoleError[];
   /** Requests that came back 4xx/5xx. Empty on the same three cases as `consoleErrors`. */
   networkErrors: FeedbackNetworkError[];
   /** Everything the named keys did not claim. `null` when there is nothing left over. */
@@ -133,7 +145,7 @@ const NETWORK_ERROR_FIELDS = ['url', 'status', 'initiatorType'] as const;
  * direction the "other" bucket does not cover, and it is silent and total.
  *
  * Rejecting the unknown key sends the whole array to "other" as a visible JSON dump instead —
- * which is exactly what `consoleErrors` already does when its ELEMENT TYPE drifts.
+ * which is exactly what `consoleErrors` does when its own element shape drifts.
  *
  * ⚠️ `filters` does not need this because it renders `Object.entries(...)` — a new key there
  * appears by itself. This section renders a fixed triple, which is what makes the difference.
@@ -149,6 +161,25 @@ const isNetworkError = (value: unknown): value is FeedbackNetworkError =>
   Number.isFinite(value.status) &&
   typeof value.initiatorType === 'string' &&
   Object.keys(value).length === NETWORK_ERROR_FIELDS.length;
+
+/** Same idea, for a console entry. */
+const CONSOLE_ERROR_FIELDS = ['message', 'count'] as const;
+
+/**
+ * 🔴 EXACT KEYS, for the reason `isNetworkError` above spells out: this section ALSO renders a
+ * fixed set of fields, so an entry carrying a key this app does not know would be claimed here,
+ * drawn nowhere, and kept out of "Other context" precisely because it was claimed.
+ *
+ * `count` is checked for being a finite number only, NOT for `>= 1`. The producer bounds it at
+ * write time; re-imposing that here would send a whole stored array to the "other" bucket over one
+ * value the renderer can display perfectly well — the same reading as `status` above.
+ */
+const isConsoleError = (value: unknown): value is FeedbackConsoleError =>
+  isPlainObject(value) &&
+  typeof value.message === 'string' &&
+  typeof value.count === 'number' &&
+  Number.isFinite(value.count) &&
+  Object.keys(value).length === CONSOLE_ERROR_FIELDS.length;
 
 /**
  * A Cloudflare-images key, as the delivery URL builder requires one.
@@ -232,7 +263,7 @@ export function splitContext(context: unknown): FeedbackContext {
       Object.values(value).every(isFilterValue)
     ) {
       out.filters = value as FeedbackFilters;
-    } else if (key === 'consoleErrors' && Array.isArray(value) && value.every(isString)) {
+    } else if (key === 'consoleErrors' && Array.isArray(value) && value.every(isConsoleError)) {
       // All-or-nothing, unlike `images` — which filters per entry only because a bad id there is a
       // live `<img src>` hazard. These are text, so a malformed array goes to "Other context"
       // whole rather than being shortened in a way the moderator cannot see.

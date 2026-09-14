@@ -68,6 +68,7 @@ import { redactText, redactValue } from '~/utils/faro/redact';
  * be the thing that forgets to redact. `feedbackContextSchema` REJECTS an over-long value rather
  * than clipping it, so clipping here is not belt-and-braces — it is what keeps an over-long
  * console line from failing the whole submission on the surface that exists to collect reports.
+ * A clipped string carries a marker so a moderator can tell it from a complete one — see `clip`.
  */
 
 export type FeedbackNetworkError = {
@@ -76,9 +77,18 @@ export type FeedbackNetworkError = {
   initiatorType: string;
 };
 
+/** One DISTINCT console message, with how many times it was recorded. */
+export type FeedbackConsoleError = {
+  message: string;
+  count: number;
+};
+
 /**
- * Keeps the LAST `capacity` items. The last few errors before someone gives up and files a report
- * are the ones describing what they gave up on; the first few are usually page-load noise.
+ * Keeps the LAST `capacity` items. The last few failed requests before someone gives up and files a
+ * report are the ones describing what they gave up on.
+ *
+ * Console messages deliberately do NOT use this — see `CountingBuffer` for why "keep the last N" is
+ * the wrong rule for them.
  */
 class RingBuffer<T> {
   private items: T[] = [];
@@ -95,7 +105,62 @@ class RingBuffer<T> {
   }
 }
 
-const consoleBuffer = new RingBuffer<string>(FEEDBACK_CONSOLE_ERROR_MAX_COUNT);
+/**
+ * Keeps up to `capacity` DISTINCT messages, first-seen first, collapsing a repeat into a `count` on
+ * the entry that is already there.
+ *
+ * 🔴 THIS IS NOT AN OPTIMISATION. IT IS THE FIX FOR WHAT A "KEEP THE LAST N" BUFFER DOES TO A REACT
+ * CASCADE. One broken render is not one `console.error`: React reports the error, then the
+ * component stack, then the boundary re-render, then the retry. So a plain last-10 buffer ships ten
+ * copies of the DOWNSTREAM symptom and ZERO copies of the originating error — the one entry a
+ * moderator actually needs, evicted by the noise it caused. Collapsing repeats spends one slot on
+ * the cascade and leaves the other nine for genuinely distinct errors, inside the same bound.
+ *
+ * ⚠ The rationale this replaced argued the opposite way — "the first few are usually page-load
+ * noise, keep the last few". That is right for a slow drift across a long session and exactly
+ * INVERTED for a cascade, which is the case a bug report is most often filed about.
+ *
+ * 🔴 A REPEAT DOES NOT MOVE ITS ENTRY TO THE END, AND THAT IS THE LOAD-BEARING HALF. Refreshing
+ * recency on a repeat would let a message firing in a loop outlive — and then evict — the
+ * originating error that arrived before it, which is the exact failure this class exists to stop.
+ * Position is FIRST-SEEN; only `count` moves.
+ *
+ * `count` is deliberately unbounded: it is a count, so a cap would understate a real cascade to
+ * save a handful of bytes. What is bounded is the number of ENTRIES, which is what carries strings.
+ */
+class CountingBuffer {
+  private entries: FeedbackConsoleError[] = [];
+  /** message → the entry in `entries`, so a repeat is O(1) rather than a scan of the array. */
+  private index = new Map<string, FeedbackConsoleError>();
+  constructor(private readonly capacity: number) {}
+  push(message: string) {
+    const seen = this.index.get(message);
+    if (seen) {
+      seen.count += 1;
+      return;
+    }
+    const entry: FeedbackConsoleError = { message, count: 1 };
+    this.entries.push(entry);
+    this.index.set(message, entry);
+    while (this.entries.length > this.capacity) {
+      const evicted = this.entries.shift();
+      // `index` is only ever written alongside `entries`, and the lookup above means a message
+      // appears at most once, so the evicted entry's key is always its own.
+      if (evicted) this.index.delete(evicted.message);
+    }
+  }
+  read(): FeedbackConsoleError[] {
+    // Entry COPIES, not references: `count` is mutable and the buffer keeps recording after a read,
+    // so handing out the live objects would let a later repeat change a value already submitted.
+    return this.entries.map((entry) => ({ ...entry }));
+  }
+  clear() {
+    this.entries = [];
+    this.index.clear();
+  }
+}
+
+const consoleBuffer = new CountingBuffer(FEEDBACK_CONSOLE_ERROR_MAX_COUNT);
 const networkBuffer = new RingBuffer<FeedbackNetworkError>(FEEDBACK_NETWORK_ERROR_MAX_COUNT);
 
 /**
@@ -137,6 +202,37 @@ export function formatConsoleArgs(args: readonly unknown[]): string {
 }
 
 /**
+ * What a clipped string ends with, so a moderator can tell a cut-off value from a complete one.
+ *
+ * 🔴 WITHOUT A MARKER THE TWO ARE INDISTINGUISHABLE ON SCREEN. A React hydration message runs well
+ * past the bound and a genuine 300-character message does not, yet `FeedbackBrowserErrors.svelte`
+ * renders both as the same bordered box — so a moderator reading a clipped line has no way to know
+ * that the part naming the component is missing, and reads a fragment as the whole error. It is the
+ * same care the panel's "N captured" heading already takes at the ARRAY level, applied to a string.
+ *
+ * One character (U+2026, not three dots) because the marker is spent out of the bound rather than
+ * added to it — see `clip`.
+ */
+const TRUNCATION_MARKER = '…';
+
+/**
+ * `value` at no more than `max` characters, marked when something was ACTUALLY cut.
+ *
+ * 🔴 THE MARKER IS SPENT OUT OF THE BUDGET, NEVER ADDED TO IT. `feedbackContextSchema` REJECTS an
+ * over-long value rather than clipping it, and a rejection fails the reporter's whole submission on
+ * the surface that exists to collect reports — so a marker appended PAST `max` would turn every
+ * long console line into a submit failure. A clipped result is exactly `max` characters.
+ *
+ * 🔴 A STRING OF EXACTLY `max` IS NOT TRUNCATED, so it gets no marker. `slice` is a no-op at the
+ * boundary, so a `>=` here would stamp "there is more" onto a complete message AND spend one of its
+ * characters saying so. The boundary is pinned from both sides by a test.
+ */
+function clip(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return value.slice(0, max - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
+}
+
+/**
  * Redact, then clip. `''` when there is nothing worth keeping, which the callers treat as "do not
  * record" rather than as an empty entry.
  *
@@ -151,7 +247,7 @@ export function formatConsoleArgs(args: readonly unknown[]): string {
 export function sanitizeConsoleMessage(raw: string): string {
   if (typeof raw !== 'string') return '';
   const redacted = redactText(raw).trim();
-  return redacted.slice(0, FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+  return clip(redacted, FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
 }
 
 /**
@@ -184,7 +280,7 @@ export function sanitizeNetworkUrl(raw: string, base?: string): string | null {
     url.hash = '';
     const scrubbed = redactValue(url.toString()).trim();
     if (!scrubbed) return null;
-    return scrubbed.slice(0, FEEDBACK_NETWORK_URL_MAX_LENGTH);
+    return clip(scrubbed, FEEDBACK_NETWORK_URL_MAX_LENGTH);
   } catch {
     // A relative URL with no base, or anything else `new URL` refuses. Storing a value we could
     // not parse means storing a value we could not strip a query off, so store nothing.
@@ -231,8 +327,11 @@ export function recordNetworkError(input: {
   });
 }
 
-/** The console errors to attach to a submission, oldest first. Already redacted and clipped. */
-export const readConsoleErrors = (): string[] => consoleBuffer.read();
+/**
+ * The console errors to attach to a submission, FIRST-SEEN first, already redacted and clipped —
+ * each one distinct, carrying the number of times it was recorded. See `CountingBuffer`.
+ */
+export const readConsoleErrors = (): FeedbackConsoleError[] => consoleBuffer.read();
 
 /** The failed requests to attach to a submission, oldest first. Already redacted and clipped. */
 export const readNetworkErrors = (): FeedbackNetworkError[] => networkBuffer.read();

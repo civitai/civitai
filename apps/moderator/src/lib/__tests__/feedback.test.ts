@@ -134,7 +134,7 @@ describe('splitContext', () => {
     // Bound to consts and shared between input and expectation, as `images`/`screenshotId` above
     // already are. This assertion's property is IDENTITY — every key carried through unchanged —
     // so restating the literals on both sides would test the transcription, not the pass-through.
-    const consoleErrors = ['TypeError: x is not a function'];
+    const consoleErrors = [{ message: 'TypeError: x is not a function', count: 3 }];
     const networkErrors = [
       { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
     ];
@@ -157,7 +157,7 @@ describe('splitContext', () => {
       images,
       screenshotId,
       sessionId: 'v913JNcgDs',
-      consoleErrors: ['TypeError: x is not a function'],
+      consoleErrors: [{ message: 'TypeError: x is not a function', count: 3 }],
       networkErrors: [
         { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
       ],
@@ -204,10 +204,11 @@ describe('splitContext', () => {
    */
   describe('the browser-error snapshot', () => {
     const ENTRY = { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' };
+    const CONSOLE_ENTRY = { message: 'TypeError: x is not a function', count: 3 };
 
     it('carries both arrays through', () => {
-      const ctx = splitContext({ consoleErrors: ['boom', 'boom'], networkErrors: [ENTRY] });
-      expect(ctx.consoleErrors).toEqual(['boom', 'boom']);
+      const ctx = splitContext({ consoleErrors: [CONSOLE_ENTRY], networkErrors: [ENTRY] });
+      expect(ctx.consoleErrors).toEqual([CONSOLE_ENTRY]);
       expect(ctx.networkErrors).toEqual([ENTRY]);
       expect(ctx.other).toBeNull();
     });
@@ -225,17 +226,50 @@ describe('splitContext', () => {
       expect(ctx.other).toBeNull();
     });
 
-    it('keeps a duplicated console line — the same error twice IS the signal', () => {
-      // Deliberately NOT deduplicated, unlike `images`. "This fired 6 times" is the useful fact,
-      // and the panel keys by index so a repeat cannot make the row unopenable.
-      const ctx = splitContext({ consoleErrors: ['same', 'same', 'same'] });
-      expect(ctx.consoleErrors).toHaveLength(3);
+    /**
+     * 🔴 THE READ SIDE DOES NOT DEDUPLICATE, even though the producer now does. Collapsing repeats
+     * is a CAPTURE-time rule, and this app reads a JSONB column written by a deployable it does not
+     * control — a row from before the collapse shipped, or from another client, can legitimately
+     * hold the same message twice. Folding them here would silently rewrite stored data, and the
+     * `{#each … (i)}` index key is what makes a repeat safe to render rather than fatal.
+     */
+    it('keeps two entries with the same message rather than folding them', () => {
+      const ctx = splitContext({
+        consoleErrors: [
+          { message: 'same', count: 1 },
+          { message: 'same', count: 1 },
+        ],
+      });
+      expect(ctx.consoleErrors).toHaveLength(2);
     });
 
-    it('shows the WHOLE array under "other" when one console entry is not a string', () => {
-      // All-or-nothing: a moderator seeing 2 of 3 lines with no indication one was dropped is
+    it('carries the repeat count through, since that is the entry the panel draws', () => {
+      const ctx = splitContext({ consoleErrors: [{ message: 'boom', count: 40 }] });
+      expect(ctx.consoleErrors).toEqual([{ message: 'boom', count: 40 }]);
+    });
+
+    it.each([
+      ['a bare string, the shape this key used to hold', 'ok'],
+      ['a missing count', { message: 'ok' }],
+      ['a missing message', { count: 2 }],
+      ['a string count', { message: 'ok', count: '2' }],
+      ['a NaN count', { message: 'ok', count: NaN }],
+      ['an object message', { message: { a: 1 }, count: 2 }],
+      ['null instead of an entry', null],
+      ['an array instead of an entry', []],
+      // 🔴 THE DRIFT CASE, same as the network one below and for the same reason: this section
+      // renders a FIXED pair, so a `typeof`-only guard would claim the array, draw `message` and
+      // `count`, and `level` would appear NOWHERE — not here and not under "Other context" either,
+      // because the key was claimed. The producer is a separate deployable, so shipping one repo
+      // reaches this.
+      [
+        'an entry with a field this app does not render',
+        { message: 'ok', count: 2, level: 'warn' },
+      ],
+    ])('routes a console array holding %s to "other"', (_label, bad) => {
+      // All-or-nothing: a moderator seeing 1 of 2 lines with no indication one was dropped is
       // worse off than one seeing the raw JSON.
-      const value = ['ok', 42];
+      const value = [CONSOLE_ENTRY, bad];
       const ctx = splitContext({ consoleErrors: value });
       expect(ctx.consoleErrors).toEqual([]);
       expect(ctx.other).toEqual({ consoleErrors: value });
@@ -285,12 +319,21 @@ describe('splitContext', () => {
      */
     it('carries a row that exceeds every producer-side bound, because storage is not validation', () => {
       const ctx = splitContext({
-        consoleErrors: Array.from({ length: 50 }, () => 'x'.repeat(5000)),
+        consoleErrors: Array.from({ length: 50 }, () => ({
+          message: 'x'.repeat(5000),
+          count: 9e9,
+        })),
         networkErrors: [{ url: 'https://a.io/x', status: 200, initiatorType: 'fetch' }],
       });
       expect(ctx.consoleErrors).toHaveLength(50);
       expect(ctx.networkErrors[0].status).toBe(200);
       expect(ctx.other).toBeNull();
+
+      // The schema's `count >= 1` is likewise a WRITE-side rule. A stored `0` is displayable, so
+      // re-imposing the floor here would bin the whole array over one number.
+      const zero = splitContext({ consoleErrors: [{ message: 'boom', count: 0 }] });
+      expect(zero.consoleErrors).toEqual([{ message: 'boom', count: 0 }]);
+      expect(zero.other).toBeNull();
     });
 
     /**
@@ -303,13 +346,13 @@ describe('splitContext', () => {
     it('carries markup, a javascript: URL and an attacker origin through as plain data', () => {
       const hostile = '<img src=x onerror="fetch(`//evil.test`)">';
       const ctx = splitContext({
-        consoleErrors: [hostile],
+        consoleErrors: [{ message: hostile, count: 1 }],
         networkErrors: [
           { url: 'javascript:alert(1)', status: 500, initiatorType: 'fetch' },
           { url: 'https://attacker.example/pixel.png', status: 404, initiatorType: 'img' },
         ],
       });
-      expect(ctx.consoleErrors).toEqual([hostile]);
+      expect(ctx.consoleErrors).toEqual([{ message: hostile, count: 1 }]);
       expect(ctx.networkErrors.map((e) => e.url)).toEqual([
         'javascript:alert(1)',
         'https://attacker.example/pixel.png',

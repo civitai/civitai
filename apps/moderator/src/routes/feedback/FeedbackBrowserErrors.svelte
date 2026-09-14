@@ -13,17 +13,26 @@
   <section class="flex min-w-0 flex-col gap-2">
     <!-- "captured", not "last N": N is the stored array's length, not a cap, so a row holding 400
          and a row holding 10 would both have read "last 10" and the operator could not tell a
-         complete snapshot from a tail. Ordering is a producer claim this app does not verify. -->
+         complete snapshot from a tail. Ordering is a producer claim this app does not verify.
+         It counts DISTINCT messages — the producer collapses repeats into `count`, so the events
+         behind this number can be far more numerous than the entries. -->
     <h3 class="text-xs tracking-wide text-dark-2 uppercase">
       Console errors
-      <span class="ml-2 font-normal normal-case">{context.consoleErrors.length} captured</span>
+      <span class="ml-2 font-normal normal-case">{context.consoleErrors.length} distinct</span>
     </h3>
     <ol class="flex max-h-64 min-w-0 flex-col gap-1 overflow-auto">
-      <!-- Index key: the same console line repeating is the ordinary case, and a duplicate value
-           key THROWS in production, making that report permanently unopenable. -->
-      {#each context.consoleErrors as line, i (i)}
-        <li class="rounded-lg border border-dark-4 bg-dark-7 p-2 font-mono text-xs wrap-anywhere">
-          {line}
+      <!-- Index key: a value key THROWS on a duplicate in production, making that report
+           permanently unopenable, and nothing in this app guarantees the producer deduplicated. -->
+      {#each context.consoleErrors as entry, i (i)}
+        <li
+          class="flex min-w-0 items-baseline gap-2 rounded-lg border border-dark-4 bg-dark-7 p-2 font-mono text-xs"
+        >
+          <span class="min-w-0 wrap-anywhere">{entry.message}</span>
+          <!-- Shown only above 1. A `×1` on every single-occurrence line is noise that trains the
+               eye to skip the badge, which is the one place a cascade announces itself. -->
+          {#if entry.count > 1}
+            <span class="shrink-0 text-dark-2" title="times this error fired">×{entry.count}</span>
+          {/if}
         </li>
       {/each}
     </ol>

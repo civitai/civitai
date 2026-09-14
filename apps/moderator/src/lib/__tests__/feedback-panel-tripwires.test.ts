@@ -439,8 +439,34 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
    */
   it('keys both snapshot lists by index', () => {
     const errors = source('FeedbackBrowserErrors.svelte');
-    expect(errors).toContain('{#each context.consoleErrors as line, i (i)}');
+    expect(errors).toContain('{#each context.consoleErrors as entry, i (i)}');
     expect(errors).toContain('{#each context.networkErrors as entry, i (i)}');
+  });
+
+  /**
+   * 🔴 THE REPEAT COUNT MUST REACH THE SCREEN, AND ITS FAILURE MODE IS SILENT. The producer
+   * collapses a React cascade's forty identical messages into ONE entry carrying `count: 40`. A
+   * panel that renders only `entry.message` shows that as a single line indistinguishable from an
+   * error that fired once — so the collapse would have made the queue LESS informative than the
+   * buffer it replaced, with every test still green because `splitContext` carries the field
+   * faithfully and nothing downstream reads it.
+   *
+   * Asserted on the template text for the reason the rest of this file is: this app has no Svelte
+   * render harness, so the source is the only place the binding can be observed.
+   */
+  it('renders the repeat count next to a console message', () => {
+    const errors = source('FeedbackBrowserErrors.svelte');
+    expect(errors).toContain('{entry.message}');
+    expect(errors).toContain('×{entry.count}');
+  });
+
+  /**
+   * And only above 1. A `×1` on every single-occurrence line is noise that trains the eye past the
+   * badge, which is the one place a cascade announces itself — so the conditional is the feature,
+   * not an optimisation, and an unconditional render would pass the assertion above on its own.
+   */
+  it('shows the count only when a message actually repeated', () => {
+    expect(source('FeedbackBrowserErrors.svelte')).toContain('{#if entry.count > 1}');
   });
 
   /**

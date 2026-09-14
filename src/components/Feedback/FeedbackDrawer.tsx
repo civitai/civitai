@@ -99,16 +99,15 @@ export default function FeedbackDrawer() {
         </Text>
       ) : (
         <Stack gap="sm">
-          {/* 🔴 THE SECOND SENTENCE USED TO BE HERE AND IT WAS FALSE. It read "We attach your
-              browser session automatically, so console errors come with the report" — but
-              `FaroProvider` runs an explicit instrumentation allow-list that DELIBERATELY EXCLUDES
-              the Console instrumentation, so no `console.error` had ever been collected. A console
-              snapshot now genuinely does ride along, which makes the claim true for the first
-              time; it is still removed from here, because it was also the WRONG MECHANISM (the
-              snapshot is not the Faro session) and because this surface disclosing its own version
-              of the payload is how the drawer and the inline prompt came to say two different
-              wrong things. The one accurate statement is FEEDBACK_TELEMETRY_DISCLOSURE, rendered
-              by `FeedbackAttachments` below on both surfaces. */}
+          {/* 🔴 THE SECOND SENTENCE USED TO BE HERE AND IT WAS FALSE. IT MUST NOT COME BACK. It
+              read "We attach your browser session automatically, so console errors come with the
+              report" — but `FaroProvider` runs an explicit instrumentation allow-list that
+              DELIBERATELY EXCLUDES the Console instrumentation, so no `console.error` had ever
+              been collected. A console snapshot now genuinely does ride along, which makes the
+              claim true for the first time — and it stays removed anyway, because it names the
+              WRONG MECHANISM: the snapshot is not the Faro session, and a reader who believed the
+              sentence would look for the data in Loki, where it has never been. Pinned by
+              `FeedbackDrawer.browser.test.tsx`. */}
           <Text size="sm" c="dimmed">
             Tell us what went wrong — what you were doing, and what happened instead.
           </Text>
