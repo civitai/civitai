@@ -171,8 +171,15 @@ describe('formatFeedbackFilterValue', () => {
    *   - `browsingLevel`, which no live producer writes: it exists only on those 23 historical
    *     `bitdex-image-feed` rows, because BitDex was decommissioned 2026-09-01.
    *   - the two historical shapes named above.
+   *
+   * ⚠️ IT WAS CALLED `reachable` UNTIL THIS ROUND, which asserted in an identifier exactly the
+   * completeness the paragraph above had already retracted in prose — and the identifier is what a
+   * reader greps for. `pinnedRenderings` says what it is: a hand-typed list of cases whose exact
+   * output is pinned, and nothing about what else the panel can be handed.
    */
-  const reachable: Array<[string, string, string | number | boolean, string, string | null]> = [
+  const pinnedRenderings: Array<
+    [string, string, string | number | boolean, string, string | null]
+  > = [
     // area                key              value      text            title
     ['bitdex-image-feed', 'browsingLevel', 1, 'PG', '1'],
     ['bitdex-image-feed', 'browsingLevel', 3, 'PG, PG-13', '3'],
@@ -206,9 +213,12 @@ describe('formatFeedbackFilterValue', () => {
     ['site-bug-report', 'page', 4, '4', null],
   ];
 
-  it.each(reachable)('renders (%s, %s, %s) as exactly %s', (area, key, value, text, title) => {
-    expect(formatFeedbackFilterValue(area, key, value)).toEqual({ text, title });
-  });
+  it.each(pinnedRenderings)(
+    'renders (%s, %s, %s) as exactly %s',
+    (area, key, value, text, title) => {
+      expect(formatFeedbackFilterValue(area, key, value)).toEqual({ text, title });
+    }
+  );
 
   /**
    * ⚠️ AN INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled as one rather than counted as the other.

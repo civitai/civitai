@@ -19,7 +19,7 @@
     civitaiUrl,
     canPromote,
     form: promoteForm,
-    draft,
+    draft = $bindable(),
   }: {
     row: FeedbackRow;
     siblings: FeedbackSibling[];
@@ -43,9 +43,23 @@
      * undo. `FeedbackDetail` survives that navigation (the row's `{#if open}` never goes false), so
      * the draft lives there and is handed down.
      *
-     * It is MUTATED IN PLACE, never reassigned: it is a `$state` proxy, so writing `draft.title`
-     * here is what the parent sees. Replacing the object with a fresh one would write a prop the
-     * parent does not read back, which is the same defect wearing a different shape.
+     * 🔴 `$bindable`, AND THE PARENT MUST PASS IT WITH `bind:draft=`. This section MUTATES the
+     * draft — three `bind:value={draft.…}` boxes plus the mode toggle — and Svelte's dev-only
+     * ownership validator treats a mutation of a prop the parent did not BIND as a defect:
+     * `create_ownership_validator`'s `is_bound_or_unset`
+     * (`svelte@5.56.3/src/internal/client/dev/ownership.js:71-80`) looks for a SETTER on the props
+     * descriptor, a plain prop has only a getter, so every keystroke into title/summary/bugId
+     * raised `ownership_invalid_mutation`. Measured in a compiled two-component repro of exactly
+     * this shape: two keystrokes → 2 warnings as a plain prop, 0 with `$bindable` + `bind:draft`.
+     * Production was never affected (`DEV` is false there) — the cost was a dev console nobody
+     * could read, and the fix is the shape Svelte documents rather than the one it discourages.
+     *
+     * ⚠️ Binding is what LICENSES the mutation, not what performs it: the draft is still a `$state`
+     * proxy mutated IN PLACE, and writing `draft.title` is still what the parent sees. What the
+     * binding changes is the failure mode of the OTHER shape — reassigning `draft` wholesale now
+     * propagates to the parent instead of being silently dropped. Mutate in place anyway; a
+     * wholesale replacement would swap the object the parent's own `bind:` and any future consumer
+     * are holding, for no gain.
      */
     draft: FeedbackPromoteDraft;
   } = $props();

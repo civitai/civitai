@@ -23,19 +23,44 @@ export const FEEDBACK_FORM_NAMES = ['triage', 'promote'] as const;
  * appeared at all. That is precisely the failure the panel-level banner was introduced to prevent,
  * arriving through the banner itself.
  *
- * 🔴 THE COMMENT THIS REPLACES CLAIMED TWO ERRORS "CANNOT BE" LIVE AT ONCE, AND ITS ARGUMENT DID NOT
- * REACH THE CASE. It was: each form disables its own controls while submitting, and a success clears
- * the error. Both halves are true; neither excludes two errors. `disabled={…submitting}` guards
- * CONCURRENT submission — and the two forms are on different tabs, so they were never concurrent —
- * while a success clears only the SUCCEEDING form's error. Nothing in either sentence stops a refused
- * triage and a later refused promote from both being set.
+ * 🔴 TWO ERRORS CAN BE LIVE AT ONCE, AND THE FALLBACK BELOW IS REACHABLE. THIS PARAGRAPH HAS NOW
+ * BEEN WRONG TWICE, IN THE SAME DIRECTION, AND THE HISTORY IS PART OF THE WARNING.
  *
- * What actually keeps the set small is wiring, not this function: `FeedbackDetail` gives each form an
- * `onSubmit` that clears the OTHER one's error, so starting any submit leaves at most one live. That
- * makes the fallback below unreachable in the panel as it stands today. It is still written, and
- * still tested, because that wiring lives in a `.svelte` file with no test tier — so a rule that
- * behaves correctly on two live errors is the part that can be held down mechanically, and the part
- * that cannot is pinned by a source-text tripwire instead.
+ * Round 1 said the two forms "cannot both be live" because each disables its own controls while
+ * submitting and a success clears the error. Both halves true; neither excludes two errors —
+ * `disabled={…submitting}` guards CONCURRENT submission, and a success clears only the SUCCEEDING
+ * form's error.
+ *
+ * Round 2 replaced that with "the cross-clearing `onSubmit` wiring makes it unreachable", and that
+ * is wrong the SAME WAY: "every submit starts by clearing its counterpart" is true, and says nothing
+ * about a submit start versus a PREVIOUSLY STARTED submit's response. A true sentence about one
+ * ordering was read as a claim about a different one, twice.
+ *
+ * The path, walked through the sources this round rather than argued from:
+ *   1. On Triage, the operator clicks a status button. `triageForm.onSubmit` clears
+ *      `promoteForm.error`; the fetch starts.
+ *   2. The status buttons are `disabled={triageForm.submitting}` — but the tab triggers are plain
+ *      `<a>` links (`FeedbackTabs.svelte`) and nothing disables them. They click Issue.
+ *   3. `{#if activeTab === 'triage'}` destroys that branch. `use:enhance`'s `destroy()` removes the
+ *      submit listener and NOTHING ELSE (`@sveltejs/kit@2.66.0`, `runtime/app/forms.js:227-231`);
+ *      the in-flight fetch keeps running, because the `AbortController` `enhance` passes to the
+ *      submit hook is never aborted by anyone — `FormState` receives it and does not use it.
+ *      `FeedbackDetail` is not destroyed either, so both `FormState`s survive intact.
+ *   4. They submit promote. `promoteForm.onSubmit` clears `triageForm.error`, which is still null.
+ *   5. The triage response lands and sets `triageForm.error`. The promote response lands and sets
+ *      `promoteForm.error`. Both live.
+ *
+ * The cross-clearing wiring is still worth having — it collapses the COMMON orderings — but it is a
+ * narrowing, not an exclusion. This function is what has to be correct when two are live, and the
+ * behaviour below is correct: the active tab's own refusal wins, which in step 5 is the promote one
+ * the operator is waiting for.
+ *
+ * ⚠️ Aborting the orphaned request was considered and REJECTED, not overlooked. It would need the
+ * controller threaded out of `onSubmit` and fired from a component teardown, in a `.svelte` file no
+ * test here can execute — and it makes a worse failure, not a better one: `enhance` returns early on
+ * `AbortError` without invoking the callback at all, so a triage write the server may already have
+ * COMMITTED would produce neither a confirmation nor a refusal. Leaving the response to land and be
+ * ranked is the behaviour this function exists to get right.
  *
  * The message NAMES the owning tab when it is not the current one, so "your save was refused" also
  * says where to go and fix it.

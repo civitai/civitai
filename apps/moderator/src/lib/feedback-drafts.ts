@@ -48,3 +48,28 @@ export const FEEDBACK_PROMOTE_DRAFT_FIELDS = ['bugId', 'title', 'summary'] as co
 export function makeFeedbackPromoteDraft(): FeedbackPromoteDraft {
   return { attachMode: false, bugId: '', title: '', summary: '' };
 }
+
+/**
+ * What the triage note box should hold after a save SUCCEEDS.
+ *
+ * 🔴 THE POINT IS THE IN-FLIGHT WINDOW. Only the status buttons are disabled while the triage form
+ * is submitting — the textarea is not — so the operator can keep typing between the click and the
+ * response. Re-seeding unconditionally from the reloaded column discards whatever they added. The
+ * unbound `value=` this branch replaced happened not to, in the sub-case where the stored column
+ * came back unchanged (Svelte's `set_value` early-returns on an unchanged cached value), so the
+ * unconditional re-seed was a narrow regression against it.
+ *
+ * The rule: the operator's text wins whenever it differs from what was posted. When it does NOT
+ * differ they have typed nothing since, so the reloaded column — which may hold a server-side
+ * normalisation, or another moderator's write that this save raced — is the better value.
+ *
+ * @param current what the box holds now
+ * @param posted what this submit actually sent, or `null` when nothing was captured (no submit in
+ * flight, or an `onSubmit` that never ran) — in which case the stored column wins, matching the
+ * unconditional behaviour rather than inventing a third one
+ * @param stored the column as it reads after the reload
+ */
+export function reseedTriageNote(current: string, posted: string | null, stored: string): string {
+  if (posted === null) return stored;
+  return current === posted ? stored : current;
+}

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -68,7 +68,7 @@ describe('typed text outlives a tab click', () => {
   });
 
   it('re-seeds the note from the reloaded column on a successful save', () => {
-    expect(source('FeedbackDetail.svelte')).toContain("note = row.triageNote ?? '';");
+    expect(source('FeedbackDetail.svelte')).toContain("row.triageNote ?? ''");
   });
 
   /**
@@ -105,18 +105,58 @@ describe('typed text outlives a tab click', () => {
     expect(promote).toContain("value={draft.attachMode ? 'attach' : 'create'}");
     expect(promote).not.toContain('let attachMode = $state(');
   });
+
+  /**
+   * 🔴 BOTH HALVES OF THE BINDING, because only the pair silences `ownership_invalid_mutation`.
+   * `FeedbackPromote` mutates the draft, and Svelte's dev ownership validator looks for a SETTER on
+   * the props descriptor (`svelte@5.56.3/src/internal/client/dev/ownership.js:71-80`) — `$bindable`
+   * in the child is what declares the prop bindable, `bind:draft=` in the parent is what puts the
+   * setter there. Dropping either one puts the warning back on every keystroke; measured this round
+   * at 2 warnings for 2 keystrokes in a compiled repro of this shape, 0 with both.
+   *
+   * `let promoteDraft` rather than `const` is pinned alongside them because it is not a style
+   * choice: `bind:` over a `const` is the compile error `constant_binding`, so a "tidy it back to
+   * const" edit breaks the build — this assertion says why before anyone tries.
+   *
+   * ⚠️ THE PARENT HALF IS PINNED WITH ITS NEIGHBOURING ATTRIBUTE, not on `bind:draft={promoteDraft}`
+   * alone, AND THAT IS NOT DECORATION. Written the short way this assertion SURVIVED its own
+   * mutation: dropping the `bind:` from the template left it green, because `FeedbackDetail`'s
+   * docstring SPELLS `bind:draft={promoteDraft}` while explaining why `const` is impossible, and a
+   * text pin cannot tell code from a sentence about the code — the same trap the `reset: false`
+   * comment below records. `form={promoteForm} bind:draft={promoteDraft} />` is element-shaped and
+   * appears in no sentence; measured to kill the mutation that the short form let through.
+   */
+  it('binds the promote draft in both directions', () => {
+    expect(source('FeedbackPromote.svelte')).toContain('draft = $bindable(),');
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('form={promoteForm} bind:draft={promoteDraft} />');
+    expect(detail).toContain('let promoteDraft = $state(makeFeedbackPromoteDraft());');
+  });
 });
 
-describe('at most one refusal is live', () => {
+describe('the cross-clearing wiring', () => {
   /**
-   * The cross-clearing wiring behind `feedbackRefusal`'s "at most one live error" note. The
-   * SELECTION rule is tested for real in `feedback-refusal.test.ts`; this is the half that lives in
-   * a file no test can execute, so it is pinned as text and labelled as such.
+   * ⚠️ THIS BLOCK WAS TITLED "at most one refusal is live", AND THAT WAS THE RETRACTED CLAIM WEARING
+   * A TEST NAME. Two refusals CAN be live — `feedback-refusal.ts` carries the reachable path — so
+   * the wiring below is a narrowing, not an exclusion, and the SELECTION rule that has to be correct
+   * when two are live is tested for real in `feedback-refusal.test.ts`. This is only the half that
+   * lives in a file no test can execute, pinned as text and labelled as such.
    */
   it('clears each form error when the other form starts submitting', () => {
     const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain('onSubmit: () => { promoteForm.error = null; }');
+    expect(detail).toContain('promoteForm.error = null;');
     expect(detail).toContain('onSubmit: () => { triageForm.error = null; }');
+  });
+
+  /**
+   * The triage form captures what it POSTED so `onSuccess` can leave text typed in flight alone.
+   * The decision itself is `reseedTriageNote`, tested for real in `feedback-drafts.test.ts`; this
+   * pins that the panel still routes through it instead of re-seeding unconditionally.
+   */
+  it('re-seeds the note through reseedTriageNote, not unconditionally', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain("note = reseedTriageNote(note, postedNote, row.triageNote ?? '');");
+    expect(detail).toContain("postedNote = String(formData.get('note') ?? '');");
   });
 
   /**
@@ -144,10 +184,62 @@ describe('opening a row goes through the one choke point', () => {
     expect(source('FeedbackPromote.svelte')).toContain('return feedbackOpenHref(next, id);');
   });
 
-  it('never writes the open param by hand', () => {
-    for (const file of ['+page.svelte', 'FeedbackPromote.svelte']) {
-      expect(source(file)).not.toContain("searchParams.set('open'");
+  /**
+   * 🔴 THE TITLE THIS REPLACES CLAIMED MORE THAN ITS BODY CHECKED, and it was false in the very file
+   * it scanned. It read "never writes the open param by hand" over a single
+   * `not.toContain("searchParams.set('open'")` — one spelling — while `+page.svelte`'s pager writes
+   * `urlWith(page.url, { cursor: …, open: null })` and `FeedbackFilters.svelte` writes
+   * `next.searchParams.delete('open')`. Both are hand-written writes of the param; both passed.
+   *
+   * The property actually worth holding is narrower than the old title and wider than the old body:
+   * CLEARING the param by hand is fine — a pager turn and a filter change both have to — but
+   * SETTING it to an id must go through `feedbackOpenHref`, because that helper is the only thing
+   * that also deletes `?tab=`, and a hand-rolled setter reopens the sticky-tab bug whose repro sits
+   * in that helper's docstring.
+   *
+   * It scans the whole directory rather than a hardcoded pair, which is what makes a FUTURE third
+   * site fail here instead of shipping — round 2 flagged that nothing stopped one, and a two-file
+   * list is exactly how the EXISTING third site (`FeedbackFilters.svelte`) went unscanned.
+   */
+  it('sets the open param to an id only through feedbackOpenHref', () => {
+    const files = readdirSync(feedbackDir).filter((file) => file.endsWith('.svelte'));
+    expect(files.length).toBeGreaterThan(4);
+
+    // Two spellings reach the param, and each needs its own witness — see the control below.
+    const seen = { objectKey: [] as string[], searchParams: [] as string[] };
+    const sets: string[] = [];
+    for (const file of files) {
+      const text = source(file);
+      for (const match of text.matchAll(/\bopen:\s*([^,}]+)/g)) {
+        seen.objectKey.push(`${file} — ${match[0]}`);
+        if (match[1].trim() !== 'null') sets.push(`${file} — ${match[0]}`);
+      }
+      for (const match of text.matchAll(
+        /searchParams\.(set|append|delete)\(\s*(?:'open'|FEEDBACK_OPEN_PARAM)/g
+      )) {
+        seen.searchParams.push(`${file} — ${match[0]}`);
+        if (match[1] !== 'delete') sets.push(`${file} — ${match[0]}`);
+      }
     }
+
+    // 🔴 POSITIVE CONTROL, PER PATTERN — because `sets` being empty is the reassuring zero this
+    // whole file is warned about, and a regex that matched nothing produces it just as readily as
+    // clean code does. Both spellings have a live witness today (`+page.svelte`'s pager writes
+    // `open: null`, `FeedbackFilters.svelte` writes `searchParams.delete('open')`), so each half of
+    // the scan is proved able to match before the verdict is read.
+    //
+    // ⚠️ It counts WRITES, not CLEARS. An earlier draft of this control required two CLEARS, which
+    // coupled it to how many sites happen to clear: turning one clear into a SET then reddened this
+    // test through the control rather than through `sets` — a pass/fail for the wrong reason.
+    // Measured, not reasoned about; that mutation now fails on the `sets` assertion.
+    expect(seen.objectKey.length, 'no `open:` write found anywhere in the panel').toBeGreaterThan(
+      0
+    );
+    expect(
+      seen.searchParams.length,
+      'no `searchParams.*(open)` write found anywhere in the panel'
+    ).toBeGreaterThan(0);
+    expect(sets).toEqual([]);
   });
 });
 
