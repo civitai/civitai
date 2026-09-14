@@ -77,11 +77,45 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
    *
    *   not_approved  — REFUSED 403. The gate working; the only branch carrying its value.
    *   not_found     — SERVED. A healthy app; the false-positive channel.
-   *   lookup_failed — REFUSED 503. Infra, not policy.
+   *   lookup_failed — ROUTE-DEPENDENT: 503 on the routes that fail closed, SERVED on the
+   *                   five that declare `onApprovalLookupFailure`. Infra, not policy.
    *
    * `sum(rate(...))` across the label adds requests that were turned away to requests that
    * were served, so an operator who cannot split by `reason` has a number with no meaning.
    * Three separate series is what makes the split possible at all.
+   *
+   * 🔴 BUT SPLITTING BY `reason` NO LONGER SETTLES WHAT HAPPENED, AND THIS DOCBLOCK USED TO
+   * SAY IT DID (`lookup_failed — REFUSED 503`). Since the opt-out landed, `lookup_failed`
+   * is refused on 8 wrapped routes and SERVED on 5. The counter carries ONLY `reason` — that
+   * is deliberate and pinned below, for the cardinality bound — so THIS METRIC CANNOT
+   * RECOVER THE REFUSED-VS-SERVED SPLIT AT ALL. No aggregation of it can; there is no label
+   * to group by. Saying "always split by `reason`" is still correct and is no longer
+   * sufficient, and the difference matters because the two halves want opposite responses:
+   * the refused half is user-visible 503s, the served half is a silent widening of what an
+   * app whose status we could not establish was allowed to do.
+   *
+   * HOW THE SPLIT IS ACTUALLY RECOVERED — structurally, then by cross-reference, in that
+   * order:
+   *
+   *   1. WHICH routes serve is a STATIC, machine-checked fact, not a runtime one. The set
+   *      is `LOOKUP_FAILURE_SERVE_RATIONALE` in
+   *      `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`, asserted in
+   *      both directions against the routes' own declarations, so it cannot drift silently.
+   *      Read the ledger to know the split; do not try to derive it from this metric.
+   *   2. The sibling RED counter `civitai_app_block_requests_total{app_block_id, endpoint,
+   *      result}` DOES carry `endpoint`, and the middleware attaches its recorder BEFORE the
+   *      approval gate runs, so a gate refusal is recorded there too — a 503 maps to
+   *      `result="server_error"` (`statusToRequestResult`). During a replica incident the
+   *      fail-closed endpoints therefore show `server_error` rising in step with
+   *      `lookup_failed`.
+   *
+   * ⚠️ (2) IS A CORRELATION, NOT A JOIN, and must not be quoted as one. The two counters
+   * share no label, so an individual `lookup_failed` increment can never be attributed to an
+   * endpoint; and `result="server_error"` is not unique to this gate — any 5xx from the
+   * wrapped handler lands in the same series. It narrows an episode, it does not resolve it.
+   * (Scope of this claim: read from `block-scope.middleware.ts` — the `res.on('finish')`
+   * attach point sits above the gate — and from `statusToRequestResult`. It is NOT exercised
+   * by a test, because the middleware suites stub `res.on` as a no-op.)
    */
   it('🔴 the three reasons are SEPARATE series — a served not_found never reads as a refusal', async () => {
     recordBlockRestApprovalVerdict('not_approved');

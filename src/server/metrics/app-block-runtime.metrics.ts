@@ -697,7 +697,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const restApprovalVerdictsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_rest_approval_verdicts_total',
-    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, REFUSED 503 (fail-closed)',
+    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, and the outcome is ROUTE-DEPENDENT — 503 on the routes that fail closed, SERVED on the five that declare onApprovalLookupFailure. This counter carries ONLY `reason`, so it cannot itself tell refused from served on lookup_failed; which routes serve is the ledger LOOKUP_FAILURE_SERVE_RATIONALE in no-unguarded-block-rest-token.test.ts, and civitai_app_block_requests_total{endpoint,result} is the sibling series that carries endpoint',
     ['reason']
   );
 

@@ -63,9 +63,46 @@ const API_DIR = 'src/pages/api';
 const MIDDLEWARE = 'src/server/middleware/block-scope.middleware.ts';
 
 /**
+ * 🔴 THE EXPOSURE CLASS OF A WRAPPED ROUTE — an ENUMERATED FIELD, not a word in a sentence.
+ *
+ * This used to be a prose prefix (`'READ — …'`, `'SPEND — …'`) and the cross-ledger check
+ * below read it with `startsWith('READ —')`. That made the check a SPELLED guard on the
+ * widest of the three classes, and it was measurably wrong: the opt-out's own docblock
+ * (`block-scope.middleware.ts`, `onApprovalLookupFailure`) states the rule as "do NOT add it
+ * to a route that spends, writes, OR DISCLOSES ANYTHING SCOPED TO THE VIEWER", and the
+ * third clause had no mechanical expression at all. Three routes classified `READ —` are
+ * squarely viewer-scoped — `collections/[id]/index.ts` (the viewer's PRIVATE collections
+ * when the token carries `collections:read:private`), `collections/index.ts` (the viewer's
+ * own collection list) and `tip-allowance.ts` (the live money counter) — so the check
+ * admitted them. Measured before this change: adding the opt-in to
+ * `collections/[id]/index.ts` with a rationale entry gave 21/21 GREEN.
+ *
+ * Splitting `READ` into three named values is what closes that clause. The distinction the
+ * opt-out actually turns on is "would a caller who is NOT this app already receive this
+ * body", so that is the value the check tests, by identity against an enumerated constant
+ * rather than by matching a word another sentence can spell.
+ */
+type RestExposure =
+  /** Moves money irreversibly. */
+  | 'SPEND'
+  /** Mutates state on the viewer's or the app's behalf. */
+  | 'WRITE'
+  /** Discloses something scoped to the VIEWER — their data, their identity, their counters. */
+  | 'READ_VIEWER_SCOPED'
+  /** Discloses APP-private state that no other caller can reach, though it names no viewer. */
+  | 'READ_APP_SCOPED'
+  /** Discloses only what a caller with no block token already receives. The ONLY opt-outable class. */
+  | 'READ_PUBLIC';
+
+/**
  * Every page route wrapped by `withBlockScope`, with what a SUSPENDED app would reach
  * through it if the gate in `withBlockScope` were not there. Derived set must match these
  * keys exactly.
+ *
+ * `exposure` is what the cross-ledger check reads; `why` is the sentence that has to be
+ * written by hand and is the actual point of the ledger. The test can check that the two
+ * are both present and that `exposure` is one of the enumerated values — it cannot check
+ * that either is TRUE.
  *
  * ⚠️ The two `shared-storage` entries are the interesting ones and the reason the
  * rationale is a sentence rather than a checkbox: they were ALREADY refused before the
@@ -74,34 +111,71 @@ const MIDDLEWARE = 'src/server/middleware/block-scope.middleware.ts';
  * refuse one step earlier and for the stated reason. Losing that distinction is how a
  * reader concludes the REST surface was already covered.
  */
-const REST_ROUTE_RATIONALE: Record<string, string> = {
-  'src/pages/api/v1/blocks/collections/[id]/follow.ts':
-    'WRITE — addContributorToCollection / removeContributorFromCollection, i.e. a suspended app mutating the viewer’s follow graph on their behalf.',
-  'src/pages/api/v1/blocks/collections/[id]/index.ts':
-    'READ — a single collection plus its items; with collections:read:private on the token that includes the viewer’s PRIVATE collections.',
-  'src/pages/api/v1/blocks/collections/index.ts':
-    'READ — collection discovery and the viewer’s own collection list.',
-  'src/pages/api/v1/blocks/generation-resources.ts':
-    'READ — public, maturity-clamped resource data. Thinnest gate of the set: no requiredScope, so no scope check and no context binding either.',
-  'src/pages/api/v1/blocks/images.ts':
-    'READ — the public, maturity-clamped image catalog. No requiredScope.',
-  'src/pages/api/v1/blocks/me.ts':
-    'READ — viewer identity (id, username, status) and the token’s buzzBudget. Gated on the viewer being a moderator today, which is a GA posture and not a takedown check.',
-  'src/pages/api/v1/blocks/models.ts':
-    'READ — the public, maturity-clamped model catalog. No requiredScope.',
-  'src/pages/api/v1/blocks/shared-storage/increment.ts':
-    'WRITE — a shared counter bump. ALREADY refused before this gate, incidentally: it delegates to resolveSharedContext, which reads app_blocks.status itself.',
-  'src/pages/api/v1/blocks/shared-storage/top.ts':
-    'READ — top-N shared counters. ALREADY refused before this gate, for the same delegation reason as increment.ts.',
-  'src/pages/api/v1/blocks/tip-allowance.ts':
-    'READ — but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
-  'src/pages/api/v1/blocks/tip.ts':
-    'SPEND — createBuzzTipTransactionHandler, a real irreversible Buzz transfer. The highest-value entry in this table and the reason the gate was added.',
-  'src/pages/api/v1/blocks/tools.ts':
-    'READ — GET returns a static in-process tool registry; POST runs a catalog search on the same clamped path models.ts serves.',
-  'src/pages/api/v1/models/[id].ts':
-    'READ — dual-auth. With no block JWT this is a plain PublicEndpoint, so the body a block receives here is byte-for-byte what an unauthenticated caller can already fetch: refusing it removes NO exposure. It inherits the gate to keep one rule in one place.',
+const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string }> = {
+  'src/pages/api/v1/blocks/collections/[id]/follow.ts': {
+    exposure: 'WRITE',
+    why: 'addContributorToCollection / removeContributorFromCollection, i.e. a suspended app mutating the viewer’s follow graph on their behalf.',
+  },
+  'src/pages/api/v1/blocks/collections/[id]/index.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'A single collection plus its items; with collections:read:private on the token that includes the viewer’s PRIVATE collections — it threads `user: subjectUser` into getCollectionItemsByCollectionId, so the body is the viewer’s, not the public one.',
+  },
+  'src/pages/api/v1/blocks/collections/index.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Collection discovery AND the viewer’s own collection list — the second half is viewer data an anonymous caller does not receive.',
+  },
+  'src/pages/api/v1/blocks/generation-resources.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'Public, maturity-clamped resource data. Thinnest gate of the set: no requiredScope, so no scope check and no context binding either.',
+  },
+  'src/pages/api/v1/blocks/images.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'The public, maturity-clamped image catalog. No requiredScope.',
+  },
+  'src/pages/api/v1/blocks/me.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Viewer identity (id, username, status) and the token’s buzzBudget. Gated on the viewer being a moderator today, which is a GA posture and not a takedown check.',
+  },
+  'src/pages/api/v1/blocks/models.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'The public, maturity-clamped model catalog. No requiredScope.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/increment.ts': {
+    exposure: 'WRITE',
+    why: 'A shared counter bump. ALREADY refused before this gate, incidentally: it delegates to resolveSharedContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/top.ts': {
+    exposure: 'READ_APP_SCOPED',
+    why: 'Top-N shared counters — app-global KV that no caller outside this app can read, so refusing it DOES remove exposure even though it names no viewer. ALREADY refused before this gate, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/tip-allowance.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
+  },
+  'src/pages/api/v1/blocks/tip.ts': {
+    exposure: 'SPEND',
+    why: 'createBuzzTipTransactionHandler, a real irreversible Buzz transfer. The highest-value entry in this table and the reason the gate was added.',
+  },
+  'src/pages/api/v1/blocks/tools.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'GET returns a static in-process tool registry; POST runs a catalog search on the same clamped path models.ts serves.',
+  },
+  'src/pages/api/v1/models/[id].ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'Dual-auth. With no block JWT this is a plain PublicEndpoint, so the body a block receives here is byte-for-byte what an unauthenticated caller can already fetch: refusing it removes NO exposure. It inherits the gate to keep one rule in one place.',
+  },
 };
+
+/** The one exposure class a route may declare `onApprovalLookupFailure` on. */
+const OPT_OUTABLE_EXPOSURE: RestExposure = 'READ_PUBLIC';
+
+/** Every wrapped route whose exposure class forbids the opt-out — derived, both directions. */
+function mustFailClosedRoutes(): string[] {
+  return Object.entries(REST_ROUTE_RATIONALE)
+    .filter(([, { exposure }]) => exposure !== OPT_OUTABLE_EXPOSURE)
+    .map(([rel]) => rel)
+    .sort();
+}
 
 /**
  * 🔴 ROUTES THAT OPT OUT OF FAILING CLOSED ON `lookup_failed`, i.e. that serve the request
@@ -127,8 +201,12 @@ const REST_ROUTE_RATIONALE: Record<string, string> = {
  *
  * The set is asserted in BOTH directions below, so a route cannot join or leave it
  * silently, and each entry is CROSS-CHECKED against `REST_ROUTE_RATIONALE` — see
- * `every serve-on-lookup-failure route is a READ in the exposure ledger`, which is what
- * mechanically keeps a SPEND or WRITE route out.
+ * `every serve-on-lookup-failure route is READ_PUBLIC in the exposure ledger`, which is
+ * what mechanically keeps a SPEND, a WRITE, a viewer-scoped read or an app-scoped read out.
+ *
+ * ⚠️ The population feeding that check is derived on the bare identifier
+ * `onApprovalLookupFailure`, NOT on the value `'serve'` — see `LOOKUP_FAILURE_OPT_OUT_RE`
+ * for the merge blocker that repair closed. The only value the type admits is `'serve'`.
  */
 const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
   'src/pages/api/v1/blocks/generation-resources.ts':
@@ -184,11 +262,30 @@ const DEFAULT_EXPORT_WRAPPED_RE = /export\s+default\s+withBlockScope\s*\(/;
 /** A CALL, not a type position — `ReturnType<typeof verifyBlockToken>` must not count. */
 const DIRECT_VERIFY_RE = /\bverifyBlockToken\s*\(/;
 /**
- * The opt-out DECLARATION, as written at a `withBlockScope` call site. Matched on CODE
- * lines only (see `servesOnApprovalLookupFailure`), so the option's own docblock in the
- * middleware — and the prose in this file — cannot enter the derived population.
+ * 🔴 THE OPT-OUT DECLARATION, DETECTED ON THE BARE IDENTIFIER — NOT ON ITS VALUE.
+ *
+ * This was `/\bonApprovalLookupFailure\s*:\s*'serve'/` and that was a MERGE BLOCKER: the
+ * literal demanded SINGLE quotes, and nothing anywhere else in the stack cares. The runtime
+ * check is `opts.onApprovalLookupFailure !== 'serve'` (`block-scope.middleware.ts`), a plain
+ * JS string comparison, so `"serve"` is fully active. `tsc` accepts it because the literal
+ * TYPE is identical — this is not the `'Serve'` typo class, which is a compile error — and
+ * prettier cannot save it either, since formatting is a non-blocking warning on modified
+ * files. Measured before this change: adding `onApprovalLookupFailure: "serve",` to
+ * `tip.ts` — the irreversible Buzz transfer, the single highest-value entry in the exposure
+ * ledger — gave 21/21 GREEN. Not one of the three guards downstream of this regex fired,
+ * because ALL of them derive their population from it.
+ *
+ * So it now matches the IDENTIFIER and says nothing about the value. Any spelling of any
+ * value forces a ledger entry, which is the fail-closed direction: a route that mentions
+ * this option in code at all must be written down, and the only value the type permits is
+ * `'serve'`. A wider quote-class regex would have been the wrong repair — it still
+ * enumerates spellings, and the next one (a template literal, a const, a spread) walks past
+ * it exactly the same way.
+ *
+ * Matched on CODE lines only (see `declaresLookupFailureOptOut`), so the option's own
+ * docblock in the middleware — and the prose in this file — cannot enter the population.
  */
-const LOOKUP_FAILURE_SERVE_RE = /\bonApprovalLookupFailure\s*:\s*'serve'/;
+const LOOKUP_FAILURE_OPT_OUT_RE = /\bonApprovalLookupFailure\b/;
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
@@ -217,15 +314,15 @@ function namesWrapperInCode(source: string): boolean {
     .some((line) => MENTIONS_RE.test(line) && !/^\s*(?:\/\/|\*|\/\*)/.test(line));
 }
 
-/** True when `source` DECLARES the lookup-failure opt-out on a line that is not a comment. */
-function servesOnApprovalLookupFailure(source: string): boolean {
-  return LOOKUP_FAILURE_SERVE_RE.test(codeLinesOnly(source));
+/** True when `source` NAMES the lookup-failure opt-out on a line that is not a comment. */
+function declaresLookupFailureOptOut(source: string): boolean {
+  return LOOKUP_FAILURE_OPT_OUT_RE.test(codeLinesOnly(source));
 }
 
-/** Routes under `src/pages/api` that declare `onApprovalLookupFailure: 'serve'`. */
+/** Routes under `src/pages/api` that declare `onApprovalLookupFailure` at all, any spelling. */
 function lookupFailureServeRoutes(): string[] {
   return walk(API_DIR)
-    .filter((rel) => servesOnApprovalLookupFailure(read(rel)))
+    .filter((rel) => declaresLookupFailureOptOut(read(rel)))
     .sort();
 }
 
@@ -293,7 +390,7 @@ describe('the REST route scan can actually see what it claims to', () => {
     // A derivation that silently matches nothing ledgers an EMPTY set and passes forever,
     // which would make the both-directions assertion vacuous in the dangerous direction.
     expect(
-      servesOnApprovalLookupFailure(
+      declaresLookupFailureOptOut(
         ['export default withBlockScope(h, {', "  onApprovalLookupFailure: 'serve',", '});'].join(
           '\n'
         )
@@ -301,22 +398,46 @@ describe('the REST route scan can actually see what it claims to', () => {
     ).toBe(true);
     // A route that does NOT declare it (the fail-closed default) must stay out.
     expect(
-      servesOnApprovalLookupFailure("export default withBlockScope(h, { endpoint: 'tip' });")
+      declaresLookupFailureOptOut("export default withBlockScope(h, { endpoint: 'tip' });")
     ).toBe(false);
     // 🔴 And the case that would quietly inflate the population: the option NAMED in a
     // comment. The middleware's own docblock and this file's prose both do exactly that.
     expect(
-      servesOnApprovalLookupFailure(
+      declaresLookupFailureOptOut(
         ["// onApprovalLookupFailure: 'serve' — described, not declared", 'export default h;'].join(
           '\n'
         )
       )
     ).toBe(false);
     expect(
-      servesOnApprovalLookupFailure(
+      declaresLookupFailureOptOut(
         [" * Set `onApprovalLookupFailure: 'serve'` to opt out.", 'export default h;'].join('\n')
       )
     ).toBe(false);
+  });
+
+  /**
+   * 🔴 THE CONTROL FOR THE DEFECT THAT WAS ACTUALLY SHIPPED. The population regex used to
+   * pin the VALUE as a single-quoted literal, so every spelling below opted a route in
+   * while leaving it out of the derived set — and out of the cross-ledger check, the
+   * wrapped-route check and the fail-closed list, all three of which read this population.
+   * The runtime compares with `!==`, so each of these is fully ACTIVE.
+   */
+  it('POSITIVE CONTROL — the opt-out is detected whatever the value is spelled like', () => {
+    for (const declaration of [
+      "  onApprovalLookupFailure: 'serve',", // the intended spelling
+      '  onApprovalLookupFailure: "serve",', // double quotes — tsc-identical, was INVISIBLE
+      '  onApprovalLookupFailure: `serve`,', // template literal
+      '  onApprovalLookupFailure:SERVE,', // a const, no whitespace
+      '  onApprovalLookupFailure   :   "serve" ,', // padded
+    ]) {
+      expect(
+        declaresLookupFailureOptOut(
+          ['export default withBlockScope(h, {', declaration, '});'].join('\n')
+        ),
+        `${declaration.trim()} must be detected — the runtime compares with !==, so it is live`
+      ).toBe(true);
+    }
   });
 
   it('POSITIVE CONTROL — a prose-only mention is NOT in the wrapped population', () => {
@@ -378,7 +499,9 @@ describe('no unguarded block-REST token verification', () => {
 
   it('every rationale says something — an empty string is not a decision', () => {
     const thin = Object.entries({
-      ...REST_ROUTE_RATIONALE,
+      ...Object.fromEntries(
+        Object.entries(REST_ROUTE_RATIONALE).map(([rel, { why }]) => [rel, why])
+      ),
       ...DELIBERATELY_UNWRAPPED,
       ...LOOKUP_FAILURE_SERVE_RATIONALE,
     })
@@ -389,6 +512,26 @@ describe('no unguarded block-REST token verification', () => {
       'These ledger entries carry no usable rationale. Say what the route reaches — a ' +
         'read, a write, a spend — not that it is "fine".'
     ).toEqual([]);
+  });
+
+  it('every exposure ledger entry declares one of the enumerated classes', () => {
+    // The `exposure` field is what the cross-ledger check reads by identity, so a typo'd or
+    // invented value must not silently fall outside every comparison. `tsc` already refuses
+    // one; this states it as a runtime fact too, since the ledger is data a future edit
+    // might widen with `as` or a spread.
+    const classes: RestExposure[] = [
+      'SPEND',
+      'WRITE',
+      'READ_VIEWER_SCOPED',
+      'READ_APP_SCOPED',
+      'READ_PUBLIC',
+    ];
+    const bad = Object.entries(REST_ROUTE_RATIONALE)
+      .filter(([, { exposure }]) => !classes.includes(exposure))
+      .map(([rel, { exposure }]) => `${rel}: ${String(exposure)}`);
+    expect(bad).toEqual([]);
+    // …and the opt-outable class is one of them, so the constant cannot drift out of the union.
+    expect(classes).toContain(OPT_OUTABLE_EXPOSURE);
   });
 
   it('ledgers every route that opts OUT of failing closed on lookup_failed', () => {
@@ -405,29 +548,38 @@ describe('no unguarded block-REST token verification', () => {
 
   /**
    * 🔴 THE CROSS-LEDGER CHECK, and the reason the opt-out is not just a second hand-list.
-   * It ties the new declaration to the EXPOSURE ledger that already exists: every route
-   * allowed to serve on an unestablished approval status must be one whose
-   * `REST_ROUTE_RATIONALE` entry classifies it as a READ.
+   * It ties the declaration to the EXPOSURE ledger that already exists: every route allowed
+   * to serve on an unestablished approval status must be classified `READ_PUBLIC`.
    *
-   * That is what mechanically keeps the dangerous entries out. `tip.ts` is `SPEND — …`,
-   * `collections/[id]/follow.ts` and `shared-storage/increment.ts` are `WRITE — …`, so
-   * adding the option to any of them fails HERE, on a rationale someone already wrote,
-   * rather than depending on a reviewer noticing a new key in a list.
+   * That is what mechanically keeps the dangerous entries out. `tip.ts` is `SPEND`,
+   * `collections/[id]/follow.ts` and `shared-storage/increment.ts` are `WRITE`, so adding
+   * the option to any of them fails HERE, on a classification someone already made, rather
+   * than depending on a reviewer noticing a new key in a list.
    *
-   * ⚠️ It is a necessary condition, not a sufficient one — `tip-allowance.ts` is a READ and
-   * still must NOT opt out, because what it reads is the viewer's live money counter. The
-   * set assertion above is what holds that; this one removes a whole class beneath it.
+   * 🔴 IT NOW COVERS ALL THREE CLAUSES OF THE RULE THE OPTION'S DOCBLOCK STATES. It used to
+   * test `startsWith('READ —')`, which expressed "does not spend" and "does not write" and
+   * said NOTHING about "discloses anything scoped to the viewer" — so `collections/index.ts`,
+   * `collections/[id]/index.ts` and `tip-allowance.ts` were all admissible. Reading an
+   * enumerated `exposure` value instead is what closes it, and it closes it for every route
+   * at once rather than for the three that happened to be noticed.
+   *
+   * ⚠️ STILL A NECESSARY CONDITION, NOT A SUFFICIENT ONE — it can only be as right as the
+   * classification in the ledger, which is a human judgement about what a body discloses.
+   * What it buys is that the judgement has to be made, spelled as one of five values, and
+   * changed deliberately: downgrading a route to `READ_PUBLIC` to get the option is a
+   * visible edit to a reviewed line, not the absence of one.
    */
-  it('every serve-on-lookup-failure route is a READ in the exposure ledger', () => {
-    const notReads = lookupFailureServeRoutes().filter(
-      (rel) => !REST_ROUTE_RATIONALE[rel]?.startsWith('READ —')
-    );
+  it('every serve-on-lookup-failure route is READ_PUBLIC in the exposure ledger', () => {
+    const notPublicReads = lookupFailureServeRoutes()
+      .filter((rel) => REST_ROUTE_RATIONALE[rel]?.exposure !== OPT_OUTABLE_EXPOSURE)
+      .map((rel) => `${rel} (${REST_ROUTE_RATIONALE[rel]?.exposure ?? 'UNLEDGERED'})`);
     expect(
-      notReads,
-      'These routes serve on an unestablished approval status but are not classified as ' +
-        'READs in REST_ROUTE_RATIONALE. A route that SPENDS, WRITES, or discloses ' +
-        'viewer-scoped state must fail CLOSED on lookup_failed — drop the option. If the ' +
-        'exposure ledger is what is wrong, fix that sentence first and say why.'
+      notPublicReads,
+      'These routes serve on an unestablished approval status but are not classified ' +
+        `${OPT_OUTABLE_EXPOSURE} in REST_ROUTE_RATIONALE. A route that SPENDS, WRITES, ` +
+        'discloses viewer-scoped state, or discloses app-private state must fail CLOSED on ' +
+        'lookup_failed — drop the option. If the exposure classification is what is wrong, ' +
+        'fix that first and say why in its `why` sentence.'
     ).toEqual([]);
   });
 
@@ -438,18 +590,46 @@ describe('no unguarded block-REST token verification', () => {
     expect(strays).toEqual([]);
   });
 
-  it('the money and write routes fail CLOSED — the option is absent from all of them', () => {
-    // Stated in the direction a reader will look for it, and independent of the derivation
-    // above: these are the entries whose refusal is the point of the gate.
-    for (const rel of [
-      'src/pages/api/v1/blocks/tip.ts',
-      'src/pages/api/v1/blocks/tip-allowance.ts',
-      'src/pages/api/v1/blocks/collections/[id]/follow.ts',
-      'src/pages/api/v1/blocks/shared-storage/increment.ts',
-      'src/pages/api/v1/blocks/me.ts',
-    ]) {
-      expect(servesOnApprovalLookupFailure(read(rel)), `${rel} must fail closed`).toBe(false);
+  /**
+   * Stated in the direction a reader will look for it, and HAND-WRITTEN rather than derived:
+   * these are the entries whose refusal is the point of the gate. Keeping it a literal list
+   * is what makes it a second, independent statement — the assertion after it is what stops
+   * the two drifting.
+   *
+   * ⚠️ It was INCOMPLETE until the exposure classes landed: three routes that must fail
+   * closed — `collections/[id]/index.ts`, `collections/index.ts` and `shared-storage/top.ts`
+   * — were absent, and since the cross-ledger check above admitted all three, nothing in
+   * this file objected to opting any of them in.
+   */
+  const MUST_FAIL_CLOSED = [
+    'src/pages/api/v1/blocks/collections/[id]/follow.ts',
+    'src/pages/api/v1/blocks/collections/[id]/index.ts',
+    'src/pages/api/v1/blocks/collections/index.ts',
+    'src/pages/api/v1/blocks/me.ts',
+    'src/pages/api/v1/blocks/shared-storage/increment.ts',
+    'src/pages/api/v1/blocks/shared-storage/top.ts',
+    'src/pages/api/v1/blocks/tip-allowance.ts',
+    'src/pages/api/v1/blocks/tip.ts',
+  ];
+
+  it('the money, write and viewer-scoped routes fail CLOSED — the option is absent from all of them', () => {
+    for (const rel of MUST_FAIL_CLOSED) {
+      expect(declaresLookupFailureOptOut(read(rel)), `${rel} must fail closed`).toBe(false);
     }
+  });
+
+  it('the hand-written fail-closed list IS every non-READ_PUBLIC route — both directions', () => {
+    // The hand list above is a human statement and the exposure classes are another; this
+    // is what keeps them from drifting apart. A new WRITE route that nobody adds to the
+    // list fails here, and so does a route quietly reclassified to READ_PUBLIC to get the
+    // option — the reclassification has to be paired with removing it from this list, which
+    // is the edit a reviewer is looking for.
+    expect(
+      [...MUST_FAIL_CLOSED].sort(),
+      'The hand-written fail-closed list and the routes derived from the exposure ledger ' +
+        'disagree. Either a route changed exposure class, or one was added/removed without ' +
+        'the other statement being updated.'
+    ).toEqual(mustFailClosedRoutes());
   });
 
   it('THE RELATIONSHIP — every ledgered route WRAPS its default export', () => {

@@ -1039,6 +1039,46 @@ describe('no unguarded block-bridge token verification', () => {
     ).toBe(1);
   });
 
+  /**
+   * 🔴 THE POSITIVE CONTROL FOR `codeLinesOnly`, AND WHY ITS ABSENCE WAS A REAL GAP.
+   *
+   * Every spelling assertion in the two tests below is filtered through `codeLinesOnly`, and
+   * that filter is the ONLY thing standing between them and prose satisfying them — this
+   * file's own docblocks name both `BlockRevocation.isRevoked` and
+   * `resolveAppBlockApprovalVerdict`, and the predicate module's docblock quotes
+   * `status === 'approved'` verbatim while describing the mint endpoint.
+   *
+   * Measured: replacing this copy's body with `return source;` left the whole file GREEN at
+   * 21/21. The REST sibling's copy IS controlled — the same mutation fails there, via
+   * `POSITIVE CONTROL — the lookup-failure opt-out regex reads code and ignores prose` — but
+   * the helper is deliberately DUPLICATED rather than shared (see its docblock), which is
+   * precisely what makes that control non-transferable. A guard whose own filter can be
+   * deleted without complaint is the shape this family keeps producing, so each copy needs
+   * its own control.
+   */
+  it('POSITIVE CONTROL — codeLinesOnly really strips comments, so prose cannot satisfy a spelling check', () => {
+    // The exact shapes the assertions below would otherwise be satisfied by.
+    expect(codeLinesOnly("// expect(guard).toMatch(/status === 'approved'/)")).toBe('');
+    expect(codeLinesOnly(' * resolveAppBlockApprovalVerdict(claims) resolves the verdict.')).toBe(
+      ''
+    );
+    expect(codeLinesOnly('/* BlockRevocation.isRevoked(claims.blockInstanceId) */')).toBe('');
+    // …and a line of real CODE survives, or the filter would strip everything and the
+    // assertions below would fail for the wrong reason rather than pass for the right one.
+    expect(codeLinesOnly('const v = await resolveAppBlockApprovalVerdict(claims);')).toBe(
+      'const v = await resolveAppBlockApprovalVerdict(claims);'
+    );
+    // 🔴 THE MUTATION THIS CONTROL EXISTS TO KILL, stated as a behavioural fact rather than
+    // a hope: an identity `codeLinesOnly` returns the comment unchanged, so this is the
+    // assertion that goes red when the body is replaced with `return source;`.
+    const mixed = [
+      ' * resolveAppBlockApprovalVerdict(claims) — named in PROSE only.',
+      'const unrelated = 1;',
+    ].join('\n');
+    expect(codeLinesOnly(mixed)).toBe('const unrelated = 1;');
+    expect(/\bresolveAppBlockApprovalVerdict\s*\(/.test(codeLinesOnly(mixed))).toBe(false);
+  });
+
   it('still SPELLS the two checks the guard exists for', () => {
     const guard = read(GUARD);
     // 🔴 THIS IS A SPELLING CHECK, NOT A BEHAVIOURAL ONE — it asserts these strings are
