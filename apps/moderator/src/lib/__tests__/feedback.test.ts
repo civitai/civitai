@@ -423,7 +423,9 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    * 🔴 THE SAME FILTER, ASSERTED AT THE NEW EXIT. The panel used to be the only consumer of these two
    * fields; the lightbox is a second one, and it is the one that renders the id at full size. This
    * extends the block above rather than repeating it: what is new is not the filter, it is that
-   * `feedbackAttachmentItems` is downstream of it and cannot be handed anything else.
+   * `feedbackAttachmentItems` sits DOWNSTREAM of it on the panel's one live path. Not "cannot be
+   * handed anything else" — `FeedbackContext` is a structural type, so a hand-built object of that
+   * shape type-checks and a cast defeats it; the compile error only catches the accident.
    *
    * The structural half is the TYPE — `feedbackAttachmentItems` accepts `FeedbackContext`, which is
    * `splitContext`'s return type, so `row.context` does not typecheck there. That alone is not a

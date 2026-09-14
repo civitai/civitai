@@ -39,9 +39,13 @@
    * 🔴 EVERY TYPED-INTO BOX IN THIS PANEL IS OWNED HERE, BECAUSE THIS COMPONENT IS THE ONLY PART OF
    * IT THAT SURVIVES A TAB CLICK. The tabs are links, so a click is a real navigation; `load`
    * re-runs and the panel's `{#if activeTab === …}` chain destroys the branch that was showing. This
-   * component is NOT destroyed — `+page.svelte`'s `{#each … (row.id)}` is keyed and the row's
-   * `{#if open}` never goes false, so props update on the same instance — which is exactly why the
-   * drafts belong at this level and nowhere below it.
+   * component is NOT destroyed — `+page.svelte`'s `{#each … (row.id)}` is keyed, and `feedbackTabHref`
+   * preserves `?open=`, so the row's `{#if open}` stays true ACROSS A TAB CLICK and props update on
+   * the same instance — which is exactly why the drafts belong at this level and nowhere below it.
+   *
+   * ⚠️ "Stays true across a tab click" is deliberately narrower than the "never goes false" this line
+   * used to claim, which the precondition paragraph below then contradicted. The `{#if}` CAN go
+   * false; a tab click is simply not one of the ways.
    *
    * Before this, the note box was an unbound `value={row.triageNote ?? ''}` and the issue boxes were
    * uncontrolled: what the operator had typed lived only in DOM nodes, and the branch took those
@@ -73,9 +77,14 @@
    * It is safe because this instance is scoped to ONE row and cannot be handed another: the row's
    * `{#if open}` in `+page.svelte` is false for every row but the open one, so opening a different
    * report destroys this component and builds a new one. `row.id` is therefore fixed for the life of
-   * the instance, and the only thing that can change under it is the stored note — which
-   * `triageForm.onSuccess` re-reads explicitly after its own save, subject to `reseedTriageNote`
-   * leaving text typed while that save was in flight alone.
+   * the instance.
+   *
+   * ⚠️ NOT "the only thing that can change under it is the stored note" — that was written here and
+   * is plainly false. `status`, `bugId` and `handledAt` all change under this instance on a reload
+   * and all re-render from the updated prop. The narrower true statement is the one that matters for
+   * the suppression: the only column this LINE captures is the stored note, and `triageForm.onSuccess`
+   * re-reads it explicitly after its own save, subject to `reseedTriageNote` leaving text typed while
+   * that save was in flight alone.
    */
   // svelte-ignore state_referenced_locally
   let note = $state(row.triageNote ?? '');
@@ -180,14 +189,21 @@
    * is reading Context would land on a panel nobody is looking at, and the operator would see a
    * submit that appeared to do nothing.
    *
-   * The alternative — auto-switching to the owning tab — was rejected. Switching tabs here is a
-   * NAVIGATION (see `FeedbackTabs.svelte`), and `update()` re-runs `load` on SUCCESS only, so firing
-   * a navigation on a refusal would re-run `load` at exactly the moment SvelteKit deliberately does
-   * not, racing the state that holds the message against the reload that would discard it.
+   * The alternative — auto-switching to the owning tab — was rejected, and it is worth being exact
+   * about WHY, because the reason written here before was wrong. It said a navigation fired on a
+   * refusal would race "the reload that would discard" the message. It would not: the message is
+   * `triageForm.error`, a `$state` field on a `FormState` declared in THIS component, and this
+   * component survives a `load` re-run. A reload discards `page`-level `form` (SvelteKit nulls it on
+   * navigation — `@sveltejs/kit@2.66.0`, `runtime/client/client.js:1380-1381`), which is the no-JS
+   * surface's `pageError` in `+page.svelte`, and that surface never runs a client-side switch anyway.
    *
-   * A panel-level banner has neither problem: it is mounted whenever the panel is, on whatever tab.
-   * It NAMES the owning tab when that is not the current one, so "your save was refused" also says
-   * where to go and fix it.
+   * 🔴 SO THE RACE IS RETRACTED AND NOT REPLACED. The rejection rests on the next paragraph alone,
+   * which is enough on its own; there is no second mechanism here, and inventing one is how this
+   * comment got wrong the first time.
+   *
+   * A panel-level banner does not have the problem in the first place: it is mounted whenever the
+   * panel is, on whatever tab, so there is nothing for a switch to fix. It NAMES the owning tab when
+   * that is not the current one, so "your save was refused" also says where to go and fix it.
    *
    * WHICH message it shows when two are somehow live is `feedbackRefusal`'s decision, not this
    * file's — it is in `$lib/feedback-refusal.ts` so it can be tested, and its docstring carries both

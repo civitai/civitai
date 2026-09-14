@@ -10,8 +10,15 @@
    * `splitContext` returns, so both id fields have already been through `IMAGE_KEY` — the filter that
    * stops a stored, client-supplied value reaching `<img src>` verbatim via `getEdgeUrl`. This
    * component is typed to accept nothing else, and `feedbackAttachmentItems` is typed the same way,
-   * so there is no shape of this page that can route raw JSONB into either the thumbnails or the
-   * lightbox.
+   * so handing either of them `row.context` FAILS TO COMPILE.
+   *
+   * ⚠️ THAT IS WHAT THE TYPE BUYS AND ALL IT BUYS — the previous sentence here claimed "there is no
+   * shape of this page that can route raw JSONB into the thumbnails or the lightbox", and a type
+   * cannot carry that. `FeedbackContext` is STRUCTURAL, so an object literal of the same shape
+   * holding unfiltered ids type-checks, and a cast defeats it outright. What actually holds today is
+   * narrower and checkable: this component has exactly one render site (`FeedbackDetail.svelte`),
+   * which is handed the `context` that `+page.svelte` built with `splitContext`. The FILTER itself is
+   * pinned behaviourally in `src/lib/__tests__/feedback.test.ts`, not by any type.
    */
   const items = $derived(feedbackAttachmentItems(context));
 

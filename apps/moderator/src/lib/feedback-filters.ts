@@ -66,12 +66,18 @@ export function formatBrowsingLevel(value: FilterValue): FormattedFilterValue | 
 /**
  * The one area whose `browsingLevel` filter is a bitmask.
  *
- * 🔴 It is also the only area that can carry that key AT ALL. Measured in this round over the whole
- * repo: the live feedback-context builders are `src/components/Apps/appsStoreFeedbackContext.ts`
- * (writes `kind`, `category`, `sort`, `query`) and `src/components/Feedback/FeedbackDrawer.tsx`
- * (writes `path` only) — neither writes `browsingLevel`, and BitDex was decommissioned 2026-09-01 so
- * no producer can start. The 23 historical `bitdex-image-feed` rows are the entire population this
- * decode exists for.
+ * 🔴 NO LIVE PRODUCER WRITES THAT KEY — which is weaker than "no row can carry it", and is the claim
+ * the evidence supports. Measured over the whole repo: the live feedback-context builders are
+ * `src/components/Apps/appsStoreFeedbackContext.ts` (writes `kind`, `category`, `sort`, `query`) and
+ * `src/components/Feedback/FeedbackDrawer.tsx` (writes `path` only); neither writes `browsingLevel`,
+ * and BitDex was decommissioned 2026-09-01. The 23 historical `bitdex-image-feed` rows are the
+ * population this decode was built for.
+ *
+ * ⚠️ THAT ENUMERATION CANNOT BOUND THE COLUMN, and an earlier revision here read it as if it could
+ * ("the only area that can carry that key AT ALL"). It enumerates THIS repo's writers at one moment;
+ * `context` is schemaless JSONB and `area` is free TEXT, so a historical writer or a future one in
+ * another deployable is outside what any search of this repo can see. That is exactly why the `area`
+ * half of the guard below is load-bearing rather than belt-and-braces.
  */
 const BITMASK_BROWSING_LEVEL_AREA = 'bitdex-image-feed';
 

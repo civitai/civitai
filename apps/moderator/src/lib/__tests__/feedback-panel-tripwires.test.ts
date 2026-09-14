@@ -14,11 +14,15 @@ import { FEEDBACK_PROMOTE_DRAFT_FIELDS } from '$lib/feedback-drafts';
  * `vitest-browser-svelte` is not a dependency. Decisions that are load-bearing at RUNTIME are
  * therefore reachable by no test that exists.
  *
- * 🔴 THEY ARE WALKABLE BY REWORDING, AND THAT IS INHERENT. A rewrite that is semantically identical
- * and textually different fails them; a rewrite that is textually identical and semantically broken
- * passes them. They can catch a DELETION or a "simplification" that removes a construct. They cannot
- * certify that the construct works — every one of these decisions was originally verified by reading
- * the library source, and that is still the only evidence behind them.
+ * 🔴 THEY ARE WALKABLE BY REWORDING THE CODE, AND THAT IS INHERENT. A rewrite that is semantically
+ * identical and textually different fails them; a rewrite that is textually identical and
+ * semantically broken passes them. They can catch a DELETION or a "simplification" that removes a
+ * construct. They cannot certify that the construct works — every one of these decisions was
+ * originally verified by reading the library source, and that is still the only evidence behind them.
+ *
+ * ⚠️ ONE half of that IS fixed, and it is the half that actually bit us three rounds running: a pin
+ * being satisfied by a COMMENT rather than by code. `source()` strips comments before scanning, so
+ * every assertion below is a claim about code only. See `stripComments` and its two controls.
  *
  * Do not count these toward coverage of the panel. If a Svelte browser tier ever lands here, the
  * behavioural version of each of these replaces it rather than joining it.
@@ -27,12 +31,51 @@ import { FEEDBACK_PROMOTE_DRAFT_FIELDS } from '$lib/feedback-drafts';
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const feedbackDir = path.resolve(dir, '../../routes/feedback');
 
-/** Collapse runs of whitespace so an assertion survives reflowing and reindentation, only. */
+/**
+ * 🔴 COMMENTS ARE REMOVED BEFORE ANYTHING IS SCANNED, AND THAT IS THE STRUCTURAL FIX FOR THIS FILE'S
+ * ONE RECURRING DEFECT: a text pin cannot tell code from a sentence ABOUT the code, so a pin can be
+ * satisfied by the very docstring that explains it and then survive deletion of what it names.
+ *
+ * It happened three times, each caught a round later than the last, and all three witnesses were in
+ * `FeedbackDetail.svelte`'s own 🔴 comments: `reset: false` matched FIVE, three of them prose; a bare
+ * `bind:draft={promoteDraft}` matched that file's docstring and stayed green with the `bind:` deleted
+ * from the template; and `row.triageNote ?? ''` matched four times — two code, two prose — leaving
+ * the re-seed pin green over a deleted re-seed. The first two were patched one at a time by widening
+ * the string with a neighbouring token. That works and does not generalise: it fixes the instance and
+ * leaves the class live for whichever pin is written next.
+ *
+ * Stripping comments closes the class instead. It is the ONE choke point every pin below goes
+ * through, so it is also the one thing that has to be proved to work — see the two controls in
+ * `the instrument itself`, which include a real-data one that watches the count MOVE.
+ *
+ * Order matters: a markup comment can contain either script-comment syntax, so markup goes first.
+ * Over-stripping is the safe direction — it makes pins fail LOUDLY — which is why the line-comment
+ * rule is allowed to be blunt (it spares `https://` and nothing else).
+ */
+const stripComments = (text: string): string =>
+  text
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:/])\/\/[^\n]*/g, '$1');
+
+/**
+ * Strip comments, then collapse runs of whitespace so an assertion survives reflowing and
+ * reindentation, only.
+ */
 const source = (file: string): string =>
-  readFileSync(path.resolve(feedbackDir, file), 'utf-8').replace(/\s+/g, ' ');
+  stripComments(readFileSync(path.resolve(feedbackDir, file), 'utf-8')).replace(/\s+/g, ' ');
 
 const componentSource = (file: string): string =>
-  readFileSync(path.resolve(dir, '../components', file), 'utf-8').replace(/\s+/g, ' ');
+  stripComments(readFileSync(path.resolve(dir, '../components', file), 'utf-8')).replace(
+    /\s+/g,
+    ' '
+  );
+
+/** The unprocessed bytes, for the controls that compare against what stripping removed. */
+const rawSource = (file: string): string =>
+  readFileSync(path.resolve(feedbackDir, file), 'utf-8').replace(/\s+/g, ' ');
+
+const count = (text: string, needle: string): number => text.split(needle).length - 1;
 
 describe('the instrument itself', () => {
   /**
@@ -52,6 +95,64 @@ describe('the instrument itself', () => {
     }
     expect(componentSource('Lightbox.svelte').length).toBeGreaterThan(500);
   });
+
+  /**
+   * 🔴 THE STRIPPER, BOTH DIRECTIONS, ON A SYNTHETIC FIXTURE. A stripper that removed nothing leaves
+   * every pin below exactly as walkable as it was and says nothing about it; a stripper that removed
+   * everything would make them all fail, which is loud. So the direction that has to be pinned is
+   * REMOVAL — and it is pinned against a token that also appears in code, so "it deleted the whole
+   * file" cannot pass as "it removed the comment".
+   *
+   * All three comment syntaxes these files actually use are covered: markup, block/JSDoc, and line.
+   */
+  it('removes a token from every comment syntax and keeps the one in code', () => {
+    const fixture = [
+      '<!-- a markup comment mentioning KEEPME and STRIPME -->',
+      '<script lang="ts">',
+      '  /** A JSDoc block mentioning STRIPME. */',
+      '  /* A plain block mentioning STRIPME. */',
+      '  // A line comment mentioning STRIPME.',
+      '  const href = "https://example.test/STRIPME-is-not-here";',
+      '  const KEEPME = 1;',
+      '</script>',
+    ].join('\n');
+
+    const stripped = stripComments(fixture);
+
+    expect(count(fixture, 'STRIPME')).toBe(5);
+    // 4 of the 5 were in comments; the one inside the URL survives, which is what proves the `//`
+    // rule did not eat the string it sits in.
+    expect(count(stripped, 'STRIPME')).toBe(1);
+    expect(stripped).toContain('https://example.test/STRIPME-is-not-here');
+    expect(stripped).toContain('const KEEPME = 1;');
+  });
+
+  /**
+   * 🔴 THE SAME CONTROL ON REAL DATA, because a stripper can pass a fixture written to suit it. This
+   * one watches a NUMBER MOVE on the actual panel source: `reset: false` occurs five times in
+   * `FeedbackDetail.svelte` — twice as an option, three times in prose explaining the option — and
+   * `bind:draft={promoteDraft}` occurs twice, once in the template and once in a docstring. Both are
+   * the exact witnesses that walked earlier rounds' pins.
+   *
+   * The raw side is asserted as "more than the stripped side" rather than as a literal count, so
+   * rewording a docstring cannot redden it. If the prose witnesses are ever deleted outright this
+   * control loses its subject and says so — repoint it at a live one rather than dropping it.
+   */
+  it('measurably removes prose from the real panel source, not just from a fixture', () => {
+    const raw = rawSource('FeedbackDetail.svelte');
+    const stripped = source('FeedbackDetail.svelte');
+
+    for (const needle of ['reset: false', 'bind:draft={promoteDraft}']) {
+      expect(
+        count(raw, needle),
+        `no prose witness for ${needle} left — this control can no longer observe stripping`
+      ).toBeGreaterThan(count(stripped, needle));
+    }
+
+    // And what survives is exactly the code: two option lines, one template attribute.
+    expect(count(stripped, 'reset: false')).toBe(2);
+    expect(count(stripped, 'bind:draft={promoteDraft}')).toBe(1);
+  });
 });
 
 describe('typed text outlives a tab click', () => {
@@ -67,8 +168,20 @@ describe('typed text outlives a tab click', () => {
     expect(detail).not.toContain("value={row.triageNote ?? ''} />");
   });
 
-  it('re-seeds the note from the reloaded column on a successful save', () => {
-    expect(source('FeedbackDetail.svelte')).toContain("row.triageNote ?? ''");
+  /**
+   * 🔴 THIS WAS TITLED "re-seeds the note ... on a successful save" AND IT PINNED NO SUCH THING.
+   * Its assertion was a bare `row.triageNote ?? ''`, which occurs FOUR times in `FeedbackDetail` —
+   * the initial seed, the re-seed, and two prose mentions — so deleting the whole re-seed from
+   * `onSuccess` left it green. Nothing was uncovered (`re-seeds the note through reseedTriageNote`
+   * below asserts that line exactly, and does go red), but a guard that READS as coverage while
+   * providing none is worse than no guard: it stops the next person looking.
+   *
+   * Repointed at the claim its one remaining witness actually supports — the box is PRE-FILLED from
+   * the stored column, so an operator opening a report sees the note already on it rather than a
+   * blank box over a populated column. That decision was pinned nowhere before.
+   */
+  it('seeds the note box from the stored column', () => {
+    expect(source('FeedbackDetail.svelte')).toContain("let note = $state(row.triageNote ?? '');");
   });
 
   /**
@@ -118,13 +231,16 @@ describe('typed text outlives a tab click', () => {
    * choice: `bind:` over a `const` is the compile error `constant_binding`, so a "tidy it back to
    * const" edit breaks the build — this assertion says why before anyone tries.
    *
-   * ⚠️ THE PARENT HALF IS PINNED WITH ITS NEIGHBOURING ATTRIBUTE, not on `bind:draft={promoteDraft}`
-   * alone, AND THAT IS NOT DECORATION. Written the short way this assertion SURVIVED its own
-   * mutation: dropping the `bind:` from the template left it green, because `FeedbackDetail`'s
-   * docstring SPELLS `bind:draft={promoteDraft}` while explaining why `const` is impossible, and a
-   * text pin cannot tell code from a sentence about the code — the same trap the `reset: false`
-   * comment below records. `form={promoteForm} bind:draft={promoteDraft} />` is element-shaped and
-   * appears in no sentence; measured to kill the mutation that the short form let through.
+   * ⚠️ THE PARENT HALF IS PINNED WITH ITS NEIGHBOURING ATTRIBUTE, and the REASON HAS CHANGED — the
+   * old one is history now, not mechanism. Written the short way this assertion once SURVIVED its
+   * own mutation: dropping the `bind:` from the template left it green, because `FeedbackDetail`'s
+   * docstring SPELLS `bind:draft={promoteDraft}` while explaining why `const` is impossible. That
+   * route is closed at the source — `source()` strips comments, and the control above watches this
+   * exact witness count drop from 2 to 1 — so the short form would now be code-only and sufficient.
+   *
+   * The long form is KEPT as defence in depth, on its own smaller merit: it pins the call SITE, so a
+   * second `FeedbackPromote` rendered somewhere else without the binding is not covered by a pin
+   * that only asks whether the string appears anywhere in the file.
    */
   it('binds the promote draft in both directions', () => {
     expect(source('FeedbackPromote.svelte')).toContain('draft = $bindable(),');
@@ -162,10 +278,15 @@ describe('the cross-clearing wiring', () => {
   /**
    * Both forms keep `reset: false`: a refusal must not blank what the operator has to resubmit.
    *
-   * ⚠️ The pattern includes the neighbouring option ON PURPOSE. A bare `/reset: false/` counted
-   * FIVE — the three prose mentions in this file's own 🔴 comments match it exactly as well as the
-   * two option lines do, so the guard was measuring documentation. That is this whole file's failure
-   * mode in miniature: a text pin cannot tell code from a sentence about the code.
+   * ⚠️ The pattern includes the neighbouring option, and — as with the `bind:draft` pin above — the
+   * REASON HAS CHANGED. A bare `/reset: false/` once counted FIVE, because the three prose mentions
+   * in `FeedbackDetail`'s own 🔴 comments match it exactly as well as the two option lines do, so the
+   * guard was measuring documentation. `source()` now strips comments and that count is 2; the
+   * control above asserts precisely this, on this file, so the claim is measured rather than argued.
+   *
+   * The pair is kept because it pins a PAIRING that matters on its own: `reload: true` is what makes
+   * the re-seed read a fresh column, and a form that dropped it while keeping `reset: false` would
+   * still satisfy a bare pin.
    */
   it('keeps reset disabled on both forms', () => {
     const detail = source('FeedbackDetail.svelte');

@@ -23,8 +23,8 @@ export const FEEDBACK_FORM_NAMES = ['triage', 'promote'] as const;
  * appeared at all. That is precisely the failure the panel-level banner was introduced to prevent,
  * arriving through the banner itself.
  *
- * 🔴 TWO ERRORS CAN BE LIVE AT ONCE, AND THE FALLBACK BELOW IS REACHABLE. THIS PARAGRAPH HAS NOW
- * BEEN WRONG TWICE, IN THE SAME DIRECTION, AND THE HISTORY IS PART OF THE WARNING.
+ * 🔴 TWO ERRORS CAN BE LIVE AT ONCE. THIS PARAGRAPH HAS NOW BEEN WRONG THREE TIMES — TWICE DENYING
+ * THAT, ONCE PROVING IT WITH A WALK THAT ALSO CLAIMED SOMETHING ELSE — AND THE HISTORY IS THE POINT.
  *
  * Round 1 said the two forms "cannot both be live" because each disables its own controls while
  * submitting and a success clears the error. Both halves true; neither excludes two errors —
@@ -36,7 +36,8 @@ export const FEEDBACK_FORM_NAMES = ['triage', 'promote'] as const;
  * about a submit start versus a PREVIOUSLY STARTED submit's response. A true sentence about one
  * ordering was read as a claim about a different one, twice.
  *
- * The path, walked through the sources this round rather than argued from:
+ * The path to TWO LIVE AT ONCE — and to that alone — walked through the sources rather than argued
+ * from. What it establishes is the premise this function's ranking rule exists for, nothing wider:
  *   1. On Triage, the operator clicks a status button. `triageForm.onSubmit` clears
  *      `promoteForm.error`; the fetch starts.
  *   2. The status buttons are `disabled={triageForm.submitting}` — but the tab triggers are plain
@@ -54,6 +55,16 @@ export const FEEDBACK_FORM_NAMES = ['triage', 'promote'] as const;
  * narrowing, not an exclusion. This function is what has to be correct when two are live, and the
  * behaviour below is correct: the active tab's own refusal wins, which in step 5 is the promote one
  * the operator is waiting for.
+ *
+ * ⚠️ THE `?? raised[0]` FALLBACK IS A SEPARATE CLAIM, AND THE WALK ABOVE IS NOT ITS EVIDENCE. The
+ * round-3 revision of this paragraph ran the two together — "two can be live AND the fallback is
+ * reachable" under one five-step story — and the story does not reach it: step 5 leaves the operator
+ * on `issue`, which OWNS the promote refusal, so `raised.find(...)` matches and the fallback never
+ * runs. The simple statement, which needs no walk at all: the fallback fires whenever no live
+ * refusal belongs to the active tab, and ONE refusal read from a tab that owns neither form is
+ * enough. That is the ordinary case — a triage refusal read from Message — and it is what the
+ * `names the Triage tab when read from %s` cases in `feedback-refusal.test.ts` exercise. If a claim
+ * needs a five-step story to be true, prefer the simple thing that is true without one.
  *
  * ⚠️ Aborting the orphaned request was considered and REJECTED, not overlooked. It would need the
  * controller threaded out of `onSubmit` and fired from a component teardown, in a `.svelte` file no

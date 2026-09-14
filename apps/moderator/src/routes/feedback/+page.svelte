@@ -50,6 +50,12 @@
    * `FeedbackDetail.svelte`, rather than one inside each form's own section. The two surfaces still
    * cover disjoint paths; neither is redundant.
    *
+   * The other half of "unreachable", which that paragraph left implicit: a LATER navigation could
+   * flip `openVisible` to false while a refusal is still in `form`. It cannot, because SvelteKit
+   * nulls `form` on navigation and leaves it alone only on invalidation (`client.js:1380-1381`,
+   * `form: invalidating ? undefined : null`) — and invalidation here happens only after a SUCCESS,
+   * whose `form` carries no `error` key for the guard above to find.
+   *
    * 🔴 The tab triggers are LINKS for this same reason (`FeedbackTabs.svelte`): a no-JS client must
    * still be able to reach `?tab=triage`, or the form this message is about would be unreachable.
    */

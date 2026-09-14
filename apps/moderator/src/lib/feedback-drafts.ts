@@ -7,9 +7,15 @@
  * with the node: a half-written internal note or issue title was discarded by a click whose whole
  * purpose was to go and check something before finishing the sentence, with no warning and no undo.
  *
- * Holding the draft in `FeedbackDetail` — which SURVIVES that navigation, because the row's
- * `{#if open}` never goes false — is what makes the text outlive the markup. This file is only the
- * shape and the starting values; the `$state` proxy that carries them is created there.
+ * Holding the draft in `FeedbackDetail` — which SURVIVES that navigation, because `feedbackTabHref`
+ * preserves `?open=` and so the row's `{#if open}` stays true across a tab click — is what makes the
+ * text outlive the markup. This file is only the shape and the starting values; the `$state` proxy
+ * that carries them is created there.
+ *
+ * ⚠️ "Survives a tab click" is the whole claim, and it used to be written as the wider "`{#if open}`
+ * never goes false". That is false: a reload whose result no longer contains the row destroys the
+ * keyed `{#each}` entry, the `{#if}` with it, and every draft inside. `FeedbackDetail.svelte` states
+ * the precondition; nothing in this file can protect against it.
  *
  * 🔴 This is the same protection `FormState`'s `reset: false` already gives after a REFUSAL, reached
  * through a route that option cannot see. `reset: false` stops `HTMLFormElement.reset()` blanking a

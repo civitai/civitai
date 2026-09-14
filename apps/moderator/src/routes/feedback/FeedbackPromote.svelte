@@ -40,8 +40,10 @@
      * `{:else if activeTab === 'issue'}` branch, so the branch is DESTROYED and rebuilt whenever the
      * operator looks at another tab. State declared in this file dies with it: a half-written issue
      * title was gone the moment anyone flipped to Context and back, with no warning and nothing to
-     * undo. `FeedbackDetail` survives that navigation (the row's `{#if open}` never goes false), so
-     * the draft lives there and is handed down.
+     * undo. `FeedbackDetail` survives that navigation — `feedbackTabHref` preserves `?open=`, so the
+     * row's `{#if open}` in `+page.svelte` stays true across a tab click — and the draft lives there
+     * and is handed down. (It is NOT true that the `{#if}` can never go false; see the precondition
+     * paragraph in `FeedbackDetail.svelte` for the case that destroys the panel outright.)
      *
      * 🔴 `$bindable`, AND THE PARENT MUST PASS IT WITH `bind:draft=`. This section MUTATES the
      * draft — three `bind:value={draft.…}` boxes plus the mode toggle — and Svelte's dev-only
@@ -57,9 +59,17 @@
      * ⚠️ Binding is what LICENSES the mutation, not what performs it: the draft is still a `$state`
      * proxy mutated IN PLACE, and writing `draft.title` is still what the parent sees. What the
      * binding changes is the failure mode of the OTHER shape — reassigning `draft` wholesale now
-     * propagates to the parent instead of being silently dropped. Mutate in place anyway; a
-     * wholesale replacement would swap the object the parent's own `bind:` and any future consumer
-     * are holding, for no gain.
+     * propagates to the parent.
+     *
+     * ⚠️ THAT SENTENCE USED TO SAY THE UNBOUND REASSIGNMENT WAS "SILENTLY DROPPED", AND IT IS NOT.
+     * Under a plain prop the child's write lands in a child-local OVERRIDE, which Svelte discards
+     * only when the parent yields a DIFFERENT value — so parent and child diverge and stay diverged
+     * until something upstream happens to move. That is the same mechanism `Lightbox.svelte` records
+     * about bits-ui's `open`, and "dropped" is the wrong word for it in both places: a dropped write
+     * is inert, a stale override is a second source of truth.
+     *
+     * Mutate in place anyway; a wholesale replacement would swap the object the parent's own `bind:`
+     * and any future consumer are holding, for no gain.
      */
     draft: FeedbackPromoteDraft;
   } = $props();
