@@ -68,11 +68,31 @@ describe('the New/Updated rule has exactly one definition', () => {
     // Every assertion below is `offenders === []`. A zero from an empty corpus reads identically to a
     // zero from a clean one, and the filters at the top are regexes over paths: widen either, or
     // restructure `src/`, and all three prohibitions go green having searched nothing.
-    expect(sourceFiles.length).toBeGreaterThan(500);
+    // 4,301 files pass the filters today. A floor of 500 would still clear after dropping the whole
+    // of `src/components/**` — i.e. it does not bind against the failure this test is named for.
+    expect(sourceFiles.length).toBeGreaterThan(4000);
+    // Both of these are SCANNED — `HELPER_MODULE` is on every allowlist, so proving the walk reaches
+    // it proves only that the walk reaches a file the detectors then skip.
+    const rels = sourceFiles.map((f) => f.rel);
+    expect(rels).toContain('src/components/Cards/ModelCard.tsx');
+    expect(rels).toContain('src/components/Model/Categories/ModelCategoryCard.tsx');
+  });
+
+  it('each detector can still see the thing it looks for', () => {
+    // Every prohibition below asserts `offenders === []`. Typo either marker — `updatedModels`,
+    // `publishedAtX` — and all three pass forever over a corpus they can no longer match.
+    const helper = sourceFiles.find((f) => f.rel === HELPER_MODULE);
+    expect(helper, 'the helper is not in the corpus at all').toBeTruthy();
     expect(
-      sourceFiles.map((f) => f.rel),
-      'the walk cannot see the file the rule is allowed to live in'
-    ).toContain(HELPER_MODULE);
+      helper!.text,
+      'the updated-window marker no longer appears where it is defined'
+    ).toContain('timeCutOffs.updatedModel');
+    const cutoffs = sourceFiles.find((f) => f.rel === CUTOFF_MODULE);
+    expect(cutoffs, 'the cutoff module is not in the corpus at all').toBeTruthy();
+    expect(
+      /\baDayAgo\s*=/.test(cutoffs!.text),
+      'the cutoff-definition regex matches nothing where the cutoff is actually defined'
+    ).toBe(true);
   });
 
   it('no other module derives the updated-model window', () => {
@@ -128,13 +148,19 @@ describe('the recency badge is gated and rendered independently of the money bad
   });
 
   it('the recency badge is gated on recency alone', () => {
-    const condition = modelCard.match(/\{\(isNew \|\| isUpdated(?<rest>[^)]*)\)/);
+    // Reading up to the `<Badge`, not just inside the parens. `{(isNew || isUpdated) && !isPaidAccess
+    // && (` leaves the paren group untouched, so a check that only inspects its contents passes
+    // through the exact single-slot precedence this whole change exists to undo — measured.
+    const gate = modelCard.match(/\{\(isNew \|\| isUpdated\)(?<rest>[^(]*)\(\s*<Badge/);
     expect(
-      condition,
-      'the recency badge is no longer gated on `(isNew || isUpdated)` — a reorder or rename breaks ' +
-        'this match too, so check which before treating it as a regression'
+      gate,
+      'the recency badge is no longer gated on `(isNew || isUpdated) && (<Badge` — a reorder or ' +
+        'rename breaks this match too, so check which before treating it as a regression'
     ).toBeTruthy();
-    expect(condition?.groups?.rest ?? '').toBe('');
+    expect(
+      gate!.groups!.rest,
+      'something other than `&&` now stands between the recency gate and its badge'
+    ).toBe(' && ');
   });
 
   it('the recency badge renders only a recency word', () => {
@@ -204,6 +230,13 @@ describe('the helper answers correctly', () => {
         cutoff
       )
     ).toEqual({ isNew: false, isUpdated: false });
+
+    // Exactly ON the cutoff is outside it, same as the window's own `>`. The case above sits an hour
+    // clear of the boundary, so a `>=` slip there would be invisible to it.
+    expect(
+      getModelRecency({ publishedAt: before(5 * 60 * 60 * 1000), lastVersionAt: cutoff }, cutoff)
+        .isUpdated
+    ).toBe(false);
   });
 
   it('New and Updated are independent answers, not a chain', () => {

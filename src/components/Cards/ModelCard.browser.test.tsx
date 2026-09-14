@@ -119,7 +119,7 @@ vi.mock('~/components/Cards/model-card.utils', async (importOriginal) => ({
 
 import { MantineProvider } from '@mantine/core';
 import type { MantineColorsTuple } from '@mantine/core';
-import { userEvent } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { ModelCard } from '~/components/Cards/ModelCard';
 // Value import, deliberately — this resolves to the MOCKED module (vi.mock is hoisted), and
@@ -285,7 +285,11 @@ describe('ModelCard paid-gate badge', () => {
     // absence of the text as well as the presence of the icon is what makes a revert to the word
     // visible here rather than only in a screenshot.
     expect(el.textContent).toBe('');
-    expect(el.querySelector('svg')).toBeTruthy();
+    // `querySelector('svg')` alone is satisfied by ANY icon, under a title that names the bolt.
+    // Tabler stamps its own class, so this reddens on a swap to a different glyph.
+    const icon = el.querySelector('svg');
+    expect(icon, 'no icon rendered in the access badge').toBeTruthy();
+    expect(icon!.getAttribute('class') ?? '').toContain('bolt');
   });
 
   test('the bolt carries an accessible name, not merely an aria-label attribute', async () => {
@@ -295,15 +299,10 @@ describe('ModelCard paid-gate badge', () => {
       </WithPalette>
     );
     await awaitBadge('access');
-    // `getAttribute('aria-label')` would pass with no `role` at all, and ARIA drops an accessible
-    // name from a role-less generic — which is what Mantine's Badge root is. Going through the role
-    // is the difference between the attribute being present and the name being exposed.
-    const named = document.querySelector('[data-status-badge="access"][role="img"]');
-    expect(
-      named,
-      'the access badge has no role, so its aria-label reaches no screen reader'
-    ).toBeTruthy();
-    expect(named!.getAttribute('aria-label')).toBe('Paid');
+    // Resolved BY ROLE AND NAME rather than by reading two attributes: `getAttribute('aria-label')`
+    // passes with no role at all, and ARIA drops an accessible name from a role-less generic, which
+    // is exactly what Mantine's Badge root is. This query is the accessibility tree's own answer.
+    await expect.element(page.getByRole('img', { name: 'Paid' })).toBeInTheDocument();
   });
 
   test('the bolt is explained on hover — it is the only thing that names it for a sighted user', async () => {
