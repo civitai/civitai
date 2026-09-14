@@ -5,8 +5,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { FormState } from '$lib/form-state.svelte';
+  import type { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { issuesUrl } from '$lib/entity-url';
   import { clearPaging } from '$lib/paging';
@@ -17,21 +16,22 @@
     siblings,
     civitaiUrl,
     canPromote,
+    form: promoteForm,
   }: {
     row: FeedbackRow;
     siblings: FeedbackSibling[];
     civitaiUrl: string;
     canPromote: boolean;
+    /**
+     * 🔴 CONSTRUCTED BY `FeedbackDetail`, NOT HERE, and it must stay that way. This section now sits
+     * behind a tab, so a refusal rendered inside it can land on a panel the operator is not looking
+     * at. The panel renders one banner above the tab strip for both forms, and it can only do that
+     * if it can see this state. It is still `reset: false` — this form carries hidden `id` and `mode`
+     * inputs, and Svelte writes their `value` rather than `defaultValue`, so a reset would leave a
+     * form posting neither.
+     */
+    form: FormState;
   } = $props();
-
-  /**
-   * 🔴 `reset: false`, matching the triage form. This form carries hidden `id` and `mode` inputs,
-   * and Svelte writes their `value` property rather than `defaultValue` — so `reset()` blanks both
-   * and leaves a form that would post neither. Nothing depends on that today, because the only
-   * path that resets is a success and a success replaces this form with the linked-issue view. The
-   * asymmetry is the hazard: the next person to add a field here inherits a live trap.
-   */
-  const promoteForm = new FormState({ onSuccess: null, reload: true, reset: false });
 
   /**
    * A sibling can sit on an earlier keyset page, where carrying this page's `?cursor=` lands the
@@ -131,11 +131,9 @@
     </p>
   {/if}
 
-  <!-- 🔴 The JS-path surface for a refusal on this form, and the only one: `+page.svelte`'s
-       `pageError` is gated on `openVisible`, which stays true whenever this panel is mounted.
-       Its position outside the branch chain carries no guarantee — nothing re-renders this section
-       while a refusal is pending, because `update()` re-runs `load` on success only. -->
-  {#if promoteForm.error}
-    <ErrorAlert message={promoteForm.error} />
-  {/if}
+  <!-- 🔴 THE REFUSAL FOR THIS FORM IS RENDERED BY `FeedbackDetail`, ABOVE THE TAB STRIP. Do not add
+       a second `ErrorAlert` here: this section only mounts when the Issue tab is selected, so an
+       in-section banner is invisible for exactly the refusal that matters — one raised while the
+       operator has moved to another tab. `+page.svelte`'s `pageError` still covers the no-JS path
+       and only that; the two remain disjoint. -->
 </section>

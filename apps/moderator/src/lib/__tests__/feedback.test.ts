@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   FARO_LOKI_RETENTION_HOURS,
+  FEEDBACK_ATTACHMENT_CAPTIONS,
   faroSessionLink,
   feedbackAreaOptions,
   feedbackAttachmentCount,
+  feedbackAttachmentItems,
   handledByLabel,
   reconstructFeedbackUrl,
   splitContext,
@@ -98,6 +100,27 @@ describe('feedbackAreaOptions', () => {
 
   it('drops an empty area string rather than offering a blank option', () => {
     expect(feedbackAreaOptions([''], ['apps-marketplace'])).toEqual(['apps-marketplace']);
+  });
+
+  /**
+   * 🔴 THE REGISTRY HALF IS THE PRODUCER'S OWN CONSTANT NOW, NOT A COPY OF IT. This file used to
+   * carry a hand-written `FEEDBACK_KNOWN_AREAS` mirroring `FEEDBACK_AREAS`, because that constant
+   * lived in the Next app's `src/` where nothing here could reach it — so an area added on one side
+   * was missing on the other and neither side could tell.
+   *
+   * The expectation is hand-typed rather than imported: importing `FEEDBACK_AREAS` to assert against
+   * `FEEDBACK_AREAS` is a test that agrees with itself. Written out, a slug added or removed upstream
+   * fails HERE with a diff, which is the moment to check the queue's filter still offers it.
+   *
+   * `bitdex-image-feed` is in the list on purpose: its producer was decommissioned 2026-09-01 and the
+   * slug is kept so the historical rows filed under it stay reachable.
+   */
+  it('defaults its known areas to the shared registry the producer writes', () => {
+    expect(feedbackAreaOptions([])).toEqual([
+      'apps-marketplace',
+      'bitdex-image-feed',
+      'site-bug-report',
+    ]);
   });
 });
 
@@ -394,5 +417,90 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
     expect(out.images).toEqual([UUID]);
     expect(out.screenshotId).toBe(UUID);
     expect(out.other).toBeNull();
+  });
+
+  /**
+   * 🔴 THE SAME FILTER, ASSERTED AT THE NEW EXIT. The panel used to be the only consumer of these two
+   * fields; the lightbox is a second one, and it is the one that renders the id at full size. This
+   * extends the block above rather than repeating it: what is new is not the filter, it is that
+   * `feedbackAttachmentItems` is downstream of it and cannot be handed anything else.
+   *
+   * The structural half is the TYPE — `feedbackAttachmentItems` accepts `FeedbackContext`, which is
+   * `splitContext`'s return type, so `row.context` does not typecheck there. That alone is not a
+   * guard worth trusting (a cast defeats it), so the behaviour is pinned here.
+   *
+   * The mixed case is the one that carries the claim. A hostile-only fixture yields an empty list,
+   * and an empty list is also what a function wired to nothing returns — so the assertion that means
+   * something is "the clean id survived AND the hostile one did not", in the same call.
+   */
+  const SECOND_UUID = '99999999-8888-4777-8666-555555555555';
+
+  it.each(hostile)('cannot route %s into a lightbox frame', (_label, value) => {
+    const items = feedbackAttachmentItems(splitContext({ images: [UUID, value] }));
+
+    expect(items.map((i) => i.id)).toEqual([UUID]);
+    expect(items).toHaveLength(1);
+  });
+
+  it.each(hostile)('cannot route %s into a lightbox frame as the screenshot', (_label, value) => {
+    const items = feedbackAttachmentItems(splitContext({ images: [UUID], screenshotId: value }));
+
+    expect(items.map((i) => i.id)).toEqual([UUID]);
+    expect(items.some((i) => i.caption === FEEDBACK_ATTACHMENT_CAPTIONS.screenshot)).toBe(false);
+  });
+
+  it('yields nothing at all when every id is hostile', () => {
+    const context = splitContext({
+      images: ['https://attacker.example/x.png'],
+      screenshotId: 'blob:https://civitai.com/abcd',
+    });
+    expect(feedbackAttachmentItems(context)).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE TWO CAPTIONS ARE NOT INTERCHANGEABLE. A file the reporter attached is theirs; the opt-in
+   * capture is a picture of their screen, which can hold another user's content. The lightbox carries
+   * the caption into the large view for exactly that reason, so which frame gets which is pinned,
+   * along with the order the panel renders them in.
+   */
+  it('captions each frame by provenance, with the opt-in capture last', () => {
+    const items = feedbackAttachmentItems(
+      splitContext({
+        images: [UUID, SECOND_UUID],
+        screenshotId: '11112222-3333-4444-8555-666677778888',
+      })
+    );
+
+    expect(items).toEqual([
+      { id: UUID, caption: 'Attached by the reporter' },
+      { id: SECOND_UUID, caption: 'Attached by the reporter' },
+      {
+        id: '11112222-3333-4444-8555-666677778888',
+        caption: 'Opt-in capture of their own viewport',
+      },
+    ]);
+  });
+
+  it('gives the two kinds different words, or the distinction is not on screen', () => {
+    expect(FEEDBACK_ATTACHMENT_CAPTIONS.image).not.toBe(FEEDBACK_ATTACHMENT_CAPTIONS.screenshot);
+  });
+
+  /**
+   * The 📎 column and the lightbox must never disagree about what is on a row. `feedbackAttachmentCount`
+   * is derived from this list rather than re-adding the two fields, so this pins that they stayed one
+   * rule — including on a row where the screenshot is REFUSED, which is where two open-coded copies
+   * would drift first.
+   */
+  it('counts exactly the frames the lightbox will show, refusals included', () => {
+    const clean = splitContext({ images: [UUID, SECOND_UUID], screenshotId: UUID });
+    expect(feedbackAttachmentCount(clean)).toBe(feedbackAttachmentItems(clean).length);
+    expect(feedbackAttachmentCount(clean)).toBe(3);
+
+    const refused = splitContext({
+      images: [UUID],
+      screenshotId: 'https://attacker.example/x.png',
+    });
+    expect(feedbackAttachmentCount(refused)).toBe(feedbackAttachmentItems(refused).length);
+    expect(feedbackAttachmentCount(refused)).toBe(1);
   });
 });
