@@ -180,6 +180,12 @@ beforeEach(() => {
       ctx?.isModerator === 'true'
   );
 });
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+});
 
 describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from the real SessionUser', () => {
   it('builds the Flipt context with the REAL tier/isMember (not free/false defaults)', async () => {

@@ -857,6 +857,12 @@ beforeEach(() => {
       new Map(versions.map((v) => [v.id, { canGenerate: true }]))
   );
 });
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+});
 
 describe('blocks.pollWorkflow', () => {
   it('returns a snapshot for a valid token + workflowId', async () => {

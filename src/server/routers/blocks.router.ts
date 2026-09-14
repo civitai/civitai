@@ -13,9 +13,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   parseSubjectUserId,
-  verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
+import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
 import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
@@ -356,9 +356,11 @@ async function assertAppEditAccess(
  * only fix the IDENTITY it's evaluated against. This does NOT widen access: the
  * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
  * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
- * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
- * tokens before this runs, and every other belt (the per-scope consent checks,
- * budget cap, daily Buzz cap, the per-(user, app) consent budget,
+ * blocked. `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
+ * tokens, revoked instances and non-approved apps before this runs — the "revoked"
+ * half of that sentence used to be false, because the caller ran a bare
+ * `verifyBlockToken`, which never checked it. Every other belt (the per-scope
+ * consent checks, budget cap, daily Buzz cap, the per-(user, app) consent budget,
  * reserveBlockBuzzSpend, getOrchestratorToken, forced-SFW) is unchanged — this
  * only swaps which identity the FLAG sees.
  *
@@ -410,11 +412,25 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
  * versus a spendable-balance read — which is why these three also carry the
  * per-instance rate limit below.
  *
- * Order (each step fail-closed): verify token → require consent scope → self-bind
- * the userId off `claims.sub` (never client input) → App-Blocks kill-switch
- * against the token subject → per-instance rate limit (keyed on the stable
- * `blockInstanceId`, BEFORE any db/ClickHouse work). Returns the self-bound
+ * Order (each step fail-closed, except where noted): `authorizeBlockBridgeToken`
+ * — which is itself verify token → revocation (a Redis GET, fail-OPEN) → approved
+ * status (an indexed `dbRead.appBlock.findUnique`, skipped for a `dev` token) —
+ * then require the consent scope → self-bind the userId off `claims.sub` (never
+ * client input) → App-Blocks kill-switch against the token subject → per-instance
+ * rate limit, keyed on the stable `blockInstanceId`. Returns the self-bound
  * `userId` + verified `claims`.
+ *
+ * ⚠️ THE RATE LIMIT IS NOT FIRST, and this docblock claimed it ran "BEFORE any
+ * db/ClickHouse work" until the revocation guard landed and made that false. Three
+ * things are now spent before the limiter can refuse anything: a Redis GET and a replica
+ * `findUnique` inside `authorizeBlockBridgeToken`, and then the full `SessionUser`
+ * resolve in `assertAppBlocksEnabledForTokenUser` — a cached read that falls through to
+ * an auth-hub fetch on a miss, i.e. the priciest of the three. The limiter cannot be
+ * hoisted above any of them: it is keyed on `claims.blockInstanceId`, which does not
+ * exist until the token is verified. What it still bounds is everything AFTER it — the
+ * ClickHouse daily-compensation read and the buzz-service calls in the three procs
+ * below, which are the expensive half. See `block-bridge-auth.service.ts` for why the
+ * order was left as it is.
  *
  * The consent scope — not an authoring capability — is the authority here: the
  * author gate that used to follow the kill-switch is gone from every runtime
@@ -422,9 +438,8 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
  */
 async function authorizeBlockBuzzRead(
   blockToken: string
-): Promise<{ userId: number; claims: NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>> }> {
-  const claims = await verifyBlockToken(blockToken);
-  if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+): Promise<{ userId: number; claims: BlockTokenClaims }> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
   if (!claims.scopes.includes('buzz:read:self')) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks buzz:read:self scope' });
   }
@@ -438,7 +453,8 @@ async function authorizeBlockBuzzRead(
   await assertAppBlocksEnabledForTokenUser(userId);
   // Per-instance rate limit (shared blocks limiter) — bounds a block hammering
   // these private reads (esp. daily-compensation → ClickHouse) onto the origin.
-  // Runs BEFORE any service call. Fail-open on a redis incident.
+  // Runs before the buzz/ClickHouse service calls in the procs below, but AFTER
+  // the guard's own Redis GET + `appBlock.findUnique`. Fail-open on a redis incident.
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
     throw new TRPCError({
@@ -3503,8 +3519,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3627,8 +3642,7 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3677,8 +3691,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3774,8 +3787,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit: an app authorized to spend the viewer's
       // Buzz on generation can read the subqueue of gens it produced.
       if (!claims.scopes.includes('ai:write:budgeted')) {
@@ -3868,8 +3880,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -3883,7 +3894,11 @@ export const blocksRouter = router({
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
       // Per-instance rate limit (shared blocks limiter), BEFORE any orchestrator
-      // read/DELETE or DB query. Cancel is the HEAVIER path (2 orchestrator GETs +
+      // read/DELETE and before this resolver's own DB lookups. It is NOT before
+      // every DB query on the request: `authorizeBlockBridgeToken` above already
+      // spent a Redis GET and an indexed `appBlock.findUnique` on the replica, and
+      // the limiter cannot be hoisted above them because it is keyed on
+      // `claims.blockInstanceId`. Cancel is the HEAVIER path (2 orchestrator GETs +
       // 1 DELETE + 1 DB lookup per call), so it MUST be bounded exactly like the
       // sibling queryAppWorkflows — same key (blockInstanceId) + scope. Fail-open
       // on a redis incident (matches the buzz self-read bridges / query proc).
@@ -3971,8 +3986,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit/query: an app authorized to spend the
       // viewer's Buzz on generation can publish the outputs it produced.
       if (!claims.scopes.includes('ai:write:budgeted')) {
@@ -4131,8 +4145,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
         throw new TRPCError({
@@ -4177,8 +4190,7 @@ export const blocksRouter = router({
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -4387,8 +4399,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
@@ -5295,8 +5306,7 @@ export const blocksRouter = router({
     // is a mutation for exactly this reason (token in the POST body). Keep it so.
     .input(z.object({ blockToken: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // CONSENT gate — the user's own grant is what authorizes this read now that
       // the author capability no longer gates the runtime. Checked BEFORE the
       // subject is resolved, matching authorizeBlockBuzzRead's order.
@@ -5433,8 +5443,7 @@ export const blocksRouter = router({
     // MUTATION for the bearer-token-in-URL reason above (see getMyBuzzBalance).
     .input(z.object({ blockToken: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       // CONSENT: the least-privileged "viewer identity" scope (mirrors /blocks/me).
       if (!claims.scopes.includes('user:read:self')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks user:read:self scope' });
@@ -5453,7 +5462,11 @@ export const blocksRouter = router({
       await assertAppBlocksEnabledForTokenUser(userId);
       // Per-instance rate limit (shared blocks limiter) — bounds a block
       // hammering the PRIMARY (the ban/mute lookup below reads dbWrite). Runs
-      // BEFORE the db read. Fail-open on a redis incident.
+      // BEFORE that primary read, which is the one worth bounding — but NOT
+      // before every db read: `authorizeBlockBridgeToken` above already spent a
+      // Redis GET and an indexed `appBlock.findUnique` on the REPLICA. The
+      // limiter is keyed on `claims.blockInstanceId`, so it cannot precede the
+      // verification that produces it. Fail-open on a redis incident.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         throw new TRPCError({
@@ -5613,8 +5626,7 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const claims = await verifyBlockToken(input.blockToken);
-      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
         throw new TRPCError({
@@ -6680,7 +6692,7 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
 // deterministic per-job Buzz bound the orchestrator offers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type BlockClaims = NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>>;
+type BlockClaims = BlockTokenClaims;
 type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
 /** The INLINE arm (`mode:'inline'`) — carries the ComfyUI graph itself. */
 type CustomComfyInlineBody = Extract<CustomComfyBody, { mode: 'inline' }>;
