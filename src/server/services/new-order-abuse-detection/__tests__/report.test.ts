@@ -94,9 +94,13 @@ describe('truncateReason', () => {
   });
 
   it('is defence in depth: the generated reason cannot reach the cap on any input', () => {
-    // ⚠️ This records HEADROOM, not a save. Every numeric field at `Number.MAX_SAFE_INTEGER` — the
-    // ceiling for a JSON number off ClickHouse — renders 269 characters smited and 311 open, against
-    // a cap of 2,000, and a realistic finding is ~220. So `truncateReason` has never trimmed anything
+    // ⚠️ This records HEADROOM, not a save. Every numeric field at `Number.MAX_SAFE_INTEGER` — NOT
+    // a ceiling on anything ClickHouse can hand us (`JSON.parse` yields a double, and a `UInt64`
+    // exceeds this by ~2,000x), just an absurdly large input that is still a number — renders 269
+    // characters smited and 311 open, against a cap of 2,000, and a realistic finding is ~220. A
+    // larger magnitude would not move that much: these render through `toLocaleString`/`toFixed`, so
+    // the length grows with the DIGIT COUNT, and the headroom below absorbs several more digits. So
+    // `truncateReason` has never trimmed anything
     // and cannot with this template; it guards a future one that interpolates an unbounded string.
     // Asserted against a quarter of the cap rather than the cap, which a 6x longer template clears.
     const absurd = suspect({

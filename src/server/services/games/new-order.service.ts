@@ -214,8 +214,8 @@ export async function smitePlayer({
    *
    * Optional, and no existing caller passes it — behaviour for everyone else is unchanged.
    *
-   * 🔴 Must not throw: it runs inside this function's own control flow, so an exception here would
-   * abort the tail it was meant to be independent of. Keep it to recording a fact.
+   * Keep it to recording a fact. A throw here cannot abort the tail — the call site swallows it —
+   * but a hook that throws still records nothing, so the caller is back to not knowing.
    */
   onSmiteCreated?: (smite: { id: number }) => void;
 }) {
@@ -228,7 +228,14 @@ export async function smitePlayer({
       remaining: size,
     },
   });
-  onSmiteCreated?.(smite);
+  try {
+    onSmiteCreated?.(smite);
+  } catch {
+    // The tail must not depend on a caller's hook. This is a newly-exported seam on a function that
+    // has already committed the penalty, and the prose asking callers not to throw was the only
+    // thing holding — structural here, so a future caller cannot turn its own bug into a half-applied
+    // smite. Deliberately silent: the hook's own failure is the hook's to report.
+  }
 
   const activeSmiteCount = await dbWrite.newOrderSmite.count({
     where: { targetPlayerId: playerId, cleansedAt: null },

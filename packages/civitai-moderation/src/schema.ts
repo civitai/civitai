@@ -60,10 +60,19 @@ export const MAX_FINDINGS_PER_REPORT = 1_000;
  * EXPORTED for the same structural reason as the cap above, one step earlier in the pipe: a producer
  * that renders a reason has to truncate it to this bound BEFORE it calls, because an over-long reason
  * does not lose the finding — it fails the parse and loses the whole report, every correctly-built
- * finding beside it included. Producers were each restating the literal, which is a copy that can
- * drift silently: lowering the bound here would leave every producer trimming to the old, now-invalid
- * length, and the first sign of it would be a detector's runs vanishing from the board. Importing the
- * constant makes the producer's truncation and the parser's cap equal by construction.
+ * finding beside it included. A producer that restates the literal holds a copy that can drift
+ * silently: lowering the bound here would leave it trimming to the old, now-invalid length, and the
+ * first sign of it would be that detector's runs vanishing from the board.
+ *
+ * ⚠️ IMPORTING THIS MAKES ONE PRODUCER'S TRUNCATION EQUAL TO THE PARSER'S CAP — IT DOES NOT MAKE
+ * THEM ALL EQUAL, and the export by itself enforces nothing. `new-order-abuse-detection` imports it;
+ * `bot-account-detection` and `reaction-withdrawal-detection` still declare their own local
+ * `MAX_REASON_LENGTH = 2_000`, and each has a suite pinning that literal. They are consistent with
+ * this value today by coincidence of the number, not by construction. The set of producers still
+ * holding a local copy is pinned as an explicit ledger in
+ * `src/server/services/new-order-abuse-detection/__tests__/max-reason-length-ledger.test.ts`, which
+ * fails if it grows or shrinks — so a NEW producer cannot quietly copy the literal, and migrating
+ * one of the two is a deliberate act rather than a silent change.
  */
 export const MAX_REASON_LENGTH = 2_000;
 

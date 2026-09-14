@@ -67,8 +67,10 @@ export type AbuseSuspect = {
 type Finding = AbuseReportInput['findings'][number];
 
 /**
- * A reason over the contract's limit does not lose the finding, it 400s the REPORT and loses every
- * finding in the batch. Truncated here; the ellipsis is the record that something was cut.
+ * A reason over the contract's limit does not lose the finding, it loses every finding in the batch.
+ * `moderatorApp.abuseReport` runs `abuseReportInput.parse(input)` BEFORE the fetch, so an over-long
+ * reason throws a ZodError inside the job's own process — no request is made and there is no 400 to
+ * read. Truncated here; the ellipsis is the record that something was cut.
  *
  * ⚠️ DEFENCE IN DEPTH, NOT LIVE PROTECTION — it has never trimmed anything and cannot with today's
  * template. `renderReason`'s longest possible output is 311 characters, measured by rendering every
@@ -179,6 +181,17 @@ export function confidenceFor(suspect: AbuseSuspect): number {
  * So the job hooks the write itself and this flag carries exactly that fact — no more. It does NOT
  * claim the player was notified, that their counter moved, or that a third-strike career reset
  * completed; each of those is in the tail that can fail independently of the penalty.
+ *
+ * ⚠️ AND ON THE THIRD STRIKE THE ROW UNDERSTATES WHAT HAPPENED, which is the one direction a
+ * moderator can act on wrongly. When the new smite is the account's third active one, `smitePlayer`
+ * writes it — so the hook fires and this files `actioned: true`, "Auto-smited by this scan." — and
+ * then `resetPlayer` cleanses EVERY active smite, that one included, and wipes the career back to
+ * Acolyte with all counters at zero. A moderator who opens the row looking for the live smite it
+ * names finds zero active smites and a reset account: a LARGER action than the row states, not a
+ * smaller one, and nothing here distinguishes it from an ordinary first strike.
+ *
+ * The mechanism predates this flag and is not ours to change from here; the reason it is written
+ * down is that "actioned: true" plus a smite that no longer exists reads as a bug in the board.
  */
 export function toFinding(suspect: AbuseSuspect, smited: boolean): Finding {
   const base = {
