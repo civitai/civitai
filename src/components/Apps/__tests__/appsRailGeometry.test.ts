@@ -221,17 +221,118 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // has no `matchMedia` and a client ≥1300 returns true — so the guard was reading as
     // cover for the hydration class while providing none for it.
     //
-    // Brace-matching is safe here because `layout` is comment-stripped above, and the only
-    // braces left inside an effect body are the balanced `${…}` of a template literal.
+    // 🔴 BRACE COUNTING RUNS ON A LITERAL-MASKED COPY, AND SKIPPING THAT MASK IS A
+    // MEASURED BYPASS OF THIS ENTIRE GUARD. An earlier revision counted braces on
+    // `layout` and claimed in this comment that "the only braces left inside an effect
+    // body are the balanced `${…}` of a template literal". Both halves were false: the
+    // effect body already contains two ordinary block braces (`if (mql.matches) {` and the
+    // `onChange` arrow), and `stripComments` above only removes LINE-START `//` comments,
+    // so a trailing comment survives intact. Adding ONE line of perfectly ordinary code
+    // inside the effect — `const openBrace = '{';`, or a trailing comment mentioning a
+    // `{` — raises `depth`, so the body-end scan runs past the effect's real `}` and a
+    // render-body `matchMedia` then reports as "inside an effect body". Measured: with
+    // either of those plus the banned render-body read, this file was GREEN at 12/12.
+    // The `unbalanced braces` assertion does not fire either, because depth still reaches
+    // zero — just later.
+    //
+    // So: blank the CONTENTS of comments and string/template literals, preserving length
+    // so every offset below still indexes the real file.
+    //
+    // ⚠️ KNOWN LIMIT: regex literals are NOT masked (telling `/` division from a regex
+    // needs a real tokeniser). `AppsPageLayout.tsx` contains none today, and the
+    // `endsBeforeJsx` assertion below is the backstop — a runaway body from ANY cause,
+    // masked or not, overshoots the JSX and reds there.
+    const maskLiterals = (src: string) => {
+      const out = src.split('');
+      const blank = (at: number) => {
+        if (out[at] !== '\n') out[at] = ' ';
+      };
+      let i = 0;
+      while (i < src.length) {
+        const c = src[i];
+        const next = src[i + 1];
+        if (c === '/' && next === '/') {
+          while (i < src.length && src[i] !== '\n') blank(i++);
+          continue;
+        }
+        if (c === '/' && next === '*') {
+          blank(i++);
+          blank(i++);
+          while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) blank(i++);
+          if (i < src.length) {
+            blank(i++);
+            blank(i++);
+          }
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') {
+          i++; // keep the opening quote itself
+          while (i < src.length) {
+            if (src[i] === '\\') {
+              blank(i++);
+              if (i < src.length) blank(i++);
+              continue;
+            }
+            if (src[i] === c) break;
+            blank(i++);
+          }
+          i++; // skip the closing quote
+          continue;
+        }
+        i++;
+      }
+      return out.join('');
+    };
+
+    // Controls on FIXTURES, not on the file under test — a control built from the artifact
+    // it validates cannot fail independently of it. Each asserts the mask both blanks the
+    // hazard and preserves length/real code.
+    const braceInString = `const a = '{'; if (x) { y(); }`;
+    expect(maskLiterals(braceInString)).toHaveLength(braceInString.length);
+    expect(
+      (maskLiterals(braceInString).match(/\{/g) ?? []).length,
+      'the brace inside the string literal survived the mask'
+    ).toBe(1);
+    const braceInComment = `doIt(); // note a { here\nnext();`;
+    expect(
+      (maskLiterals(braceInComment).match(/\{/g) ?? []).length,
+      'the brace inside the trailing comment survived the mask'
+    ).toBe(0);
+    expect(maskLiterals(braceInComment)).toContain('doIt();');
+    expect(maskLiterals(braceInComment)).toContain('next();');
+
+    const scan = maskLiterals(
+      fs.readFileSync(path.resolve(__dirname, '../AppsPageLayout.tsx'), 'utf8')
+    );
+    // ⚠️ THE RECOGNISER IS NARROWER THAN THE SENTENCE ABOVE, AND THAT IS RECORDED RATHER
+    // THAN PAPERED OVER. `effectOpen` matches the LITERAL spelling `useEffect(() => {`.
+    // A read inside `useEffect(function () {…})`, `useEffect(async () => {…})`, a
+    // multi-line `useEffect(\n  () => {`, or a `useLayoutEffect` is a legitimate effect
+    // this loop would report as "NOT inside any useEffect body" — a false positive with a
+    // confidently wrong diagnosis. It is not a false NEGATIVE, so the ban cannot be
+    // silently escaped by respelling; and if respelling removes the only match, the
+    // `effectBodies.length > 0` control below fires with its own self-diagnosing message
+    // rather than passing vacuously.
+    //
+    // Measured in the ONLY file this guard scans — `AppsPageLayout.tsx` — which holds
+    // exactly ONE `useEffect(() => {` and zero `useEffect(function`, `useEffect(async` or
+    // `useLayoutEffect`. So the narrow spelling costs nothing here. Widen it when that
+    // stops being true; do not widen it speculatively, because every spelling added is
+    // another brace-matching shape to validate.
+    //
+    // ⚠️ Scope that claim to THIS file, not to `src/`. Grepping the tree for those
+    // spellings returns hits from THIS COMMENT — the prose naming the hazard is itself a
+    // match — so a repo-wide count here would be measuring its own text. The guard reads
+    // one file; the count that means anything is the one for that file.
     const effectBodies: Array<[number, number]> = [];
     const effectOpen = /useEffect\(\(\) => \{/g;
-    for (let m = effectOpen.exec(layout); m; m = effectOpen.exec(layout)) {
+    for (let m = effectOpen.exec(scan); m; m = effectOpen.exec(scan)) {
       let depth = 1;
       let i = m.index + m[0].length;
       const bodyStart = i;
-      for (; i < layout.length && depth > 0; i++) {
-        if (layout[i] === '{') depth++;
-        else if (layout[i] === '}') depth--;
+      for (; i < scan.length && depth > 0; i++) {
+        if (scan[i] === '{') depth++;
+        else if (scan[i] === '}') depth--;
       }
       expect(depth, 'unbalanced braces while scanning a useEffect body').toBe(0);
       effectBodies.push([bodyStart, i]);
@@ -243,7 +344,7 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
 
     const reads: number[] = [];
     const mediaRead = /window\.matchMedia\(/g;
-    for (let m = mediaRead.exec(layout); m; m = mediaRead.exec(layout)) reads.push(m.index);
+    for (let m = mediaRead.exec(scan); m; m = mediaRead.exec(scan)) reads.push(m.index);
     // Positive control: if this ever finds nothing, the loop below is vacuous and would
     // pass over a file that had removed the carve-out entirely.
     expect(reads.length, 'no `window.matchMedia(` found — re-point this guard').toBeGreaterThan(0);
@@ -263,11 +364,26 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // Ordering it first gives each half its own killing mutant and its own diagnosis —
     // JSX read → "a media query reached the rendered tree"; render-body read → the
     // containment message. Both verified by mutation.
-    const jsxStart = layout.indexOf('<Container');
+    const jsxStart = scan.indexOf('<Container');
     expect(jsxStart, 'the rendered tree was not found — re-point this guard').toBeGreaterThan(-1);
-    expect(layout.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
+    expect(scan.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
       /matchMedia/
     );
+
+    // 🔴 BACKSTOP ON THE BRACE MATCHER ITSELF. Every effect is declared before the
+    // component returns, so every effect body must END before the JSX begins. A body that
+    // overshoots means the depth counter was fooled — by an unmasked regex literal, or by
+    // any construct this scanner does not model — and an overshooting body is exactly what
+    // swallows a render-body read and silently disarms the containment check below. This
+    // fires on the CAUSE rather than on one known trigger, so it holds for bypasses that
+    // have not been thought of.
+    for (const [start, end] of effectBodies) {
+      expect(
+        end,
+        `a useEffect body starting at ${start} ends at ${end}, past the JSX at ${jsxStart} — ` +
+          'the brace matcher was fooled, so the containment check below cannot be trusted'
+      ).toBeLessThan(jsxStart);
+    }
 
     for (const at of reads) {
       expect(
