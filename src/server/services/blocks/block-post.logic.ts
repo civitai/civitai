@@ -122,12 +122,27 @@ export function validateBlockPostText(input: {
 }
 
 /**
- * Normalise requested tag NAMES: lowercase, trim, drop empties, dedupe, cap.
- * Resolution against real `Tag` rows happens in the service — this only decides
- * WHICH names are worth looking up.
+ * Normalise requested tag NAMES: strip control/format chars, lowercase, collapse
+ * whitespace, drop empties, dedupe, cap. Resolution against real `Tag` rows
+ * happens in the service — this only decides WHICH names are worth looking up.
  *
  * The cap is applied AFTER dedupe so a block cannot burn the budget by repeating
  * one name.
+ *
+ * 🔴 THE CONTROL/FORMAT STRIP IS A DISPLAY GUARD, NOT A LOOKUP ONE, AND IT IS THE
+ * REASON IT LIVES HERE RATHER THAN AT THE RENDER SITE ALONE. A name that does not
+ * resolve is RETURNED to the host as `droppedTags` and rendered verbatim in the
+ * consent dialog — so these strings are block-authored text reaching host chrome,
+ * which is the one surface the module's doctrine says the block may not write to.
+ * `String.trim()` does not remove U+202E (RIGHT-TO-LEFT OVERRIDE) or any other
+ * `\p{Cf}`, so trimming alone let a block put bidi overrides and zero-width
+ * padding into the security control itself. Stripped at the SOURCE so every
+ * consumer of the dropped set — the dialog today, anything added later — inherits
+ * it; `buildCreatePostConsentCopy` re-sanitizes at the render point as well,
+ * because a doctrine this load-bearing should not rest on one layer.
+ *
+ * It costs nothing on the lookup side: `Tag.name` holds no control or format
+ * characters, so a name carrying them could only ever have been dropped.
  */
 export function normalizeBlockPostTagNames(tags: unknown): string[] {
   if (!Array.isArray(tags)) return [];
@@ -135,7 +150,16 @@ export function normalizeBlockPostTagNames(tags: unknown): string[] {
   const seen = new Set<string>();
   for (const raw of tags) {
     if (typeof raw !== 'string') continue;
-    const name = raw.toLowerCase().trim();
+    const name = raw
+      // Format chars (bidi overrides, zero-width space/joiner, soft hyphen, BOM)
+      // have no width and only reorder or hide text — remove them outright.
+      .replace(/\p{Cf}/gu, '')
+      // Control chars (incl. newline/tab) become spaces so words don't fuse,
+      // then whitespace runs collapse — a tag name is a single line by definition.
+      .replace(/\p{Cc}/gu, ' ')
+      .replace(/\s+/gu, ' ')
+      .toLowerCase()
+      .trim();
     if (name.length === 0 || name.length > 100) continue;
     if (seen.has(name)) continue;
     seen.add(name);

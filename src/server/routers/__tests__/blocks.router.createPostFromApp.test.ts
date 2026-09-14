@@ -210,7 +210,10 @@ beforeEach(() => {
   });
   mockResolveExistingPostTags.mockResolvedValue({ tagIds: [], names: [], dropped: [] });
   mockResolveBlockPostSources.mockResolvedValue([
-    { kind: 'published', imageId: 501, url: 'u', width: 1, height: 1 },
+    // `nsfwLevel` is NsfwLevel.PG (1). A `published` source carries the image's
+    // already-computed level; it is what the ClickHouse `nsfw` flag is derived
+    // from, since `Post.nsfwLevel` does not exist yet on this path.
+    { kind: 'published', imageId: 501, url: 'u', width: 1, height: 1, nsfwLevel: 1 },
   ]);
   mockWriteBlockPost.mockResolvedValue({
     postId: 5150,
@@ -469,6 +472,89 @@ describe('content + gallery re-derivation on the WRITE path', () => {
     expect(mockThrowOnBlockedUserContent).toHaveBeenCalledWith(['T', 'D', 'anime'], {
       surface: 'post',
     });
+  });
+
+  it('screens the DROPPED tag names too — they are what the consent dialog renders', async () => {
+    // 🔴 DISPLAY, NOT APPLICATION, IS WHAT PUTS THEM IN SCOPE. A name that
+    // resolved to no `Tag` row is never written anywhere — but it IS returned as
+    // `droppedTags` and rendered verbatim in the host confirm, so leaving it
+    // unscreened would mean the one string on that surface the block fully
+    // controls is also the one string the blocklist never sees.
+    mockResolveExistingPostTags.mockResolvedValue({
+      tagIds: [11],
+      names: ['anime'],
+      dropped: ['unresolved-name'],
+    });
+
+    await caller().createPostFromApp({ ...INPUT, title: 'T', detail: 'D', tags: ['anime', 'x'] });
+
+    expect(mockThrowOnBlockedUserContent).toHaveBeenCalledWith(
+      ['T', 'D', 'anime', 'unresolved-name'],
+      { surface: 'post' }
+    );
+  });
+
+  it('DERIVES the ClickHouse nsfw flag from the adopted images, not a hardcoded false', async () => {
+    // 🔴 IT USED TO BE THE LITERAL `false`, so every app-created post landed in
+    // ClickHouse as SFW regardless of content. It cannot be derived the native way
+    // (`!getIsSafeBrowsingLevel(post.nsfwLevel)`) because at this instant
+    // `Post.nsfwLevel` is still 0 — this path INSERTs `publishedAt` rather than
+    // UPDATEing it, so the level is computed later by the job queue. So it is
+    // derived from what the post is MADE of: the bit_or of the adopted images'
+    // levels, which is exactly what `updatePostNsfwLevels` will compute.
+    const c = ctx();
+
+    // NsfwLevel.PG (1) | NsfwLevel.PG13 (2) === 3 — a value equal to neither
+    // operand, and entirely inside the SFW flag.
+    mockResolveBlockPostSources.mockResolvedValue([
+      { kind: 'published', imageId: 501, url: 'u', width: 1, height: 1, nsfwLevel: 1 },
+      { kind: 'published', imageId: 502, url: 'v', width: 1, height: 1, nsfwLevel: 2 },
+    ]);
+    await caller(c).createPostFromApp({ ...INPUT, confirmedImageCount: 2 });
+
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Create', nsfw: false })
+    );
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Publish', nsfw: false })
+    );
+  });
+
+  it('flags nsfw when ANY adopted image carries an nsfw bit', async () => {
+    // The positive control for the case above: without it, a mutant hardcoding
+    // `false` again would still pass it.
+    const c = ctx();
+    mockResolveBlockPostSources.mockResolvedValue([
+      { kind: 'published', imageId: 501, url: 'u', width: 1, height: 1, nsfwLevel: 1 },
+      // NsfwLevel.R (4) — in `nsfwBrowsingLevelsArray`.
+      { kind: 'published', imageId: 502, url: 'v', width: 1, height: 1, nsfwLevel: 4 },
+    ]);
+    await caller(c).createPostFromApp({ ...INPUT, confirmedImageCount: 2 });
+
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Create', nsfw: true })
+    );
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Publish', nsfw: true })
+    );
+  });
+
+  it('flags an ALL-FRESH post nsfw — an unscanned output has no level to derive from', async () => {
+    // Not a gap being papered over: a `fresh` workflow output is unscanned by
+    // construction, so no expression here could invent a level. The native
+    // predicate reads 0 as nsfw (`getIsSafeBrowsingLevel(0)` is false — 0 means
+    // UNRATED, not safe), i.e. it errs conservative, which is the right direction
+    // for the value it replaces.
+    const c = ctx();
+    mockResolveBlockPostSources.mockResolvedValue([
+      { kind: 'workflow', url: 'https://orchestration.civitai.com/a.jpg', width: 1, height: 1 },
+    ]);
+    mockPersistImage.mockResolvedValue({ imageId: 777 });
+    await caller(c).createPostFromApp(INPUT);
+
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Create', nsfw: true })
+    );
   });
 
   it('REFUSES over-long copy with the text guard’s own message, before any resolution', async () => {

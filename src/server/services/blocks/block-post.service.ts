@@ -18,7 +18,13 @@ import {
   type BlockPostPreview,
   type BlockPostSource,
 } from '~/server/services/blocks/block-post.logic';
-import { ModelStatus, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import {
+  EntityType,
+  JobQueueType,
+  ModelStatus,
+  TagTarget,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 /**
@@ -95,6 +101,14 @@ type ResolvedSourceImage =
       url: string;
       width: number | null;
       height: number | null;
+      /**
+       * The image's already-computed `nsfwLevel`. Carried because it is the ONLY
+       * maturity signal available at post time — the `Post.nsfwLevel` the native
+       * path reads does not exist yet on this path (see
+       * `applyBlockPostPublishEffects`). A `fresh` output has no counterpart: it
+       * is unscanned by construction, so it has no level to carry.
+       */
+      nsfwLevel: number;
     };
 
 function badRequest(message: string): never {
@@ -322,9 +336,21 @@ export async function resolveGalleryTarget(input: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Ownership + app-tag proof for ONE workflow, returning the SAME ordered
- * projection `queryAppWorkflows` hands the block — so the block's `imageIndexes`
- * line up with what it saw.
+ * Ownership + app-tag proof for ONE workflow, returning a slot array in the SAME
+ * ORDER AND OF THE SAME LENGTH as the projection `queryAppWorkflows` hands the
+ * block — so the block's `imageIndexes` line up with what it saw.
+ *
+ * 🔴 THE LENGTH IS THE POINT, AND IT IS WHY THIS RETURNS `| null` SLOTS RATHER
+ * THAN A FILTERED LIST. `queryAppWorkflows` returns `items.map(projectAppWorkflow)`
+ * UNFILTERED, and so does `publishGenerationOutputs` — which is why the identical
+ * "same ordered projection" sentence is true over there and was FALSE here until
+ * this was fixed: this function used to `filter()` the allowlist, so dropping
+ * output 0 silently renumbered output 1 to index 0. A block asking for index 0
+ * then got the image it had seen at index 1, and an in-range index could fall out
+ * of range and be discarded. Not a consent break (the preview resolves the same
+ * way, so the thumbnails matched what was written) and normally a no-op, but it
+ * is a SILENT SUBSTITUTION whenever it is not. A refused slot is now a REFUSAL at
+ * the selection site (`resolveBlockPostSources`), never a shift.
  *
  * The first two guards are copied from `publishGenerationOutputs` verbatim in
  * intent and order, and for the same reason: (a) `blockWorkflowOwnedByAppUser` is
@@ -350,7 +376,7 @@ export async function resolveOwnedWorkflowOutputs(input: {
   appBlockId: string;
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-}): Promise<Array<{ url: string; width: number | null; height: number | null }>> {
+}): Promise<Array<{ url: string; width: number | null; height: number | null } | null>> {
   const owned = await blockWorkflowOwnedByAppUser({
     userId: input.userId,
     appBlockId: input.appBlockId,
@@ -391,7 +417,10 @@ export async function resolveOwnedWorkflowOutputs(input: {
   // thumbnails, so an off-allowlist url would be an image request the host makes
   // to an arbitrary origin on the block's behalf — a different exposure from the
   // server-side fetch the persist path already bounds.
-  return projected.images.filter((img) => isAllowedOutputHost(img.url));
+  //
+  // BLANKED IN PLACE, NOT FILTERED OUT — see the 🔴 note in the docblock. The
+  // slot survives so index `n` still means the output the block saw at index `n`.
+  return projected.images.map((img) => (isAllowedOutputHost(img.url) ? img : null));
 }
 
 /** The gated edge-url width used for consent thumbnails + the published-image read. */
@@ -438,7 +467,15 @@ export async function resolveAppPublishedImages(input: {
   userId: number;
   appId: string;
   browsingLevel: number;
-}): Promise<Array<{ imageId: number; url: string; width: number | null; height: number | null }>> {
+}): Promise<
+  Array<{
+    imageId: number;
+    url: string;
+    width: number | null;
+    height: number | null;
+    nsfwLevel: number;
+  }>
+> {
   const ids = [...new Set(input.imageIds)].filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length === 0) badRequest('no valid image ids in a published source');
 
@@ -469,8 +506,13 @@ export async function resolveAppPublishedImages(input: {
   `;
 
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const out: Array<{ imageId: number; url: string; width: number | null; height: number | null }> =
-    [];
+  const out: Array<{
+    imageId: number;
+    url: string;
+    width: number | null;
+    height: number | null;
+    nsfwLevel: number;
+  }> = [];
   for (const id of ids) {
     const row = byId.get(id);
     // ONE refusal message for "not yours" / "not this app's" / "already posted" /
@@ -496,6 +538,7 @@ export async function resolveAppPublishedImages(input: {
       url: getEdgeUrl(row.url, { width: POST_PREVIEW_EDGE_WIDTH }),
       width: row.width,
       height: row.height,
+      nsfwLevel: row.nsfwLevel,
     });
   }
   return out;
@@ -526,7 +569,13 @@ export async function resolveBlockPostSources(input: {
         workflowId: source.workflowId,
         getWorkflow: input.getWorkflow,
       });
-      if (outputs.length === 0) badRequest('workflow has no available outputs to post');
+      // `outputs` is index-aligned with what the block saw and carries `null`
+      // where the output host is off-allowlist. "No outputs" means no USABLE
+      // slot, not an empty array — an all-blanked workflow must refuse here
+      // rather than reach the selection step with a non-zero length.
+      if (outputs.length === 0 || outputs.every((o) => o == null)) {
+        badRequest('workflow has no available outputs to post');
+      }
       const selection = resolveWorkflowOutputSelection({
         requested: source.imageIndexes,
         availableCount: outputs.length,
@@ -538,6 +587,13 @@ export async function resolveBlockPostSources(input: {
       if (selection.length === 0) badRequest('no valid output indexes to post');
       for (const idx of selection) {
         const o = outputs[idx];
+        // REFUSE a blanked slot; never fall through to the next one. Silently
+        // skipping it would publish a DIFFERENT image than the index named — the
+        // same class of substitution the index-aligned return exists to prevent,
+        // and the same reason an unresolvable `published` id is refused rather
+        // than skipped. Uniform message with the workflow-level refusal above so
+        // the reply cannot be used to probe which output host was rejected.
+        if (!o) badRequest('workflow has no available outputs to post');
         out.push({ kind: 'workflow', url: o.url, width: o.width, height: o.height });
       }
     } else {
@@ -579,10 +635,19 @@ export async function previewBlockPost(input: {
   if (!text.ok) badRequest(text.reason);
 
   const tags = await resolveExistingPostTags(input.tags ?? []);
-  // Screen title, detail AND the RESOLVED tag names. The native path screens
-  // `[title, detail]` only — tags are never screened there — so including them is
-  // another place this path is deliberately stricter than native.
-  await throwOnBlockedUserContent([text.title, text.detail, ...tags.names], { surface: 'post' });
+  // Screen title, detail, the RESOLVED tag names AND THE DROPPED ONES. The native
+  // path screens `[title, detail]` only — tags are never screened there — so
+  // including them is another place this path is deliberately stricter than
+  // native.
+  //
+  // 🔴 THE DROPPED SET IS SCREENED BECAUSE IT IS DISPLAYED. A name that resolves
+  // to no `Tag` row is never applied to anything — but it IS returned as
+  // `droppedTags` and rendered verbatim in the host consent dialog, so declining
+  // to screen it would mean the one string on that surface a block fully controls
+  // is also the one string the blocklist never sees.
+  await throwOnBlockedUserContent([text.title, text.detail, ...tags.names, ...tags.dropped], {
+    surface: 'post',
+  });
 
   const gallery =
     input.modelVersionId != null
@@ -785,7 +850,19 @@ export async function writeBlockPost(input: {
  * that this path is a real Buzz-spending surface, which is why the rate buckets
  * and the self-dealing guard exist rather than being belt-and-braces.
  *
+ * 🔴 AND THE SECOND REASON, WHICH IS NOT ABOUT `post.controller.ts` AT ALL: TWO
+ * DATABASE TRIGGERS ALSO DO NOT FIRE ON THIS PATH. Both `post_nsfw_level_change`
+ * and `publish_post_metrics_trigger` are declared `AFTER UPDATE OF "publishedAt"
+ * ON "Post"` — INSERT is in NEITHER event list — and `writeBlockPost` writes
+ * `publishedAt` INSIDE the `post.create` (deliberately, so the post is never
+ * briefly a visible empty draft). A native publish is an UPDATE, so it fires
+ * both; this path is an INSERT, so it fires neither, and re-issuing them is the
+ * first thing this function does. See the two call sites below for the
+ * consequence of each.
+ *
  * What fires, and the native line it mirrors:
+ *   - `JobQueue(Post, UpdateNsfwLevel)` — the `post_nsfw_level_change` trigger.
+ *   - the seed `PostMetric(AllTime)` row — the `publish_post_metrics` trigger.
  *   - `firstDailyPostReward`      — 25 blue Buzz, 25/day cap, double-deduped.
  *   - `imagePostedToModelReward`  — ONLY when a gallery target was attached; 50
  *                                   blue Buzz to the MODEL OWNER. Its own
@@ -831,6 +908,61 @@ export async function applyBlockPostPublishEffects(input: {
   const { bustCachesForPosts } = await import('~/server/services/post.service');
   const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
   const { SearchIndexUpdateQueueAction } = await import('~/server/common/enums');
+  const { enqueueJobs } = await import('~/server/services/job-queue.service');
+
+  // ── TRIGGER RE-ISSUE, FIRST AND NOT LAST. Everything below this pair is a
+  // cache/reward/index effect whose loss degrades the post; these two decide
+  // whether the post is VISIBLE AT ALL, so they must not sit behind a Redis call
+  // that can throw and abandon the rest of the function.
+
+  // 🔴 `post_nsfw_level_change` NEVER FIRES HERE, AND NOTHING ELSE ON THIS PATH
+  // WRITES `Post.nsfwLevel` — `nsfwLevels.service.ts`'s `updatePostNsfwLevels` is
+  // its only writer and is reached only from the `job-queue` cron. Without this
+  // enqueue the post keeps its schema default `nsfwLevel = 0` forever, and BOTH
+  // non-owner reads gate on it: `getPostDetail` admits a non-owner only on
+  // `{ publishedAt: { lt: now }, nsfwLevel: { not: 0 } }`, and `getPostsInfinite`
+  // masks on `(p."nsfwLevel" & browsingLevel) != 0`. So the post is a permanent
+  // 404 for everyone but its author and is absent from the profile Posts tab and
+  // every feed — while its IMAGES stay visible in galleries, because the image
+  // search index gates on the post's `publishedAt` and not on its level. That
+  // combination reads as a CDN/cache bug, which is why it is called out here.
+  //
+  // ⚠️ ONLY THE ALL-`published` ARM IS BROKEN WITHOUT THIS, and that is the arm
+  // this feature exists for. A post containing any `fresh` output recovers by
+  // accident: that output's scan fires the IMAGE trigger, whose job `bit_or`s
+  // over EVERY image of the post. An all-`published` post has no such rescue,
+  // because its images were already terminally `Scanned` before they were
+  // adopted, so no image level ever changes again.
+  //
+  // ENQUEUE rather than calling `updatePostNsfwLevels` directly, for two reasons.
+  // (a) It is exactly what the trigger does — `create_job_queue_record(NEW.id,
+  // 'Post', 'UpdateNsfwLevel')` — so the CONSUMER behaves natively: the cron runs
+  // `getNsfwLevelRelatedEntities` over the queued post, which walks it to the
+  // `modelVersionId` it is attached to and rolls THAT up too (and its model, in
+  // the next batch). A direct call sets the post row and silently skips that
+  // cascade, which matters precisely on the gallery-attach path this feature also
+  // ships. (Collection rollup is discovered by the same walk but is currently
+  // disabled in `job-queue.ts`, so it is not part of the claim.) (b)
+  // `model3d.service.ts` already
+  // uses this enqueue for the same situation — a row CREATED rather than updated.
+  // `enqueueJobs` is `ON CONFLICT DO NOTHING`, so a retry is a no-op.
+  await enqueueJobs([
+    { entityId: input.postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+  ]);
+
+  // 🔴 SAME ROOT CAUSE, SMALLER BLAST RADIUS: `publish_post_metrics_trigger` is
+  // also `AFTER UPDATE OF "publishedAt"`, so no seed `PostMetric` row is created
+  // either. The COUNTS recover on their own (the metrics job upserts them), but
+  // `ageGroup` is written ONLY by this trigger, and a NULL one drops the post out
+  // of every age-bucketed metric read. Mirrors `publish_post_metrics()` exactly:
+  // the AllTime row, and `ageGroup = 'Day'` — which is what that function
+  // computes for a `publishedAt` of now (its NULL branch is the scheduled-post
+  // case, and this path never schedules).
+  await dbWrite.$executeRaw`
+    INSERT INTO "PostMetric" ("postId", "timeframe", "createdAt", "updatedAt", "likeCount", "dislikeCount", "laughCount", "cryCount", "heartCount", "commentCount", "collectedCount", "ageGroup")
+    VALUES (${input.postId}, 'AllTime'::"MetricTimeframe", now(), now(), 0, 0, 0, 0, 0, 0, 0, 'Day'::"MetricTimeframe")
+    ON CONFLICT ("postId", "timeframe") DO UPDATE SET "ageGroup" = 'Day'::"MetricTimeframe"
+  `;
 
   await preventReplicationLag('post', input.postId);
   await preventReplicationLag('postImages', input.postId);

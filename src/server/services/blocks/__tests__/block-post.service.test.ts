@@ -456,9 +456,18 @@ describe('resolveOwnedWorkflowOutputs', () => {
     );
   });
 
-  it('drops an output whose host is not on the orchestrator allowlist', async () => {
+  it('BLANKS an off-allowlist output IN PLACE — it does not renumber the ones after it', async () => {
     // The host renders these urls as consent thumbnails, so an off-allowlist url
     // would be an image request the HOST makes to an arbitrary origin.
+    //
+    // 🔴 THE INDEX SPACE IS THE ASSERTION, NOT THE COUNT. This used to `filter()`,
+    // which is a SILENT RENUMBER: with outputs `[evil, ok]`, dropping index 0 made
+    // `ok` index 0, so a block asking for the image it saw at index 1 got an
+    // out-of-range discard, and a block asking for index 0 got `ok` — a DIFFERENT
+    // image than the one it named. `queryAppWorkflows` and
+    // `publishGenerationOutputs` both hand the block the UNFILTERED projection, so
+    // the index space this must agree with is the unfiltered one. A `null` slot
+    // keeps the length and the positions; refusal happens at the selection site.
     const getWorkflow = vi.fn().mockResolvedValue({
       ...taggedWorkflow,
       steps: [
@@ -480,8 +489,98 @@ describe('resolveOwnedWorkflowOutputs', () => {
     });
 
     const out = await call(getWorkflow);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toBeNull();
+    expect(out[1]?.url).toContain('orchestration.civitai.com');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('an off-allowlist output REFUSES the index that named it — never substitutes', () => {
+  /**
+   * The consumer half of the blanked slot. Two cases, and the second is the one
+   * that was silently wrong: it is the exact shape the old filtering code turned
+   * into "publish a different image than the block asked for".
+   */
+  function twoOutputsFirstEvil() {
+    return {
+      status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              { url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 },
+              {
+                url: 'https://orchestration.civitai.com/v2/blobs/ok.jpg',
+                available: true,
+                width: 2,
+                height: 3,
+              },
+            ],
+          },
+        },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    OWNED_WORKFLOW.mockResolvedValue(true);
+  });
+
+  it('index 1 still resolves to the image the block saw at index 1', async () => {
+    // Under the old filtering return this index was OUT OF RANGE and discarded,
+    // so the whole request refused with "no valid output indexes to post".
+    const out = await resolveBlockPostSources({
+      sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [1] }],
+      actor: ACTOR,
+      getWorkflow: vi.fn().mockResolvedValue(twoOutputsFirstEvil()),
+    });
     expect(out).toHaveLength(1);
-    expect(out[0].url).toContain('orchestration.civitai.com');
+    // Width 2 / height 3 are distinct from every other fixture value here, so
+    // this cannot pass by resolving to the wrong output.
+    expect(out[0]).toMatchObject({ kind: 'workflow', width: 2, height: 3 });
+  });
+
+  it('index 0 is REFUSED rather than resolving to the NEXT image', async () => {
+    // 🔴 THE REGRESSION THIS PINS. Old behaviour: `filter()` made `ok` index 0, so
+    // this call SUCCEEDED and published `ok` — an image the block had seen at a
+    // different index. A substitution is worse than a refusal here because the
+    // consent dialog would render it and nothing would look wrong.
+    await expectRejection(
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [0] }],
+        actor: ACTOR,
+        getWorkflow: vi.fn().mockResolvedValue(twoOutputsFirstEvil()),
+      }),
+      'BAD_REQUEST',
+      'workflow has no available outputs to post'
+    );
+  });
+
+  it('a workflow whose outputs are ALL off-allowlist refuses, not silently empties', async () => {
+    const allEvil = {
+      status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [{ url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 }],
+          },
+        },
+      ],
+    };
+    await expectRejection(
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1' }],
+        actor: ACTOR,
+        getWorkflow: vi.fn().mockResolvedValue(allEvil),
+      }),
+      'BAD_REQUEST',
+      'workflow has no available outputs to post'
+    );
   });
 });
 

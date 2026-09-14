@@ -137,6 +137,41 @@ describe('normalizeBlockPostTagNames', () => {
     expect(normalizeBlockPostTagNames('anime')).toEqual([]);
     expect(normalizeBlockPostTagNames(undefined)).toEqual([]);
   });
+
+  it('STRIPS control and format characters — an unresolved name is rendered as host chrome', () => {
+    // 🔴 WHY A PURE TAG NORMALISER CARES ABOUT DISPLAY. A name that resolves to no
+    // `Tag` row is not discarded: it comes back as `droppedTags` and is rendered
+    // verbatim in the consent dialog, so these strings reach the host surface the
+    // block is otherwise forbidden to write to. `String.trim()` removes none of
+    // them.
+    //
+    // Real code points, written as escapes so no editor or transport can eat
+    // them: U+202E RIGHT-TO-LEFT OVERRIDE (reverses the display of everything
+    // after it), U+200B ZERO WIDTH SPACE (invisible padding), U+0007 BELL (a
+    // control char — mapped to a space so words do not fuse).
+    expect(normalizeBlockPostTagNames(['saf‮elbmargorp'])).toEqual(['safelbmargorp']);
+    expect(normalizeBlockPostTagNames(['zero​width'])).toEqual(['zerowidth']);
+    expect(normalizeBlockPostTagNames(['bellx'])).toEqual(['bell x']);
+    // A name made only of invisible characters collapses to empty and is dropped
+    // — the existing empty-name rule, now reachable for this class too.
+    expect(normalizeBlockPostTagNames(['‮​', 'ok'])).toEqual(['ok']);
+  });
+
+  it('collapses whitespace runs, including ones a control char produced', () => {
+    // A tag name is a single line by definition; a newline inside one would break
+    // the dialog's comma-joined list into two visual rows.
+    expect(normalizeBlockPostTagNames(['two\n\nwords'])).toEqual(['two words']);
+    expect(normalizeBlockPostTagNames(['a   b'])).toEqual(['a b']);
+  });
+
+  it('strips BEFORE the length cap, so padding cannot push a real name over it', () => {
+    // The cap is 100 characters. 100 real characters plus 10 zero-width ones is
+    // 110 raw — a pre-strip length test would discard a perfectly legal name.
+    const padded = 'x'.repeat(100) + '​'.repeat(10);
+    expect(normalizeBlockPostTagNames([padded])).toEqual(['x'.repeat(100)]);
+    // And the reverse still holds: 101 REAL characters is still too long.
+    expect(normalizeBlockPostTagNames(['x'.repeat(101)])).toEqual([]);
+  });
 });
 
 describe('resolveWorkflowOutputSelection', () => {

@@ -98,6 +98,7 @@ import type { BlockWorkflowBody } from '~/server/schema/blocks/workflow.schema';
 import type { Context } from '~/server/createContext';
 import {
   allowMatureContentForCeiling,
+  getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -506,9 +507,20 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
 
 /**
  * The FIRST FIVE guards of both post procedures, in one place so the read
- * (preview) and the write (create) can never drift on them — a preview that
- * passed a gate the write did not, or vice versa, would either leak a resolvable
- * preview to an app that may not post or render a dialog that always fails.
+ * (preview) and the write (create) can never drift ON THESE FIVE — drifting on
+ * them would either leak a resolvable preview to an app that may not post, or
+ * render a dialog that always fails.
+ *
+ * ⚠️ IT IS NOT A CLAIM THAT THE TWO PROCEDURES HAVE THE SAME GATE SET, AND
+ * READING IT THAT WAY WOULD BE WRONG. The write deliberately carries gates the
+ * preview does not — `assertSharedWriteTrust` (#6 in the `createPostFromApp`
+ * enumeration) and the two post rate buckets are WRITE-ONLY, because a read that
+ * renders a dialog is not the act those gates exist to bound, and charging a rate
+ * bucket for a preview would let a dialog the viewer never confirmed consume the
+ * budget. The resulting asymmetry — a resolvable preview for a subject who would
+ * be refused the post — is the accepted position and is asserted by a test, not
+ * an oversight. What this helper guarantees is narrower and exact: NEITHER
+ * procedure can be reached without all five of the gates below.
  *
  * 🔴 THE GUARD CALL LIVES HERE, AND THAT IS WHY THIS IS A MODULE-SCOPE HELPER
  * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
@@ -4571,7 +4583,11 @@ export const blocksRouter = router({
         const text = validateBlockPostText({ title: input.title, detail: input.detail });
         if (!text.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: text.reason });
         const tags = await resolveExistingPostTags(input.tags ?? []);
-        await throwOnBlockedUserContent([text.title, text.detail, ...tags.names], {
+        // Resolved AND dropped names, matching `previewBlockPost` exactly — the
+        // dropped ones are what the consent dialog renders verbatim. See the
+        // screen call in `block-post.service.ts` for why display, not
+        // application, is what makes them in scope.
+        await throwOnBlockedUserContent([text.title, text.detail, ...tags.names, ...tags.dropped], {
           surface: 'post',
         });
         const gallery =
@@ -4698,11 +4714,34 @@ export const blocksRouter = router({
         // Optional-chained: `ctx.track` is always present on a real request, but a
         // missing tracker must never be the thing that fails an already-public
         // post. Same reasoning as the best-effort block above.
+        //
+        // 🔴 `nsfw` IS DERIVED, NOT HARDCODED — it used to be a literal `false`,
+        // which put EVERY app-created post into ClickHouse as SFW regardless of
+        // content. It cannot be derived the way native does it
+        // (`!getIsSafeBrowsingLevel(updatedPost.nsfwLevel)`), because at this
+        // instant `Post.nsfwLevel` is still its schema default 0: this path
+        // INSERTs `publishedAt` rather than UPDATEing it, so the level is computed
+        // asynchronously by the job queue `applyBlockPostPublishEffects` just
+        // enqueued. So it is derived from the source the post is made of — the
+        // `bit_or` over the adopted images' own levels, which is exactly what
+        // `updatePostNsfwLevels` will compute for `Post.nsfwLevel` shortly.
+        //
+        // A `fresh` output contributes NOTHING and that is not a gap being papered
+        // over: it is unscanned by construction, so it has no level yet and no
+        // expression here could invent one. The native predicate then reads an
+        // all-fresh post as `nsfw: true` (`getIsSafeBrowsingLevel(0)` is false by
+        // design — 0 means unrated, not safe), i.e. it errs conservative, which is
+        // the correct direction for the value it replaces.
+        const postNsfwLevel = resolved.reduce(
+          (acc, item) => (item.kind === 'published' ? acc | item.nsfwLevel : acc),
+          0
+        );
+        const nsfw = !getIsSafeBrowsingLevel(postNsfwLevel);
         await ctx.track
-          ?.post({ type: 'Create', nsfw: false, postId: created.postId, tags: created.tagNames })
+          ?.post({ type: 'Create', nsfw, postId: created.postId, tags: created.tagNames })
           ?.catch(() => undefined);
         await ctx.track
-          ?.post({ type: 'Publish', nsfw: false, postId: created.postId, tags: created.tagNames })
+          ?.post({ type: 'Publish', nsfw, postId: created.postId, tags: created.tagNames })
           ?.catch(() => undefined);
 
         await recordOutcome('ok');

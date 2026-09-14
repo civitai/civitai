@@ -41,9 +41,21 @@ import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
  * "Share to your profile" over a button that posts something else entirely. Host
  * chrome that merely repeats the block's own strings asserts nothing and is a
  * ceremony, not a consent screen. So `buildCreatePostConsentCopy` takes a
- * `BlockPostPreview` — the server's resolution of the request — and the ONLY
- * block-influenced value it will touch is `appName`, which is
- * PUBLISHER-controlled (not iframe-controlled) and is sanitized here.
+ * `BlockPostPreview` — the server's resolution of the request.
+ *
+ * ⚠️ TWO VALUES ARE BLOCK-INFLUENCED, NOT ONE, AND BOTH ARE SANITIZED. This
+ * comment used to assert `appName` was the only one, and that was FALSE:
+ *   - `appName` — PUBLISHER-controlled (not iframe-controlled).
+ *   - `preview.droppedTags` — the block's OWN requested tag strings, echoed back
+ *     because a name that resolved to no `Tag` row is reported to the viewer
+ *     rather than silently discarded. The server bounds them (≤5 names, ≤100
+ *     chars each, control/format chars stripped in `normalizeBlockPostTagNames`),
+ *     but they are block text on the consent surface, so they get the same
+ *     anti-spoof pass as the app name here.
+ * Everything else — title, detail, the RESOLVED tag names, images, gallery — is
+ * server-derived. If a third block-influenced value is ever added to the preview,
+ * ADD IT TO THIS LIST AND TO THE SANITIZE PASS; the absolute this comment used to
+ * state is what let the second one through unnoticed.
  *
  * That is the same rule `collectionFollowGate.ts` states for the follow bridge
  * ("IT MUST STAY HOST-FETCHED. Do NOT add a block-supplied `name` to the wire and
@@ -252,9 +264,13 @@ export type CreatePostConsentCopy = {
  * A dialog that shows four thumbnails and says "Publish?" has told the viewer
  * nothing about either.
  *
- * The only block-influenced input is `appName`, which is PUBLISHER-controlled and
- * is run through `sanitizeAppChromeName` (strips control/bidi/zalgo) — the same
- * anti-spoof the follow gate applies and the publish confirm does not.
+ * The block-influenced inputs are `appName` (PUBLISHER-controlled) and
+ * `preview.droppedTags` (the block's own unresolved tag strings, echoed back).
+ * BOTH are run through `sanitizeAppChromeName` (strips `\p{Cf}` bidi overrides
+ * and zero-width padding, maps `\p{Cc}` to spaces, bounds zalgo and length) —
+ * the same anti-spoof the follow gate applies and the publish confirm does not.
+ * A dropped name that sanitizes to nothing is omitted rather than rendered as an
+ * empty entry, and if that empties the set the line is not shown at all.
  *
  * ⚠️ `title`/`detail`/`tags`/`images`/`gallery` come from the SERVER'S preview,
  * never from the wire. Passing the raw block payload here would silently turn the
@@ -271,6 +287,9 @@ export function buildCreatePostConsentCopy({
   const who = sanitizeAppChromeName(appName) ?? 'This app';
   const n = preview.images.length;
   const noun = `${n} image${n === 1 ? '' : 's'}`;
+  const droppedTags = preview.droppedTags
+    .map((t) => sanitizeAppChromeName(t))
+    .filter((t): t is string => t !== null);
   return {
     title: 'Publish this post to your profile?',
     intro: `${who} wants to publish ${noun} as a post on your Civitai profile.`,
@@ -282,10 +301,8 @@ export function buildCreatePostConsentCopy({
       ? `It will also appear in the gallery for ${preview.gallery.modelName} — ${preview.gallery.versionName}.`
       : null,
     droppedTagsLine:
-      preview.droppedTags.length > 0
-        ? `These requested tags do not exist and will not be added: ${preview.droppedTags.join(
-            ', '
-          )}.`
+      droppedTags.length > 0
+        ? `These requested tags do not exist and will not be added: ${droppedTags.join(', ')}.`
         : null,
     confirmLabel: 'Publish post',
   };

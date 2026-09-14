@@ -244,6 +244,50 @@ describe('buildCreatePostConsentCopy', () => {
     );
   });
 
+  it('SANITIZES dropped tags — they are BLOCK text on the consent surface', () => {
+    // 🔴 THE DOCTRINE HOLE THIS CLOSES. `droppedTags` is the block's OWN requested
+    // strings echoed back, and it is rendered verbatim in the dialog — so it is a
+    // second block-influenced value on the one surface that IS the security
+    // control, alongside `appName`. The module docblock used to assert `appName`
+    // was the only one.
+    //
+    // Real code points, not placeholders: U+202E RIGHT-TO-LEFT OVERRIDE (visually
+    // reverses everything after it), U+200B ZERO WIDTH SPACE (invisible padding),
+    // U+0007 BELL (a control char). `String.trim()` removes NONE of these, which
+    // is why trimming at the server was not enough on its own.
+    const copy = buildCreatePostConsentCopy({
+      appName: 'App',
+      preview: preview({ droppedTags: ['saf‮elbmargorp', 'zero​width', 'bellx'] }),
+    });
+    const line = copy.droppedTagsLine ?? '';
+    expect(line).not.toContain('‮');
+    expect(line).not.toContain('​');
+    expect(line).not.toContain('');
+    // Positive control: the legible text SURVIVES, so this is a strip and not a
+    // blanket discard that would make the assertions above pass vacuously.
+    expect(line).toContain('safelbmargorp');
+    expect(line).toContain('zerowidth');
+    expect(line).toContain('bell x');
+  });
+
+  it('omits a dropped tag that sanitizes to nothing, and the line with it', () => {
+    // A name made only of invisible characters must not render as an empty entry
+    // (", , ") — and if it was the only one, the line must not render at all.
+    const partial = buildCreatePostConsentCopy({
+      appName: 'App',
+      preview: preview({ droppedTags: ['​​', 'real'] }),
+    });
+    expect(partial.droppedTagsLine).toBe(
+      'These requested tags do not exist and will not be added: real.'
+    );
+
+    const allInvisible = buildCreatePostConsentCopy({
+      appName: 'App',
+      preview: preview({ droppedTags: ['​​'] }),
+    });
+    expect(allInvisible.droppedTagsLine).toBeNull();
+  });
+
   it('omits the dropped-tags line when nothing was dropped', () => {
     expect(
       buildCreatePostConsentCopy({ appName: 'App', preview: preview() }).droppedTagsLine

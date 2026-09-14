@@ -12,8 +12,12 @@ import { Flags } from '~/shared/utils/flags';
  * writes and `blocks`' `createPostFromApp`), and a trust predicate open-coded at
  * two sites is a predicate that will be wrong at one of them. Router-to-router
  * imports are also how import cycles start. So the rule lives in one module and
- * `apps-shared.router.ts` re-exports it for its existing importers — the move is
- * a relocation, not a rewrite: the signals, their order and their exact deny
+ * BOTH routers import it from here. `apps-shared.router.ts` does NOT re-export it
+ * — its importers were enumerated when the predicate moved and none of them took
+ * it from there, so re-exporting would only have preserved a second name for the
+ * same rule. (That file's own note at the former call site says the same; this
+ * line used to claim the opposite and was the stale half of the pair.) The move
+ * is a relocation, not a rewrite: the signals, their order and their exact deny
  * messages are byte-identical to the original, which is what keeps the
  * shared-storage tests meaningful.
  *
