@@ -21,7 +21,6 @@
 import {
   Button,
   Checkbox,
-  Divider,
   Group,
   Input,
   Menu,
@@ -30,7 +29,6 @@ import {
   Radio,
   Select,
   Switch,
-  Text,
   Textarea,
   TextInput,
   Tooltip,
@@ -42,8 +40,7 @@ import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { TriggerWordsStrip } from '~/components/Generate/Input/PromptEditorShell';
 
 import {
   Controller,
@@ -1143,51 +1140,12 @@ export function GenerationForm() {
                       minRows={2}
                       className="!border-0 !bg-transparent"
                     />
-                    {/* Nested trigger words controller — surfaces the active
-                        model/resources' trained words as copy-able chips
-                        below the editor. Auto-hides when the active
-                        subgraph didn't merge `triggerWordsGraph`. */}
                     <Controller
                       graph={graph}
                       name="triggerWords"
-                      render={({ value }) => {
-                        const triggerWords = value as string[] | undefined;
-                        if (!triggerWords || triggerWords.length === 0) return null;
-                        return (
-                          <div className="mb-1 flex flex-col gap-2 px-2">
-                            <Divider />
-                            <Text c="dimmed" className="text-xs font-semibold">
-                              Trigger words
-                            </Text>
-                            <div className="mb-2 flex items-center gap-1">
-                              <TrainedWords
-                                type="LORA"
-                                trainedWords={triggerWords}
-                                badgeProps={{
-                                  style: {
-                                    textTransform: 'none',
-                                    height: 'auto',
-                                    cursor: 'pointer',
-                                  },
-                                }}
-                              />
-                              <CopyButton value={triggerWords.join(', ')}>
-                                {({ copied, copy, Icon, color }) => (
-                                  <Button
-                                    variant="subtle"
-                                    color={color ?? 'blue.5'}
-                                    onClick={copy}
-                                    size="compact-xs"
-                                    classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                                  >
-                                    {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                                  </Button>
-                                )}
-                              </CopyButton>
-                            </div>
-                          </div>
-                        );
-                      }}
+                      render={({ value }) => (
+                        <TriggerWordsStrip triggerWords={value as string[] | undefined} />
+                      )}
                     />
                   </Paper>
                 </Input.Wrapper>

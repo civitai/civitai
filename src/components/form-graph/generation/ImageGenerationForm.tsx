@@ -4,6 +4,7 @@ import { Controller, MultiController } from 'form-graph/react';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ControlNetsInput } from '~/components/generation_v2/inputs/ControlNetsInput';
@@ -243,12 +244,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            snippets={meta?.snippets}
-            triggerWords={meta?.triggerWords}
-            attentionEdit
+          <PromptEditorShell
             label={
               <ControllerLabel
                 label="Prompt"
@@ -256,9 +252,20 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 required={meta?.required}
               />
             }
-            placeholder="Your prompt goes here..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              snippets={meta?.snippets}
+              triggerWords={meta?.triggerWords}
+              attentionEdit
+              placeholder="Your prompt goes here..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller<boolean | undefined, undefined>

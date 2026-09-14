@@ -3,6 +3,7 @@ import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
@@ -124,10 +125,7 @@ export function AudioGenerationForm() {
         graph={audioHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            triggerWords={meta?.triggerWords}
+          <PromptEditorShell
             label={
               <ControllerLabel
                 label="Prompt"
@@ -135,9 +133,18 @@ export function AudioGenerationForm() {
                 required={meta?.required}
               />
             }
-            placeholder="Describe the song you want to generate..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              triggerWords={meta?.triggerWords}
+              placeholder="Describe the song you want to generate..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller
