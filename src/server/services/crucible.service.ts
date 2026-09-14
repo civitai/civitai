@@ -70,7 +70,6 @@ export const createCrucible = async ({
   prizePositions,
   prizeCustomized,
   allowedResources,
-  judgeRequirements,
   duration,
 }: CreateCrucibleInputSchema & { userId: number }) => {
   const now = new Date();
@@ -154,9 +153,6 @@ export const createCrucible = async ({
           prizePositions: prizePositions as Prisma.JsonObject,
           allowedResources: allowedResources
             ? (allowedResources as Prisma.JsonArray)
-            : Prisma.JsonNull,
-          judgeRequirements: judgeRequirements
-            ? (judgeRequirements as Prisma.JsonObject)
             : Prisma.JsonNull,
           duration: duration * 60, // Convert hours to minutes for storage
           startAt,

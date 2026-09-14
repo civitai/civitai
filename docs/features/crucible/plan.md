@@ -321,7 +321,6 @@ model Crucible {
   maxTotalEntries Int?    // Optional cap on total entries
   prizePositions Json     // Array of {position, percentage}
   allowedResources Json?  // Optional: {baseModels: [], modelVersionIds: []}
-  judgeRequirements Json? // Optional: {verifiedOnly: bool, minUserScore: int}
 
   // Timing
   duration      Int       // Duration in hours

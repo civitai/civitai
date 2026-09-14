@@ -8334,7 +8334,6 @@ model Crucible {
   maxTotalEntries   Int?
   prizePositions    Json           @default("[]")
   allowedResources  Json?
-  judgeRequirements Json?
   duration          Int            @default(480)
   startAt           DateTime?
   endAt             DateTime?

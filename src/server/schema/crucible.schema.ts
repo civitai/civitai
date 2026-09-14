@@ -78,7 +78,6 @@ export const createCrucibleInputSchema = z.object({
   ),
   prizeCustomized: z.boolean().default(false), // Whether prize distribution was customized from default
   allowedResources: z.array(z.number()).optional(),
-  judgeRequirements: z.record(z.string(), z.any()).optional(),
   duration: z.number().min(1), // duration in hours
 });
 
