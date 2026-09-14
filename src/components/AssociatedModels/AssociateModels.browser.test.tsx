@@ -294,11 +294,13 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
 
     const dropdown = page.getByRole('button', { name: STUB_SELECT_LABEL });
     await expect.element(dropdown).toBeInTheDocument();
-    await expect.element(dropdown).toBeEnabled();
+    expect(dropdown.query()).not.toHaveAttribute('disabled');
     // By LABEL, not by role+name: the SortableItem wrapper is itself `role="button"` and its
     // accessible name CONTAINS the icon's label, so a role query matches the card first and the
     // assertion reads the wrong element.
-    await expect.element(page.getByLabelText('Remove resource').first()).toBeEnabled();
+    expect(page.getByLabelText('Remove resource').first().query()).not.toHaveAttribute(
+      'data-disabled'
+    );
     expect(
       page.getByText('Saved two').element().closest('[aria-roledescription="sortable"]')
     ).toHaveAttribute('aria-disabled', 'false');
@@ -314,11 +316,16 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
 
     // Read synchronously after the awaited anchor: all of these come from the same render, so an
     // awaited matcher would only spend the 15s budget on whichever one a regression un-disabled.
-    expect(
-      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
-      'search input'
-    ).toBeDisabled();
-    expect(page.getByLabelText('Remove resource').first().query(), 'remove button').toBeDisabled();
+    // Asserted by ATTRIBUTE, not with `toBeDisabled`. Measured: neither the synchronous nor the
+    // awaited matcher fails here on an enabled control — `toBeDisabled` reports the row's
+    // `aria-disabled` ancestor, so it passes with the button's own prop deleted.
+    expect(page.getByRole('button', { name: STUB_SELECT_LABEL }).query()).toHaveAttribute(
+      'disabled'
+    );
+    expect(page.getByLabelText('Remove resource').first().query()).toHaveAttribute(
+      'data-disabled',
+      'true'
+    );
     // Drag is the affordance with no disabled ATTRIBUTE of its own: dnd-kit announces it through
     // `aria-disabled` on the sortable node. Without this the rows stay draggable while every
     // button beside them is greyed out, and a reorder sets `changed` — which is the deletion.
@@ -351,10 +358,9 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
 
     await expect.element(page.getByText('Saved two')).toBeInTheDocument();
 
-    expect(
-      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
-      'search input'
-    ).toBeDisabled();
+    expect(page.getByRole('button', { name: STUB_SELECT_LABEL }).query()).toHaveAttribute(
+      'disabled'
+    );
     expect(
       page.getByText(/Couldn't check whether this list is up to date/i).query(),
       'could-not-verify notice'
@@ -395,10 +401,9 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
       page.getByText(/Couldn't check whether this list is up to date/i).query(),
       'could-not-verify notice'
     ).not.toBeNull();
-    expect(
-      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
-      'search input'
-    ).toBeDisabled();
+    expect(page.getByRole('button', { name: STUB_SELECT_LABEL }).query()).toHaveAttribute(
+      'disabled'
+    );
   });
 
   test('saving after an add keeps every saved association in the payload', async () => {
