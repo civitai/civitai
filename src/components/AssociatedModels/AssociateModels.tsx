@@ -44,7 +44,11 @@ export function AssociateModels({
   const [changed, setChanged] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const { data = [], isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
+  const {
+    data = [],
+    isLoading,
+    isSuccess,
+  } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
     browsingLevel: allBrowsingLevelsFlag,
@@ -181,7 +185,10 @@ export function AssociateModels({
 
   return (
     <Stack>
-      {associatedResources.length < limit && (
+      {/* Not rendered until the saved list has arrived. Selecting into an empty local list
+          while the query is still in flight leaves that list a partial view of the saved one,
+          and the save is a set-replace — every row missing from the payload is deleted. */}
+      {isSuccess && associatedResources.length < limit && (
         <QuickSearchDropdown
           supportedIndexes={['models', 'articles']}
           onItemSelected={handleSelect}
