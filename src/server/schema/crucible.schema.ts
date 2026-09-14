@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { infiniteQuerySchema } from './base.schema';
+import { isUUID } from '~/utils/string-helpers';
 import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
@@ -26,9 +27,14 @@ export const getCrucibleByIdSchema = z.object({
   id: z.number(),
 });
 
-// Schema for crucible cover image (accepts CF upload data)
+// Schema for crucible cover image (accepts CF upload data).
+//
+// `isUUID` rather than `z.string().uuid()`: Cloudflare image ids are uuid-SHAPED but not
+// RFC-4122 conformant, and Zod 4's `.uuid()` enforces the variant nibble. Measured over 20k rows
+// of `Image.url`, 18 in 19,986 fail that check, and the rejection surfaces as "did not upload
+// properly" — blaming an upload that succeeded.
 export const crucibleImageSchema = z.object({
-  url: z.string().uuid('Cover image did not upload properly, please try again'),
+  url: z.string().refine(isUUID, 'Cover image did not upload properly, please try again'),
   width: z.number(),
   height: z.number(),
   hash: z.string().optional(),
