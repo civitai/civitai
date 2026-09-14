@@ -383,10 +383,15 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * width. The claim that matters — no app renders narrower than the page that launched it
  * — still holds at equality; the headroom it used to have does not. It also clears the
  * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
- * that has already thought about its own width, while leaving a two-pane shell
- * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
- * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
- * four, 2560 holds eight).
+ * that has already thought about its own width, while leaving a two-pane shell — a
+ * fixed sidebar beside an unbounded `flex: 1` pane — a ~1350px content pane. That
+ * SHAPE is the case the cap exists for: it is the one that had nothing of its own
+ * bounding it. ⚠️ NO PARTICULAR APP IS NAMED AS THAT CASE, and the census above is
+ * not a list of apps this cap governs — an individual app of that shape may be
+ * excused by the ledger, which is why the membership is not restated in this file
+ * (see the note on that below). This paragraph is about what the VALUE 1600 buys
+ * where it applies, not about where it applies. Concretely it holds five columns of
+ * a `minmax(300px, 1fr)` grid (1288 holds four, 2560 holds eight).
  *
  * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
  * used to appear here and it is a moving target: the apps container has taken three
@@ -417,10 +422,14 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * So an opt-out here is per-APP and would unbound all three modes, not tidy up
  * one. That may well be right — a ticker and a wall want width, and the player's
  * media is `object-fit: contain` so a centred column simply shrinks it — but it
- * is a bigger product call than "the app already governs this", and it is not
- * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
- * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
- * to be added deliberately.
+ * is a bigger product call than "the app already governs this", and it was not
+ * made in the commit that shipped the cap.
+ *
+ * ⚠️ AN APP THE CENSUS CALLS UNCAPPED IS NOT AUTOMATICALLY A LEDGER MEMBER, AND THE
+ * MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE — a count or a list in this comment
+ * is a claim that rots on the next entry. The ledger lives in `globals.css` with
+ * each member's reasoning on its own rule, and its membership is ENUMERATED in
+ * `__tests__/pageBlockHostMaxWidth.test.ts`, which fails on growth AND shrink.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common

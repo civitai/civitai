@@ -76,10 +76,13 @@ describe('the shipped registry', () => {
   });
 
   it('weights them equally, so the blend is a plain mean of three opinions', () => {
-    // Load-bearing for the threshold's reasoning: `MIN_REPORTED_CONFIDENCE` is derived from
-    // "one of three equally-weighted heuristics at 0.45". A re-weighting that left the threshold
-    // alone would silently change what the threshold admits, and this is what makes that a
-    // deliberate edit with a failing test attached.
+    // Load-bearing for the threshold's reasoning: `MIN_REPORTED_CONFIDENCE` is a LITERAL whose
+    // ARGUMENT is "one of three equally-weighted heuristics at 0.45". Nothing computes it from the
+    // registry — see its docstring in `scoring.ts` — so a re-weighting leaves the threshold exactly
+    // where it is while invalidating the argument that chose it, which is the worse direction of
+    // the two. This assertion is what makes a re-weighting a deliberate edit with a failing test
+    // attached. (It does not, and cannot, catch the registry GROWING: `1/n > cut` and `0.4/n < cut`
+    // still hold at n = 4.)
     expect([...new Set(BOT_ACCOUNT_HEURISTICS.map((h) => h.weight))]).toEqual([1]);
   });
 
@@ -226,10 +229,17 @@ const scored = (userId: number, confidence: number): BotAccountScore => ({
 });
 
 describe('the reporting threshold', () => {
-  it('🔴 defaults to a value derived from the blend arithmetic, not an intuition', () => {
+  it('🔴 defaults to a LITERAL whose argument is the blend arithmetic, not an intuition', () => {
     // With three equal weights the blend is their mean, so 0.15 admits ONE heuristic at ~0.45 and
     // rejects an account where every signal is weak. Pinned because the number is the whole
     // difference between a usable board and a board nobody reads on its second day.
+    //
+    // 🔴 "ARGUMENT", NOT "DERIVATION", AND THE DISTINCTION IS THE POINT. `MIN_REPORTED_CONFIDENCE`
+    // is a plain `0.15`; nothing reads `BOT_ACCOUNT_HEURISTICS.length` to produce it. Calling it
+    // derived invites the reader to assume a fourth heuristic would move it — it would not, it
+    // would leave the value untouched and silently invalidate the reasoning for it. The two
+    // assertions below are the guards that reasoning suggests, and both still pass at n = 4, so
+    // they do not close that gap either; the docstring in `scoring.ts` is what carries it.
     expect(MIN_REPORTED_CONFIDENCE).toBe(0.15);
     // One heuristic fully convinced blends to 1/3 — comfortably reported.
     expect(1 / BOT_ACCOUNT_HEURISTICS.length).toBeGreaterThan(MIN_REPORTED_CONFIDENCE);

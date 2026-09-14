@@ -140,8 +140,11 @@
 }
 
 /* FULL-BLEED OPT-OUT LEDGER — one rule per app, and the ONLY way out of the cap.
-   One member today: `playable-collections` (its reasoning is on the rule itself,
-   below). The membership set is ASSERTED in
+   The members ARE the rules below, each carrying its own reasoning; this header
+   deliberately no longer states how many there are, because it used to say "one
+   member today" and that sentence went stale the moment a second app was added.
+   A count here is a claim with nothing checking it, three lines above the list it
+   miscounts. The membership set is ASSERTED in
    `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if
    it grows OR shrinks, so adding or removing a rule here without updating that
    expectation is a test failure, not a silent change.
@@ -185,11 +188,61 @@
    Add the rule together with a one-line reason, the way every other ledger in
    this repo is kept — an entry with no stated reason cannot be reviewed later.
 
-   WHEN IT IS WARRANTED: an app whose surface is the canvas — an infinite grid, a
-   timeline, a map, a side-by-side compare — where a centred column is actively
-   worse. NOT for "it looks bigger". The default exists because an app cannot
-   know how wide the viewer's monitor is and almost none of them defend against
-   it themselves.
+   WHEN IT IS WARRANTED — TWO GROUNDS, AND AN ENTRY MUST SAY WHICH ONE IT CLAIMS.
+   They are not the same KIND of thing, and conflating them is how the cap dies:
+   ground (1) is an argument that can be checked against the app, ground (2) is an
+   override that cannot.
+
+   (1) THE SURFACE IS THE CANVAS: an infinite grid, a timeline, a map, a
+   side-by-side compare — where a centred column is actively worse. This is where
+   the default's reasoning bites — an app cannot know how wide the viewer's monitor
+   is and almost none of them defend against it themselves — so an entry here has
+   to argue its way past that rather than assert a preference. NOT for "it looks
+   bigger": that exclusion has force HERE, because here there is a claim about the
+   surface to be wrong about, and a reviewer can open the app and disagree.
+
+   (2) AN EXPLICIT PRODUCT DECISION BY THE REPO OWNER. This is ground (1)'s
+   opposite in one specific way: nothing is malfunctioning, the cap binds exactly
+   as designed, and the trade is taken anyway. An entry on this ground is
+   admissible ONLY if it records the three things a reviewer would need to
+   re-examine it later, none of which can be recovered from the diff:
+
+     · WHO decided — the specific decider, not "we", and not the PR author by
+       default. A role ("the repo owner, directly") satisfies this; a personal name
+       is not required, and this file is world-readable, which is a reason not to
+       ask for one;
+     · WHAT TRADE was accepted — the cost as it was stated at the time, and what
+       the decision was taken AGAINST if there was an alternative on the table;
+     · WHAT IT IS WORTH — the benefit's CLASS, measured: which display widths it
+       reaches, and which it provably does not.
+
+   🔴 BE HONEST ABOUT WHAT THOSE THREE BULLETS DO: THEY MAKE AN ENTRY RECORDED AND
+   REVIEWABLE, NOT JUSTIFIED. An earlier version of this comment claimed they also
+   refuse "it looks bigger" — that a preference has "no author, no stated cost and
+   no measured reach" so the bullets exclude it. That is RETRACTED: it does not
+   hold, and believing it would let this ground swallow the cap. All three are
+   satisfiable by procedure alone, with nothing said about the app:
+
+     · every request has a requester, so WHO is always available;
+     · WHAT TRADE is the same ~150px-gutter arithmetic for EVERY app — it is a
+       property of the 1600 cap, not of the app asking;
+     · WHAT IT IS WORTH measures the reach of the EXEMPTION, not of the benefit —
+       "which display widths it reaches" has a literally identical answer for any
+       two apps.
+
+   So ground (2) is an OWNER OVERRIDE, and the bullets are the receipt for it. What
+   actually limits it is that it takes an owner decision each time and leaves a
+   record naming who took it — not a test a reviewer can apply on their own. A
+   reviewer who finds all three bullets present has confirmed the entry is
+   reviewable, and nothing more; whether the override should have been made is the
+   owner's call to answer, not the bullets'.
+
+   🔴 WHICH MEANS THE SHAPE TO WATCH FOR IS AN ENTRY COPIED FROM ANOTHER. Ground (2)
+   does NOT waive ground (1) generally, and a run of entries each admitted on
+   "the owner said so" is the cap being repealed one app at a time rather than
+   reconsidered once. If that is what is happening, the honest change is to move or
+   drop the 1600 default — a decision with its own evidence, taken where the
+   arithmetic lives, on `APP_PAGE_MAX_WIDTH_PX` — not to keep appending here.
 
    The mechanism is MEASURED, not merely written down: the "opt-out" cases in
    `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
@@ -221,6 +274,82 @@
    and injects the rule below verbatim, so deleting or mistyping it fails a test
    rather than silently letterboxing the app again. */
 [data-app-page-frame][data-block-id='playable-collections'] {
+  --app-page-max-width: none;
+}
+
+/* Sensei (`sensei`) — a two-pane chat shell, and ONE OF THE TWO APPS THIS CAP WAS
+   CREATED FOR.
+
+   🔴 ADMITTED ON GROUND (2) ABOVE — AN EXPLICIT PRODUCT DECISION, NOT A BUG FIX,
+   AND SAYING SO IS THE POINT OF THIS ENTRY. Nothing here is malfunctioning for this
+   app: the cap binds exactly as designed and the opt-out mechanism works. A later
+   reader must not go looking for the defect that motivated it, because there isn't
+   one. The three things ground (2) requires, on the record:
+
+     · WHO — the repo owner, directly. The ask was "sensei app container should be
+       full-width".
+     · WHAT TRADE — full bleed was chosen over an alternative that was on the table:
+       pairing the exemption with an internal measure on the transcript itself. The
+       ~150px-either-side cost at 1080p, quantified below, was stated in front of him
+       before he chose; "truly full-bleed" is what he chose knowing it.
+     · WHAT IT IS WORTH — the measured display-width class; see "WHAT THE EXEMPTION
+       IS WORTH, STATED NARROWLY" below.
+
+   That is the WHOLE record. Nothing else about the owner's reasoning is known, and
+   this entry deliberately does not extrapolate one. Ground (2) says plainly what
+   that makes this entry: RECORDED AND REVIEWABLE, not justified by an argument about
+   sensei. 🔴 SO THIS IS NOT A TEMPLATE. A third entry is not admitted by producing
+   the same three bullets — see the retraction under ground (2) for why the bullets
+   cannot do that work — it is admitted by the owner deciding again.
+
+   THE RATIONALE OF RECORD, AND IT HAS NOW BEEN RE-TAKEN. The census on
+   `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` reads: "TWO do not cap at all —
+   Notepad and Sensei, both `100dvh` two-pane app shells (a fixed 280 / 240px
+   sidebar beside an unbounded `flex: 1` pane). Those are the shipped apps that
+   genuinely stretched to the monitor." That census recorded no ref and nothing
+   asserted it, so it was re-read for this entry rather than quoted on trust — and
+   it HOLDS, at `ZacxDev/civitai-app-sensei` `trunk 6fd63c0` (release 0.1.22):
+
+     · root shell `width: 100%; height: 100dvh`, flex column — `src/App.tsx:2724`
+     · main row `display: flex; flex: 1; min-height: 0` — `src/App.tsx:2831`
+     · sidebar `width: 240` (plus `min-width: 200`) —
+       `src/components/SessionList.tsx:54`
+     · chat pane `flex: 1; flex-direction: column; min-width: 0` —
+       `src/App.tsx:2904`
+     · and NO `max-width` anywhere on the transcript path. The app's only two are
+       `maxWidth: '100%'` (`src/components/ResourceMention.tsx:33`) and a 440px error
+       card (`src/components/RootBoundary.tsx:56`); `src/index.css` declares none,
+       and `MessageBubble.tsx` sets neither a width nor an `align-self`.
+
+   So this cap really is the only thing bounding the app's width, and 1600 − 240 =
+   1360 is where the "~1350px content pane" figure below comes from.
+
+   ⚠️ `trunk 6fd63c0` IS A BRANCH TIP, NOT A RESOLVED DEPLOYED REF — unlike
+   `playable-collections` above, which cites `sync/deployed-0.2.2`. No deployed ref
+   was resolved for sensei, so these citations pin what trunk held when this entry
+   was written; a later reader re-checking them must re-resolve what is actually
+   live rather than assume this sha is it.
+
+   WHAT THE EXEMPTION IS WORTH, STATED NARROWLY. At the 1600 cap sensei gets roughly
+   a 1350px content pane (the constant's own figure); full bleed gives it the
+   viewport. The benefit is confined to WIDE DESKTOP DISPLAYS — the cap binds on a
+   maximised browser at 1080p (~1905 CSS px) for a ~150px gutter either side, and on
+   NOTHING in the laptop classes (1280/1366/1440/1536), no tablet, and no phone in
+   either orientation. ⚠️ THAT IS A CLAIM ABOUT WIDTHS, NOT ABOUT TRAFFIC — the
+   display-width CLASSES the exemption reaches are computed from the cap and are
+   checkable here; how many viewers sit in each is a population this repo measures
+   nowhere. So do NOT read "and that is where the traffic is" into it: the sibling
+   sentence on `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` does say it, and it is
+   unsourced there too.
+
+   🔴 NOTEPAD IS THE SIBLING CASE AND IS DELIBERATELY NOT A MEMBER. The census line
+   names both apps; only one is being excused, and the asymmetry is intended rather
+   than an oversight. If Notepad should follow, that is its own entry with its own
+   reasoning and its own row in the membership expectation.
+
+   🔴 THIS ENTRY IS ALSO ASSERTED IN `__tests__/pageBlockHostMaxWidth.test.ts`,
+   which fails if this set GROWS OR SHRINKS. */
+[data-app-page-frame][data-block-id='sensei'] {
   --app-page-max-width: none;
 }
 

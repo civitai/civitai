@@ -343,6 +343,12 @@ beforeEach(() => {
   registryOverride.clear();
   registryOverride.set(CHAT_TYPE, textStep);
 });
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+});
 
 describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
   it('the injected fixture is a genuinely registrable entry (the suite CONTROL)', () => {

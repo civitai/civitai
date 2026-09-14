@@ -415,6 +415,12 @@ beforeEach(() => {
     model: { id: 7, type: 'Checkpoint' },
   });
 });
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. The cohort is unblocked, and the widening it could have caused is closed.
