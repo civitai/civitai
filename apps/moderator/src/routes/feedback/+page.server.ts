@@ -49,6 +49,18 @@ export const load: PageServerLoad = async ({ url, request }) => {
   // membership test, so an unknown column degrades to the default ordering rather than reaching the
   // query builder — and the service refuses a second time on its own map.
   const sort = parseFeedbackSort(url.searchParams);
+  /**
+   * 🔴 PRESENT-BUT-REJECTED IS NOT ABSENT, AND THE TWO ARE OPPOSITE INSTRUCTIONS. `.catch(undefined)`
+   * collapses a param the schema refused into the same value as one that was never sent — and the
+   * service reads an absent value half as "the boundary row's value IS null", a real position in the
+   * ordering. So an over-long `?cursorValue=` would not degrade, it would silently relocate the
+   * operator into the trailing null block. Nothing else on this page has this problem: every other
+   * param's rejected value and its absent value mean the same thing.
+   *
+   * The whole cursor goes, not just the half — the service's own contract, for the same reason.
+   */
+  const cursorValueRejected =
+    url.searchParams.has(FEEDBACK_CURSOR_VALUE_PARAM) && cursorValue === undefined;
   // A present-but-empty `?status=` is a deliberate "all"; an ABSENT one is the default view.
   const statuses = url.searchParams.has('status')
     ? status.filter(isFeedbackStatus)
@@ -84,7 +96,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
       getFeedbackList({
         statuses,
         area: area || null,
-        cursor: cursor ?? null,
+        cursor: cursorValueRejected ? null : cursor ?? null,
         cursorValue: cursorValue ?? null,
         sort,
         limit: FEEDBACK_PAGE_SIZE,

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { clearPaging } from '$lib/paging';
 import {
   FEEDBACK_CURSOR_VALUE_PARAM,
   FEEDBACK_SORT_COLUMNS,
-  clearFeedbackPaging,
+  feedbackNextPageHref,
   feedbackSortAria,
   feedbackSortHref,
   feedbackSortMarker,
@@ -143,16 +144,20 @@ describe('the tri-state cycle', () => {
   });
 });
 
-describe('clearFeedbackPaging', () => {
+describe('clearPaging', () => {
   /**
-   * 🔴 BOTH HALVES. A value half surviving a new batch is not a harmless leftover — it is the
-   * operand of the keyset comparison, so the "first" page of the new query starts in the middle of
-   * the old one. The generic params come from `clearPaging`; this pins that the compound half goes
-   * with them.
+   * 🔴 BOTH HALVES, AND FROM THE SHARED HELPER RATHER THAN A PAGE-LOCAL WRAPPER. A value half
+   * surviving a new batch is not a harmless leftover — it is the operand of the keyset comparison,
+   * so the "first" page of the new query starts in the middle of the old one. A wrapper that added
+   * the delete would be a SECOND door onto this rule: seven files in this app reach for
+   * `clearPaging`, and the next control added here would reach for it too.
+   *
+   * Asserted from `$lib/feedback-sort`'s point of view because this page is the only writer of the
+   * param today — if the delete is ever moved back out of `clearPaging`, this is what goes red.
    */
   it('drops both halves of the compound cursor and the numbered-paging params', () => {
     const p = params('?status=new&cursor=91&cursorValue=zeta&cursors=91,77&imgPage=3&open=4');
-    clearFeedbackPaging(p);
+    clearPaging(p);
 
     expect(p.get('cursor')).toBeNull();
     expect(p.get(FEEDBACK_CURSOR_VALUE_PARAM)).toBeNull();
@@ -161,6 +166,74 @@ describe('clearFeedbackPaging', () => {
     // Not paging state: the filters and the open row describe the view, not a position in it.
     expect(p.get('status')).toBe('new');
     expect(p.get('open')).toBe('4');
+  });
+});
+
+describe('feedbackNextPageHref', () => {
+  /**
+   * 🔴 THE VALUE HALF IS REWRITTEN ON EVERY TURN, INCLUDING WHEN THERE IS NOTHING TO WRITE. The
+   * current URL already carries the PREVIOUS page's value, so a builder that only writes when the
+   * new one is non-null ships the old boundary attached to the new cursor id.
+   *
+   * That is not a hand-edited-URL case, it is the ordinary transition INTO the trailing null block —
+   * `handled` is null on every untriaged row. The server then reads a non-null boundary, whose
+   * predicate admits the entire null block with no id bound, so the same page comes back with its
+   * own boundary row in it and `Next →` never advances.
+   */
+  it('DELETES the value half when the new boundary has none, rather than leaving the old one', () => {
+    const href = feedbackNextPageHref(
+      url('?sort=handled&dir=asc&cursor=91&cursorValue=mira'),
+      77,
+      null
+    );
+    const next = new URL(href, 'https://moderator.test');
+
+    expect(next.searchParams.get('cursor')).toBe('77');
+    expect(next.searchParams.get(FEEDBACK_CURSOR_VALUE_PARAM)).toBeNull();
+    expect(next.searchParams.get('sort')).toBe('handled');
+    expect(next.searchParams.get('dir')).toBe('asc');
+  });
+
+  it('carries both halves when there is a value, and closes the open row', () => {
+    const href = feedbackNextPageHref(
+      url('?sort=handled&dir=asc&cursor=91&cursorValue=mira&open=4'),
+      77,
+      'quinn'
+    );
+    const next = new URL(href, 'https://moderator.test');
+
+    expect(next.searchParams.get('cursor')).toBe('77');
+    expect(next.searchParams.get(FEEDBACK_CURSOR_VALUE_PARAM)).toBe('quinn');
+    // `?open=` can name a row this page does not contain — the same rule `FeedbackFilters` applies.
+    expect(next.searchParams.get('open')).toBeNull();
+  });
+
+  /**
+   * 🔴 AN EMPTY STRING IS A VALUE, AND ABSENCE MEANS NULL — so the two must not collapse. `urlWith`
+   * deletes on `''` as well as on `null`, which is why this builder writes the param with
+   * `searchParams.set` instead. Collapsed, every row past an empty-string boundary is unreachable:
+   * the server looks for the null block, finds nothing, and reports no next page.
+   */
+  it('keeps an empty-string boundary distinct from an absent one', () => {
+    const withEmpty = new URL(
+      feedbackNextPageHref(url('?sort=area&dir=asc&cursor=91'), 77, ''),
+      'https://moderator.test'
+    );
+    expect(withEmpty.searchParams.has(FEEDBACK_CURSOR_VALUE_PARAM)).toBe(true);
+    expect(withEmpty.searchParams.get(FEEDBACK_CURSOR_VALUE_PARAM)).toBe('');
+
+    const withNull = new URL(
+      feedbackNextPageHref(url('?sort=area&dir=asc&cursor=91'), 77, null),
+      'https://moderator.test'
+    );
+    expect(withNull.searchParams.has(FEEDBACK_CURSOR_VALUE_PARAM)).toBe(false);
+  });
+
+  /** The unsorted queue pages exactly as it did before: an id, and no value half at all. */
+  it('writes no value half for the default ordering', () => {
+    expect(feedbackNextPageHref(url('?status=new'), 77, null)).toBe(
+      '/feedback?status=new&cursor=77'
+    );
   });
 });
 

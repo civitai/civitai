@@ -5,7 +5,7 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { MultiCombobox } from '@civitai/ui/components/ui/multi-combobox/index.js';
   import { num } from '$lib/format';
-  import { clearFeedbackPaging } from '$lib/feedback-sort';
+  import { clearPaging } from '$lib/paging';
   import { urlWith, urlWithMulti } from '$lib/url';
   import { FEEDBACK_STATUSES } from '$lib/feedback';
 
@@ -27,16 +27,10 @@
   /**
    * Any filter change invalidates the keyset AND closes the open row: the cursor points into a
    * result set that no longer exists, and `?open=` can name a row the new filters exclude.
-   *
-   * 🔴 `clearFeedbackPaging`, not the bare `clearPaging` this used to call. The keyset is COMPOUND
-   * now — `?cursor=` is the boundary row's id and `?cursorValue=` is its value in the sorted column
-   * — and a value half left behind is the operand of the comparison, so the "first" page of the new
-   * filter would silently start somewhere in the middle of the old one. The sort itself SURVIVES a
-   * filter change: it is a statement about how to read the queue, not about which rows are in it.
    */
   function clearedUrl() {
     const next = new URL(page.url);
-    clearFeedbackPaging(next.searchParams);
+    clearPaging(next.searchParams);
     next.searchParams.delete('open');
     return next;
   }

@@ -45,14 +45,22 @@ vi.mock('../db', () => ({
 const service = await import('../feedback.service');
 
 /**
- * Enough rows to overflow a real page, with the cycle lengths chosen so that no two columns
- * partition the set the same way.
+ * Enough rows to overflow a real page, with cycle lengths chosen so that no two columns partition
+ * the set the same way (3 areas, 4 statuses, 5 reporters, every 3rd row unhandled, every 7th
+ * unlinked).
  *
- * 🔴 THE CYCLE LENGTHS ARE COPRIME-ISH AND NONE DIVIDES `PAGE`, which is the point: a boundary that
- * lands exactly on a group edge never exercises the tie branch of the keyset, so a fixture whose
- * groups line up with the page size can leave the `(col = cursor AND id < cursorId)` arm unreachable
- * while every assertion passes. 60 rows, groups of 3/4/5/7, page sizes 7 and 50 — no group edge
- * coincides with a page edge for more than one row at a time.
+ * 🔴 WHAT MATTERS IS THAT A PAGE EDGE LANDS INSIDE A TIE GROUP, not outside one. A boundary that
+ * falls exactly on a group edge never exercises the `(col = cursor AND id < cursorId)` arm, so a
+ * fixture whose groups line up with the page could leave that arm unreachable while every assertion
+ * passes. With 60 rows and 3–5 value groups, every group is 12–20 rows wide in SORTED order — far
+ * wider than either page size — so a cut at 7 or at 50 is inside a group in every ordering.
+ *
+ * ⚠️ An earlier version of this paragraph claimed "none of the cycle lengths divides PAGE", and that
+ * was FALSE for the pair it mattered for: the `issue` cycle is 7 and one of the two page sizes is 7
+ * (3, 4 and 5 also divide `ROWS`). It was also the wrong property — the cycles run in INSERTION
+ * order and the pages are cut in SORTED order, so their arithmetic relationship says nothing. The
+ * `seeds more rows than a page holds` case below measures the property that is actually load-bearing
+ * rather than arguing for it.
  */
 const ROWS = 60;
 const AREAS = ['alpha', 'bravo', 'charlie'];
@@ -66,8 +74,18 @@ const STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'];
  */
 const REPORTERS: (string | null)[] = ['ada', 'grace', null, 'karen', 'radia'];
 
+/**
+ * 🔴 EVERY ROW GETS ITS OWN ARRIVAL TIME, INCREASING WITH THE ID. The default fixture timestamp made
+ * every row the SAME AGE, so the one thing the `age` sort is about — the duration the cell renders —
+ * was constant across the whole set and any claim about it passed vacuously. This also models the
+ * invariant the service's key rests on: `Feedback` is insert-only, so id order IS arrival order.
+ */
+const FIRST_ARRIVAL = Date.UTC(2026, 6, 1);
+const arrivalOf = (i: number) => new Date(FIRST_ARRIVAL + i * 60_000).toISOString();
+
 type Seeded = {
   id: number;
+  arrival: number;
   area: string;
   status: string;
   username: string | null;
@@ -104,10 +122,19 @@ beforeEach(async () => {
       userId: reporterIds[i % REPORTERS.length],
       area,
       status,
+      createdAt: arrivalOf(i),
       handledById: handledByUsername === null ? null : handlerIds.get(handledByUsername)!,
       bugId,
     });
-    seeded.push({ id, area, status, username, handledByUsername, bugId });
+    seeded.push({
+      id,
+      arrival: FIRST_ARRIVAL + i * 60_000,
+      area,
+      status,
+      username,
+      handledByUsername,
+      bugId,
+    });
   }
 });
 
@@ -117,11 +144,20 @@ afterEach(async () => {
   await db.close();
 });
 
-/** The value the ORDER BY sees, read off the SEEDED fixture rather than off a returned row. */
+/**
+ * The value the operator is ORDERING, read off the SEEDED fixture rather than off a returned row.
+ *
+ * 🔴 `age` IS THE RENDERED DURATION, NOT THE ID — and that is the whole point of the column, not a
+ * detail of this helper. The cell is `shortAge(createdAt)`, which GROWS as the row gets older, so
+ * ascending age is descending arrival. Expressing it as `-arrival` here makes the expectation a
+ * statement about what is on screen; expressing it as `row.id` would make it a restatement of
+ * whichever key the implementation happened to pick, which is exactly how an inverted arrow shipped
+ * once already. Everything else sorts by the value its own cell shows.
+ */
 const valueOf = (row: Seeded, column: FeedbackSortColumn): string | number | null => {
   switch (column) {
     case 'age':
-      return row.id;
+      return -row.arrival;
     case 'area':
       return row.area;
     case 'user':
@@ -151,11 +187,20 @@ const expectedOrder = (column: FeedbackSortColumn, direction: 'asc' | 'desc'): n
     })
     .map((r) => r.id);
 
-/** Every page, followed to the end, as one flat list of ids. */
+/**
+ * Every page, followed to the end, as one flat list of ids.
+ *
+ * 🔴 ONE LOOP, AND `area` IS AN ARGUMENT RATHER THAN A SECOND COPY. A near-duplicate of this
+ * function existed for the filtered case and had already drifted — a different termination guard
+ * with a different message, and no page count — which is how one of two copies quietly stops
+ * terminating. This helper is what decides whether a keyset defect is OBSERVABLE at all, so it is
+ * the last thing that should exist twice.
+ */
 async function pageThrough(
   column: FeedbackSortColumn | null,
   direction: 'asc' | 'desc',
-  limit: number
+  limit: number,
+  area?: string
 ): Promise<{ ids: number[]; pages: number }> {
   const ids: number[] = [];
   let cursor: number | null = null;
@@ -165,6 +210,7 @@ async function pageThrough(
   for (;;) {
     const page = await service.getFeedbackList({
       statuses: [],
+      area,
       cursor,
       cursorValue,
       sort: column ? { column, direction } : null,
@@ -181,6 +227,30 @@ async function pageThrough(
   }
 
   return { ids, pages };
+}
+
+/**
+ * The three claims every full page-through has to satisfy, asserted once.
+ *
+ * Two different defects, two different messages — and each assertion measures the ONE it names. A
+ * bare `new Set(ids).size === ROWS` reports a repeat and a skip identically; a bare
+ * `ids.length === ROWS` reports "80 where 60 expected" for a repeat and "51 where 60 expected" for a
+ * truncation, under whichever name it was given. The DIFFERENCE between the two counts is
+ * duplication and nothing else; the set SIZE is completeness and nothing else.
+ */
+function expectWholeSetInOrder(
+  ids: number[],
+  column: FeedbackSortColumn,
+  direction: 'asc' | 'desc'
+) {
+  expect(
+    ids.length - new Set(ids).size,
+    `${column} ${direction} returned the same row on two pages`
+  ).toBe(0);
+  expect(new Set(ids).size, `${column} ${direction} lost a row at a page boundary`).toBe(ROWS);
+  expect(ids, `${column} ${direction} returned the rows in the wrong order`).toEqual(
+    expectedOrder(column, direction)
+  );
 }
 
 describe('the compound keyset, across a manufactured page boundary', () => {
@@ -220,23 +290,7 @@ describe('the compound keyset, across a manufactured page boundary', () => {
         const { ids, pages } = await pageThrough(column, direction, service.FEEDBACK_PAGE_SIZE);
 
         expect(pages, `${column} ${direction} never crossed a page boundary`).toBeGreaterThan(1);
-        /**
-         * Two different defects, two different messages — and each assertion measures the ONE it
-         * names. A bare `new Set(ids).size === ROWS` reports a repeat and a skip identically, and a
-         * bare `ids.length === ROWS` reports "80 where 60 expected" for a repeat and "51 where 60
-         * expected" for a truncation, under whichever name it was given. The DIFFERENCE between the
-         * two counts is duplication and nothing else; the set SIZE is completeness and nothing else.
-         */
-        expect(
-          ids.length - new Set(ids).size,
-          `${column} ${direction} returned the same row on two pages`
-        ).toBe(0);
-        expect(new Set(ids).size, `${column} ${direction} lost a row at a page boundary`).toBe(
-          ROWS
-        );
-        expect(ids, `${column} ${direction} returned the rows in the wrong order`).toEqual(
-          expectedOrder(column, direction)
-        );
+        expectWholeSetInOrder(ids, column, direction);
       }
     }
   });
@@ -251,23 +305,7 @@ describe('the compound keyset, across a manufactured page boundary', () => {
         const { ids, pages } = await pageThrough(column, direction, 7);
 
         expect(pages, `${column} ${direction} paged in one shot`).toBeGreaterThan(8);
-        /**
-         * Two different defects, two different messages — and each assertion measures the ONE it
-         * names. A bare `new Set(ids).size === ROWS` reports a repeat and a skip identically, and a
-         * bare `ids.length === ROWS` reports "80 where 60 expected" for a repeat and "51 where 60
-         * expected" for a truncation, under whichever name it was given. The DIFFERENCE between the
-         * two counts is duplication and nothing else; the set SIZE is completeness and nothing else.
-         */
-        expect(
-          ids.length - new Set(ids).size,
-          `${column} ${direction} returned the same row on two pages`
-        ).toBe(0);
-        expect(new Set(ids).size, `${column} ${direction} lost a row at a page boundary`).toBe(
-          ROWS
-        );
-        expect(ids, `${column} ${direction} returned the rows in the wrong order`).toEqual(
-          expectedOrder(column, direction)
-        );
+        expectWholeSetInOrder(ids, column, direction);
       }
     }
   });
@@ -291,6 +329,29 @@ describe('the compound keyset, across a manufactured page boundary', () => {
     );
   });
 
+  /**
+   * 🔴 ASCENDING AGE IS THE YOUNGEST ROW FIRST, WHICH IS THE NEWEST ARRIVAL — the one column whose
+   * rendered value runs OPPOSITE to its SQL key, and the one place an arrow can point at the truth
+   * while the cells count the other way. `shortAge` is `now - createdAt`, so it grows as the id
+   * shrinks; `ORDER BY f.id ASC` would put `12d` above `10m` under a header reading `Age ↑` and an
+   * `aria-sort="ascending"` a screen reader has no way to check.
+   *
+   * Asserted against the ARRIVAL TIMES the fixture seeded, not against the id, so it is a claim about
+   * what the cell shows rather than a restatement of the key the implementation chose.
+   */
+  it('puts the YOUNGEST row first on ascending age, and the oldest first on descending', async () => {
+    const youngestFirst = [...seeded].sort((a, b) => b.arrival - a.arrival).map((r) => r.id);
+    const oldestFirst = [...youngestFirst].reverse();
+    // The instrument: distinct arrival times, or neither claim can be observed.
+    expect(new Set(seeded.map((r) => r.arrival)).size).toBe(ROWS);
+
+    const asc = await pageThrough('age', 'asc', 7);
+    expect(asc.ids).toEqual(youngestFirst);
+
+    const desc = await pageThrough('age', 'desc', 7);
+    expect(desc.ids).toEqual(oldestFirst);
+  });
+
   /** The default ordering is untouched: no sort, no value half, same `id DESC` keyset as before. */
   it('leaves the default ordering exactly as it was', async () => {
     const { ids } = await pageThrough(null, 'asc', 7);
@@ -307,37 +368,10 @@ describe('the compound keyset, across a manufactured page boundary', () => {
       .map((r) => r.id);
     expect(expected.length).toBeGreaterThan(0);
 
-    const { ids } = await pageThrough2('bravo', 'status', 'asc', 5);
+    const { ids } = await pageThrough('status', 'asc', 5, 'bravo');
     expect(ids).toEqual(expected);
   });
 });
-
-/** `pageThrough` with an area filter, to prove the filter and the keyset compose. */
-async function pageThrough2(
-  area: string,
-  column: FeedbackSortColumn,
-  direction: 'asc' | 'desc',
-  limit: number
-): Promise<{ ids: number[] }> {
-  const ids: number[] = [];
-  let cursor: number | null = null;
-  let cursorValue: string | null = null;
-  for (let guard = 0; guard <= ROWS; guard++) {
-    const page = await service.getFeedbackList({
-      statuses: [],
-      area,
-      cursor,
-      cursorValue,
-      sort: { column, direction },
-      limit,
-    });
-    ids.push(...page.items.map((r) => r.id));
-    if (page.nextCursor === null) return { ids };
-    cursor = page.nextCursor;
-    cursorValue = page.nextCursorValue;
-  }
-  throw new Error('paging did not terminate');
-}
 
 describe('what the query builder refuses', () => {
   /**
@@ -368,6 +402,45 @@ describe('what the query builder refuses', () => {
   });
 
   /**
+   * 🔴 THE DIRECTION IS THE SECOND UNTRUSTED FIELD, AND IT IS REFUSED HERE TOO. It never reaches SQL
+   * as text — it selects between two literal branches — so the failure it causes is quieter: a
+   * garbage value silently means `desc` at both branches, and the operator is shown a descending
+   * queue with nothing on the page claiming a direction. Refused, the whole sort is dropped and the
+   * default ordering is what comes back.
+   *
+   * `asc` is the discriminating expectation, not `desc`: a fall-through to `desc` on `area` is
+   * distinguishable from the default `id DESC` too, but only `asc` distinguishes "refused" from
+   * "defaulted to the first state of the cycle", which is what the URL parser does.
+   */
+  it('falls back to the default ordering for a direction that is not asc or desc', async () => {
+    const byId = [...seeded].map((r) => r.id).sort((a, b) => b - a);
+    const byAreaAsc = expectedOrder('area', 'asc');
+    // The instrument: the two orderings must differ, or this test cannot tell them apart.
+    expect(byAreaAsc).not.toEqual(byId);
+
+    for (const hostile of ['sideways', 'DESC', '', 'asc; --']) {
+      const page = await service.getFeedbackList({
+        statuses: [],
+        sort: { column: 'area', direction: hostile as 'asc' },
+        limit: ROWS,
+      });
+      expect(
+        page.items.map((r) => r.id),
+        `"${hostile}" was accepted as a direction`
+      ).toEqual(byId);
+    }
+
+    // Positive control: a REAL direction on the same column is not the default ordering, so the
+    // assertion above is not passing because every input produces `byId`.
+    const real = await service.getFeedbackList({
+      statuses: [],
+      sort: { column: 'area', direction: 'asc' },
+      limit: ROWS,
+    });
+    expect(real.items.map((r) => r.id)).toEqual(byAreaAsc);
+  });
+
+  /**
    * 🔴 A VALUE HALF THE COLUMN CANNOT HOLD DROPS THE WHOLE CURSOR, and page one is the right answer.
    * Keeping the id half alone would compare `f.id` against a boundary belonging to a different
    * ordering and return rows that are neither the first page nor the next one.
@@ -375,28 +448,71 @@ describe('what the query builder refuses', () => {
    * `2147483648` is one past the int4 bound, which ERRORS the comparison in Postgres rather than
    * missing it — so a version that passed it through would fail this test by throwing, not by
    * returning the wrong rows.
+   *
+   * ⚠️ TWO CASES, NOT ONE LOOP, BECAUSE THE TWO CLASSES FAIL DIFFERENTLY AND ONE MASKS THE OTHER. A
+   * value Postgres REJECTS makes a broken version THROW; a value `Number` silently mangles makes it
+   * return the wrong rows. Run together, the throw lands first and the mangled inputs are never
+   * reached — a mutant that re-opens the mangling defect dies on the neighbour's case, which is not
+   * evidence about the guard under test. Measured, not reasoned about.
    */
-  it('starts over rather than mis-paging when the value half cannot be an integer', async () => {
-    const firstPage = (
+  /** Page one of the `issue` ordering — what "the whole cursor was dropped" looks like. */
+  const issueFirstPage = async (direction: 'asc' | 'desc') =>
+    (
       await service.getFeedbackList({
         statuses: [],
-        sort: { column: 'issue', direction: 'asc' },
+        sort: { column: 'issue', direction },
         limit: 9,
       })
     ).items.map((r) => r.id);
 
-    for (const bad of ['abc', '1.5', '', '2147483648', 'null']) {
-      const page = await service.getFeedbackList({
-        statuses: [],
-        cursor: seeded[30].id,
-        cursorValue: bad,
-        sort: { column: 'issue', direction: 'asc' },
-        limit: 9,
-      });
-      expect(
-        page.items.map((r) => r.id),
-        `"${bad}" was used as a boundary`
-      ).toEqual(firstPage);
+  it('starts over rather than mis-paging on a value PostgreSQL would reject', async () => {
+    for (const direction of ['asc', 'desc'] as const) {
+      const firstPage = await issueFirstPage(direction);
+      for (const bad of ['abc', '1.5', '2147483648', 'null', '-0x1']) {
+        const page = await service.getFeedbackList({
+          statuses: [],
+          cursor: seeded[30].id,
+          cursorValue: bad,
+          sort: { column: 'issue', direction },
+          limit: 9,
+        });
+        expect(
+          page.items.map((r) => r.id),
+          `"${bad}" was used as a boundary on ${direction}`
+        ).toEqual(firstPage);
+      }
+    }
+  });
+
+  /**
+   * 🔴 THE SHAPES `Number()` SILENTLY MANGLES, WHICH IS A DIFFERENT AND QUIETER DEFECT. `Number` is
+   * not a parser: `''` and `'  '` become 0, `'0x10'` becomes 16, `'1e3'` becomes 1000, `' 12 '`
+   * becomes 12 — and every one of those satisfies `Number.isInteger`, so a guard built on it accepts
+   * them as boundaries. Nothing errors; a page of wrong rows comes back.
+   *
+   * 🔴 BOTH DIRECTIONS, AND ASC ALONE IS THE TRAP. Every seeded `bugId` is ≥ 1, so a boundary of 0
+   * on `issue asc` admits every row and returns page one BY ACCIDENT — the assertion passes while
+   * the defect is live. On `desc` the same boundary returns only the trailing null block, which is
+   * visibly not page one. An asc-only loop is what made this readable as covered.
+   */
+  it('starts over rather than mis-paging on a value Number() would silently mangle', async () => {
+    // Value OUTER, direction INNER: with the loops the other way round the first failing value on
+    // `asc` aborts the case before any `desc` assertion runs, and `''` — whose whole point is that
+    // it is invisible on `asc` — would never be checked in the direction that can see it.
+    for (const bad of ['', '  ', '0x10', '1e3', ' 12 ', '+7', '12.0']) {
+      for (const direction of ['asc', 'desc'] as const) {
+        const page = await service.getFeedbackList({
+          statuses: [],
+          cursor: seeded[30].id,
+          cursorValue: bad,
+          sort: { column: 'issue', direction },
+          limit: 9,
+        });
+        expect(
+          page.items.map((r) => r.id),
+          `"${bad}" was used as a boundary on ${direction}`
+        ).toEqual(await issueFirstPage(direction));
+      }
     }
   });
 

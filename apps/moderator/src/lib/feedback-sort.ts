@@ -1,36 +1,31 @@
-import { clearPaging } from './paging';
+import { CURSOR_VALUE_PARAM, clearPaging } from './paging';
 import { urlWith } from './url';
 
 /**
  * The feedback queue's column sort — the URL half.
  *
- * 🔴 SORTING IS SERVER-SIDE, AND THAT IS NOT A PREFERENCE. The list is keyset-paged at
- * `FEEDBACK_PAGE_SIZE`, so a client-side `.sort()` orders the 50 rows that happen to be loaded and
- * presents them as an ordering of the whole queue. It looks completely right on every screen — the
- * arrow points the way it should, the rows are in order — and it is wrong for any queue larger than
- * one page. There are 26 live rows today, so a client-side sort would also be INDISTINGUISHABLE from
- * a correct one until the table grows. Nothing here sorts rows; this module only reads and writes the
- * URL, and `getFeedbackList` does the ordering in SQL.
+ * 🔴 NOTHING HERE SORTS ROWS, AND NOTHING ELSE ON THE CLIENT MAY EITHER. The list is keyset-paged at
+ * `FEEDBACK_PAGE_SIZE`, so a `.sort()` over the loaded page orders one page and presents it as an
+ * ordering of the queue: the arrow points the right way, the visible rows are in order, and it is
+ * wrong for any queue past its first page. Below that size it is INDISTINGUISHABLE from correct, so
+ * it will not be caught by looking. `getFeedbackList` does the ordering in SQL.
  *
- * 🔴 THE STATE LIVES IN THE URL, NOT IN A COMPONENT, AND NOT IN `replaceState`. Every successful
- * write on this page calls `invalidateAll()`, so component state is re-created under the operator the
- * instant their save lands — the same reason `?tab=` is a URL param (`feedback-tabs.ts`). And shallow
- * routing is not an option either: `replaceState` DOES NOT UPDATE `page.url` in
+ * 🔴 THE STATE IS IN THE URL, NOT IN A COMPONENT AND NOT IN `replaceState`. Every successful write on
+ * this page calls `invalidateAll()`, which re-creates component state under the operator — the same
+ * reason `?tab=` is a param (`feedback-tabs.ts`). And `replaceState` DOES NOT UPDATE `page.url` in
  * `@sveltejs/kit@2.66.0` (`runtime/client/client.js:2524-2555` stores the OLD `page.url.href` under
- * its own key), so a URL-backed control built on it reads its own state back as unchanged and is
- * inert while looking live. The column headers are real links, like the tab strip's triggers.
+ * its own key), so a control built on shallow routing reads its own state back unchanged and is inert
+ * while looking live.
  */
 
 /**
  * The sortable columns, by the header they sit under.
  *
- * 🔴 THE 📎 COLUMN IS DELIBERATELY ABSENT. Attachment count is not a column — it is
- * `images.length + (screenshotId ? 1 : 0)` derived from a JSONB blob by `feedbackAttachmentCount`.
- * Sorting it server-side means an expression over `context` on every row, with no index to serve it,
- * and — the worse half — a SECOND implementation of "how many attachments does this row have", in
- * SQL, which nothing makes agree with the TypeScript one. The count and the lightbox already share a
- * single definition for exactly that reason (see `feedbackAttachmentItems`). If this is ever wanted,
- * it wants a materialised column, not a sort key.
+ * 🔴 THE 📎 COLUMN IS DELIBERATELY ABSENT. The attachment count is derived from a JSONB blob by
+ * `feedbackAttachmentCount`, so a SQL ordering needs an unindexed expression over `context` AND a
+ * SECOND implementation of that arithmetic, which nothing makes agree with the first — the count and
+ * the lightbox share one definition for exactly that reason. It wants a materialised column, not a
+ * sort key.
  */
 export const FEEDBACK_SORT_COLUMNS = ['age', 'area', 'user', 'status', 'handled', 'issue'] as const;
 
@@ -42,10 +37,9 @@ export const FEEDBACK_SORT_PARAM = 'sort';
 export const FEEDBACK_SORT_DIR_PARAM = 'dir';
 
 /**
- * The second half of the compound keyset: the boundary row's value in the SORTED column.
- *
- * `?cursor=` still carries the row id and still means exactly what it meant before. This param is
- * what makes the pair unique — see `getFeedbackList` for why the id half can never be dropped.
+ * The compound keyset's value half, re-exported from `$lib/paging` — which owns it, so that
+ * `clearPaging` clears it for every page that turns a batch over. `?cursor=` still carries the row
+ * id and still means exactly what it meant before.
  *
  * 🔴 AN ABSENT PARAM DOES NOT MEAN ONE THING — WHICH COLUMN IS SORTED DECIDES. On a column that can
  * be null (`user`, `handled`, `issue`) it means "the boundary row's value IS null", a real position
@@ -55,12 +49,12 @@ export const FEEDBACK_SORT_DIR_PARAM = 'dir';
  * `nullable` flag in `FEEDBACK_SORT_KEYS` is what holds the distinction; it is not readable from
  * here, which is why the coercion lives next to the map rather than in this module.
  */
-export const FEEDBACK_CURSOR_VALUE_PARAM = 'cursorValue';
+export const FEEDBACK_CURSOR_VALUE_PARAM = CURSOR_VALUE_PARAM;
 
 export const isFeedbackSortColumn = (value: unknown): value is FeedbackSortColumn =>
   typeof value === 'string' && (FEEDBACK_SORT_COLUMNS as readonly string[]).includes(value);
 
-const isFeedbackSortDirection = (value: unknown): value is FeedbackSortDirection =>
+export const isFeedbackSortDirection = (value: unknown): value is FeedbackSortDirection =>
   value === 'asc' || value === 'desc';
 
 /**
@@ -101,19 +95,6 @@ export function nextFeedbackSort(
 }
 
 /**
- * Paging state that a new batch invalidates — BOTH halves of the compound cursor.
- *
- * 🔴 Dropping only `?cursor=` would leave the value half behind, and a value half from the previous
- * ordering is not a harmless leftover: it is the operand of the keyset comparison, so the first page
- * of the new ordering would silently start somewhere in the middle of it. `clearPaging` owns the
- * generic params (cursor, the trail, the image page); this adds the one this page invented.
- */
-export function clearFeedbackPaging(params: URLSearchParams) {
-  clearPaging(params);
-  params.delete(FEEDBACK_CURSOR_VALUE_PARAM);
-}
-
-/**
  * The `href` a column header carries.
  *
  * 🔴 IT CLEARS PAGING. A cursor names a position in ONE ordering; carried into another it points at a
@@ -128,12 +109,37 @@ export function clearFeedbackPaging(params: URLSearchParams) {
  */
 export function feedbackSortHref(url: URL, column: FeedbackSortColumn): string {
   const next = new URL(url);
-  clearFeedbackPaging(next.searchParams);
+  clearPaging(next.searchParams);
   const sort = nextFeedbackSort(parseFeedbackSort(url.searchParams), column);
   return urlWith(next, {
     [FEEDBACK_SORT_PARAM]: sort?.column ?? null,
     [FEEDBACK_SORT_DIR_PARAM]: sort?.direction ?? null,
   });
+}
+
+/**
+ * The `href` for the next page, carrying BOTH halves of the keyset.
+ *
+ * 🔴 THE VALUE HALF IS ALWAYS WRITTEN — SET WHEN THERE IS ONE, DELETED WHEN THERE IS NOT. Leaving it
+ * alone when the new boundary's value is null is not a no-op: the CURRENT url already carries the
+ * PREVIOUS page's value, so the link ships a boundary belonging to a row that is no longer the
+ * boundary. That is the ordinary transition INTO the trailing null block, not a hand-edited URL —
+ * `handled` is null on every untriaged row — and the server then reads a non-null boundary, whose
+ * predicate admits the whole null block with no id bound. The same page comes back, its own boundary
+ * row included, and `Next →` never advances.
+ *
+ * 🔴 `searchParams.set`, NOT `urlWith`, for that half. `urlWith` deletes on an EMPTY STRING as well as
+ * on null — the right rule for a filter control, where empty means "not filtering", and the wrong one
+ * here, where an empty string is a VALUE and absence means "the boundary row's value is null".
+ *
+ * `?open=` is cleared for the reason `FeedbackFilters` clears it: it can name a row this page does not
+ * contain, and a panel that silently does not render is worse than one that was closed.
+ */
+export function feedbackNextPageHref(url: URL, cursor: number, value: string | null): string {
+  const next = new URL(urlWith(url, { cursor, open: null }), url);
+  if (value === null) next.searchParams.delete(FEEDBACK_CURSOR_VALUE_PARAM);
+  else next.searchParams.set(FEEDBACK_CURSOR_VALUE_PARAM, value);
+  return next.pathname + next.search;
 }
 
 /**

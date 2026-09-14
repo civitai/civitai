@@ -180,15 +180,39 @@ describe('load', () => {
    * therefore how it has to be coerced, is the service's to know (`FEEDBACK_SORT_KEYS`). `load`
    * bounds its LENGTH only, because an unbounded parameter is free work for whoever edits the URL.
    */
-  it('forwards the cursor value half, and drops one past its length bound', async () => {
+  it('forwards the cursor value half', async () => {
     await loaded('?status=new&sort=user&dir=asc&cursor=12&cursorValue=grace');
     expect(getFeedbackList).toHaveBeenCalledWith(
       expect.objectContaining({ cursor: 12, cursorValue: 'grace' })
     );
+  });
 
-    vi.clearAllMocks();
+  /**
+   * 🔴 A REJECTED VALUE HALF DROPS THE WHOLE CURSOR — because `.catch(undefined)` gives a rejected
+   * param the SAME value as an absent one, and those are opposite instructions here. The service
+   * reads an absent value half as "the boundary row's value IS null", a real position; so left
+   * as-is, an over-long `?cursorValue=` would not degrade to page one, it would silently relocate
+   * the operator into the trailing null block of whichever nullable column is sorted.
+   *
+   * ⚠️ The assertion is on `cursor`, not on `cursorValue`. An earlier version of this test was named
+   * "drops one past its length bound" and asserted only `cursorValue: null` — which is what a
+   * MISSING param produces too, so it pinned nothing about dropping and read as coverage of the
+   * behaviour it did not reach.
+   */
+  it('drops the WHOLE cursor when the value half is rejected, not just that half', async () => {
     await loaded(`?status=new&sort=user&dir=asc&cursor=12&cursorValue=${'x'.repeat(301)}`);
-    expect(getFeedbackList).toHaveBeenCalledWith(expect.objectContaining({ cursorValue: null }));
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: null, cursorValue: null })
+    );
+
+    // The control: a genuinely ABSENT value half keeps the id half, because on a nullable column it
+    // names a position rather than a mistake. Without this the test above passes over a loader that
+    // drops every cursor.
+    vi.clearAllMocks();
+    await loaded('?status=new&sort=user&dir=asc&cursor=12');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 12, cursorValue: null })
+    );
   });
 
   it('degrades a cursor Postgres would ERROR on, rather than passing it to the query', async () => {
