@@ -131,16 +131,21 @@ describe('splitContext', () => {
     // that has nothing to do with what this case is about.
     const images = ['2f0b6a1e-0f7a-4f2e-9c3e-1a2b3c4d5e6f', '7c9a1d2b-3e4f-4a5b-8c9d-0e1f2a3b4c5d'];
     const screenshotId = 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e';
+    // Bound to consts and shared between input and expectation, as `images`/`screenshotId` above
+    // already are. This assertion's property is IDENTITY — every key carried through unchanged —
+    // so restating the literals on both sides would test the transcription, not the pass-through.
+    const consoleErrors = ['TypeError: x is not a function'];
+    const networkErrors = [
+      { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
+    ];
     const ctx = splitContext({
       path: '/apps',
       filters: { kind: 'onsite' },
       images,
       screenshotId,
       sessionId: 'v913JNcgDs',
-      consoleErrors: ['TypeError: x is not a function'],
-      networkErrors: [
-        { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
-      ],
+      consoleErrors,
+      networkErrors,
     });
 
     // 🔴 A WHOLE-OBJECT `toEqual`, which makes this the LEDGER: a key added to `FeedbackContext`
@@ -249,6 +254,15 @@ describe('splitContext', () => {
       ['a bare string instead of an entry', 'https://a.io/x'],
       ['null instead of an entry', null],
       ['an array instead of an entry', []],
+      // 🔴 THE DRIFT CASE, AND IT IS THE REASON THE GUARD CHECKS THE KEY COUNT. A `typeof`-only
+      // guard passes this entry, the renderer draws its fixed three spans, and `method` appears
+      // NOWHERE — not in the section and not under "Other context" either, because the key was
+      // claimed. Silent and total, and the one drift direction the "other" bucket cannot cover.
+      // The producer is a separate deployable, so this is reachable by shipping one repo.
+      [
+        'an entry with a field this app does not render',
+        { url: 'https://a.io/x', status: 500, initiatorType: 'fetch', method: 'POST' },
+      ],
     ])('routes a network array holding %s to "other"', (_label, bad) => {
       const ctx = splitContext({ networkErrors: [ENTRY, bad] });
       expect(ctx.networkErrors).toEqual([]);

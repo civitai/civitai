@@ -136,7 +136,11 @@ const feedbackContextSchema = z.object({
    * the bound, which is a bug worth a rejection rather than a silent truncation.
    */
   consoleErrors: z
-    .array(z.string().max(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH))
+    // `.min(1)`: an empty string is not an error message, and the moderator panel renders one as an
+    // empty bordered box that reads as "an error we failed to display". `recordConsoleError` already
+    // refuses empties, so no legitimate submission can carry one and this bound costs the producer
+    // nothing — it closes the case for a client that is not our producer. Same shape as `sessionId`.
+    .array(z.string().min(1).max(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH))
     .max(FEEDBACK_CONSOLE_ERROR_MAX_COUNT)
     .optional(),
   /**

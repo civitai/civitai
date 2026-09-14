@@ -91,13 +91,7 @@ export function reconstructFeedbackUrl(
   return query ? `${path}?${query}` : path;
 }
 
-/**
- * One failed request from the reporter's browser-error snapshot.
- *
- * Shape mirrors `feedbackContextSchema.networkErrors` in the producer, but this app re-derives it
- * from the JSONB column rather than importing the zod type — the column has no schema at rest and
- * the producer is a separate deployable, so what is stored is a claim either way.
- */
+/** One failed request from the reporter's browser-error snapshot. */
 export type FeedbackNetworkError = {
   url: string;
   status: number;
@@ -110,9 +104,10 @@ export type FeedbackContext = {
   images: string[];
   screenshotId: string | null;
   sessionId: string | null;
-  /** Console errors the reporter's browser recorded, oldest first. Empty when none were sent. */
+  /** Console errors the reporter's browser recorded. Empty when absent, empty, OR malformed —
+   *  a malformed array is routed to `other` and shown there, not silently dropped. */
   consoleErrors: string[];
-  /** Requests that came back 4xx/5xx, oldest first. Empty when none were sent. */
+  /** Requests that came back 4xx/5xx. Empty on the same three cases as `consoleErrors`. */
   networkErrors: FeedbackNetworkError[];
   /** Everything the named keys did not claim. `null` when there is nothing left over. */
   other: Record<string, unknown> | null;
@@ -126,24 +121,34 @@ const isFilterValue = (value: unknown): value is string | number | boolean =>
 
 const isString = (value: unknown): value is string => typeof value === 'string';
 
+/** The fields the renderer draws. An entry carrying anything else is not one of these. */
+const NETWORK_ERROR_FIELDS = ['url', 'status', 'initiatorType'] as const;
+
 /**
- * 🔴 EVERY FIELD IS CHECKED, AND `initiatorType` IS THE ONE THAT LOOKS SKIPPABLE. It is a closed
- * set in the Resource Timing spec, so it reads like it cannot be wrong — but this value comes out
- * of a JSONB column, not out of a browser, and a row whose `initiatorType` is an object renders as
- * `[object Object]` in a moderator's queue instead of being dumped where they can see what it
- * actually was. A partial guard is exactly the "reads as coverage while providing none" shape.
+ * 🔴 EXACT KEYS, NOT A SUBSET, AND THAT IS THE WHOLE POINT OF THIS GUARD.
+ *
+ * A `typeof`-only check passes `{url, status, initiatorType, method}`, so `splitContext` claims the
+ * array, the renderer draws its fixed three spans, and `method` appears NOWHERE — not in the
+ * section, and not in "Other context" either, because the key was claimed. That is the one drift
+ * direction the "other" bucket does not cover, and it is silent and total.
+ *
+ * Rejecting the unknown key sends the whole array to "other" as a visible JSON dump instead —
+ * which is exactly what `consoleErrors` already does when its ELEMENT TYPE drifts.
+ *
+ * ⚠️ `filters` does not need this because it renders `Object.entries(...)` — a new key there
+ * appears by itself. This section renders a fixed triple, which is what makes the difference.
  *
  * `status` is checked for being a finite number only, NOT for being 400..599. The producer bounds
  * it at write time; re-imposing that here would send a row stored under a future widened bound to
- * the "other" bucket, which is a display regression rather than a protection — nothing on this
- * side does arithmetic with it.
+ * the "other" bucket — see the render note on out-of-range statuses in `FeedbackBrowserErrors`.
  */
 const isNetworkError = (value: unknown): value is FeedbackNetworkError =>
   isPlainObject(value) &&
   typeof value.url === 'string' &&
   typeof value.status === 'number' &&
   Number.isFinite(value.status) &&
-  typeof value.initiatorType === 'string';
+  typeof value.initiatorType === 'string' &&
+  Object.keys(value).length === NETWORK_ERROR_FIELDS.length;
 
 /**
  * A Cloudflare-images key, as the delivery URL builder requires one.
@@ -190,9 +195,7 @@ const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
  * producer's `feedbackContextSchema` is a `z.object`, which STRIPS what it does not declare, so a
  * key it never heard of does not reach this column at all. The bucket is what makes a key the
  * producer HAS declared and this app has not yet learned to render degrade to a visible JSON dump
- * instead of vanishing — which is exactly how `consoleErrors` / `networkErrors` behaved on a
- * moderator deploy that predated the renderer below, and why the two halves did not have to ship
- * atomically across the release boundary.
+ * instead of vanishing.
  */
 export function splitContext(context: unknown): FeedbackContext {
   const out: FeedbackContext = {
@@ -216,15 +219,11 @@ export function splitContext(context: unknown): FeedbackContext {
       out.sessionId = value;
     } else if (key === 'screenshotId' && typeof value === 'string' && IMAGE_KEY.test(value)) {
       out.screenshotId = value;
-    } else if (
-      key === 'images' &&
-      Array.isArray(value) &&
-      value.every((v) => typeof v === 'string')
-    ) {
+    } else if (key === 'images' && Array.isArray(value) && value.every(isString)) {
       // Deduplicated as well as filtered: `{#each … (id)}` THROWS on a duplicate key in production
       // as well as in dev, and the array is client-supplied with no uniqueness constraint anywhere
       // — so one repeated id makes the report permanently unopenable.
-      out.images = [...new Set((value as string[]).filter((v) => IMAGE_KEY.test(v)))];
+      out.images = [...new Set(value.filter((v) => IMAGE_KEY.test(v)))];
       // Anything dropped is still shown, as text, under "Other context".
       if (out.images.length !== value.length) other[key] = value;
     } else if (
@@ -234,11 +233,9 @@ export function splitContext(context: unknown): FeedbackContext {
     ) {
       out.filters = value as FeedbackFilters;
     } else if (key === 'consoleErrors' && Array.isArray(value) && value.every(isString)) {
-      // ALL-OR-NOTHING, like `filters` and unlike `images`. `images` filters per-entry because a
-      // bad id there is a live `<img src>` hazard that has to be removed from the rendered list;
-      // these are rendered as text and carry no such hazard, so the useful behaviour on a
-      // malformed array is to show a moderator the WHOLE thing under "Other context" rather than
-      // a quietly shortened list they cannot tell was shortened.
+      // All-or-nothing, unlike `images` — which filters per entry only because a bad id there is a
+      // live `<img src>` hazard. These are text, so a malformed array goes to "Other context"
+      // whole rather than being shortened in a way the moderator cannot see.
       out.consoleErrors = value;
     } else if (key === 'networkErrors' && Array.isArray(value) && value.every(isNetworkError)) {
       out.networkErrors = value;

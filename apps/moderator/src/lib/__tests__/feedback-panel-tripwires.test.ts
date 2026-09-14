@@ -90,6 +90,7 @@ describe('the instrument itself', () => {
       'FeedbackPromote.svelte',
       'FeedbackAttachments.svelte',
       'FeedbackContextPanel.svelte',
+      'FeedbackBrowserErrors.svelte',
       '+page.svelte',
     ]) {
       expect(source(file).length).toBeGreaterThan(500);
@@ -394,24 +395,39 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
    * it is asserted here as a live witness that stripping is working on THIS file.
    */
   it('adds no href, src or EdgeImage to the panel', () => {
-    const panel = source('FeedbackContextPanel.svelte');
+    // 🔴 THE LEDGER IS SCOPED TO A FILE LIST, NOT TO ONE FILE, AND THAT IS NOT TIDINESS. Both
+    // surviving `href=`s live in the FIRST section (the reconstructed page link and the Grafana
+    // link). So moving the snapshot sections into a sibling component — which this directory's own
+    // precedent invites, `FeedbackAttachments.svelte` being exactly that — would leave this
+    // assertion reading `2` and PASSING, while `{entry.url}`, the one reporter-chosen string in
+    // this panel that looks like it wants to be a link, moved to a file nothing scans. The count
+    // is what defeats a renamed variable; the file list is what defeats a moved file.
+    //
+    // An explicit list, deliberately NOT `readdirSync(feedbackDir)` the way the open-param scan
+    // does it: `+page.svelte` and `FeedbackDetail.svelte` legitimately carry `href=`, so a
+    // directory scan would turn this into noise. Add a file here when the markup moves.
+    const REQUEST_FREE_FILES = ['FeedbackContextPanel.svelte', 'FeedbackBrowserErrors.svelte'];
+    const combined = REQUEST_FREE_FILES.map(source).join('\n');
 
-    // Positive control: the scan CAN match. A zero from a broken read is indistinguishable from a
-    // zero from clean code, and every assertion below is a zero or a small number.
-    expect(panel.length).toBeGreaterThan(500);
-    expect(count(panel, 'href=')).toBeGreaterThan(0);
+    // Positive control, PER FILE: the scan CAN match and every file in the list is really read. A
+    // zero from a broken read is indistinguishable from a zero from clean code, and every
+    // assertion below is a zero or a small number.
+    for (const file of REQUEST_FREE_FILES) {
+      expect(source(file).length, `${file} read as empty or trivial`).toBeGreaterThan(500);
+    }
+    expect(count(combined, 'href=')).toBeGreaterThan(0);
 
-    expect(count(panel, 'href=')).toBe(2);
-    expect(count(panel, 'src=')).toBe(0);
-    expect(count(panel, 'EdgeImage')).toBe(0);
+    expect(count(combined, 'href=')).toBe(2);
+    expect(count(combined, 'src=')).toBe(0);
+    expect(count(combined, 'EdgeImage')).toBe(0);
 
     // 🔴 THE STRIPPER, WITNESSED ON THIS FILE. `EdgeImage` is named once in the panel's own 🔴
     // comment explaining why it must not come back. If the raw count ever equals the stripped one,
     // that witness is gone and the `toBe(0)` above has quietly become a claim about prose.
     expect(
-      count(rawSource('FeedbackContextPanel.svelte'), 'EdgeImage'),
+      REQUEST_FREE_FILES.reduce((n, file) => n + count(rawSource(file), 'EdgeImage'), 0),
       'no prose witness for EdgeImage left — this control can no longer observe stripping'
-    ).toBeGreaterThan(count(panel, 'EdgeImage'));
+    ).toBeGreaterThan(count(combined, 'EdgeImage'));
   });
 
   /**
@@ -422,9 +438,9 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
    * shipped once on the attachment list.
    */
   it('keys both snapshot lists by index', () => {
-    const panel = source('FeedbackContextPanel.svelte');
-    expect(panel).toContain('{#each context.consoleErrors as line, i (i)}');
-    expect(panel).toContain('{#each context.networkErrors as entry, i (i)}');
+    const errors = source('FeedbackBrowserErrors.svelte');
+    expect(errors).toContain('{#each context.consoleErrors as line, i (i)}');
+    expect(errors).toContain('{#each context.networkErrors as entry, i (i)}');
   });
 
   /**
@@ -434,9 +450,9 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
    * is a different and unsupported claim.
    */
   it('renders each section only when it has entries', () => {
-    const panel = source('FeedbackContextPanel.svelte');
-    expect(panel).toContain('{#if context.consoleErrors.length}');
-    expect(panel).toContain('{#if context.networkErrors.length}');
+    const errors = source('FeedbackBrowserErrors.svelte');
+    expect(errors).toContain('{#if context.consoleErrors.length}');
+    expect(errors).toContain('{#if context.networkErrors.length}');
   });
 });
 

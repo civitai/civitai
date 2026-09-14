@@ -350,6 +350,19 @@ describe('feedback schema — context bounds', () => {
       ).toThrow();
     });
 
+    /**
+     * An empty string is not an error message, and the moderator panel renders one as an empty
+     * bordered `<li>` that reads as "an error we failed to display". `recordConsoleError` already
+     * refuses empties, so this bound costs our own producer nothing — it exists for a client that
+     * is not our producer. Same shape as `sessionId`'s `.min(1)`.
+     */
+    it('rejects an empty console error', () => {
+      expect(() => parse({ consoleErrors: [''] })).toThrow();
+      // The positive control: a one-character message is still fine, so this is a `min(1)` and
+      // not an accidental ban on short messages.
+      expect(parse({ consoleErrors: ['x'] }).context?.consoleErrors).toEqual(['x']);
+    });
+
     it('rejects a non-string console error', () => {
       expect(() => parse({ consoleErrors: [42] })).toThrow();
       expect(() => parse({ consoleErrors: 'boom' })).toThrow();
