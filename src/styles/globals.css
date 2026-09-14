@@ -295,17 +295,28 @@
    have pushed a red browser tier. The checklist above already says this from the other
    direction: it lists BOTH browser ledger cases among what the retirement deletes.
      · DELETING THE LEDGER (this comment block + both ENTRY comments + both rules)
-       → 5 red of those 152, all of them named in the list above: 'the full-bleed
+       → 5 red of that set, all of them named in the list above: 'the full-bleed
        opt-out ledger — membership is explicit…' and 'globals.css documents the
        opt-out against the attributes the host actually stamps' in
-       `pageBlockHostMaxWidth.test.ts`, plus all three cases in
-       `ledgerSelectorSurvivesProdStrip.test.ts`. Nothing else in that set moves —
+       `pageBlockHostMaxWidth.test.ts`, plus THREE OF THE SEVEN cases in
+       `ledgerSelectorSurvivesProdStrip.test.ts` — '🔴 no shipped ledger rule depends
+       on an attribute production strips', '🔴 the ledger’s HOW-TO-ADD-ONE template
+       teaches a selector that survives production AND matches something' and '🔴 each
+       ledger selector’s attributes are stamped TOGETHER on ONE PageBlockHost element'.
+       (This used to say "all three cases in" that file. It has SEVEN, so a reader
+       reconciling that against the "ALL of …" deletion item above concluded the file
+       holds three tests. The other four — the strip-list case, the two synthetic
+       CONTROL cases and the docs/features/app-blocks.md HOW-TO case — grade the strip
+       CONFIG, a fabricated selector, or that docs page, never the rules in this file,
+       so they stay green on deletion. The deletion item is still ALL of the file:
+       green-on-deletion and deleted-with-the-ledger are different properties.)
+       Nothing else in that set moves —
        in particular 'stamps BOTH ledger attributes on the host root…' stays GREEN,
        because it reads `PageBlockHost.tsx` and not this file. It is a DELETION item
        in that list, never a red one, and the distinction matters: a reader chasing
        red tests will never be led to it.
      · INLINING THE CAP (drop `--app-page-max-width` from `:root`, rewrite the host's
-       `maxWidth` to read the constant directly) → 4 red of those 152, ALL in
+       `maxWidth` to read the constant directly) → 4 red of that set, ALL in
        `pageBlockHostMaxWidth.test.ts`, and they are exactly the four ⚠️ entries in
        THIS list. No ledger guard notices.
 
