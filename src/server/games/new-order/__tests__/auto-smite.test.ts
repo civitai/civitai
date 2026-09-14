@@ -396,17 +396,77 @@ describe('runAbuseDetectionScan abuse-board report', () => {
     expect(Date.parse(report.finishedAt)).toBeGreaterThanOrEqual(Date.parse(report.startedAt));
   });
 
-  it('does not fail the run when the board rejects the report', async () => {
-    // The smites above are already written; throwing here would mark the job failed and invite a
-    // retry of a run whose enforcement half already happened.
+  /**
+   * 🔴 THE TWO HALVES OF THE REPORT-FAILURE SPLIT, AND THEY MUST BE ASSERTED AS A PAIR.
+   *
+   * Either one alone passes with the branch collapsed in the direction it happens to want, so the
+   * pair is what pins the condition rather than the outcome: rethrow when the run produced nothing
+   * but the report, swallow only when smites are already written.
+   *
+   * The consequence of getting the first one wrong is invisible by construction. A swallowed failure
+   * on a run that smited nobody means the run produced no output at all and still returned success —
+   * the job's error counter never moves, so the detector can be dark indefinitely with no signal.
+   */
+  it('PROPAGATES a report failure when the run smited nobody, so the job registers an error', async () => {
+    // The flag is off, so nothing was written and there is nothing a failed run would be retrying.
+    // This is the shape of the overwhelming majority of runs.
     mockClickhouseQuery.mockResolvedValue([strictSuspect()]);
+    mockGetVotingRateLimitConfig.mockResolvedValue({
+      perMinute: 1,
+      perHour: 1,
+      perDay: 1,
+      autoSmiteAbusers: false,
+    });
+    mockAbuseReport.mockRejectedValue(new Error('400 bad request'));
+
+    await expect(runAbuseDetectionScan()).rejects.toThrow('400 bad request');
+    expect(mockSmitePlayer).not.toHaveBeenCalled();
+  });
+
+  it('SWALLOWS a report failure when smites are already written, and logs under a stable key', async () => {
+    // The one case the swallow is for: the enforcement half already happened, so failing the run
+    // asks for a retry of work that is done.
+    mockClickhouseQuery.mockResolvedValue([strictSuspect({ userId: 100 })]);
+    mockGetVotingRateLimitConfig.mockResolvedValue({
+      perMinute: 1,
+      perHour: 1,
+      perDay: 1,
+      autoSmiteAbusers: true,
+    });
     mockAbuseReport.mockRejectedValue(new Error('400 bad request'));
 
     await expect(runAbuseDetectionScan()).resolves.toBeUndefined();
+    expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
+    // 🔴 The WHOLE key, not a substring. `handleLogError`'s second argument becomes the Axiom `name`
+    // an alert would match on, so a free-text sentence there is unalertable — which is what this
+    // used to pass. A `stringContaining` assertion would keep passing if someone put the sentence
+    // back around the key.
     expect(mockHandleLogError).toHaveBeenCalledWith(
       expect.any(Error),
-      expect.stringContaining('failed to file its board report')
+      'new-order-abuse-detection:report-failed',
+      expect.objectContaining({ smited: 1, suspects: 1 })
     );
+  });
+
+  it('logs the scan to Axiom as an AGGREGATE, with no per-account array', async () => {
+    // 🔴 Pinned as the whole `details` key set, not as an absence check for today's field name: a
+    // check that only forbids `suspects` cannot see per-account detail coming back under any other
+    // key, and the failure would be a duplicated disclosure rather than a red test. Both precedents
+    // log run-level counts beside their board post; the per-account half belongs on the board, which
+    // renders it with attribution and reviewed-state that a log line has no way to carry.
+    mockClickhouseQuery.mockResolvedValue([
+      strictSuspect({ userId: 100, totalRatings: 200 }),
+      strictSuspect({ userId: 101, totalRatings: 50 }),
+    ]);
+
+    await runAbuseDetectionScan();
+
+    const scanLog = mockLogToAxiom.mock.calls
+      .map((c: unknown[]) => c[0] as { name?: string; details?: Record<string, unknown> })
+      .find((p) => p?.name === 'new-order-abuse-detection-scan');
+    expect(scanLog, 'the scan must still log its run to Axiom').toBeDefined();
+    expect(Object.keys(scanLog?.details ?? {}).sort()).toEqual(['ratings', 'suspectCount']);
+    expect(scanLog?.details).toMatchObject({ suspectCount: 2, ratings: 250 });
   });
 
   it('posts to no Discord webhook', async () => {

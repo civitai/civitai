@@ -523,9 +523,14 @@ export async function runAbuseDetectionScan() {
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
 
-  // All tunable thresholds live in Redis so the operational values aren't
-  // visible to anyone reading the public source tree. Defaults below are a
-  // first-boot fallback; once ops seeds the config, those take precedence.
+  // All tunable thresholds live in Redis, so the live operational values are not
+  // set from this file. ⚠️ That is a DEPLOYMENT fact, not a secrecy guarantee, and
+  // this comment used to claim the second: this repo is public, the fallbacks
+  // below are literals in it, a checked-in test of the smite path carries live
+  // values, and the observed numbers this scan now publishes on the abuse board
+  // bound the thresholds from above over a few runs. Treat them as operationally
+  // convenient to retune, not as hidden. Defaults below are a first-boot
+  // fallback; once ops seeds the config, those take precedence.
   // Every value is coerced to a finite number before being interpolated into
   // the ClickHouse query because `formatSqlType` passes strings through
   // unquoted — a non-numeric value sneaking into the config blob would
@@ -581,16 +586,15 @@ export async function runAbuseDetectionScan() {
     await logToAxiom({
       type: 'warning',
       name: 'new-order-abuse-detection-scan',
+      // AGGREGATE ONLY. This used to carry a per-account array, which neither precedent does — both
+      // `reaction-withdrawal-detection` and `bot-account-detection` log run-level counts beside their
+      // board post and nothing else. The per-account detail now has a better home: the board renders
+      // all six columns per finding, plus attribution and reviewed-state, which a log line cannot.
+      // Keeping a second copy here duplicated the sensitive half of the payload into a surface with
+      // different retention and no review workflow, to say something the board already says better.
       details: {
         suspectCount: suspects.length,
-        suspects: suspects.map((s) => ({
-          userId: s.userId,
-          totalRatings: s.totalRatings,
-          uniqueRatings: s.uniqueRatings,
-          dominantRating: s.dominantRating,
-          dominantPct: Math.round(s.dominantPct),
-          avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
-        })),
+        ratings: suspects.reduce((sum, s) => sum + s.totalRatings, 0),
       },
       message: `Abuse detection scan found ${suspects.length} suspicious users in the last ${ABUSE_SCAN_WINDOW_HOURS} hours`,
     }).catch(() => null);
@@ -645,10 +649,26 @@ export async function runAbuseDetectionScan() {
   // ran and found nothing", which is a different and necessary claim from the detector having gone
   // quiet — and the counters carry the population it looked at either way.
   //
-  // 🔴 Caught, not propagated. Every smite above has already been written to the database; throwing
-  // here would mark the job failed and invite the scheduler to retry a run whose enforcement half
-  // already happened. The failure is still loud: a network/HTTP failure goes to Axiom through the
-  // client's own `onFailure`, and a contract rejection is logged here by name.
+  // 🔴 RETHROWN WHEN THERE IS NOTHING TO PROTECT, SWALLOWED ONLY WHEN THERE IS.
+  //
+  // This report is the detector's only durable output. On a run that smited nobody — which is the
+  // overwhelming majority of runs, because enforcement here is rare — swallowing a failure means the
+  // run produced NOTHING and still reported success: the job's error counter stays flat, every
+  // success signal is unchanged, and the detector is dark with nothing anywhere to say so. That is
+  // the failure mode this branch exists to make visible, and the unconditional catch it replaces was
+  // paying it on nearly every run to cover a case that nearly never occurs.
+  //
+  // The swallow survives for the one genuinely awkward shape: smites are already written to the
+  // database, so failing the run asks for a retry of work whose enforcement half already happened.
+  // ⚠️ Whether a failed run is retried AT ALL could not be established — the scheduler that calls
+  // `/api/webhooks/run-jobs` lives outside this repo, and the route itself has no retry logic; it
+  // returns 500 and stops. So this branch is a precaution against a retry we have not confirmed
+  // exists, not a response to a measured one. If someone establishes the scheduler does not retry a
+  // 500, the right move is to delete the split and rethrow unconditionally.
+  //
+  // The log key is stable and opaque, in the precedents' style (`bot-account-detection:report-failed`)
+  // rather than the free-text sentence this used to pass: an alert can match a key and cannot match
+  // a sentence.
   try {
     await moderatorApp.abuseReport(
       buildAbuseReport({ suspects, smitedUserIds, startedAt, finishedAt: new Date() })
@@ -658,7 +678,11 @@ export async function runAbuseDetectionScan() {
         `(${smitedUserIds.size} auto-smited)`
     );
   } catch (e) {
-    handleLogError(e as Error, 'new-order abuse detection failed to file its board report');
+    if (smitedUserIds.size === 0) throw e;
+    handleLogError(e as Error, 'new-order-abuse-detection:report-failed', {
+      smited: smitedUserIds.size,
+      suspects: suspects.length,
+    });
   }
 }
 
@@ -666,11 +690,22 @@ const newOrderAbuseDetection = createJob(
   'new-order-abuse-detection',
   '0 23 * * *',
   runAbuseDetectionScan,
-  // 🔴 The only thing standing between a slow run and a duplicate concurrent one. Two runs of this
-  // scan do not merely double the work: each files its own board report, and the receiving table's
-  // idempotency key is `(detector, started_at)` — two runs have different start instants, so the
-  // second APPENDS a near-identical run rather than replacing the first, and a moderator sees the
-  // same cohort twice. Sized well past the query plus a 50-account smite loop.
+  // ⚠️ A WIDENING, NOT AN INTRODUCTION. `createJob` already defaults every job to a 5-minute
+  // `lockExpiration` (see `job.ts`), so this job was never unlocked — an earlier version of this
+  // comment and of the PR description both said it was, and that was wrong.
+  //
+  // Why 10 rather than the inherited 5: it matches the sibling detector that writes the same board,
+  // `reaction-withdrawal-detection`, and nothing more. NO measurement supports either number — this
+  // scan has never been observed running past 5 minutes, so the widening is precautionary and its
+  // size is borrowed, not derived. If a run ever does exceed the lock, the fix is to measure the run
+  // and size it from that, not to widen again by analogy.
+  //
+  // What the lock is worth, which is the part that IS established: the run-jobs route caps the hold
+  // at exactly this value and then releases it while the run continues, so past that point a retry
+  // can start a second concurrent run. Two runs of this scan do not merely double the work — each
+  // files its own board report, and the receiving table's idempotency key is `(detector, started_at)`,
+  // so two different start instants APPEND a near-identical run rather than replacing the first and a
+  // moderator sees the same cohort twice.
   { lockExpiration: 10 * 60 }
 );
 

@@ -21,8 +21,11 @@ import {
  * check. A finding whose `actioned`/`action` pair is half-set is refused by the contract on the
  * PRODUCER's side of the wire, which loses the whole batch — every correctly-built finding beside it
  * included — so the board shows nothing at all rather than showing something wrong. And a threshold
- * leaking into `counters` publishes to a wide audience the values that are deliberately held in
- * Redis so they are not readable from the public source tree.
+ * leaking into `counters` puts a tunable on a page that has no use for one.
+ *
+ * ⚠️ That last guard is about proportionality, NOT secrecy — the observed values on the findings
+ * already bound the thresholds, and the header of `../report` says how. The key set is pinned anyway
+ * so that adding a threshold counter is a decision someone made, not an accident nobody saw.
  */
 
 const suspect = (overrides: Partial<AbuseSuspect> = {}): AbuseSuspect => ({
@@ -250,8 +253,10 @@ describe('buildAbuseReport', () => {
   });
 
   it('publishes no threshold in counters', () => {
-    // 🔴 The scan's tunables live in Redis so they are not readable from the public source tree, and
-    // a counter is a wider and longer-lived disclosure than a log line. Pinned as the WHOLE key set,
+    // 🔴 A counter is a wider and longer-lived disclosure than a log line, and no threshold belongs
+    // on a page with no use for one. ⚠️ This does not make the thresholds unrecoverable — the
+    // observed values on the findings bound them; see the header of `../report`. Pinned as the WHOLE
+    // key set,
     // not as an absence check: a check that only forbids today's threshold names cannot see a new
     // one being added, and the failure would be a leak rather than a red test.
     const report = reportOf([suspect()], new Set([100]));

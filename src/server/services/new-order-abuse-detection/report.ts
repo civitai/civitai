@@ -11,10 +11,27 @@ import type { AbuseReportInput } from '@civitai/moderation';
  * exactly the case the contract's `actioned`/`action` pair exists to express, and exactly the case
  * its `superRefine` refuses to let a producer get half-right.
  *
- * 🔴 THE THRESHOLDS DO NOT COME IN HERE AND MUST NOT. Every tunable this scan uses is held in Redis
- * specifically so it is not readable from the public source tree, and the board has a wider audience
- * than the job's own logs. Everything rendered below is an OBSERVED value off one account's own
- * behaviour — counts, a percentage, a pace — never the number it was compared against.
+ * 🔴 NO THRESHOLD IS AN INPUT TO THIS MODULE AND NONE IS RENDERED AS A FIELD. Everything below is an
+ * OBSERVED value off one account's own behaviour — counts, a percentage, a pace — never the number it
+ * was compared against.
+ *
+ * ⚠️ WHAT THAT BUYS, AND WHAT IT DOES NOT. An earlier version of this comment said the tunables are
+ * held in Redis so they are "not readable from the public source tree", and that the confidence
+ * score "cannot be inverted to recover" one. Both overclaim, so they are corrected here rather than
+ * left to be cited:
+ *
+ *  - The reason text publishes the four values the selection rule compares. The query selects on
+ *    `HAVING totalRatings >= minTotalRatings`, so the SMALLEST `totalRatings` visible across a few
+ *    runs of the board converges on that tunable from above; the smallest dominant share among rows
+ *    reading "Auto-smited by this scan." converges on the smite tunable the same way. Withholding
+ *    the fields does not change that — the row itself is the disclosure.
+ *  - The source tree is not a barrier either: this repo is public, and a checked-in test of the
+ *    smite path already carries live values.
+ *
+ * The withholding is kept anyway, on PROPORTIONALITY rather than secrecy: nothing a moderator does
+ * with this board needs a threshold, so putting one on it is a disclosure that buys the reader
+ * nothing. And the surface this replaced — a moderator Discord channel — carried the same observed
+ * values, so the board is not a widening of what was already published.
  */
 
 /** Stable producer key. Opaque: it groups this detector's runs on the board and namespaces its
@@ -102,8 +119,10 @@ export function renderReason(suspect: AbuseSuspect, smited: boolean): string {
  * an account is here because ONE of several signals fired, so a per-account probability would be
  * invented. What the band does is put the rows a moderator should open first at the top.
  *
- * Deliberately computed from the account's OWN observed values and nothing else — no threshold is an
- * input, so the number cannot be inverted to recover one.
+ * Deliberately computed from the account's OWN observed values and nothing else, so no threshold is
+ * an input to it. ⚠️ That is a fact about THIS FUNCTION, not about the row it ships on: the reason
+ * text on the same finding publishes the values the selection rule compared, and those bound the
+ * thresholds regardless of what this function takes. See the header.
  *
  * 🔴 NOT a function of `actioned`. A smited account scores high because its numbers are extreme, not
  * because it was smited; coupling the two would make the sort order restate the "Acted" column
@@ -179,8 +198,9 @@ export type BuildReportArgs = {
 /**
  * The whole run, as the one report the endpoint will accept.
  *
- * 🔴 NO THRESHOLD GOES IN `counters`. The scan's tunables live in Redis precisely so they are not
- * readable from the public source tree, and a counter is a longer-lived and wider-read disclosure
+ * 🔴 NO THRESHOLD GOES IN `counters` — but not because that keeps one secret. The observed values on
+ * the findings already bound the thresholds (see the header); the reason is that nothing a moderator
+ * does with this board needs a tunable, and a counter is a longer-lived and wider-read disclosure
  * than a log line. The three below are outcomes of this run — how many matched, how many were acted
  * on, how many are waiting — plus the lookback, which is a plain literal in the query already.
  *
