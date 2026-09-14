@@ -93,6 +93,66 @@ const fullBleed = pageSchema?.properties?.fullBleed;
 const description = String(fullBleed?.description ?? '');
 
 /**
+ * Collapse every whitespace run to one space and trim.
+ *
+ * The ONLY edit the whole-string pin below is meant to survive is re-wrapping —
+ * the published schema is a JSON file whose description is one long line, and the
+ * expected copy here is wrapped to fit the editor. Normalising both sides with the
+ * same function is what makes those two spellings the same claim.
+ */
+const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * The published `page.fullBleed` description, VERBATIM.
+ *
+ * 🔴 WHEN THE ARTIFACT UNDER TEST IS PROSE, A GUARD ON WORDS IS WALKABLE BY
+ * REWORDING. This pin replaces a pair of substring checks (`omit it` +
+ * /full-page run host only/i) that were MEASURED to be inert against a
+ * meaning-INVERTING reword: rewriting the opening as "Opt this app INTO the
+ * full-page run host's width cap … renders it as a centred column instead of edge
+ * to edge" and the default sentence as "OMIT IT (or set false) and the host renders
+ * your app edge to edge, with no 1600px cap and no neutral gutter either side" left
+ * every numeric token intact, kept BOTH substrings present, and left this file
+ * 11/11 green — a published description telling every App Block author the exact
+ * opposite of what the host does, with a guard sitting over it reporting nothing.
+ *
+ * 🔴 THE COST IS ACCEPTED DELIBERATELY: a cosmetic reword — fixing a typo,
+ * re-punctuating a clause — now fails this test and has to be paid for by updating
+ * the copy below in the same commit. That is the price of a machine-readable claim
+ * about prose; a guard that only samples words cannot make one.
+ */
+const FULL_BLEED_DESCRIPTION = `
+  Opt this app OUT of the full-page run host's width cap, so /apps/run/<slug> renders it edge
+  to edge instead of as a centred column. Honoured by the full-page run host only; the
+  model-page slot surfaces impose no such cap and ignore this field. OMIT IT (or set false)
+  and the host caps your app at 1600px with a neutral gutter either side — that is the default
+  every app gets, and it is deliberate: an App Block is a cross-origin guest that is handed a
+  viewport and told nothing about the display, and nothing in @civitai/blocks-react gives you
+  a container to lay out in, so an uncapped app on a 2560px monitor renders as a single
+  ~2500px column. WHAT DECLARING IT CHANGES, AND WHAT IT DOES NOT: the cap is INERT below its
+  own width, so this field changes NOTHING at 1280, 1366, 1440 or 1536 (every laptop class),
+  nothing on a tablet, and nothing on a phone in either orientation. It changes wide desktop
+  displays only — it starts to bind on a maximised browser on a 1080p monitor (~1905 CSS px of
+  viewport), where the cap otherwise costs ~150px either side, and on a 2560px display it
+  hands your app the remaining ~960px. FOR MOST APPS IT IS COSMETICALLY INERT, SO CHECK YOUR
+  OWN CSS FIRST: if your app imposes a max-width of its own, that well binds before this cap
+  ever does, and declaring this field changes which background paints the far gutter and
+  nothing else - nothing about your content moves, at any width. Nine of the eleven page apps
+  shipped today cap themselves between 640 and 1100px and are in exactly that position.
+  Declaring it is only worth a review round-trip if your layout is genuinely unbounded. WHEN
+  TO DECLARE IT: when a centred column is actively worse for your surface — an infinite grid,
+  a timeline, a map, a side-by-side compare, a fullscreen player, or a two-pane shell whose
+  fixed sidebar sits beside an unbounded pane. WHEN NOT TO: to look bigger. Your app cannot
+  see how wide the viewer's monitor is; an unbounded line length, or a single form stretched
+  across 2560px, reads worse than the cap does. This is reviewed like every other field in
+  this manifest — a moderator sees it at approve time and may ask what about your surface
+  needs it — and it cannot be changed after approval without shipping a new manifest version
+  through review. It is also unforgeable at runtime: the host reads the approved manifest, and
+  the guest is cross-origin. If you want a DIFFERENT width rather than no width, this field is
+  not that; ask a maintainer.
+`;
+
+/**
  * `APP_PAGE_MAX_WIDTH_PX`, read out of `PageBlockHost.tsx` BY REGEX rather than
  * imported.
  *
@@ -319,11 +379,16 @@ describe('app-block v1 schema ⇄ page.fullBleed drift guard', () => {
     ).toBeGreaterThan(cap);
   });
 
-  it('🔴 the description states the DEFAULT behaviour, which is the half an author skims past', () => {
+  it('🔴 the description is pinned WHOLE — a guard on WORDS is walkable by rewording', () => {
     // An author reading this field is looking for how to turn it on. The sentence
     // that has to survive an edit is the one saying what happens if they do not —
     // because that is the behaviour every existing app has, and a description that
     // only explains the opt-in reads as though the cap were the new thing.
+    //
+    // The two substring checks below are kept AHEAD of the whole-string pin purely
+    // as diagnostics: a whole-string pin goes red on ANY edit and so cannot tell a
+    // reader WHICH claim they broke. Neither is the guard. Both were measured to
+    // survive a meaning-inverting reword — see FULL_BLEED_DESCRIPTION's header.
     expect(
       description.toLowerCase(),
       'the description no longer says what OMITTING the field does. Declaring the opt-in without ' +
@@ -335,6 +400,21 @@ describe('app-block v1 schema ⇄ page.fullBleed drift guard', () => {
         'model-slot surfaces impose no width cap, so an author declaring it for a slot block ' +
         'would be waiting for an effect that cannot arrive.'
     ).toMatch(/full-page run host only/i);
+
+    // THE GUARD. Whitespace-normalised on both sides, so re-wrapping the JSON or the
+    // copy above is free and NOTHING ELSE is.
+    expect(
+      norm(description),
+      'THE PUBLISHED `page.fullBleed` DESCRIPTION CHANGED. This is a DELIBERATE verbatim pin of ' +
+        'the whole string, not a substring sample: the substring checks above were measured to ' +
+        "stay green through a reword that inverted the field's meaning while keeping every " +
+        'number and both phrases, so only a whole-string pin makes this prose a checkable ' +
+        'claim. THE ACCEPTED COST: a purely cosmetic edit — a typo fix, a re-punctuated clause ' +
+        '— fails here too, and is paid by updating FULL_BLEED_DESCRIPTION in the SAME commit. ' +
+        'Before you do that, read the diff as an author would: this text is what every App ' +
+        'Block developer is told about their own layout. (Whitespace is normalised, so ' +
+        're-wrapping either side is not what broke this.)'
+    ).toBe(norm(FULL_BLEED_DESCRIPTION));
   });
 
   it('🔴 CONTROL — the cap extractor and the schema read can both FAIL', () => {
