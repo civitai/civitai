@@ -209,7 +209,7 @@ function ModelCardContent({ data }: Props) {
             {isEarlyAccess ? (
               <Tooltip
                 label="Early Access"
-                position="bottom"
+                position="bottom-start"
                 events={{ hover: true, focus: true, touch: true }}
               >
                 <Badge
@@ -237,7 +237,7 @@ function ModelCardContent({ data }: Props) {
               // rendered above one lands off the top of a first-row card.
               <Tooltip
                 label="Paid"
-                position="bottom"
+                position="bottom-start"
                 events={{ hover: true, focus: true, touch: true }}
               >
                 <Badge
