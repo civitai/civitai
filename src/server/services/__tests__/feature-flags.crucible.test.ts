@@ -151,6 +151,25 @@ describe('crucible surfaces are all gated', () => {
     expect(source).toContain('notFound: true');
   });
 
+  it('gates both crons on the jobs kill switch', () => {
+    // The user-facing flag cannot gate these: a background evaluation has no user, matches no
+    // segment, and reads the base — which is `false` for a segmented flag, so the jobs would
+    // never run. They use the separate base-`true` `crucible-jobs-enabled` switch.
+    for (const job of ['finalize-crucibles', 'sync-crucible-scores']) {
+      const source = read(`src/server/jobs/${job}.ts`);
+      expect(source).toContain('FLIPT_FEATURE_FLAGS.CRUCIBLE_JOBS_ENABLED');
+      expect(source).toMatch(/if \(!\(await isFlipt\(/);
+    }
+  });
+
+  it('keeps the two switches distinct', () => {
+    // One flag for both would be unkillable in one direction or unrunnable in the other: the
+    // crons must keep paying out crucibles already in flight when the feature is merely hidden.
+    const enumSource = read('src/server/flipt/client.ts');
+    expect(enumSource).toContain("CRUCIBLE_JOBS_ENABLED = 'crucible-jobs-enabled'");
+    expect(enumSource).not.toContain("= 'crucible',");
+  });
+
   it('gates every procedure on the crucible router', () => {
     const source = read('src/server/routers/crucible.router.ts');
     const procedures = source.match(/^\s{2}\w+: (public|guarded|protected|moderator)Procedure/gm) ?? [];
