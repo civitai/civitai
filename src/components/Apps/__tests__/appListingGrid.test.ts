@@ -54,10 +54,15 @@ describe('LISTING_GRID_SPAN — the legacy breakpoint spans the narrow ladder is
   test('base / sm / md are UNCHANGED (1 / 2 / 3 columns)', () => {
     // ⚠️ These spans are NOT rail-gated, and an earlier revision of this comment said
     // they were ("nothing below `lg` renders the rail, so nothing below `lg` had a
-    // reason to move"). That rationale is refuted by this file's own cost table below:
-    // `LISTING_GRID_SPAN` is a global constant on GRID width, applied to every viewer,
-    // and the rail is only one of the things that can consume width. A viewer below
-    // 1300px has no rail and is still governed by these spans. They are unchanged here
+    // reason to move"). `LISTING_GRID_SPAN` is keyed on MANTINE VIEWPORT BREAKPOINTS and
+    // applies to every viewer; it is `LISTING_GRID_COLUMN_STEPS`, derived from it, that
+    // is keyed on grid width. Either way the rail is only one of the things that can
+    // consume width, and a viewer below 1300px has no rail while still being governed by
+    // these spans. The refuting evidence is the cost table in the MODULE —
+    // `src/components/Apps/appListingGrid.ts` — whose 1210 / 1280 / 1299 rows are marked
+    // "NO rail" and still move 4 → 3. (An earlier revision of this note cited "this
+    // file's own cost table below"; the table below is at viewports 1300+, i.e. all
+    // rail-open, so it cannot refute a rail-gating claim.) These spans are unchanged here
     // because the re-tune deliberately scoped itself to `lg`/`xl`, not because anything
     // structurally exempts the narrow breakpoints.
     expect(LISTING_GRID_SPAN.base).toBe(12);
@@ -107,11 +112,18 @@ describe('🔴 the column LADDER — grid width → column count', () => {
    * threshold, on it, and comfortably inside the band. A fixture that sits exactly on a
    * threshold cannot see an off-by-one in the wrong direction.
    *
-   * 🔴 THE ROW WITH THE MOST DISCRIMINATING POWER IS 1376 — it is the `xl` low end, the
-   * safe middle of the desktop range, and the first row that would silently change if
-   * the narrow half of the ladder were ever floor-governed rather than breakpoint-
-   * governed. The rows that move under that mutation are 960 / 1100 / 1167 / 1168 /
-   * 1376; prune those last.
+   * 🔴 SEVEN ROWS CARRY THE DISCRIMINATING POWER — 736 / 850 / 960 / 1100 / 1167 / 1168 /
+   * 1376. Those are exactly the rows that change if the narrow half of the ladder were
+   * ever floor-governed rather than breakpoint-governed, and they are the ones to prune
+   * LAST. Measured, not reasoned: the mutation was applied (rung placement replaced with
+   * `minContentWidthForColumns(columns)`) and those seven went red.
+   *
+   * ⚠️ An earlier revision of this header named only 960 / 1100 / 1167 / 1168 / 1376 —
+   * the five rows the THREE-column rung governs — and so pointed a pruner at 736 and 850
+   * as safe band-filler. They are not: under floor governance the TWO-column rung moves
+   * 736 → 936, so both drop `2 → 1`. They are this table's only witnesses to that rung
+   * moving. (The revision before THAT named 1888 and 2100, which cannot fail at all; both
+   * errors are the same shape, in opposite directions.)
    *
    * ⚠️ 1888 and 2100 read THREE COLUMNS EITHER WAY and are therefore NOT the load-
    * bearing rows — an earlier revision of this header named them alongside 1376 as "the
@@ -208,8 +220,12 @@ describe('🔴 the column LADDER — grid width → column count', () => {
     expect([...widths].sort((a, b) => a - b)).toEqual(widths);
     const columns = LISTING_GRID_COLUMN_STEPS.map((s) => s.columns);
     expect([...columns].sort((a, b) => a - b)).toEqual(columns);
-    // No redundant rung — `lg` and `xl` are both THREE columns (span 4 of 12) since the
-    // rail re-tune, so they must collapse to a single rung. (This said "four columns"
+    // No redundant rung. 🔴 SINCE THE RE-TUNE THE DEDUP FIRES TWICE, NOT ONCE: `md`, `lg`
+    // and `xl` are ALL three columns (span 4 of 12), so `lg` and `xl` BOTH collapse into
+    // `md`'s 960 rung and the narrow half is decided entirely by `base` / `sm` / `md`.
+    // Saying only that "`lg` and `xl` collapse to a single rung" understates it and
+    // leaves a reader expecting `lg` to own a rung it no longer has — the module records
+    // the same correction at `src/components/Apps/appListingGrid.ts`. (This said "four columns"
     // until the re-tune landed; it was correct at `origin/main` and stale after.)
     expect(new Set(columns).size).toBe(columns.length);
   });

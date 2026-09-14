@@ -117,6 +117,26 @@ export function AppsPageLayout({
   const { collapsed, toggle } = useAppsRail();
   const subnavBottom = useSubnavBottom();
   const [drawerOpened, drawer] = useDisclosure(false);
+  /**
+   * 🔴 HOISTED SO THE EFFECT BELOW CAN DEPEND ON A PLAIN FUNCTION, NOT A MEMBER.
+   * `useDisclosure` returns a FRESH OBJECT LITERAL every render, and `toggle`'s identity
+   * moves with `opened`, so depending on `drawer` re-runs that effect on every render of
+   * this layout — which `useSubnavBottom` triggers on every scroll. Nothing leaked (the
+   * cleanup is correct), but it cost a `removeEventListener` + `matchMedia()` +
+   * `addEventListener` per frame while the drawer was open.
+   *
+   * `close` is the one member that IS stable: Mantine defines it as
+   * `useCallback(…, [onClose])` and `useDisclosure(false)` passes no handlers, so
+   * `onClose` is permanently `undefined`. It is also an arrow closure that never reads
+   * `this`, so calling it unbound is safe.
+   *
+   * Depending on this binding rather than on `drawer.close` keeps
+   * `react-hooks/exhaustive-deps` ARMED on that effect. The member form needs an
+   * `eslint-disable` — the rule reads `drawer.close()` as a method call and demands the
+   * receiver — and a disable there would also silence any genuinely missing dependency a
+   * later edit introduces. Verified with ESLint 8.57.1: clean here, no directive needed.
+   */
+  const closeDrawer = drawer.close;
 
   /**
    * 🔴 CLOSE THE DRAWER WHEN THE RAIL TAKES OVER. The rail/drawer swap is a CSS media
@@ -136,34 +156,19 @@ export function AppsPageLayout({
     if (!drawerOpened || typeof window === 'undefined' || !window.matchMedia) return;
     const mql = window.matchMedia(`(min-width: ${APPS_RAIL_MIN_VIEWPORT}px)`);
     if (mql.matches) {
-      drawer.close();
+      closeDrawer();
       return;
     }
     const onChange = (event: MediaQueryListEvent) => {
-      if (event.matches) drawer.close();
+      if (event.matches) closeDrawer();
     };
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);
-    // 🔴 `drawer.close`, NOT `drawer`. Mantine's `useDisclosure` returns a FRESH OBJECT
-    // LITERAL on every render, and `toggle`'s identity also moves with `opened` — so
-    // `[drawerOpened, drawer]` re-runs this on every render of the layout, which
-    // `useSubnavBottom` triggers on every scroll. Nothing leaked (the cleanup is correct)
-    // but it was a `removeEventListener` + `matchMedia()` + `addEventListener` per frame
-    // while the drawer was open. `close` is the one member that IS stable
-    // (`useCallback([onClose])`), and it is the only one this effect uses.
-    //
-    // 🔴 THE DISABLE BELOW IS LOAD-BEARING — DO NOT "FIX" THE WARNING BY ADDING
-    // `drawer`. `react-hooks/exhaustive-deps` sees `drawer.close()` as a METHOD CALL and
-    // demands the receiver rather than the member. That demand is wrong here: the
-    // closure has no `this`, `close` is destructured-by-access and used as a plain
-    // function, and `useDisclosure(false)` passes no handlers, so `onClose` is
-    // `undefined` and `close`'s `useCallback([onClose])` identity is stable for the life
-    // of the component. Taking the rule's advice re-introduces exactly the per-frame
-    // `removeEventListener` + `matchMedia()` + `addEventListener` churn described above,
-    // and does so silently — nothing fails, the page just does that work on every
-    // scroll-driven render while the drawer is open.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drawerOpened, drawer.close]);
+    // 🔴 `closeDrawer`, NOT `drawer` — see the hoist's docstring at its declaration for
+    // why depending on the whole object re-runs this on every scroll. The binding form is
+    // deliberate: it keeps `react-hooks/exhaustive-deps` armed on this effect, where
+    // `drawer.close` would need a disable that also hides future missing dependencies.
+  }, [drawerOpened, closeDrawer]);
 
   /**
    * 🔴 THE `< 2 SECTIONS ⇒ NO NAV` COLLAPSE, CARRIED OVER FROM THE TAB STRIP AND

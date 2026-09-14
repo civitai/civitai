@@ -350,9 +350,21 @@ describe('the store grid renders the column ladder it declares', () => {
         expect(w, `fixture ${w} sits exactly on the ${rung} rung`).not.toBe(rung);
       }
     }
-    // 🔴 THE COLLISION GUARDS MUST BOTH BE PRESENT. 1888 alone is the reassuring half —
-    // a floor-governed narrow half renders four there too — so a table that kept only
-    // 1888 would read as covering this and would not.
+    // 🔴 THE COLLISION GUARDS MUST BOTH BE PRESENT. 1376 is the half that discriminates;
+    // 1888 is kept for band coverage, not as a witness.
+    //
+    // ⚠️ This note used to read "1888 alone is the reassuring half — a floor-governed
+    // narrow half renders four there too". That was TRUE at `origin/main`, where the
+    // four-column rung was floor-derived at `minContentWidthForColumns(4) = 1888`, and it
+    // was STALED by this PR's own ladder re-tune, which moved that rung to the
+    // chrome-derived 2242. Under the mutation today 1888 renders THREE, i.e. it does not
+    // move at all and cannot witness anything. Nothing pinned the claim, so a green suite
+    // stayed silent about it.
+    //
+    // This file's own `CASES` header already states the corrected version — "1888 is the
+    // reassuring one; the three-column band below 1412 is what catches it" — so the two
+    // now agree. Note the browser tier is NOT blind here: `CASES` carries 1000 and 1376,
+    // and both go red under a floor-governed narrow half.
     expect(widths, 'the old xl-low-end collision guard was dropped').toContain(1376);
     expect(widths, 'the retired-1920-container collision guard was dropped').toContain(1888);
   });

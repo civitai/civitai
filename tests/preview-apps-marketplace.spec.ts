@@ -50,10 +50,12 @@ import { trpcQuery } from './preview-trpc';
  *    rather than a heading on it.
  *  - Marketplace page (`/apps/index.tsx`) renders the apps navigation as a LEFT RAIL of
  *    links, whose rows come from `appsSections` in `~/components/Apps/apps-sections`.
- *    The row this spec keys on is `{ path: '/apps', label: 'Marketplace' }` — the only
- *    one whose `visible` predicate is unconditional for a store-eligible viewer. It is
- *    NOT necessarily the first row, so the assertion below selects it BY NAME and the
- *    order is irrelevant to it.
+ *    The row this spec keys on is `{ id: 'marketplace', path: '', label: 'Marketplace' }`
+ *    — `path` is the URL segment UNDER `/apps`, so the marketplace row's is the empty
+ *    string, not `'/apps'`. It is the only row whose `visible` predicate is unconditional
+ *    for a store-eligible viewer (`(_s, c) => c.canSeeStore`; every other row is
+ *    summary-conditional). It is NOT necessarily the first row, so the assertion below
+ *    selects it BY NAME and the order is irrelevant to it.
  *
  *    🔴 THE RAIL IS VIEWPORT-GATED, so this spec asserts BOTH nav forms: the drawer
  *    trigger at this config's default 1280×720 (below `APPS_RAIL_MIN_VIEWPORT`, 1300),
@@ -63,10 +65,17 @@ import { trpcQuery } from './preview-trpc';
  *    ⚠️ This docblock described an `AppsSubNav` TABS BAR sourced from `SUB_NAV_LINKS`
  *    until the rail landed. Both are gone — `AppsSubNav.tsx` was DELETED by this PR and
  *    `SUB_NAV_LINKS` no longer exists — and the stale text is what made the assertion
- *    below look correct while it queried a `role="tab"` that nothing renders. It also
- *    claimed a search `TextInput` (placeholder "Search by name or block id"); that was
- *    already stale before this PR (absent at `origin/main`, removed upstream in #2767),
- *    and is dropped here rather than left to rot further.
+ *    below look correct while it queried a `role="tab"` that nothing renders.
+ *
+ *    The page ALSO renders a search control, which this spec does not assert:
+ *    `AppListingsMarketplaceBody.tsx` renders `<TextInput aria-label="Search"
+ *    placeholder="Search by name">` inside the `apps-store-control-row` group. ⚠️ An
+ *    earlier revision of this docblock gave the placeholder as "Search by name or block
+ *    id" (stale — only the placeholder text changed), and a later one deleted the whole
+ *    claim as "removed upstream in #2767". BOTH were wrong: the control exists at
+ *    `origin/main` and at this PR's head, and #2767 does not touch that file. The
+ *    deletion was derived from `git log -S`, which reports commits where an occurrence
+ *    COUNT changed — a rename is indistinguishable from a removal in that output.
  *
  *    The page renders no `<Title>Civitai App Blocks</Title>`: the app-blocks nav
  *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title on
