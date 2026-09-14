@@ -304,10 +304,26 @@ export async function runBotAccountDetection(
 
   // 🔴 WHICH HALF OF `asset-staging` FIRED — the same decomposition, for the same reason. That
   // heuristic answers two questions about one source (how many staged uploads, and how concentrated
-  // in time), and `heuristic:asset-staging:fired` cannot say which of them is earning its place. The
-  // specific thing these are here to settle is whether the same-second half ever fires on an account
-  // the volume half did not already carry; if it never does, it is a boundary doing nothing and
-  // should be removed rather than left looking like evidence.
+  // in time), and `heuristic:asset-staging:fired` cannot say which of them is earning its place.
+  //
+  // 🔴 THIS COMMENT USED TO NAME A QUESTION THESE COUNTERS CAN NO LONGER ANSWER, AND THE CORRECTION
+  // MATTERS BECAUSE THE OLD SENTENCE READ AS COVERAGE. It said they were here to settle "whether the
+  // same-second half ever fires on an account the volume half did not already carry". Since the
+  // firing point moved to two that has a known answer — NEVER — and it is known by arithmetic
+  // rather than by measurement: a same-second group is a subset of the staged rows, so a burst of
+  // two implies a count of at least two, and both halves now share boundaries (see `BURST_ONE_AT`).
+  // `fired_burst > 0 && fired_volume == 0` is unreachable, so a run reporting it is a defect in the
+  // evidence fold, not a finding about accounts. Leaving the old sentence would have had someone
+  // watch a counter for a signal that cannot arrive and read its silence as an answer.
+  //
+  // WHAT THEY CAN STILL SETTLE, which is why they are kept: `fired_burst` is the population of
+  // accounts whose staged uploads arrived in one batch, and the question is whether THAT population
+  // is actioned at a different rate than the accounts carried by volume alone. That is a grading
+  // question over outcomes, answered by joining these counters to moderation results — not by
+  // either counter on its own. If the answer is "no different", the burst arm has no reason to
+  // exist and the honest edit is to delete it; if it separates, that is the evidence for giving it
+  // a tighter boundary than the volume half again, which is the only thing that would make it
+  // affect a score.
   //
   // Counted over EVERY scored member, matching `fired`'s own population. They may sum to MORE than
   // `fired` — an account can be both, and attributing it to whichever won a `>` comparison would
