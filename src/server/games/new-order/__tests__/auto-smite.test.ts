@@ -239,9 +239,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
     await runAbuseDetectionScan();
 
     expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
-    expect(mockSmitePlayer).toHaveBeenCalledWith(
-      expect.objectContaining({ playerId: 500 })
-    );
+    expect(mockSmitePlayer).toHaveBeenCalledWith(expect.objectContaining({ playerId: 500 }));
   });
 
   it('honors custom smiteMaxUniqueRatings (allows 2-value spam as bot signal)', async () => {

@@ -160,7 +160,9 @@ export function renderSummary(suspects: AbuseSuspect[], smitedCount: number): st
     `${suspects.length.toLocaleString()} account(s) matched the rating-pattern scan over the last ` +
     `${ABUSE_SCAN_WINDOW_HOURS}h, between them ${ratings.toLocaleString()} rating(s). ` +
     `${smitedCount.toLocaleString()} were auto-smited by the scan; ` +
-    `${(suspects.length - smitedCount).toLocaleString()} were filed for review with no action taken.`
+    `${(
+      suspects.length - smitedCount
+    ).toLocaleString()} were filed for review with no action taken.`
   );
 }
 
