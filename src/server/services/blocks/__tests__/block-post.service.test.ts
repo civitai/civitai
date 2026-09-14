@@ -559,28 +559,116 @@ describe('an off-allowlist output REFUSES the index that named it — never subs
     );
   });
 
-  it('a workflow whose outputs are ALL off-allowlist refuses, not silently empties', async () => {
-    const allEvil = {
-      status: 'succeeded',
-      tags: [`app-block:${APP_ID}`],
-      steps: [
-        {
-          $type: 'textToImage',
-          output: {
-            images: [{ url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 }],
+  it('an OMITTED imageIndexes SKIPS the blanked slot and publishes the rest', async () => {
+    // 🔴 THE ASYMMETRY, AND WHY IT IS NOT A HOLE IN THE RULE ABOVE. The refusal
+    // exists because silently skipping an index the block NAMED would publish a
+    // different image than the one named. An omitted `imageIndexes` names nothing
+    // — it is documented as "every AVAILABLE output", and the indexes are invented
+    // by the expansion in `resolveWorkflowOutputSelection`, not by the block. So
+    // there is nothing to substitute against, and refusing the WHOLE post because
+    // one output came back on an unexpected host would fail an app that never
+    // asked for that output. Fails closed either way (the blanked slot is never
+    // published) and the preview resolves identically, so the consent thumbnails
+    // already exclude it — this is not a consent question.
+    const out = await resolveBlockPostSources({
+      sources: [{ kind: 'workflow', workflowId: 'wf_1' }],
+      actor: ACTOR,
+      getWorkflow: vi.fn().mockResolvedValue({
+        status: 'succeeded',
+        tags: [`app-block:${APP_ID}`],
+        steps: [
+          {
+            $type: 'textToImage',
+            output: {
+              images: [
+                { url: 'https://evil.example/a.jpg', available: true, width: 1, height: 1 },
+                {
+                  url: 'https://orchestration.civitai.com/v2/blobs/b.jpg',
+                  available: true,
+                  width: 2,
+                  height: 3,
+                },
+                {
+                  url: 'https://orchestration.civitai.com/v2/blobs/c.jpg',
+                  available: true,
+                  width: 5,
+                  height: 7,
+                },
+              ],
+            },
           },
-        },
-      ],
-    };
-    await expectRejection(
-      resolveBlockPostSources({
-        sources: [{ kind: 'workflow', workflowId: 'wf_1' }],
-        actor: ACTOR,
-        getWorkflow: vi.fn().mockResolvedValue(allEvil),
+        ],
       }),
-      'BAD_REQUEST',
-      'workflow has no available outputs to post'
-    );
+    });
+
+    // Dimensions are pairwise distinct and distinct from the blanked slot's, so
+    // this cannot pass by resolving the wrong outputs or by duplicating one.
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ width: 2, height: 3 });
+    expect(out[1]).toMatchObject({ width: 5, height: 7 });
+  });
+
+  /**
+   * 🔴 THE ALL-BLANKED GUARD OWNS A REFUSAL MESSAGE NOTHING ELSE CAN PRODUCE, AND
+   * THESE TWO CASES ARE WHAT MAKE THAT TESTED RATHER THAN ASSUMED.
+   *
+   * Measured before they existed: deleting `|| outputs.every((o) => o == null)`
+   * from `resolveBlockPostSources` left the whole file GREEN, because the mutant
+   * died to the downstream per-slot `if (!o)` guard, which emits the IDENTICAL
+   * message — the redundant-guard shape where a mutant dies to the OTHER guard. It
+   * is no longer even redundant: with an omitted `imageIndexes` the per-slot guard
+   * now SKIPS rather than refuses, so without the clause these two requests fall
+   * through to messages that point an app author at the wrong problem entirely.
+   */
+  describe('a workflow whose outputs are ALL off-allowlist refuses as a WORKFLOW problem', () => {
+    function allEvil(n = 1) {
+      return {
+        status: 'succeeded',
+        tags: [`app-block:${APP_ID}`],
+        steps: [
+          {
+            $type: 'textToImage',
+            output: {
+              images: Array.from({ length: n }, (_, i) => ({
+                url: `https://evil.example/${i}.jpg`,
+                available: true,
+                width: 1,
+                height: 1,
+              })),
+            },
+          },
+        ],
+      };
+    }
+
+    it('with NO indexes named — not the generic "a post needs at least one image"', async () => {
+      // Without the clause the skip arm drops every slot, this source contributes
+      // nothing, and the refusal comes from the end-of-function emptiness check.
+      await expectRejection(
+        resolveBlockPostSources({
+          sources: [{ kind: 'workflow', workflowId: 'wf_1' }],
+          actor: ACTOR,
+          getWorkflow: vi.fn().mockResolvedValue(allEvil()),
+        }),
+        'BAD_REQUEST',
+        'workflow has no available outputs to post'
+      );
+    });
+
+    it('with an OUT-OF-RANGE index named — not "no valid output indexes to post"', async () => {
+      // Without the clause `resolveWorkflowOutputSelection` returns nothing for an
+      // in-range-index-free request and the selection check refuses first, telling
+      // the author their INDEXES are wrong when the workflow is the problem.
+      await expectRejection(
+        resolveBlockPostSources({
+          sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [9] }],
+          actor: ACTOR,
+          getWorkflow: vi.fn().mockResolvedValue(allEvil(2)),
+        }),
+        'BAD_REQUEST',
+        'workflow has no available outputs to post'
+      );
+    });
   });
 });
 
@@ -750,6 +838,44 @@ describe('writeBlockPost', () => {
       'CONFLICT',
       'an image is no longer available to post'
     );
+  });
+
+  it('attaches images by UPDATE, AFTER the Post row exists — `post_published_at_change` depends on it', async () => {
+    // 🔴 PINNING AN INCIDENTAL DEPENDENCY, NOT A STYLE PREFERENCE. A third `Post`
+    // trigger — `post_published_at_change`, `AFTER UPDATE OF "publishedAt"` —
+    // also never fires on this path, and it is deliberately NOT re-issued because
+    // its effect already happens by accident: `image_sort_at_before` (`BEFORE
+    // INSERT OR UPDATE ON "Image"`) fires on the adopt, and `set_image_sort_at()`
+    // reads the already-written `publishedAt` to compute the same
+    // `GREATEST(publishedAt, scannedAt, createdAt)`; Prisma's `@updatedAt` on
+    // `Image` supplies the bump Meili's incremental sync selects on.
+    //
+    // That holds ONLY while images are attached by an UPDATE issued after the Post
+    // row exists. Creating the rows already carrying `postId` would silently stop
+    // authoring `sortAt`/`updatedAt`, with no test and no error — so both halves
+    // are asserted here.
+    await writeBlockPost({
+      actor: ACTOR,
+      materialisedImageIds: [101],
+      title: null,
+      detail: null,
+      tagIds: [],
+      tagNames: [],
+      gallery: null,
+    });
+
+    expect(dbMock.dbWrite.post.create).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.post.create.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.image.updateMany.mock.invocationCallOrder[0]
+    );
+    // …and by UPDATE, never by creating a row that already carries `postId`.
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.createMany).not.toHaveBeenCalled();
+    // ⚠️ WHAT THIS DOES NOT PIN: `set_image_sort_at()`'s own SQL. That runs in
+    // Postgres and no tier in this repo executes it, so the SQL half of the
+    // coverage claim is unverified here and is documented as such in the
+    // `applyBlockPostPublishEffects` trigger ledger.
   });
 
   it('runs the create and the adopt inside ONE transaction', async () => {

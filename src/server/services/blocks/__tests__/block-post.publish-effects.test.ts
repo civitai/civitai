@@ -1,27 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { applyBlockPostPublishEffects } from '~/server/services/blocks/block-post.service';
+import {
+  applyBlockPostPublishEffects,
+  writeBlockPost,
+} from '~/server/services/blocks/block-post.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 /**
- * `applyBlockPostPublishEffects` is the hand re-issue of everything a NATIVE post
- * publish fires that this path does not — the controller's side effects AND the
- * two `Post` database triggers, both of which are declared `AFTER UPDATE OF
- * "publishedAt"` while `writeBlockPost` writes `publishedAt` inside an INSERT.
+ * The publish-time side effects of an app-created post, across BOTH the places
+ * they live: the `JobQueue(Post, UpdateNsfwLevel)` row issued INSIDE
+ * `writeBlockPost`'s transaction, and `applyBlockPostPublishEffects` — the
+ * best-effort, post-commit re-issue of everything a NATIVE post publish fires that
+ * this path does not.
  *
- * 🔴 WHY THIS FILE EXISTS AS A SEPARATE SUITE. Every other test of this function
- * mocked it WHOLESALE (`blocks.router.createPostFromApp.test.ts` replaces it with
- * a `vi.fn()` and asserts only that a rejection does not fail the post), so the
- * SET of effects it issues was unverified prose in a docblock. An omission from
+ * 🔴 WHY THIS FILE EXISTS AS A SEPARATE SUITE. Every other test of the effects
+ * function mocked it WHOLESALE (`blocks.router.createPostFromApp.test.ts` replaces
+ * it with a `vi.fn()` and asserts only that a rejection does not fail the post), so
+ * the SET of effects it issues was unverified prose in a docblock. An omission from
  * that set is invisible to a mock — which is exactly how the missing nsfw-level
- * enqueue shipped, and why the first describe below drives the SYMPTOM rather
- * than asserting that a function was called.
+ * enqueue shipped, and why the first describe below drives the SYMPTOM rather than
+ * asserting that a function was called.
+ *
+ * 🔴 AND WHY THAT DESCRIBE NOW DRIVES `writeBlockPost`. The router calls the
+ * effects function as `applyBlockPostPublishEffects({…}).catch(log)`, AFTER the
+ * post has committed — so an enqueue issued from there is separable from the
+ * publish, and one transient statement failure produces a committed, permanently
+ * invisible post. A test that asserted only "enqueueJobs was called" cannot see
+ * that: the call happens in both designs. The cases below distinguish them by
+ * driving the symptom with the post-commit path REMOVED, and then with it FAILING.
  */
 
 const effect = vi.hoisted(() => ({
   ledger: [] as string[],
-  enqueueJobs: vi.fn(),
   preventReplicationLag: vi.fn(),
   userPostCountRefresh: vi.fn(),
   userImageVideoCountRefresh: vi.fn(),
@@ -41,9 +52,6 @@ function tap(name: string, fn: { mock: unknown }) {
   };
 }
 
-vi.mock('~/server/services/job-queue.service', () => ({
-  enqueueJobs: (...a: unknown[]) => tap('enqueueJobs', effect.enqueueJobs)(...a),
-}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: (...a: unknown[]) =>
     tap('preventReplicationLag', effect.preventReplicationLag)(...a),
@@ -103,6 +111,13 @@ const IP = '203.0.113.7';
 const NSFW_BIT_A = 4;
 const NSFW_BIT_B = 8;
 
+const ACTOR = {
+  userId: USER_ID,
+  appId: 'appblk-alpha',
+  appBlockId: 'apb_alpha',
+  browsingLevel: 1,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   effect.ledger.length = 0;
@@ -110,7 +125,51 @@ beforeEach(() => {
   // this project; without this a later test reads an earlier one's calls.
   dbMock.dbWrite.$executeRaw.mockClear?.();
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  dbMock.dbWrite.post.create.mockClear?.();
+  dbMock.dbWrite.post.create.mockResolvedValue({ id: POST_ID });
+  dbMock.dbWrite.image.updateMany.mockClear?.();
+  dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 });
+  // 🔴 `vi.clearAllMocks()` clears CALLS but keeps IMPLEMENTATIONS, so a
+  // `mockRejectedValue` armed by one case survives into every later one and makes
+  // them fail for a reason that has nothing to do with what they assert. Re-arm
+  // every mock this file ever rejects, here, rather than relying on each case to
+  // undo itself.
+  effect.preventReplicationLag.mockResolvedValue(undefined);
 });
+
+function publishPost() {
+  return writeBlockPost({
+    actor: ACTOR,
+    materialisedImageIds: [IMAGE_A, IMAGE_B],
+    title: null,
+    detail: null,
+    tagIds: [],
+    tagNames: [],
+    gallery: null,
+  });
+}
+
+/**
+ * Read the `JobQueue` rows a run actually issued, by parsing the raw statements
+ * rather than by trusting a helper's arguments.
+ *
+ * The shape is transcribed from `create_job_queue_record`
+ * (`nsfw_level_update_triggers.sql`) — `INSERT INTO "JobQueue" ("entityId",
+ * "entityType", "type") VALUES (…) ON CONFLICT DO NOTHING` — so this reads what
+ * Postgres would have stored, from whichever client issued it. That is the point:
+ * it cannot tell the difference between "issued inside the transaction" and
+ * "issued after it", which is why the ARRANGEMENT of each case below, not this
+ * helper, is what discriminates the two designs.
+ */
+function queuedJobsFrom(calls: unknown[][]) {
+  return calls
+    .filter((call) => (call[0] as string[]).join('?').includes('INSERT INTO "JobQueue"'))
+    .map((call) => ({
+      entityId: call[1] as number,
+      entityType: call[2] as EntityType,
+      type: call[3] as JobQueueType,
+    }));
+}
 
 function run(over: Partial<Parameters<typeof applyBlockPostPublishEffects>[0]> = {}) {
   return applyBlockPostPublishEffects({
@@ -172,39 +231,47 @@ function appearsInFeed(post: { nsfwLevel: number }, browsingLevel: number) {
   return (post.nsfwLevel & browsingLevel) !== 0;
 }
 
+function freshWorld() {
+  return {
+    post: { id: POST_ID, publishedAt: new Date(Date.now() - 60_000), nsfwLevel: 0 },
+    images: [
+      { postId: POST_ID, nsfwLevel: NSFW_BIT_A },
+      { postId: POST_ID, nsfwLevel: NSFW_BIT_B },
+    ],
+  };
+}
+
 describe('an all-`published` post ends up VISIBLE to a non-owner', () => {
   /**
    * 🔴 THE SYMPTOM, NOT THE CALL. Asserting "we called `enqueueJobs`" would pass
-   * against a wrong enqueue (wrong entity type, wrong job type, wrong id) and
-   * says nothing about whether the post is readable. This drives the real chain
-   * instead: effects → whatever landed in `JobQueue` → the cron's `bit_or` →
-   * the two read predicates.
+   * against a wrong enqueue (wrong entity type, wrong job type, wrong id), says
+   * nothing about whether the post is readable, and — the reason this describe was
+   * rewritten — passes IDENTICALLY whether the enqueue is atomic with the publish
+   * or issued afterwards from a function whose failures are swallowed. This drives
+   * the real chain instead: publish → whatever landed in `JobQueue` → the cron's
+   * `bit_or` → the two read predicates.
    *
-   * The arm driven is ALL-`published`, which is the broken one: it is the only
-   * arm with no accidental rescue. A post containing a `fresh` output recovers
-   * because that output's later scan fires the IMAGE trigger, whose job `bit_or`s
-   * over every image of the post; an all-`published` post's images were already
+   * The arm driven is ALL-`published`, which is the broken one: it is the only arm
+   * with no accidental rescue. A post containing a `fresh` output recovers because
+   * that output's later scan fires the IMAGE trigger, whose job `bit_or`s over
+   * every image of the post; an all-`published` post's images were already
    * terminally `Scanned` before adoption, so no image level ever changes again.
    */
   it('computes a real nsfwLevel from the adopted images, so it is not a permanent 404', async () => {
-    const world = {
-      post: { id: POST_ID, publishedAt: new Date(Date.now() - 60_000), nsfwLevel: 0 },
-      images: [
-        { postId: POST_ID, nsfwLevel: NSFW_BIT_A },
-        { postId: POST_ID, nsfwLevel: NSFW_BIT_B },
-      ],
-    };
+    const world = freshWorld();
 
-    // Pre-state: the post as `writeBlockPost` leaves it — published, level 0.
+    // Pre-state: the post as the INSERT leaves it — published, level 0.
     expect(world.post.nsfwLevel).toBe(0);
     expect(nonOwnerCanOpenPost(world.post)).toBe(false);
 
-    await run();
+    // 🔴 THE PUBLISH ALONE. `applyBlockPostPublishEffects` is NEVER CALLED in this
+    // case — that is the discriminator. An enqueue issued from the post-commit
+    // effects path leaves NOTHING in `JobQueue` here, so the post stays at level 0
+    // and the two predicates below stay false; only an enqueue that is part of the
+    // publishing transaction survives this arrangement.
+    await publishPost();
 
-    const queued = effect.enqueueJobs.mock.calls.flatMap(
-      (call) => call[0] as Array<{ entityId: number; entityType: EntityType; type: JobQueueType }>
-    );
-    runUpdateNsfwLevelCron(queued, world);
+    runUpdateNsfwLevelCron(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls), world);
 
     // The post now carries the bit_or of its images — 4 | 8 === 12, a value
     // equal to NEITHER operand, so returning one input instead of the or dies.
@@ -213,6 +280,91 @@ describe('an all-`published` post ends up VISIBLE to a non-owner', () => {
     // …which is what makes it readable at all. Both consequences, named.
     expect(nonOwnerCanOpenPost(world.post)).toBe(true);
     expect(appearsInFeed(world.post, NSFW_BIT_A)).toBe(true);
+  });
+
+  it('…and still does when EVERY post-commit statement fails and the router swallows it', async () => {
+    // 🔴 THE ORIGINAL 🔴 SYMPTOM, REACHED FROM A TRANSIENT BLIP. The router calls
+    // the effects function as `applyBlockPostPublishEffects({…}).catch(log)`, so a
+    // connection reset, pool exhaustion or statement timeout on ONE post-commit
+    // statement is swallowed with no rethrow and no retry. If the nsfw-level
+    // enqueue lives there, that blip yields a committed, permanently-404 post —
+    // exactly the defect this arc exists to close — and nothing reconciles it
+    // (`temp-set-missing-nsfw-level.ts` covers ModelVersion/Model only).
+    const world = freshWorld();
+    await publishPost();
+
+    // Everything the publish issued is already durable; capture it BEFORE arming
+    // the failure, so what follows cannot contribute.
+    const queued = queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls);
+
+    // Now break the post-commit path completely — at the DB client, so it takes
+    // out any statement the effects function issues, not one named helper.
+    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('connection reset by peer'));
+    effect.preventReplicationLag.mockRejectedValue(new Error('connection reset by peer'));
+    let swallowed: unknown = null;
+    await run().catch((error) => {
+      swallowed = error;
+    });
+    // POSITIVE CONTROL on the arrangement: the effects path really did blow up. A
+    // version of this test where it quietly succeeded would prove nothing.
+    expect(swallowed).toBeInstanceOf(Error);
+
+    runUpdateNsfwLevelCron(queued, world);
+    expect(world.post.nsfwLevel).toBe(NSFW_BIT_A | NSFW_BIT_B);
+    expect(nonOwnerCanOpenPost(world.post)).toBe(true);
+  });
+
+  it('queues the post for nsfw-level recompute with the exact entity and job type', async () => {
+    // The enqueue's ARGUMENTS, separately from the symptom cases above: those
+    // would still pass if the entity type were wrong in a way the consumer model
+    // tolerated, so the shape is pinned here too.
+    await publishPost();
+    expect(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls)).toEqual([
+      { entityId: POST_ID, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+    ]);
+    // And the statement is the trigger's own, `ON CONFLICT DO NOTHING` included —
+    // a retry of the whole publish must not fail on a duplicate row.
+    const sql = (dbMock.dbWrite.$executeRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql.replace(/\s+/g, ' ')).toContain('ON CONFLICT DO NOTHING');
+  });
+
+  it('issues the enqueue on the TRANSACTION client, so it cannot commit without the post', async () => {
+    // 🔴 THE STRUCTURAL HALF, AND THE ONE A MUTATION CAN SEE. The two cases above
+    // observe an effect; this one observes WHERE it was issued, which is what makes
+    // the atomicity claim rather than an ordering coincidence. `$transaction` here
+    // hands the callback its OWN client, so a statement issued on the global
+    // `dbWrite` — i.e. moved back outside the transaction — lands on a different
+    // spy and this fails.
+    const txExecuteRaw = vi.fn().mockResolvedValue(1);
+    const txClient = {
+      $executeRaw: txExecuteRaw,
+      post: { create: vi.fn().mockResolvedValue({ id: POST_ID }) },
+      image: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    };
+    // `…Once`, not `mockImplementation`: the shared db mock's `$transaction`
+    // default (run the callback against `dbWrite`) is what every other case in
+    // this file relies on, and `mockReset()` would delete it rather than restore it.
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (fn: unknown) =>
+      (fn as (tx: unknown) => unknown)(txClient)
+    );
+
+    await publishPost();
+    expect(queuedJobsFrom(txExecuteRaw.mock.calls)).toEqual([
+      { entityId: POST_ID, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+    ]);
+    // NEGATIVE CONTROL: nothing reached the non-transactional client.
+    expect(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls)).toEqual([]);
+  });
+
+  it('rolls the enqueue back with the post when the adopt fails — neither is durable', async () => {
+    // The other half of inseparability. A row that changed underneath us makes the
+    // adopt count come back short, the transaction throws, and the publish leaves
+    // NO Post row — so it must leave no queued job either. Under the real client
+    // the rollback is Postgres's; what this pins is that the statement is on the
+    // path that rolls back, by showing it never runs once the adopt has thrown.
+    dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 0 });
+    await expect(publishPost()).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls)).toEqual([]);
   });
 
   it('seeds the `PostMetric(AllTime)` row with an ageGroup, which the trigger would have', async () => {
@@ -251,15 +403,23 @@ describe('an all-`published` post ends up VISIBLE to a non-owner', () => {
 /**
  * 🔴 AN ASSERTED LEDGER OF THE EXACT EFFECT SET — IT MUST FAIL WHEN THE SET GROWS
  * *OR* SHRINKS. A "was it called" test only catches a shrink, and it was the
- * absence of a grow-side ledger that let the two trigger re-issues stay missing:
+ * absence of a grow-side ledger that let the trigger re-issues stay missing:
  * nothing anywhere stated what the complete set was, so nothing could notice one
- * was not in it. `toEqual` on the whole ordered array is what pins both
- * directions; adding an effect without updating this list is a failing test, by
- * design, because the docblock enumeration has to be re-read when it changes.
+ * was not in it. `toEqual` on the whole ordered array is what pins both directions.
+ *
+ * ⚠️ ITS SCOPE IS EXACTLY THE MOCKED MODULES, WHICH IS NARROWER THAN "EVERY
+ * EFFECT" — stated plainly because an over-wide reading would make this list look
+ * like coverage it does not provide. The ledger records a call only when it goes
+ * through one of the seven `vi.mock`ed modules above, so an effect issued as a RAW
+ * statement on `dbWrite`, or through a module this file does not mock, is INVISIBLE
+ * to it. The `PostMetric` insert is the standing example: it is a `$executeRaw` and
+ * appears nowhere below — it is pinned separately, by the whole-statement `toEqual`
+ * in the case above. So: adding an effect that routes through a mocked module fails
+ * this list by design; adding any other kind needs its own assertion, and adding
+ * one with NEITHER is the gap this comment exists to keep visible.
  */
 describe('the effect ledger', () => {
   const WITH_GALLERY = [
-    'enqueueJobs',
     'preventReplicationLag',
     'preventReplicationLag',
     'userPostCountCache.refresh',
@@ -290,14 +450,11 @@ describe('the effect ledger', () => {
     expect(effect.ledger).toEqual(WITH_GALLERY.filter((e) => e !== 'queueImageSearchIndexUpdate'));
   });
 
-  it('queues the post for nsfw-level recompute with the exact entity and job type', async () => {
-    // The enqueue's ARGUMENTS, separately from the symptom test above: the
-    // symptom test would still pass if the entity type were wrong in a way the
-    // consumer model tolerated, so the shape is pinned here too.
+  it('issues NO JobQueue row of its own — that one is the publishing transaction’s', async () => {
+    // The grow-side guard for the boundary this arc moved. An enqueue re-added
+    // here would be separable from the publish again, which is the whole defect.
     await run();
-    expect(effect.enqueueJobs).toHaveBeenCalledWith([
-      { entityId: POST_ID, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
-    ]);
+    expect(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls)).toEqual([]);
   });
 
   it('passes the reward arguments the native call sites pass', async () => {

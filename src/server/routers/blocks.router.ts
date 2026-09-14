@@ -4728,14 +4728,26 @@ export const blocksRouter = router({
         //
         // A `fresh` output contributes NOTHING and that is not a gap being papered
         // over: it is unscanned by construction, so it has no level yet and no
-        // expression here could invent one. The native predicate then reads an
-        // all-fresh post as `nsfw: true` (`getIsSafeBrowsingLevel(0)` is false by
-        // design — 0 means unrated, not safe), i.e. it errs conservative, which is
-        // the correct direction for the value it replaces.
-        const postNsfwLevel = resolved.reduce(
-          (acc, item) => (item.kind === 'published' ? acc | item.nsfwLevel : acc),
-          0
-        );
+        // expression here could invent one.
+        //
+        // 🔴 SO ANY FRESH OUTPUT FORCES THE UNRATED VERDICT, RATHER THAN BEING
+        // OMITTED FROM THE `bit_or`. A plain reduce is right for an ALL-fresh post
+        // (it yields 0, and `getIsSafeBrowsingLevel(0)` is false by design — 0
+        // means UNRATED, not safe — so it errs conservative) and WRONG for a MIXED
+        // one: a post of one PG `published` image plus one fresh output would
+        // reduce to the PG bit alone and be recorded `nsfw: false` PERMANENTLY,
+        // even after that output scans X and `Post.nsfwLevel` becomes 9. This row
+        // is written once and never revisited, so a permissive value here is not
+        // eventually corrected the way `Post.nsfwLevel` is. Treating an unscanned
+        // member as unrating the whole post makes both arms err in the same,
+        // conservative direction.
+        const hasUnscannedOutput = resolved.some((item) => item.kind === 'workflow');
+        const postNsfwLevel = hasUnscannedOutput
+          ? 0
+          : resolved.reduce(
+              (acc, item) => (item.kind === 'published' ? acc | item.nsfwLevel : acc),
+              0
+            );
         const nsfw = !getIsSafeBrowsingLevel(postNsfwLevel);
         await ctx.track
           ?.post({ type: 'Create', nsfw, postId: created.postId, tags: created.tagNames })

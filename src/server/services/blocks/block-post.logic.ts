@@ -141,8 +141,20 @@ export function validateBlockPostText(input: {
  * it; `buildCreatePostConsentCopy` re-sanitizes at the render point as well,
  * because a doctrine this load-bearing should not rest on one layer.
  *
- * It costs nothing on the lookup side: `Tag.name` holds no control or format
- * characters, so a name carrying them could only ever have been dropped.
+ * ⚠️ ITS LOOKUP-SIDE COST IS AN UNVERIFIED EMPIRICAL ASSUMPTION, NOT A FACT THIS
+ * REPO CAN SETTLE. The assumption is that no `Tag.name` row contains a `\p{Cf}`
+ * character, so stripping them can only ever remove names that would have been
+ * dropped anyway. Nothing in the tree proves it — `Tag.name` has no CHECK
+ * constraint and no application-level normaliser that would guarantee it — and
+ * `\p{Cf}` is wider than the bidi/zero-width padding this guard is aimed at: it
+ * also contains U+200D ZERO WIDTH JOINER and U+200C ZERO WIDTH NON-JOINER, which
+ * are LOAD-BEARING inside emoji sequences and in several scripts (Persian,
+ * Devanagari). If any row's name does carry one, that tag moves silently from
+ * RESOLVED to DROPPED — a tag stops being applied and the name shows up in the
+ * consent dialog's dropped list instead. That is a degradation, not a security
+ * hole (the display guard above is the reason this exists and it still holds), but
+ * it is a real behaviour change and it should be settled against production data —
+ * `SELECT count(*) FROM "Tag" WHERE name ~ '[\p{Cf}]'` — rather than assumed here.
  */
 export function normalizeBlockPostTagNames(tags: unknown): string[] {
   if (!Array.isArray(tags)) return [];

@@ -569,10 +569,28 @@ export async function resolveBlockPostSources(input: {
         workflowId: source.workflowId,
         getWorkflow: input.getWorkflow,
       });
+      // 🔴 DID THE BLOCK NAME INDEXES, OR ASK FOR "EVERYTHING"? The two cases get
+      // DIFFERENT treatment of a blanked slot below, and this is the only place
+      // the distinction is still available — `resolveWorkflowOutputSelection`
+      // expands an absent `imageIndexes` into `[0..n-1]`, after which a
+      // block-named index and a server-invented one are indistinguishable.
+      const namedIndexes = source.imageIndexes != null;
+
       // `outputs` is index-aligned with what the block saw and carries `null`
       // where the output host is off-allowlist. "No outputs" means no USABLE
       // slot, not an empty array — an all-blanked workflow must refuse here
       // rather than reach the selection step with a non-zero length.
+      //
+      // 🔴 THE SECOND CLAUSE IS NOT REDUNDANT WITH THE PER-SLOT GUARD BELOW, AND
+      // THE DISTINCTION IS PINNED BY TEST. It owns the two cases that guard cannot
+      // reach: (a) an all-blanked workflow with NO named indexes, where the skip
+      // arm below drops every slot and the request would otherwise fall through to
+      // the generic `'a post needs at least one image'` at the end of this
+      // function; (b) an all-blanked workflow with an OUT-OF-RANGE named index,
+      // where `resolveWorkflowOutputSelection` returns nothing and the request
+      // would otherwise refuse as `'no valid output indexes to post'`. Both
+      // replacement messages point an app author at the wrong problem — a
+      // malformed request rather than an unusable workflow.
       if (outputs.length === 0 || outputs.every((o) => o == null)) {
         badRequest('workflow has no available outputs to post');
       }
@@ -587,13 +605,26 @@ export async function resolveBlockPostSources(input: {
       if (selection.length === 0) badRequest('no valid output indexes to post');
       for (const idx of selection) {
         const o = outputs[idx];
-        // REFUSE a blanked slot; never fall through to the next one. Silently
-        // skipping it would publish a DIFFERENT image than the index named — the
-        // same class of substitution the index-aligned return exists to prevent,
-        // and the same reason an unresolvable `published` id is refused rather
-        // than skipped. Uniform message with the workflow-level refusal above so
-        // the reply cannot be used to probe which output host was rejected.
-        if (!o) badRequest('workflow has no available outputs to post');
+        if (!o) {
+          // 🔴 REFUSE ONLY WHAT THE BLOCK ACTUALLY NAMED. An EXPLICIT index landing
+          // on a blanked slot must refuse and never fall through to the next one:
+          // skipping it would publish a DIFFERENT image than the index named — the
+          // same class of substitution the index-aligned return exists to prevent,
+          // and the same reason an unresolvable `published` id is refused rather
+          // than skipped. Uniform message with the workflow-level refusal above so
+          // the reply cannot be used to probe which output host was rejected.
+          if (namedIndexes) badRequest('workflow has no available outputs to post');
+          // ⚠️ BUT AN OMITTED `imageIndexes` NAMED NOTHING, so that rationale does
+          // not apply: it is documented as "every AVAILABLE output", and the
+          // indexes here were invented by the expansion, not by the block. There is
+          // no index to substitute against and nothing the viewer was shown that
+          // this could contradict — the preview resolves identically, so the
+          // consent thumbnails already exclude the blanked slot. Refusing the whole
+          // post because ONE of a workflow's outputs came back on an unexpected
+          // host would fail an app that never asked for that output, which is a
+          // regression against the behaviour before the slots were blanked.
+          continue;
+        }
         out.push({ kind: 'workflow', url: o.url, width: o.width, height: o.height });
       }
     } else {
@@ -773,6 +804,17 @@ async function adoptImagesIntoPost(
  *
  * `publishedAt` is written INSIDE the create, so the post is never briefly
  * visible as an empty draft.
+ *
+ * 🔴 AND THE NSFW-LEVEL ENQUEUE IS PART OF THAT ATOMICITY, NOT A POST-COMMIT
+ * EFFECT. See the `tx.$executeRaw` below: the trigger it stands in for
+ * (`post_nsfw_level_change`) fires INSIDE the publishing transaction, so its
+ * `JobQueue` row commits with `publishedAt` or not at all. Issuing the same insert
+ * from `applyBlockPostPublishEffects` — which runs AFTER this transaction has
+ * committed and whose every failure the router swallows into a log line — would
+ * make a transient blip on ONE statement (connection reset, pool exhaustion,
+ * statement timeout) produce a committed, permanently invisible post with nothing
+ * to retry it. That is exactly the 🔴 symptom the enqueue exists to prevent, so it
+ * must not be reachable from the mechanism that prevents it.
  */
 export async function writeBlockPost(input: {
   actor: BlockPostActor;
@@ -818,6 +860,49 @@ export async function writeBlockPost(input: {
       startIndex: 0,
     });
 
+    // 🔴 THE `post_nsfw_level_change` RE-ISSUE, INSIDE THE TRANSACTION BECAUSE THE
+    // TRIGGER IT REPLACES IS. That trigger is `AFTER UPDATE OF "publishedAt" ON
+    // "Post"` and `writeBlockPost` writes `publishedAt` inside an INSERT, so it
+    // never fires here — and `updatePostNsfwLevels` (`nsfwLevels.service.ts`) is
+    // the ONLY writer of `Post.nsfwLevel`, reachable only from the
+    // `update-nsfw-levels` cron, which reads exactly these `JobQueue` rows. Without
+    // this row the post keeps its schema default `nsfwLevel = 0` FOREVER, and both
+    // non-owner reads gate on it: `getPostDetail` admits a non-owner only on
+    // `{ publishedAt: { lt: now }, nsfwLevel: { not: 0 } }`, and `getPostsInfinite`
+    // masks on `(p."nsfwLevel" & browsingLevel) != 0`. So the post is a permanent
+    // 404 for everyone but its author, absent from the profile Posts tab and every
+    // feed, while its IMAGES stay visible in galleries — which reads as a CDN bug.
+    // There is no reconciliation sweep for it (`temp-set-missing-nsfw-level.ts`
+    // covers `ModelVersion`/`Model` only) and no alert.
+    //
+    // ⚠️ ONLY THE ALL-`published` ARM IS BROKEN WITHOUT IT, and that is the arm
+    // this feature exists for. A post containing any `fresh` output recovers by
+    // accident: that output's later scan fires the IMAGE trigger, whose job
+    // `bit_or`s over EVERY image of the post. An all-`published` post has no such
+    // rescue — its images were terminally `Scanned` before adoption, so no image
+    // level ever changes again.
+    //
+    // WHY A RAW INSERT AND NOT `enqueueJobs`: that helper is bound to the global
+    // `dbWrite` client, so calling it here would open a SECOND connection outside
+    // this transaction and re-open the exact non-atomicity this placement removes.
+    // The statement is byte-for-byte the one `create_job_queue_record` runs
+    // (`nsfw_level_update_triggers.sql`), `ON CONFLICT DO NOTHING` included, so a
+    // retry is a no-op and the parity with the trigger is exact.
+    //
+    // ENQUEUEING rather than calling `updatePostNsfwLevels` directly is also what
+    // the trigger does, and it matters: the cron runs `getNsfwLevelRelatedEntities`
+    // over the queued post, walking it to the `modelVersionId` it is attached to
+    // and rolling THAT up too (and its model, in the next batch). A direct call
+    // sets the post row and silently skips that cascade — precisely on the
+    // gallery-attach path this feature also ships. (Collection rollup is discovered
+    // by the same walk but is currently disabled in `job-queue.ts`, so it is not
+    // part of the claim.)
+    await tx.$executeRaw`
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type")
+      VALUES (${created.id}::integer, ${EntityType.Post}::"EntityType", ${JobQueueType.UpdateNsfwLevel}::"JobQueueType")
+      ON CONFLICT DO NOTHING
+    `;
+
     return created;
   });
 
@@ -850,18 +935,59 @@ export async function writeBlockPost(input: {
  * that this path is a real Buzz-spending surface, which is why the rate buckets
  * and the self-dealing guard exist rather than being belt-and-braces.
  *
- * 🔴 AND THE SECOND REASON, WHICH IS NOT ABOUT `post.controller.ts` AT ALL: TWO
- * DATABASE TRIGGERS ALSO DO NOT FIRE ON THIS PATH. Both `post_nsfw_level_change`
- * and `publish_post_metrics_trigger` are declared `AFTER UPDATE OF "publishedAt"
- * ON "Post"` — INSERT is in NEITHER event list — and `writeBlockPost` writes
+ * 🔴 AND THE SECOND REASON, WHICH IS NOT ABOUT `post.controller.ts` AT ALL: SOME
+ * `Post` DATABASE TRIGGERS DO NOT FIRE ON THIS PATH. `writeBlockPost` writes
  * `publishedAt` INSIDE the `post.create` (deliberately, so the post is never
- * briefly a visible empty draft). A native publish is an UPDATE, so it fires
- * both; this path is an INSERT, so it fires neither, and re-issuing them is the
- * first thing this function does. See the two call sites below for the
- * consequence of each.
+ * briefly a visible empty draft), so a native publish is an UPDATE while this path
+ * is an INSERT.
  *
- * What fires, and the native line it mirrors:
- *   - `JobQueue(Post, UpdateNsfwLevel)` — the `post_nsfw_level_change` trigger.
+ * ### THE COMPLETE TRIGGER LEDGER ON `"Post"` — FOUR, not two
+ *
+ * Enumerated from `packages/civitai-db-schema/prisma/`, migrations INCLUDED (three
+ * live in `programmability/`, one only in a migration, and the migration one is
+ * the one that behaves DIFFERENTLY — so a sweep of `programmability/` alone gets
+ * this wrong). A fifth appearing here is a defect: re-derive rather than trusting
+ * this list.
+ *
+ *   1. `post_nsfw_level_change`      `AFTER UPDATE OF "publishedAt" OR DELETE`
+ *      → DOES NOT FIRE. Re-issued — but NOT here: it is issued INSIDE
+ *        `writeBlockPost`'s transaction, because the trigger it stands in for
+ *        commits atomically with `publishedAt` and this function does not (see
+ *        the BEST-EFFORT note at the bottom). Read that call site for the symptom.
+ *   2. `publish_post_metrics_trigger` `AFTER UPDATE OF "publishedAt"`
+ *      → DOES NOT FIRE. Re-issued below (the seed `PostMetric(AllTime)` row).
+ *   3. `post_published_at_change`     `AFTER UPDATE OF "publishedAt"`,
+ *      `WHEN (NEW."publishedAt" IS DISTINCT FROM OLD."publishedAt")`
+ *      → DOES NOT FIRE, and is deliberately NOT re-issued, because its EFFECT is
+ *        already produced by a different trigger on a different table. It runs
+ *        `update_image_sort_at()`, which restamps `sortAt = GREATEST(publishedAt,
+ *        scannedAt, createdAt)` and bumps `updatedAt` on every image of the post.
+ *        On this path `adoptImagesIntoPost`'s `tx.image.updateMany` runs AFTER
+ *        `post.create` in the SAME transaction, so `image_sort_at_before`
+ *        (`BEFORE INSERT OR UPDATE ON "Image"`) fires per row and
+ *        `set_image_sort_at()` reads the already-written `publishedAt` and computes
+ *        the identical `GREATEST(...)`; Prisma's `@updatedAt` on `Image` supplies
+ *        the `updatedAt` bump that Meili's incremental image sync selects on
+ *        (`WHERE updatedAt > lastUpdate`).
+ *        🔴 THAT COVERAGE IS INCIDENTAL AND FRAGILE. It holds only while images
+ *        are attached by an UPDATE issued after the Post row exists. Creating the
+ *        `Image` rows already carrying `postId`, or adding any path that writes
+ *        `Post.publishedAt` without also writing its images, silently stops
+ *        authoring `sortAt`/`updatedAt` and the post's images never re-sort or
+ *        re-sync. The ORDERING half is pinned by a test in
+ *        `block-post.service.test.ts` ("attaches images by UPDATE, after the Post
+ *        row exists"); the `set_image_sort_at()` SQL itself is NOT pinned from
+ *        this repo's test tier, so treat that half as unverified here.
+ *   4. `trg_moderation_post`          `AFTER UPDATE OF "title", "detail" OR INSERT`,
+ *      `WHEN (NEW."title" IS NOT NULL OR NEW."detail" IS NOT NULL)`
+ *      → **FIRES.** INSERT *is* in this one's event list, so the block-supplied
+ *        copy this path writes IS queued for moderation
+ *        (`create_job_queue_moderation('Post')`) with no help from us. Named
+ *        because the completeness claim above is only useful if it also says which
+ *        triggers need nothing — and because assuming this one was broken too
+ *        would have meant re-issuing a moderation job the DB already queued.
+ *
+ * What fires HERE, and the native line it mirrors:
  *   - the seed `PostMetric(AllTime)` row — the `publish_post_metrics` trigger.
  *   - `firstDailyPostReward`      — 25 blue Buzz, 25/day cap, double-deduped.
  *   - `imagePostedToModelReward`  — ONLY when a gallery target was attached; 50
@@ -888,9 +1014,17 @@ export async function writeBlockPost(input: {
  * `track.post` calls — those need the request-scoped tracker and are issued by
  * the ROUTER, which is where `ctx` lives.
  *
- * BEST-EFFORT BY CONSTRUCTION: the post is already committed when this runs, so
- * a failure here must never turn a successful publish into an error the block
- * sees. Each effect is awaited but the whole block is caught by the caller.
+ * 🔴 BEST-EFFORT BY CONSTRUCTION, AND THAT IS WHY THE NSFW-LEVEL ENQUEUE IS NOT
+ * HERE. The post is already committed when this runs, so a failure must never turn
+ * a successful publish into an error the block sees — the router calls this as
+ * `applyBlockPostPublishEffects({…}).catch((error) => logToAxiom({…}))`. Every
+ * effect below is therefore DROPPABLE: losing a cache bust, a reward or a search-
+ * index enqueue degrades the post but leaves it readable. An effect that decides
+ * whether the post is VISIBLE AT ALL does not belong in a function with those
+ * semantics, because one transient statement failure would then produce a
+ * committed, permanently-404 post with nothing to retry it. Anything added here
+ * must survive being silently dropped; if it cannot, it belongs in
+ * `writeBlockPost`'s transaction instead.
  */
 export async function applyBlockPostPublishEffects(input: {
   postId: number;
@@ -908,49 +1042,16 @@ export async function applyBlockPostPublishEffects(input: {
   const { bustCachesForPosts } = await import('~/server/services/post.service');
   const { queueImageSearchIndexUpdate } = await import('~/server/services/image.service');
   const { SearchIndexUpdateQueueAction } = await import('~/server/common/enums');
-  const { enqueueJobs } = await import('~/server/services/job-queue.service');
 
-  // ── TRIGGER RE-ISSUE, FIRST AND NOT LAST. Everything below this pair is a
-  // cache/reward/index effect whose loss degrades the post; these two decide
-  // whether the post is VISIBLE AT ALL, so they must not sit behind a Redis call
-  // that can throw and abandon the rest of the function.
+  // ── TRIGGER RE-ISSUE, FIRST AND NOT LAST: everything below it is a
+  // cache/reward/index effect whose loss merely degrades the post, and this one
+  // must not sit behind a Redis call that can throw and abandon the rest of the
+  // function. The OTHER trigger re-issue — `post_nsfw_level_change`'s `JobQueue`
+  // row — is deliberately NOT here; it lives inside `writeBlockPost`'s
+  // transaction, because it decides whether the post is visible at all and this
+  // function's failures are swallowed by the router. See both docblocks.
 
-  // 🔴 `post_nsfw_level_change` NEVER FIRES HERE, AND NOTHING ELSE ON THIS PATH
-  // WRITES `Post.nsfwLevel` — `nsfwLevels.service.ts`'s `updatePostNsfwLevels` is
-  // its only writer and is reached only from the `job-queue` cron. Without this
-  // enqueue the post keeps its schema default `nsfwLevel = 0` forever, and BOTH
-  // non-owner reads gate on it: `getPostDetail` admits a non-owner only on
-  // `{ publishedAt: { lt: now }, nsfwLevel: { not: 0 } }`, and `getPostsInfinite`
-  // masks on `(p."nsfwLevel" & browsingLevel) != 0`. So the post is a permanent
-  // 404 for everyone but its author and is absent from the profile Posts tab and
-  // every feed — while its IMAGES stay visible in galleries, because the image
-  // search index gates on the post's `publishedAt` and not on its level. That
-  // combination reads as a CDN/cache bug, which is why it is called out here.
-  //
-  // ⚠️ ONLY THE ALL-`published` ARM IS BROKEN WITHOUT THIS, and that is the arm
-  // this feature exists for. A post containing any `fresh` output recovers by
-  // accident: that output's scan fires the IMAGE trigger, whose job `bit_or`s
-  // over EVERY image of the post. An all-`published` post has no such rescue,
-  // because its images were already terminally `Scanned` before they were
-  // adopted, so no image level ever changes again.
-  //
-  // ENQUEUE rather than calling `updatePostNsfwLevels` directly, for two reasons.
-  // (a) It is exactly what the trigger does — `create_job_queue_record(NEW.id,
-  // 'Post', 'UpdateNsfwLevel')` — so the CONSUMER behaves natively: the cron runs
-  // `getNsfwLevelRelatedEntities` over the queued post, which walks it to the
-  // `modelVersionId` it is attached to and rolls THAT up too (and its model, in
-  // the next batch). A direct call sets the post row and silently skips that
-  // cascade, which matters precisely on the gallery-attach path this feature also
-  // ships. (Collection rollup is discovered by the same walk but is currently
-  // disabled in `job-queue.ts`, so it is not part of the claim.) (b)
-  // `model3d.service.ts` already
-  // uses this enqueue for the same situation — a row CREATED rather than updated.
-  // `enqueueJobs` is `ON CONFLICT DO NOTHING`, so a retry is a no-op.
-  await enqueueJobs([
-    { entityId: input.postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
-  ]);
-
-  // 🔴 SAME ROOT CAUSE, SMALLER BLAST RADIUS: `publish_post_metrics_trigger` is
+  // 🔴 `publish_post_metrics_trigger` is also `AFTER UPDATE OF "publishedAt"`,
   // also `AFTER UPDATE OF "publishedAt"`, so no seed `PostMetric` row is created
   // either. The COUNTS recover on their own (the metrics job upserts them), but
   // `ageGroup` is written ONLY by this trigger, and a NULL one drops the post out

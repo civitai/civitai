@@ -539,6 +539,32 @@ describe('content + gallery re-derivation on the WRITE path', () => {
     );
   });
 
+  it('flags a MIXED post nsfw — one unscanned output unrates the whole post', async () => {
+    // 🔴 THE ARM THAT ERRED PERMISSIVE. The derivation used to be a plain reduce
+    // over `published` members only, so this post — one PG image plus one fresh
+    // output — reduced to the PG bit alone and was recorded `nsfw: false`
+    // PERMANENTLY, even after the fresh output scans X and `Post.nsfwLevel`
+    // becomes 9. Unlike `Post.nsfwLevel`, this row is written once and never
+    // revisited, so nothing corrects it. A fresh member now forces the same
+    // unrated verdict the all-fresh arm already produced, which is the
+    // conservative direction and makes both arms agree.
+    const c = ctx();
+    mockResolveBlockPostSources.mockResolvedValue([
+      // NsfwLevel.PG (1) — squarely inside the SFW flag on its own.
+      { kind: 'published', imageId: 501, url: 'u', width: 1, height: 1, nsfwLevel: 1 },
+      { kind: 'workflow', url: 'https://orchestration.civitai.com/a.jpg', width: 1, height: 1 },
+    ]);
+    mockPersistImage.mockResolvedValue({ imageId: 777 });
+    await caller(c).createPostFromApp({ ...INPUT, confirmedImageCount: 2 });
+
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Create', nsfw: true })
+    );
+    expect(c.track.post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Publish', nsfw: true })
+    );
+  });
+
   it('flags an ALL-FRESH post nsfw — an unscanned output has no level to derive from', async () => {
     // Not a gap being papered over: a `fresh` workflow output is unscanned by
     // construction, so no expression here could invent a level. The native
