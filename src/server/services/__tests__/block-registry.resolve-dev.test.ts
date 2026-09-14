@@ -34,6 +34,15 @@ function ownRow(status: string) {
   };
 }
 
+/**
+ * An OWNED AppBlock row whose manifest carries an arbitrary extra shape — the
+ * owned dev projection reads `manifest.page`, which `ownRow` does not declare at
+ * all, so a `page.*` claim needs a row that can express one.
+ */
+function ownRowWithManifest(manifest: Record<string, unknown>) {
+  return { ...ownRow('approved'), manifest: { name: 'My App', scopes: [], ...manifest } };
+}
+
 describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -162,6 +171,148 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     const res = await BlockRegistry.resolveDevPageBlockForAuthor('brand-new', 555);
     expect(res?.ephemeralSource).toBe('brand-new');
     expect(res?.bootSkeleton).toBe(false);
+  });
+
+  // ── `page.fullBleed` ON BOTH DEV-TUNNEL PROJECTIONS ──────────────────────
+  //
+  // 🔴 THESE TWO READS SHIPPED WITH NO TEST AT ALL, WHICH IS THE SAME HOLE
+  // `bootSkeleton` (d3–d5 above) was dug out of, one field later. The dev tunnel
+  // is where an author checks their OWN app before approval, so a projection
+  // hardcoded to `false` here makes the one surface that exists to show them the
+  // feature the one surface that cannot — they declare `page.fullBleed`, open
+  // /apps/dev/<blockId>, see the capped column and conclude the field does
+  // nothing. Nothing else in the suite reaches either read: the approved/run
+  // projection is covered by `block-registry.resolve-page.test.ts` and the review
+  // mint by `publish-request.mintReviewToken.test.ts`, and neither executes this
+  // function.
+  //
+  // EVERY CASE BELOW IS TWO-POINT ON PURPOSE. A single `declares true → true`
+  // assertion is equally satisfied by a projection hardcoded to `true`, so each
+  // test drives a declaring AND a non-declaring manifest through the SAME call and
+  // asserts the results DIFFER. The depth arm matters for the same reason it does
+  // on the run path: `bootSkeleton` sits at the manifest ROOT while `fullBleed`
+  // sits under `page`, so a read at the wrong depth is the plausible mistake and it
+  // fails silently (always `false`).
+
+  it('(fb1) OWNED path: `page.fullBleed` travels, and an app that declares nothing stays capped', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      ownRowWithManifest({ page: { path: '/', title: 'Bleed', fullBleed: true } })
+    );
+    const declared = await BlockRegistry.resolveDevPageBlockForAuthor('my-app', 555);
+    expect(
+      declared?.fullBleed,
+      'an OWNED app declaring `page.fullBleed: true` resolves to `fullBleed: false` on the dev ' +
+        'tunnel. The author checking their own app before approval is shown the capped column ' +
+        'the run page will NOT give them.'
+    ).toBe(true);
+
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      ownRowWithManifest({ page: { path: '/', title: 'Bleed' } })
+    );
+    const undeclared = await BlockRegistry.resolveDevPageBlockForAuthor('my-app', 555);
+    expect(
+      undeclared?.fullBleed,
+      'an OWNED app that declares NOTHING resolves to `fullBleed: true` on the dev tunnel — the ' +
+        'projection is hardcoded or inverted, and the cap is no longer the default.'
+    ).toBe(false);
+
+    expect(
+      declared?.fullBleed === undeclared?.fullBleed,
+      'both arms resolved to the same value, so the manifest is not what moved it'
+    ).toBe(false);
+  });
+
+  it('(fb2) OWNED path: strict `=== true`, and the field is read at `page.` depth only', async () => {
+    // Publisher JSON. The approve-time validator rejects a non-boolean, but the
+    // projection must not depend on that having run — an older snapshot predates it.
+    for (const value of ['true', 1, {}, 'yes', [], 'false']) {
+      mockDbRead.appBlock.findFirst.mockResolvedValue(
+        ownRowWithManifest({ page: { path: '/', title: 'x', fullBleed: value } })
+      );
+      const res = await BlockRegistry.resolveDevPageBlockForAuthor('my-app', 555);
+      expect(res?.fullBleed, `page.fullBleed=${JSON.stringify(value)}`).toBe(false);
+    }
+    // DEPTH. `bootSkeleton` is a manifest-ROOT boolean and `fullBleed` is not;
+    // accepting both spellings would make the documented field ambiguous and would
+    // let a `page`-less manifest opt out of the cap.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(ownRowWithManifest({ fullBleed: true }));
+    const topLevel = await BlockRegistry.resolveDevPageBlockForAuthor('my-app', 555);
+    expect(
+      topLevel?.fullBleed,
+      'a TOP-LEVEL `fullBleed` enabled full bleed on the dev tunnel. The documented field is ' +
+        '`page.fullBleed`; a second accepted spelling here would disagree with the run page and ' +
+        'with the approve-time validator.'
+    ).toBe(false);
+  });
+
+  it('(fb3) EPHEMERAL path: the PENDING manifest’s `page.fullBleed` travels, and its absence does not', async () => {
+    const pending = (page: unknown) => {
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+      mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        submittedByUserId: 555,
+        manifest: { scopes: [], page },
+      });
+    };
+
+    pending({ path: '/', title: 'Bleed', fullBleed: true });
+    const declared = await BlockRegistry.resolveDevPageBlockForAuthor('my-pending', 555);
+    expect(declared?.ephemeralSource).toBe('pending');
+    expect(
+      declared?.fullBleed,
+      'an owned-PENDING app declaring `page.fullBleed: true` resolves to false on the dev ' +
+        'tunnel. This is the pre-approval surface, i.e. the only place the author can see the ' +
+        'declaration they just wrote take effect.'
+    ).toBe(true);
+
+    pending({ path: '/', title: 'Bleed' });
+    const undeclared = await BlockRegistry.resolveDevPageBlockForAuthor('my-pending', 555);
+    expect(
+      undeclared?.fullBleed,
+      'an owned-PENDING app that declares nothing resolved to full bleed — `ephemeralFullBleed` ' +
+        'is hardcoded or inverted.'
+    ).toBe(false);
+
+    expect(
+      declared?.fullBleed === undeclared?.fullBleed,
+      'both arms resolved to the same value, so the pending manifest is not what moved it'
+    ).toBe(false);
+  });
+
+  it('(fb4) EPHEMERAL path: strict `=== true`, page depth, and a brand-new slug stays capped', async () => {
+    for (const value of ['true', 1, {}, 'yes', 'false']) {
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+      mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+        submittedByUserId: 555,
+        manifest: { scopes: [], page: { fullBleed: value } },
+      });
+      const res = await BlockRegistry.resolveDevPageBlockForAuthor('my-pending', 555);
+      expect(res?.fullBleed, `pending page.fullBleed=${JSON.stringify(value)}`).toBe(false);
+    }
+
+    // DEPTH on the pending manifest too.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      submittedByUserId: 555,
+      manifest: { scopes: [], fullBleed: true },
+    });
+    const topLevel = await BlockRegistry.resolveDevPageBlockForAuthor('my-pending', 555);
+    expect(
+      topLevel?.fullBleed,
+      'a TOP-LEVEL `fullBleed` on the PENDING manifest enabled full bleed on the dev tunnel'
+    ).toBe(false);
+
+    // The brand-new control: no manifest exists at all, so the value can only be
+    // the safe default. Without this arm, fb3's positive would not prove the
+    // pending manifest is the source rather than the ephemeral branch itself.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const brandNew = await BlockRegistry.resolveDevPageBlockForAuthor('brand-new', 555);
+    expect(brandNew?.ephemeralSource).toBe('brand-new');
+    expect(brandNew?.fullBleed).toBe(false);
   });
 
   it('(d2) THE FIX: an owned-pending money app surfaces its budgeted scope (not the stale []) so the dev-page Generate gate is not falsely empty', async () => {

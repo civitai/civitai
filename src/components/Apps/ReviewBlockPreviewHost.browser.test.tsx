@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+// Mid-TEST teardown. `component-setup` auto-cleans after each test, which is not
+// enough for a two-point case: both arms mount the same component, and two live
+// trees leave two `page-host` nodes so every `getByTestId` after the second mount
+// fails the strict-mode single-match rule. `cleanup()` is async and must be awaited.
+import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
@@ -25,11 +30,13 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
     reviewRunForReal,
     canOpenPage,
     bootSkeleton,
+    fullBleed,
     trustTier,
   }: {
     reviewRunForReal?: boolean;
     canOpenPage?: boolean;
     bootSkeleton?: boolean;
+    fullBleed?: boolean;
     trustTier?: string;
   }) => (
     <div
@@ -44,6 +51,15 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
       // reversible with a fully green gate — hardcoding `false` here again, or
       // dropping the key from the mint, killed nothing.
       data-boot-skeleton={String(!!bootSkeleton)}
+      // 🔴 Surfaced because THIS SURFACE IS THE GATE ON THE FIELD, not merely a
+      // fidelity nicety. `page.fullBleed` replaced a platform-side CSS exemption
+      // ledger that only a deploy could change, so the moderator review is now the
+      // only thing standing between an app and the full page width — and it was
+      // unguarded: replacing the forwarding below with a literal `false` left the
+      // preview showing the capped column, with the whole node and browser suite
+      // green, so the one human deciding the question could not see what they were
+      // approving.
+      data-full-bleed={String(!!fullBleed)}
       // 🔴 The forced tier is DEFENCE LAYER 2 (this file's own header): it is
       // what makes `intersectSandbox` drop `allow-same-origin`, so the review
       // iframe runs at an opaque origin rather than the moderator's. It was
@@ -111,6 +127,10 @@ const mintCalls = vi.hoisted(() => ({
   // constant. Without a true case the negative one passes against a hardcoded
   // `false`, which is exactly the state this coverage was missing.
   bootSkeleton: false,
+  // Same knob, same reason, for `page.fullBleed` — and for this field the
+  // constant it has to be discriminated from is the DEFAULT the fixtures carry
+  // (`fullBleed: false`), which a hardcoded forwarding reproduces exactly.
+  fullBleed: false,
 }));
 vi.mock('~/utils/trpc', async () => {
   const React = await import('react');
@@ -132,7 +152,11 @@ vi.mock('~/utils/trpc', async () => {
                 // `??` not a bare override: an unconditional overwrite makes the
                 // fixtures' own `bootSkeleton` field DEAD, so a future author who
                 // sets it there gets a silently-passing false result.
-                setData({ ...base, bootSkeleton: mintCalls.bootSkeleton ?? base.bootSkeleton });
+                setData({
+                  ...base,
+                  bootSkeleton: mintCalls.bootSkeleton ?? base.bootSkeleton,
+                  fullBleed: mintCalls.fullBleed ?? base.fullBleed,
+                });
               },
             };
           },
@@ -148,6 +172,7 @@ import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost
 beforeEach(() => {
   mintCalls.inputs = [];
   mintCalls.bootSkeleton = false;
+  mintCalls.fullBleed = false;
   flagState.appBlocks = false;
   flagState.appBlocksPages = false;
 });
@@ -188,6 +213,60 @@ describe('ReviewBlockPreviewHost — run-for-real opt-in', () => {
     mount();
     await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
     expect(page.getByTestId('page-host').element().getAttribute('data-boot-skeleton')).toBe('true');
+  });
+
+  /**
+   * 🔴 THE MODERATOR PREVIEW IS THE GATE ON `page.fullBleed`, AND IT WAS INERT-ABLE.
+   *
+   * The manifest field replaced a per-app CSS exemption ledger in `globals.css`:
+   * before it, an app got the full page width only when a platform engineer added a
+   * rule and deployed it. Now the app declares it and a moderator approves it — so
+   * this preview is not "render fidelity", it is the whole review. Measured on the
+   * PR head: replacing `fullBleed={mintData.fullBleed === true}` in
+   * `ReviewBlockPreviewHost.tsx` with a literal `false` left every node and browser
+   * test green, because this stub never surfaced the prop. That is a moderator
+   * approving a declaration whose effect they were structurally prevented from
+   * seeing — the exact defect `bootSkeleton`'s own coverage above exists to prevent,
+   * one field later and with higher stakes.
+   *
+   * TWO POINTS, ONE TEST, SAME MOUNT PATH. Either arm alone is worthless: a preview
+   * hardcoded to `false` passes the non-declaring arm, and one hardcoded to `true`
+   * passes the declaring arm. Only the DELTA is evidence, so it is asserted
+   * explicitly rather than left implicit in two separate tests that could drift
+   * apart.
+   */
+  test('a mint that DECLARES page.fullBleed reaches the host, and one that does not DOES NOT', async () => {
+    // POINT 1 — the mint says nothing (the fixtures' `fullBleed: false` default,
+    // which is also what every hardcoded forwarding produces).
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    const undeclared = page.getByTestId('page-host').element().getAttribute('data-full-bleed');
+    expect(
+      undeclared,
+      'the review preview reports full bleed for an app whose manifest declares NOTHING. The ' +
+        'moderator is being shown a presentation the approved app will not have, and the cap is ' +
+        'no longer the default for apps that say nothing.'
+    ).toBe('false');
+    await cleanup();
+
+    // POINT 2 — the same mount, the same mint path, one field different.
+    mintCalls.fullBleed = true;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    const declared = page.getByTestId('page-host').element().getAttribute('data-full-bleed');
+    expect(
+      declared,
+      'a review mint carrying `fullBleed: true` did not reach the host. The moderator reviewing ' +
+        'the `page.fullBleed` declaration sees the CAPPED column, i.e. cannot see the thing they ' +
+        'are approving — check `ReviewBlockPreviewHost` still forwards `mintData.fullBleed` ' +
+        'rather than a constant.'
+    ).toBe('true');
+
+    expect(
+      declared === undeclared,
+      'both arms produced the same `data-full-bleed`, so the mint is not what moves it — the ' +
+        'forwarding is a constant and this preview cannot review the field at all'
+    ).toBe(false);
   });
 
   test('DEFAULT is render-only: host gets reviewRunForReal=false, no banner, opt-in offered', async () => {
