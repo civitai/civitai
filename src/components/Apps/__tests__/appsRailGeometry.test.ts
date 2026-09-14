@@ -238,11 +238,33 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // So: blank the CONTENTS of comments and string/template literals, preserving length
     // so every offset below still indexes the real file.
     //
-    // ⚠️ KNOWN LIMIT: regex literals are NOT masked (telling `/` division from a regex
-    // needs a real tokeniser). `AppsPageLayout.tsx` contains none today, and the
-    // `endsBeforeJsx` assertion below is the backstop — a runaway body from ANY cause,
-    // masked or not, overshoots the JSX and reds there.
-    const maskLiterals = (src: string) => {
+    // ⚠️ KNOWN LIMITS, and this list is not a proof of completeness — it is what has been
+    // measured. (1) Regex literals are NOT masked (telling `/` division from a regex needs
+    // a real tokeniser); `AppsPageLayout.tsx` contains none today, and the `endsBeforeJsx`
+    // backstop reds on the runaway body that would cause. (2) The quote scanner has no
+    // unterminated-literal handling — see the TWO SCANS note directly below, which is why
+    // reads are never taken from the string-masked copy.
+    //
+    // An earlier revision framed the residual risk as regex-literals-only. It was not:
+    // limit (2) was live and unlisted, and it was the one that actually shipped a bypass.
+    // Treat this list as "the holes we have found", never as "the holes there are".
+    //
+    // 🔴 TWO SCANS, AND USING ONE FOR BOTH JOBS IS A MEASURED BYPASS. String masking is
+    // required for BRACE COUNTING and is actively harmful for FINDING READS, because the
+    // quote scanner has no notion of an unterminated literal: an ordinary apostrophe in
+    // JSX text — `Don't`, `app's` — opens a pseudo-string that blanks everything up to
+    // the next `'` in the file, which is typically the opening quote of a real string
+    // many lines later. Anything in between DISAPPEARS from the scan. An earlier revision
+    // masked once and used that copy for both, so this JSX:
+    //
+    //     <span>Don't</span>
+    //     {window.matchMedia('(min-width: 1300px)').matches && <span>y</span>}
+    //
+    // left the file GREEN at 12/12 with a media query in the rendered tree — the banned
+    // shape, invisible because the read had been blanked. The previous revision of this
+    // guard, which did no quote tracking at all, caught it. So: mask strings for braces,
+    // NEVER for reads.
+    const maskLiterals = (src: string, maskStrings = true) => {
       const out = src.split('');
       const blank = (at: number) => {
         if (out[at] !== '\n') out[at] = ' ';
@@ -265,7 +287,7 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
           }
           continue;
         }
-        if (c === '"' || c === "'" || c === '`') {
+        if (maskStrings && (c === '"' || c === "'" || c === '`')) {
           i++; // keep the opening quote itself
           while (i < src.length) {
             if (src[i] === '\\') {
@@ -300,10 +322,21 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     ).toBe(0);
     expect(maskLiterals(braceInComment)).toContain('doIt();');
     expect(maskLiterals(braceInComment)).toContain('next();');
+    // The control for the runaway above: an unpaired apostrophe followed by real code.
+    // With string masking ON the code between it and the next quote is swallowed (that is
+    // the bypass); with masking OFF it must survive intact, which is what the READ scan
+    // relies on. This fixture is what the previous revision lacked.
+    const apostropheRunaway = `<span>Don't</span>\n{window.matchMedia('(x)')}`;
+    expect(maskLiterals(apostropheRunaway, true)).not.toContain('window.matchMedia');
+    expect(maskLiterals(apostropheRunaway, false)).toContain('window.matchMedia');
+    expect(maskLiterals(apostropheRunaway, false)).toHaveLength(apostropheRunaway.length);
 
-    const scan = maskLiterals(
-      fs.readFileSync(path.resolve(__dirname, '../AppsPageLayout.tsx'), 'utf8')
-    );
+    const raw = fs.readFileSync(path.resolve(__dirname, '../AppsPageLayout.tsx'), 'utf8');
+    // Braces: comments AND string/template literals blanked.
+    const scan = maskLiterals(raw);
+    // Reads: comments blanked ONLY. Both are length-preserving, so offsets are comparable.
+    const scanReads = maskLiterals(raw, false);
+    expect(scanReads).toHaveLength(scan.length);
     // ⚠️ THE RECOGNISER IS NARROWER THAN THE SENTENCE ABOVE, AND THAT IS RECORDED RATHER
     // THAN PAPERED OVER. `effectOpen` matches the LITERAL spelling `useEffect(() => {`.
     // A read inside `useEffect(function () {…})`, `useEffect(async () => {…})`, a
@@ -342,12 +375,31 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
       'no `useEffect(() => {` found — re-point this guard'
     ).toBeGreaterThan(0);
 
+    // 🔴 MATCH THE BARE IDENTIFIER, NOT `window.matchMedia(`, AND READ FROM `scanReads`.
+    // The narrow spelling is a false NEGATIVE — the one direction that fails OPEN — so the
+    // ban was escapable by rewording rather than by defeating the logic. All four of these
+    // were measured GREEN against `/window\.matchMedia\(/` while being real hydration
+    // hazards in the render body:
+    //
+    //     globalThis.matchMedia('(min-width: 1300px)').matches
+    //     const mm = window.matchMedia; mm(…)
+    //     const { matchMedia } = window; matchMedia(…)
+    //     window['matchMedia'](…)
+    //
+    // `\bmatchMedia\b` catches all four: the last needs the literal UNMASKED, which is the
+    // second reason reads come from `scanReads`. Comments are masked there, so the
+    // docstrings in the component that discuss `matchMedia` are not counted as reads.
+    //
+    // This direction is worth the extra false positives an alias might cause: a false
+    // positive is a red test someone reads, a false negative is the banned shape shipping
+    // silently. (`effectOpen`'s narrowness, noted above, has the opposite sign — it can
+    // only over-report — which is why it is left narrow and this is not.)
     const reads: number[] = [];
-    const mediaRead = /window\.matchMedia\(/g;
-    for (let m = mediaRead.exec(scan); m; m = mediaRead.exec(scan)) reads.push(m.index);
+    const mediaRead = /\bmatchMedia\b/g;
+    for (let m = mediaRead.exec(scanReads); m; m = mediaRead.exec(scanReads)) reads.push(m.index);
     // Positive control: if this ever finds nothing, the loop below is vacuous and would
     // pass over a file that had removed the carve-out entirely.
-    expect(reads.length, 'no `window.matchMedia(` found — re-point this guard').toBeGreaterThan(0);
+    expect(reads.length, 'no `matchMedia` found — re-point this guard').toBeGreaterThan(0);
     // ⚠️ ANCHORED ON `<Container`, NOT ON `return (`. The FIRST `return (` in this file is
     // the drawer effect's own cleanup (`return () => mql.removeEventListener(...)`), so
     // slicing there covers 60 lines of hook body and docblock as well as the JSX. That is
@@ -364,9 +416,9 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // Ordering it first gives each half its own killing mutant and its own diagnosis —
     // JSX read → "a media query reached the rendered tree"; render-body read → the
     // containment message. Both verified by mutation.
-    const jsxStart = scan.indexOf('<Container');
+    const jsxStart = scanReads.indexOf('<Container');
     expect(jsxStart, 'the rendered tree was not found — re-point this guard').toBeGreaterThan(-1);
-    expect(scan.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
+    expect(scanReads.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
       /matchMedia/
     );
 
@@ -375,8 +427,15 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // overshoots means the depth counter was fooled — by an unmasked regex literal, or by
     // any construct this scanner does not model — and an overshooting body is exactly what
     // swallows a render-body read and silently disarms the containment check below. This
-    // fires on the CAUSE rather than on one known trigger, so it holds for bypasses that
-    // have not been thought of.
+    // fires on the CAUSE rather than on one known trigger, for that FAILURE MODE.
+    //
+    // ⚠️ SCOPE IT HONESTLY — an earlier revision said this "holds for bypasses that have
+    // not been thought of", and that is wider than what it does. It covers a body that
+    // GROWS. It cannot see a read that DISAPPEARS: the apostrophe runaway described at the
+    // masker above blanks the read itself, leaving every effect body untouched, so this
+    // loop and the containment loop both pass over a file with a media query in its
+    // rendered tree. That class is handled by reading from `scanReads` instead, not here.
+    // No assertion in this block can see it.
     for (const [start, end] of effectBodies) {
       expect(
         end,
@@ -388,8 +447,10 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     for (const at of reads) {
       expect(
         effectBodies.some(([start, end]) => at >= start && at < end),
-        `a \`window.matchMedia\` read at offset ${at} is NOT inside any useEffect body — ` +
-          'a media query outside an effect decides a render and diverges between server and client'
+        `a \`matchMedia\` reference at offset ${at} is NOT inside any useEffect body — ` +
+          'a media query outside an effect decides a render and diverges between server and client. ' +
+          'This matches the bare identifier, so an alias or destructure (`const mm = window.matchMedia`) ' +
+          'counts as a reference where it is WRITTEN, not where it is called'
       ).toBe(true);
     }
   });
