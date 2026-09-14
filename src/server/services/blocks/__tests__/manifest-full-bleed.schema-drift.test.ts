@@ -185,11 +185,14 @@ describe('app-block v1 schema ⇄ page.fullBleed drift guard', () => {
     expect(fullBleed, 'public/schemas/app-block/v1.json has no `page.fullBleed`').toBeDefined();
     expect(fullBleed?.type).toBe('boolean');
     // 🔴 THE DEFAULT IS PART OF THE CONTRACT, NOT DOCUMENTATION. `false` is what
-    // keeps the cap the behaviour for the long tail — nine of eleven page apps cap
-    // themselves between 640 and 1100px and would inherit whatever this says. A
-    // `default: true` here would read as a typo and would tell every author's editor
-    // that omitting the field means full bleed, which is the opposite of what the
-    // host does (`page.fullBleed === true`).
+    // keeps the cap the behaviour for the LONG TAIL — an app scaffolded from the
+    // starters declares no width of its own, so it inherits whatever this says. ⚠️ IT
+    // IS NOT THE SHIPPED FLEET THAT INHERITS IT: nine of the eleven page apps cap
+    // themselves at 640-1100px, so the cap is a no-op for their layout whichever way
+    // this default points. Citing those nine here would be the wrong witness for the
+    // right conclusion. A `default: true` would read as a typo and would tell every
+    // author's editor that omitting the field means full bleed, which is the opposite
+    // of what the host does (`page.fullBleed === true`).
     expect(fullBleed?.default).toBe(false);
   });
 

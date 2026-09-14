@@ -570,8 +570,10 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       undeclaredArm.hostWidth,
       `at 2560x1080 an app that declares NOTHING is full-bleed (${undeclaredArm.hostWidth}px of ` +
         `${undeclaredArm.parentWidth}px). The cap is meant to stay the default for every app ` +
-        'that says nothing — nine of the eleven shipped page apps cap themselves below 1100px ' +
-        'and rely on it. Either the branch is inverted or the cap is gone.'
+        'that says nothing — NOT because the shipped fleet relies on it (nine of the eleven page ' +
+        'apps cap themselves at 640-1100px, so the cap is a no-op for their layout either way) ' +
+        'but because an app scaffolded from the starters declares no width of its own and ' +
+        'inherits whatever this default is. Either the branch is inverted or the cap is gone.'
     ).toBeLessThan(undeclaredArm.parentWidth);
     await cleanup();
 

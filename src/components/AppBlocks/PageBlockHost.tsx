@@ -432,14 +432,32 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * but only as a MIGRATION PATH for the two apps that were members before the field
  * existed — it is not where a new app goes.
  *
- * ⚠️ THAT MAKES THIS CAP EASY TO ESCAPE, WHICH IS THE POINT AND ALSO THE COST. The
- * census above is the argument that the long tail will take it up: nine of eleven
- * page apps cap themselves between 640 and 1100, i.e. most apps that declare
- * `fullBleed` will get the width and then not use it. That is a product decision
- * taken deliberately — "all apps should be able to go full-bleed if they want" —
- * and the thing it trades away is that the cap was previously an opinion an app had
- * to argue past. If it turns out most apps declare it, the honest follow-up is to
- * reconsider the DEFAULT here with its own evidence, not to re-close the field.
+ * ⚠️ THAT MAKES THIS CAP EASY TO ESCAPE, WHICH IS THE POINT AND ALSO THE COST.
+ * 🔴 BE PRECISE ABOUT WHICH HALF OF THE CENSUS ABOVE CARRIES WHICH ARGUMENT — they
+ * point in opposite directions, and quoting the wrong one is a mistake that has
+ * already been made in writing about this feature:
+ *
+ *   · THE NINE-OF-ELEVEN BULLET IS NOT A REASON TO KEEP THE CAP. Those apps cap
+ *     themselves at 640–1100, so the cap is already "a no-op for their layout: it
+ *     changes which background paints the far gutter and nothing else" — the
+ *     census's own words. Delete the cap outright and those nine do not move; only
+ *     the two uncapped `100dvh` shells would. So "without a cap, apps would be
+ *     full-bleed whether they wanted it or not" is FALSE of the shipped fleet, and
+ *     it is not the argument. What that bullet does say about THIS field is that
+ *     declaring it is cosmetically inert for most applicants — see the `fullBleed`
+ *     prop below, where the consequence for review is written down.
+ *   · THE LONG-TAIL BULLET IS THE ONE THAT JUSTIFIES A DEFAULT.
+ *     `@civitai/blocks-react` exports no Container / AppShell / Page and the
+ *     official starter templates contain zero width declarations, so an app
+ *     scaffolded tomorrow inherits whatever the host gives it. That is a claim about
+ *     FUTURE apps, and it is untouched by how many shipped apps happen to cap
+ *     themselves — which is exactly why it survives the correction above.
+ *
+ * The product decision was taken deliberately — "all apps should be able to go
+ * full-bleed if they want" — and what it trades away is that the cap was previously
+ * an opinion an app had to argue past. If it turns out most apps declare it, the
+ * honest follow-up is to reconsider the DEFAULT here with its own evidence, not to
+ * re-close the field.
  *
  * ⚠️ AN APP THE CENSUS CALLS UNCAPPED IS NOT AUTOMATICALLY A LEDGER MEMBER, AND THE
  * MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE — a count or a list in this comment
@@ -541,6 +559,19 @@ export interface PageBlockHostProps {
    * a user would not. That failure mode is identical here and arguably worse,
    * because for this field the moderator's view IS the review. Required means a new
    * host surface is a type error until someone decides what it should do.
+   *
+   * ⚠️ FOR MOST APPLICANTS THIS FIELD IS COSMETICALLY INERT, AND WHOEVER DESIGNS THE
+   * REVIEW GATE SHOULD KNOW THAT BEFORE THEY DESIGN IT. Nine of the eleven page apps
+   * in the census on `APP_PAGE_MAX_WIDTH_PX` impose a well of their own between 640
+   * and 1100px. Their own `max-width` binds long before this one would, so for those
+   * nine, declaring the field "changes which background paints the far gutter and
+   * nothing else" — the census's phrasing — and changes nothing whatsoever about
+   * their content at any viewport width. So a moderator opening such an app before
+   * and after the declaration sees two identical screenshots. That is not a defect
+   * and not a reason to refuse the declaration; it is a property of the field that
+   * makes the review question "what on this surface spends 2560px that 1600px
+   * cannot?" rather than "did this look different". The two apps it is NOT inert for
+   * are the uncapped `100dvh` two-pane shells the census names.
    *
    * Publisher-controlled, so it is read `=== true` server-side and validated at
    * submit (`page.fullBleed must be a boolean`) rather than coerced. The blast
