@@ -47,7 +47,9 @@ export function AssociateModels({
   const {
     data: savedAssociations,
     isLoading,
-    isFetching,
+    isStale,
+    isError,
+    dataUpdatedAt,
   } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
@@ -57,6 +59,15 @@ export function AssociateModels({
   const [associatedResources, setAssociatedResources] = useState<State>(data);
   const [linkBack, setLinkBack] = useState<number[]>([]);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
+
+  // The one question every edit affordance asks: is the list on screen the saved list?
+  // `isStale` is set by `invalidate` and cleared only by a SUCCESSFUL fetch, so it stays true
+  // while a correction is in flight, has failed, or is paused offline — all three are states in
+  // which the rows shown may not be what is saved. Editing a list that is not the saved one is
+  // what destroys data here: `setAssociatedResources` is a set-replace, so every row missing
+  // from the payload is deleted. `!isFetching` is NOT enough — a failed background refetch goes
+  // back to idle while `data` is still the last successful, pre-correction payload.
+  const canEdit = !!savedAssociations && !isStale;
 
   const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
     onSuccess: async (result) => {
@@ -86,7 +97,7 @@ export function AssociateModels({
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over) return;
+    if (!canEdit || !over) return;
     if (active.id !== over.id) {
       const resources = [...associatedResources];
       const ids: UniqueIdentifier[] = resources.map(({ item }) => item.id);
@@ -99,6 +110,7 @@ export function AssociateModels({
   };
 
   const handleSelect: QuickSearchDropdownProps['onItemSelected'] = (item, data) => {
+    if (!canEdit) return;
     setChanged(true);
     setAssociatedResources((resources) => {
       if (item.entityType === 'Model') {
@@ -116,6 +128,7 @@ export function AssociateModels({
   };
 
   const handleRemove = (id: number) => {
+    if (!canEdit) return;
     const models = [...associatedResources.filter(({ item }) => item.id !== id)];
     setAssociatedResources(models);
     // Drop the tick too: re-adding the row in the same edit would otherwise arrive
@@ -147,11 +160,15 @@ export function AssociateModels({
 
   // Gated on `changed`, not on the local list being empty: a list seeded from a stale cache is
   // non-empty, so only-when-empty refuses the correction and the next set-replace deletes
-  // whatever the stale copy never knew about. Depend on the query's own array rather than the
-  // `?? []` fallback, which is a fresh array per render and would re-run this forever.
+  // whatever the stale copy never knew about.
+  // Keyed on `dataUpdatedAt` rather than on the array, which is only reference-stable by grace of
+  // React Query's structural sharing — add a `select` or `placeholderData` to this query and an
+  // array dependency becomes an unbounded setState loop, which a test runner reports as a hang
+  // rather than a failure. A fetch timestamp cannot churn that way.
   useEffect(() => {
     if (!changed && savedAssociations) setAssociatedResources(savedAssociations);
-  }, [savedAssociations, changed]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataUpdatedAt, changed]);
 
   const onlyMe = searchMode === 'me';
 
@@ -179,6 +196,7 @@ export function AssociateModels({
       .map(({ item }) => item.id)
   );
   const toggleLinkBack = (modelId: number) => {
+    if (!canEdit) return;
     setChanged(true);
     setLinkBack((current) =>
       current.includes(modelId) ? current.filter((id) => id !== modelId) : [...current, modelId]
@@ -187,14 +205,11 @@ export function AssociateModels({
 
   return (
     <Stack>
-      {/* Withheld until the saved list has arrived AND is not being corrected. Editing against a
-          partial view of the saved set is what destroys data: the save is a set-replace, so every
-          row missing from the payload is deleted. Delivery covers the first load; `!isFetching`
-          covers a reopen over an invalidated cache, where rows are on screen but a refetch is
-          still in flight and an edit made now would make the effect below refuse the correction.
-          The predicate is delivery, NOT `isSuccess` — a failed background refetch keeps the rows
-          but flips status, and pulling the search box out from under an open edit is its own bug. */}
-      {savedAssociations && !isFetching && associatedResources.length < limit && (
+      {/* Disabled rather than unmounted while the list cannot be edited: the InstantSearch tree
+          and its Meili round trip are rebuilt on every remount, and a box that vanishes tells the
+          user nothing. `handleSelect` re-reads `canEdit` for the same reason the other handlers
+          do — the disabled input is the affordance, the check is the guard. */}
+      {savedAssociations && associatedResources.length < limit && (
         <QuickSearchDropdown
           supportedIndexes={['models', 'articles']}
           onItemSelected={handleSelect}
@@ -209,6 +224,7 @@ export function AssociateModels({
           }
           dropdownItemLimit={25}
           clearable={false}
+          disabled={!canEdit}
         />
       )}
 
@@ -227,6 +243,13 @@ export function AssociateModels({
         </Text>
       ) : (
         <Stack gap="xs">
+          {!canEdit && (
+            <Text c="dimmed" size="xs">
+              {isError
+                ? `Couldn't check whether this list is up to date, so editing is paused. Close this and reopen to try again.`
+                : `Checking this list for changes — editing is paused for a moment.`}
+            </Text>
+          )}
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text c="dimmed" size="xs">
               Drag to reorder
@@ -298,6 +321,7 @@ export function AssociateModels({
                                 <Chip
                                   size="xs"
                                   checked={linkBack.includes(association.item.id)}
+                                  disabled={!canEdit}
                                   onChange={() => toggleLinkBack(association.item.id)}
                                   classNames={{ label: 'uppercase font-bold tracking-[0.25px]' }}
                                 >
@@ -311,6 +335,7 @@ export function AssociateModels({
                           variant="subtle"
                           color="red"
                           aria-label="Remove resource"
+                          disabled={!canEdit}
                           onClick={() => handleRemove(association.item.id)}
                         >
                           <IconTrash size={20} />
