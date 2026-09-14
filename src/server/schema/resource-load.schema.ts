@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { preparationSchema } from '~/shared/orchestrator/download-preparation';
 
 /**
  * `ResourceInfo.availability` as the orchestrator actually returns it. The generated SDK types it as
@@ -103,17 +104,7 @@ export const resourceLoadSignalSchema = z.object({
   workflowId: z.string().nullish(),
   name: z.string().nullish(),
   status: z.string().nullish(),
-  preparation: z
-    .object({
-      /** AIR of the resource holding the step back — the only thing identifying WHICH load this is. */
-      resource: z.string(),
-      /** Downloads ahead of this one. Zero means it is transferring now. */
-      queuePosition: z.number(),
-      /** 0..1, null while still queued. */
-      progress: z.number().nullish(),
-      etaSeconds: z.number().nullish(),
-    })
-    .nullish(),
+  preparation: preparationSchema.nullish(),
 });
 
 export type ResourceLoadSignal = z.infer<typeof resourceLoadSignalSchema>;

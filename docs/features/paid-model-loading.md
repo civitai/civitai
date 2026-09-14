@@ -90,10 +90,21 @@ this section once it ages. The app's own orchestrator calls still go through the
 
 ### Step preparation — what the card and the alert render
 
-`WorkflowStep.preparation` (`WorkflowStepPreparation`) carries the gating resource, `queuePosition`,
-`progress`, `etaSeconds`, `lane`, `boostedEtaSeconds` (null once already `high`), and `resources[]` —
-every resource the step waits on, **gating resource first**, each with `sizeBytes`, `lane`,
-`queuePosition`, `progress`, `bytesPerSecond` and its own ETAs.
+From beta.106, `WorkflowStep.preparation` is `WorkflowStepPreparationResource[] | null` — every
+resource the step waits on, **gating resource first**, each with `sizeBytes`, `lane`,
+`queuePosition` (null while transferring), `progress`, `bytesPerSecond`, `etaSeconds` and
+`boostedEtaSeconds` (null once already `high`). The beta.105 summary-object shape is **not** read —
+the orchestrator must be on beta.106 before this ships.
+
+Raw data enters in three places — the server's step reader, the generation signal handler, and the
+moderator page's load-progress signal — and each validates it against `preparationSchema`
+(`src/shared/orchestrator/download-preparation.ts`). Anything else reads as nothing to download. The
+summary (`DownloadPreparation`) is derived from the gating resource, and an empty list also reads as
+nothing to download: a bare `[]` is truthy, and would put a download panel and a paid Boost on a step
+with nothing to boost.
+
+beta.106 also adds `WorkflowStep.warnings[]` (so far only `modelDeprecated`, with `retiresAt` and a
+suggested `replacement`). Nothing reads it yet.
 
 It arrives three ways: on the workflow list, on the status refresh, and on step webhook events. A
 preparing step publishes every **10 seconds**, deduplicated at 1% progress.
@@ -175,10 +186,10 @@ rule instead of restating it. The numbers, the audit and the readers list are in
 
 Everything here is the deploying engineer's, before this branch merges.
 
-- [ ] **Remove the debug logging.** Four sites, kept deliberately for manual testing:
-      `useWhatIfFromGraph.ts`, form-graph `WhatIfProvider.tsx`, `submitWorkflow`'s `console.dir` in
-      `workflows.ts`, and the dev-only `raw` field in `whatIfFromGraph`.
-      *Closes when:* none of the four remains in the diff.
+- [ ] **Confirm the production orchestrator is on beta.106.** The site reads only the resource-list
+      `preparation`; an older orchestrator's summary object reads as nothing to download, so no
+      download panel and no Boost.
+      *Closes when:* a preparing step's `preparation` from the production orchestrator is an array.
 - [ ] **`pnpm run typecheck`, `pnpm run lint`, `pnpm run prettier:write`, and the full
       `pnpm run test:unit:run` once.** Targeted suites are not a substitute for the last one.
 - [ ] **Run `comment-review` over the diff and `docs-drift-review` over the commits.** The two lanes

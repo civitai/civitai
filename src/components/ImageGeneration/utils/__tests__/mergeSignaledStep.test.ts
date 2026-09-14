@@ -129,8 +129,9 @@ describe('mergeSignaledStep', () => {
 });
 
 describe('applyPreparationEvent', () => {
-  const preparation = (queuePosition: number) =>
-    ({ resource: 'urn:air:sdxl:checkpoint:civitai:1@2', queuePosition, resources: [] } as any);
+  const preparation = (queuePosition: number) => [
+    { resource: 'urn:air:sdxl:checkpoint:civitai:1@2', sizeBytes: 1, lane: 'low', queuePosition },
+  ];
 
   const cache = (over: Record<string, unknown> = {}) =>
     ({
@@ -140,7 +141,12 @@ describe('applyPreparationEvent', () => {
             {
               id: 'wf-1',
               steps: [
-                { name: 'step-1', status: 'unassigned', preparation: preparation(9), ...over },
+                {
+                  name: 'step-1',
+                  status: 'unassigned',
+                  preparation: { queuePosition: 9 },
+                  ...over,
+                },
               ],
             },
           ],
@@ -171,5 +177,12 @@ describe('applyPreparationEvent', () => {
 
   it('asks for a refetch when the workflow is not in this cache page', () => {
     expect(applyPreparationEvent(cache(), event({ workflowId: 'wf-other' }))).toBe('needs-refetch');
+  });
+
+  it('clears the cached preparation when the event carries a malformed list', () => {
+    const data = cache();
+
+    applyPreparationEvent(data, event({ preparation: [{ resource: 'x' }] }));
+    expect(data.pages[0].items[0].steps[0].preparation).toBeUndefined();
   });
 });

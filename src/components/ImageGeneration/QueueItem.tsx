@@ -96,7 +96,7 @@ import {
   downloadQueueHref,
 } from '~/components/ResourceLoad/download-lanes';
 import { parseAIRSafe } from '~/shared/utils/air';
-import type { WorkflowStepPreparation } from '@civitai/orchestration-client';
+import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import { getModelUrl } from '~/utils/string-helpers';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import {
@@ -594,7 +594,7 @@ function StepOutputs({
   pending: boolean;
   processing: boolean;
   queuePosition?: WorkflowData['steps'][number]['queuePosition'];
-  preparation?: WorkflowStepPreparation;
+  preparation?: DownloadPreparation;
   markerTags?: string[];
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
@@ -686,7 +686,7 @@ function DownloadBoost({
   preparation,
 }: {
   request: WorkflowData;
-  preparation: WorkflowStepPreparation;
+  preparation: DownloadPreparation;
 }) {
   const boosted = request.downloadPriority === 'high' || preparation.lane === 'high';
   const canBoost = !boosted && preparation.boostedEtaSeconds != null;

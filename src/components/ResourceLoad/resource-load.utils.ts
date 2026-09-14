@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { resourceLoadSignalSchema } from '~/server/schema/resource-load.schema';
+import { summarizePreparation } from '~/shared/orchestrator/download-preparation';
 import { parseAIRSafe } from '~/shared/utils/air';
 import { resourceLoadDrainVerdict, useResourceLoadStore } from '~/store/resource-load.store';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -24,9 +25,10 @@ export type ResourceLoadProgress = {
  */
 export function toResourceLoadProgress(raw: unknown): ResourceLoadProgress | null {
   const parsed = resourceLoadSignalSchema.safeParse(raw);
-  if (!parsed.success || !parsed.data.preparation) return null;
+  const preparation = parsed.success ? summarizePreparation(parsed.data.preparation) : undefined;
+  if (!parsed.success || !preparation) return null;
 
-  const { resource, queuePosition, progress, etaSeconds } = parsed.data.preparation;
+  const { resource, queuePosition, progress, etaSeconds } = preparation;
   const air = parseAIRSafe(resource);
   if (!air?.version) return null;
 

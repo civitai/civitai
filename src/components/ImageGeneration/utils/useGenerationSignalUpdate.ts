@@ -7,6 +7,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { normalizePreparation } from '~/shared/orchestrator/download-preparation';
 import type {
   NormalizedStep,
   WorkflowStatusUpdate,
@@ -36,8 +37,7 @@ export function applyPreparationEvent(
     if (!step) continue;
     // A status change still needs the full refetch — outputs and errors only arrive there.
     verdict = step.status === event.status ? 'applied' : 'needs-refetch';
-    // The signal client predates `lane`/`resources` on this shape; the orchestrator sends them.
-    step.preparation = event.preparation as NormalizedStep['preparation'];
+    step.preparation = normalizePreparation(event.preparation);
     break;
   }
   return verdict;
@@ -49,7 +49,7 @@ export function useTextToImageSignalUpdate() {
 
   return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
     if (data.$type !== 'step') return;
-    if (data.preparation) {
+    if (normalizePreparation(data.preparation)) {
       const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
       // An object, not a `let`: the assignment happens inside a callback, which control-flow
       // analysis cannot see — it would narrow a plain variable to its initial value.

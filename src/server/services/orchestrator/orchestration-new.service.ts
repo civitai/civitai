@@ -31,8 +31,9 @@ import type {
 import type {
   Priority as DownloadPriority,
   PreprocessVideoStepTemplate,
-  WorkflowStepPreparation,
 } from '@civitai/orchestration-client';
+import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
+import { normalizePreparation } from '~/shared/orchestrator/download-preparation';
 import { TimeSpan } from '@civitai/client';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
 import {
@@ -2096,7 +2097,7 @@ export type StepMetadataTransformation = {
 };
 
 const readPreparation = (step: WorkflowStep) =>
-  (step as { preparation?: WorkflowStepPreparation | null }).preparation ?? undefined;
+  normalizePreparation((step as { preparation?: unknown }).preparation);
 const readDownloadPriority = (workflow: Workflow) =>
   (workflow as { downloadPriority?: DownloadPriority | null }).downloadPriority ?? undefined;
 
@@ -2108,7 +2109,7 @@ export interface NormalizedStep {
   timeout?: string | null;
   completedAt?: string | null;
   queuePosition?: WorkflowStepQueuePosition;
-  preparation?: WorkflowStepPreparation;
+  preparation?: DownloadPreparation;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */

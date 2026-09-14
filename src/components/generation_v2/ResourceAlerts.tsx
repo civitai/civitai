@@ -10,7 +10,7 @@
  * flask at each level a rule can target and warned about above the submit row.
  */
 
-import type { WorkflowStepPreparation } from '@civitai/orchestration-client';
+import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import { Alert, List, Stack, Switch, Text } from '@mantine/core';
 import { useRef } from 'react';
 
@@ -208,7 +208,7 @@ export function SeedanceImg2VidAlert({ ecosystem, workflow }: SeedanceImg2VidAle
 // =============================================================================
 
 export type DownloadAlertWhatIf = {
-  data: { ready?: boolean; preparation?: WorkflowStepPreparation; cost?: unknown };
+  data: { ready?: boolean; preparation?: DownloadPreparation; cost?: unknown };
   isLoading: boolean;
   isSuccess: boolean;
   canEstimateCost: boolean;
