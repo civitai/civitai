@@ -10,14 +10,17 @@ import {
 import {
   MAX_CONTENT_SAMPLES,
   MAX_FILENAME_SAMPLES,
+  MAX_STAGED_IMAGE_SAMPLES,
   collectCohortSignals,
   emptyCohortSignals,
   type EvidenceReader,
 } from './evidence';
 import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from './fingerprint-keys';
 import {
+  ASSET_STAGING_ID,
   BOT_ACCOUNT_HEURISTICS,
   CONTENT_TEMPLATING_ID,
+  assetStagingHalfScores,
   contentTemplatingSourceScore,
   isCommonEmailDomain,
   registrationClusterGroupKey,
@@ -108,6 +111,9 @@ export type BotAccountDetectionOptions = {
   /** Ceiling on image rows read for the templating heuristic's filename half. Defaults to
    *  `MAX_FILENAME_SAMPLES`. Separate from the content budget — see that constant. */
   maxFilenameSamples?: number;
+  /** Ceiling on image rows read for the `asset-staging` heuristic. Defaults to
+   *  `MAX_STAGED_IMAGE_SAMPLES`. Its own budget, not a share of the filename one. */
+  maxStagedImageSamples?: number;
 };
 
 export type BotAccountDetectionResult = {
@@ -170,6 +176,7 @@ export async function runBotAccountDetection(
   const minConfidence = options.minConfidence ?? MIN_REPORTED_CONFIDENCE;
   const maxContentSamples = options.maxContentSamples ?? MAX_CONTENT_SAMPLES;
   const maxFilenameSamples = options.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
+  const maxStagedImageSamples = options.maxStagedImageSamples ?? MAX_STAGED_IMAGE_SAMPLES;
   const log = deps.log ?? (() => undefined);
   const checkCanceled = deps.checkCanceled ?? (() => undefined);
 
@@ -199,6 +206,7 @@ export async function runBotAccountDetection(
         chunkSize: pageSize,
         maxContentSamples,
         maxFilenameSamples,
+        maxStagedImageSamples,
         // The run's own clock as the filename read's upper bound, so the sample is a snapshot of
         // the window rather than drifting with whatever was uploaded while the run walked.
         createdBefore: startedAt,
@@ -221,6 +229,10 @@ export async function runBotAccountDetection(
     filenameSamples: signals.sources.filenameSamples,
     filenameBudgetExhausted: signals.sources.filenameBudgetExhausted,
     membersSampledForFilenames: signals.sources.membersSampledForFilenames,
+    stagedImages: signals.sources.stagedImages,
+    stagedImageBudgetExhausted: signals.sources.stagedImageBudgetExhausted,
+    membersSampledForStagedImages: signals.sources.membersSampledForStagedImages,
+    membersWithStagedImages: signals.stagedImagesByUser.size,
     // The failure half, beside the availability half. A reader of this line could previously see
     // `filenameSamples: false` and not know whether a read had broken or a client was absent.
     readFailures: signals.sources.readFailures,
@@ -290,6 +302,19 @@ export async function runBotAccountDetection(
     cohort.members.filter((m) => contentTemplatingSourceScore(m.userId, signals, prefix) > 0)
       .length;
 
+  // 🔴 WHICH HALF OF `asset-staging` FIRED — the same decomposition, for the same reason. That
+  // heuristic answers two questions about one source (how many staged uploads, and how concentrated
+  // in time), and `heuristic:asset-staging:fired` cannot say which of them is earning its place. The
+  // specific thing these are here to settle is whether the same-second half ever fires on an account
+  // the volume half did not already carry; if it never does, it is a boundary doing nothing and
+  // should be removed rather than left looking like evidence.
+  //
+  // Counted over EVERY scored member, matching `fired`'s own population. They may sum to MORE than
+  // `fired` — an account can be both, and attributing it to whichever won a `>` comparison would
+  // invent a tie-break the data does not support.
+  const stagedHalfFired = (half: 'volume' | 'burst') =>
+    cohort.members.filter((m) => assetStagingHalfScores(m.userId, signals)[half] > 0).length;
+
   const counters: Record<string, number> = {
     window_hours: windowHours,
     cohort_scanned: cohort.scanned,
@@ -342,6 +367,18 @@ export async function runBotAccountDetection(
     evidence_members_sampled_for_filenames: signals.sources.membersSampledForFilenames,
     evidence_filename_budget: maxFilenameSamples,
 
+    // The staged-image source, on the same 0/1 terms as the two above and emitted on every run. For
+    // `asset-staging` the availability flag matters MORE than it does for the ring heuristics: a
+    // zero from this source that nobody read means "these accounts staged nothing", which is a claim
+    // about each account's own uploads rather than a weaker version of a claim about a ring.
+    evidence_staged_images: signals.sources.stagedImages ? 1 : 0,
+    evidence_staged_image_budget_exhausted: signals.sources.stagedImageBudgetExhausted ? 1 : 0,
+    evidence_members_sampled_for_staged_images: signals.sources.membersSampledForStagedImages,
+    evidence_staged_image_budget: maxStagedImageSamples,
+    // How many members had ANY staged upload — the denominator for the heuristic's own rate, and the
+    // number that says whether "nobody scored" means the signal is rare or the read is empty.
+    evidence_members_with_staged_images: signals.stagedImagesByUser.size,
+
     // 🔴 THE SOURCE-FAILURE LEDGER. Every other evidence counter above answers "was this heuristic
     // blind", and each of them reads `0` on a quiet day AND on a broken one. That is not a
     // hypothetical: a run shipped whose filename read died on every attempt, and its counters —
@@ -376,10 +413,12 @@ export async function runBotAccountDetection(
     evidence_source_read_failures:
       (signals.sources.readFailures.registrationIps ? 1 : 0) +
       (signals.sources.readFailures.contentSamples ? 1 : 0) +
-      (signals.sources.readFailures.filenameSamples ? 1 : 0),
+      (signals.sources.readFailures.filenameSamples ? 1 : 0) +
+      (signals.sources.readFailures.stagedImages ? 1 : 0),
     evidence_registration_ips_read_failed: signals.sources.readFailures.registrationIps ? 1 : 0,
     evidence_content_read_failed: signals.sources.readFailures.contentSamples ? 1 : 0,
     evidence_filename_read_failed: signals.sources.readFailures.filenameSamples ? 1 : 0,
+    evidence_staged_image_read_failed: signals.sources.readFailures.stagedImages ? 1 : 0,
 
     domains_suppressed_common: domainsSuppressed,
 
@@ -388,6 +427,8 @@ export async function runBotAccountDetection(
     [`heuristic:${CONTENT_TEMPLATING_ID}:fired_filename`]: firedFromSource(
       FILENAME_FINGERPRINT_PREFIX
     ),
+    [`heuristic:${ASSET_STAGING_ID}:fired_volume`]: stagedHalfFired('volume'),
+    [`heuristic:${ASSET_STAGING_ID}:fired_burst`]: stagedHalfFired('burst'),
     // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
     ...confidenceBucketCounters(scores),
     // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
@@ -411,8 +452,13 @@ export async function runBotAccountDetection(
     // 🔴 THE SUPPRESSION SENTENCE. The counters carry this too, but the summary is what a human
     // reads first, and a finding count with no denominator beside it is the shape of every
     // reassuring zero this detector was built to avoid producing.
-    ` ${reported.length} scored at or above the ${minConfidence.toFixed(
-      2
+    // 🔴 THE CUT IS RENDERED EXACTLY, NOT TO TWO PLACES. `toFixed(2)` printed the default threshold
+    // as `0.11` once it was re-derived to 0.1125 for a four-heuristic registry — a summary stating a
+    // looser cut than the one it applied, in the sentence a human reads to know what they are
+    // looking at. Four places with the trailing zeros trimmed renders 0.15 as `0.15` and 0.1125 as
+    // `0.1125`, and keeps an operator-supplied `1/3` from spilling seventeen digits.
+    ` ${reported.length} scored at or above the ${String(
+      Number(minConfidence.toFixed(4))
     )} reporting threshold and ` +
     `appear below; ${suppressed.length} scored under it and are counted in the ` +
     `confidence_bucket_* counters but NOT reported as findings.` +
@@ -476,6 +522,27 @@ export async function runBotAccountDetection(
         `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} members. ` +
         `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
         `window and scored 0 on filename clustering for want of data.`
+      : '') +
+    // 🔴 THE STAGED-IMAGE SOURCE'S OWN DISCLOSURES, AND THEY SAY SOMETHING STRONGER THAN THE OTHERS.
+    // A dead ring source leaves a weaker version of a claim about the cohort; a dead staged-image
+    // read leaves `asset-staging` asserting that every account's uploads were published, which is a
+    // claim about each account individually and is simply false rather than merely weak. The
+    // sentence says so in those terms, and names which of the two happened.
+    (signals.sources.stagedImages
+      ? ''
+      : signals.sources.readFailures.stagedImages
+      ? ` 🔴 THE STAGED-IMAGE READ FAILED this run and its partial result was discarded, so the ` +
+        `asset-staging heuristic scored 0 for every member for want of data. That is not evidence ` +
+        `that these accounts published what they uploaded — it is a broken read, and it is counted ` +
+        `in evidence_source_read_failures.`
+      : ` 🔴 STAGED-IMAGE DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
+        `asset-staging heuristic scored 0 for every member for want of data. That is not evidence ` +
+        `that these accounts published what they uploaded.`) +
+    (signals.sources.stagedImageBudgetExhausted
+      ? ` 🔴 THE STAGED-IMAGE BUDGET (${maxStagedImageSamples} rows) WAS EXHAUSTED after ` +
+        `${signals.sources.membersSampledForStagedImages} of ${cohort.members.length} members. ` +
+        `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
+        `window and scored 0 on asset staging for want of data.`
       : '') +
     (cohort.capped
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +

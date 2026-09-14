@@ -62,6 +62,14 @@ import { rampScore } from './ramp';
  * constants against the new registry size, which is work this change did not want, not a
  * prohibition.
  *
+ * ⚠️ THAT FOURTH ENTRY HAS SINCE LANDED — `heuristics/staging.ts`, `asset-staging` — and it paid the
+ * price named above: `MIN_REPORTED_CONFIDENCE` was re-derived from 0.15 to 0.1125, and
+ * `SOLE_SIGNAL_DOMINANCE` stopped being a literal and became `soleSignalDominance(registrySize)`,
+ * which computes the same 3 at `n = 3` and 4 at `n = 4`. Both are now pinned by a test that reads
+ * the registry's length, so the next entry cannot be added without the arithmetic going red. The
+ * paragraph above stands as the reasoning for why THIS source folded in rather than registering
+ * separately; it is no longer a statement about what the registry contains.
+ *
  * 🔴 FILENAMES ARE FINGERPRINTED ON THEIR OWN TERMS — see `evidence.ts#normalizeFilename`. Reusing
  * `contentFingerprint` was measured and rejected: its digit masking collapses every `<digits>.jpg`
  * into one key, and its length floors reject `1900.jpg.jpeg` and `logo.jpg` outright, which between

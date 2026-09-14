@@ -1,4 +1,5 @@
 import { publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
+import { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import type { BotAccountCohortMember } from './cohort';
@@ -130,6 +131,38 @@ export const MAX_FILENAMES_PER_MEMBER = 50;
 export const FILENAME_READ_BATCH_SIZE = 10;
 
 /**
+ * The most image rows the STAGED-IMAGE read will take, across every account.
+ *
+ * 🔴 ITS OWN BUDGET, FOR THE REASON `MAX_FILENAME_SAMPLES` IS ITS OWN BUDGET. Two reads sharing one
+ * allowance is one read able to spend the other's, and the direction that fails in is the one that
+ * silently blinds whichever read runs second. The three sources are now three budgets, three
+ * availability flags and three failure flags, and none of them can consume another.
+ *
+ * Sized the same as the filename budget because the population is the same table and the same
+ * cohort. It is a DIFFERENT number that happens to be equal, not a shared one — the filename read
+ * takes every image a member uploaded while this one takes only the staged subset, so they do not
+ * move together and must not be expressed as one constant.
+ */
+export const MAX_STAGED_IMAGE_SAMPLES = 20_000;
+
+/**
+ * The most staged images one MEMBER contributes to a run.
+ *
+ * 🔴 PER-ACCOUNT, NOT A CAP ON THE RESULT — the whole point of `MAX_FILENAMES_PER_MEMBER`, applied
+ * to the second image read rather than re-derived. A global `take` with an `ORDER BY id DESC` under
+ * it lets the chunk's most prolific uploader EVICT every other account in it, silently, in the
+ * direction that understates every account this heuristic is looking for.
+ *
+ * 🔴 IT BOUNDS THE SCORE AS WELL AS THE READ, which the filename cap does not. A filename sample
+ * folds into a SET, so the fiftieth sample is worth nearly nothing; here the sample IS the
+ * measurement — `asset-staging` scores on how MANY staged images a member has — so this cap is also
+ * the largest count the heuristic can ever see. That is harmless only because the ramp saturates an
+ * order of magnitude below it (`STAGED_ONE_AT`); it would stop being harmless the moment that
+ * boundary approached this number, which is the coupling to check before moving either.
+ */
+export const MAX_STAGED_IMAGES_PER_MEMBER = 50;
+
+/**
  * How much of one comment is kept.
  *
  * Templated shill text is identical from its first words; the tail is padding. Truncating on receipt
@@ -161,6 +194,43 @@ export type ContentSampleRow = { userId: number; content: string };
 export type FilenameSampleRow = { userId: number; name: string | null };
 
 /**
+ * One STAGED image: an upload that carries no generation metadata and was never attached to a post.
+ *
+ * 🔴 IT DELIBERATELY CARRIES NO IMAGE IDENTITY AND NO `meta`. The predicate ("no metadata, no post")
+ * is applied in the QUERY — see `stagedImageSampleArgs` — so every row that arrives is already one
+ * of these, and the only thing the heuristic then needs from a row is WHEN it was created. Selecting
+ * `meta` to re-test it here would pull a generation-parameter blob per row for a question the index
+ * has already answered, on the largest table the detector touches.
+ *
+ * `createdAt` is a timestamp rather than an id because the signal is a SAME-SECOND burst — an
+ * automated batch — and ids are dense enough on this table that consecutive ids say nothing about
+ * elapsed time. It is the one place this module reads `createdAt` as a value rather than as a bound.
+ */
+export type StagedImageRow = { userId: number; createdAt: Date };
+
+/**
+ * What one account's staged uploads amount to, as the heuristic reads them.
+ *
+ * Two numbers rather than a list, for the reason `CohortSignals` gives about sizes rather than
+ * lists: nothing downstream needs to know WHICH uploads, and a per-member row list held for a
+ * 25,000-member cohort is a different memory profile from two integers.
+ */
+export type StagedImageFacts = {
+  /** How many staged images were sampled for this member. Bounded by `MAX_STAGED_IMAGES_PER_MEMBER`. */
+  count: number;
+  /**
+   * The most of them sharing ONE whole second of creation time.
+   *
+   * 🔴 A SECOND, NOT A WINDOW, and that is the conservative reading on purpose. A rolling window
+   * would also catch a batch straddling a second boundary — which this misses, and which is a stated
+   * false NEGATIVE — but a window has a width nobody has measured, while a shared truncated second
+   * is a fact about the rows rather than a parameter. `1` is the floor for any member with a staged
+   * image (an upload always shares its own second with itself) and it is below the scoring boundary.
+   */
+  largestSameSecondBurst: number;
+};
+
+/**
  * The Postgres slice this module is allowed to use: two reads, no write method, nothing to widen.
  *
  * Written structurally rather than as `typeof dbRead` for the reason `cohort.ts` gives at length —
@@ -175,8 +245,24 @@ export type EvidenceDb = {
   commentV2: {
     findMany: (args: ReturnType<typeof contentSampleArgs>) => Promise<ContentSampleRow[]>;
   };
+  /**
+   * 🔴 TWO CALL SIGNATURES, ONE OPERATION. The filename read and the staged-image read are different
+   * questions about the same table — the first reads every upload's NAME, the second reads only the
+   * uploads that carry no metadata and no post — so they take different arguments and return
+   * different rows. Written as overloads rather than as a union return type because a union would
+   * force every call site to narrow a result whose shape the ARGUMENTS already determine, and the
+   * narrowing would be a cast, i.e. a place for the two to silently disagree.
+   *
+   * It is still ONE member of the operation ledger (`image.findMany`) — see
+   * `__tests__/no-write-surface.test.ts`, which records METHODS rather than call sites. That is the
+   * honest reading: this widens what an already-permitted read is asked for, it does not grant a new
+   * operation.
+   */
   image: {
-    findMany: (args: ReturnType<typeof filenameSampleArgs>) => Promise<FilenameSampleRow[]>;
+    findMany: {
+      (args: ReturnType<typeof filenameSampleArgs>): Promise<FilenameSampleRow[]>;
+      (args: ReturnType<typeof stagedImageSampleArgs>): Promise<StagedImageRow[]>;
+    };
   };
 };
 
@@ -233,6 +319,26 @@ export type EvidenceReader = {
     perMemberTake: number,
     createdBefore?: Date
   ): Promise<FilenameSampleRow[]>;
+  /**
+   * Up to `perMemberTake` recent STAGED images FOR EACH of these accounts, uploaded at or before
+   * `createdBefore` — the uploads carrying no generation metadata that were never attached to a
+   * post.
+   *
+   * 🔴 PER MEMBER, like `listFilenameSamples` and for the same measured reason. The result is
+   * bounded by `userIds.length × perMemberTake`, so a caller sizing a budget must multiply.
+   *
+   * 🔴 IT IS A SEPARATE READ RATHER THAN A WIDER `listFilenameSamples`, and the alternative was
+   * considered rather than skipped. Folding the two would mean one statement selecting `meta` for
+   * every upload a member made, because "is this staged" cannot be answered from the columns the
+   * filename read wants — so the cost of the combined read is a generation-parameter blob per row
+   * on the largest table here, where this read pays a `WHERE` clause instead and returns a strict
+   * and usually much smaller subset.
+   */
+  listStagedImageSamples(
+    userIds: number[],
+    perMemberTake: number,
+    createdBefore?: Date
+  ): Promise<StagedImageRow[]>;
   /** Whether a registration-IP read can happen at all. `false` means the source is missing, NOT
    *  that the accounts share no IP. */
   hasRegistrationIps: boolean;
@@ -336,6 +442,62 @@ export function filenameSampleArgs(userId: number, take: number, createdBefore?:
       ...(createdBefore ? { createdAt: { lte: createdBefore } } : {}),
     },
     select: { userId: true, name: true },
+    orderBy: { id: 'desc' },
+    take,
+  } as const;
+}
+
+/**
+ * The `findMany` arguments for ONE account's STAGED images.
+ *
+ * "Staged" is the conjunction of two facts about an upload, and neither alone is the signal:
+ *  - `meta` is NULL — no generation metadata, so the image was not produced on this site. Both
+ *    spellings count: a SQL `NULL` and the JSON literal `null`, which is what `Prisma.AnyNull`
+ *    means and what `equals: null` on a `Json?` column will not compile to. The two are
+ *    indistinguishable to anyone reading the site and differ only in how the row was written, so a
+ *    filter matching one of them would score half of an identical population.
+ *  - `postId` IS NULL — the upload was never attached to a post, so there is no page it appears on.
+ *
+ * 🔴 ONE ACCOUNT PER STATEMENT, WHICH IS NOT A STYLE CHOICE — see `filenameSampleArgs` for the
+ * measured reason. A `userId IN (…)` list over `Image` with a `LIMIT` under it produced a backward
+ * primary-key scan that walked the table for over 150 seconds and, on the days it did complete, let
+ * a handful of prolific accounts evict everyone else in the chunk. Narrowing the list does not fix
+ * it. `WHERE userId = $1` is an equality on the leading column of an index and neither failure is
+ * reachable from it.
+ *
+ * 🔴 `postId: null` IS THE SELECTIVE PREDICATE AND IT HAS ITS OWN INDEX. `schema.prisma` declares
+ * `(userId, postId)` as well as `(userId, id)`, so this read's `WHERE` is an exact prefix of the
+ * first — an equality on `userId` and a value (NULL) on `postId`. The `meta` test is a filter on top
+ * of whatever the planner chooses; it is not indexed and does not need to be, because the group it
+ * filters is one account's unattached uploads.
+ *
+ * 🔴 `orderBy: { id: 'desc' }`, NOT `createdAt`, EVEN THOUGH THE SELECTED COLUMN IS `createdAt`.
+ * There is no declared `(userId, createdAt)` index; ordering on it would sort outside every declared
+ * index, and `id` is a monotonic surrogate on an append-only table so descending `id` IS descending
+ * upload order for this purpose. The `take` bounds the read, so the order decides WHICH rows survive
+ * it, and the newest are the ones a burst is made of. (The deployed table also carries an undeclared
+ * `(userId, createdAt)` index — stated because the sibling docstring states it; it does not change
+ * the choice, and reasoning from the schema file alone about the live index set is what got a
+ * previous version of that docstring wrong.)
+ *
+ * 🔴 IT DOES NOT FILTER ON `ingestion` OR `needsReview`, for exactly the reason `filenameSampleArgs`
+ * does not: the partial index those predicates would reach excludes the rows this heuristic is made
+ * of. An upload the scanner blocked is still an upload, and an account whose content is removed
+ * while the account survives is the case the detector exists to surface.
+ *
+ * `createdBefore` is an upper bound, so two runs over the same window sample the same rows rather
+ * than drifting with whatever was uploaded meanwhile. There is no lower bound, deliberately: every
+ * cohort account was created inside the run's window, so none of its images can predate it.
+ */
+export function stagedImageSampleArgs(userId: number, take: number, createdBefore?: Date) {
+  return {
+    where: {
+      userId,
+      postId: null,
+      meta: { equals: Prisma.AnyNull },
+      ...(createdBefore ? { createdAt: { lte: createdBefore } } : {}),
+    },
+    select: { userId: true, createdAt: true },
     orderBy: { id: 'desc' },
     take,
   } as const;
@@ -477,6 +639,21 @@ export function createEvidenceReader(
       const perMember = await Promise.all(
         userIds.map((userId) =>
           db.image.findMany(filenameSampleArgs(userId, perMemberTake, createdBefore))
+        )
+      );
+      return perMember.flat();
+    },
+    listStagedImageSamples: async (userIds, perMemberTake, createdBefore) => {
+      if (!userIds.length || perMemberTake <= 0) return [];
+      // 🔴 THE SAME ALL-OR-NOTHING FAN-OUT AS THE FILENAME READ, and deliberately not
+      // `Promise.allSettled`. Here the case for it is even plainer than there: this heuristic scores
+      // a member on how many staged uploads it HAS, so a batch that partly failed does not produce a
+      // vaguer answer, it produces a LOWER one — a member whose rows went missing scores 0 and is
+      // indistinguishable from a member with nothing staged. Keeping the fulfilled half would
+      // publish that as a finding-free run with `evidence_source_read_failures: 0`.
+      const perMember = await Promise.all(
+        userIds.map((userId) =>
+          db.image.findMany(stagedImageSampleArgs(userId, perMemberTake, createdBefore))
         )
       );
       return perMember.flat();
@@ -625,6 +802,18 @@ export type CohortSignals = {
   /** namespaced fingerprint → how many DISTINCT cohort members produced it. */
   membersPerFingerprint: Map<string, number>;
   /**
+   * userId → what its STAGED uploads amount to. Absent means the member had none SAMPLED, which is
+   * not the same as having none — see `sources.stagedImages`.
+   *
+   * 🔴 IT IS A PER-MEMBER FACT, NOT A COHORT-WIDE INDEX, AND IT IS THE FIRST ONE HERE. Every other
+   * entry on this type answers "how many OTHER accounts share this", because every other heuristic
+   * is a ring detector. `asset-staging` is not: it is a statement about one account's own uploads,
+   * and it lives here anyway because the READ is a cohort-level read — one budgeted walk of the
+   * whole cohort, with its own availability flag — and splitting where a fact is indexed from where
+   * it is fetched would give the heuristics two sources of evidence to reason about instead of one.
+   */
+  stagedImagesByUser: Map<number, StagedImageFacts>;
+  /**
    * 🔴 WHICH SOURCES ACTUALLY ANSWERED. A heuristic reading an empty index cannot tell "these
    * accounts share nothing" from "nobody asked" — and the two call for opposite conclusions. Every
    * consumer of this type is expected to branch on these before reading a zero as a signal.
@@ -653,6 +842,7 @@ export type CohortSignals = {
       registrationIps: boolean;
       contentSamples: boolean;
       filenameSamples: boolean;
+      stagedImages: boolean;
     };
     /** ClickHouse was reachable and the registration-IP read ran. */
     registrationIps: boolean;
@@ -685,6 +875,21 @@ export type CohortSignals = {
     filenameBudgetExhausted: boolean;
     /** How many members had filenames sampled at all. */
     membersSampledForFilenames: number;
+    /**
+     * The staged-image read ran to completion. `false` means it never ran, or a batch THREW and the
+     * partial data was discarded — NOT that the cohort staged nothing.
+     *
+     * 🔴 ITS OWN FLAG, AND THE `asset-staging` HEURISTIC IS THE ONE THAT MOST NEEDS IT. The ring
+     * heuristics degrade from a dead source into a weaker version of the same claim; this one
+     * degrades into a claim about a member's own uploads that is FLATLY WRONG — "this account has
+     * staged nothing" said of an account that staged forty. There is no reading of a zero here that
+     * is safe without this flag beside it.
+     */
+    stagedImages: boolean;
+    /** The staged-image budget was spent before the whole cohort was sampled. */
+    stagedImageBudgetExhausted: boolean;
+    /** How many members had staged images sampled at all. */
+    membersSampledForStagedImages: number;
   };
 };
 
@@ -697,6 +902,7 @@ export function emptyCohortSignals(): CohortSignals {
     membersPerDomain: new Map(),
     fingerprintsByUser: new Map(),
     membersPerFingerprint: new Map(),
+    stagedImagesByUser: new Map(),
     sources: {
       // 🔴 NOT "did not run" — these are the only fields here whose safe default is `false`
       // meaning what it says. An index over nothing is not a failure, and defaulting them to
@@ -705,6 +911,7 @@ export function emptyCohortSignals(): CohortSignals {
         registrationIps: false,
         contentSamples: false,
         filenameSamples: false,
+        stagedImages: false,
       },
       registrationIps: false,
       contentSamples: false,
@@ -713,6 +920,9 @@ export function emptyCohortSignals(): CohortSignals {
       filenameSamples: false,
       filenameBudgetExhausted: false,
       membersSampledForFilenames: 0,
+      stagedImages: false,
+      stagedImageBudgetExhausted: false,
+      membersSampledForStagedImages: 0,
     },
   };
 }
@@ -745,6 +955,8 @@ export function buildCohortSignals(args: {
   /** Optional so a caller indexing only text — every existing test, and any future source-by-source
    *  grading run — does not have to pass an empty array to mean "did not read this". */
   filenameSamples?: FilenameSampleRow[];
+  /** Optional for the same reason `filenameSamples` is. */
+  stagedImageSamples?: StagedImageRow[];
   sources: CohortSignals['sources'];
 }): CohortSignals {
   const signals = emptyCohortSignals();
@@ -811,6 +1023,39 @@ export function buildCohortSignals(args: {
   for (const [fingerprint, members] of fingerprintMembers)
     signals.membersPerFingerprint.set(fingerprint, members.size);
 
+  // 🔴 THE STAGED-IMAGE FOLD COUNTS ROWS, NOT MEMBERS, AND IT IS THE ONE PLACE THAT IS CORRECT.
+  // Every fold above counts DISTINCT ACCOUNTS because every heuristic above asks "how many others
+  // share this" — one account pasting a text ninety times must not manufacture a ring out of itself.
+  // `asset-staging` asks the opposite question: how much did THIS account stage. Its unit is the
+  // upload, and deduplicating to one-per-member would collapse the entire signal to a boolean.
+  const secondsByUser = new Map<number, Map<number, number>>();
+  for (const row of args.stagedImageSamples ?? []) {
+    if (!inCohort.has(row.userId)) continue;
+    const facts = signals.stagedImagesByUser.get(row.userId) ?? {
+      count: 0,
+      largestSameSecondBurst: 0,
+    };
+    facts.count += 1;
+    signals.stagedImagesByUser.set(row.userId, facts);
+
+    // Truncated to a whole second. An UNPARSEABLE timestamp is counted as an upload and left out of
+    // the burst tally: `NaN` is a usable Map key (SameValueZero), so admitting it would gather every
+    // undated row of one member into a single fake "burst" — a maximal score built out of bad data,
+    // which is the one direction this must not fail in.
+    const millis = row.createdAt instanceof Date ? row.createdAt.getTime() : Number.NaN;
+    if (!Number.isFinite(millis)) continue;
+    const second = Math.floor(millis / 1000);
+    let seconds = secondsByUser.get(row.userId);
+    if (!seconds) secondsByUser.set(row.userId, (seconds = new Map()));
+    seconds.set(second, (seconds.get(second) ?? 0) + 1);
+  }
+  for (const [userId, seconds] of secondsByUser) {
+    const facts = signals.stagedImagesByUser.get(userId);
+    if (!facts) continue;
+    for (const n of seconds.values())
+      if (n > facts.largestSameSecondBurst) facts.largestSameSecondBurst = n;
+  }
+
   return signals;
 }
 
@@ -866,6 +1111,14 @@ export async function collectCohortSignals(
     filenameBatchSize?: number;
     maxContentSamples?: number;
     maxFilenameSamples?: number;
+    maxStagedImageSamples?: number;
+    /**
+     * Per-member cap on staged-image rows. Defaults to `MAX_STAGED_IMAGES_PER_MEMBER`.
+     *
+     * 🔴 A TEST AFFORDANCE, like `maxFilenamesPerMember`. `run.ts` passes the run-level budget and
+     * NOT this one, so the per-member cap is the constant in production, always.
+     */
+    maxStagedImagesPerMember?: number;
     /**
      * Per-member cap on filename rows. Defaults to `MAX_FILENAMES_PER_MEMBER`.
      *
@@ -888,6 +1141,8 @@ export async function collectCohortSignals(
   const budgetTotal = opts.maxContentSamples ?? MAX_CONTENT_SAMPLES;
   const filenameBudgetTotal = opts.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
   const filenamesPerMember = opts.maxFilenamesPerMember ?? MAX_FILENAMES_PER_MEMBER;
+  const stagedBudgetTotal = opts.maxStagedImageSamples ?? MAX_STAGED_IMAGE_SAMPLES;
+  const stagedPerMember = opts.maxStagedImagesPerMember ?? MAX_STAGED_IMAGES_PER_MEMBER;
   const checkCanceled = opts.checkCanceled ?? (() => undefined);
   const log = opts.log ?? (() => undefined);
 
@@ -1023,16 +1278,61 @@ export async function collectCohortSignals(
   if (filenameRead && filenameBudget <= 0 && filenameMembersSampled < members.length)
     filenameBudgetExhausted = true;
 
+  // The staged-image walk. The filename walk above with its own budget, its own per-member cap and
+  // its own flags — three separate reads, three separate failure modes, and no shared allowance.
+  // It reuses `filenameBatches` rather than re-chunking the same id list at the same width: the
+  // batch is a CONCURRENCY WINDOW over one connection pool, so two walks slicing one cohort with one
+  // number is one decision expressed once, not a coincidence. (They still run one after the other,
+  // so the pool sees `filenameBatchSize` statements at a time, not twice that.)
+  const stagedImageSamples: StagedImageRow[] = [];
+  let stagedBudget = stagedBudgetTotal;
+  let stagedBudgetExhausted = false;
+  let stagedMembersSampled = 0;
+  let stagedRead = true;
+  let stagedFailed = false;
+  for (const ids of filenameBatches) {
+    checkCanceled();
+    if (stagedBudget <= 0) {
+      stagedBudgetExhausted = true;
+      break;
+    }
+    let rows: StagedImageRow[];
+    try {
+      rows = await reader.listStagedImageSamples(ids, stagedPerMember, opts.createdBefore);
+    } catch (e) {
+      log('bot-account-detection:staged-images-failed', {
+        chunkIds: ids.length,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      // Partial data is DISCARDED here for a sharper reason than in the loops above: a member whose
+      // batch failed has no rows, and no rows is the exact shape of a member with nothing staged. A
+      // half-read run would publish "these accounts staged nothing" about accounts nobody looked at.
+      stagedImageSamples.length = 0;
+      stagedRead = false;
+      stagedFailed = true;
+      stagedBudgetExhausted = false;
+      stagedMembersSampled = 0;
+      break;
+    }
+    stagedMembersSampled += ids.length;
+    stagedBudget -= rows.length;
+    stagedImageSamples.push(...rows);
+  }
+  if (stagedRead && stagedBudget <= 0 && stagedMembersSampled < members.length)
+    stagedBudgetExhausted = true;
+
   return buildCohortSignals({
     members,
     registrationIps,
     contentSamples,
     filenameSamples,
+    stagedImageSamples,
     sources: {
       readFailures: {
         registrationIps: ipsFailed,
         contentSamples: contentFailed,
         filenameSamples: filenameFailed,
+        stagedImages: stagedFailed,
       },
       registrationIps: ipsRead,
       contentSamples: contentRead,
@@ -1041,6 +1341,9 @@ export async function collectCohortSignals(
       filenameSamples: filenameRead,
       filenameBudgetExhausted,
       membersSampledForFilenames: Math.min(filenameMembersSampled, members.length),
+      stagedImages: stagedRead,
+      stagedImageBudgetExhausted: stagedBudgetExhausted,
+      membersSampledForStagedImages: Math.min(stagedMembersSampled, members.length),
     },
   });
 }

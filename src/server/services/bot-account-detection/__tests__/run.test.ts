@@ -14,11 +14,7 @@ import {
   postingVelocityHeuristic,
   registrationClusterHeuristic,
 } from '../heuristics';
-import {
-  MIN_REPORTED_CONFIDENCE,
-  SOLE_SIGNAL_DOMINANCE,
-  type BotAccountHeuristic,
-} from '../scoring';
+import { MIN_REPORTED_CONFIDENCE, soleSignalDominance, type BotAccountHeuristic } from '../scoring';
 import { BotAccountReportError, runBotAccountDetection } from '../run';
 
 const STARTED = new Date('2026-09-03T03:20:00.000Z');
@@ -212,7 +208,11 @@ describe('the reporting threshold, end to end', () => {
     const scenario = runScoring({ 1: 0.02, 2: 0.9, 3: 0 });
     await scenario.result;
     const summary = scenario.reports[0].summary ?? '';
-    expect(summary).toContain('1 scored at or above the 0.15 reporting threshold');
+    // 🔴 THE CUT IS RENDERED EXACTLY. `toFixed(2)` printed the re-derived default 0.1125 as
+    // `0.11` — a summary naming a looser cut than the one it applied, in the sentence a human reads
+    // first. The expectation is the literal string, so a regression to two decimal places fails
+    // here rather than being read past.
+    expect(summary).toContain('1 scored at or above the 0.1125 reporting threshold');
     expect(summary).toContain('2 scored under it');
     expect(summary).toContain('NOT reported as findings');
   });
@@ -283,6 +283,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       ids.map((userId) => ({ userId, ip: '203.0.113.9' })),
     listContentSamples: async (ids: number[]) =>
       ids.map((userId) => ({ userId, content: RING_TEXT })),
+    listStagedImageSamples: async () => [],
     listFilenameSamples: async () => [],
   };
 
@@ -306,9 +307,10 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(finding).toBeDefined();
     const sub = subScoresOf(finding as { reason: string });
 
-    // A positive control on the parse before either number is believed: all three registered
+    // A positive control on the parse before either number is believed: all four registered
     // heuristics are present, so a regex that matched a fragment cannot read as a pass.
     expect(Object.keys(sub).sort()).toEqual([
+      'asset-staging',
       'content-templating',
       'posting-velocity',
       'registration-cluster',
@@ -321,8 +323,9 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(sub['registration-cluster']).toBeCloseTo(0.5, 6);
     expect(sub['content-templating']).toBeCloseTo(0.5, 6);
     // And the blend a moderator sorts on moved with them, rather than the sub-scores being
-    // decoration on a number computed elsewhere.
-    expect(finding?.confidence).toBeCloseTo(1 / 3, 6);
+    // decoration on a number computed elsewhere. Two of FOUR heuristics at 0.5 blends to 0.25 —
+    // it was 1/3 over three entries, and the difference is the denominator, not the evidence.
+    expect(finding?.confidence).toBeCloseTo(0.25, 6);
 
     // The reason a moderator reads names WHAT was seen, not only that something was.
     expect(finding?.reason).toContain('6 new posting accounts share its registration IP');
@@ -341,6 +344,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
       // Mixed case on purpose: these are ONE cluster, not two.
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async (ids: number[]) =>
         ids.map((userId) => ({ userId, name: userId % 2 === 0 ? 'Logo.jpg' : 'logo.jpg' })),
     });
@@ -350,6 +354,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(finding).toBeDefined();
     const sub = subScoresOf(finding as { reason: string });
     expect(Object.keys(sub).sort()).toEqual([
+      'asset-staging',
       'content-templating',
       'posting-velocity',
       'registration-cluster',
@@ -382,6 +387,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
       },
@@ -406,6 +412,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
       },
@@ -417,6 +424,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     const quietCounters = (await quiet.result).counters;
@@ -473,6 +481,215 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(failedCounters.evidence_source_read_failures).toBe(1);
   });
 
+  /**
+   * A cohort whose accounts have uploaded images and published NONE of them — the shape
+   * `asset-staging` exists to see. `visible: 0` on every member, because a staged image is
+   * unattached by definition and `imageCountArgs` excludes it.
+   */
+  const stagingRun = (
+    evidence: Parameters<typeof runBotAccountDetection>[0]['evidence'],
+    images = 6
+  ) => {
+    const accounts = Array.from({ length: 3 }, (_, i) => account(i + 1));
+    const reader: CohortReader = {
+      listNewAccounts: async ({ before, take }) =>
+        [...accounts]
+          .sort((a, b) => b.id - a.id)
+          .filter((a) => before === undefined || a.id < before)
+          .slice(0, take),
+      countPosts: async (ids) => ({
+        comments: [],
+        commentsV2: [],
+        models: [],
+        images: [],
+        allComments: [],
+        allCommentsV2: [],
+        allModels: [],
+        allImages: ids.map((userId) => ({ userId, count: images })),
+      }),
+    };
+    const out = sink();
+    return {
+      ...out,
+      result: runBotAccountDetection(
+        { reader, evidence, sendReport: out.sendReport, now: clock() }, // production registry
+        { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+      ),
+    };
+  };
+
+  /** Staged uploads for every member, `perMember` of them, all inside ONE second when `burst`. */
+  const stagedEvidence = (perMember: number, burst: boolean) => ({
+    hasRegistrationIps: false,
+    listRegistrationIps: async () => [],
+    listContentSamples: async () => [],
+    listFilenameSamples: async () => [],
+    listStagedImageSamples: async (ids: number[]) =>
+      ids.flatMap((userId) =>
+        Array.from({ length: perMember }, (_, i) => ({
+          userId,
+          createdAt: new Date(
+            new Date('2026-09-03T02:00:00.000Z').getTime() + (burst ? i * 10 : i * 60_000)
+          ),
+        }))
+      ),
+  });
+
+  it('🔴 THE STAGED EVIDENCE REACHES THE SCORING, and the finding proves it', async () => {
+    // 🔴 THE SEAM, AND IT IS THE ONE THIS TREE HAS ALREADY BEEN BURNED BY. `evidence.test.ts` covers
+    // the index, `heuristics.test.ts` covers the scorer over hand-built signals — and neither ever
+    // builds the COMBINED state, which is exactly how a mutant replacing the `signals` handed to
+    // `scoreAccount` with `emptyCohortSignals()` once left an entire suite green with two-thirds of
+    // the detector inert. A fourth heuristic reading a fourth index is a fourth chance at that, and
+    // the cheapest place to lose it is the one wire nobody tests: `collectCohortSignals` building
+    // `stagedImagesByUser`, and `scoreAccount` being handed THAT object.
+    //
+    // The assertion is on the EMITTED FINDING's sub-scores. A score object or a counter is a claim
+    // about an intermediate; the finding is what reaches the board.
+    const scenario = stagingRun(stagedEvidence(6, false));
+    await scenario.result;
+
+    const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
+    expect(finding).toBeDefined();
+    const sub = subScoresOf(finding as { reason: string });
+    // Positive control on the parse before any number is believed.
+    expect(Object.keys(sub).sort()).toEqual([
+      'asset-staging',
+      'content-templating',
+      'posting-velocity',
+      'registration-cluster',
+    ]);
+
+    // 🔴 THE HEURISTIC THAT GOES INERT UNDER THE SEAM MUTANT. Six staged uploads a minute apart is
+    // (6-1)/(8-1) on the volume half and nothing on the burst half.
+    // Read off the reason's `id=0.00` clause, so the expectation is the RENDERED two-decimal form
+    // of (6-1)/(8-1) = 0.714285…. Exact rather than approximate: the rendering is part of what a
+    // moderator sees, and a value assertion with slack would pass on a heuristic scoring 0.7149.
+    expect(sub['asset-staging']).toBe(0.71);
+    // 🔴 AND THE THREE RING HEURISTICS SCORE NOTHING, which is the point of the case: this account
+    // is on the board because of its OWN uploads, with no other account involved anywhere in the
+    // run. No previous heuristic could have produced this finding.
+    expect(sub['posting-velocity']).toBe(0);
+    expect(sub['registration-cluster']).toBe(0);
+    expect(sub['content-templating']).toBe(0);
+    // One of four heuristics at 0.714 blends to 0.1786 — above the shipped threshold, so this is a
+    // row a moderator actually receives rather than one suppressed under the cut.
+    expect(finding?.confidence).toBeCloseTo(0.178571428571, 6);
+    expect((await scenario.result).findingsReported).toBe(3);
+
+    // The reason names WHAT was seen, not merely that something was.
+    expect(finding?.reason).toContain('no generation metadata');
+    expect(finding?.reason).toContain('attached to no post');
+  });
+
+  it('🔴 the SAME-SECOND half reaches the board and is counted apart from the volume half', async () => {
+    // Two runs, identical but for WHEN the uploads happened. Asserted as a comparison because the
+    // decomposition's whole purpose is answering "is the burst half doing work the volume half was
+    // not already doing" — a value assertion on one run cannot say that.
+    const spread = stagingRun(stagedEvidence(3, false));
+    const spreadResult = await spread.result;
+    const burst = stagingRun(stagedEvidence(3, true));
+    const burstResult = await burst.result;
+
+    const scoreOf = (s: typeof spread) =>
+      subScoresOf(s.reports[0].findings.find((f) => f.userId === 1) as { reason: string })[
+        'asset-staging'
+      ];
+    // Three uploads: the volume half gives (3-1)/(8-1) = 0.2857 either way, and the burst half
+    // gives (3-1)/(4-1) = 0.6667 when all three land in one second. Rendered to two decimals in the
+    // reason clause these are 0.29 and 0.67 — deliberately neither 0 nor 1, so a mutant that
+    // saturates or zeroes a half cannot land on either.
+    expect(scoreOf(spread)).toBe(0.29);
+    expect(scoreOf(burst)).toBe(0.67);
+
+    // 🔴 THE COUNTERS TELL THE TWO HALVES APART. Without this decomposition a half that never fires
+    // on an account the other did not already carry is invisible — the failure that kept a
+    // zero-firing comment source alive for five runs one heuristic over.
+    expect(burstResult.counters['heuristic:asset-staging:fired_burst']).toBe(3);
+    expect(burstResult.counters['heuristic:asset-staging:fired_volume']).toBe(3);
+    expect(spreadResult.counters['heuristic:asset-staging:fired_burst']).toBe(0);
+    expect(spreadResult.counters['heuristic:asset-staging:fired_volume']).toBe(3);
+  });
+
+  it('🔴 A FAILED STAGED READ AND A QUIET DAY PRODUCE DIFFERENT COUNTERS', async () => {
+    // 🔴 THE SILENT-ZERO SEAM, ON THE SOURCE WHERE THE QUIET-DAY READING IS NOT MERELY WEAKER BUT
+    // FALSE. A dead staged read leaves `asset-staging` asserting that every account published what
+    // it uploaded. Asserted as a COMPARISON between two runs rather than as a value, because a test
+    // pinning any single counter's value passes on BOTH of them — which is exactly how a production
+    // run whose image read died on every attempt reported success with every dashboard green.
+    const failed = stagingRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+      listStagedImageSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const failedCounters = (await failed.result).counters;
+    // The control: the identical run whose staged read worked perfectly and found nothing.
+    const quiet = stagingRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+      listStagedImageSamples: async () => [],
+    });
+    const quietCounters = (await quiet.result).counters;
+
+    expect(failedCounters.evidence_staged_image_read_failed).toBe(1);
+    expect(quietCounters.evidence_staged_image_read_failed).toBe(0);
+    expect(failedCounters.evidence_source_read_failures).toBe(1);
+    expect(quietCounters.evidence_source_read_failures).toBe(0);
+    expect(failedCounters.evidence_staged_images).toBe(0);
+    expect(quietCounters.evidence_staged_images).toBe(1);
+    // 🔴 EMITTED ON EVERY RUN, ZEROS INCLUDED — a key absent on a healthy run cannot be alerted on
+    // with a threshold, because its absence reads as "no data" rather than as "nothing broke".
+    for (const key of [
+      'evidence_staged_images',
+      'evidence_staged_image_read_failed',
+      'evidence_members_with_staged_images',
+      'evidence_staged_image_budget_exhausted',
+      'evidence_staged_image_budget',
+    ])
+      expect(Object.keys(quietCounters)).toContain(key);
+
+    // And the summary says WHICH of the two happened, in the sentence a human reads first.
+    expect(failed.reports[0].summary).toContain('THE STAGED-IMAGE READ FAILED');
+    expect(quiet.reports[0].summary).not.toContain('STAGED-IMAGE');
+  });
+
+  it('🔴 a run with NO evidence reader says the staged source did not run, not that it failed', async () => {
+    // The third arm, and the one the counters alone cannot separate from a failure: a deployment
+    // where the source was never wired up is a normal state, not an incident. The two sentences
+    // call for different actions and only the report chooses between them.
+    const neverRan = run([account(1)]);
+    const result = await neverRan.result;
+    expect(result.counters.evidence_staged_images).toBe(0);
+    expect(result.counters.evidence_staged_image_read_failed).toBe(0);
+    const summary = neverRan.reports[0].summary ?? '';
+    expect(summary).toContain('STAGED-IMAGE DATA WAS UNAVAILABLE');
+    expect(summary).not.toContain('THE STAGED-IMAGE READ FAILED');
+  });
+
+  it('counts the members carrying any staged upload — the heuristic’s own denominator', async () => {
+    // A rate is unreadable without it: "nobody scored" means one thing when six members staged
+    // something and another when none did, and no other counter separates those.
+    const scenario = stagingRun(stagedEvidence(2, false));
+    const counters = (await scenario.result).counters;
+    expect(counters.evidence_members_with_staged_images).toBe(3);
+    // The negative arm, so the number is not simply the cohort size under another name.
+    const none = stagingRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+      listStagedImageSamples: async () => [],
+    });
+    expect((await none.result).counters.evidence_members_with_staged_images).toBe(0);
+    expect((await none.result).counters.cohort_size).toBe(3);
+  });
+
   it('🔴 a healthy run reports ZERO read failures — the other arm of the same key', async () => {
     // A failure counter that is never watched going to zero is a counter nobody can trust a zero
     // from. This arm is what makes the non-zero above attributable.
@@ -480,6 +697,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       hasRegistrationIps: true,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     const counters = (await scenario.result).counters;
@@ -501,6 +719,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       listContentSamples: async () => {
         throw new Error('replica timeout');
       },
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
       },
@@ -549,6 +768,7 @@ describe('the evidence sources are reported, not assumed', () => {
             { userId: 2, ip: 'x' },
           ],
           listContentSamples: async () => [],
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -602,6 +822,7 @@ describe('the evidence sources are reported, not assumed', () => {
             throw new Error('clickhouse down');
           },
           listContentSamples: async () => [],
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -638,6 +859,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [],
           listContentSamples: async () => [],
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -668,6 +890,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [{ userId: 1, ip: '203.0.113.4' }],
           listContentSamples: async () => [],
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -695,6 +918,7 @@ describe('the evidence sources are reported, not assumed', () => {
           listContentSamples: async () => {
             throw new Error('replica timeout');
           },
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -730,6 +954,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: false,
           listRegistrationIps: async () => [],
           listContentSamples: async () => [],
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -796,6 +1021,7 @@ describe('the evidence sources are reported, not assumed', () => {
           // Two rows per chunk against a budget of 2: the first chunk spends it and the walk stops.
           listContentSamples: async (ids) =>
             ids.map((userId) => ({ userId, content: 'x'.repeat(30) })),
+          listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
@@ -881,6 +1107,7 @@ describe('🔴 the signals log line carries the failure half, not just the avail
         throw new Error('clickhouse down');
       },
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     await scenario.result;
@@ -891,6 +1118,7 @@ describe('🔴 the signals log line carries the failure half, not just the avail
       registrationIps: true,
       contentSamples: false,
       filenameSamples: false,
+      stagedImages: false,
     });
     // The availability half is still there beside it — the failure half is an addition, not a
     // replacement, and a reader needs both to tell a broken read from an absent client.
@@ -905,6 +1133,7 @@ describe('🔴 the signals log line carries the failure half, not just the avail
       hasRegistrationIps: true,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     await scenario.result;
@@ -912,6 +1141,7 @@ describe('🔴 the signals log line carries the failure half, not just the avail
       registrationIps: false,
       contentSamples: false,
       filenameSamples: false,
+      stagedImages: false,
     });
   });
 
@@ -924,6 +1154,7 @@ describe('🔴 the signals log line carries the failure half, not just the avail
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
       },
@@ -933,6 +1164,7 @@ describe('🔴 the signals log line carries the failure half, not just the avail
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
       listContentSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     await quiet.result;
@@ -1064,8 +1296,14 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
     // 6 items in 0.67h is 9/hour, just over the 4/hour floor — a trace, not a finding.
     expect(velocity).toBeCloseTo(0.1389, 4);
     expect(templating).toBeCloseTo(0.5, 4);
-    // The property that makes this the collision population rather than a corroborated finding.
-    expect(templating).toBeGreaterThanOrEqual(SOLE_SIGNAL_DOMINANCE * velocity);
+    // The property that makes this the collision population rather than a corroborated finding. The
+    // bar is a function of how many heuristics this RUN registered — three, injected below — and not
+    // of the shipped registry's size. That distinction is the whole point of
+    // `soleSignalDominance`: at four entries the bar is 4 and this same member falls the other side
+    // of it (4 x 0.1389 = 0.5556 against a leader of 0.5), which is the derivation working rather
+    // than the case having stopped being a collision.
+    expect(templating).toBeGreaterThanOrEqual(soleSignalDominance(3) * velocity);
+    expect(templating).toBeLessThan(soleSignalDominance(4) * velocity);
 
     const { reader } = recordingReader([account(1)]);
     const out = sink();
@@ -1592,6 +1830,7 @@ describe('🔴 the cluster key reaches the board', () => {
     hasRegistrationIps: false,
     listRegistrationIps: async () => [],
     listContentSamples: async () => [],
+    listStagedImageSamples: async () => [],
     listFilenameSamples: async () => [],
   };
 

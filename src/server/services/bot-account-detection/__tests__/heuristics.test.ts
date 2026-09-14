@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
-import { emptyCohortSignals, type CohortSignals } from '../evidence';
+import { emptyCohortSignals, type CohortSignals, type StagedImageFacts } from '../evidence';
 import { BOT_ACCOUNT_HEURISTICS } from '../heuristics';
 import {
   COMMON_EMAIL_DOMAINS,
@@ -23,6 +23,15 @@ import {
   contentTemplatingSourceScore,
   largestContentCluster,
 } from '../heuristics/similarity';
+import {
+  BURST_ONE_AT,
+  BURST_ZERO_AT,
+  STAGED_ONE_AT,
+  STAGED_ZERO_AT,
+  assetStagingHalfScores,
+  assetStagingHeuristic,
+  stagedImageFacts,
+} from '../heuristics/staging';
 import { filenameFingerprint } from '../evidence';
 import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from '../fingerprint-keys';
 import {
@@ -76,9 +85,12 @@ function signalsWith(spec: {
   membersPerDomain?: Record<string, number>;
   fingerprints?: Record<number, string[]>;
   membersPerFingerprint?: Record<string, number>;
+  staged?: Record<number, StagedImageFacts>;
   sources?: Partial<CohortSignals['sources']>;
 }): CohortSignals {
   const s = emptyCohortSignals();
+  for (const [userId, facts] of Object.entries(spec.staged ?? {}))
+    s.stagedImagesByUser.set(Number(userId), facts);
   for (const [userId, ips] of Object.entries(spec.ips ?? {})) s.ipsByUser.set(Number(userId), ips);
   for (const [ip, n] of Object.entries(spec.membersPerIp ?? {})) s.membersPerIp.set(ip, n);
   for (const [d, n] of Object.entries(spec.membersPerDomain ?? {})) s.membersPerDomain.set(d, n);
@@ -89,6 +101,10 @@ function signalsWith(spec: {
   s.sources = { ...s.sources, ...spec.sources };
   return s;
 }
+
+/** One member's staged-upload facts, as the index carries them. */
+const stagedSignals = (userId: number, facts: StagedImageFacts) =>
+  signalsWith({ staged: { [userId]: facts } });
 
 // ---------------------------------------------------------------------------------------------
 // The shared ramp
@@ -617,10 +633,174 @@ describe('content-templating', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Heuristic 4 — asset staging
+// ---------------------------------------------------------------------------------------------
+
+describe('asset-staging', () => {
+  const score = (m: BotAccountCohortMember, s: CohortSignals) =>
+    assetStagingHeuristic.score(evidence(m, s));
+
+  it('🔴 pins the boundary CONSTANTS separately from the behaviour', () => {
+    // Same reasoning as the three heuristics above: every behavioural case below uses LITERAL
+    // counts and LITERAL expected scores, so none of them says anything about these values. A
+    // boundary case written as `{ count: STAGED_ZERO_AT }` is vacuous about the constant under
+    // test — measured on this module: a mutant moving `CLUSTER_ZERO_AT` survived exactly that.
+    expect(STAGED_ZERO_AT).toBe(1);
+    expect(STAGED_ONE_AT).toBe(8);
+    expect(BURST_ZERO_AT).toBe(1);
+    expect(BURST_ONE_AT).toBe(4);
+  });
+
+  it('scores 0 for ONE staged upload and fires from two', () => {
+    // One unattached, metadata-free upload is the commonest shape on the site that matches this
+    // predicate at all — somebody started a post and did not finish. Scoring it would fire on a
+    // large share of every day's genuine signups.
+    //
+    // LITERAL counts and a LITERAL expected value. 2 staged is (2-1)/(8-1) = 1/7 = 0.142857…, which
+    // is deliberately not a half, a quarter or a round tenth: a mutant that averages the bounds,
+    // drops the `- zeroAt`, or divides by `oneAt` gives 0.5, 0.25 and 0.25 respectively.
+    expect(score(member(), stagedSignals(42, { count: 1, largestSameSecondBurst: 1 }))).toBe(0);
+    expect(score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 1 }))).toBeCloseTo(
+      0.142857142857,
+      10
+    );
+  });
+
+  it('saturates well past the volume boundary', () => {
+    // Overshoots rather than landing on it — 11 against a boundary of 8.
+    expect(score(member(), stagedSignals(42, { count: 11, largestSameSecondBurst: 1 }))).toBe(1);
+  });
+
+  it('🔴 a SAME-SECOND pair strengthens the score above what the count alone gives', () => {
+    // 🔴 THE CLAIM THE BURST HALF EXISTS TO MAKE, asserted as a COMPARISON rather than as a value.
+    // Two staged uploads is a weak signal; two staged uploads created in the same second is a batch
+    // a program submitted. Both members have the identical COUNT, so the only thing separating the
+    // two numbers is the burst — a mutant that ignores `largestSameSecondBurst` entirely returns
+    // the same score for both and fails here rather than passing a value assertion by luck.
+    const spread = score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 1 }));
+    const burst = score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 2 }));
+    expect(burst).toBeGreaterThan(spread);
+    // The values, literally: (2-1)/(4-1) = 1/3 against the volume half's 1/7.
+    expect(burst).toBeCloseTo(0.333333333333, 10);
+    expect(spread).toBeCloseTo(0.142857142857, 10);
+  });
+
+  it('scores a burst of ONE as nothing — every upload shares its own second', () => {
+    // 🔴 THE OFF-BY-ONE THAT WOULD MAKE THIS HEURISTIC FIRE ON EVERY MEMBER WITH ANY STAGED IMAGE.
+    // A lone upload trivially has a largest-same-second group of 1, so reading `zeroAt` as "the
+    // smallest value that fires" would give every staged upload a burst score and the half would
+    // stop distinguishing anything.
+    //
+    // 🔴 ASSERTED ON THE HALF, NOT ONLY ON THE BLEND, BECAUSE THE BLEND CANNOT SEE THIS MUTANT.
+    // Measured: moving `BURST_ZERO_AT` to 0 makes a burst of one score 0.25, and at a count of 3
+    // the volume half is already 0.2857 — so `max` returns the volume half either way and the
+    // blended expectation below passes at BOTH values of the constant. The case read as a boundary
+    // test and was vacuous about the boundary; the mutant died elsewhere in the file, which is a
+    // different claim from this case being coverage. Reading the half directly makes the assertion
+    // reachable.
+    const facts = stagedSignals(42, { count: 3, largestSameSecondBurst: 1 });
+    expect(assetStagingHalfScores(42, facts).burst).toBe(0);
+    // And the blend is then the volume half's (3-1)/(8-1) and nothing else.
+    expect(score(member(), facts)).toBeCloseTo(0.285714285714, 10);
+  });
+
+  it('saturates the burst half past its own boundary', () => {
+    // 6 in one second against a boundary of 4, on an account whose volume half alone would be 1/7.
+    expect(score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 6 }))).toBe(1);
+  });
+
+  it('🔴 combines the two halves with max, NOT a sum', () => {
+    // A sum would double-count the same uploads — every burst member is also a count member — and
+    // would make the sub-score stop meaning "how far past ordinary these uploads are".
+    //
+    // 5 staged is (5-1)/7 = 0.571428…; a burst of 2 is 1/3 = 0.333…. The sum is 0.904761…, which is
+    // a DIFFERENT number from both operands and from the max, so this case separates all three
+    // readings rather than only rejecting one.
+    const both = stagedSignals(42, { count: 5, largestSameSecondBurst: 2 });
+    expect(score(member(), both)).toBeCloseTo(0.571428571428, 10);
+    expect(score(member(), both)).not.toBeCloseTo(0.904761904761, 6);
+  });
+
+  it('scores an account with nothing staged 0, without throwing', () => {
+    expect(score(member(), signalsWith({}))).toBe(0);
+    expect(stagedImageFacts(42, signalsWith({}))).toEqual({
+      count: 0,
+      largestSameSecondBurst: 0,
+    });
+  });
+
+  it('reads only its OWN member’s facts', () => {
+    // The index is keyed by user, and a heuristic reading the wrong entry would score one account
+    // on another's uploads. The fixture gives member 7 a maximal shape and member 42 nothing, so a
+    // mutant reading "the first entry" or "any entry" scores 1 where this expects 0.
+    const s = signalsWith({ staged: { 7: { count: 40, largestSameSecondBurst: 40 } } });
+    expect(score(member({ userId: 42 }), s)).toBe(0);
+    expect(score(member({ userId: 7 }), s)).toBe(1);
+  });
+
+  it('🔴 assetStagingHalfScores isolates the two halves, in BOTH directions', () => {
+    // 🔴 WITHOUT THIS THE COUNTERS CANNOT SEE WHICH HALF FIRED, and a half that never fires on an
+    // account the other did not already carry is a boundary doing nothing while looking like
+    // evidence — the failure mode that kept a zero-firing comment source alive for five runs one
+    // heuristic over. Asserted in both directions so the decomposition is not just re-reporting the
+    // max under two names.
+    const volumeOnly = signalsWith({ staged: { 42: { count: 6, largestSameSecondBurst: 1 } } });
+    expect(assetStagingHalfScores(42, volumeOnly).volume).toBeCloseTo(0.714285714285, 10);
+    expect(assetStagingHalfScores(42, volumeOnly).burst).toBe(0);
+
+    const burstOnly = signalsWith({ staged: { 42: { count: 2, largestSameSecondBurst: 2 } } });
+    expect(assetStagingHalfScores(42, burstOnly).burst).toBeCloseTo(0.333333333333, 10);
+    expect(assetStagingHalfScores(42, burstOnly).volume).toBeCloseTo(0.142857142857, 10);
+  });
+
+  it('🔴 explains itself with the numbers it used, and states the account’s image total', () => {
+    // The ratio is what tells a moderator whether these uploads are ALL of the account's images or
+    // a corner of them — the heuristic deliberately does not require "all" (the per-member cap makes
+    // that test unreachable on exactly the busiest accounts), so the denominator is disclosed rather
+    // than folded into the score.
+    const m = member({ all: { images: 12 } });
+    const note = assetStagingHeuristic.explain(
+      evidence(m, stagedSignals(42, { count: 9, largestSameSecondBurst: 4 })),
+      1
+    );
+    expect(note).toContain('9 of this account');
+    expect(note).toContain('12 uploaded image(s)');
+    expect(note).toContain('no generation metadata');
+    expect(note).toContain('4 of them were created within the same second');
+  });
+
+  it('🔴 omits the same-second clause when the burst half did not fire', () => {
+    // The reason clause and the score read ONE predicate. A note claiming a burst on an account
+    // whose burst half scored nothing would send a moderator looking for a batch that is not there
+    // — the defect `domainClusterIsNamedInReason` exists one heuristic over to prevent.
+    const note = assetStagingHeuristic.explain(
+      evidence(member(), stagedSignals(42, { count: 4, largestSameSecondBurst: 1 })),
+      0.42
+    );
+    expect(note).toContain('4 of this account');
+    expect(note).not.toContain('same second');
+  });
+
+  it('says nothing at zero, rather than reciting a signal that did not fire', () => {
+    expect(assetStagingHeuristic.explain(evidence(member(), signalsWith({})), 0)).toBeNull();
+  });
+
+  it('🔴 needs no OTHER account to exist — the property no ring heuristic has', () => {
+    // Stated as a test because it is the reason this heuristic was added: the cohort-level indexes
+    // are entirely empty here (no IPs, no domains, no fingerprints), which is the state every ring
+    // heuristic scores 0 in, and this one still fires.
+    const alone = signalsWith({ staged: { 42: { count: 8, largestSameSecondBurst: 1 } } });
+    expect(alone.membersPerIp.size).toBe(0);
+    expect(alone.membersPerFingerprint.size).toBe(0);
+    expect(score(member(), alone)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // The registry, blended
 // ---------------------------------------------------------------------------------------------
 
-describe('the three heuristics together', () => {
+describe('the four heuristics together', () => {
   it('score independently — one firing does not move the others', () => {
     // The operator chose shadow mode to grade each signal ON ITS OWN, so this is the property that
     // matters most: a wave-shaped account with no ring evidence must show velocity alone.
@@ -630,13 +810,16 @@ describe('the three heuristics together', () => {
       ['posting-velocity', 1],
       ['registration-cluster', 0],
       ['content-templating', 0],
+      ['asset-staging', 0],
     ]);
-    // One of three equally weighted heuristics fully convinced blends to a third — which is above
-    // the reporting threshold, and is the arithmetic that threshold was chosen against.
-    expect(result.confidence).toBeCloseTo(1 / 3, 12);
+    // One of FOUR equally weighted heuristics fully convinced blends to a quarter — which is above
+    // the reporting threshold, and is the arithmetic that threshold was chosen against. It was a
+    // third before `asset-staging` was registered; the same account, unchanged, now blends lower,
+    // which is the denominator effect the threshold was re-derived for.
+    expect(result.confidence).toBeCloseTo(1 / 4, 12);
   });
 
-  it('an ordinary new account scores 0 on all three', () => {
+  it('an ordinary new account scores 0 on all four', () => {
     // The population this detector must NOT report: a real newcomer, a common mail provider, no
     // shared IP, no templated text.
     const ordinary = member({
@@ -670,8 +853,32 @@ describe('the three heuristics together', () => {
       ['posting-velocity', 0],
       ['registration-cluster', 1],
       ['content-templating', 1],
+      ['asset-staging', 0],
     ]);
-    expect(result.confidence).toBeCloseTo(2 / 3, 12);
+    expect(result.confidence).toBeCloseTo(2 / 4, 12);
+  });
+
+  it('🔴 a LONE stager scores on asset-staging alone — the shape no ring heuristic can see', () => {
+    // 🔴 THE CASE THE REGISTRY HAD NO ANSWER TO BEFORE THIS HEURISTIC. Every other entry asks "how
+    // many OTHER new accounts share this", so one account working by itself is invisible to all
+    // three: nothing is shared, so nothing clusters. This member posts slowly, registered on a
+    // common provider, shares no address and templated nothing — and it has staged nine uploads
+    // with five of them inside one second.
+    const loner = member({
+      all: { images: 9 },
+      createdAt: at('2026-09-03T01:00:00.000Z'),
+      emailDomain: 'gmail.com',
+    });
+    const s = stagedSignals(42, { count: 9, largestSameSecondBurst: 5 });
+    const result = scoreAccount(BOT_ACCOUNT_HEURISTICS, evidence(loner, s));
+    expect(result.subScores.map((x) => [x.id, x.score])).toEqual([
+      ['posting-velocity', 0],
+      ['registration-cluster', 0],
+      ['content-templating', 0],
+      ['asset-staging', 1],
+    ]);
+    // One of four, fully convinced — above the reporting threshold on its own.
+    expect(result.confidence).toBeCloseTo(1 / 4, 12);
   });
 });
 
