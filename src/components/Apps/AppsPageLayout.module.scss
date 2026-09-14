@@ -25,9 +25,22 @@
  * would be querying the thing it is about to resize.
  */
 
-/* The rail + body row. `items-start` so the aside does not stretch to the body's height
-   — the sticky positioning inside it needs a short box to pin against, not a full-height
-   column. */
+/* The rail + body row. `align-items: flex-start` so the aside does not stretch to the
+   body's height.
+
+   🔴 THIS COMMENT USED TO STATE THE RULE BACKWARDS — "the sticky positioning inside it
+   needs a short box to pin against, not a full-height column" — and that sentence is the
+   reason a completely inert rail shipped through review. It is exactly wrong. A sticky
+   element is constrained to its CONTAINING BLOCK, so a SHORT container gives it a travel
+   range of ~0 and it scrolls away with the page. It needs a TALL containing block, not a
+   short one.
+
+   What makes it work here is that the sticky sits on the `<aside>` ITSELF — a flex item,
+   whose containing block is this full-height row — rather than on a div nested inside the
+   shrink-wrapped aside. `align-items: flex-start` (with `align-self: flex-start` on the
+   aside) keeps the aside from stretching, which is a purely visual concern and is NOT
+   what makes the sticky travel. See the inline comment on the `<aside>` in
+   `AppsPageLayout.tsx`, and `CollectionsLayout.module.scss` for the same pairing. */
 .railRow {
   display: flex;
   align-items: flex-start;

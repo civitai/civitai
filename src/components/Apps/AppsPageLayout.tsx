@@ -238,17 +238,37 @@ export function AppsPageLayout({
             data-apps-chrome="rail"
             // The WIDTH is inline because the collapse state is React's, and the node
             // tier reads it off a rendered tree. Only the rail's PRESENCE (the ≥1300px
-            // switch) lives in the stylesheet — see `AppsPageLayout.module.scss`.
-            style={{ width: collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH }}
+            // switch) lives in the stylesheet — see the module stylesheet imported above.
+            //
+            // 🔴 THE STICKY LIVES ON THIS ASIDE — THE FLEX ITEM — NOT ON A DIV INSIDE IT,
+            // AND THE DIFFERENCE IS THE WHOLE FEATURE. `position: sticky` is constrained
+            // to its CONTAINING BLOCK. An earlier revision put it on the inner wrapper,
+            // whose containing block is this aside, and `.railRow { align-items:
+            // flex-start }` shrink-wraps the aside to its content height — so the travel
+            // range was `aside.height − wrapper.height` ≈ 0 and the rail scrolled off with
+            // the page. Measured: viewport top 0 → −600 after a 600px scroll, i.e. fully
+            // inert, which is WORSE than the tab strip it replaced (that could at least
+            // never be scrolled past).
+            //
+            // A sticky FLEX ITEM's containing block is the flex CONTAINER, which is
+            // full-height, so it travels the length of the row. `alignSelf: 'flex-start'`
+            // keeps it shrink-wrapped vertically while it does. This is exactly what
+            // `CollectionsLayout` does (`.container { align-items: flex-start }` +
+            // `.sidebar { position: sticky; align-self: flex-start }`) — the precedent
+            // this component's own docstring already cites.
+            //
+            // `top` follows the subnav's real bottom edge rather than a fixed header
+            // offset: the global subnav hides by TRANSLATING, so it keeps its layout box
+            // and a static `top` strands the rail a subnav-height below where it belongs.
+            // Both in-repo rail precedents pin to this pair; do not substitute a constant.
+            style={{
+              width: collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH,
+              position: 'sticky',
+              top: subnavBottom + SUBNAV_STICKY_GAP,
+              alignSelf: 'flex-start',
+            }}
           >
-            <div
-              // Follows the subnav's real bottom edge rather than a fixed header offset:
-              // the global subnav hides by TRANSLATING, so it keeps its layout box and a
-              // static `top` strands the rail a subnav-height below where it should sit.
-              // Both in-repo rail precedents (`AccountLayout`, `CollectionsLayout`) pin
-              // to this same pair; do not substitute a constant.
-              style={{ position: 'sticky', top: subnavBottom + SUBNAV_STICKY_GAP }}
-            >
+            <div>
               <Group justify={collapsed ? 'center' : 'flex-end'} gap={0} mb={4}>
                 <Tooltip
                   label={collapsed ? 'Expand navigation' : 'Collapse navigation'}

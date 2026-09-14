@@ -104,7 +104,11 @@ function measure() {
   const bodyColumn = required('[data-apps-chrome="body-column"]');
   const band = required('[data-apps-chrome="band"]');
   const container = required('.mantine-Container-root');
-  const sticky = rail.firstElementChild as HTMLElement;
+  // The sticky element is the ASIDE ITSELF (a flex item), not a wrapper inside it —
+  // see the inline comment on the `<aside>`. Reading the inner div here is what the
+  // retired assertions did, and it is why they reported `position: sticky` on a rail
+  // that could not travel.
+  const sticky = rail;
   const title = document.querySelector('h2') as HTMLElement | null;
   const body = required('[data-testid="body"]');
 
@@ -146,6 +150,58 @@ const body = (
   </div>
 );
 
+/**
+ * A body tall enough that the page actually scrolls. The 200px `body` above cannot
+ * scroll at all, which is the second reason the retired sticky assertions could not
+ * observe stickiness: even had they read the right property, there was no travel.
+ */
+const tallBody = (
+  <div data-testid="body" style={{ height: 3000 }}>
+    body
+  </div>
+);
+
+/**
+ * Render, measure the rail's VIEWPORT-relative top, scroll, measure again.
+ *
+ * Viewport is 1440 — above `APPS_RAIL_MIN_VIEWPORT` (1300), so the rail is actually
+ * displayed. Measuring this below 1300 would read a `display: none` box and report a
+ * pinned rail because there is no rail.
+ */
+async function renderTallAndScroll(ui: ReactElement) {
+  await page.viewport(1440, 900);
+  renderWithProviders(ui);
+  await expect.element(page.getByTestId('body')).toBeInTheDocument();
+  await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+
+  const rail = required('[data-apps-chrome="rail"]');
+  const container = required('.mantine-Container-root');
+  // The sticky element is the ASIDE ITSELF (a flex item), not a wrapper inside it —
+  // see the inline comment on the `<aside>`. Reading the inner div here is what the
+  // retired assertions did, and it is why they reported `position: sticky` on a rail
+  // that could not travel.
+  const sticky = rail;
+  const stickyPosition = getComputedStyle(sticky).position;
+  const stickyTop = getComputedStyle(sticky).top;
+  const railViewportTopBefore = px2(rail.getBoundingClientRect().top);
+
+  const before = window.scrollY;
+  window.scrollTo(0, 600);
+  await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+  const scrolledBy = window.scrollY - before;
+  const railViewportTopAfter = px2(rail.getBoundingClientRect().top);
+  window.scrollTo(0, 0);
+
+  return {
+    styleSheetLoaded: pad(container, 'Left') > 0,
+    stickyPosition,
+    stickyTop,
+    railViewportTopBefore,
+    railViewportTopAfter,
+    scrolledBy,
+  };
+}
+
 describe('/apps chrome vertical geometry', () => {
   test('the Container drops its TOP pad and keeps its BOTTOM one', async () => {
     // REGRESSION coverage for the vertical-padding pass, unchanged by the rail: `/apps/*`
@@ -159,28 +215,78 @@ describe('/apps chrome vertical geometry', () => {
     expect(g.containerPadInline).toEqual([16, 16]);
   });
 
-  test('🔴 the RAIL and the BODY start at the same y — `align-items: flex-start`', async () => {
-    // The rail's own vertical claim, and the one that fails loudest if the row ever
-    // stretches its items: a full-height `<aside>` gives the sticky wrapper inside it a
-    // container as tall as the page, and `position: sticky` against a box that never
-    // scrolls past is inert. Both columns starting at 0 is what makes the sticky work.
+  test('🔴 the BODY starts at the container top; the RAIL clamps to its sticky offset', async () => {
+    // ⚠️ AN EARLIER REVISION ASSERTED `railTop === 0` AND CLAIMED IT WAS THE CAUSE OF THE
+    // STICKY WORKING — "Both columns starting at 0 is what makes the sticky work". Both
+    // halves were wrong, and together they are why a completely inert rail passed this
+    // file for the whole review. `railTop === 0` held identically whether the rail pinned
+    // or scrolled away; the property that decides stickiness is which box is the sticky
+    // element's CONTAINING BLOCK, which no unscrolled measurement can see.
+    //
+    // The rail now clamps to `SUBNAV_STICKY_GAP` at rest, and that is the CORRECT value
+    // rather than a regression: a sticky element whose static position is ABOVE its `top`
+    // threshold is pushed down to it. This harness mounts no global subnav, so
+    // `useSubnavBottom` returns 0, `top` resolves to `0 + SUBNAV_STICKY_GAP`, and the
+    // Container sits flush at the viewport top — so the clamp fires immediately. On the
+    // real page the same 16px is the deliberate gap between the subnav's bottom edge and
+    // the rail, which is the entire reason `SUBNAV_STICKY_GAP` exists.
+    //
+    // The body column is NOT sticky, so it keeps starting at the container top. The pair
+    // is what makes the claim readable: same container, one offset by the sticky gap.
     const g = await renderAndMeasure(<AppsPageLayout>{body}</AppsPageLayout>);
     expect(g.styleSheetLoaded).toBe(true);
-    expect(g.railTop).toBe(0);
+    expect(g.railTop).toBe(SUBNAV_STICKY_GAP);
     expect(g.bodyColumnTop).toBe(0);
   });
 
-  test('🔴 the rail is STICKY at the subnav gap, not statically positioned', async () => {
-    // `useSubnavBottom` returns 0 with no scroll-area context (this harness mounts none),
-    // so the offset resolves to `0 + SUBNAV_STICKY_GAP`. The load-bearing half is that it
-    // is `sticky` AT ALL and that the offset is the shared constant rather than a
-    // hardcoded number — a static rail scrolls away on a long store page, and a fixed
-    // offset strands it a subnav-height below where it should sit once the global subnav
-    // retracts (which is the defect `useSubnavBottom` exists for).
-    const g = await renderAndMeasure(<AppsPageLayout>{body}</AppsPageLayout>);
+  test('🔴 the rail STAYS PINNED WHEN THE PAGE SCROLLS — the whole point of the rail', async () => {
+    /**
+     * 🔴 THIS TEST SCROLLS, AND THAT IS THE ENTIRE REASON IT EXISTS. The two assertions
+     * it replaces measured `position === 'sticky'`, `top === '16px'` and `railTop === 0`
+     * WITHOUT EVER SCROLLING — and all four of those hold on an arrangement where the
+     * rail is completely inert. Measured on the pre-fix markup: identical values, and a
+     * rail that left the viewport at scroll 600.
+     *
+     * The mechanism the unscrolled assertions cannot see: `position: sticky` is
+     * constrained to its CONTAINING BLOCK. The pre-fix markup put the sticky on a div
+     * INSIDE `<aside class=rail>`, and `.railRow { align-items: flex-start }` shrink-wraps
+     * that aside to its content height (~220px). Travel range is then
+     * `aside.height − sticky.height` ≈ 0, so the rail scrolls away with the page — worse
+     * than the tab strip it replaced, which at least could never be scrolled past.
+     *
+     * The fix follows `CollectionsLayout`, the precedent this component's docstring
+     * already cites: put `position: sticky` on the FLEX ITEM itself with
+     * `align-self: flex-start`. A sticky flex item's containing block is the flex
+     * CONTAINER — full height — so it travels the length of the row.
+     *
+     * RED/GREEN MATRIX, measured in THIS harness at 1440×900 with a 3000px body. The
+     * container starts flush at the viewport top here (no global subnav is mounted and
+     * `containerPadTop` is 0), so the rail's natural top is 0; scrolling 600 then either
+     * clamps it at the sticky offset or carries it off-screen:
+     *
+     *   pre-fix  : top  0 at scroll 0  →  −600 at scroll 600   (rail gone)
+     *   post-fix : top 16 at scroll 0  →   +16 at scroll 600   (pinned, does not move)
+     *
+     * The pre-fix `0` vs post-fix `16` at rest is the sticky offset clamping — see the
+     * alignment test above. The assertion that matters is the SECOND column: the pre-fix
+     * rail moves by the full scroll delta, the post-fix rail does not move at all.
+     */
+    const g = await renderTallAndScroll(<AppsPageLayout>{tallBody}</AppsPageLayout>);
     expect(g.styleSheetLoaded).toBe(true);
+    // Guard-the-guard: if the page cannot scroll, every assertion below is vacuous.
+    expect(g.scrolledBy, 'the harness page did not actually scroll').toBeGreaterThan(500);
     expect(g.stickyPosition).toBe('sticky');
     expect(g.stickyTop).toBe(`${SUBNAV_STICKY_GAP}px`);
+    // At rest: clamped to the sticky offset (see the alignment test for why this is 16
+    // and not 0 in this harness).
+    expect(g.railViewportTopBefore).toBe(SUBNAV_STICKY_GAP);
+    // 🔴 THE LOAD-BEARING ASSERTION. Pinned ⇒ clamped at the sticky offset and still on
+    // screen. Inert ⇒ carried up by the full scroll delta, i.e. far negative.
+    expect(
+      g.railViewportTopAfter,
+      'the rail scrolled away with the page — `position: sticky` is inert because its ' +
+        'containing block is a shrink-wrapped box with no travel range'
+    ).toBe(SUBNAV_STICKY_GAP);
   });
 
   test('no-header page: the body starts one band-gap below the chrome', async () => {
