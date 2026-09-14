@@ -1,4 +1,3 @@
-import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -28,6 +27,12 @@ import {
   processFinalRatings,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
+import { moderatorApp } from '~/server/services/moderator-app.service';
+import {
+  ABUSE_SCAN_WINDOW_HOURS,
+  buildAbuseReport,
+  type AbuseSuspect,
+} from '~/server/services/new-order-abuse-detection/report';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -497,10 +502,24 @@ const newOrderChangeRateTarget = createJob(
 );
 
 // Periodic abuse detection: identify users with suspicious rating patterns.
-// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring, and (when
-// `autoSmiteAbusers` is enabled in Redis config) auto-smites suspects matching
-// strict signals via the system actor.
+// Runs daily at 23:00 UTC, logs to Axiom, files every suspect on the moderator
+// app's abuse-detection board, and (when `autoSmiteAbusers` is enabled in Redis
+// config) auto-smites suspects matching strict signals via the system actor.
+//
+// 🔴 THE BOARD POST HAPPENS AFTER THE SMITE LOOP, AND THE ORDER IS LOAD-BEARING.
+// Each finding carries the contract's `actioned`/`action` pair, which is a claim
+// about what this run already DID — so the findings cannot be built until the
+// smiting is over and it is known which accounts it actually succeeded on. The
+// contract rejects a mispaired finding on the producer's side of the wire, and
+// one rejection loses the whole batch, not the offending row.
+//
+// Replaces the Discord webhook this scan used to post to: the board is durable,
+// reviewable, and the only surface that can represent "detected and deliberately
+// not acted on", which is most of what this scan produces.
 export async function runAbuseDetectionScan() {
+  // Captured before the first await so the board's "when did this run" reading is
+  // the producer's own start, not the instant the report happened to be built.
+  const startedAt = new Date();
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
 
@@ -524,20 +543,13 @@ export async function runAbuseDetectionScan() {
   const smiteDominantPct = asFinite(det.smiteDominantPct, 100);
   const smiteMaxUniqueRatings = asFinite(det.smiteMaxUniqueRatings, 1);
 
-  const suspects = await clickhouse.$query<{
-    userId: number;
-    totalRatings: number;
-    uniqueRatings: number;
-    dominantRating: number;
-    dominantPct: number;
-    avgPerMinute: number;
-  }>`
+  const suspects = await clickhouse.$query<AbuseSuspect>`
       WITH user_dominant AS (
         SELECT
           userId,
           topK(1)(rating)[1] as dominantRating
         FROM knights_new_order_image_rating FINAL
-        WHERE createdAt >= now() - INTERVAL 24 HOUR
+        WHERE createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
           AND rank != 'Acolyte'
         GROUP BY userId
       )
@@ -550,7 +562,7 @@ export async function runAbuseDetectionScan() {
         count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
       FROM knights_new_order_image_rating r FINAL
       JOIN user_dominant d ON r.userId = d.userId
-      WHERE r.createdAt >= now() - INTERVAL 24 HOUR
+      WHERE r.createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
         AND r.rank != 'Acolyte'
       GROUP BY r.userId, d.dominantRating
       HAVING totalRatings >= ${minTotalRatings}
@@ -558,6 +570,11 @@ export async function runAbuseDetectionScan() {
       ORDER BY totalRatings DESC
       LIMIT 50
     `;
+
+  // The accounts the smite loop actually succeeded on — MEMBERSHIP, not selection. The loop below
+  // swallows a per-player failure and carries on, so a target that threw is still an open case and
+  // must not be filed on the board as one that was dealt with.
+  const smitedUserIds = new Set<number>();
 
   if (suspects.length > 0) {
     log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
@@ -575,39 +592,8 @@ export async function runAbuseDetectionScan() {
           avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
         })),
       },
-      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 24 hours`,
+      message: `Abuse detection scan found ${suspects.length} suspicious users in the last ${ABUSE_SCAN_WINDOW_HOURS} hours`,
     }).catch(() => null);
-
-    // Alert moderators via Discord webhook
-    if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
-      const suspectLines = suspects
-        .slice(0, 10) // Cap at 10 to keep the embed manageable
-        .map(
-          (s) =>
-            `• **User ${s.userId}** — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
-            `${Math.round(s.dominantPct)}% same value, ${(
-              Math.round(s.avgPerMinute * 10) / 10
-            ).toFixed(1)}/min`
-        )
-        .join('\n');
-
-      await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [
-            {
-              title: `⚠️ KoN Abuse Detection (24h) — ${suspects.length} suspect(s)`,
-              description:
-                suspectLines +
-                (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
-              color: 0xff9800,
-              timestamp: new Date().toISOString(),
-            },
-          ],
-        }),
-      }).catch(() => null);
-    }
 
     // Auto-smite branch: gated by Redis config flag (off by default). Smite
     // filter applies the tighter `smite*` thresholds against the broader
@@ -637,6 +623,9 @@ export async function runAbuseDetectionScan() {
             reason,
             size: newOrderConfig.smiteSize * 50,
           });
+          // Recorded only past the await, so a throw leaves the account out of the set and its
+          // board finding reads `actioned: false` — which is what actually happened.
+          smitedUserIds.add(s.userId);
           await logToAxiom({
             type: 'warning',
             name: 'new-order-auto-smite',
@@ -651,12 +640,38 @@ export async function runAbuseDetectionScan() {
   } else {
     log('AbuseDetection :: No suspicious users found');
   }
+
+  // Filed even with no suspects: a run row with zero findings is how the board says "this detector
+  // ran and found nothing", which is a different and necessary claim from the detector having gone
+  // quiet — and the counters carry the population it looked at either way.
+  //
+  // 🔴 Caught, not propagated. Every smite above has already been written to the database; throwing
+  // here would mark the job failed and invite the scheduler to retry a run whose enforcement half
+  // already happened. The failure is still loud: a network/HTTP failure goes to Axiom through the
+  // client's own `onFailure`, and a contract rejection is logged here by name.
+  try {
+    await moderatorApp.abuseReport(
+      buildAbuseReport({ suspects, smitedUserIds, startedAt, finishedAt: new Date() })
+    );
+    log(
+      `AbuseDetection :: Filed ${suspects.length} finding(s) on the abuse board ` +
+        `(${smitedUserIds.size} auto-smited)`
+    );
+  } catch (e) {
+    handleLogError(e as Error, 'new-order abuse detection failed to file its board report');
+  }
 }
 
 const newOrderAbuseDetection = createJob(
   'new-order-abuse-detection',
   '0 23 * * *',
-  runAbuseDetectionScan
+  runAbuseDetectionScan,
+  // 🔴 The only thing standing between a slow run and a duplicate concurrent one. Two runs of this
+  // scan do not merely double the work: each files its own board report, and the receiving table's
+  // idempotency key is `(detector, started_at)` — two runs have different start instants, so the
+  // second APPENDS a near-identical run rather than replacing the first, and a moderator sees the
+  // same cohort twice. Sized well past the query plus a 50-account smite loop.
+  { lockExpiration: 10 * 60 }
 );
 
 export const newOrderJobs = [
