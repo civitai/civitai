@@ -30,6 +30,7 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import type { GenerationStore } from './store';
@@ -102,6 +103,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           )}
         />
       </div>
+      <GateRuleWarnings />
       <Controller
         graph={imageHub}
         name="resources"

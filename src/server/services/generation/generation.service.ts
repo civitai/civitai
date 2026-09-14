@@ -46,10 +46,16 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 
 import {
   applicableRulesFor,
+  canGenerateBlockedTargets,
   gateRuleSchema,
-  rulesToStates,
+  type CanGenerateBlockedTargets,
   type GateRule,
 } from '~/shared/data-graph/generation/gates';
+import {
+  applicableMessagesFor,
+  generatorMessageSchema,
+  type GeneratorMessage,
+} from '~/shared/generation/messages';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
@@ -735,6 +741,23 @@ export async function resolveTestingAccess(user: {
 const gateRulesArraySchema = z.array(gateRuleSchema);
 
 /**
+ * Parse stored rules one at a time and drop the unreadable ones. A whole-array
+ * parse fails closed on the FIRST rule a build doesn't understand — and since
+ * every gate reads this one store, a single rule carrying a presentation added
+ * in a newer deploy would drop hidden and kill-switch rules too, on every pod
+ * still running the old build.
+ */
+function parseGateRules(value: unknown): GateRule[] {
+  if (!Array.isArray(value)) return [];
+  const rules: GateRule[] = [];
+  for (const raw of value) {
+    const parsed = gateRuleSchema.safeParse(raw);
+    if (parsed.success) rules.push(parsed.data);
+  }
+  return rules;
+}
+
+/**
  * The operator-authored gate rules (the normalized "rules" model). Stored as a
  * single JSON array under `generation:gate-rules`; the only gating store, though
  * it coexists with the self-hosted toggle. Fail-open to `[]` so a bad/missing
@@ -751,14 +774,43 @@ export async function getGateRules(): Promise<GateRule[]> {
       logSysRedisFailOpen('read-degraded', 'getGateRules', err);
       return null;
     });
-  const parsed = gateRulesArraySchema.safeParse(cached ?? []);
-  return parsed.success ? parsed.data : [];
+  return parseGateRules(cached ?? []);
 }
 
 /** Persists the full gate-rules array. The mod UI is the single source of truth. */
 export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
   const parsed = gateRulesArraySchema.parse(rules);
   await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules', toJson(parsed));
+  return parsed;
+}
+
+/**
+ * Mod-authored generator messages — a separate store from the gate rules, since
+ * a message gates nothing (see `shared/generation/messages.ts`). Parsed one at a
+ * time for the same reason as the rules: one unreadable entry must not silence
+ * the rest.
+ */
+export async function getGeneratorMessages(): Promise<GeneratorMessage[]> {
+  const cached = await withSysReadDeadline(
+    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:messages')
+  )
+    .then((data) => (data ? fromJson<GeneratorMessage[]>(data) : null))
+    .catch((err) => {
+      logSysRedisFailOpen('read-degraded', 'getGeneratorMessages', err);
+      return null;
+    });
+  if (!Array.isArray(cached)) return [];
+  const messages: GeneratorMessage[] = [];
+  for (const raw of cached) {
+    const parsed = generatorMessageSchema.safeParse(raw);
+    if (parsed.success) messages.push(parsed.data);
+  }
+  return messages;
+}
+
+export async function setGeneratorMessages(messages: GeneratorMessage[]) {
+  const parsed = z.array(generatorMessageSchema).parse(messages);
+  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:messages', toJson(parsed));
   return parsed;
 }
 
@@ -782,6 +834,12 @@ export type GenerationConfig = {
    * the server.
    */
   gateRules: GateRule[];
+  /**
+   * Mod-authored messages for THIS user (audience-filtered server side, so copy
+   * aimed at one tier never ships in another's payload). Rendered above the
+   * submit row when the selection matches their targets.
+   */
+  generatorMessages: GeneratorMessage[];
 };
 
 /**
@@ -817,12 +875,14 @@ export function getSelfHostedDisabledEcosystems({
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, hasTestingAccess, status, gateRules] = await Promise.all([
-    getUnstableResources(),
-    resolveTestingAccess(user),
-    getGenerationStatus(),
-    getGateRules(),
-  ]);
+  const [unstableResources, hasTestingAccess, status, gateRules, generatorMessages] =
+    await Promise.all([
+      getUnstableResources(),
+      resolveTestingAccess(user),
+      getGenerationStatus(),
+      getGateRules(),
+      getGeneratorMessages(),
+    ]);
   const selfHostedMode = status.selfHostedMode;
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
@@ -837,6 +897,10 @@ export async function getGenerationConfig(
       isModerator: !!user.isModerator,
       isMember,
       hasTestingAccess,
+    }),
+    generatorMessages: applicableMessagesFor(generatorMessages, {
+      isMember,
+      tier: user.tier ?? 'free',
     }),
   };
 }
@@ -891,34 +955,25 @@ export async function getShouldChargeForResources(
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
-/** The `hidden` gate targets for the site-wide `canGenerate` check. */
-export type CanGenerateHiddenGates = { ecosystems: Set<string>; versionIds: Set<number> };
-
 /**
- * Resolve the ecosystems / version IDs the gate rules HIDE for this user — the
- * only state that hard-blocks `canGenerate` (disabled / members-only are
- * generator-UI affordances, not a site-wide block). Membership is intentionally
- * ignored here (no tier lookup): `isMember: true` drops member-restricted rules,
- * leaving the moderator / tester / kill-switch / hidden rules, which need only
- * the (already-resolved) testing-access flag + mod status.
+ * The ecosystems / version IDs the gate rules HIDE for this user — the only state
+ * that hard-blocks `canGenerate`. Membership is intentionally ignored (no tier
+ * lookup): `isMember: true` drops member-restricted rules, leaving the
+ * moderator / tester / kill-switch rules, which need only the (already-resolved)
+ * testing-access flag + mod status.
  */
 export async function getCanGenerateHiddenGates(user: {
   id?: number;
   isModerator?: boolean;
-}): Promise<CanGenerateHiddenGates> {
+}): Promise<CanGenerateBlockedTargets> {
   const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
-  const states = rulesToStates(
+  return canGenerateBlockedTargets(
     applicableRulesFor(rules, {
       isModerator: !!user.isModerator,
       isMember: true,
       hasTestingAccess,
     })
   );
-  const ecosystems = new Set<string>();
-  for (const [key, r] of states.ecosystems) if (r.state === 'hidden') ecosystems.add(key);
-  const versionIds = new Set<number>();
-  for (const [id, r] of states.modelVersionIds) if (r.state === 'hidden') versionIds.add(id);
-  return { ecosystems, versionIds };
 }
 
 /**
@@ -942,7 +997,7 @@ export function getResourceCanGenerate({
     flags: number;
   };
   user: { id?: number; isModerator?: boolean };
-  hiddenGates: CanGenerateHiddenGates;
+  hiddenGates: CanGenerateBlockedTargets;
 }): boolean {
   const isUnavailable = isGenerationDisabled(resource.flags);
   const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
@@ -1044,7 +1099,10 @@ export async function resolveCanGenerateForVersions(
     getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
     needsStandardGate
       ? getCanGenerateHiddenGates(ctx.user)
-      : Promise.resolve<CanGenerateHiddenGates>({ ecosystems: new Set(), versionIds: new Set() }),
+      : Promise.resolve<CanGenerateBlockedTargets>({
+          ecosystems: new Set(),
+          versionIds: new Set(),
+        }),
   ]);
 
   // Generation alias (Option B): evaluate a cover version using its target's

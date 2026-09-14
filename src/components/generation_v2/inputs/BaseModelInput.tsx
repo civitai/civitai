@@ -325,7 +325,8 @@ export function BaseModelListContent({
         ? ecosystemById.get(item.defaultEcosystemId)?.key ?? item.key
         : item.key;
     const gateState = disabledStateMap?.get(disabledCheckKey);
-    const isDisabled = !!gateState;
+    // `disabled` stays selectable — the form explains it and blocks generation.
+    const isDisabled = gateState?.state === 'memberOnly';
     const badge = gateState ? GATE_BADGE[gateState.state] : undefined;
     const button = (
       <UnstyledButton

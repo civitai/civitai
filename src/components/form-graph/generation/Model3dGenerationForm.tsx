@@ -10,6 +10,7 @@ import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { model3dHub } from '~/shared/form-graph/generation/model3d/hub.graph';
 
 import { ControllerLabel } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import type { GenerationStore } from './store';
 
 /**
@@ -46,6 +47,7 @@ function OptionButtons({
 export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
   return (
     <Stack gap="sm">
+      <GateRuleWarnings />
       <Controller
         graph={model3dHub}
         name="polygenVersion"

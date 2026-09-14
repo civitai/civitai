@@ -49,7 +49,7 @@ import {
   getResourceData,
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
-import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
+import { applicableRulesFor, gatedSelectionRefusal } from '~/shared/data-graph/generation/gates';
 import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
 import {
   createModelSubstitutionCollector,
@@ -628,10 +628,9 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
         .join(', ');
       throw throwBadRequestError(`Validation failed: ${errorMessages}`);
     }
-    return {
-      data: hubResult.data as GenerationGraphOutput,
-      computedKeys: new Set(hubResult.computedKeys),
-    };
+    const data = hubResult.data as GenerationGraphOutput;
+    refuseGatedSelection(data, externalCtx);
+    return { data, computedKeys: new Set(hubResult.computedKeys) };
   }
 
   if (!result.success) {
@@ -646,7 +645,17 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
     if (node.kind === 'computed') computedKeys.add(node.key);
   }
 
+  refuseGatedSelection(result.data, externalCtx);
   return { data: result.data, computedKeys };
+}
+
+function refuseGatedSelection(data: GenerationGraphOutput, externalCtx: GenerationCtx) {
+  const refusal = gatedSelectionRefusal(externalCtx.gateRules ?? [], {
+    ecosystem: 'ecosystem' in data ? (data.ecosystem as string | undefined) : undefined,
+    workflow: data.workflow,
+    versionIds: collectResourceIds(data).map((r) => r.id),
+  });
+  if (refusal) throw throwBadRequestError(refusal);
 }
 
 // =============================================================================

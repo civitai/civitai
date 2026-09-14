@@ -52,8 +52,8 @@ import {
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
-import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
+import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
@@ -292,21 +292,10 @@ function PriorityAlertSpace({
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
-      <ExperimentalWarnings />
+      <GeneratorMessageWarnings />
       <BaseModelWarnings />
       {priorityAlert}
     </>
-  );
-}
-
-/** Several can show at once, so these stay out of the exclusive chain above. */
-function ExperimentalWarnings() {
-  return (
-    <MultiController
-      graph={generationHub}
-      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
-      render={({ values }) => <ExperimentalAlerts selection={values} />}
-    />
   );
 }
 
@@ -337,7 +326,7 @@ function SubmitButton({
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -350,6 +339,7 @@ function SubmitButton({
 
   const submitBlocked =
     !canGenerate ||
+    gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||

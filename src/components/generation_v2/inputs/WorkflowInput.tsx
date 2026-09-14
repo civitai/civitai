@@ -143,8 +143,8 @@ function WorkflowMenuItem({
   gateState,
   gateMessage,
 }: WorkflowMenuItemProps) {
-  // Operator/rule-disabled takes priority over the member-only gate: greyed,
-  // non-selectable, "Disabled" badge + tooltip (mirrors BaseModelInput).
+  // Rule-disabled stays SELECTABLE, badged and dimmed: picking it is how the
+  // form gets to explain why generation is blocked (mirrors BaseModelInput).
   if (gateState === 'disabled') {
     return (
       <Tooltip
@@ -153,7 +153,10 @@ function WorkflowMenuItem({
         withArrow
         openDelay={300}
       >
-        <div className="w-full cursor-not-allowed rounded-md px-3 py-2.5 opacity-50">
+        <UnstyledButton
+          onClick={onSelect}
+          className="w-full rounded-md px-3 py-2.5 opacity-60 hover:bg-gray-1 dark:hover:bg-dark-5"
+        >
           <Group gap="sm" wrap="nowrap" justify="space-between">
             <div className="min-w-0 flex-1">
               <Text size="sm">{workflow.label}</Text>
@@ -167,7 +170,7 @@ function WorkflowMenuItem({
               Disabled
             </Badge>
           </Group>
-        </div>
+        </UnstyledButton>
       </Tooltip>
     );
   }

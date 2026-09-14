@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
+import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -102,6 +103,11 @@ export function useWhatIfFromStore({
   const workflow = (store.getSnapshot().state as { workflow?: string }).workflow;
   const isNoSubmit = workflowConfigByKey.get(workflow ?? '')?.noSubmit === true;
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- revision tracks store writes
+  const selectionValues = useMemo(() => store.getSnapshot().state, [revision, store]);
+  // Don't estimate a selection the server will refuse.
+  const gateBlocked = useDisabledGates(selectionValues).length > 0;
+
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     queryPayload as any,
@@ -109,6 +115,7 @@ export function useWhatIfFromStore({
       enabled:
         enabled &&
         !isNoSubmit &&
+        !gateBlocked &&
         !!currentUser &&
         !!queryPayload &&
         !resourcesLoading &&
@@ -134,6 +141,7 @@ export function useWhatIfFromStore({
     data,
     isLoading: queryResult.isFetching || imagesPending,
     canEstimateCost,
+    gateBlocked,
     validationErrors,
   };
 }

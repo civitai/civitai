@@ -7,6 +7,7 @@ import {
 } from '~/server/schema/generation.schema';
 import type { GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { GateRule } from '~/shared/data-graph/generation/gates';
+import type { GeneratorMessage } from '~/shared/generation/messages';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -67,6 +68,7 @@ const DEFAULT_GENERATION_CONFIG = {
   selfHostedDisabledEcosystems: [] as string[],
   selfHostedMode: 'enabled' as GenerationStatusMode,
   gateRules: [] as GateRule[],
+  generatorMessages: [] as GeneratorMessage[],
 };
 
 /**

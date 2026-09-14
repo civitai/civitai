@@ -26,7 +26,7 @@ export function describeRule(rule) {
   }${rule.message ? `\n    message: ${rule.message}` : ''}`;
 }
 
-// The other presentations (`experimental`, `notice`) annotate a usable item and gate nothing.
+// The other presentation (`experimental`) annotates a usable item and gates nothing.
 const GATING_PRESENTATIONS = ['hidden', 'disabled'];
 
 /**
