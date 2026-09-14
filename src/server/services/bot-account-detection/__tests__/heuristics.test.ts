@@ -33,7 +33,7 @@ import {
   stagedImageFacts,
 } from '../heuristics/staging';
 import { filenameFingerprint } from '../evidence';
-import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from '../fingerprint-keys';
+import { FILENAME_FINGERPRINT_PREFIX } from '../fingerprint-keys';
 import {
   MIN_AGE_HOURS,
   MIN_ITEMS,
@@ -508,17 +508,22 @@ describe('content-templating', () => {
     expect(score(member(), signalsWith({}))).toBe(0);
   });
 
-  it('🔴 quotes the shared text so a moderator can confirm or dismiss it', () => {
-    // The whole reason this is exact-match-after-masking rather than a distance measure: the
-    // finding has to be checkable at a glance. The QUOTED form is the normalised one — what was
-    // actually compared — so a reader is not shown a different string from the one that scored.
+  it('🔴 quotes the shared value so a moderator can confirm or dismiss it', () => {
+    // The whole reason this is exact-match-after-normalisation rather than a distance measure: the
+    // finding has to be checkable at a glance. The QUOTED form is what was actually compared, so a
+    // reader is not shown a different string from the one that scored.
+    //
+    // An UNPREFIXED key is used deliberately: `unprefixFingerprint` returns it unchanged, so this
+    // case exercises the quoting and the truncation rather than the namespace strip, which the
+    // filename cases below own.
     const s = signalsWith({
-      fingerprints: { 42: ['check out my page at linkmask for nummask free credits'] },
-      membersPerFingerprint: { 'check out my page at linkmask for nummask free credits': 6 },
+      fingerprints: { 42: ['some-long-shared-upload-name.png'] },
+      membersPerFingerprint: { 'some-long-shared-upload-name.png': 6 },
     });
     const note = contentTemplatingHeuristic.explain(evidence(member(), s), 0.5);
-    expect(note).toContain('6 new accounts posted the same text');
-    expect(note).toContain('check out my page at linkmask');
+    expect(note).toBe(
+      '6 new accounts uploaded a file with the same name — “some-long-shared-upload-name.png”'
+    );
   });
 
   // -------------------------------------------------------------------------------------------
@@ -551,11 +556,12 @@ describe('content-templating', () => {
     expect(score(member(), filenameSignals('logo.jpg', 26))).toBe(1);
   });
 
-  it('🔴 REGRESSION: the PROSE floors do not reach filenames — both of these cluster', () => {
-    // 🔴 THE FILENAMES A CONFIRMED RING ACTUALLY SHARED. `contentFingerprint` rejects both outright
-    // (`1900.jpg.jpeg` → "nummask jpg jpeg", 16 chars / 3 tokens; `logo.jpg` → "logo jpg", 8 / 2,
-    // against floors of 24 and 4 — measured by executing the shipped normaliser). Had this source
-    // reused the prose fingerprint, the entire signal would have been discarded before scoring.
+  it('🔴 REGRESSION: no length floor reaches filenames — both of these cluster', () => {
+    // 🔴 THE FILENAMES A CONFIRMED RING ACTUALLY SHARED. The deleted prose fingerprinter rejected
+    // both outright (`1900.jpg.jpeg` → "nummask jpg jpeg", 16 chars / 3 tokens; `logo.jpg` →
+    // "logo jpg", 8 / 2, against floors of 24 and 4 — measured by executing the shipped normaliser
+    // while it existed). Had this source reused the prose fingerprint, the entire signal would have
+    // been discarded before scoring.
     expect(score(member(), filenameSignals('1900.jpg.jpeg', 3))).toBeGreaterThan(0);
     expect(score(member(), filenameSignals('logo.jpg', 3))).toBeGreaterThan(0);
   });
@@ -570,46 +576,53 @@ describe('content-templating', () => {
     expect(note).toContain('8 new accounts uploaded a file with the same name');
     expect(note).toContain('logo.jpg');
     expect(note).not.toContain(FILENAME_FINGERPRINT_PREFIX);
-    // And it is named as a FILENAME, not reported as posted text — the two call for different
-    // moderator actions and the wording is the only thing that distinguishes them.
-    expect(note).not.toContain('posted the same text');
+    // And it is named as a FILENAME rather than as posted text — a claim about an upload and a claim
+    // about a comment call for different moderator actions, and the wording is the only thing that
+    // distinguishes them. Pinned as a WHOLE STRING rather than as keywords, because a reword is
+    // exactly how a guard on words gets walked past.
+    expect(note).toBe('8 new accounts uploaded a file with the same name — “logo.jpg”');
   });
 
-  it('🔴 explain() still says "text" for a TEXT cluster — the two are not merged', () => {
-    const s = signalsWith({
-      fingerprints: { 42: [`${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`] },
-      membersPerFingerprint: { [`${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`]: 5 },
-    });
-    const note = contentTemplatingHeuristic.explain(evidence(member(), s), 0.5);
-    expect(note).toContain('5 new accounts posted the same text');
-    expect(note).toContain('free buzz at linkmask');
-    expect(note).not.toContain(TEXT_FINGERPRINT_PREFIX);
-    expect(note).not.toContain('uploaded a file');
-  });
+  // -------------------------------------------------------------------------------------------
+  // Source isolation. One source is registered today; the mechanism is what the next one needs.
+  // -------------------------------------------------------------------------------------------
 
-  it('scores on the LARGEST cluster across both sources, whichever surface it is on', () => {
-    const textK = `${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`;
+  /**
+   * A namespace this module does not currently produce.
+   *
+   * The comment-text source that used to supply `text:` keys is deleted, so a second REAL namespace
+   * no longer exists — and the three cases below would be untestable if they were written in terms
+   * of one. They are INVARIANT GUARDS, labelled as such: none of them was red at any base, and none
+   * catches a bug that exists today. They exist because `largestContentCluster`'s prefix argument
+   * and `contentTemplatingSourceScore` are kept deliberately (see `similarity.ts`) so the next
+   * source folded in here arrives with its own counter from the first run, and an unexercised
+   * mechanism is one that has quietly stopped working by the time that happens.
+   */
+  const OTHER_PREFIX = 'other:';
+
+  it('scores on the LARGEST cluster across every source, whichever surface it is on', () => {
+    const otherK = `${OTHER_PREFIX}some other surface`;
     const fileK = filenameFingerprint('logo.jpg') as string;
     const s = signalsWith({
-      fingerprints: { 42: [textK, fileK] },
-      membersPerFingerprint: { [textK]: 3, [fileK]: 9 },
+      fingerprints: { 42: [otherK, fileK] },
+      membersPerFingerprint: { [otherK]: 3, [fileK]: 9 },
     });
     expect(largestContentCluster(42, s)).toEqual({ size: 9, fingerprint: fileK });
   });
 
-  it('🔴 contentTemplatingSourceScore isolates ONE source, so the two can be graded apart', () => {
-    // 🔴 WITHOUT THIS THE COUNTERS CANNOT SEE WHICH HALF FIRED — and an invisible zero-firing half
-    // is precisely how the comment-only version survived five production runs.
-    const textK = `${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`;
+  it('🔴 contentTemplatingSourceScore isolates ONE source (invariant guard)', () => {
+    // 🔴 WITHOUT THIS THE COUNTERS CANNOT SEE WHICH SOURCE FIRED — and an invisible zero-firing
+    // source is precisely how the deleted comment source survived every run it shipped in.
+    const otherK = `${OTHER_PREFIX}some other surface`;
     const fileK = filenameFingerprint('logo.jpg') as string;
     const s = signalsWith({
-      fingerprints: { 42: [textK, fileK] },
-      // The text cluster is below the floor; the filename cluster is not.
-      membersPerFingerprint: { [textK]: 2, [fileK]: 9 },
+      fingerprints: { 42: [otherK, fileK] },
+      // The other source's cluster is below the floor; the filename cluster is not.
+      membersPerFingerprint: { [otherK]: 2, [fileK]: 9 },
     });
-    expect(contentTemplatingSourceScore(42, s, TEXT_FINGERPRINT_PREFIX)).toBe(0);
+    expect(contentTemplatingSourceScore(42, s, OTHER_PREFIX)).toBe(0);
     expect(contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)).toBeGreaterThan(0);
-    // The blended score is carried entirely by the filename half.
+    // The blended score is carried entirely by the filename source.
     expect(score(member(), s)).toBe(
       contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)
     );
@@ -617,14 +630,14 @@ describe('content-templating', () => {
 
   it('🔴 a source score ignores the OTHER source entirely, even when it is larger', () => {
     // The isolation has to hold in both directions, or the decomposition just re-reports the max.
-    const textK = `${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`;
+    const otherK = `${OTHER_PREFIX}some other surface`;
     const fileK = filenameFingerprint('logo.jpg') as string;
     const s = signalsWith({
-      fingerprints: { 42: [textK, fileK] },
-      membersPerFingerprint: { [textK]: 9, [fileK]: 3 },
+      fingerprints: { 42: [otherK, fileK] },
+      membersPerFingerprint: { [otherK]: 9, [fileK]: 3 },
     });
     expect(contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)).toBeCloseTo(0.125, 12);
-    expect(contentTemplatingSourceScore(42, s, TEXT_FINGERPRINT_PREFIX)).toBeCloseTo(0.875, 12);
+    expect(contentTemplatingSourceScore(42, s, OTHER_PREFIX)).toBeCloseTo(0.875, 12);
   });
 
   it('bounds the quote, so one long text cannot truncate the whole finding', () => {
