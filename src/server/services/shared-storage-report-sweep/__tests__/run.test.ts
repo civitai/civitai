@@ -148,14 +148,22 @@ describe('the sweep files ONE well-formed run per window', () => {
 
 describe('🔴 the reported CONTENT never reaches the board', () => {
   /**
-   * 🔴 WATCH THIS ONE FAIL BEFORE TRUSTING IT. Confirmed red by mapping the row's stored value into
-   * the finding reason on purpose (`reason: \`${renderReason(row)} ${(row as any).value}\`` in
-   * `report.ts`), which produced:
+   * 🔴 WATCH THIS ONE FAIL BEFORE TRUSTING IT — and the reproduction is stated exactly, because a
+   * guard nobody can re-break is a guard nobody will maintain. In `run.ts`, `groupReports`, append
+   * the source row's stored value to the group's `reasons` (the realistic leak: someone decides a
+   * moderator would like to read the reported text without leaving the board):
    *
-   *   AssertionError: expected '…{"title":"CANARY-…"}' to not contain 'CANARY-8f2a1c-DO-NOT-LEAK'
+   *   reasons: [...(row.reason == null ? [] : [row.reason]),
+   *             String((row as unknown as { value?: string }).value ?? '')],
    *
-   * and went green again when the line was restored. The guard is reachable, and it fails for its
-   * own reason rather than for a schema error.
+   * That produced, at the assertion at the end of this test and nowhere else:
+   *
+   *   AssertionError: expected '[{"detector":"app-blocks-shared-stora…' to not contain
+   *   'CANARY-8f2a1c-DO-NOT-LEAK'
+   *   Tests  1 failed | 16 passed (17)
+   *
+   * and went green again when the line was restored. EXACTLY ONE test failed, so the guard is
+   * reachable and dies for its OWN reason rather than to a neighbouring guard or a schema error.
    *
    * The fixture carries the content on the row deliberately — `SharedReportRow` has no field for it,
    * so a guard built only from the declared type would be asserting against something that cannot
