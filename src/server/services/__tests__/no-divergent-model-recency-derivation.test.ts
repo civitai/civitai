@@ -17,6 +17,17 @@ import { getModelRecency } from '~/components/Cards/model-card.utils';
  *
  * And one property that is not textual at all: the helper still answers correctly. A guard built only
  * from prohibitions passes after the feature is deleted.
+ *
+ * 🔴 What this does NOT close, measured rather than assumed. Two probes were run against it: a
+ * copy-pasted fourth site reddened two assertions and named the file; a fourth site that derived the
+ * same answer in its own words — a local `24 * 60 * 60 * 1000` cutoff and an inlined two-hour window,
+ * naming neither `aDayAgo` nor `timeCutOffs.updatedModel` — passed clean. So this catches a fourth
+ * COPY, which is what copy-paste actually produces, and not a fourth independent DERIVATION.
+ *
+ * Closing that gap was tried and rejected: keying on a day-magnitude cutoff appearing beside
+ * `publishedAt` matches six unrelated modules, and exempting six files by name is how the third copy
+ * of the paid-gate predicate came to be written unseen. A narrow guard whose limit is written down
+ * beats a broad one with an allowlist nobody reads.
  */
 
 const repoRoot = path.resolve(__dirname, '../../../..');
