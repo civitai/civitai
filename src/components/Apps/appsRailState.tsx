@@ -156,7 +156,24 @@ export function useAppsRail(): {
     if (adopted.current || seed !== null) return;
     adopted.current = true;
     const stored = readAppsRailStorage();
-    if (stored) setState(stored);
+    if (!stored) return;
+    setState(stored);
+    // 🔴 RE-SEED THE COOKIE, OR THIS REFLOW HAPPENS ON EVERY HARD LOAD, FOREVER.
+    // Adopting from storage without writing the cookie back leaves the server in exactly
+    // the state that made the adoption necessary: the next full page load of ANY
+    // `/apps/*` route SSRs the rail OPEN (260px), hydration matches, and this effect
+    // snaps it to 56px again — taking the container-queried store grid with it. That is
+    // the "260 → 56 jump on hydration … re-ladders the whole grid and every card resizes"
+    // this module's own header says the cookie exists to prevent, reintroduced by the fix
+    // that made the fallback reachable. Client-side navigation is unaffected (the
+    // Provider is above the router outlet); direct entry, refresh and any external link
+    // into `/apps/*` are not.
+    //
+    // With the write, the cohort pays the flash ONCE and the cookie carries them
+    // thereafter — which is what `~/shared/utils/cookies` already promises in prose
+    // ("after ONE post-mount adoption"). Caught by a delta audit of the very commit that
+    // made this branch live.
+    persistAppsRailState(stored);
   }, [seed, setState]);
 
   const setCollapsed = useCallback(

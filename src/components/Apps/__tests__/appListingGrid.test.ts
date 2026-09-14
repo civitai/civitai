@@ -101,7 +101,7 @@ describe('🔴 the column LADDER — grid width → column count', () => {
    * threshold, on it, and comfortably inside the band. A fixture that sits exactly on a
    * threshold cannot see an off-by-one in the wrong direction.
    *
-   * 🔴 THE 1376 / 1887 / 1888 ROWS ARE THE MOST IMPORTANT IN THIS TABLE, and they exist
+   * 🔴 THE 1376 / 1888 / 2100 ROWS ARE THE MOST IMPORTANT IN THIS TABLE, and they exist
    * because of an arithmetic COLLISION rather than because anything is near a rung:
    * `4 × 460 + 3 × 16 = 1888`, so at today's floor the four-column rung would land on
    * exactly the retired 1920 container's content width IF the floor governed the narrow
@@ -203,17 +203,21 @@ describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow
    * 🔴 WHY THIS DESCRIBE EXISTS, AND WHY IT DID NOT NEED TO AT THE OLD FLOOR.
    *
    * `LISTING_CARD_MIN_WIDTH` is 460, and `4 × 460 + 3 × 16 = 1888` — EXACTLY the content
-   * width of the retired 1920 container. So the four-column rung's floor-derived value
-   * and one of the most-quoted widths in this change are now the same number, and the
-   * two halves of the ladder are one refactor away from being confused for each other.
+   * width of the retired 1920 container. So a floor-derived rung and one of the
+   * most-quoted widths in this change are the same number, and the two halves of the
+   * ladder are one refactor away from being confused for each other.
    *
-   * If the floor ever governed the narrow half, four columns would start at 1888 and the
-   * ENTIRE 1168–1887 band would drop to three — including 1376, the `xl` low end, which
-   * is the middle of the ordinary desktop range and the last width anyone would think to
-   * re-check. Every other assertion in this file would still pass: 1888 itself would
-   * still read four (the floor's own rung), 2364 would still read five, the stylesheet
-   * seam would still agree, and the browser fixtures at 1888 / 2450 / 2528 would all be
-   * green. The defect would be invisible everywhere except here.
+   * ⚠️ THE CONCRETE FORM MOVED WITH THE RAIL RE-TUNE, AND THIS PARAGRAPH IS CORRECTED
+   * RATHER THAN DELETED because the trap it names is unchanged. It used to read: a
+   * floor-governed narrow half would start four columns at 1888 and drop the whole
+   * 1168–1887 band to three. There is no 1168 rung any more and no five-column rung at
+   * 2364, so that sentence describes a ladder this file no longer tests. The live form:
+   * the lowest narrow rung is `md` at 960, its floor-derived counterpart is
+   * `3 × 460 + 2 × 16 = 1412`, and a floor-governed narrow half would drop the ENTIRE
+   * 960–1411 band to two columns. Every other assertion in this file would still pass —
+   * 1412 itself would read three (the floor's own rung), the stylesheet seam would still
+   * agree, and the browser fixtures at 1888 / 2450 / 2528 would all be green. The defect
+   * would be invisible everywhere except here.
    *
    * At the old 383 floor `4 × 383 + 3 × 16 = 1580`, comfortably away from every number in
    * play, and a floor-governed narrow half would have broken loudly. It is the NEW value

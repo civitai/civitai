@@ -103,8 +103,17 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * Raised by an adversarial round-0 audit; deliberately NOT resolved in code here, because
  * it is the product call the sign-off exists to make.
  *
- * `base` / `sm` / `md` are UNCHANGED (12 → 1 col, 6 → 2, 4 → 3): no viewport that
- * narrow renders the rail at all, so nothing below `lg` has a reason to move.
+ * `base` / `sm` / `md` are UNCHANGED (12 → 1 col, 6 → 2, 4 → 3) — and the reason is that
+ * their COLUMN COUNTS were already what the re-tune wants, not that their viewports are
+ * narrow.
+ *
+ * ⚠️ THIS SENTENCE USED TO READ "no viewport that narrow renders the rail at all, so
+ * nothing below `lg` has a reason to move", AND THE TABLE ABOVE REFUTES THAT RATIONALE
+ * TWICE. `lg`'s own band (viewport 1210–1299) renders NO RAIL and moves anyway, 4 → 3;
+ * and "renders no rail" was never a reason to be unchanged in the first place, because
+ * the rung is a global constant on GRID width and does not ask whether a rail is on
+ * screen. A fix round claimed to have removed this and did not — which is how a refuted
+ * rationale survives to be reused by the next editor.
  *
  * Historical note, kept because it explains the shape of this object: `xl` was `2.4`
  * (five columns) before the 2026-07 covers pass, which moved it to `3` (four columns)
@@ -305,10 +314,17 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  * 🔴 IT HAS **ZERO PIXELS OF MARGIN** AT THE ONE VIEWPORT IT EXISTS FOR, AND THAT IS THE
  * SHARPEST THING ABOUT IT. The grid at a 2560 viewport is `2252 − S`, where `S` is the
  * reserved scrollbar; the rung is 2242, so four columns arrive **iff `S ≤ 10`**. Measured:
- * `S=10 → 2242 → 4 cols`, `S=11 → 2241 → 3 cols`. So an 11px thin gutter, 125% OS
- * scaling, or any browser zoom drops a 2560 monitor to three 750px cards — which is
- * precisely the "silent off-by-a-scrollbar" failure the container-query note below
- * records as a lesson already learned once. The retired five-column rung had 154px of
+ * `S=10 → 2242 → 4 cols`, `S=11 → 2241 → 3 cols` at **736.3px** each — precisely the
+ * "silent off-by-a-scrollbar" failure the container-query note below records as a lesson
+ * already learned once.
+ *
+ * ⚠️ THE MECHANISM IS A WIDER SCROLLBAR, AND ONLY THAT. An earlier draft offered "an 11px
+ * thin gutter, 125% OS scaling, or any browser zoom", and the last two are NOT mechanisms
+ * for `S > 10`: scaling and zoom change the CSS VIEWPORT (a 2560 panel at 125% reports
+ * 2048 CSS px), so they never produce "a 2560 viewport with S=11" — they land on three
+ * columns for an unrelated reason and at a different card width. The same draft said
+ * 750px, which is `2252/3` with the two 16px gutters forgotten. Right conclusion, two
+ * wrong causes and a wrong number. The retired five-column rung had 154px of
  * slack here; this one has none, and the slack was spent buying the four-column outcome
  * at exactly 2560.
  *

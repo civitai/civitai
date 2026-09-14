@@ -15,9 +15,9 @@ import {
 import { SUBNAV_STICKY_GAP } from '~/hooks/useSubnavBottom';
 import {
   LISTING_FOUR_COLUMN_MIN_WIDTH,
+  listingCardWidthAt,
   listingGridColumnsAt,
 } from '~/components/Apps/appListingGrid';
-import { APPS_CONTAINER_GUTTER, APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
 // 🔴 THE PARSER PRODUCTION ACTUALLY RUNS. `_app`'s `getInitialProps` calls
 // `parseCookies(getCookies(ctx))`, so this zod schema — not any helper in the rail's own
 // module — is what decides the SSR seed. An earlier revision of this file tested a
@@ -61,22 +61,40 @@ describe('the rail costs what the ladder and the layout think it costs', () => {
     // is what the allowance BUYS. An audit priced it: the grid at a 2560 viewport is
     // `2252 − S`, against a four-column rung of 2242, so four columns arrive **iff S ≤ 10**.
     // There is no slack at all at the one viewport the rung was derived for.
-    const gridAt2560 = (scrollbar: number) =>
-      APPS_PAGE_CONTAINER_WIDTH - scrollbar - APPS_CONTAINER_GUTTER - appsRailChromeWidth(false);
-
-    expect(APPS_RESERVED_SCROLLBAR).toBe(10);
-    expect(gridAt2560(APPS_RESERVED_SCROLLBAR)).toBe(LISTING_FOUR_COLUMN_MIN_WIDTH);
-    // THE MARGIN, NAMED: exactly zero. Stated as a subtraction so it moves if any of the
-    // four inputs moves, rather than as a number nobody re-derives.
-    expect(gridAt2560(APPS_RESERVED_SCROLLBAR) - LISTING_FOUR_COLUMN_MIN_WIDTH).toBe(0);
-
-    // …and the cliff is one pixel away, in the direction a real platform can move.
-    expect(listingGridColumnsAt(gridAt2560(10)), 'S=10 — the allowance this repo assumes').toBe(4);
+    // 🔴 AND THE FIRST REPLACEMENT FOR IT WAS JUST AS INERT — recorded because the second
+    // attempt is only credible with the first one's failure written down. It defined
+    // `gridAt2560(S) = CONTAINER − S − GUTTER − railChrome(false)`, which is
+    // CHARACTER-FOR-CHARACTER the definition of `LISTING_FOUR_COLUMN_MIN_WIDTH`, and then
+    // asserted the two were equal. That is `X === X` for ANY values of the four inputs.
+    // Mutation-proven by a delta audit: widening `APPS_RAIL_WIDTH` 260 → 300 (which
+    // silently moves the rung to 2202 and makes "zero margin at 2560" a claim about a
+    // different number) left it GREEN; so did `APPS_PAGE_CONTAINER_WIDTH` 2560 → 2600.
+    //
+    // So the rung is pinned as an INDEPENDENTLY WRITTEN LITERAL. 2242 is typed out here
+    // and derived there; that is the only arrangement in which moving any input can fail.
     expect(
-      listingGridColumnsAt(gridAt2560(11)),
-      'S=11 — an 11px thin gutter, 125% OS scaling or any browser zoom, and a 2560 ' +
-        'monitor renders THREE 750px cards instead of four 548.5px ones'
+      LISTING_FOUR_COLUMN_MIN_WIDTH,
+      'the four-column rung moved. It is derived from the container, the scrollbar ' +
+        'allowance, the gutter and the RAIL WIDTH — so a rail-width change silently ' +
+        'retunes the store ladder. Re-read the cost table on LISTING_GRID_SPAN before ' +
+        're-baselining this number.'
+    ).toBe(2242);
+    expect(APPS_RESERVED_SCROLLBAR).toBe(10);
+
+    // THE MARGIN, NAMED: exactly zero — the widest grid a 2560 viewport can yield with
+    // the rail open, minus the rung, against literals on both sides.
+    expect(2560 - 10 - 32 - 276).toBe(2242);
+    expect(2560 - 10 - 32 - 276 - 2242).toBe(0);
+
+    // …and the cliff is one pixel away, in the one direction a real platform can move it.
+    expect(listingGridColumnsAt(2242), 'S=10 — the allowance this repo assumes').toBe(4);
+    expect(
+      listingGridColumnsAt(2241),
+      'S=11 — an 11px thin gutter and a 2560 monitor renders THREE 736.3px cards instead ' +
+        'of four 548.5px ones. (A WIDER SCROLLBAR is the only mechanism: OS scaling and ' +
+        'browser zoom change the CSS viewport, not S.)'
     ).toBe(3);
+    expect(listingCardWidthAt(2241, 3)).toBeCloseTo(736.33, 2);
 
     // 🔴 AND WHY THIS LIVES IN THE NODE TIER RATHER THAN THE BROWSER ONE. Measured in the
     // pinned `chrome-headless-shell`: `scrollbar-width: thin`, `auto` and `none` ALL report
@@ -84,7 +102,7 @@ describe('the rail costs what the ladder and the layout think it costs', () => {
     // test therefore runs at S=0, so the reserving platform — the one this rung was placed
     // for — is structurally invisible to that tier. Arithmetic is the only instrument this
     // repo has for it, so the arithmetic is asserted rather than assumed.
-    expect(listingGridColumnsAt(gridAt2560(0)), 'S=0 — every browser test on this repo').toBe(4);
+    expect(listingGridColumnsAt(2252), 'S=0 — every browser test on this repo').toBe(4);
   });
 });
 
@@ -191,8 +209,18 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // neither the ban above nor this carve-out can be widened into the other: the call
     // must live inside a `useEffect`, and it must not appear in the returned JSX.
     expect(layout).toMatch(/useEffect\(\(\) => \{[\s\S]*?window\.matchMedia\(/);
-    const jsx = layout.slice(layout.indexOf('return ('));
-    expect(jsx, 'a media query reached the rendered tree').not.toMatch(/matchMedia/);
+    // ⚠️ ANCHORED ON `<Container`, NOT ON `return (`. The FIRST `return (` in this file is
+    // the drawer effect's own cleanup (`return () => mql.removeEventListener(...)`), so
+    // slicing there covers 60 lines of hook body and docblock as well as the JSX. That is
+    // a superset today — it passes, and is not a false negative — but a SECOND legitimate
+    // effect reading `matchMedia` would red it with the message "a media query reached
+    // the rendered tree", diagnosing a non-defect. The component's JSX is the only thing
+    // this rule is about, and `<Container` is where it starts.
+    const jsxStart = layout.indexOf('<Container');
+    expect(jsxStart, 'the rendered tree was not found — re-point this guard').toBeGreaterThan(-1);
+    expect(layout.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
+      /matchMedia/
+    );
   });
 });
 

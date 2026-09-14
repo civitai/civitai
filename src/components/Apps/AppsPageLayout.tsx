@@ -144,7 +144,14 @@ export function AppsPageLayout({
     };
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);
-  }, [drawerOpened, drawer]);
+    // 🔴 `drawer.close`, NOT `drawer`. Mantine's `useDisclosure` returns a FRESH OBJECT
+    // LITERAL on every render, and `toggle`'s identity also moves with `opened` — so
+    // `[drawerOpened, drawer]` re-runs this on every render of the layout, which
+    // `useSubnavBottom` triggers on every scroll. Nothing leaked (the cleanup is correct)
+    // but it was a `removeEventListener` + `matchMedia()` + `addEventListener` per frame
+    // while the drawer was open. `close` is the one member that IS stable
+    // (`useCallback([onClose])`), and it is the only one this effect uses.
+  }, [drawerOpened, drawer.close]);
 
   /**
    * 🔴 THE `< 2 SECTIONS ⇒ NO NAV` COLLAPSE, CARRIED OVER FROM THE TAB STRIP AND

@@ -44,6 +44,8 @@ vi.mock('~/components/Apps/useAppsNavSections', async () => {
   return { useAppsNavSections: () => registry.appsSections.slice(0, 2) };
 });
 
+const registryModule = await import('~/components/Apps/apps-sections');
+
 vi.mock('next/router', () => ({
   __esModule: true,
   useRouter: () => ({ pathname: mocks.pathname }),
@@ -66,6 +68,16 @@ function railWidth(): number | null {
 }
 
 const toggle = () => page.getByRole('button', { name: /(Collapse|Expand) navigation/ });
+
+/**
+ * The exact sections the `useAppsNavSections` stub above feeds the layout.
+ *
+ * ONE definition, read by both the stub and the assertions, so a registry rename or
+ * reorder moves them together instead of reding arms that are not about labels.
+ */
+function registrySlice() {
+  return registryModule.appsSections.slice(0, 2);
+}
 
 function readCookie(name: string): string | undefined {
   for (const part of document.cookie.split(';')) {
@@ -152,6 +164,44 @@ describe('🔴 the SSR cookie seed decides the FIRST render', () => {
     // exists to prevent. The adoption happens in an EFFECT, after hydration has matched.
     await vi.waitFor(() => {
       expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
+    });
+  });
+
+  test('🔴 the adoption RE-SEEDS the cookie, so the reflow happens ONCE and not forever', async () => {
+    // 🔴 THE FIX THAT MADE THIS BRANCH LIVE ALSO MADE IT REPEAT. Adopting from storage
+    // without writing the cookie back leaves the SERVER in exactly the state that made
+    // the adoption necessary: the next hard load of any `/apps/*` route SSRs the rail
+    // open, hydration matches, and the effect snaps it to 56px again — taking the
+    // container-queried store grid with it. Every full page load, indefinitely. Client
+    // navigation is unaffected (the Provider is above the outlet); direct entry, refresh
+    // and any external link into `/apps/*` are not.
+    //
+    // Caught by a delta audit of the very commit that made the branch reachable — the
+    // shape the ladder predicts: a fix round's own change is the next finding.
+    window.localStorage.setItem(APPS_RAIL_STORAGE_KEY, 'collapsed');
+    expect(
+      readCookie(APPS_RAIL_COOKIE),
+      'the fixture must start with NO rail cookie'
+    ).toBeUndefined();
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsRailProvider value={undefined}>
+        <Page testid="body" />
+      </AppsRailProvider>
+    );
+    await expect.element(page.getByTestId('body')).toBeInTheDocument();
+    await vi.waitFor(() => {
+      expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
+    });
+
+    // …and the cookie now carries it, so the NEXT server render seeds collapsed and there
+    // is no second flash.
+    await vi.waitFor(() => {
+      expect(
+        readCookie(APPS_RAIL_COOKIE),
+        'the rail adopted from storage but never wrote the cookie — this reflow will ' +
+          'repeat on every hard load'
+      ).toBe('collapsed');
     });
   });
 
@@ -344,9 +394,14 @@ describe('🔴 the collapsed rail keeps its accessible names', () => {
 
   test('every entry is still reachable BY NAME with the labels visually gone', async () => {
     await renderCollapsed();
-    // The registry slice this file stubs is [Marketplace, Activity]. Both must resolve by
-    // accessible name even though neither renders its label as text.
-    for (const name of ['Marketplace', 'Activity']) {
+    // 🔴 THE EXPECTED NAMES ARE DERIVED FROM THE SAME SLICE THE STUB FEEDS THE LAYOUT, not
+    // hardcoded. `['Marketplace', 'Activity']` in a literal would red this arm on a
+    // registry RENAME or REORDER — neither of which this test is about — while saying
+    // nothing new about the property it does own (that a collapsed entry keeps an
+    // accessible name). Deriving makes it a guard on the STATE rather than on two words.
+    const expected = registrySlice().map((section) => section.label);
+    expect(expected, 'the stub fed the layout nothing to render').toHaveLength(2);
+    for (const name of expected) {
       const el = page.getByRole('link', { name }).element() as HTMLElement;
       expect(el.tagName.toLowerCase()).toBe('a');
       // The NAME comes from `aria-label`, because the visible <span> is not rendered when
@@ -369,9 +424,10 @@ describe('🔴 the collapsed rail keeps its accessible names', () => {
     );
     await expect.element(page.getByTestId('body')).toBeInTheDocument();
     expect(railWidth()).toBe(APPS_RAIL_WIDTH);
-    const el = page.getByRole('link', { name: 'Marketplace' }).element() as HTMLElement;
+    const first = registrySlice()[0].label;
+    const el = page.getByRole('link', { name: first }).element() as HTMLElement;
     expect(el.getAttribute('aria-label')).toBeNull();
-    expect(el.textContent).toContain('Marketplace');
+    expect(el.textContent).toContain(first);
   });
 
   test('the group heading is CLIPPED, not removed from the accessibility tree', async () => {
@@ -381,7 +437,14 @@ describe('🔴 the collapsed rail keeps its accessible names', () => {
     // Still present and still carrying its text — `hidden`/`aria-hidden` would drop it from
     // the tree, which is what the component's comment says it must not do.
     expect(headings.length).toBeGreaterThan(0);
-    expect(headings.map((el) => (el.textContent ?? '').trim())).toContain('Discover');
+    // Derived, for the same reason as the link names above: the heading is whatever GROUP
+    // the stubbed sections belong to, not the literal string "Discover".
+    const groups = await import('~/components/Apps/apps-sections');
+    const expectedHeading = groups.appsSectionGroups.find(
+      (g) => g.id === registrySlice()[0].group
+    )?.label;
+    expect(expectedHeading, 'the first stubbed section belongs to no known group').toBeTruthy();
+    expect(headings.map((el) => (el.textContent ?? '').trim())).toContain(expectedHeading);
     for (const el of headings) {
       expect(el.getAttribute('aria-hidden')).toBeNull();
       expect(el.hasAttribute('hidden')).toBe(false);
