@@ -169,10 +169,11 @@ export async function resolveAppBlockApprovalVerdict(
 
 /**
  * THE REST POLICY over that verdict: identical, plus a fail-closed `lookup_failed` for a
- * read that threw. `withBlockScope` maps the result onto status codes — and note that
- * only TWO of the four non-`ok` results refuse there; `not_found` is served. The refusal
- * mapping lives at the call site, not here, because the bridge maps the same verdicts
- * onto a different policy.
+ * read that threw. `withBlockScope` maps the result onto status codes, and the mapping is
+ * not "ok passes, everything else refuses": `ok` and `dev_exempt` serve, `not_approved`
+ * (403) and `lookup_failed` (503) refuse, and `not_found` is counted and SERVED. The
+ * mapping lives at that call site rather than here, because the bridge maps the same
+ * verdicts onto a different policy.
  */
 export async function resolveRestApprovalVerdict(
   claims: BlockTokenClaims
