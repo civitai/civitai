@@ -146,7 +146,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           id: pairData.left.id,
           imageId: pairData.left.imageId,
           userId: pairData.left.userId,
-          score: pairData.left.score,
           image: pairData.left.image,
           user: {
             id: pairData.left.user.id,
@@ -159,7 +158,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           id: pairData.right.id,
           imageId: pairData.right.imageId,
           userId: pairData.right.userId,
-          score: pairData.right.score,
           image: pairData.right.image,
           user: {
             id: pairData.right.user.id,

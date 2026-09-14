@@ -15,7 +15,7 @@ import {
 } from '~/server/schema/crucible.schema';
 import {
   createCrucible,
-  getCrucible,
+  getCrucibleDetail,
   getCrucibles,
   submitEntry,
   getJudgingPair,
@@ -26,6 +26,7 @@ import {
   getFeaturedCrucible,
   getJudgesCount,
   getJudgeStats,
+  withoutEntryScores,
 } from '~/server/services/crucible.service';
 import { isModerator } from '~/server/routers/base.router';
 import { Prisma } from '@prisma/client';
@@ -72,82 +73,6 @@ const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   },
 });
 
-// Select for detail view - includes all fields and relations
-const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
-  id: true,
-  userId: true,
-  name: true,
-  description: true,
-  imageId: true,
-  nsfwLevel: true,
-  entryFee: true,
-  entryLimit: true,
-  maxTotalEntries: true,
-  prizePositions: true,
-  allowedResources: true,
-  duration: true,
-  status: true,
-  startAt: true,
-  endAt: true,
-  createdAt: true,
-  updatedAt: true,
-  user: {
-    select: {
-      id: true,
-      username: true,
-      image: true,
-      deletedAt: true,
-    },
-  },
-  image: {
-    select: {
-      id: true,
-      name: true,
-      url: true,
-      type: true,
-      metadata: true,
-      nsfwLevel: true,
-      width: true,
-      height: true,
-    },
-  },
-  entries: {
-    select: {
-      id: true,
-      userId: true,
-      imageId: true,
-      score: true,
-      position: true,
-      createdAt: true,
-      user: {
-        select: {
-          id: true,
-          username: true,
-          image: true,
-        },
-      },
-      image: {
-        select: {
-          id: true,
-          name: true,
-          url: true,
-          nsfwLevel: true,
-          width: true,
-          height: true,
-        },
-      },
-    },
-    orderBy: {
-      score: 'desc',
-    },
-  },
-  _count: {
-    select: {
-      entries: true,
-    },
-  },
-});
-
 export const crucibleRouter = router({
   getInfinite: publicProcedure
     .use(isFlagProtected('crucible'))
@@ -167,10 +92,10 @@ export const crucibleRouter = router({
   getById: publicProcedure
     .use(isFlagProtected('crucible'))
     .input(getCrucibleByIdSchema)
-    .query(async ({ input }) => {
-      const crucible = await getCrucible({
+    .query(async ({ ctx, input }) => {
+      const crucible = await getCrucibleDetail({
         id: input.id,
-        select: crucibleDetailSelect,
+        userId: ctx.user?.id,
       });
 
       return crucible;
@@ -209,7 +134,7 @@ export const crucibleRouter = router({
         userId: ctx.user.id,
       });
 
-      return pair;
+      return withoutEntryScores(pair);
     }),
 
   submitVote: guardedProcedure
